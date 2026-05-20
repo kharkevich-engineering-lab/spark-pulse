@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+# ── Project metadata ────────────────────────────────────────────────────────
+
+[project]
+name = "spark-pulse"
+version = "0.1.0"
+description = "Web UI for spark-vllm-docker — recipe management, deployment, and monitoring for DGX Spark"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "sse-starlette>=2.2.0",
+    "pyyaml>=6.0",
+    "pydantic>=2.0",
+    "click>=8.0",
+    "authlib>=1.3.0",
+    "httpx>=0.28.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black>=24.8.0",
+    "pytest>=8.0",
+    "httpx>=0.28",
+]
+mcp = [
+    "mcp>=1.0.0",
+]
+
+[[project.maintainers]]
+name = "Alexander Kharkevich"
+email = "alex@kharkevich.org"
+
+[project.urls]
+homepage = "https://github.com/kharkevich-engineering-lab/spark-pulse"
+repository = "https://github.com/kharkevich-engineering-lab/spark-pulse"
+
+# ── Console script ──────────────────────────────────────────────────────────
+
+[project.scripts]
+spark-pulse = "spark_pulse.cli:main"
+
+# ── Packaging ───────────────────────────────────────────────────────────────
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["spark_pulse*", "spark_pulse.*"]
+
+[tool.setuptools.package-data]
+spark_pulse = [
+    "ui/**/*",
+    "service/templates/**/*",
+]

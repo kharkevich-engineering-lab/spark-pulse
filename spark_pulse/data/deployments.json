@@ -1,0 +1,65 @@
+[
+  {
+    "id": "401c8b340a18",
+    "recipe_id": "qwen3.5-397b-int4",
+    "name": "qwen3.5-397b-int4",
+    "params": {
+      "tensor_parallel": 2,
+      "port": 9000,
+      "gpu_memory_utilization": 0.9,
+      "max_num_seqs": 2,
+      "host": "0.0.0.0"
+    },
+    "nodes": null,
+    "status": "pending",
+    "created_at": "2026-05-20T15:44:51.537456+00:00",
+    "started_at": null,
+    "stopped_at": null,
+    "error_message": null,
+    "pid": null,
+    "port": 9000,
+    "launch_command": "# Mock: simulating vllm serve for qwen3.5-397b-int4"
+  },
+  {
+    "id": "6b6478dda698",
+    "recipe_id": "qwen3.5-397b-int4",
+    "name": "qwen3.5-397b-int4",
+    "params": {
+      "tensor_parallel": 2,
+      "port": 9000,
+      "gpu_memory_utilization": 0.9,
+      "max_num_seqs": 2,
+      "host": "0.0.0.0"
+    },
+    "nodes": null,
+    "status": "pending",
+    "created_at": "2026-05-20T17:26:04.343158+00:00",
+    "started_at": null,
+    "stopped_at": null,
+    "error_message": null,
+    "pid": null,
+    "port": 9000,
+    "launch_command": "# Mock: simulating vllm serve for qwen3.5-397b-int4"
+  },
+  {
+    "id": "4976c753da33",
+    "recipe_id": "qwen3.5-122b-fp8",
+    "name": "qwen3.5-122b-fp8",
+    "params": {
+      "tensor_parallel": 2,
+      "port": 9010,
+      "gpu_memory_utilization": 0.7,
+      "max_num_seqs": 32,
+      "host": "0.0.0.0"
+    },
+    "nodes": null,
+    "status": "pending",
+    "created_at": "2026-05-20T17:38:16.607451+00:00",
+    "started_at": null,
+    "stopped_at": null,
+    "error_message": null,
+    "pid": null,
+    "port": 9010,
+    "launch_command": "# Mock: simulating vllm serve for qwen3.5-122b-fp8"
+  }
+]

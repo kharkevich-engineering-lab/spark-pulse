@@ -1,0 +1,40 @@
+@import "tailwindcss";
+
+@theme {
+  /* Dark theme (default) — matches kharkevich.com */
+  --color-bg: #08111f;
+  --color-surface: #10192a;
+  --color-surface-hover: #162338;
+  --color-border: rgba(148, 163, 184, 0.24);
+  --color-border-hover: rgba(148, 163, 184, 0.4);
+  --color-primary: #7ab8ff;
+  --color-primary-hover: #93cafe;
+  --color-accent-2: #5de7d1;
+  --color-tag-bg: #162338;
+  --color-success: #34d058;
+  --color-warning: #f59e0b;
+  --color-danger: #ea4a5a;
+  --color-text: #e6edf7;
+  --color-text-muted: #a6b4c8;
+}
+
+html, body, #root { height: 100%; margin: 0; padding: 0; }
+* { scrollbar-width: thin; scrollbar-color: #2a4a6a transparent; }
+
+/* Light theme overrides — matches kharkevich.com */
+html.light {
+  --color-bg: #f6f8fa;
+  --color-surface: #ffffff;
+  --color-surface-hover: #edf3fb;
+  --color-border: #d7e0ea;
+  --color-border-hover: #c0cdd8;
+  --color-primary: #2a78c9;
+  --color-primary-hover: #3c88d9;
+  --color-accent-2: #00a9a5;
+  --color-tag-bg: #edf3fb;
+  --color-success: #34d058;
+  --color-warning: #f59e0b;
+  --color-danger: #ea4a5a;
+  --color-text: #1a2732;
+  --color-text-muted: #5c6b72;
+}

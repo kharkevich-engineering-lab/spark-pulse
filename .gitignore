@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+spark_plug.egg-info/
+
+# Data
+spark_plug/data/deployments.json
+
+# Frontend
+web/node_modules/
+web/dist/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+.env
+
+# TSC build artifacts
+*.tsbuildinfo
+.qwen/settings.json*

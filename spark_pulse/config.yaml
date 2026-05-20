@@ -1,0 +1,13 @@
+auth_enabled: false
+default_container: vllm-node
+default_gpu_mem_util: 0.8
+default_port_range_end: 9100
+default_port_range_start: 9000
+mcp_enabled: true
+mcp_path: /mcp
+mcp_api_token: ''
+oidc_client_id: ''
+oidc_client_secret: ''
+oidc_provider_url: ''
+spark_vllm_path: /tmp/spark-vllm-docker
+webui_port: 8100
