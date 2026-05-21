@@ -45,6 +45,11 @@ repository = "https://github.com/kharkevich-engineering-lab/spark-pulse"
 [project.scripts]
 spark-pulse = "spark_pulse.cli:main"
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "--tb=short -v"
+
 # ── Packaging ───────────────────────────────────────────────────────────────
 
 [tool.setuptools.packages.find]
