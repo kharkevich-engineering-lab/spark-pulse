@@ -30,7 +30,7 @@ _active_tokens: dict[str, dict] = {}
 
 def _oidc_configured() -> bool:
     """Check if OIDC is configured and enabled."""
-    return (
+    return bool(
         os.environ.get("SPARK_PULSE_AUTH_ENABLED", str(config.auth_enabled)) == "true"
         and config.oidc_provider_url
         and config.oidc_client_id
