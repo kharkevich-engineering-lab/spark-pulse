@@ -53,37 +53,51 @@ def start(host, port, workers, env_file, dry_run):
 @main.command()
 @click.option("--host", "host", default="0.0.0.0", help="Systemd service bind address")
 @click.option("--port", "port", default=config.webui_port, type=int, help="Systemd service bind port")
-@click.option("--user", "user", default=os.environ.get("USER", "spark"), help="Systemd service user")
+@click.option("--service-user", "service_user", default=os.environ.get("USER", "spark"), help="System service Unix user")
+@click.option("--user", "use_user", is_flag=True, help="Install a user-scoped systemd service")
 @click.option("--no-start", is_flag=True, help="Install but don't start")
-def install(host, port, user, no_start):
+def install(host, port, service_user, use_user, no_start):
     """Install and enable the systemd service."""
+    scope = "user" if use_user else "system"
     try:
-        install_systemd(host=host, port=port, user=user, start=not no_start)
+        install_systemd(host=host, port=port, user=service_user, start=not no_start, scope=scope)
         click.echo(f"Installed systemd service '{SERVICE_NAME}'.")
         if no_start:
-            click.echo("Service installed but not started. Run 'spark-pulse manage start-service' to start.")
+            click.echo("Service installed but not started. Run 'spark-pulse start-service' to start.")
         else:
             click.echo("Service started.")
+        if use_user:
+            click.echo("User unit installed. To start at boot without login session, run: loginctl enable-linger $USER")
     except PermissionError:
-        click.echo("Error: systemd installation requires root/sudo privileges.", err=True)
+        if use_user:
+            click.echo("Error: unable to write user systemd files. Check ~/.config permissions.", err=True)
+        else:
+            click.echo("Error: systemd installation requires root/sudo privileges.", err=True)
         sys.exit(1)
 
 
 @main.command()
-def uninstall():
+@click.option("--user", "use_user", is_flag=True, help="Uninstall user-scoped systemd service")
+def uninstall(use_user):
     """Remove the systemd service."""
+    scope = "user" if use_user else "system"
     try:
-        uninstall_systemd()
+        uninstall_systemd(scope=scope)
         click.echo(f"Removed systemd service '{SERVICE_NAME}'.")
     except PermissionError:
-        click.echo("Error: systemd uninstall requires root/sudo privileges.", err=True)
+        if use_user:
+            click.echo("Error: unable to remove user systemd files. Check ~/.config permissions.", err=True)
+        else:
+            click.echo("Error: systemd uninstall requires root/sudo privileges.", err=True)
         sys.exit(1)
 
 
 @main.command()
-def status():
+@click.option("--user", "use_user", is_flag=True, help="Check user-scoped systemd service status")
+def status(use_user):
     """Check systemd service status."""
-    status = get_status()
+    scope = "user" if use_user else "system"
+    status = get_status(scope=scope)
     if status == "active":
         click.echo(f"{SERVICE_NAME}: active (running)")
     elif status in ("inactive", "dead"):
@@ -98,9 +112,19 @@ def status():
 
 
 @main.command()
-def stop_service():
+@click.option("--user", "use_user", is_flag=True, help="Stop user-scoped systemd service")
+def stop_service(use_user):
     """Stop the systemd service."""
-    stop_server()
+    scope = "user" if use_user else "system"
+    stop_server(scope=scope)
+
+
+@main.command()
+@click.option("--user", "use_user", is_flag=True, help="Start user-scoped systemd service")
+def start_service(use_user):
+    """Start the systemd service."""
+    scope = "user" if use_user else "system"
+    start_server(scope=scope)
 
 
 @main.command()
