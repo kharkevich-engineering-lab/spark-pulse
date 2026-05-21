@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: PyPI
-      url: https://pypi.org/project/spark-plug/
+      url: https://pypi.org/project/spark-pulse/
     permissions:
       contents: write
       id-token: write
@@ -22,14 +22,15 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 24
-      - name: Install dependencies
-        run: npm ci
       - name: Run semantic-release
         id: release
         uses: cycjimmy/semantic-release-action@v6
         with:
           extra_plugins: |
+            @semantic-release/commit-analyzer
+            @semantic-release/release-notes-generator
             @semantic-release/exec
+            @semantic-release/github
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Publish to PyPI
