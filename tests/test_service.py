@@ -7,7 +7,10 @@ def test_get_service_dir_by_scope(monkeypatch, tmp_path):
     monkeypatch.setattr(service.Path, "home", lambda: tmp_path)
 
     assert service._get_service_dir("system") == service.Path("/var/lib/spark-pulse")
-    assert service._get_service_dir("user") == tmp_path / ".local" / "share" / "spark-pulse"
+    assert (
+        service._get_service_dir("user")
+        == tmp_path / ".local" / "share" / "spark-pulse"
+    )
 
 
 def test_systemctl_cmd_includes_user_flag_for_user_scope():
@@ -51,7 +54,9 @@ def test_install_systemd_user_scope_writes_user_files(monkeypatch, tmp_path):
     monkeypatch.setattr(service.Path, "home", lambda: tmp_path)
     monkeypatch.setattr(service, "_get_package_dir", lambda: package_dir)
     monkeypatch.setattr(service.sys, "executable", "/usr/bin/python3")
-    monkeypatch.setitem(service.config._data, "spark_vllm_path", "/tmp/spark-vllm-docker")
+    monkeypatch.setitem(
+        service.config._data, "spark_vllm_path", "/tmp/spark-vllm-docker"
+    )
 
     calls = []
 
