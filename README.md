@@ -106,6 +106,25 @@ spark-pulse/
 
 ### As a Python package
 
+#### From PyPI
+
+```bash
+# Install from PyPI
+python3 -m pip install spark-pulse
+
+# Optional MCP extras
+python3 -m pip install "spark-pulse[mcp]"
+```
+
+If you install with user-site packages (`python3 -m pip install --user spark-pulse`),
+ensure your local bin directory is in `PATH`:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+#### From local source
+
 ```bash
 # Install from local repo
 pip install -e .
@@ -162,18 +181,46 @@ development on macOS or any machine without a DGX Spark:
 
 ### Systemd service (production)
 
+After installing from PyPI or source, register the service in one of these modes.
+
+#### System scope (root-managed)
+
 ```bash
-# Install systemd unit
+# Install and start system unit (requires sudo)
 sudo spark-pulse install
 
-# Uninstall
-sudo spark-pulse uninstall
-
-# Check status
+# Start/stop/status
+sudo spark-pulse start-service
+sudo spark-pulse stop-service
 spark-pulse status
 
-# Stop service
-spark-pulse stop-service
+# Unregister unit
+sudo spark-pulse uninstall
+```
+
+#### User scope (no sudo)
+
+```bash
+# Install and start user unit
+spark-pulse install --user
+
+# Start/stop/status for user unit
+spark-pulse start-service --user
+spark-pulse stop-service --user
+spark-pulse status --user
+
+# Unregister user unit
+spark-pulse uninstall --user
+```
+
+User-mode unit files are written under `~/.config/systemd/user/` and env files under
+`~/.config/spark-pulse/`. System-mode files are written under `/etc/systemd/system/`
+and `/etc/`.
+
+To keep user services running after logout, enable lingering:
+
+```bash
+loginctl enable-linger "$USER"
 ```
 
 ### MCP Server (AI Assistants)
