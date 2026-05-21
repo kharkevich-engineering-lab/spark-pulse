@@ -5,6 +5,7 @@ __pycache__/
 dist/
 build/
 .venv/
+.venv_ci/
 spark_pulse.egg-info/
 
 # Data
