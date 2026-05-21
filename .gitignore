@@ -5,10 +5,10 @@ __pycache__/
 dist/
 build/
 .venv/
-spark_plug.egg-info/
+spark_pulse.egg-info/
 
 # Data
-spark_plug/data/deployments.json
+spark_pulse/data/deployments.json
 
 # Frontend
 web/node_modules/
@@ -25,3 +25,4 @@ web/dist/
 # TSC build artifacts
 *.tsbuildinfo
 .qwen/settings.json*
+.pytest_cache/

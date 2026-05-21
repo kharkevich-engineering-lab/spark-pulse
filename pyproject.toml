@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "spark-pulse"
-version = "0.1.0"
+version = "1.2.3"
 description = "Web UI for spark-vllm-docker — recipe management, deployment, and monitoring for DGX Spark"
 readme = "README.md"
 license = "MIT"
