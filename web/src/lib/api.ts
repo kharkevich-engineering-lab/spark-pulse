@@ -1,4 +1,4 @@
-import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntry, Settings } from "@/lib/types";
+import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntry, Settings, SecretsResponse, ModSummary, ModDetail } from "@/lib/types";
 
 const API = "/api";
 
@@ -23,6 +23,7 @@ export async function fetchLogs(id: string, n = 200): Promise<{ logs: string }> 
 // ── Memory ──────────────────────────────────────────────────────────────────
 
 export async function fetchMemory(): Promise<MemoryResponse> { return json<MemoryResponse>("/memory"); }
+export async function killGpuProcess(pid: number): Promise<{ killed: boolean; pid: number; error?: string }> { return json(`/memory/processes/${pid}`, { method: "DELETE" }); }
 
 // ── Cache ───────────────────────────────────────────────────────────────────
 
@@ -33,6 +34,14 @@ export async function cleanCache(targets: string[]): Promise<Record<string, stri
 
 export async function fetchSettings(): Promise<Settings> { return json<Settings>("/settings"); }
 export async function updateSettings(partial: Partial<Settings>): Promise<Settings> { return json<Settings>("/settings", { method: "PUT", body: JSON.stringify(partial) }); }
+export async function fetchSecrets(): Promise<SecretsResponse> { return json<SecretsResponse>("/settings/secrets"); }
+export async function saveSecrets(partial: { hf_token?: string }): Promise<SecretsResponse> { return json<SecretsResponse>("/settings/secrets", { method: "PUT", body: JSON.stringify(partial) }); }
+export async function deleteSecret(key: string): Promise<void> { await json(`/settings/secrets/${key}`, { method: "DELETE" }); }
+
+// ── Mods ─────────────────────────────────────────────────────────────────────
+
+export async function fetchMods(): Promise<ModSummary[]> { return json<ModSummary[]>("/mods"); }
+export async function fetchMod(id: string): Promise<ModDetail> { return json<ModDetail>(`/mods/${encodeURIComponent(id)}`); }
 
 // ── SSE ─────────────────────────────────────────────────────────────────────
 

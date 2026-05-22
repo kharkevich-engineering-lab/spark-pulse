@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Zap, ListChecks, Activity, Database, Settings, Menu, X, Github, Sun, Moon, MoonStar, LogOut, User, RotateCw, Bot } from "lucide-react";
+import { Zap, ListChecks, Activity, Database, Settings, Menu, X, Github, Sun, Moon, MoonStar, LogOut, User, RotateCw, Bot, Wrench } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { type ThemeMode, getTheme, setTheme } from "@/lib/theme";
@@ -9,7 +9,8 @@ import { doRefresh } from "@/lib/refresh";
 const NAV = [
   { href: "/", label: "Recipes", icon: Zap },
   { href: "/jobs", label: "Jobs", icon: ListChecks },
-  { href: "/memory", label: "Memory", icon: Activity },
+  { href: "/mods", label: "Mods", icon: Wrench },
+  { href: "/monitoring", label: "Monitoring", icon: Activity },
   { href: "/cache", label: "Cache", icon: Database },
   { href: "/mcp", label: "MCP", icon: Bot },
   { href: "/settings", label: "Settings", icon: Settings },

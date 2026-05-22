@@ -20,9 +20,31 @@ def test_get_gpu_stats_parses_nvidia_smi(monkeypatch):
     assert gpus[0]["uuid"] == "GPU-123"
     assert gpus[0]["name"] == "NVIDIA A100"
     assert gpus[0]["memory_total"] == 40960
+    assert gpus[0]["memory_supported"] is True
     assert gpus[0]["utilization"] == 75
     assert gpus[0]["power_draw"] == 10.5
     assert gpus[0]["power_limit"] == 40
+
+
+def test_get_gpu_stats_handles_not_supported_memory(monkeypatch):
+    # NVIDIA GB10 (Grace Blackwell) reports unified memory as [N/A] in CSV mode
+    output = "0, GPU-f836961c, NVIDIA GB10, [N/A], [N/A], [N/A], 39, 0, 10.52, [N/A]\n"
+
+    def fake_run(*_args, **_kwargs):
+        return SimpleNamespace(returncode=0, stdout=output)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    gpus = system.get_gpu_stats()
+
+    assert len(gpus) == 1
+    assert gpus[0]["name"] == "NVIDIA GB10"
+    assert gpus[0]["memory_total"] == 0
+    assert gpus[0]["memory_used"] == 0
+    assert gpus[0]["memory_supported"] is False
+    assert gpus[0]["temperature"] == 39
+    assert gpus[0]["power_draw"] == 10.52
+    assert gpus[0]["power_limit"] is None
 
 
 def test_get_gpu_stats_parses_without_power_fields(monkeypatch):

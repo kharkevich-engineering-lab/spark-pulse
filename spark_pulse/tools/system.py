@@ -1,8 +1,8 @@
 """Real system tools — nvidia-smi, free, df parsing."""
 
 import subprocess
+from pathlib import Path
 from typing import Any
-
 
 def get_gpu_stats() -> list[dict[str, Any]]:
     """Parse nvidia-smi output for GPU memory, temperature, utilization, and power."""
@@ -12,9 +12,10 @@ def get_gpu_stats() -> list[dict[str, Any]]:
     ]
 
     def parse_number(value: str) -> float | int | None:
-        if not value or value in {"N/A", "Not Supported", "NA"}:
+        v = value.strip("[] ") if value else value
+        if not v or v in {"N/A", "Not Supported", "NA"}:
             return None
-        return float(value) if "." in value else int(value)
+        return float(v) if "." in v else int(v)
 
     try:
         for cmd in commands:
@@ -33,11 +34,12 @@ def get_gpu_stats() -> list[dict[str, Any]]:
                     "gpu": f"GPU {parts[0]}",
                     "uuid": parts[1],
                     "name": parts[2],
-                    "memory_total": int(parts[3]),
-                    "memory_used": int(parts[4]),
-                    "memory_free": int(parts[5]),
-                    "temperature": int(parts[6]) if parts[6] else None,
-                    "utilization": int(parts[7]) if parts[7] else None,
+                    "memory_total": int(parse_number(parts[3]) or 0),
+                    "memory_used": int(parse_number(parts[4]) or 0),
+                    "memory_free": int(parse_number(parts[5]) or 0),
+                    "memory_supported": parse_number(parts[3]) is not None,
+                    "temperature": int(t) if (t := parse_number(parts[6])) is not None else None,
+                    "utilization": int(u) if (u := parse_number(parts[7])) is not None else None,
                     "power_draw": parse_number(parts[8]) if len(parts) > 8 else None,
                     "power_limit": parse_number(parts[9]) if len(parts) > 9 else None,
                 })
@@ -119,6 +121,41 @@ def get_disk_stats() -> list[dict[str, Any]]:
         return disks
     except (subprocess.SubprocessError, FileNotFoundError):
         return []
+
+
+def kill_gpu_process(pid: int) -> dict[str, Any]:
+    """Stop a GPU process — stops the Docker container it belongs to, or sends SIGTERM directly."""
+    import os
+    import re
+    import signal as _signal
+
+    # Check if PID lives inside a Docker container via cgroup
+    container_id: str | None = None
+    try:
+        cgroup = Path(f"/proc/{pid}/cgroup").read_text()
+        m = re.search(r"docker-([0-9a-f]{12,64})\.scope", cgroup)
+        if m:
+            container_id = m.group(1)
+    except (FileNotFoundError, PermissionError):
+        pass
+
+    if container_id:
+        result = subprocess.run(
+            ["docker", "stop", container_id],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode == 0:
+            return {"killed": True, "pid": pid, "method": "docker_stop", "container": container_id[:12]}
+        return {"killed": False, "pid": pid, "error": result.stderr.strip() or "docker stop failed"}
+
+    # Fallback: direct signal
+    try:
+        os.kill(pid, _signal.SIGTERM)
+        return {"killed": True, "pid": pid, "method": "sigterm"}
+    except ProcessLookupError:
+        return {"killed": False, "pid": pid, "error": "Process not found"}
+    except PermissionError:
+        return {"killed": False, "pid": pid, "error": "Permission denied"}
 
 
 def get_all_memory() -> dict[str, Any]:

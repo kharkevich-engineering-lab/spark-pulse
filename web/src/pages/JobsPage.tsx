@@ -3,7 +3,7 @@ import { fetchDeployments, stopDeployment, connectLogStream } from "@/lib/api";
 import { useQuery } from "@/hooks/useQuery";
 import StatusBadge from "@/components/StatusBadge";
 import { ConfirmModal, AlertModal } from "@/components/Modal";
-import { Square, Loader2, AlertCircle, Terminal } from "lucide-react";
+import { Square, X, Trash2, Loader2, AlertCircle, Terminal } from "lucide-react";
 import { setRefresh } from "@/lib/refresh";
 
 export default function JobsPage() {
@@ -13,16 +13,31 @@ export default function JobsPage() {
   const [streaming, setStreaming] = useState<Record<string, boolean>>({});
   const logRef = useRef<Record<string, HTMLDivElement | null>>({});
   const stopRef = useRef<Record<string, () => void>>({});
+  const atBottomRef = useRef<Record<string, boolean>>({});
   const [stopTarget, setStopTarget] = useState<{ id: string; name: string } | null>(null);
   const [alertModal, setAlertModal] = useState<{ title: string; message: string } | null>(null);
 
   useEffect(() => { setRefresh(refetch); }, [refetch]);
   useEffect(() => { const i = setInterval(refetch, 10000); return () => clearInterval(i); }, [refetch]);
-  useEffect(() => { if (expandedId && logRef.current[expandedId]) logRef.current[expandedId]?.scrollTo({ top: 99999, behavior: "smooth" }); }, [logs[expandedId || ""]]);
+
+  // Auto-scroll only if already pinned to the bottom
+  useEffect(() => {
+    if (!expandedId) return;
+    const el = logRef.current[expandedId];
+    if (el && atBottomRef.current[expandedId] !== false) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [logs[expandedId || ""]]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleLogScroll = (id: string) => {
+    const el = logRef.current[id];
+    if (el) atBottomRef.current[id] = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  };
 
   const toggle = async (id: string) => {
     if (expandedId === id) { stopRef.current[id]?.(); setStreaming((s) => ({ ...s, [id]: false })); setExpandedId(null); return; }
     setExpandedId(id);
+    atBottomRef.current[id] = true; // start pinned to bottom
     setStreaming((s) => ({ ...s, [id]: true }));
     stopRef.current[id] = connectLogStream(id, (event, data) => {
       if (event === "log") setLogs((l) => ({ ...l, [id]: [...(l[id] || []), (data as { text: string }).text] }));
@@ -62,7 +77,9 @@ export default function JobsPage() {
                 <StatusBadge status={dep.status} />
                 {dep.pid && <span className="text-xs font-mono text-text-muted shrink-0">PID: {dep.pid}</span>}
                 <span className="text-xs text-text-muted shrink-0">{new Date(dep.created_at).toLocaleString()}</span>
-                <button onClick={(e) => { e.stopPropagation(); setStopTarget({ id: dep.id, name: dep.name }); }} disabled={dep.status !== "running"} className="p-2 rounded-lg hover:bg-danger/10 text-text-muted hover:text-danger transition-colors disabled:opacity-30 shrink-0" title="Stop"><Square size={14} /></button>
+                {["stopped", "error"].includes(dep.status)
+                  ? <button onClick={(e) => { e.stopPropagation(); setStopTarget({ id: dep.id, name: dep.name }); }} className="p-2 rounded-lg hover:bg-danger/10 text-text-muted hover:text-danger transition-colors shrink-0" title="Remove from history"><Trash2 size={14} /></button>
+                  : <button onClick={(e) => { e.stopPropagation(); setStopTarget({ id: dep.id, name: dep.name }); }} disabled={dep.status !== "running" && dep.status !== "pending"} className="p-2 rounded-lg hover:bg-danger/10 text-text-muted hover:text-danger transition-colors disabled:opacity-30 shrink-0" title={dep.status === "pending" ? "Cancel" : "Stop"}>{dep.status === "pending" ? <X size={14} /> : <Square size={14} />}</button>}
               </div>
               {expandedId === dep.id && (
                 <div className="border-t border-border">
@@ -70,8 +87,8 @@ export default function JobsPage() {
                     {streaming[dep.id] ? <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />Streaming</span> : <span>Stream stopped</span>}
                     <button onClick={() => toggle(dep.id)} className="ml-auto text-primary hover:underline">Hide</button>
                   </div>
-                  <div ref={(el) => { logRef.current[dep.id] = el; }} className="p-4 bg-black font-mono text-sm text-green-400 h-64 overflow-auto whitespace-pre-wrap">
-                    {(logs[dep.id] || ["No logs yet..."]).map((line, i) => <div key={i} className="leading-relaxed">{line}</div>)}
+                  <div ref={(el) => { logRef.current[dep.id] = el; }} onScroll={() => handleLogScroll(dep.id)} className="p-4 bg-bg font-mono text-sm text-text h-[calc(100vh-16rem)] overflow-auto whitespace-pre-wrap">
+                    {(logs[dep.id] || ["No logs yet..."]).map((line, i) => <div key={i} className="leading-relaxed text-text-muted last:text-text">{line}</div>)}
                   </div>
                 </div>
               )}
@@ -90,9 +107,9 @@ export default function JobsPage() {
           open={!!stopTarget}
           onClose={() => setStopTarget(null)}
           onConfirm={() => { doStop(stopTarget.id, stopTarget.name); setStopTarget(null); }}
-          title="Stop Deployment"
-          message={`Stop "${stopTarget.name}"? This will terminate the running process.`}
-          confirmLabel="Stop"
+          title={["stopped", "error"].includes(deployments?.find(d => d.id === stopTarget.id)?.status ?? "") ? "Remove Job" : deployments?.find(d => d.id === stopTarget.id)?.status === "pending" ? "Cancel Pending Job" : "Stop Deployment"}
+          message={["stopped", "error"].includes(deployments?.find(d => d.id === stopTarget.id)?.status ?? "") ? `Remove "${stopTarget.name}" from history?` : deployments?.find(d => d.id === stopTarget.id)?.status === "pending" ? `Cancel "${stopTarget.name}" before it starts?` : `Stop "${stopTarget.name}"? This will terminate the running process.`}
+          confirmLabel={["stopped", "error"].includes(deployments?.find(d => d.id === stopTarget.id)?.status ?? "") ? "Remove" : deployments?.find(d => d.id === stopTarget.id)?.status === "pending" ? "Cancel Job" : "Stop"}
           confirmVariant="danger"
         />
       )}

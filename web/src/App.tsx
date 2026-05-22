@@ -7,6 +7,7 @@ import MemoryPage from "@/pages/MemoryPage";
 import CachePage from "@/pages/CachePage";
 import MCPPage from "@/pages/MCPPage";
 import SettingsPage from "@/pages/SettingsPage";
+import ModsPage from "@/pages/ModsPage";
 
 export default function App() {
   return (
@@ -16,7 +17,8 @@ export default function App() {
           <Routes>
             <Route path="/" element={<RecipesPage />} />
             <Route path="/jobs" element={<JobsPage />} />
-            <Route path="/memory" element={<MemoryPage />} />
+            <Route path="/mods" element={<ModsPage />} />
+            <Route path="/monitoring" element={<MemoryPage />} />
             <Route path="/cache" element={<CachePage />} />
             <Route path="/mcp" element={<MCPPage />} />
             <Route path="/settings" element={<SettingsPage />} />

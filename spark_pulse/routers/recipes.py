@@ -15,7 +15,7 @@ def list_recipes():
     return tools.recipes.list_recipes()
 
 
-@router.get("/{recipe_id}")
+@router.get("/{recipe_id:path}")
 def get_recipe(recipe_id: str):
     recipe = tools.recipes.get_recipe(recipe_id)
     if recipe is None:

@@ -41,6 +41,7 @@ export interface GPUStats {
   memory_total: number;
   memory_used: number;
   memory_free: number;
+  memory_supported: boolean;
   temperature: number | null;
   utilization: number | null;
   power_draw: number | null;
@@ -52,6 +53,7 @@ export interface GPUProcess {
   pid: number;
   process_name: string;
   used_memory: number;
+  is_tracked?: boolean;
 }
 
 export interface CPUStats {
@@ -93,4 +95,22 @@ export interface Settings {
   default_port_range_start: number;
   default_port_range_end: number;
   webui_port: number;
+  cluster_enabled: boolean;
+  job_retention_days: number;
+  env_managed?: string[];
+}
+
+export interface SecretsResponse {
+  hf_token: string; // masked, e.g. "••••••••abc1" or "" if not set
+}
+
+export interface ModSummary {
+  id: string;
+  description: string;
+  files: { name: string; kind: string }[];
+  has_patches: boolean;
+}
+
+export interface ModDetail extends ModSummary {
+  script: string;
 }

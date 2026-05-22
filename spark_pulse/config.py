@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Optional
@@ -9,6 +10,52 @@ from typing import Optional
 import yaml
 
 _CONFIG_PATH = Path(__file__).resolve().parent / "config.yaml"
+_SECRETS_PATH = Path.home() / ".config" / "spark-pulse" / "secrets.json"
+_SETTINGS_PATH = Path.home() / ".config" / "spark-pulse" / "settings.json"
+
+# Fields that can be overridden by environment variables.
+# key = settings field name, value = env var name
+_ENV_MAP: dict[str, str] = {
+    "spark_vllm_path": "SPARK_VLLM_PATH",
+    "webui_port": "WEBUI_PORT",
+}
+
+
+def _load_secrets() -> dict:
+    if not _SECRETS_PATH.exists():
+        return {}
+    try:
+        with open(_SECRETS_PATH) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_secrets(data: dict) -> None:
+    _SECRETS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = _SECRETS_PATH.with_suffix(".tmp")
+    with open(tmp, "w") as f:
+        json.dump(data, f)
+    tmp.chmod(0o600)
+    tmp.rename(_SECRETS_PATH)
+
+
+def _load_user_settings() -> dict:
+    if not _SETTINGS_PATH.exists():
+        return {}
+    try:
+        with open(_SETTINGS_PATH) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_user_settings(data: dict) -> None:
+    _SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = _SETTINGS_PATH.with_suffix(".tmp")
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2)
+    tmp.rename(_SETTINGS_PATH)
 
 
 class _Config:
@@ -16,21 +63,31 @@ class _Config:
 
     def __init__(self):
         self._data: dict = {}
+        self._env_managed: set[str] = set()
         self._load()
 
     def _load(self):
+        # 1. Package defaults (config.yaml — overwritten on each deploy)
         if _CONFIG_PATH.exists():
             with open(_CONFIG_PATH) as f:
                 self._data = yaml.safe_load(f) or {}
         else:
             self._data = {}
-        # .env overrides
-        self._data["spark_vllm_path"] = os.getenv(
-            "SPARK_VLLM_PATH", self._data.get("spark_vllm_path", "/tmp/spark-vllm-docker")
-        )
-        self._data["webui_port"] = int(
-            os.getenv("WEBUI_PORT", str(self._data.get("webui_port", 8100)))
-        )
+
+        # 2. User overrides (persistent across deploys)
+        self._data.update(_load_user_settings())
+
+        # 3. Env var overrides (highest priority — mark as externally managed)
+        self._env_managed = set()
+        for field, env_var in _ENV_MAP.items():
+            val = os.getenv(env_var)
+            if val is not None:
+                self._data[field] = int(val) if field == "webui_port" else val
+                self._env_managed.add(field)
+
+    @property
+    def env_managed(self) -> list[str]:
+        return sorted(self._env_managed)
 
     @property
     def spark_vllm_path(self) -> str:
@@ -55,6 +112,14 @@ class _Config:
     @property
     def webui_port(self) -> int:
         return int(self._data.get("webui_port", 8100))
+
+    @property
+    def cluster_enabled(self) -> bool:
+        return bool(self._data.get("cluster_enabled", False))
+
+    @property
+    def job_retention_days(self) -> int:
+        return int(self._data.get("job_retention_days", 7))
 
     @property
     def auth_enabled(self) -> bool:
@@ -85,13 +150,43 @@ class _Config:
         return str(os.environ.get("SPARK_PULSE_MCP_API_TOKEN", self._data.get("mcp_api_token", "")))
 
     def save(self):
-        with open(_CONFIG_PATH, "w") as f:
-            yaml.dump(self._data, f, default_flow_style=False)
+        # Legacy — keep for compat but user settings now go to settings.json
+        user = _load_user_settings()
+        _save_user_settings(user)
 
     def update(self, **kwargs):
+        user = _load_user_settings()
         for k, v in kwargs.items():
-            self._data[k] = v
-        self.save()
+            if k not in self._env_managed:  # env vars take priority; don't overwrite
+                user[k] = v
+                self._data[k] = v
+        _save_user_settings(user)
+
+    # ── Secrets ──────────────────────────────────────────────────────────────
+
+    @property
+    def hf_token(self) -> str:
+        """HuggingFace token — env var takes priority over secrets file."""
+        return os.environ.get("HF_TOKEN", "") or _load_secrets().get("hf_token", "")
+
+    def save_secret(self, key: str, value: str) -> None:
+        """Persist a secret to the secrets file with restricted permissions."""
+        secrets = _load_secrets()
+        secrets[key] = value
+        _save_secrets(secrets)
+
+    def delete_secret(self, key: str) -> None:
+        """Remove a secret from the secrets file."""
+        secrets = _load_secrets()
+        secrets.pop(key, None)
+        _save_secrets(secrets)
+
+    def hf_token_masked(self) -> str:
+        """Return a masked representation safe to send to the UI."""
+        token = self.hf_token
+        if not token:
+            return ""
+        return "\u2022" * 8 + token[-4:]
 
 
 config = _Config()

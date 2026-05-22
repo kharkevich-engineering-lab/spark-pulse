@@ -20,6 +20,8 @@
 
 html, body, #root { height: 100%; margin: 0; padding: 0; }
 * { scrollbar-width: thin; scrollbar-color: #2a4a6a transparent; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; }
 
 /* Light theme overrides — matches kharkevich.com */
 html.light {

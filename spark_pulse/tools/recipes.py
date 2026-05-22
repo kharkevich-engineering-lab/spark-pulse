@@ -16,13 +16,14 @@ def list_recipes(spark_path: Path | None = None) -> list[dict[str, Any]]:
     if not recipe_dir.is_dir():
         return []
     recipes = []
-    for yaml_file in sorted(recipe_dir.glob("*.yaml")):
+    for yaml_file in sorted(recipe_dir.rglob("*.yaml")):
         try:
             with open(yaml_file) as f:
                 data = yaml.safe_load(f)
+            recipe_id = str(yaml_file.relative_to(recipe_dir).with_suffix(""))
             if data:
                 recipes.append({
-                    "id": yaml_file.stem,
+                    "id": recipe_id,
                     "name": data.get("name", yaml_file.stem),
                     "model": data.get("model", "unknown"),
                     "container": data.get("container", "vllm-node"),
@@ -38,12 +39,13 @@ def list_recipes(spark_path: Path | None = None) -> list[dict[str, Any]]:
 
 
 def get_recipe(recipe_id: str, spark_path: Path | None = None) -> dict[str, Any] | None:
-    """Load a specific recipe by filename."""
+    """Load a specific recipe by relative path id or display name."""
     spark_path = spark_path or Path(config.spark_vllm_path)
-    yaml_file = spark_path / "recipes" / f"{recipe_id}.yaml"
+    recipe_dir = spark_path / "recipes"
+    yaml_file = recipe_dir / f"{recipe_id}.yaml"
     candidates = [yaml_file] if yaml_file.exists() else []
     if not candidates and recipe_id:
-        candidates = sorted((spark_path / "recipes").glob("*.yaml"))
+        candidates = sorted(recipe_dir.rglob("*.yaml"))
 
     for candidate in candidates:
         try:
@@ -51,10 +53,11 @@ def get_recipe(recipe_id: str, spark_path: Path | None = None) -> dict[str, Any]
                 data = yaml.safe_load(f)
             if not data:
                 continue
-            if candidate.stem != recipe_id and data.get("name") != recipe_id:
+            candidate_id = str(candidate.relative_to(recipe_dir).with_suffix(""))
+            if candidate_id != recipe_id and data.get("name") != recipe_id:
                 continue
             return {
-                "id": candidate.stem,
+                "id": candidate_id,
                 "name": data.get("name", candidate.stem),
                 "model": data.get("model", "unknown"),
                 "container": data.get("container", "vllm-node"),
