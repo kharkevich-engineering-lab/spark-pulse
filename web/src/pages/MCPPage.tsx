@@ -54,7 +54,14 @@ export default function MCPPage() {
 
   const port = settings?.webui_port ?? 8100;
   const mcpPath = "/mcp";
-  const endpoint = `http://127.0.0.1:${port}${mcpPath}`;
+  const browserUrl = typeof window === "undefined" ? undefined : new URL(window.location.href);
+  const currentOrigin = browserUrl?.origin;
+  const currentPort = browserUrl?.port;
+  const backendOrigin = currentPort === String(port)
+    ? currentOrigin ?? `http://127.0.0.1:${port}`
+    : `${browserUrl?.protocol ?? "http:"}//${browserUrl?.hostname ?? "127.0.0.1"}:${port}`;
+  const endpoint = `${backendOrigin}${mcpPath}`;
+  const isDevServer = currentPort !== "" && currentPort !== String(port);
   const enabled = true; // MCP is always running alongside the web UI
 
   return (
@@ -62,6 +69,13 @@ export default function MCPPage() {
       <div>
         <h2 className="text-2xl font-bold">MCP Server</h2>
         <p className="text-text-muted mt-1">Model Context Protocol — connect AI assistants to manage deployments</p>
+        <p className="text-xs text-text-muted mt-2">
+          In the packaged app, the frontend and MCP endpoint are served by the same FastAPI process on port {port}.
+          {" "}
+          {isDevServer
+            ? `You are currently viewing the Vite dev server on port ${currentPort}, so MCP still lives on the backend at ${endpoint}.`
+            : `This page is already being served by the backend, so ${endpoint} is the same app origin.`}
+        </p>
       </div>
 
       {/* Status + connection */}
