@@ -21,13 +21,8 @@ async def metrics_generator() -> AsyncGenerator[str, None]:
     while True:
         try:
             data = system.get_all_memory()
-            running_pids: set[int] = {
-                dep["pid"]
-                for dep in list_deployments()
-                if dep.get("pid") and dep.get("status") in ("running", "pending")
-            }
-            for proc in data.get("processes", []):
-                proc["is_tracked"] = proc["pid"] in running_pids
+            running = [d for d in list_deployments() if d.get("status") in ("running", "pending")]
+            system.enrich_gpu_process_tracking(data.get("processes", []), running)
             yield f"event: metrics\ndata: {json.dumps(data)}\n\n"
         except Exception as e:
             yield f"event: error\ndata: {{\"message\": \"{e}\"}}\n\n"

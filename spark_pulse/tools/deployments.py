@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import subprocess
 import threading
@@ -17,6 +18,14 @@ from spark_pulse.config import config
 _DEPLOYMENTS_FILE = Path.home() / ".config" / "spark-pulse" / "deployments.json"
 _LOG_DIR = Path.home() / ".config" / "spark-pulse" / "logs"
 
+# Matches -e KEY=VALUE or -e KEY=VALUE; redacts the value portion
+_SENSITIVE_ENV_RE = re.compile(r"(-e\s+\w+=)\S+")
+
+
+def _redact_cmd(cmd_str: str) -> str:
+    """Replace values in -e KEY=VALUE arguments with [REDACTED]."""
+    return _SENSITIVE_ENV_RE.sub(r"\1[REDACTED]", cmd_str)
+
 
 # ── Persistence helpers ───────────────────────────────────────────────────────
 
@@ -25,7 +34,17 @@ def _load() -> list[dict[str, Any]]:
         return []
     try:
         with open(_DEPLOYMENTS_FILE) as f:
-            return json.load(f)
+            data = json.load(f)
+        # Sanitize any previously stored unredacted launch commands
+        changed = False
+        for dep in data:
+            lc = dep.get("launch_command")
+            if lc and _SENSITIVE_ENV_RE.search(lc):
+                dep["launch_command"] = _redact_cmd(lc)
+                changed = True
+        if changed:
+            _save(data)
+        return data
     except (json.JSONDecodeError, OSError):
         return []
 
@@ -188,7 +207,7 @@ def create_deployment(
     now = datetime.now(timezone.utc).isoformat()
 
     cmd = _build_cmd(recipe_id, params, nodes)
-    cmd_str = " ".join(cmd)
+    cmd_str = _redact_cmd(" ".join(cmd))
 
     _LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_path = str(_LOG_DIR / f"{dep_id}.log")

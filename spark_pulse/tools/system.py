@@ -1,8 +1,128 @@
 """Real system tools — nvidia-smi, free, df parsing."""
 
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
+
+
+# ── Docker / process-tracking helpers ────────────────────────────────────────
+
+def _cgroup_container_id(pid: int) -> str | None:
+    """Return the short (12-char) Docker container ID from a process's cgroup, or None."""
+    try:
+        cgroup = Path(f"/proc/{pid}/cgroup").read_text()
+        m = re.search(r"docker-([0-9a-f]{12})", cgroup)
+        return m.group(1) if m else None
+    except OSError:
+        return None
+
+
+def _proc_children() -> dict[int, list[int]]:
+    """Scan /proc and return a map of pid → direct child pids."""
+    children: dict[int, list[int]] = {}
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            for line in (entry / "status").read_text().splitlines():
+                if line.startswith("PPid:"):
+                    ppid = int(line.split()[1])
+                    children.setdefault(ppid, []).append(int(entry.name))
+                    break
+        except OSError:
+            pass
+    return children
+
+
+def _descendants(root: int, children: dict[int, list[int]], max_depth: int = 6) -> list[int]:
+    result: list[int] = []
+    queue = [(root, 0)]
+    seen = {root}
+    while queue:
+        pid, d = queue.pop()
+        if d >= max_depth:
+            continue
+        for c in children.get(pid, []):
+            if c not in seen:
+                seen.add(c)
+                result.append(c)
+                queue.append((c, d + 1))
+    return result
+
+
+def _docker_container_name(pid: int) -> str | None:
+    """If pid is a `docker exec|run|start` process, return the target container name."""
+    try:
+        parts = Path(f"/proc/{pid}/cmdline").read_text().replace("\x00", " ").strip().split()
+    except OSError:
+        return None
+    if not parts or "docker" not in parts[0]:
+        return None
+    for i, p in enumerate(parts):
+        if p == "--name" and i + 1 < len(parts):
+            return parts[i + 1]
+        if p in ("exec", "start", "attach") and i + 1 < len(parts):
+            j = i + 1
+            while j < len(parts) and parts[j].startswith("-"):
+                j += 1
+            if j < len(parts):
+                return parts[j]
+    return None
+
+
+def _resolve_container_name(name: str) -> str | None:
+    """Resolve a Docker container name to a short 12-char container ID."""
+    try:
+        r = subprocess.run(
+            ["docker", "inspect", "--format", "{{.Id}}", name],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip()[:12]
+    except Exception:
+        pass
+    return None
+
+
+def enrich_gpu_process_tracking(
+    processes: list[dict[str, Any]],
+    running_deployments: list[dict[str, Any]],
+) -> None:
+    """Set ``is_tracked`` on each GPU process dict in-place.
+
+    Tracked means the process belongs to a Docker container started/exec'd
+    by a known running deployment, or its PID directly matches a deployment.
+    """
+    dep_pids = {dep["pid"] for dep in running_deployments if dep.get("pid")}
+    if not processes:
+        return
+
+    tracked_container_ids: set[str] = set()
+    try:
+        children = _proc_children()
+        container_names: set[str] = set()
+        for dep in running_deployments:
+            pid = dep.get("pid")
+            if not pid:
+                continue
+            for child_pid in _descendants(int(pid), children):
+                name = _docker_container_name(child_pid)
+                if name:
+                    container_names.add(name)
+        for name in container_names:
+            cid = _resolve_container_name(name)
+            if cid:
+                tracked_container_ids.add(cid)
+    except Exception:
+        pass
+
+    for proc in processes:
+        cid = _cgroup_container_id(proc["pid"])
+        if cid:
+            proc["is_tracked"] = cid in tracked_container_ids
+        else:
+            proc["is_tracked"] = proc["pid"] in dep_pids
 
 def get_gpu_stats() -> list[dict[str, Any]]:
     """Parse nvidia-smi output for GPU memory, temperature, utilization, and power."""
@@ -126,18 +246,18 @@ def get_disk_stats() -> list[dict[str, Any]]:
 def kill_gpu_process(pid: int) -> dict[str, Any]:
     """Stop a GPU process — stops the Docker container it belongs to, or sends SIGTERM directly."""
     import os
-    import re
     import signal as _signal
 
-    # Check if PID lives inside a Docker container via cgroup
-    container_id: str | None = None
-    try:
-        cgroup = Path(f"/proc/{pid}/cgroup").read_text()
-        m = re.search(r"docker-([0-9a-f]{12,64})\.scope", cgroup)
-        if m:
-            container_id = m.group(1)
-    except (FileNotFoundError, PermissionError):
-        pass
+    container_id = _cgroup_container_id(pid)
+    # cgroup returns short 12-char; also accept full 64-char from a wider search
+    if not container_id:
+        try:
+            cgroup = Path(f"/proc/{pid}/cgroup").read_text()
+            m = re.search(r"docker-([0-9a-f]{12,64})\.scope", cgroup)
+            if m:
+                container_id = m.group(1)
+        except OSError:
+            pass
 
     if container_id:
         result = subprocess.run(
