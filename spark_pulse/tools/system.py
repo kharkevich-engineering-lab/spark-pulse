@@ -6,25 +6,28 @@ from typing import Any
 
 def get_gpu_stats() -> list[dict[str, Any]]:
     """Parse nvidia-smi output for GPU memory, temperature, utilization, and power."""
-    try:
-        result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=index,uuid,name,memory.total,memory.used,memory.free,temperature.gpu,utilization.gpu,power.draw,power.limit",
-             "--format=csv,nounits,noheader"],
-            capture_output=True, text=True, timeout=10,
-        )
-        if result.returncode != 0:
-            return []
-        gpus = []
-        for line in result.stdout.strip().split("\n"):
-            if not line.strip():
-                continue
-            parts = [p.strip() for p in line.split(",")]
-            if len(parts) >= 10:
-                def parse_number(value: str) -> float | int | None:
-                    if not value or value in {"N/A", "Not Supported"}:
-                        return None
-                    return float(value) if "." in value else int(value)
+    commands = [
+        ["nvidia-smi", "--query-gpu=index,uuid,name,memory.total,memory.used,memory.free,temperature.gpu,utilization.gpu,power.draw,power.limit", "--format=csv,nounits,noheader"],
+        ["nvidia-smi", "--query-gpu=index,uuid,name,memory.total,memory.used,memory.free,temperature.gpu,utilization.gpu", "--format=csv,nounits,noheader"],
+    ]
 
+    def parse_number(value: str) -> float | int | None:
+        if not value or value in {"N/A", "Not Supported", "NA"}:
+            return None
+        return float(value) if "." in value else int(value)
+
+    try:
+        for cmd in commands:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            if result.returncode != 0:
+                continue
+            gpus = []
+            for line in result.stdout.strip().split("\n"):
+                if not line.strip():
+                    continue
+                parts = [p.strip() for p in line.split(",")]
+                if len(parts) < 8:
+                    continue
                 gpus.append({
                     "index": int(parts[0]),
                     "gpu": f"GPU {parts[0]}",
@@ -35,10 +38,12 @@ def get_gpu_stats() -> list[dict[str, Any]]:
                     "memory_free": int(parts[5]),
                     "temperature": int(parts[6]) if parts[6] else None,
                     "utilization": int(parts[7]) if parts[7] else None,
-                    "power_draw": parse_number(parts[8]),
-                    "power_limit": parse_number(parts[9]),
+                    "power_draw": parse_number(parts[8]) if len(parts) > 8 else None,
+                    "power_limit": parse_number(parts[9]) if len(parts) > 9 else None,
                 })
-        return gpus
+            if gpus:
+                return gpus
+        return []
     except (subprocess.SubprocessError, FileNotFoundError, ValueError):
         return []
 
