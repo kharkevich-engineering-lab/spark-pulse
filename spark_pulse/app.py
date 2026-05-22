@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 from spark_pulse.config import config
-from spark_pulse.routers import recipes, deployments, memory, cache, settings
+from spark_pulse.routers import recipes, deployments, memory, cache, settings, mods
 from spark_pulse.auth import AuthMiddleware, router as auth_router
 from spark_pulse.sse import router as sse_router
 from spark_pulse.tools import is_simulation
@@ -85,6 +85,7 @@ def create_app() -> FastAPI:
     app.include_router(memory.router)
     app.include_router(cache.router)
     app.include_router(settings.router)
+    app.include_router(mods.router)
     app.include_router(auth_router)
     app.include_router(sse_router)
 

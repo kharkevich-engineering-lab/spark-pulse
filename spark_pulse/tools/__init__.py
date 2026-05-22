@@ -22,9 +22,8 @@ else:
         system,
         cache,
         recipes,
+        deployments,
     )
-    # Deployments always use disk persistence (same for both modes)
-    from spark_pulse.mock import deployments as deployments
 
 
 def is_simulation() -> bool:

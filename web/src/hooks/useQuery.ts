@@ -12,16 +12,27 @@ export function useQuery<T>(fetcher: () => Promise<T>, deps: unknown[] = []): Us
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const hasDataRef = useRef(false);
 
   const refetch = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = new AbortController();
     const signal = abortRef.current.signal;
-    setLoading(true);
+    // Only show the loading spinner on the very first fetch
+    if (!hasDataRef.current) setLoading(true);
     setError(null);
-    fetcher().then((res) => { if (!signal.aborted) setData(res); })
-      .catch((e) => { if (!signal.aborted && e.name !== "AbortError") setError(e.message); })
-      .finally(() => { if (!signal.aborted) setLoading(false); });
+    fetcher().then((res) => {
+      if (!signal.aborted) {
+        setData(res);
+        hasDataRef.current = true;
+        setLoading(false);
+      }
+    }).catch((e) => {
+      if (!signal.aborted && e.name !== "AbortError") {
+        setError(e.message);
+        setLoading(false);
+      }
+    });
   }, deps);
 
   useEffect(() => { refetch(); return () => abortRef.current?.abort(); }, [refetch]);

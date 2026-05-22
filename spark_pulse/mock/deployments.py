@@ -33,8 +33,8 @@ def list_deployments() -> list[dict[str, Any]]:
 
 
 def create_deployment(recipe_id: str, name: str, params: dict[str, Any],
-                      nodes: list[str] | None = None) -> dict[str, Any]:
-    """Create a new deployment."""
+                      nodes: list[str] | None = None, launch_command: str = "") -> dict[str, Any]:
+    """Create a new deployment (simulation — no real process is started)."""
     dep_id = uuid.uuid4().hex[:12]
     now = datetime.now(timezone.utc).isoformat()
     deployment = {
@@ -50,7 +50,7 @@ def create_deployment(recipe_id: str, name: str, params: dict[str, Any],
         "error_message": None,
         "pid": None,
         "port": params.get("port", 8000),
-        "launch_command": f"# Mock: simulating vllm serve for {recipe_id}",
+        "launch_command": launch_command or f"# Simulation: vllm serve for {recipe_id}",
     }
     saved = _load()
     saved = [d for d in saved if d.get("id") != dep_id]

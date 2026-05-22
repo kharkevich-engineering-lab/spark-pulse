@@ -1,6 +1,9 @@
 """Memory monitoring API — GPU, CPU, disk stats."""
 
-from fastapi import APIRouter
+import os
+import signal
+
+from fastapi import APIRouter, HTTPException
 
 from spark_pulse import tools
 
@@ -24,4 +27,18 @@ def get_disk_stats():
 
 @router.get("")
 def get_all_memory():
-    return tools.system.get_all_memory()
+    from spark_pulse.tools.deployments import list_deployments
+    data = tools.system.get_all_memory()
+    running = [d for d in list_deployments() if d.get("status") in ("running", "pending")]
+    tools.system.enrich_gpu_process_tracking(data.get("processes", []), running)
+    return data
+
+
+@router.delete("/processes/{pid}")
+def kill_gpu_process(pid: int):
+    result = tools.system.kill_gpu_process(pid)
+    if not result.get("killed") and result.get("error") == "Process not found":
+        raise HTTPException(status_code=404, detail=f"Process {pid} not found")
+    if not result.get("killed") and result.get("error") == "Permission denied":
+        raise HTTPException(status_code=403, detail=f"Permission denied to kill process {pid}")
+    return result

@@ -1,101 +1,134 @@
-import { Bot, Code, Copy, Check, ExternalLink, Plug, Rocket, Settings, Globe, Key, Lock } from "lucide-react";
+import { Bot, Code2, Copy, Check, Plug, Globe, Key, Lock, Terminal, ChevronDown } from "lucide-react";
 import { useState } from "react";
+import { fetchSettings } from "@/lib/api";
+import { useQuery } from "@/hooks/useQuery";
 
 const TOOLS = [
   { name: "list_recipes", desc: "List all deployment recipes" },
   { name: "get_recipe", desc: "Get details of a specific recipe" },
   { name: "create_deployment", desc: "Launch a new deployment" },
   { name: "stop_deployment", desc: "Stop a running deployment" },
-  { name: "list_deployments", desc: "List all deployments" },
-  { name: "get_deployment_logs", desc: "Get deployment logs" },
-  { name: "get_memory", desc: "Get GPU/CPU/disk memory stats" },
+  { name: "list_deployments", desc: "List all deployments and status" },
+  { name: "get_deployment_logs", desc: "Stream or fetch deployment logs" },
+  { name: "get_memory", desc: "Get GPU / CPU / disk memory stats" },
   { name: "list_cache", desc: "List cached models and artifacts" },
-  { name: "clean_cache", desc: "Clean cached models and artifacts" },
+  { name: "clean_cache", desc: "Delete cached models and artifacts" },
 ];
 
 function CodeBlock({ code, label }: { code: string; label: string }) {
   const [copied, setCopied] = useState(false);
-
   const copy = async () => {
     await navigator.clipboard.writeText(code);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
-
   return (
     <div className="rounded-xl bg-surface border border-border overflow-hidden">
       <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-bg">
-        <span className="text-xs text-text-muted">{label}</span>
-        <button
-          onClick={copy}
-          className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text transition-colors"
-        >
-          {copied ? <Check size={14} className="text-success" /> : <Copy size={14} />}
+        <span className="text-xs text-text-muted font-mono">{label}</span>
+        <button onClick={copy} className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text transition-colors">
+          {copied ? <Check size={13} className="text-success" /> : <Copy size={13} />}
           {copied ? "Copied" : "Copy"}
         </button>
       </div>
-      <pre className="p-4 text-sm font-mono overflow-x-auto"><code>{code}</code></pre>
+      <pre className="p-4 text-sm font-mono overflow-x-auto leading-relaxed"><code>{code}</code></pre>
+    </div>
+  );
+}
+
+function SetupSection({ title, children }: { title: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rounded-xl bg-surface border border-border overflow-hidden">
+      <button onClick={() => setOpen(v => !v)} className="w-full flex items-center justify-between px-5 py-4 hover:bg-surface-hover transition-colors">
+        <span className="font-semibold text-sm">{title}</span>
+        <ChevronDown size={16} className={`text-text-muted transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && <div className="px-5 pb-5 space-y-4 border-t border-border">{children}</div>}
     </div>
   );
 }
 
 export default function MCPPage() {
+  const { data: settings } = useQuery(fetchSettings);
+
+  const port = settings?.webui_port ?? 8100;
+  const mcpPath = "/mcp";
+  const browserUrl = typeof window === "undefined" ? undefined : new URL(window.location.href);
+  const currentOrigin = browserUrl?.origin;
+  const currentPort = browserUrl?.port;
+  const backendOrigin = currentPort === String(port)
+    ? currentOrigin ?? `http://127.0.0.1:${port}`
+    : `${browserUrl?.protocol ?? "http:"}//${browserUrl?.hostname ?? "127.0.0.1"}:${port}`;
+  const endpoint = `${backendOrigin}${mcpPath}`;
+  const isDevServer = currentPort !== "" && currentPort !== String(port);
+  const enabled = true; // MCP is always running alongside the web UI
+
   return (
-    <div className="space-y-8 max-w-4xl">
+    <div className="space-y-6">
       <div>
-        <div className="flex items-center gap-3 mb-2">
-          <Bot size={32} className="text-primary" />
-          <h2 className="text-2xl font-bold">MCP Server</h2>
-        </div>
-        <p className="text-text-muted">
-          Model Context Protocol server runs automatically alongside the web UI.
-          AI assistants connect via HTTP to manage your spark-vllm-docker deployments.
+        <h2 className="text-2xl font-bold">MCP Server</h2>
+        <p className="text-text-muted mt-1">Model Context Protocol — connect AI assistants to manage deployments</p>
+        <p className="text-xs text-text-muted mt-2">
+          In the packaged app, the frontend and MCP endpoint are served by the same FastAPI process on port {port}.
+          {" "}
+          {isDevServer
+            ? `You are currently viewing the Vite dev server on port ${currentPort}, so MCP still lives on the backend at ${endpoint}.`
+            : `This page is already being served by the backend, so ${endpoint} is the same app origin.`}
         </p>
       </div>
 
-      {/* HTTP Connection */}
-      <section className="space-y-4">
-        <h3 className="text-lg font-semibold flex items-center gap-2">
-          <Globe size={20} />
-          HTTP Server
-        </h3>
-        <p className="text-text-muted">
-          The MCP server starts automatically when you run <code className="px-1.5 py-0.5 rounded bg-bg text-sm font-mono">spark-pulse start</code>.
-          Connect to it via HTTP with token authentication.
-        </p>
-
-        <div className="rounded-xl bg-surface border border-border p-5 space-y-3">
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-text-muted flex items-center gap-2"><Globe size={14} /> Endpoint</span>
-            <span className="font-mono">http://127.0.0.1:8100/mcp</span>
+      {/* Status + connection */}
+      <div className="rounded-xl bg-surface border border-border p-5 space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Bot size={18} className="text-primary" />
+            <span className="font-semibold">Server Status</span>
           </div>
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-text-muted flex items-center gap-2"><Plug size={14} /> Transport</span>
-            <span className="font-mono">HTTP (JSON-RPC)</span>
+          {enabled
+            ? <span className="flex items-center gap-1.5 text-xs text-success font-medium px-2.5 py-1 rounded-full bg-success/15"><span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />Active</span>
+            : <span className="text-xs text-text-muted px-2.5 py-1 rounded-full bg-bg">Disabled</span>}
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+          <div className="flex items-center justify-between p-2.5 rounded-lg bg-bg gap-3">
+            <span className="flex items-center gap-2 text-text-muted shrink-0"><Globe size={13} />Endpoint</span>
+            <span className="font-mono text-xs truncate">{endpoint}</span>
           </div>
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-text-muted flex items-center gap-2"><Lock size={14} /> Security</span>
-            <span className="font-mono">Protected by auth middleware (same as web UI)</span>
+          <div className="flex items-center justify-between p-2.5 rounded-lg bg-bg gap-3">
+            <span className="flex items-center gap-2 text-text-muted shrink-0"><Plug size={13} />Transport</span>
+            <span className="font-mono text-xs">HTTP (JSON-RPC 2.0)</span>
           </div>
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-text-muted flex items-center gap-2"><Key size={14} /> API Token</span>
-            <span className="font-mono">Optional — shares auth with web UI</span>
+          <div className="flex items-center justify-between p-2.5 rounded-lg bg-bg gap-3">
+            <span className="flex items-center gap-2 text-text-muted shrink-0"><Lock size={13} />Security</span>
+            <span className="font-mono text-xs">Shared with web UI</span>
+          </div>
+          <div className="flex items-center justify-between p-2.5 rounded-lg bg-bg gap-3">
+            <span className="flex items-center gap-2 text-text-muted shrink-0"><Key size={13} />API Token</span>
+            <span className="font-mono text-xs">Optional — set in Settings</span>
           </div>
         </div>
-      </section>
+      </div>
 
-      {/* Claude Desktop */}
-      <section className="space-y-4">
-        <h3 className="text-lg font-semibold flex items-center gap-2">
-          <Settings size={20} />
-          Claude Desktop (HTTP)
-        </h3>
-        <p className="text-text-muted">
-          Use HTTP transport for Claude Desktop. The server handles auth via the token you configure.
-        </p>
+      {/* Tools grid */}
+      <div>
+        <h3 className="text-base font-semibold mb-3 flex items-center gap-2"><Code2 size={16} className="text-primary" />Available Tools ({TOOLS.length})</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+          {TOOLS.map((tool) => (
+            <div key={tool.name} className="p-4 rounded-xl bg-surface border border-border hover:border-border-hover transition-colors group">
+              <p className="font-mono text-sm text-primary group-hover:text-primary-hover transition-colors mb-1">{tool.name}</p>
+              <p className="text-xs text-text-muted">{tool.desc}</p>
+            </div>
+          ))}
+        </div>
+      </div>
 
-        <CodeBlock
-          code={`{
+      {/* Setup guides (collapsible) */}
+      <div>
+        <h3 className="text-base font-semibold mb-3 flex items-center gap-2"><Terminal size={16} className="text-primary" />Setup Guides</h3>
+        <div className="space-y-2">
+          <SetupSection title="Claude Desktop (HTTP transport)">
+            <p className="text-xs text-text-muted pt-1">Add to your <code className="font-mono bg-bg px-1 py-0.5 rounded">claude_desktop_config.json</code>:</p>
+            <CodeBlock label="claude_desktop_config.json" code={`{
   "mcpServers": {
     "spark-pulse": {
       "command": "npx",
@@ -103,108 +136,41 @@ export default function MCPPage() {
         "-y",
         "@modelcontextprotocol/server-http",
         "--url",
-        "http://127.0.0.1:8100/mcp",
+        "${endpoint}",
         "--headers",
-        '{"Authorization": "Bearer YOUR_TOKEN"}'
+        "{\\"Authorization\\": \\"Bearer YOUR_TOKEN\\"}"
       ]
     }
   }
-}`}
-          label="claude_desktop_config.json (HTTP transport)"
-        />
-      </section>
+}`} />
+          </SetupSection>
 
-      {/* curl test */}
-      <section className="space-y-4">
-        <h3 className="text-lg font-semibold flex items-center gap-2">
-          <Code size={20} />
-          Test Connection
-        </h3>
+          <SetupSection title="Cursor / Windsurf (stdio)">
+            <p className="text-xs text-text-muted pt-1">Install and run the stdio server:</p>
+            <CodeBlock label="install" code={`pip install -e '.[mcp]'`} />
+            <CodeBlock label="stdio server" code={`spark-pulse mcp`} />
+          </SetupSection>
 
-        <CodeBlock
-          code={`# List available tools
-curl -X POST http://127.0.0.1:8100/mcp \\
-  -H "Content-Type: application/json" \\
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+          <SetupSection title="Python client">
+            <CodeBlock label="python" code={`from mcp import Client
 
-# Get memory stats
-curl -X POST http://127.0.0.1:8100/mcp \\
-  -H "Content-Type: application/json" \\
-  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_memory","arguments":{}}}'`}
-          label="curl examples"
-        />
-      </section>
-
-      {/* Tools */}
-      <section className="space-y-4">
-        <h3 className="text-lg font-semibold flex items-center gap-2">
-          <Rocket size={20} />
-          Available Tools
-        </h3>
-        <p className="text-text-muted">
-          The MCP server exposes these tools to AI assistants:
-        </p>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {TOOLS.map((tool) => (
-            <div
-              key={tool.name}
-              className="rounded-xl bg-surface border border-border p-4 hover:border-border-hover transition-colors"
-            >
-              <div className="font-mono text-sm text-primary mb-1">{tool.name}</div>
-              <div className="text-xs text-text-muted">{tool.desc}</div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* CLI */}
-      <section className="space-y-4">
-        <h3 className="text-lg font-semibold flex items-center gap-2">
-          <Plug size={20} />
-          CLI Transport (stdio)
-        </h3>
-        <p className="text-text-muted">
-          For clients that support stdio transport (Claude Desktop native, Cursor, etc.),
-          use the CLI command to start the server.
-        </p>
-
-        <CodeBlock code="$ pip install -e '.[mcp]'" label="Install extra" />
-        <CodeBlock code="$ spark-pulse mcp" label="Start stdio server" />
-      </section>
-
-      {/* Other clients */}
-      <section className="space-y-4">
-        <h3 className="text-lg font-semibold flex items-center gap-2">
-          <ExternalLink size={20} />
-          Other Clients
-        </h3>
-        <div className="rounded-xl bg-surface border border-border p-5 space-y-4">
-          <p className="text-text-muted text-sm">
-            Any MCP-compatible client can connect via HTTP (recommended) or stdio transport.
-            The HTTP endpoint works with any HTTP client library.
-          </p>
-
-          <div className="space-y-3">
-            <h4 className="font-semibold text-sm">Cursor / Windsurf</h4>
-            <p className="text-xs text-text-muted">
-              Use the Claude Desktop HTTP config above, or run <code className="px-1 py-0.5 rounded bg-bg font-mono">spark-pulse mcp</code> for stdio mode.
-            </p>
-          </div>
-
-          <div className="space-y-3">
-            <h4 className="font-semibold text-sm">Python Client</h4>
-            <CodeBlock
-              code={`from mcp import Client
-async with Client("http://127.0.0.1:8100/mcp") as client:
+async with Client("${endpoint}") as client:
     tools = await client.list_tools()
     for t in tools:
-        print(t.name)`}
-              label="Python MCP client"
-            />
-          </div>
+        print(t.name)`} />
+          </SetupSection>
+
+          <SetupSection title="curl — quick test">
+            <CodeBlock label="list tools" code={`curl -X POST ${endpoint} \\
+  -H "Content-Type: application/json" \\
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'`} />
+            <CodeBlock label="call get_memory" code={`curl -X POST ${endpoint} \\
+  -H "Content-Type: application/json" \\
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_memory","arguments":{}}}'`} />
+          </SetupSection>
         </div>
-      </section>
+      </div>
     </div>
   );
 }
+

@@ -52,6 +52,38 @@ defaults:
     assert out["defaults"]["port"] == 9001
 
 
+def test_list_recipes_scans_subdirectories(tmp_path):
+    recipe_dir = tmp_path / "recipes"
+    (recipe_dir / "cluster").mkdir(parents=True)
+    (recipe_dir / "cluster" / "big-model.yaml").write_text(
+        "name: Big Model (PP=3)\nmodel: vendor/big\n", encoding="utf-8"
+    )
+    (recipe_dir / "small.yaml").write_text(
+        "name: Small Model\nmodel: vendor/small\n", encoding="utf-8"
+    )
+
+    out = recipes.list_recipes(spark_path=tmp_path)
+    ids = [r["id"] for r in out]
+
+    assert "small" in ids
+    assert "cluster/big-model" in ids
+
+
+def test_get_recipe_finds_subdirectory_recipe(tmp_path):
+    recipe_dir = tmp_path / "recipes"
+    (recipe_dir / "cluster").mkdir(parents=True)
+    (recipe_dir / "cluster" / "big-model.yaml").write_text(
+        "name: Big Model (PP=3)\nmodel: vendor/big\ncommand: vllm serve\n",
+        encoding="utf-8",
+    )
+
+    out = recipes.get_recipe("cluster/big-model", spark_path=tmp_path)
+
+    assert out is not None
+    assert out["id"] == "cluster/big-model"
+    assert out["name"] == "Big Model (PP=3)"
+
+
 def test_build_launch_command_replaces_supported_tokens():
     recipe = {
         "command": "vllm serve --host {host} --port {port} {-tp} --gpu-memory-utilization {--gpu-memory-utilization} --max-model-len {--max-model-len}"

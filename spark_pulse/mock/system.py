@@ -51,6 +51,19 @@ _DISK_STATS = [
 ]
 
 
+def enrich_gpu_process_tracking(
+    processes: list[dict[str, Any]],
+    running_deployments: list[dict[str, Any]],
+) -> None:
+    """Mark mock GPU processes as tracked when they belong to running deployments.
+
+    Simulation mode uses synthetic processes, so we fall back to matching by PID.
+    """
+    tracked_pids = {int(dep["pid"]) for dep in running_deployments if dep.get("pid")}
+    for process in processes:
+        process["is_tracked"] = int(process.get("pid", -1)) in tracked_pids
+
+
 def get_gpu_stats() -> list[dict[str, Any]]:
     """Return realistic DGX Spark GPU stats."""
     return list(_GPU_STATS["gpu"])
