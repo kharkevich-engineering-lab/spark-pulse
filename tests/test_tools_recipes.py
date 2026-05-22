@@ -84,7 +84,6 @@ def test_get_recipe_finds_subdirectory_recipe(tmp_path):
     assert out["name"] == "Big Model (PP=3)"
 
 
-
 def test_build_launch_command_replaces_supported_tokens():
     recipe = {
         "command": "vllm serve --host {host} --port {port} {-tp} --gpu-memory-utilization {--gpu-memory-utilization} --max-model-len {--max-model-len}"

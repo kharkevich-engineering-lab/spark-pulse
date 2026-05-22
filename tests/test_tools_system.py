@@ -51,7 +51,9 @@ def test_get_gpu_stats_parses_without_power_fields(monkeypatch):
     output = "0, GPU-123, NVIDIA A100, 40960, 20480, 20480, 45, 75\n"
 
     def fake_run(*args, **kwargs):
-        if args[0][1].startswith("--query-gpu=index,uuid,name,memory.total,memory.used,memory.free,temperature.gpu,utilization.gpu,power.draw,power.limit"):
+        if args[0][1].startswith(
+            "--query-gpu=index,uuid,name,memory.total,memory.used,memory.free,temperature.gpu,utilization.gpu,power.draw,power.limit"
+        ):
             return SimpleNamespace(returncode=1, stdout="")
         return SimpleNamespace(returncode=0, stdout=output)
 
