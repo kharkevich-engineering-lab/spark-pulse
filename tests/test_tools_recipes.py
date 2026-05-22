@@ -20,6 +20,7 @@ defaults:
     out = recipes.list_recipes(spark_path=tmp_path)
 
     assert len(out) == 1
+    assert out[0]["id"] == "valid"
     assert out[0]["name"] == "TinyLlama"
     assert out[0]["defaults"]["port"] == 8123
 
@@ -45,6 +46,7 @@ defaults:
     out = recipes.get_recipe("qwen", spark_path=tmp_path)
 
     assert out is not None
+    assert out["id"] == "qwen"
     assert out["name"] == "Qwen"
     assert out["command"].startswith("vllm serve")
     assert out["defaults"]["port"] == 9001

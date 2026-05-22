@@ -22,6 +22,7 @@ def list_recipes(spark_path: Path | None = None) -> list[dict[str, Any]]:
                 data = yaml.safe_load(f)
             if data:
                 recipes.append({
+                    "id": yaml_file.stem,
                     "name": data.get("name", yaml_file.stem),
                     "model": data.get("model", "unknown"),
                     "container": data.get("container", "vllm-node"),
@@ -40,29 +41,36 @@ def get_recipe(recipe_id: str, spark_path: Path | None = None) -> dict[str, Any]
     """Load a specific recipe by filename."""
     spark_path = spark_path or Path(config.spark_vllm_path)
     yaml_file = spark_path / "recipes" / f"{recipe_id}.yaml"
-    if not yaml_file.exists():
-        return None
-    try:
-        with open(yaml_file) as f:
-            data = yaml.safe_load(f)
-        if not data:
-            return None
-        return {
-            "name": data.get("name", yaml_file.stem),
-            "model": data.get("model", "unknown"),
-            "container": data.get("container", "vllm-node"),
-            "command": data.get("command", ""),
-            "description": data.get("description", ""),
-            "mods": data.get("mods", []),
-            "defaults": data.get("defaults", {}),
-            "env": data.get("env", {}),
-            "build_args": data.get("build_args", []),
-            "solo_only": bool(data.get("solo_only", False)),
-            "cluster_only": bool(data.get("cluster_only", False)),
-            "recipe_version": data.get("recipe_version", "1"),
-        }
-    except (yaml.YAMLError, OSError):
-        return None
+    candidates = [yaml_file] if yaml_file.exists() else []
+    if not candidates and recipe_id:
+        candidates = sorted((spark_path / "recipes").glob("*.yaml"))
+
+    for candidate in candidates:
+        try:
+            with open(candidate) as f:
+                data = yaml.safe_load(f)
+            if not data:
+                continue
+            if candidate.stem != recipe_id and data.get("name") != recipe_id:
+                continue
+            return {
+                "id": candidate.stem,
+                "name": data.get("name", candidate.stem),
+                "model": data.get("model", "unknown"),
+                "container": data.get("container", "vllm-node"),
+                "command": data.get("command", ""),
+                "description": data.get("description", ""),
+                "mods": data.get("mods", []),
+                "defaults": data.get("defaults", {}),
+                "env": data.get("env", {}),
+                "build_args": data.get("build_args", []),
+                "solo_only": bool(data.get("solo_only", False)),
+                "cluster_only": bool(data.get("cluster_only", False)),
+                "recipe_version": data.get("recipe_version", "1"),
+            }
+        except (yaml.YAMLError, OSError):
+            continue
+    return None
 
 
 def build_launch_command(recipe: dict[str, Any], params: dict[str, Any]) -> str:
