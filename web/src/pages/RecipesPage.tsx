@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { fetchRecipes, fetchRecipe, fetchDeployments, createDeployment, fetchSettings } from "@/lib/api";
 import type { RecipeDetail } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
@@ -125,6 +125,14 @@ function RecipeModal({ recipe, isRunning, clusterEnabled, onClose, onError }: { 
   const [name, _setName] = useState(recipe.name);
   const [params, _setParams] = useState<Record<string, unknown>>({ ...recipe.defaults });
   const [submitting, setSubmitting] = useState(false);
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    modalRef.current?.focus();
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onClose]);
 
   const clusterBlocked = recipe.cluster_only && !clusterEnabled;
 
@@ -140,7 +148,7 @@ function RecipeModal({ recipe, isRunning, clusterEnabled, onClose, onError }: { 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
-      <div className="relative w-full max-w-2xl max-h-[80vh] overflow-auto rounded-xl bg-surface border border-border p-6">
+      <div ref={modalRef} tabIndex={-1} className="relative w-full max-w-2xl max-h-[80vh] overflow-auto rounded-xl bg-surface border border-border p-6 outline-none">
         <div className="flex items-start justify-between mb-6">
           <div>
             <div className="flex items-center gap-2">

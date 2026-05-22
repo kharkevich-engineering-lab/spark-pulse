@@ -1,10 +1,11 @@
-import { useState, useEffect } from "react";
-import { Zap, ListChecks, Activity, Database, Settings, Menu, X, Github, Sun, Moon, MoonStar, LogOut, User, RotateCw, Bot, Wrench } from "lucide-react";
-import { Link, useLocation } from "react-router-dom";
-import { cn } from "@/lib/utils";
-import { type ThemeMode, getTheme, setTheme } from "@/lib/theme";
 import { useAuth } from "@/lib/auth";
 import { doRefresh } from "@/lib/refresh";
+import { type ThemeMode, getTheme, setTheme } from "@/lib/theme";
+import { cn } from "@/lib/utils";
+import { Activity, Bot, Copyright, Database, ListChecks, LogOut, Menu, Moon, MoonStar, RotateCw, Settings, Sun, User, Wrench, X, Zap } from "lucide-react";
+import { SiGithub, SiPypi } from "@icons-pack/react-simple-icons";
+import { useEffect, useState } from "react";
+import { Link, useLocation } from "react-router-dom";
 
 const NAV = [
   { href: "/", label: "Recipes", icon: Zap },
@@ -86,7 +87,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     fetch("/version")
       .then((r) => r.json())
       .then((d) => setVersion(d.version))
-      .catch(() => {});
+      .catch(() => { });
   }, []);
 
   return (
@@ -149,16 +150,35 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
         {/* Footer */}
         <div className="p-4 border-t border-border text-xs text-text-muted space-y-1">
-          <p>© 2026 Kharkevich Engineering Lab</p>
           <a
-            href="https://github.com/kharkevich-engineering-lab/spark-pulse"
+            href="https://kharkevich.com"
             target="_blank"
-            rel="noopener noreferrer"
+            rel="noopener"
             className="inline-flex items-center gap-1.5 hover:text-text transition-colors"
           >
-            <Github size={12} />
-            GitHub
+            <Copyright size={12} />
+            {new Date().getFullYear()} Kharkevich Engineering Lab
           </a>
+          <div className="flex items-center gap-4">
+            <a
+              href="https://github.com/kharkevich-engineering-lab/spark-pulse"
+              target="_blank"
+              rel="noopener"
+              className="inline-flex items-center gap-1.5 hover:text-text transition-colors"
+            >
+              <SiGithub size={12} />
+              GitHub
+            </a>
+            <a
+              href="https://pypi.org/project/spark-pulse/"
+              target="_blank"
+              rel="noopener"
+              className="inline-flex items-center gap-1.5 hover:text-text transition-colors"
+            >
+              <SiPypi size={12} />
+              PyPI
+            </a>
+          </div>
         </div>
       </aside>
 
