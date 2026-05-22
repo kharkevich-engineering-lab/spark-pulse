@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { fetchRecipes, fetchRecipe, createDeployment } from "@/lib/api";
 import type { RecipeDetail } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
@@ -10,6 +10,13 @@ export default function RecipesPage() {
   const { data: recipes, loading, error, refetch } = useQuery(fetchRecipes);
   const [selected, setSelected] = useState<RecipeDetail | null>(null);
   const [alertModal, setAlertModal] = useState<{ title: string; message: string } | null>(null);
+
+  const duplicateNames = useMemo(() => {
+    if (!recipes) return new Set<string>();
+    const counts = new Map<string, number>();
+    recipes.forEach((recipe) => counts.set(recipe.name, (counts.get(recipe.name) ?? 0) + 1));
+    return new Set<string>([...counts.entries()].filter(([, count]) => count > 1).map(([name]) => name));
+  }, [recipes]);
 
   // Register refresh callback with header
   useEffect(() => { setRefresh(refetch); }, [refetch]);
@@ -29,7 +36,10 @@ export default function RecipesPage() {
           {recipes.map((r) => (
             <div key={r.id} className="p-5 rounded-xl bg-surface border border-border hover:border-border-hover cursor-pointer group" onClick={() => fetchRecipe(r.id).then(setSelected)}>
               <div className="flex items-start justify-between mb-3">
-                <h3 className="font-semibold text-base group-hover:text-primary transition-colors">{r.name}</h3>
+                <div>
+                  <h3 className="font-semibold text-base group-hover:text-primary transition-colors">{r.name}</h3>
+                  <p className="text-xs text-text-muted mt-1 font-mono">{duplicateNames.has(r.name) ? r.id : r.model}</p>
+                </div>
                 <ArrowRight size={16} className="text-text-muted group-hover:text-primary transition-colors" />
               </div>
               <p className="text-sm text-text-muted mb-4 line-clamp-2">{r.description || r.model}</p>

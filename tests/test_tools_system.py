@@ -25,6 +25,38 @@ def test_get_gpu_stats_parses_nvidia_smi(monkeypatch):
     assert gpus[0]["power_limit"] == 40
 
 
+def test_get_gpu_stats_parses_without_power_fields(monkeypatch):
+    output = "0, GPU-123, NVIDIA A100, 40960, 20480, 20480, 45, 75\n"
+
+    def fake_run(*args, **kwargs):
+        if args[0][1].startswith("--query-gpu=index,uuid,name,memory.total,memory.used,memory.free,temperature.gpu,utilization.gpu,power.draw,power.limit"):
+            return SimpleNamespace(returncode=1, stdout="")
+        return SimpleNamespace(returncode=0, stdout=output)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    gpus = system.get_gpu_stats()
+
+    assert len(gpus) == 1
+    assert gpus[0]["power_draw"] is None
+    assert gpus[0]["power_limit"] is None
+
+
+def test_get_gpu_stats_parses_na_power_fields(monkeypatch):
+    output = "0, GPU-123, NVIDIA A100, 40960, 20480, 20480, 45, 75, N/A, N/A\n"
+
+    def fake_run(*_args, **_kwargs):
+        return SimpleNamespace(returncode=0, stdout=output)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    gpus = system.get_gpu_stats()
+
+    assert len(gpus) == 1
+    assert gpus[0]["power_draw"] is None
+    assert gpus[0]["power_limit"] is None
+
+
 def test_get_cpu_stats_parses_free_output(monkeypatch):
     output = "Mem: 1000 500 200 0 0 300\n"
 
