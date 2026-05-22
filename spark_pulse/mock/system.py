@@ -8,15 +8,29 @@ from typing import Any
 _GPU_STATS = {
     "gpu": [
         {
+            "index": 0,
             "gpu": "GPU 0",
+            "uuid": "GPU-00000000-0000-0000-0000-000000000000",
+            "name": "NVIDIA GB10",
             "memory_total": 131072,  # 128 GB in MB
             "memory_used": 89234,    # ~68% used
             "memory_free": 41838,
             "temperature": 72,
             "utilization": 45,
+            "power_draw": 10,
+            "power_limit": None,
         }
     ],
 }
+
+_GPU_PROCESSES = [
+    {
+        "gpu_uuid": "GPU-00000000-0000-0000-0000-000000000000",
+        "pid": 98251,
+        "process_name": "VLLM::EngineCore",
+        "used_memory": 83421,
+    },
+]
 
 _CPU_STATS = {
     "total": 131072,  # 128 GB in MB
@@ -58,4 +72,5 @@ def get_all_memory() -> dict[str, Any]:
         "gpu": get_gpu_stats(),
         "cpu": get_cpu_stats(),
         "disk": get_disk_stats(),
+        "processes": list(_GPU_PROCESSES),
     }

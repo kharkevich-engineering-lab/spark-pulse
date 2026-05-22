@@ -27,7 +27,7 @@ export default function RecipesPage() {
       {recipes && recipes.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {recipes.map((r) => (
-            <div key={r.name} className="p-5 rounded-xl bg-surface border border-border hover:border-border-hover cursor-pointer group" onClick={() => fetchRecipe(r.name).then(setSelected)}>
+            <div key={r.id} className="p-5 rounded-xl bg-surface border border-border hover:border-border-hover cursor-pointer group" onClick={() => fetchRecipe(r.id).then(setSelected)}>
               <div className="flex items-start justify-between mb-3">
                 <h3 className="font-semibold text-base group-hover:text-primary transition-colors">{r.name}</h3>
                 <ArrowRight size={16} className="text-text-muted group-hover:text-primary transition-colors" />
@@ -66,7 +66,7 @@ function RecipeModal({ recipe, onClose, onError }: { recipe: RecipeDetail; onClo
   const launch = async () => {
     setSubmitting(true);
     try {
-      await createDeployment({ recipe_id: recipe.name, name, params });
+      await createDeployment({ recipe_id: recipe.id, name, params });
       window.location.href = "/jobs";
     } catch (e) { onError(e instanceof Error ? e.message : "Failed to launch"); }
     finally { setSubmitting(false); }

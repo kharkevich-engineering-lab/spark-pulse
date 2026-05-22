@@ -101,14 +101,14 @@ _RECIPES = [
 
 def list_recipes() -> list[dict[str, Any]]:
     """Return the mock recipe list."""
-    return list(_RECIPES)
+    return [{"id": r["name"], **r} for r in _RECIPES]
 
 
 def get_recipe(recipe_id: str) -> dict[str, Any] | None:
     """Look up a specific recipe by name."""
     for r in _RECIPES:
         if r["name"] == recipe_id:
-            return dict(r)
+            return {"id": r["name"], **r}
     return None
 
 

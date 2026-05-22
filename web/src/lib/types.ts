@@ -1,4 +1,5 @@
 export interface RecipeSummary {
+  id: string;
   name: string;
   model: string;
   container: string;
@@ -33,12 +34,24 @@ export interface Deployment {
 }
 
 export interface GPUStats {
+  index: number;
   gpu: string;
+  uuid: string;
+  name: string;
   memory_total: number;
   memory_used: number;
   memory_free: number;
   temperature: number | null;
   utilization: number | null;
+  power_draw: number | null;
+  power_limit: number | null;
+}
+
+export interface GPUProcess {
+  gpu_uuid: string;
+  pid: number;
+  process_name: string;
+  used_memory: number;
 }
 
 export interface CPUStats {
@@ -61,6 +74,7 @@ export interface MemoryResponse {
   gpu: GPUStats[];
   cpu: CPUStats;
   disk: DiskStats[];
+  processes: GPUProcess[];
 }
 
 export interface CacheEntry {
