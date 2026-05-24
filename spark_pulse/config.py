@@ -135,7 +135,11 @@ class _Config:
 
     @property
     def oidc_client_secret(self) -> str:
-        return str(self._data.get("oidc_client_secret", ""))
+        """OIDC client secret — checks settings.json first, then secrets.json."""
+        if self._data.get("oidc_client_secret"):
+            return str(self._data["oidc_client_secret"])
+        secrets = _load_secrets()
+        return str(secrets.get("oidc_client_secret", ""))
 
     @property
     def mcp_enabled(self) -> bool:
@@ -157,6 +161,8 @@ class _Config:
     def update(self, **kwargs):
         user = _load_user_settings()
         for k, v in kwargs.items():
+            if v is None:  # skip None values
+                continue
             if k not in self._env_managed:  # env vars take priority; don't overwrite
                 user[k] = v
                 self._data[k] = v

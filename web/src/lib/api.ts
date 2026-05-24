@@ -3,7 +3,13 @@ import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntr
 const API = "/api";
 
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API}${path}`, { headers: { "Content-Type": "application/json" }, ...init });
+  const headers: Record<string, string> = { "Content-Type": "application/json", ...((init?.headers as Record<string, string>) || {}) };
+  const res = await fetch(`${API}${path}`, { headers, credentials: "include", ...init });
+  if (res.status === 401) {
+    // Redirect to login on any 401 (cookie-based auth — no token to check)
+    window.location.href = "/login";
+    throw new Error("Unauthorized");
+  }
   if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
   return res.json();
 }

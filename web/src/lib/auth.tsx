@@ -1,6 +1,7 @@
 /** Frontend authentication context — token management and user info. */
 
 import { useState, useEffect, createContext, useContext, useCallback } from "react";
+import { loadConfig } from "@/lib/config";
 
 interface User {
   name?: string;
@@ -32,40 +33,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     error: null,
   });
 
-  // Check for token in URL hash or query params (from OIDC callback)
+  // Load runtime config on startup
   useEffect(() => {
-    const url = new URL(window.location.href);
-    const token = url.searchParams.get("token");
-    if (token) {
-      localStorage.setItem("spark-pulse-token", token);
-      // Clean URL
-      url.searchParams.delete("token");
-      window.history.replaceState({}, "", url.toString());
-      fetchUser(token);
-    } else {
-      const stored = localStorage.getItem("spark-pulse-token");
-      if (stored) {
-        fetchUser(stored);
-      } else {
-        setState((s) => ({ ...s, loading: false }));
-      }
-    }
+    loadConfig().catch(() => {});
   }, []);
 
-  const fetchUser = async (token: string) => {
+  // On mount, check if user is authenticated via session cookie
+  useEffect(() => {
+    fetchUser();
+  }, []);
+
+  const fetchUser = async () => {
     try {
-      const res = await fetch("/auth/me", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await fetch("/auth/me", { credentials: "include" });
       if (res.ok) {
         const data = await res.json();
-        setState({ token, user: data.user || {}, loading: false, error: null });
+        setState({ token: "", user: data.user || {}, loading: false, error: null });
       } else {
-        localStorage.removeItem("spark-pulse-token");
-        setState({ token: null, user: null, loading: false, error: "Session expired" });
+        setState({ token: null, user: null, loading: false, error: null });
       }
     } catch {
-      setState({ token: null, user: null, loading: false, error: "Auth check failed" });
+      setState({ token: null, user: null, loading: false, error: null });
     }
   };
 
@@ -75,17 +63,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(async () => {
     try {
-      const token = localStorage.getItem("spark-pulse-token");
-      if (token) {
-        await fetch("/auth/logout", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}` },
-        });
-      }
+      await fetch("/auth/logout", {
+        method: "POST",
+        credentials: "include",
+      });
     } catch {
       // Ignore logout errors
     }
-    localStorage.removeItem("spark-pulse-token");
     setState({ token: null, user: null, loading: false, error: null });
   }, []);
 

@@ -2,6 +2,7 @@ import { useAuth } from "@/lib/auth";
 import { doRefresh } from "@/lib/refresh";
 import { type ThemeMode, getTheme, setTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
+import { isAuthEnabled } from "@/lib/config";
 import { Activity, Bot, Copyright, Database, ListChecks, LogOut, Menu, Moon, MoonStar, RotateCw, Settings, Sun, User, Wrench, X, Zap } from "lucide-react";
 import { SiGithub, SiPypi } from "@icons-pack/react-simple-icons";
 import { useEffect, useState } from "react";
@@ -20,6 +21,11 @@ const NAV = [
 // Internal header component with refresh + theme + auth
 function HeaderInner() {
   const { isAuthenticated, user, login, logout } = useAuth();
+  const [authEnabled, setAuthEnabled] = useState(false);
+
+  useEffect(() => {
+    setAuthEnabled(isAuthEnabled());
+  }, []);
 
   return (
     <div className="hidden lg:flex fixed top-4 right-4 z-50 items-center gap-1.5">
@@ -31,7 +37,7 @@ function HeaderInner() {
         <RotateCw size={16} />
       </button>
       <ThemeToggle />
-      {isAuthenticated ? (
+      {authEnabled && isAuthenticated ? (
         <div className="flex items-center gap-2 ml-1">
           <span className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-surface-hover text-sm">
             <User size={14} />
@@ -41,11 +47,11 @@ function HeaderInner() {
             <LogOut size={18} />
           </button>
         </div>
-      ) : (
+      ) : authEnabled ? (
         <button onClick={login} className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-colors ml-1">
           Login
         </button>
-      )}
+      ) : null}
     </div>
   );
 }
