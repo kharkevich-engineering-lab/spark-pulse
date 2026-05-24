@@ -20,12 +20,13 @@ const NAV = [
 
 // Internal header component with refresh + theme + auth
 function HeaderInner() {
-  const { isAuthenticated, user, login, logout } = useAuth();
+  const { isAuthenticated, user, login, logout, isConfigLoaded } = useAuth();
   const [authEnabled, setAuthEnabled] = useState(false);
 
   useEffect(() => {
     setAuthEnabled(isAuthEnabled());
-  }, []);
+    window.addEventListener("storage", () => setTheme(getTheme()));
+  }, [isConfigLoaded]);
 
   return (
     <div className="hidden lg:flex fixed top-4 right-4 z-50 items-center gap-1.5">
@@ -58,12 +59,6 @@ function HeaderInner() {
 
 function ThemeToggle() {
   const [mode, setMode] = useState<ThemeMode>(getTheme());
-
-  useEffect(() => {
-    const handler = () => setMode(getTheme());
-    window.addEventListener("storage", handler);
-    return () => window.removeEventListener("storage", handler);
-  }, []);
 
   const cycle = () => {
     const next: ThemeMode = mode === "dark" ? "light" : mode === "light" ? "system" : "dark";

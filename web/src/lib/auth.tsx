@@ -1,6 +1,7 @@
 /** Frontend authentication context — token management and user info. */
 
 import { useState, useEffect, createContext, useContext, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { loadConfig } from "@/lib/config";
 
 interface User {
@@ -21,6 +22,7 @@ interface AuthContextValue extends AuthState {
   login: () => void;
   logout: () => Promise<void>;
   isAuthenticated: boolean;
+  isConfigLoaded: boolean;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -33,9 +35,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     error: null,
   });
 
+  const [configLoaded, setConfigLoaded] = useState(false);
+  const navigate = useNavigate();
+
   // Load runtime config on startup
   useEffect(() => {
-    loadConfig().catch(() => {});
+    loadConfig().finally(() => setConfigLoaded(true));
   }, []);
 
   // On mount, check if user is authenticated via session cookie
@@ -71,7 +76,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Ignore logout errors
     }
     setState({ token: null, user: null, loading: false, error: null });
-  }, []);
+    navigate("/login", { replace: true });
+  }, [navigate]);
 
   return (
     <AuthContext.Provider
@@ -80,6 +86,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         login,
         logout,
         isAuthenticated: !!state.token && !state.loading,
+        isConfigLoaded: configLoaded,
       }}
     >
       {children}
