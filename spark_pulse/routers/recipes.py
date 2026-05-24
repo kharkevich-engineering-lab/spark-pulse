@@ -1,8 +1,5 @@
 """Recipes API — list and view deployment recipes."""
 
-from pathlib import Path
-from typing import Any
-
 from fastapi import APIRouter, HTTPException
 
 from spark_pulse import tools

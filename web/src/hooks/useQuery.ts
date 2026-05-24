@@ -7,7 +7,7 @@ export interface UseQueryResult<T> {
   refetch: () => void;
 }
 
-export function useQuery<T>(fetcher: () => Promise<T>, deps: unknown[] = []): UseQueryResult<T> {
+export function useQuery<T>(fetcher: () => Promise<T>): UseQueryResult<T> {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -18,7 +18,6 @@ export function useQuery<T>(fetcher: () => Promise<T>, deps: unknown[] = []): Us
     abortRef.current?.abort();
     abortRef.current = new AbortController();
     const signal = abortRef.current.signal;
-    // Only show the loading spinner on the very first fetch
     if (!hasDataRef.current) setLoading(true);
     setError(null);
     fetcher().then((res) => {
@@ -33,9 +32,9 @@ export function useQuery<T>(fetcher: () => Promise<T>, deps: unknown[] = []): Us
         setLoading(false);
       }
     });
-  }, deps);
+  }, [fetcher]);
 
-  useEffect(() => { refetch(); return () => abortRef.current?.abort(); }, [refetch]);
+  useEffect(() => { return refetch(); }, [refetch]);
 
   return { data, loading, error, refetch };
 }

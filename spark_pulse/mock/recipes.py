@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 _RECIPES = [
     {
         "name": "qwen3.5-397b-int4",

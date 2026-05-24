@@ -30,7 +30,9 @@ def create_deployment(req: dict):
     launch_cmd = tools.recipes.build_launch_command(recipe, params)
 
     return tools.deployments.create_deployment(
-        recipe_id=recipe_id, name=name, params=params,
+        recipe_id=recipe_id,
+        name=name,
+        params=params,
         nodes=req.get("nodes"),
         launch_command=launch_cmd,
     )
@@ -41,7 +43,9 @@ def stop_or_delete_deployment(deployment_id: str):
     deps = tools.deployments.list_deployments()
     dep = next((d for d in deps if d.get("id") == deployment_id), None)
     if dep is None:
-        raise HTTPException(status_code=404, detail=f"Deployment '{deployment_id}' not found")
+        raise HTTPException(
+            status_code=404, detail=f"Deployment '{deployment_id}' not found"
+        )
 
     if dep.get("status") in ("stopped", "error"):
         # Terminal state — remove from history
@@ -51,7 +55,9 @@ def stop_or_delete_deployment(deployment_id: str):
     # Active — stop the process
     result = tools.deployments.stop_deployment(deployment_id)
     if result is None:
-        raise HTTPException(status_code=404, detail=f"Deployment '{deployment_id}' not found")
+        raise HTTPException(
+            status_code=404, detail=f"Deployment '{deployment_id}' not found"
+        )
     return result
 
 

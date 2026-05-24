@@ -14,13 +14,41 @@ def get_cache_dirs() -> list[dict[str, str]]:
     home = os.path.expanduser("~")
     spark_path = config.spark_vllm_path
     return [
-        {"name": "HF Model Cache", "path": f"{home}/.cache/huggingface/hub", "description": "Downloaded HuggingFace models"},
-        {"name": "vLLM Cache", "path": f"{home}/.cache/vllm", "description": "vLLM internal cache"},
-        {"name": "FlashInfer Cache", "path": f"{home}/.cache/flashinfer", "description": "FlashInfer JIT cache"},
-        {"name": "Triton Cache", "path": f"{home}/.triton", "description": "Triton compiler cache"},
-        {"name": "CCache", "path": f"{home}/.ccache", "description": "CUDA/C++ compilation cache"},
-        {"name": "uv Pip Cache", "path": f"{home}/.cache/uv", "description": "Python package cache"},
-        {"name": "Wheels (spark-vllm)", "path": f"{spark_path}/wheels", "description": "Built/installed wheels"},
+        {
+            "name": "HF Model Cache",
+            "path": f"{home}/.cache/huggingface/hub",
+            "description": "Downloaded HuggingFace models",
+        },
+        {
+            "name": "vLLM Cache",
+            "path": f"{home}/.cache/vllm",
+            "description": "vLLM internal cache",
+        },
+        {
+            "name": "FlashInfer Cache",
+            "path": f"{home}/.cache/flashinfer",
+            "description": "FlashInfer JIT cache",
+        },
+        {
+            "name": "Triton Cache",
+            "path": f"{home}/.triton",
+            "description": "Triton compiler cache",
+        },
+        {
+            "name": "CCache",
+            "path": f"{home}/.ccache",
+            "description": "CUDA/C++ compilation cache",
+        },
+        {
+            "name": "uv Pip Cache",
+            "path": f"{home}/.cache/uv",
+            "description": "Python package cache",
+        },
+        {
+            "name": "Wheels (spark-vllm)",
+            "path": f"{spark_path}/wheels",
+            "description": "Built/installed wheels",
+        },
     ]
 
 
@@ -28,7 +56,13 @@ def scan_dir(path: str) -> dict[str, Any]:
     """Scan a directory and return size + file count."""
     p = Path(path)
     if not p.exists():
-        return {"name": Path(path).name, "path": path, "size_bytes": 0, "file_count": 0, "description": ""}
+        return {
+            "name": Path(path).name,
+            "path": path,
+            "size_bytes": 0,
+            "file_count": 0,
+            "description": "",
+        }
     total_size = 0
     file_count = 0
     try:
@@ -41,7 +75,13 @@ def scan_dir(path: str) -> dict[str, Any]:
                     pass
     except OSError:
         pass
-    return {"name": p.name, "path": path, "size_bytes": total_size, "file_count": file_count, "description": ""}
+    return {
+        "name": p.name,
+        "path": path,
+        "size_bytes": total_size,
+        "file_count": file_count,
+        "description": "",
+    }
 
 
 def list_cache() -> list[dict[str, Any]]:
@@ -64,10 +104,20 @@ def clean_cache(targets: list[str]) -> dict[str, str]:
         if target == "wheels (spark-vllm)":
             try:
                 result = subprocess.run(
-                    ["bash", Path(config.spark_vllm_path) / "hf-download.sh", "--cleanup"],
-                    capture_output=True, text=True, timeout=300,
+                    [
+                        "bash",
+                        Path(config.spark_vllm_path) / "hf-download.sh",
+                        "--cleanup",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
                 )
-                results[target] = "HF cache cleaned via script" if result.returncode == 0 else f"Error: {result.stderr[:200]}"
+                results[target] = (
+                    "HF cache cleaned via script"
+                    if result.returncode == 0
+                    else f"Error: {result.stderr[:200]}"
+                )
             except Exception as e:
                 results[target] = f"Error: {e}"
         elif target in all_dirs:

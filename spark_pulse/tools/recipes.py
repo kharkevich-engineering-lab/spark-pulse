@@ -1,6 +1,5 @@
 """Real recipe tools — YAML parsing from spark-vllm-docker."""
 
-import os
 from pathlib import Path
 from typing import Any
 
@@ -22,17 +21,19 @@ def list_recipes(spark_path: Path | None = None) -> list[dict[str, Any]]:
                 data = yaml.safe_load(f)
             recipe_id = str(yaml_file.relative_to(recipe_dir).with_suffix(""))
             if data:
-                recipes.append({
-                    "id": recipe_id,
-                    "name": data.get("name", yaml_file.stem),
-                    "model": data.get("model", "unknown"),
-                    "container": data.get("container", "vllm-node"),
-                    "description": data.get("description", ""),
-                    "solo_only": bool(data.get("solo_only", False)),
-                    "cluster_only": bool(data.get("cluster_only", False)),
-                    "mods": data.get("mods", []),
-                    "defaults": data.get("defaults", {}),
-                })
+                recipes.append(
+                    {
+                        "id": recipe_id,
+                        "name": data.get("name", yaml_file.stem),
+                        "model": data.get("model", "unknown"),
+                        "container": data.get("container", "vllm-node"),
+                        "description": data.get("description", ""),
+                        "solo_only": bool(data.get("solo_only", False)),
+                        "cluster_only": bool(data.get("cluster_only", False)),
+                        "mods": data.get("mods", []),
+                        "defaults": data.get("defaults", {}),
+                    }
+                )
         except (yaml.YAMLError, OSError):
             continue
     return recipes

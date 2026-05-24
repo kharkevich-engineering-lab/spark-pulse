@@ -15,7 +15,6 @@ import httpx
 
 from spark_pulse.config import config
 
-
 # ── Tool definitions ─────────────────────────────────────────────────────────
 
 TOOLS = [
@@ -67,7 +66,11 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "id": {"type": "string", "description": "Deployment ID"},
-                "lines": {"type": "integer", "description": "Number of lines (default 100)", "default": 100},
+                "lines": {
+                    "type": "integer",
+                    "description": "Number of lines (default 100)",
+                    "default": 100,
+                },
             },
             "required": ["id"],
         },
@@ -102,7 +105,10 @@ TOOLS = [
 
 # ── Tool handlers ────────────────────────────────────────────────────────────
 
-async def _http(method: str, path: str, json_body: dict | None = None, params: dict | None = None) -> Any:
+
+async def _http(
+    method: str, path: str, json_body: dict | None = None, params: dict | None = None
+) -> Any:
     url = f"http://127.0.0.1:{config.webui_port}/api{path}"
     async with httpx.AsyncClient(timeout=30) as client:
         if method == "GET":
@@ -121,15 +127,26 @@ HANDLERS: dict[str, Any] = {
     "list_recipes": lambda args: _http("GET", "/recipes"),
     "get_recipe": lambda args: _http("GET", f"/recipes/{args['name']}"),
     "create_deployment": lambda args: _http(
-        "POST", "/deployments",
-        json_body={"recipe_id": args["recipe_id"], "name": args["name"], "params": args.get("params", {})},
+        "POST",
+        "/deployments",
+        json_body={
+            "recipe_id": args["recipe_id"],
+            "name": args["name"],
+            "params": args.get("params", {}),
+        },
     ),
     "list_deployments": lambda args: _http("GET", "/deployments"),
     "stop_deployment": lambda args: _http("DELETE", f"/deployments/{args['id']}"),
-    "get_deployment_logs": lambda args: _http("GET", f"/deployments/{args['id']}/logs", params={"lines": args.get("lines", 100)}),
+    "get_deployment_logs": lambda args: _http(
+        "GET",
+        f"/deployments/{args['id']}/logs",
+        params={"lines": args.get("lines", 100)},
+    ),
     "get_memory": lambda args: _http("GET", "/memory"),
     "list_cache": lambda args: _http("GET", "/cache"),
-    "clean_cache": lambda args: _http("POST", "/cache/clean", json_body={"targets": args["targets"]}),
+    "clean_cache": lambda args: _http(
+        "POST", "/cache/clean", json_body={"targets": args["targets"]}
+    ),
 }
 
 
@@ -173,7 +190,11 @@ async def handle_mcp(request_json: dict) -> dict:
             }
         try:
             result = await handler(tool_args)
-            return {"jsonrpc": "2.0", "id": req_id, "result": {"content": [{"type": "text", "text": json.dumps(result)}]}}
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {"content": [{"type": "text", "text": json.dumps(result)}]},
+            }
         except Exception as e:
             return {
                 "jsonrpc": "2.0",
@@ -187,4 +208,8 @@ async def handle_mcp(request_json: dict) -> dict:
     if method == "prompts/list":
         return {"jsonrpc": "2.0", "id": req_id, "result": {"prompts": []}}
 
-    return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32601, "message": f"Unknown method: {method}"}}
+    return {
+        "jsonrpc": "2.0",
+        "id": req_id,
+        "error": {"code": -32601, "message": f"Unknown method: {method}"},
+    }

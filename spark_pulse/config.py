@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Optional
 
 import yaml
 
@@ -123,7 +122,12 @@ class _Config:
 
     @property
     def auth_enabled(self) -> bool:
-        return os.environ.get("SPARK_PULSE_AUTH_ENABLED", str(self._data.get("auth_enabled", False))).lower() == "true"
+        return (
+            os.environ.get(
+                "SPARK_PULSE_AUTH_ENABLED", str(self._data.get("auth_enabled", False))
+            ).lower()
+            == "true"
+        )
 
     @property
     def oidc_provider_url(self) -> str:
@@ -135,11 +139,20 @@ class _Config:
 
     @property
     def oidc_client_secret(self) -> str:
-        return str(self._data.get("oidc_client_secret", ""))
+        """OIDC client secret — checks settings.json first, then secrets.json."""
+        if self._data.get("oidc_client_secret"):
+            return str(self._data["oidc_client_secret"])
+        secrets = _load_secrets()
+        return str(secrets.get("oidc_client_secret", ""))
 
     @property
     def mcp_enabled(self) -> bool:
-        return os.environ.get("SPARK_PULSE_MCP_ENABLED", str(self._data.get("mcp_enabled", True))).lower() == "true"
+        return (
+            os.environ.get(
+                "SPARK_PULSE_MCP_ENABLED", str(self._data.get("mcp_enabled", True))
+            ).lower()
+            == "true"
+        )
 
     @property
     def mcp_path(self) -> str:
@@ -147,7 +160,11 @@ class _Config:
 
     @property
     def mcp_api_token(self) -> str:
-        return str(os.environ.get("SPARK_PULSE_MCP_API_TOKEN", self._data.get("mcp_api_token", "")))
+        return str(
+            os.environ.get(
+                "SPARK_PULSE_MCP_API_TOKEN", self._data.get("mcp_api_token", "")
+            )
+        )
 
     def save(self):
         # Legacy — keep for compat but user settings now go to settings.json
@@ -157,6 +174,8 @@ class _Config:
     def update(self, **kwargs):
         user = _load_user_settings()
         for k, v in kwargs.items():
+            if v is None:  # skip None values
+                continue
             if k not in self._env_managed:  # env vars take priority; don't overwrite
                 user[k] = v
                 self._data[k] = v

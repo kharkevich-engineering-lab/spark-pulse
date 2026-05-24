@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 import Layout from "@/components/Layout";
 import { AuthProvider } from "@/lib/auth";
 import RecipesPage from "@/pages/RecipesPage";
@@ -8,11 +8,21 @@ import CachePage from "@/pages/CachePage";
 import MCPPage from "@/pages/MCPPage";
 import SettingsPage from "@/pages/SettingsPage";
 import ModsPage from "@/pages/ModsPage";
+import LoginPage from "@/pages/LoginPage";
 
-export default function App() {
+// Inner component that conditionally renders Layout based on route
+function AppRoutes() {
+  const location = useLocation();
+  const isLoginPage = location.pathname === "/login";
+
   return (
-    <BrowserRouter>
-      <AuthProvider>
+    <>
+      {/* Login page renders outside Layout — no sidebar */}
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+      </Routes>
+      {/* All other pages render inside Layout with sidebar */}
+      {!isLoginPage && (
         <Layout>
           <Routes>
             <Route path="/" element={<RecipesPage />} />
@@ -24,6 +34,16 @@ export default function App() {
             <Route path="/settings" element={<SettingsPage />} />
           </Routes>
         </Layout>
+      )}
+    </>
+  );
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <AuthProvider>
+        <AppRoutes />
       </AuthProvider>
     </BrowserRouter>
   );

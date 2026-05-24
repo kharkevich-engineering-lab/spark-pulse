@@ -30,7 +30,9 @@ def get_settings():
 
 @router.put("")
 def update_settings(req: dict):
-    config.update(**{k: v for k, v in req.items() if v is not None and k != "env_managed"})
+    config.update(
+        **{k: v for k, v in req.items() if v is not None and k != "env_managed"}
+    )
     return _settings_response()
 
 

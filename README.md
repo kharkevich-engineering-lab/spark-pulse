@@ -131,6 +131,34 @@ Then set the client secret via the UI Settings page or directly in `secrets.json
 }
 ```
 
+### Development Mode with Mock OIDC Provider
+
+For local development, Spark Pulse ships with convenience scripts that start a [mock OIDC provider](https://github.com/geigerzaehler/oidc-provider-mock) alongside the dev server. This lets you test the full SSO login flow without a real identity provider.
+
+**Full stack (backend + frontend with hot-reload):**
+
+```bash
+./scripts/run-dev-oidc-full.sh
+```
+
+This script:
+1. Starts the mock OIDC provider on `http://localhost:9400`
+2. Creates `~/.config/spark-pulse/settings.json` and `secrets.json` with dev credentials
+3. Launches the backend with `--reload` (serves both API and built frontend)
+
+**Backend only (for API testing):**
+
+```bash
+./scripts/run-dev-oidc.sh
+```
+
+Dev credentials (both scripts):
+- **Provider URL:** `http://localhost:9400`
+- **Client ID:** `spark-pulse-dev`
+- **Client Secret:** `dev-secret`
+
+To stop, press `Ctrl+C` — the scripts clean up all background processes.
+
 ## Development
 
 Clone the repository and install local development dependencies:

@@ -14,10 +14,9 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
-from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from spark_pulse.config import config
@@ -41,7 +40,16 @@ def _oidc_configured() -> bool:
 class AuthMiddleware(BaseHTTPMiddleware):
     """Protect all routes except public ones when auth is enabled."""
 
-    PUBLIC_PATHS = {"/health", "/auth/login", "/auth/callback", "/auth/logout", "/auth/me"}
+    PUBLIC_PATHS = {
+        "/",
+        "/login",
+        "/health",
+        "/auth/login",
+        "/auth/callback",
+        "/auth/logout",
+        "/auth/me",
+        "/api/config",
+    }
 
     async def dispatch(self, request: Request, call_next):
         if not _oidc_configured():
@@ -50,18 +58,24 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         # Allow public paths
         path = request.url.path
-        if path in self.PUBLIC_PATHS or path.startswith("/auth/"):
+        if (
+            path in self.PUBLIC_PATHS
+            or path.startswith("/auth/")
+            or path.startswith("/assets/")
+            or path.startswith("/static/")
+        ):
             return await call_next(request)
 
-        # Require bearer token
-        auth_header = request.headers.get("authorization", "")
-        if not auth_header.startswith("Bearer "):
-            return RedirectResponse(url="/auth/login")
+        # Require session cookie
+        token = request.cookies.get("token")
+        if not token:
+            return JSONResponse(
+                status_code=401, content={"detail": "Not authenticated"}
+            )
 
-        token = auth_header[7:]
         user = _active_tokens.get(token)
         if not user:
-            return RedirectResponse(url="/auth/login")
+            return JSONResponse(status_code=401, content={"detail": "Invalid token"})
 
         # Attach user to request state
         request.state.user = user
@@ -82,19 +96,21 @@ async def login(request: Request):
     # Discover well-known config
     try:
         import httpx
+
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(f"{provider_url}/.well-known/openid-configuration")
             if resp.status_code == 200:
                 config_data = resp.json()
                 auth_url = config_data.get("authorization_endpoint", "")
-                token_url = config_data.get("token_endpoint", "")
             else:
                 raise HTTPException(status_code=502, detail="OIDC provider unreachable")
     except Exception:
         raise HTTPException(status_code=502, detail="Failed to discover OIDC provider")
 
     if not auth_url:
-        raise HTTPException(status_code=500, detail="Missing authorization_endpoint in OIDC config")
+        raise HTTPException(
+            status_code=500, detail="Missing authorization_endpoint in OIDC config"
+        )
 
     state = os.urandom(16).hex()
     redirect_uri = str(request.url.replace(path="/auth/callback", query=""))
@@ -118,12 +134,13 @@ async def callback(request: Request, code: str, state: str):
 
     try:
         import httpx
+
         provider_url = config.oidc_provider_url
         redirect_uri = str(request.url.replace(query=""))
 
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
-                f"{provider_url}/token",
+                f"{provider_url}/oauth2/token",
                 data={
                     "grant_type": "authorization_code",
                     "code": code,
@@ -157,8 +174,17 @@ async def callback(request: Request, code: str, state: str):
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
 
-            # Redirect to app with token
-            return RedirectResponse(f"/?token={token_key}")
+            # Set session cookie and redirect to home
+            response = RedirectResponse(url="/", status_code=302)
+            response.set_cookie(
+                key="token",
+                value=token_key,
+                httponly=True,
+                samesite="lax",
+                path="/",
+                max_age=expires_in,
+            )
+            return response
 
     except HTTPException:
         raise
@@ -168,22 +194,23 @@ async def callback(request: Request, code: str, state: str):
 
 @router.post("/logout")
 async def logout(request: Request):
-    """Invalidate current token."""
-    auth_header = request.headers.get("authorization", "")
-    if auth_header.startswith("Bearer "):
-        token = auth_header[7:]
+    """Invalidate current token and clear cookie."""
+    token = request.cookies.get("token")
+    if token:
         _active_tokens.pop(token, None)
-    return {"message": "Logged out"}
+    response = {"message": "Logged out"}
+    resp = JSONResponse(content=response)
+    resp.delete_cookie(key="token", path="/")
+    return resp
 
 
 @router.get("/me")
 async def get_me(request: Request):
     """Get current user info."""
-    auth_header = request.headers.get("authorization", "")
-    if not auth_header.startswith("Bearer "):
+    token = request.cookies.get("token")
+    if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
-    token = auth_header[7:]
     user_data = _active_tokens.get(token)
     if not user_data:
         raise HTTPException(status_code=401, detail="Invalid token")

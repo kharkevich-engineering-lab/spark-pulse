@@ -13,16 +13,38 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.13"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]" ruff
-      - name: Run pre-commit
+          cd web && npm ci && cd ..
+
+      - name: Run Python linters
         run: |
-          black --check --diff tests/
-          ruff check tests/
+          black --check --diff tests/ spark_pulse/
+          ruff check tests/ spark_pulse/
+
+      - name: Run tests
+        run: |
           pytest --tb=short -v tests/
+
+      - name: Run frontend ESLint
+        run: |
+          cd web && npx eslint src/ && cd ..
+
+      - name: Run TypeScript type check
+        run: |
+          cd web && npx tsc --noEmit && cd ..

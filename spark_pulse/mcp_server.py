@@ -15,6 +15,7 @@ try:
     from mcp.server import Server
     from mcp.server.stdio import stdio_server
     from mcp.types import Tool, TextContent
+
     MCP_AVAILABLE = True
 except ImportError:
     MCP_AVAILABLE = False
@@ -33,7 +34,11 @@ async def run_mcp_server() -> None:
     @server.list_tools()
     async def list_tools():
         return [
-            Tool(name=t["name"], description=t["description"], inputSchema=t["inputSchema"])
+            Tool(
+                name=t["name"],
+                description=t["description"],
+                inputSchema=t["inputSchema"],
+            )
             for t in TOOLS
         ]
 
@@ -48,18 +53,25 @@ async def run_mcp_server() -> None:
         response = await handle_mcp(rpc)
         content = response.get("result", {}).get("content", [])
         if content:
-            return [TextContent(type="text", text=c["text"]) for c in content if c.get("type") == "text"]
+            return [
+                TextContent(type="text", text=c["text"])
+                for c in content
+                if c.get("type") == "text"
+            ]
         error = response.get("error", {})
-        return [TextContent(type="text", text=f"Error: {error.get('message', 'unknown')}")]
+        return [
+            TextContent(type="text", text=f"Error: {error.get('message', 'unknown')}")
+        ]
 
     async with stdio_server() as (read_stream, write_stream):
-        await server.run(read_stream, write_stream, server.create_initialization_options())
+        await server.run(
+            read_stream, write_stream, server.create_initialization_options()
+        )
 
 
 def main() -> None:
     """Entry point for `spark-pulse mcp` CLI command."""
     import asyncio
+
     print("Starting Spark Pulse MCP server...", file=sys.stderr)
     asyncio.run(run_mcp_server())
-
-
