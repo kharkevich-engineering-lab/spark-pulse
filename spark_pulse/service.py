@@ -127,9 +127,13 @@ def _render_service_content(
     )
 
 
-def install_systemd(host: str = "0.0.0.0", port: int = 8100,
-                    user: str | None = None, start: bool = True,
-                    scope: ServiceScope = "system") -> None:
+def install_systemd(
+    host: str = "0.0.0.0",
+    port: int = 8100,
+    user: str | None = None,
+    start: bool = True,
+    scope: ServiceScope = "system",
+) -> None:
     """Install the systemd service unit file and environment file."""
     if user is None:
         user = os.environ.get("USER", "spark")
@@ -205,7 +209,9 @@ def stop_server(scope: ServiceScope = "system") -> None:
 def get_status(scope: ServiceScope = "system") -> str:
     """Get the systemd service status."""
     try:
-        result = _run_cmd(_systemctl_cmd(["is-active", SERVICE_NAME], scope=scope), check=False)
+        result = _run_cmd(
+            _systemctl_cmd(["is-active", SERVICE_NAME], scope=scope), check=False
+        )
         return result.stdout.strip()
     except FileNotFoundError:
         return "not-installed"
@@ -215,6 +221,4 @@ def get_status(scope: ServiceScope = "system") -> str:
 
 def _run_cmd(cmd: list[str], check: bool = True) -> subprocess.CompletedProcess:
     """Run a command and return the result."""
-    return subprocess.run(
-        cmd, capture_output=True, text=True, check=check
-    )
+    return subprocess.run(cmd, capture_output=True, text=True, check=check)

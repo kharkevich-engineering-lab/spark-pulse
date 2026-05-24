@@ -10,8 +10,6 @@ Usage:
 from __future__ import annotations
 
 import os
-import threading
-import time
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -20,7 +18,6 @@ import oidc_provider_mock
 
 from spark_pulse.app import create_app
 from spark_pulse.config import config
-
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -45,6 +42,7 @@ def app_client(oidc_server):
     app = create_app()
 
     from fastapi.testclient import TestClient
+
     client = TestClient(app, raise_server_exceptions=False)
     return client
 
@@ -90,6 +88,7 @@ class TestApiConfig:
 
         app = create_app()
         from fastapi.testclient import TestClient
+
         client = TestClient(app)
 
         resp = client.get("/api/config")
@@ -110,7 +109,7 @@ class TestOidcLoginFlow:
         resp = app_client.get("/auth/login", follow_redirects=False)
         assert resp.status_code == 307
         location = resp.headers["location"]
-        parsed = urlparse(location)
+        _parsed = urlparse(location)
         # Should redirect to the mock OIDC provider
         assert oidc_server.replace("http://", "") in location
 
@@ -120,9 +119,7 @@ class TestOidcLoginFlow:
         # Should return an error (422 is from FastAPI validation, which is fine)
         assert resp.status_code in [400, 401, 422, 500]
 
-    def test_full_login_flow(
-        self, app_client, oidc_server, configured_user
-    ):
+    def test_full_login_flow(self, app_client, oidc_server, configured_user):
         """Test the complete login flow: login -> authorize -> callback."""
         # Step 1: Initiate login
         login_resp = app_client.get("/auth/login", follow_redirects=False)
@@ -167,6 +164,7 @@ class TestTokenManagement:
     def test_logout_invalidates_token(self):
         """Logout should invalidate the current token."""
         from spark_pulse import auth
+
         # Manually insert a valid token
         valid_token = "test-token-logout"
         auth._active_tokens[valid_token] = {
@@ -176,6 +174,7 @@ class TestTokenManagement:
         # Verify token is valid
         from fastapi.testclient import TestClient
         import warnings
+
         app = create_app()
         client = TestClient(app, raise_server_exceptions=False)
 
@@ -216,6 +215,7 @@ class TestAuthMiddleware:
     def test_protected_path_returns_401_when_not_authenticated(self, oidc_server):
         """Protected API paths should return 401 when not authenticated (SPA handling)."""
         from fastapi.testclient import TestClient
+
         # Configure OIDC to point at the mock provider
         os.environ["SPARK_PULSE_AUTH_ENABLED"] = "true"
         config._data["oidc_provider_url"] = oidc_server
@@ -232,6 +232,7 @@ class TestAuthMiddleware:
     def test_protected_path_accessible_with_valid_cookie(self):
         """Protected API paths should be accessible with a valid cookie."""
         from spark_pulse import auth
+
         # Manually insert a valid token
         valid_token = "test-token-protected"
         auth._active_tokens[valid_token] = {
@@ -239,6 +240,7 @@ class TestAuthMiddleware:
         }
 
         from fastapi.testclient import TestClient
+
         app = create_app()
         client = TestClient(app, raise_server_exceptions=False)
 
@@ -266,6 +268,7 @@ class TestAuthDisabled:
 
         app = create_app()
         from fastapi.testclient import TestClient
+
         client = TestClient(app, raise_server_exceptions=False)
 
         # Should be able to access any path without auth

@@ -19,10 +19,10 @@ if _sim_mode:
     )
 else:
     from spark_pulse.tools import (
-        system,
-        cache,
-        recipes,
-        deployments,
+        system as system,
+        cache as cache,
+        recipes as recipes,
+        deployments as deployments,
     )
 
 

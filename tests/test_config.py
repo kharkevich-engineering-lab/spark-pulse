@@ -3,7 +3,6 @@ import yaml
 
 from spark_pulse import config as config_module
 
-
 # ── Config loading tests ────────────────────────────────────────────────────
 
 
@@ -131,12 +130,14 @@ def test_oidc_values_from_yaml(tmp_path, monkeypatch):
     """OIDC values should be read from YAML."""
     config_file = tmp_path / "config.yaml"
     config_file.write_text(
-        yaml.safe_dump({
-            "auth_enabled": True,
-            "oidc_provider_url": "https://keycloak.example.com/realms/myrealm",
-            "oidc_client_id": "spark-pulse",
-            "oidc_client_secret": "secret123",
-        }),
+        yaml.safe_dump(
+            {
+                "auth_enabled": True,
+                "oidc_provider_url": "https://keycloak.example.com/realms/myrealm",
+                "oidc_client_id": "spark-pulse",
+                "oidc_client_secret": "secret123",
+            }
+        ),
         encoding="utf-8",
     )
     monkeypatch.setattr(config_module, "_CONFIG_PATH", config_file)
@@ -222,10 +223,12 @@ def test_default_port_range(tmp_path, monkeypatch):
     """Default port range should be 9000-9100."""
     config_file = tmp_path / "config.yaml"
     config_file.write_text(
-        yaml.safe_dump({
-            "default_port_range_start": 9000,
-            "default_port_range_end": 9100,
-        }),
+        yaml.safe_dump(
+            {
+                "default_port_range_start": 9000,
+                "default_port_range_end": 9100,
+            }
+        ),
         encoding="utf-8",
     )
     monkeypatch.setattr(config_module, "_CONFIG_PATH", config_file)

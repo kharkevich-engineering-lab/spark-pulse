@@ -95,6 +95,7 @@ class TestAuthMiddleware:
     def _make_request(self, path="/api/recipes", cookie_token=None):
         """Create a mock ASGI scope for testing."""
         from unittest.mock import MagicMock
+
         request = MagicMock()
         request.url.path = path
         request.url.__str__ = MagicMock(return_value=f"http://localhost{path}")
@@ -105,6 +106,7 @@ class TestAuthMiddleware:
     def test_dispatch_allows_when_auth_disabled(self, monkeypatch):
         """When auth is disabled, all requests should pass through."""
         from unittest.mock import MagicMock
+
         monkeypatch.setenv("SPARK_PULSE_AUTH_ENABLED", "false")
         mw = auth.AuthMiddleware(None)
         request = self._make_request("/api/recipes")
@@ -120,12 +122,22 @@ class TestAuthMiddleware:
     def test_dispatch_allows_public_paths(self, monkeypatch):
         """Public paths should be allowed without auth."""
         from unittest.mock import MagicMock
+
         monkeypatch.setenv("SPARK_PULSE_AUTH_ENABLED", "true")
-        monkeypatch.setitem(auth.config._data, "oidc_provider_url", "https://issuer.example")
+        monkeypatch.setitem(
+            auth.config._data, "oidc_provider_url", "https://issuer.example"
+        )
         monkeypatch.setitem(auth.config._data, "oidc_client_id", "client-id")
         monkeypatch.setitem(auth.config._data, "oidc_client_secret", "secret")
         mw = auth.AuthMiddleware(None)
-        for path in ["/health", "/auth/login", "/auth/callback", "/auth/logout", "/auth/me", "/api/config"]:
+        for path in [
+            "/health",
+            "/auth/login",
+            "/auth/callback",
+            "/auth/logout",
+            "/auth/me",
+            "/api/config",
+        ]:
             request = self._make_request(path)
             call_next_called = []
 
@@ -140,8 +152,11 @@ class TestAuthMiddleware:
         """Requests without session cookie should return 401."""
         from unittest.mock import MagicMock
         from starlette.responses import JSONResponse
+
         monkeypatch.setenv("SPARK_PULSE_AUTH_ENABLED", "true")
-        monkeypatch.setitem(auth.config._data, "oidc_provider_url", "https://issuer.example")
+        monkeypatch.setitem(
+            auth.config._data, "oidc_provider_url", "https://issuer.example"
+        )
         monkeypatch.setitem(auth.config._data, "oidc_client_id", "client-id")
         monkeypatch.setitem(auth.config._data, "oidc_client_secret", "secret")
         mw = auth.AuthMiddleware(None)
@@ -161,8 +176,11 @@ class TestAuthMiddleware:
         """Requests with an unknown cookie should return 401."""
         from unittest.mock import MagicMock
         from starlette.responses import JSONResponse
+
         monkeypatch.setenv("SPARK_PULSE_AUTH_ENABLED", "true")
-        monkeypatch.setitem(auth.config._data, "oidc_provider_url", "https://issuer.example")
+        monkeypatch.setitem(
+            auth.config._data, "oidc_provider_url", "https://issuer.example"
+        )
         monkeypatch.setitem(auth.config._data, "oidc_client_id", "client-id")
         monkeypatch.setitem(auth.config._data, "oidc_client_secret", "secret")
         mw = auth.AuthMiddleware(None)
@@ -181,8 +199,11 @@ class TestAuthMiddleware:
     def test_attaches_user_with_valid_cookie(self, monkeypatch):
         """Requests with a valid cookie should attach user to request state."""
         from unittest.mock import MagicMock
+
         monkeypatch.setenv("SPARK_PULSE_AUTH_ENABLED", "true")
-        monkeypatch.setitem(auth.config._data, "oidc_provider_url", "https://issuer.example")
+        monkeypatch.setitem(
+            auth.config._data, "oidc_provider_url", "https://issuer.example"
+        )
         monkeypatch.setitem(auth.config._data, "oidc_client_id", "client-id")
         monkeypatch.setitem(auth.config._data, "oidc_client_secret", "secret")
         mw = auth.AuthMiddleware(None)
@@ -196,7 +217,7 @@ class TestAuthMiddleware:
             call_next_called.append(True)
             return MagicMock()
 
-        result = asyncio.run(mw.dispatch(request, call_next))
+        _result = asyncio.run(mw.dispatch(request, call_next))
         assert len(call_next_called) == 1
         # Middleware attaches the full token data (including "user" key)
         assert request.state.user == {"user": {"name": "Alice"}}

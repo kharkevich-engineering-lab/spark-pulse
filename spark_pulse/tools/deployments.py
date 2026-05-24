@@ -29,6 +29,7 @@ def _redact_cmd(cmd_str: str) -> str:
 
 # ── Persistence helpers ───────────────────────────────────────────────────────
 
+
 def _load() -> list[dict[str, Any]]:
     if not _DEPLOYMENTS_FILE.exists():
         return []
@@ -66,6 +67,7 @@ def _update_status(deployment_id: str, **fields: Any) -> None:
 
 # ── Process helpers ───────────────────────────────────────────────────────────
 
+
 def _is_alive(pid: int) -> bool:
     """Return True if the process is still running."""
     try:
@@ -92,7 +94,9 @@ def _reconcile(deployments: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if not pid:
                 # Server restarted before the process was ever launched
                 dep["status"] = "error"
-                dep["error_message"] = "Interrupted: server restarted before process launched"
+                dep["error_message"] = (
+                    "Interrupted: server restarted before process launched"
+                )
                 dep["stopped_at"] = now
                 changed = True
             elif not _is_alive(int(pid)):
@@ -115,13 +119,20 @@ def _monitor(dep_id: str, proc: subprocess.Popen) -> None:  # type: ignore[type-
     if rc == 0:
         _update_status(dep_id, status="stopped", stopped_at=now)
     else:
-        _update_status(dep_id, status="error", stopped_at=now,
-                       error_message=f"Process exited with code {rc}")
+        _update_status(
+            dep_id,
+            status="error",
+            stopped_at=now,
+            error_message=f"Process exited with code {rc}",
+        )
 
 
 # ── Command builder ───────────────────────────────────────────────────────────
 
-def _build_cmd(recipe_id: str, params: dict[str, Any], nodes: list[str] | None) -> list[str]:
+
+def _build_cmd(
+    recipe_id: str, params: dict[str, Any], nodes: list[str] | None
+) -> list[str]:
     """Build the run-recipe.sh invocation from deployment params.
 
     Note: HF_TOKEN is passed via -e to Docker. It will appear in the process
@@ -297,7 +308,9 @@ def get_logs(deployment_id: str, lines: int = 200) -> str:
     try:
         result = subprocess.run(
             ["tail", "-n", str(lines), log_path],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         return result.stdout or "(empty log)"
     except (OSError, subprocess.TimeoutExpired):

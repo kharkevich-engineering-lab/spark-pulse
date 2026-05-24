@@ -7,7 +7,16 @@ from typing import Any
 
 from spark_pulse.config import config
 
-_ASSET_EXTENSIONS = {".patch", ".diff", ".jinja", ".py", ".json", ".yaml", ".yml", ".sh"}
+_ASSET_EXTENSIONS = {
+    ".patch",
+    ".diff",
+    ".jinja",
+    ".py",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".sh",
+}
 
 
 def _mods_dir() -> Path:
@@ -39,6 +48,7 @@ def _extract_description(run_sh: Path) -> str:
 
     # Fallback: look for the first `echo "..."` line anywhere in the script
     import re
+
     for line in lines:
         m = re.match(r'\s*echo\s+["\'](.+?)["\']', line)
         if m:
@@ -64,8 +74,11 @@ def _asset_kind(name: str) -> str:
 def _mod_info(mod_dir: Path, include_script: bool = False) -> dict[str, Any]:
     run_sh = mod_dir / "run.sh"
     files = sorted(
-        ({"name": f.name, "kind": _asset_kind(f.name)} for f in mod_dir.iterdir()
-         if f.is_file() and f.name != "run.sh"),
+        (
+            {"name": f.name, "kind": _asset_kind(f.name)}
+            for f in mod_dir.iterdir()
+            if f.is_file() and f.name != "run.sh"
+        ),
         key=lambda x: x["name"],
     )
     info: dict[str, Any] = {

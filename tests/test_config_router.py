@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from spark_pulse.app import create_app
 from spark_pulse.config import config
@@ -20,6 +19,7 @@ class TestApiConfigEndpoint:
 
         app = create_app()
         from fastapi.testclient import TestClient
+
         client = TestClient(app)
 
         resp = client.get("/api/config")
@@ -31,12 +31,15 @@ class TestApiConfigEndpoint:
     def test_config_returns_auth_enabled_true(self, monkeypatch):
         """Config should report auth_enabled=True when configured."""
         monkeypatch.setenv("SPARK_PULSE_AUTH_ENABLED", "true")
-        monkeypatch.setitem(config._data, "oidc_provider_url", "https://keycloak.example.com")
+        monkeypatch.setitem(
+            config._data, "oidc_provider_url", "https://keycloak.example.com"
+        )
         monkeypatch.setitem(config._data, "oidc_client_id", "test-client")
         monkeypatch.setitem(config._data, "oidc_client_secret", "test-secret")
 
         app = create_app()
         from fastapi.testclient import TestClient
+
         client = TestClient(app, raise_server_exceptions=False)
 
         resp = client.get("/api/config")
@@ -51,6 +54,7 @@ class TestApiConfigEndpoint:
 
         app = create_app()
         from fastapi.testclient import TestClient
+
         client = TestClient(app)
 
         resp = client.get("/api/config")
@@ -64,6 +68,7 @@ class TestApiConfigEndpoint:
 
         app = create_app()
         from fastapi.testclient import TestClient
+
         client = TestClient(app)
 
         resp = client.get("/api/config")
@@ -74,12 +79,15 @@ class TestApiConfigEndpoint:
     def test_config_oidc_configured_false_when_missing_secrets(self, monkeypatch):
         """oidc_configured should be False when OIDC secrets are missing."""
         monkeypatch.setenv("SPARK_PULSE_AUTH_ENABLED", "true")
-        monkeypatch.setitem(config._data, "oidc_provider_url", "https://keycloak.example.com")
+        monkeypatch.setitem(
+            config._data, "oidc_provider_url", "https://keycloak.example.com"
+        )
         monkeypatch.setitem(config._data, "oidc_client_id", "test-client")
         monkeypatch.setitem(config._data, "oidc_client_secret", "")
 
         app = create_app()
         from fastapi.testclient import TestClient
+
         client = TestClient(app)
 
         resp = client.get("/api/config")
@@ -96,6 +104,7 @@ class TestApiConfigEndpoint:
 
         app = create_app()
         from fastapi.testclient import TestClient
+
         client = TestClient(app)
 
         resp = client.get("/api/config")
@@ -106,12 +115,15 @@ class TestApiConfigEndpoint:
     def test_config_oidc_configured_false_when_missing_client_id(self, monkeypatch):
         """oidc_configured should be False when client ID is missing."""
         monkeypatch.setenv("SPARK_PULSE_AUTH_ENABLED", "true")
-        monkeypatch.setitem(config._data, "oidc_provider_url", "https://keycloak.example.com")
+        monkeypatch.setitem(
+            config._data, "oidc_provider_url", "https://keycloak.example.com"
+        )
         monkeypatch.setitem(config._data, "oidc_client_id", "")
         monkeypatch.setitem(config._data, "oidc_client_secret", "test-secret")
 
         app = create_app()
         from fastapi.testclient import TestClient
+
         client = TestClient(app)
 
         resp = client.get("/api/config")

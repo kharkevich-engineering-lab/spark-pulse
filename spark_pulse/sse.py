@@ -18,14 +18,19 @@ router = APIRouter(prefix="/sse", tags=["sse"])
 async def metrics_generator() -> AsyncGenerator[str, None]:
     """Generate SSE events with memory metrics every 5 seconds."""
     from spark_pulse.tools.deployments import list_deployments
+
     while True:
         try:
             data = system.get_all_memory()
-            running = [d for d in list_deployments() if d.get("status") in ("running", "pending")]
+            running = [
+                d
+                for d in list_deployments()
+                if d.get("status") in ("running", "pending")
+            ]
             system.enrich_gpu_process_tracking(data.get("processes", []), running)
             yield f"event: metrics\ndata: {json.dumps(data)}\n\n"
         except Exception as e:
-            yield f"event: error\ndata: {{\"message\": \"{e}\"}}\n\n"
+            yield f'event: error\ndata: {{"message": "{e}"}}\n\n'
         await asyncio.sleep(5)
 
 
@@ -45,14 +50,21 @@ async def sse_metrics():
 
 async def log_generator(deployment_id: str) -> AsyncGenerator[str, None]:
     """Emit existing log lines then tail for new ones until deployment stops."""
-    dep = next((d for d in tools.deployments.list_deployments() if d.get("id") == deployment_id), None)
+    dep = next(
+        (
+            d
+            for d in tools.deployments.list_deployments()
+            if d.get("id") == deployment_id
+        ),
+        None,
+    )
     if not dep:
-        yield f'event: error\ndata: {json.dumps({"message": "Deployment not found"})}\n\n'
+        yield f"event: error\ndata: {json.dumps({'message': 'Deployment not found'})}\n\n"
         return
 
     log_path = dep.get("log_path")
     if not log_path:
-        yield f'event: error\ndata: {json.dumps({"message": "No log file for this deployment"})}\n\n'
+        yield f"event: error\ndata: {json.dumps({'message': 'No log file for this deployment'})}\n\n"
         return
 
     path = Path(log_path)
@@ -64,7 +76,7 @@ async def log_generator(deployment_id: str) -> AsyncGenerator[str, None]:
             for line in f:
                 text = line.rstrip("\n")
                 if text:
-                    yield f'event: log\ndata: {json.dumps({"text": text})}\n\n'
+                    yield f"event: log\ndata: {json.dumps({'text': text})}\n\n"
         pos = path.stat().st_size
 
     last_status = dep.get("status")
@@ -82,17 +94,24 @@ async def log_generator(deployment_id: str) -> AsyncGenerator[str, None]:
                     for line in f:
                         text = line.rstrip("\n")
                         if text:
-                            yield f'event: log\ndata: {json.dumps({"text": text})}\n\n'
+                            yield f"event: log\ndata: {json.dumps({'text': text})}\n\n"
                 pos = size
 
         # Check for status changes
-        dep = next((d for d in tools.deployments.list_deployments() if d.get("id") == deployment_id), None)
+        dep = next(
+            (
+                d
+                for d in tools.deployments.list_deployments()
+                if d.get("id") == deployment_id
+            ),
+            None,
+        )
         if not dep:
             break
         new_status = dep.get("status")
         if new_status != last_status:
             last_status = new_status
-            yield f'event: status\ndata: {json.dumps({"status": new_status})}\n\n'
+            yield f"event: status\ndata: {json.dumps({'status': new_status})}\n\n"
         if new_status in ("stopped", "error"):
             break
 

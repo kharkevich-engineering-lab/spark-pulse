@@ -32,8 +32,13 @@ def list_deployments() -> list[dict[str, Any]]:
     return _load()
 
 
-def create_deployment(recipe_id: str, name: str, params: dict[str, Any],
-                      nodes: list[str] | None = None, launch_command: str = "") -> dict[str, Any]:
+def create_deployment(
+    recipe_id: str,
+    name: str,
+    params: dict[str, Any],
+    nodes: list[str] | None = None,
+    launch_command: str = "",
+) -> dict[str, Any]:
     """Create a new deployment (simulation — no real process is started)."""
     dep_id = uuid.uuid4().hex[:12]
     now = datetime.now(timezone.utc).isoformat()

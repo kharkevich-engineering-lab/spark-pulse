@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Optional
 
 import yaml
 
@@ -123,7 +122,12 @@ class _Config:
 
     @property
     def auth_enabled(self) -> bool:
-        return os.environ.get("SPARK_PULSE_AUTH_ENABLED", str(self._data.get("auth_enabled", False))).lower() == "true"
+        return (
+            os.environ.get(
+                "SPARK_PULSE_AUTH_ENABLED", str(self._data.get("auth_enabled", False))
+            ).lower()
+            == "true"
+        )
 
     @property
     def oidc_provider_url(self) -> str:
@@ -143,7 +147,12 @@ class _Config:
 
     @property
     def mcp_enabled(self) -> bool:
-        return os.environ.get("SPARK_PULSE_MCP_ENABLED", str(self._data.get("mcp_enabled", True))).lower() == "true"
+        return (
+            os.environ.get(
+                "SPARK_PULSE_MCP_ENABLED", str(self._data.get("mcp_enabled", True))
+            ).lower()
+            == "true"
+        )
 
     @property
     def mcp_path(self) -> str:
@@ -151,7 +160,11 @@ class _Config:
 
     @property
     def mcp_api_token(self) -> str:
-        return str(os.environ.get("SPARK_PULSE_MCP_API_TOKEN", self._data.get("mcp_api_token", "")))
+        return str(
+            os.environ.get(
+                "SPARK_PULSE_MCP_API_TOKEN", self._data.get("mcp_api_token", "")
+            )
+        )
 
     def save(self):
         # Legacy — keep for compat but user settings now go to settings.json

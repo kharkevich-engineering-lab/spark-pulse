@@ -13,7 +13,7 @@ _GPU_STATS = {
             "uuid": "GPU-00000000-0000-0000-0000-000000000000",
             "name": "NVIDIA GB10",
             "memory_total": 131072,  # 128 GB in MB
-            "memory_used": 89234,    # ~68% used
+            "memory_used": 89234,  # ~68% used
             "memory_free": 41838,
             "temperature": 72,
             "utilization": 45,
@@ -34,7 +34,7 @@ _GPU_PROCESSES = [
 
 _CPU_STATS = {
     "total": 131072,  # 128 GB in MB
-    "used": 43520,    # ~33% used
+    "used": 43520,  # ~33% used
     "free": 87552,
     "available": 92160,
     "usage_percent": 33.2,
@@ -44,8 +44,8 @@ _DISK_STATS = [
     {
         "mount": "/",
         "total": 1290277824000,  # ~1.2 TB
-        "used": 837702287360,    # ~780 GB used
-        "free": 452575536640,    # ~420 GB free
+        "used": 837702287360,  # ~780 GB used
+        "free": 452575536640,  # ~420 GB free
         "usage_percent": 64.9,
     },
 ]

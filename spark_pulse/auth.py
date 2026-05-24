@@ -14,9 +14,8 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
-from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -59,13 +58,20 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         # Allow public paths
         path = request.url.path
-        if path in self.PUBLIC_PATHS or path.startswith("/auth/") or path.startswith("/assets/") or path.startswith("/static/"):
+        if (
+            path in self.PUBLIC_PATHS
+            or path.startswith("/auth/")
+            or path.startswith("/assets/")
+            or path.startswith("/static/")
+        ):
             return await call_next(request)
 
         # Require session cookie
         token = request.cookies.get("token")
         if not token:
-            return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
+            return JSONResponse(
+                status_code=401, content={"detail": "Not authenticated"}
+            )
 
         user = _active_tokens.get(token)
         if not user:
@@ -90,19 +96,21 @@ async def login(request: Request):
     # Discover well-known config
     try:
         import httpx
+
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(f"{provider_url}/.well-known/openid-configuration")
             if resp.status_code == 200:
                 config_data = resp.json()
                 auth_url = config_data.get("authorization_endpoint", "")
-                token_url = config_data.get("token_endpoint", "")
             else:
                 raise HTTPException(status_code=502, detail="OIDC provider unreachable")
     except Exception:
         raise HTTPException(status_code=502, detail="Failed to discover OIDC provider")
 
     if not auth_url:
-        raise HTTPException(status_code=500, detail="Missing authorization_endpoint in OIDC config")
+        raise HTTPException(
+            status_code=500, detail="Missing authorization_endpoint in OIDC config"
+        )
 
     state = os.urandom(16).hex()
     redirect_uri = str(request.url.replace(path="/auth/callback", query=""))
@@ -126,6 +134,7 @@ async def callback(request: Request, code: str, state: str):
 
     try:
         import httpx
+
         provider_url = config.oidc_provider_url
         redirect_uri = str(request.url.replace(query=""))
 

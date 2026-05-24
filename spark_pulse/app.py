@@ -4,18 +4,25 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 from spark_pulse.config import config
-from spark_pulse.routers import recipes, deployments, memory, cache, settings, mods, config as config_router
+from spark_pulse.routers import (
+    recipes,
+    deployments,
+    memory,
+    cache,
+    settings,
+    mods,
+    config as config_router,
+)
 from spark_pulse.auth import AuthMiddleware, router as auth_router
 from spark_pulse.sse import router as sse_router
 from spark_pulse.tools import is_simulation
 from spark_pulse.version import get_version
 from spark_pulse.mcp_http import handle_mcp, MCP_PATH
-
 
 # ── SPA serving ──────────────────────────────────────────────────────────────
 
@@ -25,8 +32,10 @@ _INDEX_FILE = _UI_DIR / "index.html"
 
 def _get_ui_dir() -> Path:
     if not _UI_DIR.is_dir():
-        raise RuntimeError(f"UI directory not found at {_UI_DIR}. "
-                           "Build the frontend first: cd web && npm install && npm run build")
+        raise RuntimeError(
+            f"UI directory not found at {_UI_DIR}. "
+            "Build the frontend first: cd web && npm install && npm run build"
+        )
     return _UI_DIR
 
 
@@ -53,8 +62,10 @@ async def lifespan(app: FastAPI):
     app.state.spark_path_valid = spark_path.is_dir()
 
     mode = "SIMULATION" if is_simulation() else "PRODUCTION"
-    print(f"Spark Pulse starting in {mode} mode "
-          f"(spark-vllm-docker: {config.spark_vllm_path})")
+    print(
+        f"Spark Pulse starting in {mode} mode "
+        f"(spark-vllm-docker: {config.spark_vllm_path})"
+    )
 
     yield
 
@@ -102,13 +113,18 @@ def create_app() -> FastAPI:
 
     # MCP JSON-RPC endpoint (same port, inherits auth middleware)
     if config.mcp_enabled:
+
         @app.post(f"/{MCP_PATH}")
         async def mcp_endpoint(request: Request):
             try:
                 body = await request.json()
             except Exception:
                 return JSONResponse(
-                    {"jsonrpc": "2.0", "error": {"code": -32700, "message": "Parse error"}, "id": None},
+                    {
+                        "jsonrpc": "2.0",
+                        "error": {"code": -32700, "message": "Parse error"},
+                        "id": None,
+                    },
                     status_code=400,
                 )
             result = await handle_mcp(body)
@@ -117,7 +133,9 @@ def create_app() -> FastAPI:
         print(f"MCP server enabled at /{MCP_PATH}")
 
     # SPA catch-all
-    @app.api_route("/{filename:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+    @app.api_route(
+        "/{filename:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"]
+    )
     async def serve_static(request: Request, filename: str):
         return _serve_spa(filename)
 
