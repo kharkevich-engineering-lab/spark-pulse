@@ -25,7 +25,7 @@ export async function loadConfig(): Promise<AppConfig> {
     }
     config = await response.json();
     return config as AppConfig;
-  } catch (error) {
+  } catch {
     // Default to disabled auth if config fails to load
     const defaults: AppConfig = {
       auth_enabled: false,

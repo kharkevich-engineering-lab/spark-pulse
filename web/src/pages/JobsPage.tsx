@@ -27,7 +27,7 @@ export default function JobsPage() {
     if (el && atBottomRef.current[expandedId] !== false) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [logs[expandedId || ""]]);  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [logs[expandedId || ""]]);
 
   const handleLogScroll = (id: string) => {
     const el = logRef.current[id];

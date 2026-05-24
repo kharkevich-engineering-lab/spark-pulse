@@ -4,9 +4,8 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/lib/auth";
 import { isAuthEnabled, loadConfig } from "@/lib/config";
-import { Copyright, LogIn } from "lucide-react";
+import { Copyright, Zap } from "lucide-react";
 import { SiGithub, SiPypi } from "@icons-pack/react-simple-icons";
-import { Zap } from "lucide-react";
 
 export default function LoginPage() {
   const { isAuthenticated, login } = useAuth();
