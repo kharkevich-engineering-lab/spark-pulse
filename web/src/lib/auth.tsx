@@ -48,7 +48,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const res = await fetch("/auth/me", { credentials: "include" });
       if (res.ok) {
         const data = await res.json();
-        setState({ token: "", user: data.user || {}, loading: false, error: null });
+        setState({ token: "cookie", user: data.user || {}, loading: false, error: null });
       } else {
         setState({ token: null, user: null, loading: false, error: null });
       }
