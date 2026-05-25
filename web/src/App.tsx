@@ -7,7 +7,6 @@ import MemoryPage from "@/pages/MemoryPage";
 import CachePage from "@/pages/CachePage";
 import MCPPage from "@/pages/MCPPage";
 import SettingsPage from "@/pages/SettingsPage";
-import ModsPage from "@/pages/ModsPage";
 import LoginPage from "@/pages/LoginPage";
 import CustomRecipesPage from "@/pages/CustomRecipesPage";
 
@@ -28,7 +27,6 @@ function AppRoutes() {
           <Routes>
             <Route path="/" element={<RecipesPage />} />
             <Route path="/jobs" element={<JobsPage />} />
-            <Route path="/mods" element={<ModsPage />} />
             <Route path="/monitoring" element={<MemoryPage />} />
             <Route path="/cache" element={<CachePage />} />
             <Route path="/mcp" element={<MCPPage />} />
