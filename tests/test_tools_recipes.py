@@ -91,9 +91,7 @@ def test_list_recipes_includes_extensionless_symlink(tmp_path):
     recipe_dir.mkdir()
 
     custom_file = tmp_path / "custom-new.yaml"
-    custom_file.write_text(
-        "name: Custom New\nmodel: vendor/custom\n", encoding="utf-8"
-    )
+    custom_file.write_text("name: Custom New\nmodel: vendor/custom\n", encoding="utf-8")
     (recipe_dir / "custom-new").symlink_to(custom_file)
 
     out = recipes.list_recipes(spark_path=tmp_path)
