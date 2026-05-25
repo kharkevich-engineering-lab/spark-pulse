@@ -86,6 +86,39 @@ def test_get_recipe_finds_subdirectory_recipe(tmp_path):
     assert out["name"] == "Big Model (PP=3)"
 
 
+def test_list_recipes_includes_extensionless_symlink(tmp_path):
+    recipe_dir = tmp_path / "recipes"
+    recipe_dir.mkdir()
+
+    custom_file = tmp_path / "custom-new.yaml"
+    custom_file.write_text(
+        "name: Custom New\nmodel: vendor/custom\n", encoding="utf-8"
+    )
+    (recipe_dir / "custom-new").symlink_to(custom_file)
+
+    out = recipes.list_recipes(spark_path=tmp_path)
+    ids = [r["id"] for r in out]
+
+    assert "custom-new" in ids
+
+
+def test_get_recipe_reads_extensionless_symlink(tmp_path):
+    recipe_dir = tmp_path / "recipes"
+    recipe_dir.mkdir()
+
+    custom_file = tmp_path / "custom-uploaded.yaml"
+    custom_file.write_text(
+        "name: Uploaded Recipe\nmodel: vendor/uploaded\n", encoding="utf-8"
+    )
+    (recipe_dir / "custom-uploaded").symlink_to(custom_file)
+
+    out = recipes.get_recipe("custom-uploaded", spark_path=tmp_path)
+
+    assert out is not None
+    assert out["id"] == "custom-uploaded"
+    assert out["name"] == "Uploaded Recipe"
+
+
 def test_build_launch_command_replaces_supported_tokens():
     recipe = {
         "command": "vllm serve --host {host} --port {port} {-tp} --gpu-memory-utilization {--gpu-memory-utilization} --max-model-len {--max-model-len}"
