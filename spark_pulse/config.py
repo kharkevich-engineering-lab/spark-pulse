@@ -17,6 +17,7 @@ _SETTINGS_PATH = Path.home() / ".config" / "spark-pulse" / "settings.json"
 _ENV_MAP: dict[str, str] = {
     "spark_vllm_path": "SPARK_VLLM_PATH",
     "webui_port": "WEBUI_PORT",
+    "git_update_check_interval_seconds": "GIT_UPDATE_CHECK_INTERVAL_SECONDS",
 }
 
 
@@ -119,6 +120,32 @@ class _Config:
     @property
     def job_retention_days(self) -> int:
         return int(self._data.get("job_retention_days", 7))
+
+    @property
+    def git_update_enabled(self) -> bool:
+        raw = os.environ.get(
+            "GIT_UPDATE_ENABLED", str(self._data.get("git_update_enabled", True))
+        )
+        return raw.lower() == "true"
+
+    @property
+    def git_update_check_interval_seconds(self) -> int:
+        return int(
+            os.environ.get(
+                "GIT_UPDATE_CHECK_INTERVAL_SECONDS",
+                str(self._data.get("git_update_check_interval_seconds", 3600)),
+            )
+        )
+
+    @property
+    def git_update_auto_pull(self) -> bool:
+        return (
+            os.environ.get(
+                "GIT_UPDATE_AUTO_PULL",
+                str(self._data.get("git_update_auto_pull", False)),
+            ).lower()
+            == "true"
+        )
 
     @property
     def auth_enabled(self) -> bool:

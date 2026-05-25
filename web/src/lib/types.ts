@@ -8,6 +8,7 @@ export interface RecipeSummary {
   cluster_only: boolean;
   mods: string[];
   defaults: Record<string, unknown>;
+  is_customized: boolean;
 }
 
 export interface RecipeDetail extends RecipeSummary {
@@ -88,18 +89,6 @@ export interface CacheEntry {
   size_human?: string;
 }
 
-export interface Settings {
-  spark_vllm_path: string;
-  default_container: string;
-  default_gpu_mem_util: number;
-  default_port_range_start: number;
-  default_port_range_end: number;
-  webui_port: number;
-  cluster_enabled: boolean;
-  job_retention_days: number;
-  env_managed?: string[];
-}
-
 export interface SecretsResponse {
   hf_token: string; // masked, e.g. "••••••••abc1" or "" if not set
 }
@@ -113,4 +102,86 @@ export interface ModSummary {
 
 export interface ModDetail extends ModSummary {
   script: string;
+}
+
+export interface RecipeCustomization {
+  command?: string;
+  defaults?: Record<string, unknown>;
+  env?: Record<string, string>;
+  build_args?: string[];
+  container?: string;
+  model?: string;
+  mods?: string[];
+}
+
+export interface CustomRecipeInfo {
+  id: string;
+  name: string;
+  filename: string;
+  filepath: string;
+  created_at: number;
+}
+
+export interface CustomModInfo {
+  id: string;
+  name: string;
+  description: string;
+  filepath: string;
+  has_run_sh: boolean;
+}
+
+export interface ModFileMap {
+  [filepath: string]: string;
+}
+
+export interface RecipeFormRef {
+  save: () => void;
+  cancel: () => void;
+}
+
+export interface GitUpdateStatus {
+  git_available: boolean;
+  is_repo: boolean;
+  local_version: string | null;
+  version_available: boolean;
+  has_uncommitted_changes: boolean;
+  remote_version?: string | null;
+  local_date?: string | null;
+  remote_date?: string | null;
+}
+
+export interface GitUpdateSettings {
+  git_update_enabled: boolean;
+  git_update_check_interval_seconds: number;
+  git_update_auto_pull: boolean;
+}
+
+export interface Settings {
+  spark_vllm_path: string;
+  default_container: string;
+  default_gpu_mem_util: number;
+  default_port_range_start: number;
+  default_port_range_end: number;
+  webui_port: number;
+  cluster_enabled: boolean;
+  job_retention_days: number;
+  git_update_enabled: boolean;
+  git_update_check_interval_seconds: number;
+  git_update_auto_pull: boolean;
+  env_managed?: string[];
+}
+
+export interface GitUpdateAction {
+  success: boolean;
+  error?: string;
+}
+
+export interface GitUpdateCheckResult {
+  available: boolean;
+  local_version: string | null;
+  remote_version: string | null;
+  local_date: string | null;
+  remote_date: string | null;
+  has_uncommitted_changes: boolean;
+  last_fetch_ok?: boolean;
 }

@@ -1,4 +1,4 @@
-import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntry, Settings, SecretsResponse, ModSummary, ModDetail } from "@/lib/types";
+import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntry, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, GitUpdateStatus, GitUpdateAction, GitUpdateCheckResult, CustomRecipeInfo, CustomModInfo, ModFileMap } from "@/lib/types";
 
 const API = "/api";
 
@@ -49,6 +49,19 @@ export async function deleteSecret(key: string): Promise<void> { await json(`/se
 export async function fetchMods(): Promise<ModSummary[]> { return json<ModSummary[]>("/mods"); }
 export async function fetchMod(id: string): Promise<ModDetail> { return json<ModDetail>(`/mods/${encodeURIComponent(id)}`); }
 
+// ── Recipe Customizations ────────────────────────────────────────────────────
+
+export async function fetchRecipeCustomization(recipeId: string): Promise<RecipeCustomization> { return json<RecipeCustomization>(`/recipes/customize/${encodeURIComponent(recipeId)}`); }
+export async function saveRecipeCustomization(recipeId: string, customization: RecipeCustomization): Promise<RecipeCustomization> { return json<RecipeCustomization>(`/recipes/customize/${encodeURIComponent(recipeId)}`, { method: "PUT", body: JSON.stringify(customization) }); }
+export async function deleteRecipeCustomization(recipeId: string): Promise<{ deleted: boolean }> { return json<{ deleted: boolean }>(`/recipes/customize/${encodeURIComponent(recipeId)}`, { method: "DELETE" }); }
+
+// ── Git Update ───────────────────────────────────────────────────────────────
+
+export async function fetchGitUpdateStatus(): Promise<GitUpdateStatus> { return json<GitUpdateStatus>("/git-update/status"); }
+export async function triggerGitUpdateCheck(): Promise<GitUpdateCheckResult> { return json<GitUpdateCheckResult>("/git-update/check", { method: "POST" }); }
+export async function triggerGitFetch(): Promise<GitUpdateAction> { return json<GitUpdateAction>("/git-update/fetch", { method: "POST" }); }
+export async function triggerGitPull(): Promise<GitUpdateAction> { return json<GitUpdateAction>("/git-update/pull", { method: "POST" }); }
+
 // ── SSE ─────────────────────────────────────────────────────────────────────
 
 export function connectLogStream(deploymentId: string, onMessage: (event: string, data: unknown) => void): () => void {
@@ -64,4 +77,61 @@ export function connectMetricsStream(onMessage: (event: string, data: unknown) =
   es.addEventListener("metrics", (e: MessageEvent) => onMessage("metrics", JSON.parse(e.data)));
   es.addEventListener("error", (e: MessageEvent) => onMessage("error", JSON.parse(e.data)));
   return () => es.close();
+}
+
+// ── Custom Files ────────────────────────────────────────────────────────────
+
+export async function listCustomRecipes(): Promise<CustomRecipeInfo[]> {
+  return json<CustomRecipeInfo[]>("/custom-files/recipes/list");
+}
+
+export async function getCustomRecipeContent(recipeId: string): Promise<{ content: string; id: string }> {
+  return json<{ content: string; id: string }>(`/custom-files/recipes/${recipeId}`);
+}
+
+export async function saveCustomRecipe(recipeId: string, yamlContent: string): Promise<{ saved: boolean }> {
+  return json<{ saved: boolean }>(`/custom-files/recipes/${recipeId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content: yamlContent }),
+  });
+}
+
+export async function deleteCustomRecipe(recipeId: string): Promise<{ deleted: boolean }> {
+  return json<{ deleted: boolean }>(`/custom-files/recipes/${recipeId}`, { method: "DELETE" });
+}
+
+export async function uploadCustomRecipe(file: File): Promise<{ id: string; name: string }> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const headers: Record<string, string> = {};
+  const res = await fetch(`${API}/custom-files/recipes/upload`, {
+    headers,
+    body: formData,
+    method: "POST",
+    credentials: "include",
+  });
+  if (res.status === 401) { window.location.href = "/login"; throw new Error("Unauthorized"); }
+  if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+export async function listCustomMods(): Promise<CustomModInfo[]> {
+  return json<CustomModInfo[]>("/custom-files/mods/list");
+}
+
+export async function getCustomModFiles(modId: string): Promise<{ files: ModFileMap; id: string }> {
+  return json<{ files: ModFileMap; id: string }>(`/custom-files/mods/${modId}`);
+}
+
+export async function saveCustomModFiles(modId: string, files: ModFileMap): Promise<{ saved: boolean }> {
+  return json<{ saved: boolean }>(`/custom-files/mods/${modId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(files),
+  });
+}
+
+export async function deleteCustomMod(modId: string): Promise<{ deleted: boolean }> {
+  return json<{ deleted: boolean }>(`/custom-files/mods/${modId}`, { method: "DELETE" });
 }

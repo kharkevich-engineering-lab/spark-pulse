@@ -19,6 +19,9 @@ def _settings_response() -> dict:
         "webui_port": config.webui_port,
         "cluster_enabled": config.cluster_enabled,
         "job_retention_days": config.job_retention_days,
+        "git_update_enabled": config.git_update_enabled,
+        "git_update_check_interval_seconds": config.git_update_check_interval_seconds,
+        "git_update_auto_pull": config.git_update_auto_pull,
         "env_managed": config.env_managed,
     }
 

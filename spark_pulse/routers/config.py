@@ -25,5 +25,6 @@ def get_config():
         "oidc_configured": _oidc_configured(),
         "mcp_enabled": config.mcp_enabled,
         "cluster_enabled": config.cluster_enabled,
+        "git_update_enabled": config.git_update_enabled,
         "simulation_mode": True,  # TODO: derive from spark_pulse.tools.is_simulation()
     }

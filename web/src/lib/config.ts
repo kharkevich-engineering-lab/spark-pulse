@@ -11,6 +11,7 @@ interface AppConfig {
   oidc_configured: boolean;
   mcp_enabled: boolean;
   cluster_enabled: boolean;
+  git_update_enabled: boolean;
   simulation_mode: boolean;
 }
 
@@ -32,6 +33,7 @@ export async function loadConfig(): Promise<AppConfig> {
       oidc_configured: false,
       mcp_enabled: true,
       cluster_enabled: false,
+      git_update_enabled: true,
       simulation_mode: true,
     };
     config = defaults;
@@ -51,6 +53,14 @@ export function getConfig(): AppConfig {
 export function isAuthEnabled(): boolean {
   try {
     return getConfig().auth_enabled && getConfig().oidc_configured;
+  } catch {
+    return false;
+  }
+}
+
+export function isGitUpdateEnabled(): boolean {
+  try {
+    return getConfig().git_update_enabled;
   } catch {
     return false;
   }

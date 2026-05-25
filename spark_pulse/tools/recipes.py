@@ -6,6 +6,52 @@ from typing import Any
 import yaml
 
 from spark_pulse.config import config
+from spark_pulse.tools import custom_recipes
+
+
+def _iter_recipe_files(recipe_dir: Path) -> list[Path]:
+    """Return recipe file candidates, including extensionless symlinks.
+
+    Custom recipe links are created as extensionless entries like
+    `recipes/custom-my-recipe -> .../custom-my-recipe.yaml`.
+    Those are valid recipe files and should be included in discovery.
+    """
+    seen: set[Path] = set()
+    files: list[Path] = []
+
+    if not recipe_dir.is_dir():
+        return files
+
+    for pattern in ("*.yaml", "*.yml"):
+        for path in sorted(recipe_dir.rglob(pattern)):
+            if path not in seen:
+                seen.add(path)
+                files.append(path)
+
+    # Include extensionless symlinks that resolve to YAML files.
+    for path in sorted(recipe_dir.iterdir()):
+        if path.suffix:
+            continue
+        if not path.is_symlink():
+            continue
+        try:
+            target = path.resolve(strict=True)
+        except OSError:
+            continue
+        if not target.is_file() or target.suffix.lower() not in {".yaml", ".yml"}:
+            continue
+        if path not in seen:
+            seen.add(path)
+            files.append(path)
+
+    return files
+
+
+def _recipe_id_from_path(recipe_dir: Path, recipe_file: Path) -> str:
+    rel = recipe_file.relative_to(recipe_dir)
+    if recipe_file.suffix.lower() in {".yaml", ".yml"}:
+        return str(rel.with_suffix(""))
+    return str(rel)
 
 
 def list_recipes(spark_path: Path | None = None) -> list[dict[str, Any]]:
@@ -15,11 +61,11 @@ def list_recipes(spark_path: Path | None = None) -> list[dict[str, Any]]:
     if not recipe_dir.is_dir():
         return []
     recipes = []
-    for yaml_file in sorted(recipe_dir.rglob("*.yaml")):
+    for yaml_file in _iter_recipe_files(recipe_dir):
         try:
             with open(yaml_file) as f:
                 data = yaml.safe_load(f)
-            recipe_id = str(yaml_file.relative_to(recipe_dir).with_suffix(""))
+            recipe_id = _recipe_id_from_path(recipe_dir, yaml_file)
             if data:
                 recipes.append(
                     {
@@ -32,6 +78,7 @@ def list_recipes(spark_path: Path | None = None) -> list[dict[str, Any]]:
                         "cluster_only": bool(data.get("cluster_only", False)),
                         "mods": data.get("mods", []),
                         "defaults": data.get("defaults", {}),
+                        "is_customized": custom_recipes.has_customization(recipe_id),
                     }
                 )
         except (yaml.YAMLError, OSError):
@@ -43,10 +90,12 @@ def get_recipe(recipe_id: str, spark_path: Path | None = None) -> dict[str, Any]
     """Load a specific recipe by relative path id or display name."""
     spark_path = spark_path or Path(config.spark_vllm_path)
     recipe_dir = spark_path / "recipes"
+    direct = recipe_dir / recipe_id
     yaml_file = recipe_dir / f"{recipe_id}.yaml"
-    candidates = [yaml_file] if yaml_file.exists() else []
+    yml_file = recipe_dir / f"{recipe_id}.yml"
+    candidates = [c for c in (direct, yaml_file, yml_file) if c.exists()]
     if not candidates and recipe_id:
-        candidates = sorted(recipe_dir.rglob("*.yaml"))
+        candidates = _iter_recipe_files(recipe_dir)
 
     for candidate in candidates:
         try:
@@ -54,10 +103,10 @@ def get_recipe(recipe_id: str, spark_path: Path | None = None) -> dict[str, Any]
                 data = yaml.safe_load(f)
             if not data:
                 continue
-            candidate_id = str(candidate.relative_to(recipe_dir).with_suffix(""))
+            candidate_id = _recipe_id_from_path(recipe_dir, candidate)
             if candidate_id != recipe_id and data.get("name") != recipe_id:
                 continue
-            return {
+            recipe = {
                 "id": candidate_id,
                 "name": data.get("name", candidate.stem),
                 "model": data.get("model", "unknown"),
@@ -72,6 +121,29 @@ def get_recipe(recipe_id: str, spark_path: Path | None = None) -> dict[str, Any]
                 "cluster_only": bool(data.get("cluster_only", False)),
                 "recipe_version": data.get("recipe_version", "1"),
             }
+
+            # Apply persisted user customizations on top of YAML data.
+            customization = custom_recipes.get_customization(candidate_id)
+            if customization:
+                custom_defaults = customization.get("defaults")
+                if isinstance(custom_defaults, dict):
+                    recipe["defaults"] = {
+                        **recipe.get("defaults", {}),
+                        **custom_defaults,
+                    }
+
+                for field in (
+                    "command",
+                    "env",
+                    "build_args",
+                    "container",
+                    "model",
+                    "mods",
+                ):
+                    if field in customization:
+                        recipe[field] = customization[field]
+
+            return recipe
         except (yaml.YAMLError, OSError):
             continue
     return None
