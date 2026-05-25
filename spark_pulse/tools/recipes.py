@@ -6,6 +6,7 @@ from typing import Any
 import yaml
 
 from spark_pulse.config import config
+from spark_pulse.tools import custom_recipes
 
 
 def list_recipes(spark_path: Path | None = None) -> list[dict[str, Any]]:
@@ -32,6 +33,7 @@ def list_recipes(spark_path: Path | None = None) -> list[dict[str, Any]]:
                         "cluster_only": bool(data.get("cluster_only", False)),
                         "mods": data.get("mods", []),
                         "defaults": data.get("defaults", {}),
+                        "is_customized": custom_recipes.has_customization(recipe_id),
                     }
                 )
         except (yaml.YAMLError, OSError):
@@ -57,7 +59,7 @@ def get_recipe(recipe_id: str, spark_path: Path | None = None) -> dict[str, Any]
             candidate_id = str(candidate.relative_to(recipe_dir).with_suffix(""))
             if candidate_id != recipe_id and data.get("name") != recipe_id:
                 continue
-            return {
+            recipe = {
                 "id": candidate_id,
                 "name": data.get("name", candidate.stem),
                 "model": data.get("model", "unknown"),
@@ -72,6 +74,19 @@ def get_recipe(recipe_id: str, spark_path: Path | None = None) -> dict[str, Any]
                 "cluster_only": bool(data.get("cluster_only", False)),
                 "recipe_version": data.get("recipe_version", "1"),
             }
+
+            # Apply persisted user customizations on top of YAML data.
+            customization = custom_recipes.get_customization(candidate_id)
+            if customization:
+                custom_defaults = customization.get("defaults")
+                if isinstance(custom_defaults, dict):
+                    recipe["defaults"] = {**recipe.get("defaults", {}), **custom_defaults}
+
+                for field in ("command", "env", "build_args", "container", "model", "mods"):
+                    if field in customization:
+                        recipe[field] = customization[field]
+
+            return recipe
         except (yaml.YAMLError, OSError):
             continue
     return None

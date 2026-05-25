@@ -1,6 +1,7 @@
 """FastAPI application factory for Spark Pulse."""
 
 import os
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -17,12 +18,76 @@ from spark_pulse.routers import (
     settings,
     mods,
     config as config_router,
+    git_update as git_update_router,
+    custom_recipes as custom_recipes_router,
+    custom_files as custom_files_router,
 )
 from spark_pulse.auth import AuthMiddleware, router as auth_router
 from spark_pulse.sse import router as sse_router
 from spark_pulse.tools import is_simulation
+from spark_pulse.tools.git_update import check_updates
 from spark_pulse.version import get_version
 from spark_pulse.mcp_http import handle_mcp, MCP_PATH
+
+# ── Background git update scheduler ──────────────────────────────────────────
+
+_git_update_task: threading.Timer | None = None
+_git_update_running = False
+
+
+def _git_update_loop():
+    """Periodic loop that checks for git updates and emits events via SSE."""
+    global _git_update_task, _git_update_running
+
+    # Timer callbacks should do one check, then schedule the next callback.
+    # A while-loop here can enqueue unbounded timers.
+    if not _git_update_running:
+        return
+
+    try:
+        result = check_updates(config.spark_vllm_path)
+        if result.get("available"):
+            print(
+                f"Git update available: {result.get('local_version')} -> {result.get('remote_version')}"
+            )
+            # SSE broadcast happens through the SSE endpoint which clients poll
+            # at their configured interval
+    except Exception as e:
+        print(f"Git update check failed: {e}")
+
+    if not _git_update_running:
+        return
+
+    interval = config.git_update_check_interval_seconds
+    _git_update_task = threading.Timer(interval, _git_update_loop)
+    _git_update_task.daemon = True
+    _git_update_task.start()
+
+
+def _start_git_update_scheduler():
+    """Start the periodic git update check if enabled."""
+    global _git_update_task, _git_update_running
+
+    if not config.git_update_enabled:
+        return
+
+    _git_update_running = True
+    # Start the first check
+    _git_update_task = threading.Timer(60, _git_update_loop)  # First check after 1 min
+    _git_update_task.daemon = True
+    _git_update_task.start()
+    print("Git update scheduler started")
+
+
+def _stop_git_update_scheduler():
+    """Stop the periodic git update check."""
+    global _git_update_task, _git_update_running
+
+    _git_update_running = False
+    if _git_update_task is not None:
+        _git_update_task.cancel()
+        _git_update_task = None
+    print("Git update scheduler stopped")
 
 # ── SPA serving ──────────────────────────────────────────────────────────────
 
@@ -57,7 +122,8 @@ def _serve_spa(filename: str | None = None) -> FileResponse:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup: validate spark-vllm-docker path, log mode. Shutdown: cleanup."""
+    """Startup: validate spark-vllm-docker path, log mode, create symlinks, start scheduler.
+    Shutdown: remove symlinks, cleanup."""
     spark_path = Path(config.spark_vllm_path)
     app.state.spark_path_valid = spark_path.is_dir()
 
@@ -67,7 +133,33 @@ async def lifespan(app: FastAPI):
         f"(spark-vllm-docker: {config.spark_vllm_path})"
     )
 
+    # Create symlinks for custom recipes and mods
+    try:
+        created = custom_files_router.create_symlinks(config.spark_vllm_path)
+        n_recipes = len(created.get("recipes", []))
+        n_mods = len(created.get("mods", []))
+        if n_recipes or n_mods:
+            print(f"Symlinks created: {n_recipes} custom recipes, {n_mods} custom mods")
+    except Exception as e:
+        print(f"Warning: could not create symlinks for custom files: {e}")
+
+    # Start background git update scheduler
+    _start_git_update_scheduler()
+
     yield
+
+    # Cleanup on shutdown
+    _stop_git_update_scheduler()
+
+    # Remove symlinks for custom recipes and mods
+    try:
+        removed = custom_files_router.remove_symlinks(config.spark_vllm_path)
+        n_recipes = removed.get("recipes", 0)
+        n_mods = removed.get("mods", 0)
+        if n_recipes or n_mods:
+            print(f"Symlinks removed: {n_recipes} custom recipes, {n_mods} custom mods")
+    except Exception as e:
+        print(f"Warning: could not remove symlinks for custom files: {e}")
 
 
 def create_app() -> FastAPI:
@@ -91,6 +183,8 @@ def create_app() -> FastAPI:
     app.add_middleware(AuthMiddleware)
 
     # API routes
+    app.include_router(custom_files_router.router)
+    app.include_router(custom_recipes_router.router)
     app.include_router(recipes.router)
     app.include_router(deployments.router)
     app.include_router(memory.router)
@@ -98,6 +192,7 @@ def create_app() -> FastAPI:
     app.include_router(settings.router)
     app.include_router(mods.router)
     app.include_router(config_router.router)
+    app.include_router(git_update_router.router)
     app.include_router(auth_router)
     app.include_router(sse_router)
 

@@ -1,3 +1,5 @@
+import json
+
 from spark_pulse.tools import recipes
 
 
@@ -103,3 +105,41 @@ def test_build_launch_command_replaces_supported_tokens():
     assert "--tensor-parallel-size 4" in cmd
     assert "--gpu-memory-utilization 0.92" in cmd
     assert "--max-model-len 4096" in cmd
+
+
+def test_get_recipe_applies_saved_customization(tmp_path, monkeypatch):
+    recipe_dir = tmp_path / "recipes"
+    recipe_dir.mkdir()
+    (recipe_dir / "qwen.yaml").write_text(
+        """
+name: Qwen
+model: Qwen/Qwen2.5
+container: vllm-node
+command: vllm serve {model} --port {port}
+defaults:
+  port: 9001
+""".strip(),
+        encoding="utf-8",
+    )
+
+    custom_path = tmp_path / "custom-recipes.json"
+    custom_path.write_text(
+        json.dumps(
+            {
+                "qwen": {
+                    "command": "custom serve {model}",
+                    "defaults": {"port": 9010},
+                    "mods": ["my-mod"],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(recipes.custom_recipes, "_CUSTOM_PATH", custom_path)
+
+    out = recipes.get_recipe("qwen", spark_path=tmp_path)
+
+    assert out is not None
+    assert out["command"] == "custom serve {model}"
+    assert out["defaults"]["port"] == 9010
+    assert out["mods"] == ["my-mod"]

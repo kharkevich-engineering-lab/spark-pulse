@@ -9,6 +9,7 @@ import MCPPage from "@/pages/MCPPage";
 import SettingsPage from "@/pages/SettingsPage";
 import ModsPage from "@/pages/ModsPage";
 import LoginPage from "@/pages/LoginPage";
+import CustomRecipesPage from "@/pages/CustomRecipesPage";
 
 // Inner component that conditionally renders Layout based on route
 function AppRoutes() {
@@ -32,6 +33,7 @@ function AppRoutes() {
             <Route path="/cache" element={<CachePage />} />
             <Route path="/mcp" element={<MCPPage />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/custom-recipes" element={<CustomRecipesPage />} />
           </Routes>
         </Layout>
       )}

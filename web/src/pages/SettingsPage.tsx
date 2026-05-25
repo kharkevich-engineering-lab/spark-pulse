@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
-import { fetchSettings, updateSettings, fetchSecrets, saveSecrets, deleteSecret } from "@/lib/api";
+import { fetchSettings, updateSettings, fetchSecrets, saveSecrets, deleteSecret, fetchGitUpdateStatus, triggerGitFetch, triggerGitPull } from "@/lib/api";
 import { useQuery } from "@/hooks/useQuery";
-import { Settings as SettingsIcon, Loader2, AlertCircle, Check, KeyRound, Eye, EyeOff, Trash2, Lock, Server, Clock } from "lucide-react";
+import { Settings as SettingsIcon, Loader2, AlertCircle, Check, KeyRound, Eye, EyeOff, Trash2, Lock, Server, Clock, GitBranch, GitCommit, ArrowDownUp } from "lucide-react";
 import { AlertModal } from "@/components/Modal";
 import { setRefresh } from "@/lib/refresh";
 
@@ -26,6 +26,11 @@ export default function SettingsPage() {
   const [showToken, setShowToken] = useState(false);
   const [savingToken, setSavingToken] = useState(false);
   const [savedToken, setSavedToken] = useState(false);
+
+  // Git update state
+  const { data: gitStatus, refetch: refetchGitStatus, loading: gitLoading } = useQuery(fetchGitUpdateStatus);
+  const [gitActionLoading, setGitActionLoading] = useState<string | null>(null);
+  const [gitError, setGitError] = useState<string | null>(null);
 
   const isDirty = settings != null && Object.keys(form).some(
     (k) => JSON.stringify(form[k]) !== JSON.stringify((settings as unknown as Record<string, unknown>)[k])
@@ -70,6 +75,32 @@ export default function SettingsPage() {
       refetchSecrets();
     } catch (e) {
       setAlertModal({ title: "Error", message: e instanceof Error ? e.message : "Failed to clear token" });
+    }
+  };
+
+  const handleGitFetch = async () => {
+    setGitError(null);
+    setGitActionLoading("fetch");
+    try {
+      await triggerGitFetch();
+      await refetchGitStatus();
+    } catch (e) {
+      setGitError(e instanceof Error ? e.message : "Fetch failed");
+    } finally {
+      setGitActionLoading(null);
+    }
+  };
+
+  const handleGitPull = async () => {
+    setGitError(null);
+    setGitActionLoading("pull");
+    try {
+      await triggerGitPull();
+      await refetchGitStatus();
+    } catch (e) {
+      setGitError(e instanceof Error ? e.message : "Pull failed");
+    } finally {
+      setGitActionLoading(null);
     }
   };
 
@@ -160,6 +191,122 @@ export default function SettingsPage() {
                 <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${form.cluster_enabled ? "translate-x-5" : "translate-x-0"}`} />
               </button>
             </div>
+          </div>
+
+          {/* Git Auto-Update */}
+          <div className="rounded-xl bg-surface border border-border p-5 space-y-4">
+            <div className="flex items-center gap-2 pb-3 border-b border-border">
+              <GitBranch size={16} className="text-primary" />
+              <h3 className="font-semibold">Git Auto-Update</h3>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium">Enable auto-update checks</p>
+                <p className="text-xs text-text-muted mt-0.5">Periodically check for new commits in spark-vllm-docker.</p>
+              </div>
+              <button type="button" onClick={() => setForm({ ...form, git_update_enabled: !form.git_update_enabled })} className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${form.git_update_enabled ? "bg-primary" : "bg-border"}`}>
+                <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${form.git_update_enabled ? "translate-x-5" : "translate-x-0"}`} />
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <label className="text-sm font-medium whitespace-nowrap">Check interval</label>
+              <input
+                type="number"
+                min="60"
+                max="86400"
+                step="60"
+                value={Number(form.git_update_check_interval_seconds ?? 3600)}
+                onChange={(e) => setForm({ ...form, git_update_check_interval_seconds: parseInt(e.target.value) || 3600 })}
+                className="w-24 px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm"
+              />
+              <span className="text-sm text-text-muted">seconds</span>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium">Auto-pull</p>
+                <p className="text-xs text-text-muted mt-0.5">Automatically pull updates when available (instead of fetch only).</p>
+              </div>
+              <button type="button" onClick={() => setForm({ ...form, git_update_auto_pull: !form.git_update_auto_pull })} className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${form.git_update_auto_pull ? "bg-primary" : "bg-border"}`}>
+                <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${form.git_update_auto_pull ? "translate-x-5" : "translate-x-0"}`} />
+              </button>
+            </div>
+
+            {/* Git status display */}
+            {gitStatus && !gitLoading && (
+              <div className="pt-3 border-t border-border space-y-2">
+                <div className="flex items-center gap-2 text-xs">
+                  {gitStatus.git_available ? (
+                    gitStatus.is_repo ? (
+                      <>
+                        <GitCommit size={12} className={gitStatus.version_available ? "text-primary" : "text-text-muted"} />
+                        <span className="text-text-muted">
+                          Local: <code className="px-1 rounded bg-bg font-mono">{gitStatus.local_version}</code>
+                          {gitStatus.version_available && (
+                            <>
+                              <ArrowDownUp size={10} className="mx-0.5" />
+                              Remote: <code className="px-1 rounded bg-bg font-mono">{gitStatus.remote_version}</code>
+                              <span className="text-primary ml-1 font-medium">update available</span>
+                            </>
+                          )}
+                          {!gitStatus.version_available && (
+                            <span className="text-success ml-1 font-medium">up to date</span>
+                          )}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <GitCommit size={12} className="text-text-muted" />
+                        <span className="text-text-muted">Not a git repository</span>
+                      </>
+                    )
+                  ) : (
+                    <>
+                      <AlertCircle size={12} className="text-warning" />
+                      <span className="text-warning">Git not installed</span>
+                    </>
+                  )}
+                </div>
+
+                {gitError && (
+                  <div className="text-xs text-danger flex items-center gap-1.5">
+                    <AlertCircle size={12} />
+                    <span>{gitError}</span>
+                  </div>
+                )}
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleGitFetch}
+                    disabled={gitActionLoading === "fetch"}
+                    className="px-3 py-1.5 rounded-lg border border-border hover:border-primary/50 text-xs font-medium transition-colors disabled:opacity-50 flex items-center gap-1"
+                  >
+                    {gitActionLoading === "fetch" ? (
+                      <Loader2 size={12} className="animate-spin" />
+                    ) : (
+                      <GitCommit size={12} />
+                    )}
+                    Fetch
+                  </button>
+                  {gitStatus.version_available && (
+                    <button
+                      onClick={handleGitPull}
+                      disabled={gitActionLoading === "pull"}
+                      className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-white text-xs font-medium transition-colors disabled:opacity-50 flex items-center gap-1"
+                    >
+                      {gitActionLoading === "pull" ? (
+                        <Loader2 size={12} className="animate-spin" />
+                      ) : (
+                        <ArrowDownUp size={12} />
+                      )}
+                      Pull
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Secrets */}

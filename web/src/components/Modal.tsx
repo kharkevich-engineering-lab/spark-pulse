@@ -100,14 +100,28 @@ export function ConfirmModal({ open, onClose, onConfirm, title, message, confirm
     }
   };
 
+  // Enter confirms, ESC cancels (handled by BaseModal)
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Enter" && !confirming) {
+        e.preventDefault();
+        handleConfirm();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [open, confirming, onConfirm]);
+
   return (
-    <BaseModal
-      open={open}
-      onClose={() => !confirming && onClose()}
-      title={title}
-      icon={<AlertTriangle size={20} className={confirmVariant === "danger" ? "text-warning" : "text-primary"} />}
-      actions={
-        <>
+    <div data-confirm-modal="true">
+      <BaseModal
+        open={open}
+        onClose={() => !confirming && onClose()}
+        title={title}
+        icon={<AlertTriangle size={20} className={confirmVariant === "danger" ? "text-warning" : "text-primary"} />}
+        actions={
+          <>
           <button
             onClick={onClose}
             disabled={confirming}
@@ -131,6 +145,7 @@ export function ConfirmModal({ open, onClose, onConfirm, title, message, confirm
     >
       <p className="text-text-muted">{message}</p>
     </BaseModal>
+    </div>
   );
 }
 
