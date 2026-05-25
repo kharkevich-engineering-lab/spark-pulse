@@ -30,7 +30,6 @@ except ImportError:
 from spark_pulse.app import create_app
 from fastapi.testclient import TestClient
 
-
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
 
@@ -66,8 +65,10 @@ def mock_git_available():
 def mock_git_repo(git_repo_path):
     """Mock the git repo check to return the test repo."""
     with patch("spark_pulse.tools.git_update.is_git_repo") as mock:
+
         def side_effect(path):
             return path == git_repo_path
+
         mock.side_effect = side_effect
         yield git_repo_path
 
@@ -147,6 +148,7 @@ def e2e_server(e2e_app):
 
     # Wait for server to be ready
     import time
+
     base_url = f"http://127.0.0.1:{config.port}"
     for _ in range(30):
         try:

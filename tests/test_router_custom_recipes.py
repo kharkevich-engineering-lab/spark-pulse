@@ -22,6 +22,7 @@ def app_client():
     """Create a test FastAPI app and return a TestClient."""
     app = create_app()
     from fastapi.testclient import TestClient
+
     return TestClient(app, raise_server_exceptions=False)
 
 
@@ -35,6 +36,7 @@ def custom_path(tmp_path):
 def mock_custom_path(custom_path):
     """Patch the custom recipes path to use a temp file."""
     import spark_pulse.tools.custom_recipes as cr
+
     original = cr._CUSTOM_PATH
     cr._CUSTOM_PATH = custom_path
     yield custom_path
@@ -145,11 +147,13 @@ class TestRecipeSummaryIncludesCustomized:
         )
 
         import spark_pulse.config as config_mod
+
         original_path = config_mod.config._data.get("spark_vllm_path")
         config_mod.config._data["spark_vllm_path"] = str(spark_path)
 
         # Patch custom path to avoid interference
         import spark_pulse.tools.custom_recipes as cr
+
         original_custom = cr._CUSTOM_PATH
         cr._CUSTOM_PATH = custom_path
 

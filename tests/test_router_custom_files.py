@@ -28,6 +28,7 @@ def app_client(tmp_path, monkeypatch):
     (tmp_path / "cm").mkdir()
     app = create_app()
     from fastapi.testclient import TestClient
+
     return TestClient(app, raise_server_exceptions=False)
 
 
@@ -135,7 +136,9 @@ class TestListCustomMods:
     def test_returns_mods(self, app_client, tmp_path, monkeypatch):
         """Should return list of custom mods."""
         mpath = (tmp_path / "cm" / "test-mod").mkdir(parents=True)
-        (tmp_path / "cm" / "test-mod" / "run.sh").write_text("#!/bin/bash", encoding="utf-8")
+        (tmp_path / "cm" / "test-mod" / "run.sh").write_text(
+            "#!/bin/bash", encoding="utf-8"
+        )
 
         resp = app_client.get("/api/custom-files/mods/list")
         assert resp.status_code == 200

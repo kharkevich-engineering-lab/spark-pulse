@@ -136,7 +136,9 @@ class TestRemoveSymlinks:
         recipes_dir, mods_dir = _make_temp_paths(monkeypatch, tmp_path)
 
         recipes_dir / "remove-recipe.yaml"
-        recipes_dir.joinpath("remove-recipe.yaml").write_text("name: Remove\n", encoding="utf-8")
+        recipes_dir.joinpath("remove-recipe.yaml").write_text(
+            "name: Remove\n", encoding="utf-8"
+        )
         mpath = mods_dir / "remove-mod"
         mpath.mkdir()
         (mpath / "run.sh").write_text("#!/bin/bash", encoding="utf-8")
@@ -218,8 +220,12 @@ class TestDiscoverCustomRecipes:
         """Should ignore files starting with dot."""
         recipes_dir, _ = _make_temp_paths(monkeypatch, tmp_path)
 
-        recipes_dir.joinpath(".hidden.yaml").write_text("name: Hidden\n", encoding="utf-8")
-        recipes_dir.joinpath("visible.yaml").write_text("name: Visible\n", encoding="utf-8")
+        recipes_dir.joinpath(".hidden.yaml").write_text(
+            "name: Hidden\n", encoding="utf-8"
+        )
+        recipes_dir.joinpath("visible.yaml").write_text(
+            "name: Visible\n", encoding="utf-8"
+        )
 
         recipes = custom_files.discover_custom_recipes()
         ids = [r["id"] for r in recipes]
@@ -310,7 +316,9 @@ class TestRecipeContent:
     def test_save_valid_yaml(self, tmp_path, monkeypatch):
         recipes_dir, _ = _make_temp_paths(monkeypatch, tmp_path)
 
-        result = custom_files.save_custom_recipe("custom/new-recipe", "name: New\nmodel: foo")
+        result = custom_files.save_custom_recipe(
+            "custom/new-recipe", "name: New\nmodel: foo"
+        )
         assert result is True
         assert (recipes_dir / "new-recipe.yaml").exists()
 
@@ -362,10 +370,13 @@ class TestModContent:
     def test_save_mod_files(self, tmp_path, monkeypatch):
         _, mods_dir = _make_temp_paths(monkeypatch, tmp_path)
 
-        result = custom_files.save_custom_mod("custom/save-mod", {
-            "run.sh": "#!/bin/bash\necho hello",
-            "template.jinja": "{{ world }}",
-        })
+        result = custom_files.save_custom_mod(
+            "custom/save-mod",
+            {
+                "run.sh": "#!/bin/bash\necho hello",
+                "template.jinja": "{{ world }}",
+            },
+        )
         assert result is True
         assert (mods_dir / "save-mod" / "run.sh").exists()
         assert (mods_dir / "save-mod" / "template.jinja").exists()

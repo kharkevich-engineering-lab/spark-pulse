@@ -34,9 +34,7 @@ class TestGitUpdateStatus:
 
     def test_status_returns_git_available_false(self, app_client, tmp_path):
         """When git is not available, status should reflect it."""
-        with patch(
-            "spark_pulse.tools.git_update.is_git_available", return_value=False
-        ):
+        with patch("spark_pulse.tools.git_update.is_git_available", return_value=False):
             resp = app_client.get("/api/git-update/status")
 
         assert resp.status_code == 200
@@ -58,7 +56,9 @@ class TestGitUpdateStatus:
             "remote_date": "2025-01-15T10:30:00+00:00",
         }
 
-        with patch("spark_pulse.routers.git_update.get_git_status", return_value=mock_status):
+        with patch(
+            "spark_pulse.routers.git_update.get_git_status", return_value=mock_status
+        ):
             resp = app_client.get("/api/git-update/status")
 
         assert resp.status_code == 200
@@ -79,7 +79,9 @@ class TestGitUpdateStatus:
             "remote_version": "def5678",
         }
 
-        with patch("spark_pulse.routers.git_update.get_git_status", return_value=mock_status):
+        with patch(
+            "spark_pulse.routers.git_update.get_git_status", return_value=mock_status
+        ):
             resp = app_client.get("/api/git-update/status")
 
         assert resp.status_code == 200

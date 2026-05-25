@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import threading
 import tempfile
 from pathlib import Path
@@ -91,20 +92,32 @@ def e2e_server(e2e_app):
     """Run a test server for e2e tests."""
     from uvicorn import Config, Server
 
-    config = Config(app=e2e_app, host="127.0.0.1", port=0, log_level="error")
+    # Pick a concrete free port. Using port=0 with Uvicorn doesn't update
+    # Config.port, so clients would otherwise try to connect to port 0.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+
+    config = Config(app=e2e_app, host="127.0.0.1", port=port, log_level="error")
     server = Server(config)
 
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
 
     import time
-    base_url = f"http://127.0.0.1:{config.port}"
+    base_url = f"http://127.0.0.1:{port}"
+    last_error: Exception | None = None
     for _ in range(30):
         try:
             httpx.get(f"{base_url}/health", timeout=1)
             break
-        except (httpx.ConnectError, httpx.ReadTimeout):
+        except (httpx.ConnectError, httpx.ReadTimeout) as exc:
+            last_error = exc
             time.sleep(0.2)
+    else:
+        server.should_exit = True
+        thread.join(timeout=5)
+        raise RuntimeError(f"Test server did not start: {last_error}")
 
     yield base_url
 

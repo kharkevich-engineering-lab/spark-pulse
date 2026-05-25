@@ -10,7 +10,6 @@ import pytest
 
 from spark_pulse.tools import custom_recipes
 
-
 # ── Test: load_customizations ────────────────────────────────────────────────
 
 
@@ -130,7 +129,9 @@ class TestSaveCustomization:
         fpath = tmp_path / "custom.json"
 
         with patch.object(custom_recipes, "_CUSTOM_PATH", fpath):
-            result = custom_recipes.save_customization("new-recipe", {"command": "echo hi"})
+            result = custom_recipes.save_customization(
+                "new-recipe", {"command": "echo hi"}
+            )
 
         assert result["command"] == "echo hi"
 
@@ -145,7 +146,9 @@ class TestSaveCustomization:
         fpath.write_text(json.dumps(existing), encoding="utf-8")
 
         with patch.object(custom_recipes, "_CUSTOM_PATH", fpath):
-            result = custom_recipes.save_customization("new-recipe", {"model": "new-model"})
+            result = custom_recipes.save_customization(
+                "new-recipe", {"model": "new-model"}
+            )
 
         # Result is the merged dict for new-recipe
         assert result["model"] == "new-model"
@@ -158,11 +161,14 @@ class TestSaveCustomization:
         """Should only store fields in CUSTOMIZABLE_FIELDS."""
         fpath = tmp_path / "custom.json"
         with patch.object(custom_recipes, "_CUSTOM_PATH", fpath):
-            result = custom_recipes.save_customization("r", {
-                "command": "new-cmd",
-                "description": "ignored",  # not in CUSTOMIZABLE_FIELDS
-                "defaults": {"port": 8000},
-            })
+            result = custom_recipes.save_customization(
+                "r",
+                {
+                    "command": "new-cmd",
+                    "description": "ignored",  # not in CUSTOMIZABLE_FIELDS
+                    "defaults": {"port": 8000},
+                },
+            )
 
         assert "command" in result
         assert "description" not in result
@@ -252,21 +258,37 @@ class TestGetCustomizedRecipe:
 
     def test_no_customization_returns_original(self, tmp_path):
         """When no customization exists, should return original recipe."""
-        fake_recipe = {"id": "r", "name": "Test", "model": "model-x", "command": "cmd", "defaults": {}}
-        with patch("spark_pulse.tools.custom_recipes.get_customization", return_value=None):
-            with patch("spark_pulse.tools.recipes.get_recipe", return_value=fake_recipe):
+        fake_recipe = {
+            "id": "r",
+            "name": "Test",
+            "model": "model-x",
+            "command": "cmd",
+            "defaults": {},
+        }
+        with patch(
+            "spark_pulse.tools.custom_recipes.get_customization", return_value=None
+        ):
+            with patch(
+                "spark_pulse.tools.recipes.get_recipe", return_value=fake_recipe
+            ):
                 result = custom_recipes.get_customized_recipe("r", spark_path=tmp_path)
                 assert result == fake_recipe
 
     def test_merges_custom_defaults(self, tmp_path):
         """User defaults should merge with original defaults (user wins)."""
         original = {
-            "id": "r", "name": "Test", "model": "m", "command": "cmd",
+            "id": "r",
+            "name": "Test",
+            "model": "m",
+            "command": "cmd",
             "defaults": {"port": 8000, "gpu_mem_util": 0.8},
         }
         customization = {"defaults": {"port": 9999, "extra": 42}}
 
-        with patch("spark_pulse.tools.custom_recipes.get_customization", return_value=customization):
+        with patch(
+            "spark_pulse.tools.custom_recipes.get_customization",
+            return_value=customization,
+        ):
             with patch("spark_pulse.tools.recipes.get_recipe", return_value=original):
                 result = custom_recipes.get_customized_recipe("r")
 
@@ -277,9 +299,13 @@ class TestGetCustomizedRecipe:
     def test_overrides_fields(self, tmp_path):
         """Non-default fields should be directly overridden."""
         original = {
-            "id": "r", "name": "Test", "model": "original-model",
-            "command": "vllm serve {model}", "env": {"X": "1"},
-            "build_args": ["--arg"], "container": "vllm-node",
+            "id": "r",
+            "name": "Test",
+            "model": "original-model",
+            "command": "vllm serve {model}",
+            "env": {"X": "1"},
+            "build_args": ["--arg"],
+            "container": "vllm-node",
             "defaults": {},
         }
         customization = {
@@ -290,7 +316,10 @@ class TestGetCustomizedRecipe:
             "container": "custom-container",
         }
 
-        with patch("spark_pulse.tools.custom_recipes.get_customization", return_value=customization):
+        with patch(
+            "spark_pulse.tools.custom_recipes.get_customization",
+            return_value=customization,
+        ):
             with patch("spark_pulse.tools.recipes.get_recipe", return_value=original):
                 result = custom_recipes.get_customized_recipe("r")
 
@@ -302,7 +331,9 @@ class TestGetCustomizedRecipe:
 
     def test_returns_none_for_missing_recipe(self, tmp_path):
         """Should return None when original recipe doesn't exist."""
-        with patch("spark_pulse.tools.custom_recipes.get_customization", return_value={}):
+        with patch(
+            "spark_pulse.tools.custom_recipes.get_customization", return_value={}
+        ):
             with patch("spark_pulse.tools.recipes.get_recipe", return_value=None):
                 result = custom_recipes.get_customized_recipe("missing")
                 assert result is None

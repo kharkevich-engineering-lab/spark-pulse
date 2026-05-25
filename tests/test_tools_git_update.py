@@ -21,7 +21,6 @@ from spark_pulse.tools.git_update import (
     pull,
 )
 
-
 # ── Test: is_git_available ───────────────────────────────────────────────────
 
 
@@ -38,16 +37,12 @@ class TestIsGitAvailable:
 
     def test_git_not_installed(self):
         """When git is not installed, should return False."""
-        with patch(
-            "subprocess.run", side_effect=FileNotFoundError("git not found")
-        ):
+        with patch("subprocess.run", side_effect=FileNotFoundError("git not found")):
             assert is_git_available("/tmp/test") is False
 
     def test_git_timeout(self):
         """When git command times out, should return False."""
-        with patch(
-            "subprocess.run", side_effect=subprocess.TimeoutExpired("git", 10)
-        ):
+        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("git", 10)):
             assert is_git_available("/tmp/test") is False
 
     def test_git_os_error(self):
@@ -69,9 +64,7 @@ class TestIsGitRepo:
         (repo_dir / ".git").mkdir()
 
         with patch("spark_pulse.tools.git_update._run_git") as mock_run:
-            mock_run.return_value = MagicMock(
-                returncode=0, stdout="true"
-            )
+            mock_run.return_value = MagicMock(returncode=0, stdout="true")
             assert is_git_repo(str(repo_dir)) is True
             mock_run.assert_called_once_with(
                 str(repo_dir), "rev-parse", "--is-inside-work-tree"
@@ -80,9 +73,7 @@ class TestIsGitRepo:
     def test_not_a_git_repo(self, tmp_path):
         """When path is not a git repo, should return False."""
         with patch("spark_pulse.tools.git_update._run_git") as mock_run:
-            mock_run.return_value = MagicMock(
-                returncode=1, stdout="false"
-            )
+            mock_run.return_value = MagicMock(returncode=1, stdout="false")
             assert is_git_repo(str(tmp_path)) is False
 
     def test_nonexistent_path(self, tmp_path):
@@ -242,7 +233,9 @@ class TestPull:
         with patch("spark_pulse.tools.git_update.is_git_repo", return_value=True):
             with patch(
                 "spark_pulse.tools.git_update._run_git",
-                return_value=MagicMock(returncode=0, stdout="Already up to date.", stderr=""),
+                return_value=MagicMock(
+                    returncode=0, stdout="Already up to date.", stderr=""
+                ),
             ):
                 result = pull(str(tmp_path))
                 assert result["success"] is True
