@@ -21,7 +21,9 @@ _SYMLINK_MODS_PREFIX = "custom-"
 
 def _is_safe_path_part(part: str) -> bool:
     """Allow only plain relative path parts (no traversal, no separators)."""
-    return bool(part) and part not in {".", ".."} and "/" not in part and "\\" not in part
+    return (
+        bool(part) and part not in {".", ".."} and "/" not in part and "\\" not in part
+    )
 
 
 def _is_safe_rel_path(rel_path: str) -> bool:
@@ -45,13 +47,10 @@ def _is_symlink_created_by_us(link: Path) -> bool:
     try:
         target = link.resolve()
         return (
-            target.is_dir() and _CUSTOM_RECIPES_DIR in target.parents
-        ) or (
-            target.is_file() and _CUSTOM_RECIPES_DIR in target.parents
-        ) or (
-            target.is_dir() and _CUSTOM_MODS_DIR in target.parents
-        ) or (
-            target.is_file() and _CUSTOM_MODS_DIR in target.parents
+            (target.is_dir() and _CUSTOM_RECIPES_DIR in target.parents)
+            or (target.is_file() and _CUSTOM_RECIPES_DIR in target.parents)
+            or (target.is_dir() and _CUSTOM_MODS_DIR in target.parents)
+            or (target.is_file() and _CUSTOM_MODS_DIR in target.parents)
         )
     except OSError:
         return False
@@ -329,24 +328,29 @@ def discover_custom_recipes() -> list[dict]:
         if item.suffix in (".yaml", ".yml"):
             try:
                 import yaml
+
                 with open(item) as f:
                     data = yaml.safe_load(f) or {}
                 name = data.get("name", item.stem)
-                recipes.append({
-                    "id": f"custom/{item.stem}",
-                    "name": name,
-                    "filename": item.name,
-                    "filepath": str(item),
-                    "created_at": item.stat().st_ctime,
-                })
+                recipes.append(
+                    {
+                        "id": f"custom/{item.stem}",
+                        "name": name,
+                        "filename": item.name,
+                        "filepath": str(item),
+                        "created_at": item.stat().st_ctime,
+                    }
+                )
             except (yaml.YAMLError, OSError):
-                recipes.append({
-                    "id": f"custom/{item.stem}",
-                    "name": item.stem,
-                    "filename": item.name,
-                    "filepath": str(item),
-                    "created_at": item.stat().st_ctime,
-                })
+                recipes.append(
+                    {
+                        "id": f"custom/{item.stem}",
+                        "name": item.stem,
+                        "filename": item.name,
+                        "filepath": str(item),
+                        "created_at": item.stat().st_ctime,
+                    }
+                )
 
         # For directories (subdirectory recipes)
         elif item.is_dir():
@@ -359,13 +363,15 @@ def discover_custom_recipes() -> list[dict]:
                         data = yaml.safe_load(f) or {}
                     name = data.get("name", item.stem)
                     rel_id = f"custom/{item.name}/{yaml_file.stem}"
-                    recipes.append({
-                        "id": rel_id,
-                        "name": name,
-                        "filename": yaml_file.name,
-                        "filepath": str(yaml_file),
-                        "created_at": item.stat().st_ctime,
-                    })
+                    recipes.append(
+                        {
+                            "id": rel_id,
+                            "name": name,
+                            "filename": yaml_file.name,
+                            "filepath": str(yaml_file),
+                            "created_at": item.stat().st_ctime,
+                        }
+                    )
                 except OSError:
                     pass
 
@@ -419,13 +425,15 @@ def discover_custom_mods() -> list[dict]:
             except OSError:
                 pass
 
-        mods.append({
-            "id": f"custom/{item.name}",
-            "name": item.name,
-            "description": description,
-            "filepath": str(item),
-            "has_run_sh": has_run_sh,
-        })
+        mods.append(
+            {
+                "id": f"custom/{item.name}",
+                "name": item.name,
+                "description": description,
+                "filepath": str(item),
+                "has_run_sh": has_run_sh,
+            }
+        )
 
     return mods
 
@@ -490,6 +498,7 @@ def save_custom_recipe(recipe_id: str, yaml_content: str) -> bool:
 
     # Validate YAML
     import yaml
+
     try:
         yaml.safe_load(yaml_content)
     except yaml.YAMLError:
@@ -549,6 +558,7 @@ def upload_custom_recipe(file_content: bytes, filename: str) -> dict:
 
     # Validate YAML
     import yaml
+
     try:
         data = yaml.safe_load(file_content.decode("utf-8"))
         if not isinstance(data, dict):

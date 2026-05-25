@@ -73,8 +73,7 @@ const RecipeForm = forwardRef<RecipeFormRef, {
     setRawYaml(`---\n${serialize(fields)}`);
   };
 
-  // Sync form state → rawYaml whenever a form field changes (but not during render)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // Sync form state -> rawYaml whenever a form field changes (but not during render)
   useEffect(() => { updateRawYaml(); }, [name, model, container, command, editDefaults, envEntries, buildArgs, modsList]);
 
   const watchFormChanges = () => {

@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from spark_pulse.tools.git_update import (
     check_updates,

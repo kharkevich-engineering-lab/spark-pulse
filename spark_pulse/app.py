@@ -89,6 +89,7 @@ def _stop_git_update_scheduler():
         _git_update_task = None
     print("Git update scheduler stopped")
 
+
 # ── SPA serving ──────────────────────────────────────────────────────────────
 
 _UI_DIR = Path(__file__).resolve().parent / "ui"

@@ -8,13 +8,11 @@ Usage:
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from spark_pulse.app import create_app
-from spark_pulse.config import config
-from spark_pulse.tools.git_update import get_git_status
 
 
 @pytest.fixture

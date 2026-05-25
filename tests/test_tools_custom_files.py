@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import tempfile
-from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -181,7 +177,7 @@ class TestRemoveSymlinks:
         link = spark / "recipes" / "custom-external"
         link.symlink_to(external)
 
-        removed = custom_files.remove_symlinks(str(spark))
+        custom_files.remove_symlinks(str(spark))
         # Should not remove external symlink (it points outside custom dir)
         assert link.exists()
 

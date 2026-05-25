@@ -12,13 +12,9 @@ Usage:
 
 from __future__ import annotations
 
-import json
 import os
 import socket
 import threading
-import tempfile
-from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 import httpx
@@ -75,6 +71,7 @@ def e2e_config(spark_vllm_dir, custom_recipe_file):
 
     # Patch custom recipes path
     import spark_pulse.tools.custom_recipes as cr
+
     cr._CUSTOM_PATH = custom_recipe_file
 
     return config
@@ -84,6 +81,7 @@ def e2e_config(spark_vllm_dir, custom_recipe_file):
 def e2e_app(e2e_config):
     """Create test app for e2e tests."""
     from spark_pulse.app import create_app
+
     return create_app()
 
 
@@ -105,6 +103,7 @@ def e2e_server(e2e_app):
     thread.start()
 
     import time
+
     base_url = f"http://127.0.0.1:{port}"
     last_error: Exception | None = None
     for _ in range(30):

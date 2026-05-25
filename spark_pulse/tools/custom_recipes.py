@@ -82,7 +82,8 @@ def save_customization(recipe_id: str, customization: dict) -> dict:
     existing = customizations.get(recipe_id, {})
     # Store only customizable fields, merged with existing
     filtered = {
-        k: v for k, v in customization.items()
+        k: v
+        for k, v in customization.items()
         if k in CUSTOMIZABLE_FIELDS and v is not None
     }
     merged = {**existing, **filtered}
@@ -112,7 +113,9 @@ def has_customization(recipe_id: str) -> bool:
     return get_customization(recipe_id) is not None
 
 
-def get_customized_recipe(recipe_id: str, spark_path: Path | None = None) -> dict | None:
+def get_customized_recipe(
+    recipe_id: str, spark_path: Path | None = None
+) -> dict | None:
     """Load a recipe and merge any user customizations on top.
 
     This is the main entry point — same return shape as get_recipe()

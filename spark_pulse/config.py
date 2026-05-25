@@ -141,7 +141,8 @@ class _Config:
     def git_update_auto_pull(self) -> bool:
         return (
             os.environ.get(
-                "GIT_UPDATE_AUTO_PULL", str(self._data.get("git_update_auto_pull", False))
+                "GIT_UPDATE_AUTO_PULL",
+                str(self._data.get("git_update_auto_pull", False)),
             ).lower()
             == "true"
         )

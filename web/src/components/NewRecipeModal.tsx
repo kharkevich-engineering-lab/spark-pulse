@@ -62,7 +62,7 @@ export default function NewRecipeModal({
       setRecipeName((nameMatch?.[1].trim()) || file.name.replace(/\.(yaml|yml)$/, ""));
       setContent(text);
       setStep("preview");
-    } catch (e) {
+    } catch {
       onError("Failed to read file");
     }
   }, [onError]);

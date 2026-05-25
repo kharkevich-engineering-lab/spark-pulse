@@ -67,7 +67,7 @@ export default function CustomRecipesPage() {
       const { content } = await getCustomRecipeContent(recipe.id);
       setRecipeContent(content);
       setShowRecipeModal(true);
-    } catch (e) {
+    } catch {
       setAlertModal({ title: "Error", message: "Failed to load recipe" });
     }
   };
@@ -94,7 +94,7 @@ export default function CustomRecipesPage() {
       const { files } = await getCustomModFiles(mod.id);
       setModFiles(files);
       setShowModModal(true);
-    } catch (e) {
+    } catch {
       setAlertModal({ title: "Error", message: "Failed to load mod" });
     }
   };

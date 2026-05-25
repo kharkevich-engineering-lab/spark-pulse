@@ -80,9 +80,19 @@ def get_recipe(recipe_id: str, spark_path: Path | None = None) -> dict[str, Any]
             if customization:
                 custom_defaults = customization.get("defaults")
                 if isinstance(custom_defaults, dict):
-                    recipe["defaults"] = {**recipe.get("defaults", {}), **custom_defaults}
+                    recipe["defaults"] = {
+                        **recipe.get("defaults", {}),
+                        **custom_defaults,
+                    }
 
-                for field in ("command", "env", "build_args", "container", "model", "mods"):
+                for field in (
+                    "command",
+                    "env",
+                    "build_args",
+                    "container",
+                    "model",
+                    "mods",
+                ):
                     if field in customization:
                         recipe[field] = customization[field]
 

@@ -5,7 +5,7 @@ are stored in ~/.config/spark-pulse/custom-recipes.json so original
 YAML files are never modified — git updates always work.
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
 from spark_pulse.tools.custom_recipes import (
     delete_customization,

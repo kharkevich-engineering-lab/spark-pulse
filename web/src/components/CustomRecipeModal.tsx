@@ -83,7 +83,7 @@ export default function CustomRecipeModal({
     try {
       const text = await file.text();
       setContent(text);
-    } catch (e) {
+    } catch {
       onError("Failed to read file");
     } finally {
       setUploading(false);

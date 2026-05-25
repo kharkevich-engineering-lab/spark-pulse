@@ -15,7 +15,6 @@ Usage:
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -23,12 +22,11 @@ import httpx
 
 # Ensure we use the CI venv for playwright if available
 try:
-    from playwright.sync_api import Page, expect
+    __import__("playwright.sync_api")
 except ImportError:
     pytest.skip("playwright not installed", allow_module_level=True)
 
 from spark_pulse.app import create_app
-from fastapi.testclient import TestClient
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 

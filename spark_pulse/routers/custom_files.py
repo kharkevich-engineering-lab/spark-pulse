@@ -8,8 +8,6 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 
 from spark_pulse import config
 from spark_pulse.tools.custom_files import (
-    create_symlinks,
-    remove_symlinks,
     create_symlink_for_recipe,
     remove_symlink_for_recipe,
     create_symlink_for_mod,
@@ -30,6 +28,7 @@ router = APIRouter(prefix="/api/custom-files", tags=["custom-files"])
 
 # ── Symlink status ─────────────────────────────────────────────────────────
 
+
 @router.get("/symlinks")
 def get_symlink_status():
     """Check if symlinks are currently active."""
@@ -42,6 +41,7 @@ def get_symlink_status():
 
 # ── Validation ──────────────────────────────────────────────────────────────
 
+
 @router.post("/recipes/validate")
 def validate_recipe_endpoint(content: dict):
     """Validate a recipe YAML without saving it.
@@ -52,6 +52,7 @@ def validate_recipe_endpoint(content: dict):
     if not yaml_content.strip():
         raise HTTPException(status_code=400, detail="YAML content cannot be empty")
     import yaml
+
     try:
         data = yaml.safe_load(yaml_content)
         if not isinstance(data, dict):
@@ -77,6 +78,7 @@ def validate_recipe_endpoint(content: dict):
 
 
 # ── Custom Recipes ────────────────────────────────────────────────────────
+
 
 @router.get("/recipes/list")
 def list_custom_recipes():
@@ -153,6 +155,7 @@ async def upload_custom_recipe_endpoint(file: UploadFile = File(...)):
 
 # ── Custom Mods ───────────────────────────────────────────────────────────
 
+
 @router.get("/mods/list")
 def list_custom_mods():
     """List all custom mods."""
@@ -218,8 +221,12 @@ async def upload_custom_mod_endpoint(
 
     For now, creates a stub mod with the given name. ZIP upload can be added later.
     """
-    mod_name = name or (zip_file.filename.replace(".zip", "") if zip_file.filename else "mod")
-    save_custom_mod(f"custom/{mod_name}", {"run.sh": f"#!/bin/bash\necho 'Mod: {mod_name}'"})
+    mod_name = name or (
+        zip_file.filename.replace(".zip", "") if zip_file.filename else "mod"
+    )
+    save_custom_mod(
+        f"custom/{mod_name}", {"run.sh": f"#!/bin/bash\necho 'Mod: {mod_name}'"}
+    )
     # Create symlink for the new mod (best-effort)
     try:
         create_symlink_for_mod(mod_name)

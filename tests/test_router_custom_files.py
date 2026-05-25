@@ -8,8 +8,6 @@ Usage:
 
 from __future__ import annotations
 
-import tempfile
-from pathlib import Path
 
 import pytest
 
@@ -135,7 +133,7 @@ class TestListCustomMods:
 
     def test_returns_mods(self, app_client, tmp_path, monkeypatch):
         """Should return list of custom mods."""
-        mpath = (tmp_path / "cm" / "test-mod").mkdir(parents=True)
+        (tmp_path / "cm" / "test-mod").mkdir(parents=True)
         (tmp_path / "cm" / "test-mod" / "run.sh").write_text(
             "#!/bin/bash", encoding="utf-8"
         )

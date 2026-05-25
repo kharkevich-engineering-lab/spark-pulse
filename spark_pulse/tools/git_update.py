@@ -7,7 +7,6 @@ from the spark-vllm-docker git repository.
 from __future__ import annotations
 
 import subprocess
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -72,9 +71,7 @@ def get_remote_version(spark_path: str) -> str | None:
     if not is_git_repo(spark_path):
         return None
     try:
-        result = _run_git(
-            spark_path, "rev-parse", "--short=7", "origin/HEAD"
-        )
+        result = _run_git(spark_path, "rev-parse", "--short=7", "origin/HEAD")
         if result.returncode == 0:
             return result.stdout.strip()
     except (subprocess.TimeoutExpired, OSError):
@@ -145,8 +142,12 @@ def check_updates(spark_path: str) -> dict[str, Any]:
         "available": available,
         "local_version": local_version,
         "remote_version": remote_version,
-        "local_date": get_commit_timestamp(spark_path, "HEAD") if local_version else None,
-        "remote_date": get_commit_timestamp(spark_path, "origin/HEAD") if remote_version else None,
+        "local_date": (
+            get_commit_timestamp(spark_path, "HEAD") if local_version else None
+        ),
+        "remote_date": (
+            get_commit_timestamp(spark_path, "origin/HEAD") if remote_version else None
+        ),
         "has_uncommitted_changes": has_uncommitted_changes(spark_path),
         "last_fetch_ok": fetch_result.get("success", False),
     }
