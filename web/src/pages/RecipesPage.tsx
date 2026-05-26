@@ -3,14 +3,14 @@ import { fetchRecipes, fetchRecipe, fetchDeployments, createDeployment, fetchSet
 import type { RecipeDetail, RecipeCustomization, RecipeSummary, ModSummary, ModDetail, CustomRecipeInfo, CustomModInfo, ModFileMap } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
 import { AlertModal, ConfirmModal } from "@/components/Modal";
-import { Loader2, AlertCircle, ChevronDown, X, Copy, Check, Wrench, Zap, FileCode2, FileText, FileCode, ArrowRightLeft } from "lucide-react";
+import { Loader2, AlertCircle, ChevronDown, X, Copy, Check, Wrench, Zap, FileCode2, FileText, FileCode } from "lucide-react";
 import RecipeCard from "@/components/RecipeCard";
 import RecipeDrawer from "@/components/RecipeDrawer";
 import SlideDrawer from "@/components/SlideDrawer";
 import BaseCard from "@/components/BaseCard";
+import CustomRecipeDrawer from "@/components/CustomRecipeDrawer";
+import CustomModDrawer from "@/components/CustomModDrawer";
 import { setRefresh } from "@/lib/refresh";
-
-type Tab = "recipes" | "mods";
 
 // ── File-kind badge colours ──────────────────────────────────────────────────
 
@@ -142,6 +142,7 @@ export default function RecipesPage() {
   const { data: settings } = useQuery(fetchSettings);
   const { data: mods, loading: modsLoading, error: modsError } = useQuery(fetchMods);
   const [showCustom, setShowCustom] = useState(false);
+  const [tab, setTab] = useState<"recipes" | "mods">("recipes");
   const [customRecipes, setCustomRecipes] = useState<CustomRecipeInfo[]>([]);
   const [customMods, setCustomMods] = useState<CustomModInfo[]>([]);
   const [customLoading, setCustomLoading] = useState(false);
@@ -240,7 +241,7 @@ export default function RecipesPage() {
   };
 
   const handleSaveCustomMod = async (_id: string, fileMap: ModFileMap) => {
-    await saveCustomMod(_id, fileMap);
+    await saveCustomModFiles(_id, fileMap);
     await loadCustomData();
   };
 
@@ -307,15 +308,32 @@ export default function RecipesPage() {
     setResetConfirm({ recipeId: recipe.id, recipeName: recipe.name });
   };
 
-  const isAnyLoading = recipesLoading || modsLoading;
+  const isAnyLoading = recipesLoading || modsLoading || customLoading;
   const isError = recipesError || modsError;
   const combinedError = [recipesError, modsError].filter(Boolean).join("; ");
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold">Recipes & Mods</h2>
-        <p className="text-text-muted mt-1">Browse deployment recipes and available modifications</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold">Recipes & Mods</h2>
+          <p className="text-text-muted mt-1">
+            {showCustom ? "Browse your custom recipes and mods" : "Browse deployment recipes and available modifications"}
+          </p>
+        </div>
+        {/* Toggle switch */}
+        <button
+          onClick={handleToggleCustom}
+          disabled={customLoading}
+          className={`relative w-14 h-7 rounded-full transition-colors ${showCustom ? "bg-primary" : "bg-border"}`}
+          aria-label="Toggle custom mode"
+        >
+          <span className={`absolute top-0.5 left-0.5 w-6 h-6 rounded-full bg-white shadow transition-transform ${showCustom ? "translate-x-7" : ""}`} />
+          <span className="absolute inset-0 flex items-center justify-between px-1.5 pointer-events-none">
+            <span className={`text-[10px] font-medium ${showCustom ? "text-white" : "text-text-muted"}`}>SYS</span>
+            <span className={`text-[10px] font-medium ${showCustom ? "text-primary" : "text-text-muted"}`}>CUST</span>
+          </span>
+        </button>
       </div>
 
       {/* Tabs */}
@@ -329,7 +347,7 @@ export default function RecipesPage() {
           }`}
         >
           <Zap size={14} className="inline mr-1.5" />
-          Recipes ({recipes?.length ?? 0})
+          Recipes ({showCustom ? customRecipes.length : (recipes?.length ?? 0)})
         </button>
         <button
           onClick={() => setTab("mods")}
@@ -340,7 +358,7 @@ export default function RecipesPage() {
           }`}
         >
           <Wrench size={14} className="inline mr-1.5" />
-          Mods ({mods?.length ?? 0})
+          Mods ({showCustom ? customMods.length : (mods?.length ?? 0)})
         </button>
       </div>
 
@@ -360,54 +378,81 @@ export default function RecipesPage() {
       {/* ── Recipes tab ─────────────────────────────────────────────────── */}
       {tab === "recipes" && !isAnyLoading && (
         <div className="space-y-6">
-          {recipes && recipes.length > 0 && (
+          {showCustom ? (
             <>
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                {available.map((r) => (
-                  <RecipeCard
-                    key={r.id}
-                    r={r}
-                    isRunning={runningIds.has(r.id)}
-                    clusterBlocked={false}
-                    onSelect={() => handleSelect(r)}
-                    onReset={() => openResetConfirm(r)}
-                  />
-                ))}
-              </div>
-
-              {unavailable.length > 0 && (
-                <div>
-                  <button
-                    onClick={() => setShowUnavailable(v => !v)}
-                    className="flex items-center gap-2 text-sm text-text-muted hover:text-text transition-colors mb-3"
-                  >
-                    <ChevronDown size={16} className={`transition-transform ${showUnavailable ? "rotate-180" : ""}`} />
-                    {showUnavailable ? "Hide" : "Show"} {unavailable.length} unavailable recipe{unavailable.length > 1 ? "s" : ""} (cluster only)
-                  </button>
-                  {showUnavailable && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                      {unavailable.map((r) => (
-                        <RecipeCard
-                          key={r.id}
-                          r={r}
-                          isRunning={false}
-                          clusterBlocked={true}
-                          onSelect={() => {}}
-                          onReset={() => openResetConfirm(r)}
-                        />
-                      ))}
-                    </div>
-                  )}
+              {customRecipes.length > 0 && (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                  {customRecipes.map((r) => (
+                    <BaseCard
+                      key={r.id}
+                      icon={<FileText size={16} className="shrink-0 text-primary" />}
+                      title={r.name}
+                      subtitle={r.filename}
+                      onClick={() => handleOpenCustomRecipe(r)}
+                    />
+                  ))}
+                </div>
+              )}
+              {customRecipes.length === 0 && (
+                <div className="text-center py-20 text-text-muted">
+                  <FileText size={48} className="mx-auto mb-4 opacity-30" />
+                  <p className="text-lg font-medium">No custom recipes</p>
+                  <p className="text-sm mt-1">Upload a YAML file or create a new recipe.</p>
                 </div>
               )}
             </>
-          )}
+          ) : (
+            <>
+              {recipes && recipes.length > 0 && (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    {available.map((r) => (
+                      <RecipeCard
+                        key={r.id}
+                        r={r}
+                        isRunning={runningIds.has(r.id)}
+                        clusterBlocked={false}
+                        onSelect={() => handleSelect(r)}
+                        onReset={() => openResetConfirm(r)}
+                      />
+                    ))}
+                  </div>
 
-          {recipes && recipes.length === 0 && (
-            <div className="text-center py-20 text-text-muted">
-              <p>No recipes found.</p>
-              <p className="text-sm mt-1">Check spark-vllm-docker path in Settings.</p>
-            </div>
+                  {unavailable.length > 0 && (
+                    <div>
+                      <button
+                        onClick={() => setShowUnavailable(v => !v)}
+                        className="flex items-center gap-2 text-sm text-text-muted hover:text-text transition-colors mb-3"
+                      >
+                        <ChevronDown size={16} className={`transition-transform ${showUnavailable ? "rotate-180" : ""}`} />
+                        {showUnavailable ? "Hide" : "Show"} {unavailable.length} unavailable recipe{unavailable.length > 1 ? "s" : ""} (cluster only)
+                      </button>
+                      {showUnavailable && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                          {unavailable.map((r) => (
+                            <RecipeCard
+                              key={r.id}
+                              r={r}
+                              isRunning={false}
+                              clusterBlocked={true}
+                              onSelect={() => {}}
+                              onReset={() => openResetConfirm(r)}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
+
+              {recipes && recipes.length === 0 && (
+                <div className="text-center py-20 text-text-muted">
+                  <p>No recipes found.</p>
+                  <p className="text-sm mt-1">Check spark-vllm-docker path in Settings.</p>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
@@ -415,27 +460,60 @@ export default function RecipesPage() {
       {/* ── Mods tab ────────────────────────────────────────────────────── */}
       {tab === "mods" && !isAnyLoading && (
         <div className="space-y-4">
-          {mods && mods.length === 0 && (
-            <div className="py-20 text-center text-text-muted">
-              <Wrench size={48} className="mx-auto mb-4 opacity-30" />
-              <p className="text-lg font-medium">No mods found</p>
-              <p className="text-sm mt-1 opacity-70">
-                Make sure spark_vllm_path is configured correctly in Settings.
-              </p>
-            </div>
-          )}
+          {showCustom ? (
+            <>
+              {customMods.length === 0 && (
+                <div className="py-20 text-center text-text-muted">
+                  <Wrench size={48} className="mx-auto mb-4 opacity-30" />
+                  <p className="text-lg font-medium">No custom mods</p>
+                  <p className="text-sm mt-1 opacity-70">Create a new mod to get started.</p>
+                </div>
+              )}
 
-          {mods && mods.length > 0 && (
-            <div className="grid gap-3 sm:grid-cols-1 lg:grid-cols-2">
-              {mods.map((mod) => (
-                <ModCard key={mod.id} mod={mod} onClick={() => setActiveModId(mod.id)} />
-              ))}
-            </div>
+              {customMods.length > 0 && (
+                <div className="grid gap-3 sm:grid-cols-1 lg:grid-cols-2">
+                  {customMods.map((m) => (
+                    <BaseCard
+                      key={m.id}
+                      icon={<Wrench size={16} className="shrink-0 text-primary" />}
+                      title={m.name}
+                      description={m.description}
+                      badges={m.has_run_sh ? (
+                        <span className="flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-success/15 text-success">
+                          <span className="w-1.5 h-1.5 rounded-full bg-success" />run.sh
+                        </span>
+                      ) : undefined}
+                      onClick={() => handleOpenCustomMod(m)}
+                    />
+                  ))}
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              {mods && mods.length === 0 && (
+                <div className="py-20 text-center text-text-muted">
+                  <Wrench size={48} className="mx-auto mb-4 opacity-30" />
+                  <p className="text-lg font-medium">No mods found</p>
+                  <p className="text-sm mt-1 opacity-70">
+                    Make sure spark_vllm_path is configured correctly in Settings.
+                  </p>
+                </div>
+              )}
+
+              {mods && mods.length > 0 && (
+                <div className="grid gap-3 sm:grid-cols-1 lg:grid-cols-2">
+                  {mods.map((mod) => (
+                    <ModCard key={mod.id} mod={mod} onClick={() => setActiveModId(mod.id)} />
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
 
-      {/* ── Modals / Drawers ────────────────────────────────────────────── */}
+      {/* ── Drawers ─────────────────────────────────────────────────────── */}
       {selected && (
         <RecipeDrawer
           recipe={selected.recipe}
@@ -456,6 +534,31 @@ export default function RecipesPage() {
 
       {activeModId && (
         <ModDrawer modId={activeModId} onClose={() => setActiveModId(null)} />
+      )}
+
+      {/* Custom recipe modal */}
+      {showRecipeModal && selectedRecipe && (
+        <CustomRecipeDrawer
+          open={showRecipeModal}
+          recipe={selectedRecipe}
+          onClose={() => { setShowRecipeModal(false); setSelectedRecipe(null); }}
+          onSave={handleSaveCustomRecipe}
+          onDelete={handleDeleteCustomRecipe}
+          onError={(msg) => setAlertModal({ title: "Error", message: msg })}
+        />
+      )}
+
+      {/* Custom mod modal */}
+      {showModModal && selectedMod && (
+        <CustomModDrawer
+          open={showModModal}
+          mod={selectedMod}
+          files={modFiles}
+          onClose={() => { setShowModModal(false); setSelectedMod(null); }}
+          onSave={handleSaveCustomMod}
+          onDelete={handleDeleteCustomMod}
+          onError={(msg) => setAlertModal({ title: "Error", message: msg })}
+        />
       )}
 
       {alertModal && (
