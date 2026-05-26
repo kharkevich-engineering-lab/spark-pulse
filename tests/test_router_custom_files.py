@@ -247,6 +247,7 @@ class TestSyncSymlinks:
         (spark_dir / "recipes").mkdir(parents=True)
         (spark_dir / "mods").mkdir(parents=True)
         import spark_pulse.config as cfg
+
         monkeypatch.setitem(cfg.config._data, "spark_vllm_path", str(spark_dir))
 
         resp = app_client.post(
@@ -266,6 +267,7 @@ class TestSyncSymlinks:
         (spark_dir / "recipes").mkdir(parents=True)
         (spark_dir / "mods").mkdir(parents=True)
         import spark_pulse.config as cfg
+
         monkeypatch.setitem(cfg.config._data, "spark_vllm_path", str(spark_dir))
 
         resp = app_client.post(
@@ -293,6 +295,7 @@ class TestSyncSymlinks:
         (spark_dir / "recipes").mkdir(parents=True)
         (spark_dir / "mods").mkdir(parents=True)
         import spark_pulse.config as cfg
+
         monkeypatch.setitem(cfg.config._data, "spark_vllm_path", str(spark_dir))
 
         # Pass mode=remove as query param only (no body), should use default "create"
