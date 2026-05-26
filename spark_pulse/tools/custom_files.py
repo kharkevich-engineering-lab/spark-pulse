@@ -107,14 +107,14 @@ def _remove_symlinks_for_dir(
     spark_dir: Path,
     symlink_prefix: str,
     custom_dir: Path,
-) -> int:
+) -> list[str]:
     """Remove symlinks that point into custom_dir.
 
-    Returns number of symlinks removed.
+    Returns list of symlink names removed.
     """
-    removed = 0
+    removed: list[str] = []
     if not spark_dir.is_dir():
-        return 0
+        return removed
 
     for item in spark_dir.iterdir():
         if not item.name.startswith(symlink_prefix):
@@ -122,7 +122,7 @@ def _remove_symlinks_for_dir(
         if _is_symlink_created_by_us(item):
             try:
                 item.unlink()
-                removed += 1
+                removed.append(item.name)
             except OSError:
                 continue
 
@@ -159,16 +159,16 @@ def create_symlinks(spark_vllm_path: str) -> dict[str, list[str]]:
     return created
 
 
-def remove_symlinks(spark_vllm_path: str) -> dict[str, int]:
+def remove_symlinks(spark_vllm_path: str) -> dict[str, list[str]]:
     """Remove symlinks for custom recipes and mods (full refresh).
 
-    Returns dict with counts: {"recipes": N, "mods": N}
+    Returns dict with names removed: {"recipes": [...], "mods": [...]}
     """
     spark_dir = Path(spark_vllm_path)
     recipes_dir = spark_dir / "recipes"
     mods_dir = spark_dir / "mods"
 
-    removed = {"recipes": 0, "mods": 0}
+    removed: dict[str, list[str]] = {"recipes": [], "mods": []}
 
     removed["recipes"] = _remove_symlinks_for_dir(
         recipes_dir, _SYMLINK_RECIPES_PREFIX, _CUSTOM_RECIPES_DIR

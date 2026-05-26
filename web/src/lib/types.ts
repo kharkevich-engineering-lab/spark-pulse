@@ -137,6 +137,7 @@ export interface ModFileMap {
 export interface RecipeFormRef {
   save: () => void;
   cancel: () => void;
+  getDeployName: () => string;
 }
 
 export interface GitUpdateStatus {

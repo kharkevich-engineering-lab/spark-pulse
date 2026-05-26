@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@icons-pack/react-simple-icons": "^13.13.0",
+    "@uiw/react-textarea-code-editor": "^3.1.1",
     "clsx": "^2.1.1",
     "lucide-react": "^0.475.0",
     "react": "^19.1.0",

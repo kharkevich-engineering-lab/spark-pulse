@@ -5,13 +5,17 @@ stored in ~/.config/spark-pulse/ (not in spark_vllm_path).
 """
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from pydantic import BaseModel
+from typing import Literal
 
-from spark_pulse import config
+from spark_pulse.config import config
 from spark_pulse.tools.custom_files import (
     create_symlink_for_recipe,
     remove_symlink_for_recipe,
     create_symlink_for_mod,
     remove_symlink_for_mod,
+    create_symlinks,
+    remove_symlinks,
     discover_custom_recipes,
     discover_custom_mods,
     get_custom_recipe_content,
@@ -26,6 +30,10 @@ from spark_pulse.tools.custom_files import (
 router = APIRouter(prefix="/api/custom-files", tags=["custom-files"])
 
 
+class SyncSymlinksRequest(BaseModel):
+    mode: Literal["create", "remove"] = "create"
+
+
 # ── Symlink status ─────────────────────────────────────────────────────────
 
 
@@ -35,6 +43,23 @@ def get_symlink_status():
     try:
         spark_path = config.spark_vllm_path
         return {"spark_path": spark_path}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/symlinks/sync")
+def sync_symlinks(body: SyncSymlinksRequest) -> dict[str, list[str]]:
+    """Sync symlinks — create or remove all custom recipe/mod symlinks.
+
+    mode: "create" (add custom to spark) or "remove" (remove custom from spark)
+    Returns {"recipes": [...names...], "mods": [...names...]} in both cases.
+    """
+    try:
+        spark_path = config.spark_vllm_path
+        if body.mode == "create":
+            return create_symlinks(spark_path)
+        else:
+            return remove_symlinks(spark_path)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

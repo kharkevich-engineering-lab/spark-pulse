@@ -3,17 +3,15 @@ import { doRefresh } from "@/lib/refresh";
 import { type ThemeMode, getTheme, setTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import { isAuthEnabled, isGitUpdateEnabled } from "@/lib/config";
-import { Activity, Bot, Copyright, Database, FileText, ListChecks, LogOut, Menu, Moon, MoonStar, RotateCw, Settings, Sun, User, Wrench, X, Zap } from "lucide-react";
+import { Activity, Bot, Copyright, Database, ListChecks, LogOut, Menu, Moon, MoonStar, RotateCw, Settings, Sun, User, X, Zap } from "lucide-react";
 import { SiGithub, SiPypi } from "@icons-pack/react-simple-icons";
 import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import GitUpdateNotification from "@/components/Notifications";
 
 const NAV = [
-  { href: "/", label: "Recipes", icon: Zap },
-  { href: "/custom-recipes", label: "My Recipes", icon: FileText },
+  { href: "/", label: "Recipes & Mods", icon: Zap },
   { href: "/jobs", label: "Jobs", icon: ListChecks },
-  { href: "/mods", label: "Mods", icon: Wrench },
   { href: "/monitoring", label: "Monitoring", icon: Activity },
   { href: "/cache", label: "Cache", icon: Database },
   { href: "/mcp", label: "MCP", icon: Bot },

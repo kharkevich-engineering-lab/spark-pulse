@@ -7,9 +7,7 @@ import MemoryPage from "@/pages/MemoryPage";
 import CachePage from "@/pages/CachePage";
 import MCPPage from "@/pages/MCPPage";
 import SettingsPage from "@/pages/SettingsPage";
-import ModsPage from "@/pages/ModsPage";
 import LoginPage from "@/pages/LoginPage";
-import CustomRecipesPage from "@/pages/CustomRecipesPage";
 
 // Inner component that conditionally renders Layout based on route
 function AppRoutes() {
@@ -28,12 +26,10 @@ function AppRoutes() {
           <Routes>
             <Route path="/" element={<RecipesPage />} />
             <Route path="/jobs" element={<JobsPage />} />
-            <Route path="/mods" element={<ModsPage />} />
             <Route path="/monitoring" element={<MemoryPage />} />
             <Route path="/cache" element={<CachePage />} />
             <Route path="/mcp" element={<MCPPage />} />
             <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/custom-recipes" element={<CustomRecipesPage />} />
           </Routes>
         </Layout>
       )}
