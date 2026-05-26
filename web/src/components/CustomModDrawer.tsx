@@ -1,11 +1,11 @@
-/** Modal for editing a custom mod's files. */
+/** Drawer for editing a custom mod's files. */
 
 import { useState, useEffect } from "react";
 import { Save, Trash2, X } from "lucide-react";
 import { ConfirmModal } from "@/components/Modal";
 import type { CustomModInfo, ModFileMap } from "@/lib/types";
 
-export default function CustomModManager({
+export default function CustomModDrawer({
   open,
   mod,
   files,
@@ -72,11 +72,14 @@ export default function CustomModManager({
 
   return (
     <>
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="absolute inset-0 bg-black/60" onClick={onClose} />
-        <div className="relative w-full max-w-4xl max-h-[85vh] overflow-auto rounded-xl bg-surface border border-border shadow-2xl">
+      <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
+        <div
+          tabIndex={-1}
+          className="h-full w-full max-w-2xl bg-surface border-l border-border shadow-xl flex flex-col overflow-hidden outline-none"
+          onClick={(e) => e.stopPropagation()}
+        >
           {/* Header */}
-          <div className="sticky top-0 bg-surface border-b border-border px-6 py-4 flex items-center justify-between">
+          <div className="sticky top-0 bg-surface border-b border-border px-6 py-4 flex items-center justify-between shrink-0">
             <div>
               <h3 className="text-lg font-bold">{mod.name}</h3>
               {mod.description && <p className="text-xs text-text-muted mt-0.5">{mod.description}</p>}
@@ -87,54 +90,56 @@ export default function CustomModManager({
           </div>
 
           {/* Content */}
-          <div className="flex h-[500px]">
-            {/* File list sidebar */}
-            <div className="w-48 border-r border-border p-4 overflow-auto">
-              <h4 className="text-xs font-medium text-text-muted mb-2 uppercase">Files</h4>
-              {allFiles.length > 0 ? (
-                <ul className="space-y-1">
-                  {allFiles.map((f) => (
-                    <li key={f}>
-                      <button
-                        onClick={() => setSelectedFile(f)}
-                        className={`w-full text-left px-2 py-1 rounded text-xs font-mono transition-colors truncate ${
-                          selectedFile === f
-                            ? "bg-primary/15 text-primary"
-                            : "hover:bg-surface-hover text-text-muted"
-                        }`}
-                      >
-                        {f}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="text-xs text-text-muted italic">No files</p>
-              )}
-            </div>
-
-            {/* File editor */}
-            <div className="flex-1 flex flex-col">
-              <div className="flex-1 p-4">
-                {selectedFile ? (
-                  <textarea
-                    value={fileMap[selectedFile] || ""}
-                    onChange={(e) => handleFileChange(e.target.value)}
-                    className="w-full h-full px-4 py-3 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm resize-none"
-                    spellCheck={false}
-                    placeholder="#!/bin/bash&#10;..."
-                  />
+          <div className="flex-1 flex flex-col overflow-hidden">
+            <div className="flex flex-1 min-h-0">
+              {/* File list sidebar */}
+              <div className="w-44 border-r border-border p-4 overflow-auto shrink-0">
+                <h4 className="text-xs font-medium text-text-muted mb-2 uppercase">Files</h4>
+                {allFiles.length > 0 ? (
+                  <ul className="space-y-1">
+                    {allFiles.map((f) => (
+                      <li key={f}>
+                        <button
+                          onClick={() => setSelectedFile(f)}
+                          className={`w-full text-left px-2 py-1 rounded text-xs font-mono transition-colors truncate ${
+                            selectedFile === f
+                              ? "bg-primary/15 text-primary"
+                              : "hover:bg-surface-hover text-text-muted"
+                          }`}
+                        >
+                          {f}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
                 ) : (
-                  <div className="flex items-center justify-center h-full text-text-muted text-sm">
-                    Select a file to edit
-                  </div>
+                  <p className="text-xs text-text-muted italic">No files</p>
                 )}
+              </div>
+
+              {/* File editor */}
+              <div className="flex-1 flex flex-col min-w-0 p-4">
+                <div className="flex-1 min-h-0">
+                  {selectedFile ? (
+                    <textarea
+                      value={fileMap[selectedFile] || ""}
+                      onChange={(e) => handleFileChange(e.target.value)}
+                      className="w-full h-full px-4 py-3 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm resize-none"
+                      spellCheck={false}
+                      placeholder="#!/bin/bash&#10;..."
+                    />
+                  ) : (
+                    <div className="flex items-center justify-center h-full text-text-muted text-sm">
+                      Select a file to edit
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
 
           {/* Footer */}
-          <div className="flex items-center justify-between px-6 py-4 border-t border-border bg-surface sticky bottom-0">
+          <div className="flex items-center justify-between px-6 py-4 border-t border-border bg-surface shrink-0">
             <button
               onClick={() => setShowDelete(true)}
               className="px-3 py-2 rounded-lg border border-border hover:border-danger text-sm font-medium text-danger transition-colors flex items-center gap-1.5"

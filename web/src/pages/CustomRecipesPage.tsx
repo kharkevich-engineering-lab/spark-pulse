@@ -14,8 +14,8 @@ import {
 import type { CustomRecipeInfo, CustomModInfo, ModFileMap } from "@/lib/types";
 import { Loader2, Plus, FileText, Box } from "lucide-react";
 import { AlertModal } from "@/components/Modal";
-import CustomRecipeModal from "@/components/CustomRecipeModal";
-import CustomModManager from "@/components/CustomModManager";
+import CustomRecipeDrawer from "@/components/CustomRecipeDrawer";
+import CustomModDrawer from "@/components/CustomModDrawer";
 import NewRecipeModal from "@/components/NewRecipeModal";
 import NewModModal from "@/components/NewModModal";
 
@@ -225,7 +225,7 @@ export default function CustomRecipesPage() {
       )}
 
       {showRecipeModal && selectedRecipe && (
-        <CustomRecipeModal
+        <CustomRecipeDrawer
           open={showRecipeModal}
           recipe={selectedRecipe}
           onClose={() => { setShowRecipeModal(false); setSelectedRecipe(null); }}
@@ -236,7 +236,7 @@ export default function CustomRecipesPage() {
       )}
 
       {showModModal && selectedMod && (
-        <CustomModManager
+        <CustomModDrawer
           open={showModModal}
           mod={selectedMod}
           files={modFiles}

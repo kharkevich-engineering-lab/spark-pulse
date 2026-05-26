@@ -1,12 +1,12 @@
-/** Modal for editing a custom recipe's YAML content. */
+/** Drawer for editing a custom recipe's YAML content. */
 
 import { useState, useEffect, useRef } from "react";
-import { Save, Upload, Trash2, X, Loader2 } from "lucide-react";
+import { Save, Upload, Trash2, X } from "lucide-react";
 import { ConfirmModal } from "@/components/Modal";
 import type { CustomRecipeInfo } from "@/lib/types";
 import { getCustomRecipeContent } from "@/lib/api";
 
-export default function CustomRecipeModal({
+export default function CustomRecipeDrawer({
   open,
   recipe,
   onClose,
@@ -26,30 +26,53 @@ export default function CustomRecipeModal({
   const [saving, setSaving] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const drawerRef = useRef<HTMLDivElement>(null);
 
-  // Load content when modal opens or recipe changes
+  // Load content when drawer opens or recipe changes.
+  // Ignore stale async responses if the selected recipe changes mid-request.
   useEffect(() => {
-    if (open && recipe) {
-      loadContent();
-    } else {
+    if (!open || !recipe) {
       setContent("");
-    }
-  }, [open, recipe]);
-
-  const loadContent = async () => {
-    if (!recipe) return;
-    setLoadingContent(true);
-    try {
-      const data = await getCustomRecipeContent(recipe.id);
-      setContent(data.content);
-    } catch (e) {
-      onError(e instanceof Error ? e.message : "Failed to load recipe");
-    } finally {
       setLoadingContent(false);
+      return;
     }
-  };
+
+    let cancelled = false;
+    setLoadingContent(true);
+
+    const recipeId = recipe.id;
+    void (async () => {
+      try {
+        const data = await getCustomRecipeContent(recipeId);
+        if (!cancelled) {
+          setContent(data.content);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          onError(e instanceof Error ? e.message : "Failed to load recipe");
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingContent(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, recipe?.id, onError]);
+
+  // Focus drawer on open
+  useEffect(() => {
+    if (open) {
+      drawerRef.current?.focus();
+      const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+      window.addEventListener("keydown", handler);
+      return () => window.removeEventListener("keydown", handler);
+    }
+  }, [open, onClose]);
 
   const handleSave = async () => {
     if (!recipe || !content.trim()) return;
@@ -95,11 +118,15 @@ export default function CustomRecipeModal({
 
   return (
     <>
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="absolute inset-0 bg-black/60" onClick={onClose} />
-        <div className="relative w-full max-w-4xl max-h-[90vh] overflow-auto rounded-xl bg-surface border border-border shadow-2xl">
+      <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
+        <div
+          ref={drawerRef}
+          tabIndex={-1}
+          className="h-full w-full max-w-2xl bg-surface border-l border-border shadow-xl flex flex-col overflow-hidden outline-none"
+          onClick={(e) => e.stopPropagation()}
+        >
           {/* Header */}
-          <div className="sticky top-0 bg-surface border-b border-border px-6 py-4 flex items-center justify-between">
+          <div className="sticky top-0 bg-surface border-b border-border px-6 py-4 flex items-center justify-between shrink-0">
             <div>
               <h3 className="text-lg font-bold">{recipe.name}</h3>
               <p className="text-xs text-text-muted mt-0.5 font-mono">{recipe.filename}</p>
@@ -110,7 +137,7 @@ export default function CustomRecipeModal({
           </div>
 
           {/* Content */}
-          <div className="p-6">
+          <div className="flex-1 overflow-y-auto p-6">
             <div className="flex items-center justify-between mb-3">
               <label className="text-sm font-medium">Recipe YAML</label>
               <div className="flex items-center gap-2">
@@ -132,7 +159,6 @@ export default function CustomRecipeModal({
               </div>
             </div>
             <textarea
-              ref={textareaRef}
               value={content}
               onChange={(e) => setContent(e.target.value)}
               className="w-full h-[400px] px-4 py-3 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm resize-y"
@@ -140,15 +166,10 @@ export default function CustomRecipeModal({
               placeholder="name: My Recipe&#10;model: ..."
               disabled={loadingContent}
             />
-            {loadingContent && (
-              <div className="absolute inset-0 flex items-center justify-center bg-surface/80">
-                <Loader2 className="animate-spin text-primary" size={24} />
-              </div>
-            )}
           </div>
 
           {/* Footer */}
-          <div className="flex items-center justify-between px-6 py-4 border-t border-border bg-surface sticky bottom-0">
+          <div className="flex items-center justify-between px-6 py-4 border-t border-border bg-surface shrink-0">
             <button
               onClick={() => setShowDelete(true)}
               className="px-3 py-2 rounded-lg border border-border hover:border-danger text-sm font-medium text-danger transition-colors flex items-center gap-1.5"

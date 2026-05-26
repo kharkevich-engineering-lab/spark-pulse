@@ -1,15 +1,17 @@
-/** Recipe modal wrapper.
+/** Recipe drawer wrapper.
 
 Combines the backdrop, keyboard handling, and scrollable container
 around RecipeForm. Lifts editing state so header buttons can toggle
-edit mode.
+edit mode. Uses a right-side drawer pattern (same as ModDrawer).
 */
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import RecipeForm from "./RecipeForm";
+import { ConfirmModal } from "@/components/Modal";
+import { X } from "lucide-react";
 import type { RecipeDetail, RecipeCustomization, RecipeFormRef } from "@/lib/types";
 
-export default function RecipeModal({ recipe, customization, isRunning, clusterEnabled, onClose, onError, onDeploy, onSaveCustomization, onReset }: {
+export default function RecipeDrawer({ recipe, customization, isRunning, clusterEnabled, onClose, onError, onDeploy, onSaveCustomization, onReset }: {
   recipe: RecipeDetail;
   customization: RecipeCustomization;
   isRunning: boolean;
@@ -18,43 +20,28 @@ export default function RecipeModal({ recipe, customization, isRunning, clusterE
   onError: (msg: string) => void;
   onDeploy?: (name: string, params: Record<string, unknown>) => Promise<void>;
   onSaveCustomization?: (fields: Partial<RecipeCustomization>) => void;
-  onReset?: () => void;
+  onReset?: () => void | Promise<void>;
 }) {
-  const modalRef = useRef<HTMLDivElement>(null);
+  const drawerRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<RecipeFormRef>(null);
   const clusterBlocked = recipe.cluster_only && !clusterEnabled;
   const hasCustomization = customization && Object.keys(customization).length > 0;
   const [isEditing, setIsEditing] = useState(false);
   const [deploying, setDeploying] = useState(false);
+  const [resetConfirm, setResetConfirm] = useState(false);
 
   useEffect(() => {
-    modalRef.current?.focus();
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        // If focus is inside a confirm modal (dialog), let that modal handle it
-        const active = document.activeElement;
-        if (active && active.closest("[data-confirm-modal]")) return;
-
-        // In edit mode: cancel (restore form, exit edit)
-        // Not in edit mode: close modal
-        if (isEditing) {
-          formRef.current?.cancel();
-          setIsEditing(false);
-        } else {
-          onClose();
-        }
-      }
-    };
+    drawerRef.current?.focus();
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [onClose, isEditing]);
+  }, [onClose]);
 
   const handleDeploy = async () => {
     if (!onDeploy) return;
     setDeploying(true);
     try {
-      const nameInput = modalRef.current?.querySelector<HTMLInputElement>('input[placeholder="Recipe Name"]');
-      const name = nameInput?.value || recipe.name;
+      const name = formRef.current?.getDeployName() || recipe.name;
       await onDeploy(name, {});
       onClose();
     } catch (e) { onError(e instanceof Error ? e.message : "Failed to deploy"); }
@@ -69,17 +56,21 @@ export default function RecipeModal({ recipe, customization, isRunning, clusterE
     } catch (e) { onError(e instanceof Error ? e.message : "Failed to save customization"); }
   };
 
-  const handleReset = async () => {
+  const handleReset = useCallback(async () => {
+    await onReset?.();
     setIsEditing(false);
-    onReset?.();
-  };
+  }, [onReset]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
-      <div ref={modalRef} tabIndex={-1} className="relative w-full max-w-2xl max-h-[85vh] overflow-auto rounded-xl bg-surface border border-border outline-none">
+    <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
+      <div
+        ref={drawerRef}
+        tabIndex={-1}
+        className="h-full w-full max-w-2xl bg-surface border-l border-border shadow-xl flex flex-col overflow-hidden outline-none"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header row: name + actions */}
-        <div className="sticky top-0 bg-surface border-b border-border px-6 py-4 flex items-start justify-between gap-3">
+        <div className="sticky top-0 bg-surface border-b border-border px-6 py-4 flex items-start justify-between gap-3 shrink-0">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
               <h3 className="text-xl font-bold truncate">{recipe.name}</h3>
@@ -124,6 +115,7 @@ export default function RecipeModal({ recipe, customization, isRunning, clusterE
             {isEditing && (
               <>
                 <button
+                  type="button"
                   onClick={() => formRef.current?.save()}
                   className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-white font-medium text-sm transition-colors"
                 >
@@ -131,7 +123,8 @@ export default function RecipeModal({ recipe, customization, isRunning, clusterE
                 </button>
                 {hasCustomization && onSaveCustomization && (
                   <button
-                    onClick={handleReset}
+                    type="button"
+                    onClick={() => setResetConfirm(true)}
                     className="px-3 py-1.5 rounded-lg border border-border hover:border-warning/50 text-sm font-medium transition-colors text-warning"
                   >
                     Reset
@@ -139,32 +132,49 @@ export default function RecipeModal({ recipe, customization, isRunning, clusterE
                 )}
               </>
             )}
-            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-surface-hover transition-colors">✕</button>
+            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-surface-hover transition-colors">
+              <X size={18} />
+            </button>
           </div>
         </div>
 
         {clusterBlocked && (
-          <div className="px-6 py-3 border-b border-border">
+          <div className="px-6 py-3 border-b border-border shrink-0">
             <div className="flex items-start gap-3 p-3 rounded-lg bg-warning/10 border border-warning/30">
               <p className="text-sm text-warning">This recipe requires cluster mode.</p>
             </div>
           </div>
         )}
 
-        <div className="p-6">
+        <div className="flex-1 overflow-y-auto">
           <RecipeForm
             ref={formRef}
             recipe={recipe}
             customization={customization}
             onDeploy={handleDeploy}
             onSaveCustomization={handleSave}
-            onReset={handleReset}
             isRunning={isRunning}
             clusterBlocked={clusterBlocked}
             isEditing={isEditing}
           />
         </div>
       </div>
+
+      {/* Reset confirmation modal */}
+      {resetConfirm && (
+        <ConfirmModal
+          open={resetConfirm}
+          onClose={() => setResetConfirm(false)}
+          onConfirm={() => {
+            void handleReset();
+            setResetConfirm(false);
+          }}
+          title="Reset Customization"
+          message={`Reset "${recipe.name}" to its original recipe? Any customizations you made will be lost.`}
+          confirmLabel="Reset"
+          confirmVariant="danger"
+        />
+      )}
     </div>
   );
 }

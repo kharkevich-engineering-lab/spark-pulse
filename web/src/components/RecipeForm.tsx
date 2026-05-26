@@ -17,14 +17,12 @@ const RecipeForm = forwardRef<RecipeFormRef, {
   customization: RecipeCustomization;
   onDeploy: (name: string, params: Record<string, unknown>) => Promise<void>;
   onSaveCustomization?: (fields: Partial<RecipeCustomization>) => void;
-  onReset?: () => void;
   isRunning: boolean;
   clusterBlocked: boolean;
   isEditing: boolean;
 }>(function RecipeForm({
   recipe,
   onSaveCustomization,
-  onReset,
   isEditing,
 }, ref) {
   const [editAsYaml, setEditAsYaml] = useState(false);
@@ -157,6 +155,7 @@ const RecipeForm = forwardRef<RecipeFormRef, {
       setBuildArgs(recipe.build_args || []); setModsList(recipe.mods || []);
       setNewEnvKey(""); setNewEnvValue(""); setNewBuildArg(""); setEditAsYaml(false);
     },
+    getDeployName: () => name.trim() || recipe.name,
   }));
 
   const addEnv = () => {
@@ -170,39 +169,35 @@ const RecipeForm = forwardRef<RecipeFormRef, {
 
   // Form fields
   const renderFormFields = () => (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="block text-sm font-medium mb-1">Recipe Name</label>
-          <input type="text" value={name} onChange={(e) => { setName(e.target.value); watchFormChanges(); }}
-            disabled={!isEditing}
-            className="w-full px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm disabled:opacity-60" />
-        </div>
-        <div>
-          <label className="block text-sm font-medium mb-1">Model</label>
-          <input type="text" value={model} onChange={(e) => { setModel(e.target.value); watchFormChanges(); }}
-            disabled={!isEditing} placeholder="e.g. Intel/Qwen3.5-397B-INT4"
-            className="w-full px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm text-text-muted disabled:opacity-60" />
-        </div>
+    <div className="space-y-5">
+      <div>
+        <label className="block text-sm font-medium mb-1">Recipe Name</label>
+        <input type="text" value={name} onChange={(e) => { setName(e.target.value); watchFormChanges(); }}
+          disabled={!isEditing}
+          className="w-full px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm disabled:opacity-60" />
       </div>
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="block text-sm font-medium mb-1">Container</label>
-          <input type="text" value={container} onChange={(e) => { setContainer(e.target.value); watchFormChanges(); }}
-            disabled={!isEditing}
-            className="w-full px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm disabled:opacity-60" />
-        </div>
-        {command && (
-          <div>
-            <label className="block text-sm font-medium mb-1">Command Template
-              {isEditing && <span className="text-xs text-text-muted ml-2 font-normal">Use &#123;model&#125; tokens</span>}
-            </label>
-            <textarea value={command} onChange={(e) => { setCommand(e.target.value); watchFormChanges(); }}
-              disabled={!isEditing} rows={3}
-              className="w-full px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-xs disabled:opacity-60 resize-y" />
-          </div>
-        )}
+      <div>
+        <label className="block text-sm font-medium mb-1">Model</label>
+        <input type="text" value={model} onChange={(e) => { setModel(e.target.value); watchFormChanges(); }}
+          disabled={!isEditing} placeholder="e.g. Intel/Qwen3.5-397B-INT4"
+          className="w-full px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm text-text-muted disabled:opacity-60" />
       </div>
+      <div>
+        <label className="block text-sm font-medium mb-1">Container</label>
+        <input type="text" value={container} onChange={(e) => { setContainer(e.target.value); watchFormChanges(); }}
+          disabled={!isEditing}
+          className="w-full px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm disabled:opacity-60" />
+      </div>
+      {command && (
+        <div>
+          <label className="block text-sm font-medium mb-1">Command Template
+            {isEditing && <span className="text-xs text-text-muted ml-2 font-normal">Use &#123;model&#125; tokens</span>}
+          </label>
+          <textarea value={command} onChange={(e) => { setCommand(e.target.value); watchFormChanges(); }}
+            disabled={!isEditing} rows={3}
+            className="w-full px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-xs disabled:opacity-60 resize-y" />
+        </div>
+      )}
       {Object.keys(recipe.defaults).length > 0 && (
         <div>
           <div className="flex items-center justify-between mb-2">
@@ -294,32 +289,29 @@ const RecipeForm = forwardRef<RecipeFormRef, {
           </div>
         ) : (<p className="text-xs text-text-muted italic">No mods</p>)}
       </div>
-      {isEditing && (
-        <div className="pt-2 border-t border-border">
-          <button onClick={onReset} className="px-4 py-2.5 rounded-lg border border-border hover:border-warning/50 text-sm font-medium transition-colors flex items-center gap-2 text-warning">
-            <X size={14} /> Reset
-          </button>
-        </div>
-      )}
     </div>
   );
 
   // YAML editor
   const renderYamlEditor = () => (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
+    <div className="flex-1 flex flex-col min-h-0">
+      <div className="flex items-center justify-between mb-2">
         <label className="text-sm font-medium">Recipe YAML</label>
         {yamlError && (<span className="text-xs text-danger">{yamlError}</span>)}
       </div>
-      <textarea value={rawYaml} onChange={(e) => { setRawYaml(e.target.value); }} disabled={!isEditing}
-        className="w-full h-[400px] px-4 py-3 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm resize-y disabled:opacity-60"
-        spellCheck={false} />
-      <p className="text-xs text-text-muted">Edit the YAML directly. Changes are saved when you click Save.</p>
+      <textarea
+        value={rawYaml}
+        onChange={(e) => { setRawYaml(e.target.value); }}
+        disabled={!isEditing}
+        className="flex-1 min-h-[300px] w-full px-4 py-3 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm resize-y disabled:opacity-60"
+        spellCheck={false}
+      />
+      <p className="text-xs text-text-muted mt-2">Edit the YAML directly. Changes are saved when you click Save.</p>
     </div>
   );
 
   return (
-    <div>
+    <div className={`px-6 py-5 flex flex-col min-h-0 ${editAsYaml ? "flex-1" : ""}`}>
       {isEditing && (
         <div className="flex items-center gap-2 mb-4">
           <button onClick={() => setEditAsYaml(false)}

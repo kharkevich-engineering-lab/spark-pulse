@@ -5,7 +5,7 @@ import { useQuery } from "@/hooks/useQuery";
 import { AlertModal, ConfirmModal } from "@/components/Modal";
 import { Loader2, AlertCircle, ChevronDown, ChevronRight, X, Copy, Check, Wrench, Zap, FileCode2, FileText, FileCode } from "lucide-react";
 import RecipeCard from "@/components/RecipeCard";
-import RecipeModal from "@/components/RecipeModal";
+import RecipeDrawer from "@/components/RecipeDrawer";
 import { setRefresh } from "@/lib/refresh";
 import { useRef } from "react";
 
@@ -374,7 +374,7 @@ export default function RecipesPage() {
 
       {/* ── Modals / Drawers ────────────────────────────────────────────── */}
       {selected && (
-        <RecipeModal
+        <RecipeDrawer
           recipe={selected.recipe}
           customization={selected.customization}
           isRunning={runningIds.has(selected.recipe.id)}
@@ -383,7 +383,11 @@ export default function RecipesPage() {
           onError={(msg) => setAlertModal({ title: "Error", message: msg })}
           onDeploy={handleDeploy}
           onSaveCustomization={handleSaveCustomization}
-          onReset={() => selected && openResetConfirm(selected.recipe)}
+          onReset={() => {
+            if (selected) {
+              return handleReset(selected.recipe.id);
+            }
+          }}
         />
       )}
 
