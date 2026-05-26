@@ -3,13 +3,15 @@ import { fetchRecipes, fetchRecipe, fetchDeployments, createDeployment, fetchSet
 import type { RecipeDetail, RecipeCustomization, RecipeSummary, ModSummary, ModDetail, CustomRecipeInfo, CustomModInfo, ModFileMap } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
 import { AlertModal, ConfirmModal } from "@/components/Modal";
-import { Loader2, AlertCircle, ChevronDown, X, Copy, Check, Wrench, Zap, FileCode2, FileText, FileCode } from "lucide-react";
+import { Loader2, AlertCircle, ChevronDown, X, Copy, Check, Wrench, Zap, FileCode2, FileText, FileCode, Plus } from "lucide-react";
 import RecipeCard from "@/components/RecipeCard";
 import RecipeDrawer from "@/components/RecipeDrawer";
 import SlideDrawer from "@/components/SlideDrawer";
 import BaseCard from "@/components/BaseCard";
 import CustomRecipeDrawer from "@/components/CustomRecipeDrawer";
 import CustomModDrawer from "@/components/CustomModDrawer";
+import NewRecipeModal from "@/components/NewRecipeModal";
+import NewModModal from "@/components/NewModModal";
 import { setRefresh } from "@/lib/refresh";
 
 // ── File-kind badge colours ──────────────────────────────────────────────────
@@ -162,6 +164,10 @@ export default function RecipesPage() {
 
   // Confirmation modal state for reset
   const [resetConfirm, setResetConfirm] = useState<{ recipeId: string; recipeName: string } | null>(null);
+
+  // New recipe/mod modal state
+  const [showNewRecipe, setShowNewRecipe] = useState(false);
+  const [showNewMod, setShowNewMod] = useState(false);
 
   const clusterEnabled = settings?.cluster_enabled ?? false;
 
@@ -379,17 +385,31 @@ export default function RecipesPage() {
           {showCustom ? (
             <>
               {customRecipes.length > 0 && (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                  {customRecipes.map((r) => (
-                    <BaseCard
-                      key={r.id}
-                      icon={<FileText size={16} className="shrink-0 text-primary" />}
-                      title={r.name}
-                      subtitle={r.filename}
-                      onClick={() => handleOpenCustomRecipe(r)}
-                    />
-                  ))}
-                </div>
+                <>
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm text-text-muted">
+                      {customRecipes.length} custom recipe{customRecipes.length > 1 ? "s" : ""}
+                    </p>
+                    <button
+                      onClick={() => setShowNewRecipe(true)}
+                      className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium flex items-center gap-1.5 transition-colors"
+                    >
+                      <Plus size={14} />
+                      New Recipe
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    {customRecipes.map((r) => (
+                      <BaseCard
+                        key={r.id}
+                        icon={<FileText size={16} className="shrink-0 text-primary" />}
+                        title={r.name}
+                        subtitle={r.filename}
+                        onClick={() => handleOpenCustomRecipe(r)}
+                      />
+                    ))}
+                  </div>
+                </>
               )}
               {customRecipes.length === 0 && (
                 <div className="text-center py-20 text-text-muted">
@@ -469,22 +489,36 @@ export default function RecipesPage() {
               )}
 
               {customMods.length > 0 && (
-                <div className="grid gap-3 sm:grid-cols-1 lg:grid-cols-2">
-                  {customMods.map((m) => (
-                    <BaseCard
-                      key={m.id}
-                      icon={<Wrench size={16} className="shrink-0 text-primary" />}
-                      title={m.name}
-                      description={m.description}
-                      badges={m.has_run_sh ? (
-                        <span className="flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-success/15 text-success">
-                          <span className="w-1.5 h-1.5 rounded-full bg-success" />run.sh
-                        </span>
-                      ) : undefined}
-                      onClick={() => handleOpenCustomMod(m)}
-                    />
-                  ))}
-                </div>
+                <>
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm text-text-muted">
+                      {customMods.length} custom mod{customMods.length > 1 ? "s" : ""}
+                    </p>
+                    <button
+                      onClick={() => setShowNewMod(true)}
+                      className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium flex items-center gap-1.5 transition-colors"
+                    >
+                      <Plus size={14} />
+                      New Mod
+                    </button>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-1 lg:grid-cols-2">
+                    {customMods.map((m) => (
+                      <BaseCard
+                        key={m.id}
+                        icon={<Wrench size={16} className="shrink-0 text-primary" />}
+                        title={m.name}
+                        description={m.description}
+                        badges={m.has_run_sh ? (
+                          <span className="flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-success/15 text-success">
+                            <span className="w-1.5 h-1.5 rounded-full bg-success" />run.sh
+                          </span>
+                        ) : undefined}
+                        onClick={() => handleOpenCustomMod(m)}
+                      />
+                    ))}
+                  </div>
+                </>
               )}
             </>
           ) : (
@@ -555,6 +589,32 @@ export default function RecipesPage() {
           onClose={() => { setShowModModal(false); setSelectedMod(null); }}
           onSave={handleSaveCustomMod}
           onDelete={handleDeleteCustomMod}
+          onError={(msg) => setAlertModal({ title: "Error", message: msg })}
+        />
+      )}
+
+      {/* New recipe modal */}
+      {showNewRecipe && (
+        <NewRecipeModal
+          open={showNewRecipe}
+          onClose={() => setShowNewRecipe(false)}
+          onSave={async (_id, _name, _content) => {
+            await loadCustomData();
+            setShowNewRecipe(false);
+          }}
+          onError={(msg) => setAlertModal({ title: "Error", message: msg })}
+        />
+      )}
+
+      {/* New mod modal */}
+      {showNewMod && (
+        <NewModModal
+          open={showNewMod}
+          onClose={() => setShowNewMod(false)}
+          onSave={async (_id, _name) => {
+            await loadCustomData();
+            setShowNewMod(false);
+          }}
           onError={(msg) => setAlertModal({ title: "Error", message: msg })}
         />
       )}
