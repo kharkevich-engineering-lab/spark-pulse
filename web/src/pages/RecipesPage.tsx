@@ -314,52 +314,53 @@ export default function RecipesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold">Recipes & Mods</h2>
-          <p className="text-text-muted mt-1">
-            {showCustom ? "Browse your custom recipes and mods" : "Browse deployment recipes and available modifications"}
-          </p>
-        </div>
-        {/* Toggle switch */}
-        <button
-          onClick={handleToggleCustom}
-          disabled={customLoading}
-          className={`relative w-14 h-7 rounded-full transition-colors ${showCustom ? "bg-primary" : "bg-border"}`}
-          aria-label="Toggle custom mode"
-        >
-          <span className={`absolute top-0.5 left-0.5 w-6 h-6 rounded-full bg-white shadow transition-transform ${showCustom ? "translate-x-7" : ""}`} />
-          <span className="absolute inset-0 flex items-center justify-between px-1.5 pointer-events-none">
-            <span className={`text-[10px] font-medium ${showCustom ? "text-white" : "text-text-muted"}`}>SYS</span>
-            <span className={`text-[10px] font-medium ${showCustom ? "text-primary" : "text-text-muted"}`}>CUST</span>
-          </span>
-        </button>
+      <div>
+        <h2 className="text-2xl font-bold">Recipes & Mods</h2>
+        <p className="text-text-muted mt-1">
+          {showCustom ? "Browse your custom recipes and mods" : "Browse deployment recipes and available modifications"}
+        </p>
       </div>
 
-      {/* Tabs */}
-      <div className="flex items-center gap-2 border-b border-border">
-        <button
-          onClick={() => setTab("recipes")}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-            tab === "recipes"
-              ? "border-primary text-primary"
-              : "border-transparent text-text-muted hover:text-text"
-          }`}
-        >
-          <Zap size={14} className="inline mr-1.5" />
-          Recipes ({showCustom ? customRecipes.length : (recipes?.length ?? 0)})
-        </button>
-        <button
-          onClick={() => setTab("mods")}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-            tab === "mods"
-              ? "border-primary text-primary"
-              : "border-transparent text-text-muted hover:text-text"
-          }`}
-        >
-          <Wrench size={14} className="inline mr-1.5" />
-          Mods ({showCustom ? customMods.length : (mods?.length ?? 0)})
-        </button>
+      {/* Tabs + Toggle */}
+      <div className="flex items-center justify-between border-b border-border">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setTab("recipes")}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+              tab === "recipes"
+                ? "border-primary text-primary"
+                : "border-transparent text-text-muted hover:text-text"
+            }`}
+          >
+            <Zap size={14} className="inline mr-1.5" />
+            Recipes ({showCustom ? customRecipes.length : (recipes?.length ?? 0)})
+          </button>
+          <button
+            onClick={() => setTab("mods")}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+              tab === "mods"
+                ? "border-primary text-primary"
+                : "border-transparent text-text-muted hover:text-text"
+            }`}
+          >
+            <Wrench size={14} className="inline mr-1.5" />
+            Mods ({showCustom ? customMods.length : (mods?.length ?? 0)})
+          </button>
+        </div>
+        {/* Toggle + label */}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleToggleCustom}
+            disabled={customLoading}
+            className={`relative w-11 h-6 rounded-full transition-colors ${showCustom ? "bg-primary" : "bg-border"}`}
+            aria-label="Toggle custom mode"
+          >
+            <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${showCustom ? "translate-x-5" : ""}`} />
+          </button>
+          <span className={`text-sm font-medium ${showCustom ? "text-primary" : "text-text-muted"}`}>
+            Custom mode
+          </span>
+        </div>
       </div>
 
       {/* Loading / error overlay */}
