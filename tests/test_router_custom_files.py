@@ -233,3 +233,73 @@ class TestUploadMod:
         assert data["id"] == "custom/stub-mod"
         assert data["name"] == "stub-mod"
         assert data["saved"] is True
+
+
+# ── Symlink sync ──────────────────────────────────────────────────────────
+
+
+class TestSyncSymlinks:
+    """Test POST /api/custom-files/symlinks/sync."""
+
+    def test_create_mode(self, app_client, tmp_path, monkeypatch):
+        """Should return {recipes, mods} lists when mode=create."""
+        spark_dir = tmp_path / "spark"
+        (spark_dir / "recipes").mkdir(parents=True)
+        (spark_dir / "mods").mkdir(parents=True)
+        import spark_pulse.config as cfg
+        monkeypatch.setitem(cfg.config._data, "spark_vllm_path", str(spark_dir))
+
+        resp = app_client.post(
+            "/api/custom-files/symlinks/sync",
+            json={"mode": "create"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "recipes" in data
+        assert "mods" in data
+        assert isinstance(data["recipes"], list)
+        assert isinstance(data["mods"], list)
+
+    def test_remove_mode(self, app_client, tmp_path, monkeypatch):
+        """Should return {recipes, mods} lists when mode=remove."""
+        spark_dir = tmp_path / "spark"
+        (spark_dir / "recipes").mkdir(parents=True)
+        (spark_dir / "mods").mkdir(parents=True)
+        import spark_pulse.config as cfg
+        monkeypatch.setitem(cfg.config._data, "spark_vllm_path", str(spark_dir))
+
+        resp = app_client.post(
+            "/api/custom-files/symlinks/sync",
+            json={"mode": "remove"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "recipes" in data
+        assert "mods" in data
+        assert isinstance(data["recipes"], list)
+        assert isinstance(data["mods"], list)
+
+    def test_invalid_mode_returns_422(self, app_client):
+        """Should return 422 for an invalid mode value."""
+        resp = app_client.post(
+            "/api/custom-files/symlinks/sync",
+            json={"mode": "invalid"},
+        )
+        assert resp.status_code == 422
+
+    def test_mode_parsed_from_body_not_query(self, app_client, tmp_path, monkeypatch):
+        """mode must come from JSON body; passing it as a query param should be ignored."""
+        spark_dir = tmp_path / "spark"
+        (spark_dir / "recipes").mkdir(parents=True)
+        (spark_dir / "mods").mkdir(parents=True)
+        import spark_pulse.config as cfg
+        monkeypatch.setitem(cfg.config._data, "spark_vllm_path", str(spark_dir))
+
+        # Pass mode=remove as query param only (no body), should use default "create"
+        resp = app_client.post(
+            "/api/custom-files/symlinks/sync?mode=remove",
+            json={},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "recipes" in data

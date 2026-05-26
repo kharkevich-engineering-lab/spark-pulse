@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { fetchRecipes, fetchRecipe, fetchDeployments, createDeployment, fetchSettings, fetchRecipeCustomization, saveRecipeCustomization, deleteRecipeCustomization, fetchMods, fetchMod, listCustomRecipes, getCustomRecipeContent, saveCustomRecipe, deleteCustomRecipe, listCustomMods, getCustomModFiles, saveCustomModFiles, deleteCustomMod, syncSymlinks } from "@/lib/api";
+import { fetchRecipes, fetchRecipe, fetchDeployments, createDeployment, fetchSettings, fetchRecipeCustomization, saveRecipeCustomization, deleteRecipeCustomization, fetchMods, fetchMod, listCustomRecipes, saveCustomRecipe, deleteCustomRecipe, listCustomMods, getCustomModFiles, saveCustomModFiles, deleteCustomMod, syncSymlinks } from "@/lib/api";
 import type { RecipeDetail, RecipeCustomization, RecipeSummary, ModSummary, ModDetail, CustomRecipeInfo, CustomModInfo, ModFileMap } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
 import { AlertModal, ConfirmModal } from "@/components/Modal";
@@ -142,6 +142,7 @@ export default function RecipesPage() {
   const { data: settings } = useQuery(fetchSettings);
   const { data: mods, loading: modsLoading, error: modsError } = useQuery(fetchMods);
   const [showCustom, setShowCustom] = useState(false);
+  const [toggling, setToggling] = useState(false);
   const [tab, setTab] = useState<"recipes" | "mods">("recipes");
   const [customRecipes, setCustomRecipes] = useState<CustomRecipeInfo[]>([]);
   const [customMods, setCustomMods] = useState<CustomModInfo[]>([]);
@@ -154,8 +155,6 @@ export default function RecipesPage() {
   // Custom recipe modal state
   const [selectedRecipe, setSelectedRecipe] = useState<CustomRecipeInfo | null>(null);
   const [showRecipeModal, setShowRecipeModal] = useState(false);
-  const [recipeContent, setRecipeContent] = useState("");
-
   // Custom mod modal state
   const [selectedMod, setSelectedMod] = useState<CustomModInfo | null>(null);
   const [showModModal, setShowModModal] = useState(false);
@@ -194,34 +193,32 @@ export default function RecipesPage() {
   };
 
   const handleToggleCustom = async () => {
+    if (toggling) return;
+    setToggling(true);
     const next = !showCustom;
-    if (next) {
-      // Switching to custom: create symlinks
-      try { await syncSymlinks("create"); } catch { /* best-effort */ }
-      await loadCustomData();
-    } else {
-      // Switching to system: remove symlinks
-      try { await syncSymlinks("remove"); } catch { /* best-effort */ }
+    try {
+      if (next) {
+        // Switching to custom: create symlinks
+        try { await syncSymlinks("create"); } catch { /* best-effort */ }
+        await loadCustomData();
+      } else {
+        // Switching to system: remove symlinks
+        try { await syncSymlinks("remove"); } catch { /* best-effort */ }
+      }
+      setShowCustom(next);
+    } finally {
+      setToggling(false);
     }
-    setShowCustom(next);
   };
 
   const handleOpenCustomRecipe = async (recipe: CustomRecipeInfo) => {
     setSelectedRecipe(recipe);
-    try {
-      const { content } = await getCustomRecipeContent(recipe.id);
-      setRecipeContent(content);
-      setShowRecipeModal(true);
-    } catch {
-      setAlertModal({ title: "Error", message: "Failed to load recipe" });
-    }
+    setShowRecipeModal(true);
   };
 
-  const handleSaveCustomRecipe = async (_id: string, _content: string) => {
-    if (recipeContent) {
-      await saveCustomRecipe(_id, recipeContent);
-      await loadCustomData();
-    }
+  const handleSaveCustomRecipe = async (id: string, content: string) => {
+    await saveCustomRecipe(id, content);
+    await loadCustomData();
   };
 
   const handleDeleteCustomRecipe = async (_id: string) => {
@@ -351,7 +348,7 @@ export default function RecipesPage() {
         <div className="flex items-center gap-2">
           <button
             onClick={handleToggleCustom}
-            disabled={customLoading}
+            disabled={customLoading || toggling}
             className={`relative w-11 h-6 rounded-full transition-colors ${showCustom ? "bg-primary" : "bg-border"}`}
             aria-label="Toggle custom mode"
           >

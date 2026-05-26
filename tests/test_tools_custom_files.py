@@ -141,8 +141,8 @@ class TestRemoveSymlinks:
 
         custom_files.create_symlinks(str(spark))
         removed = custom_files.remove_symlinks(str(spark))
-        assert removed["recipes"] >= 1
-        assert removed["mods"] >= 1
+        assert len(removed["recipes"]) >= 1
+        assert len(removed["mods"]) >= 1
 
         assert not (spark / "recipes" / "custom-remove-recipe").exists()
         assert not (spark / "mods" / "custom-remove-mod").exists()

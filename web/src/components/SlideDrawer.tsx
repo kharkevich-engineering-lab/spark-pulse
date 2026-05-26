@@ -36,7 +36,13 @@ export default function SlideDrawer({ open, onClose, header, actions, children }
   useEffect(() => {
     if (open) {
       drawerRef.current?.focus();
-      const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+      const handler = (e: KeyboardEvent) => {
+        if (e.key === "Escape") {
+          // Don't close the drawer if a nested confirm modal is handling Escape
+          if (document.querySelector("[data-confirm-modal]")) return;
+          onClose();
+        }
+      };
       window.addEventListener("keydown", handler);
       return () => window.removeEventListener("keydown", handler);
     }
