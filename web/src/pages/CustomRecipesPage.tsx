@@ -16,6 +16,7 @@ import { Loader2, Plus, FileText, Box } from "lucide-react";
 import { AlertModal } from "@/components/Modal";
 import CustomRecipeDrawer from "@/components/CustomRecipeDrawer";
 import CustomModDrawer from "@/components/CustomModDrawer";
+import BaseCard from "@/components/BaseCard";
 import NewRecipeModal from "@/components/NewRecipeModal";
 import NewModModal from "@/components/NewModModal";
 
@@ -162,16 +163,13 @@ export default function CustomRecipesPage() {
           {recipes.length > 0 && (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               {recipes.map((r) => (
-                <div
+                <BaseCard
                   key={r.id}
+                  icon={<FileText size={16} className="shrink-0 text-primary" />}
+                  title={r.name}
+                  subtitle={r.filename}
                   onClick={() => handleOpenRecipe(r)}
-                  className="p-5 rounded-xl bg-surface border border-border hover:border-primary/50 cursor-pointer transition-colors group"
-                >
-                  <div className="flex items-start justify-between mb-2">
-                    <h3 className="font-semibold text-base group-hover:text-primary transition-colors">{r.name}</h3>
-                  </div>
-                  <p className="text-xs text-text-muted font-mono">{r.filename}</p>
-                </div>
+                />
               ))}
             </div>
           )}
@@ -196,23 +194,18 @@ export default function CustomRecipesPage() {
           {mods.length > 0 && (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               {mods.map((m) => (
-                <div
+                <BaseCard
                   key={m.id}
+                  icon={<Box size={16} className="shrink-0 text-primary" />}
+                  title={m.name}
+                  description={m.description}
+                  badges={m.has_run_sh ? (
+                    <span className="flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-success/15 text-success">
+                      <span className="w-1.5 h-1.5 rounded-full bg-success" />run.sh
+                    </span>
+                  ) : undefined}
                   onClick={() => handleOpenMod(m)}
-                  className="p-5 rounded-xl bg-surface border border-border hover:border-primary/50 cursor-pointer transition-colors group"
-                >
-                  <div className="flex items-start justify-between mb-2">
-                    <h3 className="font-semibold text-base group-hover:text-primary transition-colors">{m.name}</h3>
-                  </div>
-                  {m.description && <p className="text-xs text-text-muted mt-1 line-clamp-2">{m.description}</p>}
-                  <div className="flex items-center gap-2 mt-3 text-xs text-text-muted">
-                    {m.has_run_sh && (
-                      <span className="flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-success/15 text-success">
-                        <span className="w-1.5 h-1.5 rounded-full bg-success" />run.sh
-                      </span>
-                    )}
-                  </div>
-                </div>
+                />
               ))}
             </div>
           )}

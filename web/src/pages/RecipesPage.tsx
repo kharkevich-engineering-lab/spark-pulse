@@ -1,13 +1,14 @@
 import { useState, useEffect, useMemo } from "react";
-import { fetchRecipes, fetchRecipe, fetchDeployments, createDeployment, fetchSettings, fetchRecipeCustomization, saveRecipeCustomization, deleteRecipeCustomization, fetchMods, fetchMod } from "@/lib/api";
-import type { RecipeDetail, RecipeCustomization, RecipeSummary, ModSummary, ModDetail } from "@/lib/types";
+import { fetchRecipes, fetchRecipe, fetchDeployments, createDeployment, fetchSettings, fetchRecipeCustomization, saveRecipeCustomization, deleteRecipeCustomization, fetchMods, fetchMod, listCustomRecipes, getCustomRecipeContent, saveCustomRecipe, deleteCustomRecipe, listCustomMods, getCustomModFiles, saveCustomModFiles, deleteCustomMod, syncSymlinks } from "@/lib/api";
+import type { RecipeDetail, RecipeCustomization, RecipeSummary, ModSummary, ModDetail, CustomRecipeInfo, CustomModInfo, ModFileMap } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
 import { AlertModal, ConfirmModal } from "@/components/Modal";
-import { Loader2, AlertCircle, ChevronDown, ChevronRight, X, Copy, Check, Wrench, Zap, FileCode2, FileText, FileCode } from "lucide-react";
+import { Loader2, AlertCircle, ChevronDown, X, Copy, Check, Wrench, Zap, FileCode2, FileText, FileCode, ArrowRightLeft } from "lucide-react";
 import RecipeCard from "@/components/RecipeCard";
 import RecipeDrawer from "@/components/RecipeDrawer";
+import SlideDrawer from "@/components/SlideDrawer";
+import BaseCard from "@/components/BaseCard";
 import { setRefresh } from "@/lib/refresh";
-import { useRef } from "react";
 
 type Tab = "recipes" | "mods";
 
@@ -47,14 +48,6 @@ function ModDrawer({ modId, onClose }: { modId: string; onClose: () => void }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const drawerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    drawerRef.current?.focus();
-    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [onClose]);
 
   useEffect(() => {
     setLoading(true);
@@ -73,77 +66,73 @@ function ModDrawer({ modId, onClose }: { modId: string; onClose: () => void }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
-      <div
-        ref={drawerRef}
-        tabIndex={-1}
-        className="h-full w-full max-w-2xl bg-surface border-l border-border shadow-xl flex flex-col overflow-hidden outline-none"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
+    <SlideDrawer
+      open={!!modId}
+      onClose={onClose}
+      header={
+        <div>
           <div className="flex items-center gap-2">
-            <Wrench size={20} className="text-primary" />
-            <span className="font-mono font-semibold text-lg">{modId}</span>
+            <Wrench size={18} className="text-primary" />
+            <span className="text-xl font-mono font-bold truncate">{modId}</span>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded hover:bg-surface-hover transition-colors">
-            <X size={18} />
-          </button>
         </div>
-
-        {loading && (
-          <div className="flex-1 flex items-center justify-center">
-            <Loader2 className="animate-spin text-primary" size={32} />
+      }
+      actions={
+        <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover:bg-surface-hover transition-colors">
+          <X size={18} />
+        </button>
+      }
+    >
+      {loading && (
+        <div className="flex-1 flex items-center justify-center">
+          <Loader2 className="animate-spin text-primary" size={32} />
+        </div>
+      )}
+      {error && (
+        <div className="flex-1 flex items-center justify-center px-6">
+          <div className="flex items-center gap-3 text-danger">
+            <AlertCircle size={20} />
+            <span>{error}</span>
           </div>
-        )}
-        {error && (
-          <div className="flex-1 flex items-center justify-center px-6">
-            <div className="flex items-center gap-3 text-danger">
-              <AlertCircle size={20} />
-              <span>{error}</span>
+        </div>
+      )}
+      {detail && !loading && (
+        <div className="p-6 space-y-5">
+          {detail.description && (
+            <div className="p-4 rounded-xl bg-bg border border-border">
+              <p className="text-sm text-text-muted leading-relaxed">{detail.description}</p>
             </div>
-          </div>
-        )}
-
-        {detail && !loading && (
-          <div className="flex-1 overflow-y-auto p-6 space-y-5">
-            {detail.description && (
-              <div className="p-4 rounded-xl bg-bg border border-border">
-                <p className="text-sm text-text-muted leading-relaxed">{detail.description}</p>
-              </div>
-            )}
-
-            {detail.files.length > 0 && (
-              <div>
-                <p className="text-sm font-medium mb-2 text-text-muted uppercase tracking-wide text-xs">Assets</p>
-                <div className="flex flex-wrap gap-2">
-                  {detail.files.map((f) => (
-                    <FileBadge key={f.name} name={f.name} kind={f.kind} />
-                  ))}
-                </div>
-              </div>
-            )}
-
+          )}
+          {detail.files.length > 0 && (
             <div>
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-sm font-medium">run.sh</p>
-                <button
-                  onClick={copyScript}
-                  className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text transition-colors"
-                >
-                  {copied ? <Check size={14} className="text-success" /> : <Copy size={14} />}
-                  {copied ? "Copied" : "Copy"}
-                </button>
-              </div>
-              <div className="rounded-xl bg-bg border border-border overflow-hidden">
-                <pre className="p-4 text-xs font-mono overflow-x-auto leading-relaxed whitespace-pre">
-                  {detail.script || "(empty)"}
-                </pre>
+              <p className="text-sm font-medium mb-2 text-text-muted uppercase tracking-wide text-xs">Assets</p>
+              <div className="flex flex-wrap gap-2">
+                {detail.files.map((f) => (
+                  <FileBadge key={f.name} name={f.name} kind={f.kind} />
+                ))}
               </div>
             </div>
+          )}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm font-medium">run.sh</p>
+              <button
+                onClick={copyScript}
+                className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text transition-colors"
+              >
+                {copied ? <Check size={14} className="text-success" /> : <Copy size={14} />}
+                {copied ? "Copied" : "Copy"}
+              </button>
+            </div>
+            <div className="rounded-xl bg-bg border border-border overflow-hidden">
+              <pre className="p-4 text-xs font-mono overflow-x-auto leading-relaxed whitespace-pre">
+                {detail.script || "(empty)"}
+              </pre>
+            </div>
           </div>
-        )}
-      </div>
-    </div>
+        </div>
+      )}
+    </SlideDrawer>
   );
 }
 
@@ -152,23 +141,29 @@ export default function RecipesPage() {
   const { data: deployments } = useQuery(fetchDeployments);
   const { data: settings } = useQuery(fetchSettings);
   const { data: mods, loading: modsLoading, error: modsError } = useQuery(fetchMods);
-  const [tab, setTab] = useState<Tab>("recipes");
+  const [showCustom, setShowCustom] = useState(false);
+  const [customRecipes, setCustomRecipes] = useState<CustomRecipeInfo[]>([]);
+  const [customMods, setCustomMods] = useState<CustomModInfo[]>([]);
+  const [customLoading, setCustomLoading] = useState(false);
   const [selected, setSelected] = useState<{ recipe: RecipeDetail; customization: RecipeCustomization } | null>(null);
   const [alertModal, setAlertModal] = useState<{ title: string; message: string } | null>(null);
   const [showUnavailable, setShowUnavailable] = useState(false);
   const [activeModId, setActiveModId] = useState<string | null>(null);
 
+  // Custom recipe modal state
+  const [selectedRecipe, setSelectedRecipe] = useState<CustomRecipeInfo | null>(null);
+  const [showRecipeModal, setShowRecipeModal] = useState(false);
+  const [recipeContent, setRecipeContent] = useState("");
+
+  // Custom mod modal state
+  const [selectedMod, setSelectedMod] = useState<CustomModInfo | null>(null);
+  const [showModModal, setShowModModal] = useState(false);
+  const [modFiles, setModFiles] = useState<ModFileMap>({});
+
   // Confirmation modal state for reset
   const [resetConfirm, setResetConfirm] = useState<{ recipeId: string; recipeName: string } | null>(null);
 
   const clusterEnabled = settings?.cluster_enabled ?? false;
-
-  const duplicateNames = useMemo(() => {
-    if (!recipes) return new Set<string>();
-    const counts = new Map<string, number>();
-    recipes.forEach((recipe) => counts.set(recipe.name, (counts.get(recipe.name) ?? 0) + 1));
-    return new Set<string>([...counts.entries()].filter(([, count]) => count > 1).map(([name]) => name));
-  }, [recipes]);
 
   const runningIds = useMemo(() => {
     if (!deployments) return new Set<string>();
@@ -183,6 +178,76 @@ export default function RecipesPage() {
   }, [recipes, clusterEnabled]);
 
   useEffect(() => { setRefresh(refetch); }, [refetch]);
+
+  const loadCustomData = async () => {
+    setCustomLoading(true);
+    try {
+      const [r, m] = await Promise.all([listCustomRecipes(), listCustomMods()]);
+      setCustomRecipes(r);
+      setCustomMods(m);
+    } catch (e) {
+      setAlertModal({ title: "Error", message: e instanceof Error ? e.message : "Failed to load custom data" });
+    } finally {
+      setCustomLoading(false);
+    }
+  };
+
+  const handleToggleCustom = async () => {
+    const next = !showCustom;
+    if (next) {
+      // Switching to custom: create symlinks
+      try { await syncSymlinks("create"); } catch { /* best-effort */ }
+      await loadCustomData();
+    } else {
+      // Switching to system: remove symlinks
+      try { await syncSymlinks("remove"); } catch { /* best-effort */ }
+    }
+    setShowCustom(next);
+  };
+
+  const handleOpenCustomRecipe = async (recipe: CustomRecipeInfo) => {
+    setSelectedRecipe(recipe);
+    try {
+      const { content } = await getCustomRecipeContent(recipe.id);
+      setRecipeContent(content);
+      setShowRecipeModal(true);
+    } catch {
+      setAlertModal({ title: "Error", message: "Failed to load recipe" });
+    }
+  };
+
+  const handleSaveCustomRecipe = async (_id: string, _content: string) => {
+    if (recipeContent) {
+      await saveCustomRecipe(_id, recipeContent);
+      await loadCustomData();
+    }
+  };
+
+  const handleDeleteCustomRecipe = async (_id: string) => {
+    await deleteCustomRecipe(_id);
+    await loadCustomData();
+  };
+
+  const handleOpenCustomMod = async (mod: CustomModInfo) => {
+    setSelectedMod(mod);
+    try {
+      const { files } = await getCustomModFiles(mod.id);
+      setModFiles(files);
+      setShowModModal(true);
+    } catch {
+      setAlertModal({ title: "Error", message: "Failed to load mod" });
+    }
+  };
+
+  const handleSaveCustomMod = async (_id: string, fileMap: ModFileMap) => {
+    await saveCustomMod(_id, fileMap);
+    await loadCustomData();
+  };
+
+  const handleDeleteCustomMod = async (_id: string) => {
+    await deleteCustomMod(_id);
+    await loadCustomData();
+  };
 
   const handleSelect = async (recipe: RecipeSummary) => {
     try {
@@ -304,7 +369,6 @@ export default function RecipesPage() {
                     r={r}
                     isRunning={runningIds.has(r.id)}
                     clusterBlocked={false}
-                    duplicateNames={duplicateNames}
                     onSelect={() => handleSelect(r)}
                     onReset={() => openResetConfirm(r)}
                   />
@@ -328,7 +392,6 @@ export default function RecipesPage() {
                           r={r}
                           isRunning={false}
                           clusterBlocked={true}
-                          duplicateNames={duplicateNames}
                           onSelect={() => {}}
                           onReset={() => openResetConfirm(r)}
                         />
@@ -417,38 +480,26 @@ export default function RecipesPage() {
 // ── Mod card ─────────────────────────────────────────────────────────────────
 
 function ModCard({ mod, onClick }: { mod: ModSummary; onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      className="w-full text-left p-5 rounded-xl bg-surface border border-border hover:border-primary/50 hover:bg-surface-hover transition-all group"
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            <Wrench size={16} className="text-primary shrink-0" />
-            <span className="font-mono font-semibold text-sm">{mod.id}</span>
-            {mod.has_patches && (
-              <span className="px-1.5 py-0.5 rounded text-xs bg-warning/15 text-warning border border-warning/30 font-mono">
-                patches
-              </span>
-            )}
-          </div>
-          {mod.description ? (
-            <p className="text-sm text-text-muted leading-snug">{mod.description}</p>
-          ) : (
-            <p className="text-sm text-text-muted italic opacity-50">No description</p>
-          )}
-        </div>
-        <ChevronRight size={16} className="text-text-muted group-hover:text-primary shrink-0 mt-0.5 transition-colors" />
-      </div>
-
-      {mod.files.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 mt-3">
-          {mod.files.map((f) => (
-            <FileBadge key={f.name} name={f.name} kind={f.kind} />
-          ))}
-        </div>
+  const badges = (
+    <>
+      {mod.has_patches && (
+        <span className="px-1.5 py-0.5 rounded text-xs bg-warning/15 text-warning border border-warning/30 font-mono">
+          patches
+        </span>
       )}
-    </button>
+      {mod.files.map((f) => (
+        <FileBadge key={f.name} name={f.name} kind={f.kind} />
+      ))}
+    </>
+  );
+
+  return (
+    <BaseCard
+      icon={<Wrench size={16} className="shrink-0 text-primary" />}
+      title={mod.id}
+      description={mod.description}
+      badges={badges}
+      onClick={onClick}
+    />
   );
 }

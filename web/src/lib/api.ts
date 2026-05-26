@@ -135,3 +135,13 @@ export async function saveCustomModFiles(modId: string, files: ModFileMap): Prom
 export async function deleteCustomMod(modId: string): Promise<{ deleted: boolean }> {
   return json<{ deleted: boolean }>(`/custom-files/mods/${modId}`, { method: "DELETE" });
 }
+
+// ── Symlink Sync ────────────────────────────────────────────────────────────
+
+export async function syncSymlinks(mode: "create" | "remove"): Promise<{ recipes: string[]; mods: string[] }> {
+  return json<{ recipes: string[]; mods: string[] }>("/custom-files/symlinks/sync", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode }),
+  });
+}

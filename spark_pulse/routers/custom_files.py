@@ -12,6 +12,8 @@ from spark_pulse.tools.custom_files import (
     remove_symlink_for_recipe,
     create_symlink_for_mod,
     remove_symlink_for_mod,
+    create_symlinks,
+    remove_symlinks,
     discover_custom_recipes,
     discover_custom_mods,
     get_custom_recipe_content,
@@ -35,6 +37,23 @@ def get_symlink_status():
     try:
         spark_path = config.spark_vllm_path
         return {"spark_path": spark_path}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/symlinks/sync")
+def sync_symlinks(mode: str = "create"):
+    """Sync symlinks — create or remove all custom recipe/mod symlinks.
+
+    mode: "create" (add custom to spark) or "remove" (remove custom from spark)
+    """
+    try:
+        spark_path = config.spark_vllm_path
+        if mode == "create":
+            result = create_symlinks(spark_path)
+        else:
+            result = remove_symlinks(spark_path)
+        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

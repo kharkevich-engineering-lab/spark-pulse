@@ -11,6 +11,7 @@ Props:
 import { useState, useEffect, useImperativeHandle, forwardRef, useRef } from "react";
 import type { RecipeDetail, RecipeCustomization, RecipeFormRef } from "@/lib/types";
 import { X, Code2 } from "lucide-react";
+import LazyCodeEditor from "./LazyCodeEditor";
 
 const RecipeForm = forwardRef<RecipeFormRef, {
   recipe: RecipeDetail;
@@ -299,11 +300,13 @@ const RecipeForm = forwardRef<RecipeFormRef, {
         <label className="text-sm font-medium">Recipe YAML</label>
         {yamlError && (<span className="text-xs text-danger">{yamlError}</span>)}
       </div>
-      <textarea
+      <LazyCodeEditor
         value={rawYaml}
-        onChange={(e) => { setRawYaml(e.target.value); }}
+        language="yaml"
+        onChange={(evn: React.ChangeEvent<HTMLTextAreaElement>) => { setRawYaml(evn.target.value); }}
         disabled={!isEditing}
-        className="flex-1 min-h-[300px] w-full px-4 py-3 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm resize-y disabled:opacity-60"
+        padding={16}
+        className="flex-1 min-h-[300px] font-mono text-sm"
         spellCheck={false}
       />
       <p className="text-xs text-text-muted mt-2">Edit the YAML directly. Changes are saved when you click Save.</p>

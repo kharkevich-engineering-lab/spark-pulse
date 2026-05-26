@@ -1,14 +1,10 @@
-/** Recipe drawer wrapper.
-
-Combines the backdrop, keyboard handling, and scrollable container
-around RecipeForm. Lifts editing state so header buttons can toggle
-edit mode. Uses a right-side drawer pattern (same as ModDrawer).
-*/
+/** Recipe drawer — uses SlideDrawer for layout, RecipeForm for content. */
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import RecipeForm from "./RecipeForm";
 import { ConfirmModal } from "@/components/Modal";
 import { X } from "lucide-react";
+import SlideDrawer from "./SlideDrawer";
 import type { RecipeDetail, RecipeCustomization, RecipeFormRef } from "@/lib/types";
 
 export default function RecipeDrawer({ recipe, customization, isRunning, clusterEnabled, onClose, onError, onDeploy, onSaveCustomization, onReset }: {
@@ -22,7 +18,6 @@ export default function RecipeDrawer({ recipe, customization, isRunning, cluster
   onSaveCustomization?: (fields: Partial<RecipeCustomization>) => void;
   onReset?: () => void | Promise<void>;
 }) {
-  const drawerRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<RecipeFormRef>(null);
   const clusterBlocked = recipe.cluster_only && !clusterEnabled;
   const hasCustomization = customization && Object.keys(customization).length > 0;
@@ -31,11 +26,8 @@ export default function RecipeDrawer({ recipe, customization, isRunning, cluster
   const [resetConfirm, setResetConfirm] = useState(false);
 
   useEffect(() => {
-    drawerRef.current?.focus();
-    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [onClose]);
+    setIsEditing(false);
+  }, [recipe.id]); // Reset edit state when recipe changes
 
   const handleDeploy = async () => {
     if (!onDeploy) return;
@@ -62,119 +54,119 @@ export default function RecipeDrawer({ recipe, customization, isRunning, cluster
   }, [onReset]);
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
-      <div
-        ref={drawerRef}
-        tabIndex={-1}
-        className="h-full w-full max-w-2xl bg-surface border-l border-border shadow-xl flex flex-col overflow-hidden outline-none"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header row: name + actions */}
-        <div className="sticky top-0 bg-surface border-b border-border px-6 py-4 flex items-start justify-between gap-3 shrink-0">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <h3 className="text-xl font-bold truncate">{recipe.name}</h3>
-              {isRunning && <span className="flex items-center gap-1.5 text-xs text-success font-medium px-2 py-0.5 rounded-full bg-success/15 shrink-0"><span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />Running</span>}
-            </div>
-            <p className="text-sm text-text-muted mt-1 truncate">{recipe.model}</p>
+    <SlideDrawer
+      open={!!recipe}
+      onClose={onClose}
+      header={
+        <div>
+          <div className="flex items-center gap-2">
+            <h3 className="text-xl font-bold truncate">{recipe.name}</h3>
+            {isRunning && <span className="flex items-center gap-1.5 text-xs text-success font-medium px-2 py-0.5 rounded-full bg-success/15 shrink-0"><span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />Running</span>}
           </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {/* Not editing: Deploy + Customize */}
-            {!isEditing && (
-              <>
-                {onDeploy && (
-                  <button
-                    onClick={handleDeploy}
-                    disabled={deploying || isRunning || clusterBlocked}
-                    className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium text-sm transition-colors"
-                  >
-                    {deploying ? "…" : "Deploy"}
-                  </button>
-                )}
-                {onSaveCustomization && !hasCustomization && (
-                  <button
-                    onClick={() => setIsEditing(true)}
-                    disabled={isRunning || clusterBlocked}
-                    className="px-3 py-1.5 rounded-lg border border-border hover:border-primary/50 text-sm font-medium transition-colors"
-                  >
-                    Customize
-                  </button>
-                )}
-                {onSaveCustomization && hasCustomization && (
-                  <button
-                    onClick={() => setIsEditing(true)}
-                    disabled={isRunning || clusterBlocked}
-                    className="px-3 py-1.5 rounded-lg border border-border hover:border-primary/50 text-sm font-medium transition-colors"
-                  >
-                    Edit Custom
-                  </button>
-                )}
-              </>
-            )}
-            {/* Editing: Save + Reset */}
-            {isEditing && (
-              <>
+          <p className="text-sm text-text-muted mt-1 truncate">{recipe.model}</p>
+        </div>
+      }
+      actions={
+        <>
+          {/* Not editing: Deploy + Customize */}
+          {!isEditing && (
+            <>
+              {onDeploy && (
                 <button
                   type="button"
-                  onClick={() => formRef.current?.save()}
-                  className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-white font-medium text-sm transition-colors"
+                  onClick={handleDeploy}
+                  disabled={deploying || isRunning || clusterBlocked}
+                  className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium text-sm transition-colors"
                 >
-                  Save
+                  {deploying ? "…" : "Deploy"}
                 </button>
-                {hasCustomization && onSaveCustomization && (
-                  <button
-                    type="button"
-                    onClick={() => setResetConfirm(true)}
-                    className="px-3 py-1.5 rounded-lg border border-border hover:border-warning/50 text-sm font-medium transition-colors text-warning"
-                  >
-                    Reset
-                  </button>
-                )}
-              </>
-            )}
-            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-surface-hover transition-colors">
-              <X size={18} />
-            </button>
+              )}
+              {onSaveCustomization && !hasCustomization && (
+                <button
+                  type="button"
+                  onClick={() => setIsEditing(true)}
+                  disabled={isRunning || clusterBlocked}
+                  className="px-3 py-1.5 rounded-lg border border-border hover:border-primary/50 text-sm font-medium transition-colors"
+                >
+                  Customize
+                </button>
+              )}
+              {onSaveCustomization && hasCustomization && (
+                <button
+                  type="button"
+                  onClick={() => setIsEditing(true)}
+                  disabled={isRunning || clusterBlocked}
+                  className="px-3 py-1.5 rounded-lg border border-border hover:border-primary/50 text-sm font-medium transition-colors"
+                >
+                  Edit Custom
+                </button>
+              )}
+            </>
+          )}
+          {/* Editing: Save + Reset */}
+          {isEditing && (
+            <>
+              <button
+                type="button"
+                onClick={() => formRef.current?.save()}
+                className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-white font-medium text-sm transition-colors"
+              >
+                Save
+              </button>
+              {hasCustomization && onSaveCustomization && (
+                <button
+                  type="button"
+                  onClick={() => setResetConfirm(true)}
+                  className="px-3 py-1.5 rounded-lg border border-border hover:border-warning/50 text-sm font-medium transition-colors text-warning"
+                >
+                  Reset
+                </button>
+              )}
+            </>
+          )}
+          <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover:bg-surface-hover transition-colors">
+            <X size={18} />
+          </button>
+        </>
+      }
+    >
+      {clusterBlocked && (
+        <div className="px-6 py-3 border-b border-border">
+          <div className="flex items-start gap-3 p-3 rounded-lg bg-warning/10 border border-warning/30">
+            <p className="text-sm text-warning">This recipe requires cluster mode.</p>
           </div>
         </div>
-
-        {clusterBlocked && (
-          <div className="px-6 py-3 border-b border-border shrink-0">
-            <div className="flex items-start gap-3 p-3 rounded-lg bg-warning/10 border border-warning/30">
-              <p className="text-sm text-warning">This recipe requires cluster mode.</p>
-            </div>
-          </div>
-        )}
-
-        <div className="flex-1 overflow-y-auto">
-          <RecipeForm
-            ref={formRef}
-            recipe={recipe}
-            customization={customization}
-            onDeploy={handleDeploy}
-            onSaveCustomization={handleSave}
-            isRunning={isRunning}
-            clusterBlocked={clusterBlocked}
-            isEditing={isEditing}
-          />
-        </div>
-      </div>
-
-      {/* Reset confirmation modal */}
-      {resetConfirm && (
-        <ConfirmModal
-          open={resetConfirm}
-          onClose={() => setResetConfirm(false)}
-          onConfirm={() => {
-            void handleReset();
-            setResetConfirm(false);
-          }}
-          title="Reset Customization"
-          message={`Reset "${recipe.name}" to its original recipe? Any customizations you made will be lost.`}
-          confirmLabel="Reset"
-          confirmVariant="danger"
-        />
       )}
-    </div>
+      <RecipeForm
+        ref={formRef}
+        recipe={recipe}
+        customization={customization}
+        onDeploy={handleDeploy}
+        onSaveCustomization={handleSave}
+        isRunning={isRunning}
+        clusterBlocked={clusterBlocked}
+        isEditing={isEditing}
+      />
+
+      {/* Reset confirmation modal — rendered inside drawer, below content */}
+      {resetConfirm && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/30">
+          <div className="pointer-events-auto">
+            <ConfirmModal
+              open={resetConfirm}
+              onClose={() => setResetConfirm(false)}
+              onConfirm={() => {
+                void handleReset();
+                setResetConfirm(false);
+              }}
+              title="Reset Customization"
+              message={`Reset "${recipe.name}" to its original recipe? Any customizations you made will be lost.`}
+              confirmLabel="Reset"
+              confirmVariant="danger"
+            />
+          </div>
+        </div>
+      )}
+    </SlideDrawer>
   );
 }
