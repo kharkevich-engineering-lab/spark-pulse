@@ -12,6 +12,7 @@ interface AppConfig {
   mcp_enabled: boolean;
   cluster_enabled: boolean;
   git_update_enabled: boolean;
+  benchmarking_enabled: boolean;
   simulation_mode: boolean;
 }
 
@@ -34,6 +35,7 @@ export async function loadConfig(): Promise<AppConfig> {
       mcp_enabled: true,
       cluster_enabled: false,
       git_update_enabled: true,
+      benchmarking_enabled: false,
       simulation_mode: true,
     };
     config = defaults;
@@ -61,6 +63,14 @@ export function isAuthEnabled(): boolean {
 export function isGitUpdateEnabled(): boolean {
   try {
     return getConfig().git_update_enabled;
+  } catch {
+    return false;
+  }
+}
+
+export function isBenchmarkingEnabled(): boolean {
+  try {
+    return getConfig().benchmarking_enabled;
   } catch {
     return false;
   }

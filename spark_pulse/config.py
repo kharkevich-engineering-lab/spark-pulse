@@ -157,6 +157,16 @@ class _Config:
         )
 
     @property
+    def benchmarking_enabled(self) -> bool:
+        return (
+            os.environ.get(
+                "SPARK_PULSE_BENCHMARKING_ENABLED",
+                str(self._data.get("benchmarking_enabled", False)),
+            ).lower()
+            == "true"
+        )
+
+    @property
     def oidc_provider_url(self) -> str:
         return str(self._data.get("oidc_provider_url", ""))
 

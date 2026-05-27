@@ -2,8 +2,8 @@ import { useAuth } from "@/lib/auth";
 import { doRefresh } from "@/lib/refresh";
 import { type ThemeMode, getTheme, setTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
-import { isAuthEnabled, isGitUpdateEnabled } from "@/lib/config";
-import { Activity, Bot, Copyright, Database, ListChecks, LogOut, Menu, Moon, MoonStar, RotateCw, Settings, Sun, User, X, Zap } from "lucide-react";
+import { isAuthEnabled, isGitUpdateEnabled, isBenchmarkingEnabled } from "@/lib/config";
+import { Activity, Bot, Copyright, Database, Flame, ListChecks, LogOut, Menu, Moon, MoonStar, RotateCw, Settings, Sun, User, X, Zap } from "lucide-react";
 import { SiGithub, SiPypi } from "@icons-pack/react-simple-icons";
 import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
@@ -11,7 +11,8 @@ import GitUpdateNotification from "@/components/Notifications";
 
 const NAV = [
   { href: "/", label: "Recipes & Mods", icon: Zap },
-  { href: "/jobs", label: "Jobs", icon: ListChecks },
+  { href: "/jobs", label: "Inference", icon: ListChecks },
+  { href: "/benchmarking", label: "Benchmarking", icon: Flame },
   { href: "/monitoring", label: "Monitoring", icon: Activity },
   { href: "/cache", label: "Cache", icon: Database },
   { href: "/mcp", label: "MCP", icon: Bot },
@@ -128,7 +129,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
         {/* Nav */}
         <nav className="flex-1 p-4 space-y-1">
-          {NAV.map((item) => {
+          {NAV.filter((item) => item.href !== "/benchmarking" || isBenchmarkingEnabled()).map((item) => {
             const active = location.pathname === item.href;
             const Icon = item.icon;
             return (

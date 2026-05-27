@@ -16,6 +16,7 @@ if _sim_mode:
         cache as cache,
         recipes as recipes,
         deployments as deployments,
+        benchmarking as benchmarking,
     )
 else:
     from spark_pulse.tools import (
@@ -23,6 +24,7 @@ else:
         cache as cache,
         recipes as recipes,
         deployments as deployments,
+        benchmarking as benchmarking,
     )
 
 
