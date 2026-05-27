@@ -1,4 +1,4 @@
-import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntry, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, GitUpdateStatus, GitUpdateAction, GitUpdateCheckResult, CustomRecipeInfo, CustomModInfo, ModFileMap } from "@/lib/types";
+import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntry, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, GitUpdateStatus, GitUpdateAction, GitUpdateCheckResult, CustomRecipeInfo, CustomModInfo, ModFileMap, BenchmarkResult } from "@/lib/types";
 
 const API = "/api";
 
@@ -143,5 +143,47 @@ export async function syncSymlinks(mode: "create" | "remove"): Promise<{ recipes
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ mode }),
+  });
+}
+
+// ── Benchmarking ──────────────────────────────────────────────────────────────
+
+export async function fetchBenchmarks(): Promise<BenchmarkResult[]> {
+  return json<BenchmarkResult[]>("/benchmarks");
+}
+
+export async function fetchBenchmark(id: string): Promise<BenchmarkResult> {
+  return json<BenchmarkResult>(`/benchmarks/${id}`);
+}
+
+export async function fetchLatestByRecipe(): Promise<Record<string, BenchmarkResult>> {
+  return json<Record<string, BenchmarkResult>>("/benchmarks/latest-by-recipe");
+}
+
+export async function compareRuns(runIds: string[]): Promise<{
+  runs: Record<string, BenchmarkResult>;
+  comparison: Record<string, any>;
+  run_ids: string[];
+}> {
+  return json<{
+    runs: Record<string, BenchmarkResult>;
+    comparison: Record<string, any>;
+    run_ids: string[];
+  }>("/benchmarks/compare", {
+    method: "POST",
+    body: JSON.stringify({ run_ids: runIds }),
+  });
+}
+
+export async function runBenchmark(body: {
+  deployment_id: string;
+  baseline_id?: string;
+  recipe_id?: string;
+  recipe_name?: string;
+  params?: Record<string, unknown>;
+}): Promise<BenchmarkResult> {
+  return json<BenchmarkResult>("/benchmarks", {
+    method: "POST",
+    body: JSON.stringify(body),
   });
 }

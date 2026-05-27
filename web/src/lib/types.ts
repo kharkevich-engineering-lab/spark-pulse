@@ -169,6 +169,7 @@ export interface Settings {
   git_update_enabled: boolean;
   git_update_check_interval_seconds: number;
   git_update_auto_pull: boolean;
+  benchmarking_enabled: boolean;
   env_managed?: string[];
 }
 
@@ -185,4 +186,17 @@ export interface GitUpdateCheckResult {
   remote_date: string | null;
   has_uncommitted_changes: boolean;
   last_fetch_ok?: boolean;
+}
+
+export interface BenchmarkResult {
+  benchmark_id: string;
+  deployment_id: string;
+  recipe_id: string;
+  recipe_name: string;
+  baseline_id: string | null;
+  status: "running" | "completed" | "error";
+  started_at: string;
+  completed_at: string | null;
+  params: Record<string, unknown>;
+  results: Record<string, unknown> | null;
 }

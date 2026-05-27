@@ -1,12 +1,12 @@
 import { useEffect, useState, useRef } from "react";
-import { fetchDeployments, stopDeployment, connectLogStream } from "@/lib/api";
+import { fetchDeployments, stopDeployment, connectLogStream, runBenchmark } from "@/lib/api";
 import { useQuery } from "@/hooks/useQuery";
 import StatusBadge from "@/components/StatusBadge";
 import { ConfirmModal, AlertModal } from "@/components/Modal";
-import { Square, X, Trash2, Loader2, AlertCircle, Terminal } from "lucide-react";
+import { Square, X, Trash2, Loader2, AlertCircle, Terminal, Flame } from "lucide-react";
 import { setRefresh } from "@/lib/refresh";
 
-export default function JobsPage() {
+export default function InferencePage() {
   const { data: deployments, loading, error, refetch } = useQuery(fetchDeployments);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [logs, setLogs] = useState<Record<string, string[]>>({});
@@ -16,6 +16,30 @@ export default function JobsPage() {
   const atBottomRef = useRef<Record<string, boolean>>({});
   const [stopTarget, setStopTarget] = useState<{ id: string; name: string } | null>(null);
   const [alertModal, setAlertModal] = useState<{ title: string; message: string } | null>(null);
+  const [benchmarkModal, setBenchmarkModal] = useState<{ id: string; name: string; recipeId: string; recipeName: string } | null>(null);
+  const [isBenchmarking, setIsBenchmarking] = useState(false);
+
+  const handleBenchmark = async () => {
+    if (!benchmarkModal) return;
+    setIsBenchmarking(true);
+    try {
+      await runBenchmark({
+        deployment_id: benchmarkModal.id,
+        recipe_id: benchmarkModal.recipeId,
+        recipe_name: benchmarkModal.recipeName,
+        params: { benchmarks: ["throughput", "latency"] },
+      });
+      setBenchmarkModal(null);
+      refetch();
+    } catch (e) {
+      setAlertModal({
+        title: "Error",
+        message: e instanceof Error ? e.message : "Failed to run benchmark",
+      });
+    } finally {
+      setIsBenchmarking(false);
+    }
+  };
 
   useEffect(() => { setRefresh(refetch); }, [refetch]);
   useEffect(() => { const i = setInterval(refetch, 10000); return () => clearInterval(i); }, [refetch]);
@@ -59,8 +83,8 @@ export default function JobsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold">Jobs</h2>
-        <p className="text-text-muted mt-1">Running and recently stopped deployments</p>
+        <h2 className="text-2xl font-bold">Inference</h2>
+        <p className="text-text-muted mt-1">Live model inference workloads and their logs</p>
       </div>
 
       {loading && <div className="flex justify-center py-20"><Loader2 className="animate-spin text-primary" size={32} /></div>}
@@ -80,6 +104,9 @@ export default function JobsPage() {
                 {["stopped", "error"].includes(dep.status)
                   ? <button onClick={(e) => { e.stopPropagation(); setStopTarget({ id: dep.id, name: dep.name }); }} className="p-2 rounded-lg hover:bg-danger/10 text-text-muted hover:text-danger transition-colors shrink-0" title="Remove from history"><Trash2 size={14} /></button>
                   : <button onClick={(e) => { e.stopPropagation(); setStopTarget({ id: dep.id, name: dep.name }); }} disabled={dep.status !== "running" && dep.status !== "pending"} className="p-2 rounded-lg hover:bg-danger/10 text-text-muted hover:text-danger transition-colors disabled:opacity-30 shrink-0" title={dep.status === "pending" ? "Cancel" : "Stop"}>{dep.status === "pending" ? <X size={14} /> : <Square size={14} />}</button>}
+                {dep.status === "running" && (
+                  <button onClick={(e) => { e.stopPropagation(); setBenchmarkModal({ id: dep.id, name: dep.name, recipeId: dep.recipe_id, recipeName: dep.recipe_id }); }} className="p-2 rounded-lg hover:bg-primary/10 text-text-muted hover:text-primary transition-colors shrink-0" title="Run Benchmark"><Flame size={14} /></button>
+                )}
               </div>
               {expandedId === dep.id && (
                 <div className="border-t border-border">
@@ -107,9 +134,9 @@ export default function JobsPage() {
           open={!!stopTarget}
           onClose={() => setStopTarget(null)}
           onConfirm={() => { doStop(stopTarget.id, stopTarget.name); setStopTarget(null); }}
-          title={["stopped", "error"].includes(deployments?.find(d => d.id === stopTarget.id)?.status ?? "") ? "Remove Job" : deployments?.find(d => d.id === stopTarget.id)?.status === "pending" ? "Cancel Pending Job" : "Stop Deployment"}
+          title={["stopped", "error"].includes(deployments?.find(d => d.id === stopTarget.id)?.status ?? "") ? "Remove" : deployments?.find(d => d.id === stopTarget.id)?.status === "pending" ? "Cancel" : "Stop Deployment"}
           message={["stopped", "error"].includes(deployments?.find(d => d.id === stopTarget.id)?.status ?? "") ? `Remove "${stopTarget.name}" from history?` : deployments?.find(d => d.id === stopTarget.id)?.status === "pending" ? `Cancel "${stopTarget.name}" before it starts?` : `Stop "${stopTarget.name}"? This will terminate the running process.`}
-          confirmLabel={["stopped", "error"].includes(deployments?.find(d => d.id === stopTarget.id)?.status ?? "") ? "Remove" : deployments?.find(d => d.id === stopTarget.id)?.status === "pending" ? "Cancel Job" : "Stop"}
+          confirmLabel={["stopped", "error"].includes(deployments?.find(d => d.id === stopTarget.id)?.status ?? "") ? "Remove" : deployments?.find(d => d.id === stopTarget.id)?.status === "pending" ? "Cancel" : "Stop"}
           confirmVariant="danger"
         />
       )}
@@ -117,6 +144,42 @@ export default function JobsPage() {
       {/* Alert modal */}
       {alertModal && (
         <AlertModal open={!!alertModal} onClose={() => setAlertModal(null)} title={alertModal.title} message={alertModal.message} />
+      )}
+
+      {/* Benchmark confirmation */}
+      {benchmarkModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="rounded-xl bg-surface border border-border w-full max-w-sm p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold flex items-center gap-2">
+                <Flame size={20} className="text-primary" />
+                Run Benchmark
+              </h3>
+              <button onClick={() => setBenchmarkModal(null)} className="p-1 rounded hover:bg-surface-hover">
+                <X size={18} />
+              </button>
+            </div>
+            <p className="text-sm text-text-muted">
+              Run a benchmark on <strong>{benchmarkModal.name}</strong>? This will measure throughput, latency, and memory usage.
+            </p>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                onClick={() => setBenchmarkModal(null)}
+                className="px-4 py-2 rounded-lg border border-border text-sm hover:bg-surface-hover transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleBenchmark}
+                disabled={isBenchmarking}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-colors disabled:opacity-50"
+              >
+                {isBenchmarking && <Loader2 size={16} className="animate-spin" />}
+                {isBenchmarking ? "Running..." : "Run"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

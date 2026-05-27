@@ -33,6 +33,10 @@ dev = [
 mcp = [
     "mcp>=1.0.0",
 ]
+benchmarking = [
+    "llama-benchy>=0.1.0",
+    "filelock>=3.12.0",
+]
 
 [[project.maintainers]]
 name = "Alexander Kharkevich"
