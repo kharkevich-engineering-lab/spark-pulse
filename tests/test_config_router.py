@@ -76,14 +76,17 @@ class TestApiConfigEndpoint:
         data = resp.json()
         assert data["cluster_enabled"] is True
 
-    def test_config_oidc_configured_false_when_missing_secrets(self, monkeypatch):
+    def test_config_oidc_configured_false_when_missing_secrets(self, tmp_path, monkeypatch):
         """oidc_configured should be False when OIDC secrets are missing."""
+        from spark_pulse import config as config_module
+
         monkeypatch.setenv("SPARK_PULSE_AUTH_ENABLED", "true")
         monkeypatch.setitem(
             config._data, "oidc_provider_url", "https://keycloak.example.com"
         )
         monkeypatch.setitem(config._data, "oidc_client_id", "test-client")
         monkeypatch.setitem(config._data, "oidc_client_secret", "")
+        monkeypatch.setattr(config_module, "_SECRETS_PATH", tmp_path / "missing_secrets.json")
 
         app = create_app()
         from fastapi.testclient import TestClient
