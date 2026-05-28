@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, useLocation, Navigate } from "react-router-dom";
 import Layout from "@/components/Layout";
 import { AuthProvider } from "@/lib/auth";
+import { ConfigProvider, useConfig } from "@/lib/config";
 import RecipesPage from "@/pages/RecipesPage";
 import InferencePage from "@/pages/InferencePage";
 import BenchmarkingPage from "@/pages/BenchmarkingPage";
@@ -9,7 +10,6 @@ import CachePage from "@/pages/CachePage";
 import MCPPage from "@/pages/MCPPage";
 import SettingsPage from "@/pages/SettingsPage";
 import LoginPage from "@/pages/LoginPage";
-import { isBenchmarkingEnabled } from "@/lib/config";
 import { initCsrfToken } from "@/lib/api";
 
 // Initialize CSRF token from meta tag (no-op if meta tag is absent)
@@ -17,7 +17,9 @@ initCsrfToken();
 
 // Wrapper that conditionally renders the Benchmarking page based on config
 function BenchmarkingRoute() {
-  return isBenchmarkingEnabled() ? <BenchmarkingPage /> : <Navigate to="/" replace />;
+  const { config } = useConfig();
+  const enabled = config?.benchmarking_enabled ?? false;
+  return enabled ? <BenchmarkingPage /> : <Navigate to="/" replace />;
 }
 
 // Inner component that conditionally renders Layout based on route
@@ -53,7 +55,9 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <AppRoutes />
+        <ConfigProvider>
+          <AppRoutes />
+        </ConfigProvider>
       </AuthProvider>
     </BrowserRouter>
   );
