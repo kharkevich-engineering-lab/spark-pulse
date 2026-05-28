@@ -21,7 +21,7 @@ const NAV = [
 
 // Internal header component with refresh + theme + auth
 function HeaderInner() {
-  const { isAuthenticated, user, login, logout, isConfigLoaded } = useAuth();
+  const { isAuthenticated, user, logout, isConfigLoaded } = useAuth();
   const [authEnabled, setAuthEnabled] = useState(false);
 
   useEffect(() => {
@@ -50,10 +50,6 @@ function HeaderInner() {
             <LogOut size={18} />
           </button>
         </div>
-      ) : authEnabled ? (
-        <button onClick={login} className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-colors ml-1">
-          Login
-        </button>
       ) : null}
     </div>
   );
