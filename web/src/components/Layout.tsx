@@ -2,7 +2,7 @@ import { useAuth } from "@/lib/auth";
 import { doRefresh } from "@/lib/refresh";
 import { type ThemeMode, getTheme, setTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
-import { useConfig, isAuthEnabled, isGitUpdateEnabled } from "@/lib/config";
+import { useConfig } from "@/lib/config";
 import { Activity, Bot, Copyright, Database, Flame, ListChecks, LogOut, Menu, Moon, MoonStar, RotateCw, Settings, Sun, User, X, Zap } from "lucide-react";
 import { SiGithub, SiPypi } from "@icons-pack/react-simple-icons";
 import { useEffect, useState, useMemo } from "react";
@@ -21,17 +21,22 @@ const NAV = [
 
 // Internal header component with refresh + theme + auth
 function HeaderInner() {
-  const { isAuthenticated, user, logout, isConfigLoaded } = useAuth();
-  const [authEnabled, setAuthEnabled] = useState(false);
+  const { isAuthenticated, user, logout } = useAuth();
+  const { config } = useConfig();
+  const [themeKey, setThemeKey] = useState(0);
 
   useEffect(() => {
-    setAuthEnabled(isAuthEnabled());
-    window.addEventListener("storage", () => setTheme(getTheme()));
-  }, [isConfigLoaded]);
+    window.addEventListener("storage", () => { setTheme(getTheme()); setThemeKey(k => k + 1); });
+  }, []);
+
+  const authEnabled = config?.auth_enabled ?? false;
+  const gitUpdateEnabled = config?.git_update_enabled ?? false;
+  // eslint-disable-next-line react-hooks/exhaustive-deps — only runs on storage event
+  void themeKey;
 
   return (
     <div className="hidden lg:flex fixed top-4 right-4 z-50 items-center gap-1.5">
-      {isGitUpdateEnabled() && <GitUpdateNotification />}
+      {gitUpdateEnabled && <GitUpdateNotification />}
       <button
         onClick={doRefresh}
         className="p-2 rounded-lg hover:bg-surface-hover transition-colors"

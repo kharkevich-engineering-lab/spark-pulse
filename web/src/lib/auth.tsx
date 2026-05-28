@@ -2,7 +2,8 @@
 
 import { useState, useEffect, createContext, useContext, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { isAuthEnabled, loadConfig } from "@/lib/config";
+import { loadConfig } from "@/lib/config";
+import { useConfig } from "@/lib/config";
 
 interface User {
   name?: string;
@@ -37,17 +38,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const [configLoaded, setConfigLoaded] = useState(false);
   const navigate = useNavigate();
+  const { config } = useConfig();
 
   // Load runtime config on startup and check auth only when enabled.
   useEffect(() => {
     const initAuth = async () => {
       try {
         await loadConfig();
-        if (!isAuthEnabled()) {
-          setState({ token: null, user: null, loading: false, error: null });
-          return;
-        }
-        await fetchUser();
       } finally {
         setConfigLoaded(true);
       }
@@ -55,6 +52,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     void initAuth();
   }, []);
+
+  // When config loads, check if auth is enabled
+  useEffect(() => {
+    if (config === null || !configLoaded) return;
+    if (config.auth_enabled) {
+      fetchUser();
+    } else {
+      setState({ token: null, user: null, loading: false, error: null });
+    }
+  }, [config, configLoaded]);
 
   const fetchUser = async () => {
     try {

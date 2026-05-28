@@ -58,10 +58,6 @@ export function isGitUpdateEnabled(): boolean {
   return getConfig().git_update_enabled;
 }
 
-export function isBenchmarkingEnabled(): boolean {
-  return getConfig().benchmarking_enabled;
-}
-
 // ── React context for config ───────────────────────────────────────────────
 
 interface ConfigContextValue {

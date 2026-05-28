@@ -1,32 +1,26 @@
 /** Login page — redirects to OIDC provider for authentication. */
 
-import { useState, useEffect } from "react";
+import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/lib/auth";
-import { isAuthEnabled, loadConfig } from "@/lib/config";
+import { useConfig } from "@/lib/config";
 import { Copyright, Zap } from "lucide-react";
 import { SiGithub, SiPypi } from "@icons-pack/react-simple-icons";
 
 export default function LoginPage() {
   const { isAuthenticated, login } = useAuth();
+  const { config } = useConfig();
   const navigate = useNavigate();
-  const [authReady, setAuthReady] = useState(false);
 
   useEffect(() => {
-    // Load config on mount
-    loadConfig().then(() => setAuthReady(true)).catch(() => setAuthReady(true));
-  }, []);
-
-  useEffect(() => {
-    if (!authReady) return;
     // If already authenticated, redirect to home
-    if (isAuthenticated) {
+    if (isAuthenticated && config?.auth_enabled !== true) {
       navigate("/", { replace: true });
     }
-  }, [isAuthenticated, navigate, authReady]);
+  }, [isAuthenticated, navigate, config]);
 
   // Still loading config — show loading state
-  if (!authReady) {
+  if (!config) {
     return (
       <div className="flex min-h-screen flex-col bg-background">
         <div className="flex-1 flex items-center justify-center">
@@ -71,7 +65,7 @@ export default function LoginPage() {
   }
 
   // If auth is not enabled, redirect to home
-  if (!isAuthEnabled()) {
+  if (config?.auth_enabled !== true) {
     navigate("/", { replace: true });
     return null;
   }
