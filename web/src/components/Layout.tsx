@@ -2,10 +2,10 @@ import { useAuth } from "@/lib/auth";
 import { doRefresh } from "@/lib/refresh";
 import { type ThemeMode, getTheme, setTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
-import { isAuthEnabled, isGitUpdateEnabled, isBenchmarkingEnabled } from "@/lib/config";
+import { useConfig } from "@/lib/config";
 import { Activity, Bot, Copyright, Database, Flame, ListChecks, LogOut, Menu, Moon, MoonStar, RotateCw, Settings, Sun, User, X, Zap } from "lucide-react";
 import { SiGithub, SiPypi } from "@icons-pack/react-simple-icons";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { Link, useLocation } from "react-router-dom";
 import GitUpdateNotification from "@/components/Notifications";
 
@@ -85,6 +85,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const location = useLocation();
   const [version, setVersion] = useState("");
+  const { config } = useConfig();
+  const benchmarkingEnabled = config?.benchmarking_enabled ?? false;
+  const gitUpdateEnabled = config?.git_update_enabled ?? false;
 
   useEffect(() => {
     fetch("/version")
@@ -92,6 +95,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       .then((d) => setVersion(d.version))
       .catch(() => { });
   }, []);
+
+  const navItems = useMemo(() => NAV.filter((item) => {
+    if (item.href === "/benchmarking") return benchmarkingEnabled;
+    if (item.href === "/git-update") return gitUpdateEnabled;
+    return true;
+  }), [benchmarkingEnabled, gitUpdateEnabled]);
 
   return (
     <div className="flex h-screen bg-bg text-text">
@@ -129,7 +138,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
         {/* Nav */}
         <nav className="flex-1 p-4 space-y-1">
-          {NAV.filter((item) => item.href !== "/benchmarking" || isBenchmarkingEnabled()).map((item) => {
+          {navItems.map((item) => {
             const active = location.pathname === item.href;
             const Icon = item.icon;
             return (
