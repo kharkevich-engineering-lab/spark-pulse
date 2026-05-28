@@ -72,12 +72,16 @@ class TestApiConfig:
     """Test the SPA runtime config endpoint."""
 
     def test_config_returns_oidc_status(self, app_client, monkeypatch):
-        """Config endpoint should report OIDC configuration status."""
+        """Config endpoint should report auth_enabled=True when OIDC is enabled.
+
+        oidc_configured is no longer exposed to the frontend —
+        it only needs to know whether auth is enabled.
+        """
         resp = app_client.get("/api/config")
         assert resp.status_code == 200
         data = resp.json()
         assert data["auth_enabled"] is True
-        assert data["oidc_configured"] is True
+        assert "oidc_configured" not in data
 
     def test_config_auth_disabled(self, monkeypatch):
         """Config endpoint should report auth disabled when not configured."""
@@ -95,7 +99,7 @@ class TestApiConfig:
         assert resp.status_code == 200
         data = resp.json()
         assert data["auth_enabled"] is False
-        assert data["oidc_configured"] is False
+        assert "oidc_configured" not in data
 
 
 # ── Tests: OIDC login flow ──────────────────────────────────────────────────

@@ -8,7 +8,6 @@ import { createContext, useContext, useEffect, useState } from "react";
 
 export interface AppConfig {
   auth_enabled: boolean;
-  oidc_configured: boolean;
   mcp_enabled: boolean;
   cluster_enabled: boolean;
   git_update_enabled: boolean;
@@ -18,7 +17,6 @@ export interface AppConfig {
 
 const DEFAULT_CONFIG: AppConfig = {
   auth_enabled: false,
-  oidc_configured: false,
   mcp_enabled: true,
   cluster_enabled: false,
   git_update_enabled: true,
@@ -51,8 +49,9 @@ export function getConfig(): AppConfig {
   return cachedConfig;
 }
 
+/** Whether to show the login page / redirect on 401. */
 export function isAuthEnabled(): boolean {
-  return getConfig().auth_enabled && getConfig().oidc_configured;
+  return getConfig().auth_enabled;
 }
 
 export function isGitUpdateEnabled(): boolean {
