@@ -81,11 +81,11 @@ class TestApiConfig:
         assert data["mcp_enabled"] is True
 
     def test_config_no_auth_field(self, app_client, monkeypatch):
-        """Config endpoint should not include auth_enabled — frontend handles auth via 401 redirect."""
+        """Config should include auth_enabled but not oidc_configured."""
         resp = app_client.get("/api/config")
         assert resp.status_code == 200
         data = resp.json()
-        assert "auth_enabled" not in data
+        assert "auth_enabled" in data
         assert "oidc_configured" not in data
 
 

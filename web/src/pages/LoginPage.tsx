@@ -11,7 +11,7 @@ export default function LoginPage() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    // If already authenticated (or auth is disabled), redirect to home
+    // If already authenticated, redirect to home
     if (isAuthenticated) {
       navigate("/", { replace: true });
     }

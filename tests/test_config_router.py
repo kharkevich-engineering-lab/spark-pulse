@@ -10,11 +10,7 @@ class TestApiConfigEndpoint:
     """Tests for the /api/config endpoint."""
 
     def test_config_no_auth_fields(self, monkeypatch):
-        """Config should not include auth_enabled or oidc_configured.
-
-        The frontend handles authentication via 401 redirects,
-        so auth configuration details are not exposed.
-        """
+        """Config should include auth_enabled so frontend can distinguish disabled vs not-authenticated."""
         monkeypatch.setenv("SPARK_PULSE_AUTH_ENABLED", "true")
 
         app = create_app()
@@ -25,7 +21,8 @@ class TestApiConfigEndpoint:
         resp = client.get("/api/config")
         assert resp.status_code == 200
         data = resp.json()
-        assert "auth_enabled" not in data
+        assert "auth_enabled" in data
+        # oidc_configured is not exposed — frontend uses auth_enabled + 401 handling
         assert "oidc_configured" not in data
 
     def test_config_returns_mcp_enabled(self, monkeypatch):

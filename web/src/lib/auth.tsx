@@ -2,7 +2,7 @@
 
 import { useState, useEffect, createContext, useContext, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { loadConfig } from "@/lib/config";
+import { loadConfig, useConfig } from "@/lib/config";
 
 interface User {
   name?: string;
@@ -37,8 +37,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const [configLoaded, setConfigLoaded] = useState(false);
   const navigate = useNavigate();
+  const { config } = useConfig();
 
-  // Load runtime config on startup (needed for other features)
+  // Load runtime config on startup
   useEffect(() => {
     const init = async () => {
       try {
@@ -51,11 +52,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     void init();
   }, []);
 
-  // Check authentication status — if disabled, set token so user is considered "in"
+  // When config loads, check auth status
   useEffect(() => {
-    if (!configLoaded) return;
-    fetchUser();
-  }, [configLoaded]);
+    if (!configLoaded || config === null) return;
+
+    if (!config.auth_enabled) {
+      // Auth disabled — treat user as "in" (no token needed)
+      setState({ token: "disabled", user: null, loading: false, error: null });
+    } else {
+      // Auth enabled — check if user has a valid session
+      fetchUser();
+    }
+  }, [config, configLoaded]);
 
   const fetchUser = async () => {
     try {
@@ -64,11 +72,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const data = await res.json();
         setState({ token: "cookie", user: data.user || {}, loading: false, error: null });
       } else {
-        // 401 or error — auth is disabled, so treat user as "in"
-        setState({ token: "disabled", user: null, loading: false, error: null });
+        setState({ token: null, user: null, loading: false, error: null });
       }
     } catch {
-      setState({ token: "disabled", user: null, loading: false, error: null });
+      setState({ token: null, user: null, loading: false, error: null });
     }
   };
 

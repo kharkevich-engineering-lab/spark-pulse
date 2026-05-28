@@ -20,6 +20,7 @@ router = APIRouter(prefix="/api/config", tags=["config"])
 def get_config():
     """Return the current application configuration to the frontend."""
     return {
+        "auth_enabled": config.auth_enabled,
         "mcp_enabled": config.mcp_enabled,
         "cluster_enabled": config.cluster_enabled,
         "git_update_enabled": config.git_update_enabled,

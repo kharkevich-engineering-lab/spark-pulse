@@ -7,6 +7,7 @@ UI elements (login button, features, etc.) without needing separate builds.
 import { createContext, useContext, useEffect, useState } from "react";
 
 export interface AppConfig {
+  auth_enabled: boolean;
   mcp_enabled: boolean;
   cluster_enabled: boolean;
   git_update_enabled: boolean;
@@ -15,6 +16,7 @@ export interface AppConfig {
 }
 
 const DEFAULT_CONFIG: AppConfig = {
+  auth_enabled: false,
   mcp_enabled: true,
   cluster_enabled: false,
   git_update_enabled: true,
