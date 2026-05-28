@@ -27,6 +27,7 @@ export default function NewModModal({
   const [dragOver, setDragOver] = useState(false);
 
   const handleZipUpload = useCallback(async (file: File) => {
+    if (file.size > 10 * 1024 * 1024) { onError("ZIP file too large (max 10MB)"); return; }
     try {
       const name = file.name.replace(/\.zip$/i, "") || "uploaded-mod";
       const formData = new FormData();

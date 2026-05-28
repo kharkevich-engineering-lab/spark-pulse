@@ -10,6 +10,10 @@ import MCPPage from "@/pages/MCPPage";
 import SettingsPage from "@/pages/SettingsPage";
 import LoginPage from "@/pages/LoginPage";
 import { isBenchmarkingEnabled } from "@/lib/config";
+import { initCsrfToken } from "@/lib/api";
+
+// Initialize CSRF token from meta tag (no-op if meta tag is absent)
+initCsrfToken();
 
 // Wrapper that conditionally renders the Benchmarking page based on config
 function BenchmarkingRoute() {

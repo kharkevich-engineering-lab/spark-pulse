@@ -64,7 +64,12 @@ export default function InferencePage() {
     atBottomRef.current[id] = true; // start pinned to bottom
     setStreaming((s) => ({ ...s, [id]: true }));
     stopRef.current[id] = connectLogStream(id, (event, data) => {
-      if (event === "log") setLogs((l) => ({ ...l, [id]: [...(l[id] || []), (data as { text: string }).text] }));
+      if (event === "log") {
+        setLogs((l) => {
+          const prev = l[id] || [];
+          return { ...l, [id]: [...prev.slice(-499), (data as { text: string }).text] };
+        });
+      }
       else if (event === "status") refetch();
     });
   };

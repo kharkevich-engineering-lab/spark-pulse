@@ -2,8 +2,23 @@ import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntr
 
 const API = "/api";
 
+// ── CSRF token ───────────────────────────────────────────────────────────────
+
+let csrfToken: string | null = null;
+
+/** Read CSRF token from a meta tag. Call early (e.g. in app bootstrap). */
+export function initCsrfToken(): void {
+  const el = document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]');
+  csrfToken = el?.content ?? null;
+}
+
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json", ...((init?.headers as Record<string, string>) || {}) };
+  // Attach CSRF token on state-changing requests
+  const method = (init?.method || "GET").toUpperCase();
+  if ((method === "POST" || method === "PUT" || method === "DELETE" || method === "PATCH") && csrfToken) {
+    headers["X-CSRF-Token"] = csrfToken;
+  }
   const res = await fetch(`${API}${path}`, { headers, credentials: "include", ...init });
   if (res.status === 401) {
     // Redirect to login on any 401 (cookie-based auth — no token to check)
@@ -66,16 +81,24 @@ export async function triggerGitPull(): Promise<GitUpdateAction> { return json<G
 
 export function connectLogStream(deploymentId: string, onMessage: (event: string, data: unknown) => void): () => void {
   const es = new EventSource(`/sse/logs/${deploymentId}`);
-  es.addEventListener("log", (e: MessageEvent) => onMessage("log", JSON.parse(e.data)));
-  es.addEventListener("status", (e: MessageEvent) => onMessage("status", JSON.parse(e.data)));
-  es.addEventListener("error", (e: MessageEvent) => onMessage("error", JSON.parse(e.data)));
+  const parse = (raw: string) => {
+    try { return JSON.parse(raw); }
+    catch { return null; }
+  };
+  es.addEventListener("log", (e: MessageEvent) => { const d = parse(e.data); if (d !== null) onMessage("log", d); });
+  es.addEventListener("status", (e: MessageEvent) => { const d = parse(e.data); if (d !== null) onMessage("status", d); });
+  es.addEventListener("error", (e: MessageEvent) => { const d = parse(e.data); if (d !== null) onMessage("error", d); });
   return () => es.close();
 }
 
 export function connectMetricsStream(onMessage: (event: string, data: unknown) => void): () => void {
   const es = new EventSource("/sse/metrics");
-  es.addEventListener("metrics", (e: MessageEvent) => onMessage("metrics", JSON.parse(e.data)));
-  es.addEventListener("error", (e: MessageEvent) => onMessage("error", JSON.parse(e.data)));
+  const parse = (raw: string) => {
+    try { return JSON.parse(raw); }
+    catch { return null; }
+  };
+  es.addEventListener("metrics", (e: MessageEvent) => { const d = parse(e.data); if (d !== null) onMessage("metrics", d); });
+  es.addEventListener("error", (e: MessageEvent) => { const d = parse(e.data); if (d !== null) onMessage("error", d); });
   return () => es.close();
 }
 
@@ -105,6 +128,7 @@ export async function uploadCustomRecipe(file: File): Promise<{ id: string; name
   const formData = new FormData();
   formData.append("file", file);
   const headers: Record<string, string> = {};
+  if (csrfToken) headers["X-CSRF-Token"] = csrfToken;
   const res = await fetch(`${API}/custom-files/recipes/upload`, {
     headers,
     body: formData,

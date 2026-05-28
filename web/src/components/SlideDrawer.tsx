@@ -20,7 +20,7 @@ Usage:
 ```
 */
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
 interface SlideDrawerProps {
   open: boolean;
@@ -33,20 +33,21 @@ interface SlideDrawerProps {
 export default function SlideDrawer({ open, onClose, header, actions, children }: SlideDrawerProps) {
   const drawerRef = useRef<HTMLDivElement>(null);
 
+  const handleKeyDown = useCallback(() => {
+    // Don't close the drawer if a nested confirm modal is handling Escape
+    if (document.querySelector("[data-confirm-modal]")) return;
+    onClose();
+  }, [onClose]);
+
   useEffect(() => {
-    if (open) {
-      drawerRef.current?.focus();
-      const handler = (e: KeyboardEvent) => {
-        if (e.key === "Escape") {
-          // Don't close the drawer if a nested confirm modal is handling Escape
-          if (document.querySelector("[data-confirm-modal]")) return;
-          onClose();
-        }
-      };
-      window.addEventListener("keydown", handler);
-      return () => window.removeEventListener("keydown", handler);
-    }
-  }, [open, onClose]);
+    if (!open) return;
+    drawerRef.current?.focus();
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") handleKeyDown();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [open, handleKeyDown]);
 
   if (!open) return null;
 

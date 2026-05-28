@@ -16,6 +16,16 @@ interface AppConfig {
   simulation_mode: boolean;
 }
 
+const DEFAULT_CONFIG: AppConfig = {
+  auth_enabled: false,
+  oidc_configured: false,
+  mcp_enabled: true,
+  cluster_enabled: false,
+  git_update_enabled: true,
+  benchmarking_enabled: false,
+  simulation_mode: true,
+};
+
 let config: AppConfig | null = null;
 
 export async function loadConfig(): Promise<AppConfig> {
@@ -29,25 +39,15 @@ export async function loadConfig(): Promise<AppConfig> {
     return config as AppConfig;
   } catch {
     // Default to disabled auth if config fails to load
-    const defaults: AppConfig = {
-      auth_enabled: false,
-      oidc_configured: false,
-      mcp_enabled: true,
-      cluster_enabled: false,
-      git_update_enabled: true,
-      benchmarking_enabled: false,
-      simulation_mode: true,
-    };
-    config = defaults;
-    return defaults;
+    config = { ...DEFAULT_CONFIG };
+    return config as AppConfig;
   }
 }
 
 export function getConfig(): AppConfig {
   if (!config) {
-    throw new Error(
-      "Configuration not loaded yet. Call loadConfig() first."
-    );
+    // Return a fresh default instead of throwing — callers expect graceful fallback
+    return { ...DEFAULT_CONFIG };
   }
   return config;
 }
