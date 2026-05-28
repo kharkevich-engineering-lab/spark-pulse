@@ -2,7 +2,7 @@ import { useAuth } from "@/lib/auth";
 import { doRefresh } from "@/lib/refresh";
 import { type ThemeMode, getTheme, setTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
-import { useConfig } from "@/lib/config";
+import { useConfig, isAuthEnabled, isGitUpdateEnabled } from "@/lib/config";
 import { Activity, Bot, Copyright, Database, Flame, ListChecks, LogOut, Menu, Moon, MoonStar, RotateCw, Settings, Sun, User, X, Zap } from "lucide-react";
 import { SiGithub, SiPypi } from "@icons-pack/react-simple-icons";
 import { useEffect, useState, useMemo } from "react";
