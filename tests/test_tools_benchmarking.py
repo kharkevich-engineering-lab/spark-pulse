@@ -22,11 +22,14 @@ import pytest
 
 @pytest.fixture()
 def _bench_path(monkeypatch, tmp_path):
-    """Point the benchmarks file at a temp location."""
+    """Point the benchmarks file at a temp location and reset cache."""
     monkeypatch.setattr(
         "spark_pulse.tools.benchmarking._BENCHMARKS_PATH",
         tmp_path / "benchmarks.json",
     )
+    # Also reset the in-memory cache so tests don't see stale data
+    from spark_pulse.tools import benchmarking
+    benchmarking._reset_cache()
     monkeypatch.setattr(
         "spark_pulse.tools.benchmarking._RETENTION_DAYS",
         90,

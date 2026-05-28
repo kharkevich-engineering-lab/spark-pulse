@@ -4,6 +4,8 @@ Benchmarks are tracked per recipe/model, enabling historical comparison
 across different configurations and runs.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import uuid
@@ -19,6 +21,52 @@ logger = logging.getLogger(__name__)
 _BENCHMARKS_PATH = Path.home() / ".config" / "spark-pulse" / "benchmarks.json"
 _BENCHMARKS_LOCK = FileLock(f"{_BENCHMARKS_PATH}.lock", timeout=30)
 _RETENTION_DAYS = 90
+
+# ── In-memory cache ──────────────────────────────────────────────────────────
+
+import threading
+
+# Cached data: {benchmark_id: record}
+_bench_cache: dict[str, dict] = {}
+_bench_cache_lock = threading.RLock()  # Reentrant to allow nested lock acquisition
+_bench_cache_dirty = True  # True when cache needs reload from disk
+
+
+def _ensure_cache_loaded() -> None:
+    """Load benchmarks from disk into memory if dirty."""
+    global _bench_cache_dirty
+    with _bench_cache_lock:
+        if not _bench_cache_dirty:
+            return
+        data = _load()
+        _bench_cache.clear()
+        _bench_cache.update({b["benchmark_id"]: b for b in data})
+        _bench_cache_dirty = False
+
+
+def _reset_cache() -> None:
+    """Reset the in-memory cache. Used by tests."""
+    global _bench_cache, _bench_cache_dirty
+    with _bench_cache_lock:
+        _bench_cache.clear()
+        _bench_cache_dirty = True
+
+
+def _purge_expired(data: list[dict]) -> list[dict]:
+    global _bench_cache_dirty
+    if not data:
+        return []
+    cutoff = datetime.now(timezone.utc).timestamp() - _RETENTION_DAYS * 86400
+    before = len(data)
+    data = [
+        b for b in data
+        if datetime.fromisoformat(b["started_at"]).timestamp() > cutoff
+    ]
+    purged = before - len(data)
+    if purged > 0:
+        logger.info("Purged %d expired benchmark records (>%d days old)", purged, _RETENTION_DAYS)
+        _bench_cache_dirty = True
+    return data
 
 
 def _load() -> list[dict]:
@@ -46,6 +94,7 @@ def _atomic_benchmarks():
         data = _load()
         yield data
         _save(data)
+        _bench_cache_dirty = True
 
 
 def _purge_expired(data: list[dict]) -> list[dict]:
@@ -139,36 +188,50 @@ def execute_benchmark(benchmark_id: str) -> None:
 
 def list_benchmarks() -> list[dict]:
     """Return all benchmarks sorted by started_at descending."""
-    data = _load()
-    data = _purge_expired(data)
-    data.sort(key=lambda b: b["started_at"], reverse=True)
-    return data
+    with _bench_cache_lock:
+        _ensure_cache_loaded()
+        # Re-purge expired on each list call (also marks cache dirty if records removed)
+        raw = _load()
+        raw = _purge_expired(raw)
+        # Sync cache with purged data
+        _bench_cache.clear()
+        _bench_cache.update({b["benchmark_id"]: b for b in raw})
+        return sorted(
+            _bench_cache.values(),
+            key=lambda b: b.get("started_at", ""),
+            reverse=True,
+        )
 
 
 def get_benchmark(benchmark_id: str) -> dict | None:
     """Return a single benchmark by ID, or None if not found."""
-    for b in list_benchmarks():
-        if b["benchmark_id"] == benchmark_id:
-            return b
-    return None
+    with _bench_cache_lock:
+        _ensure_cache_loaded()
+        return _bench_cache.get(benchmark_id)
 
 
 def get_benchmarks_for_recipe(recipe_id: str) -> list[dict]:
     """Return all benchmarks for a specific recipe, sorted by date descending."""
-    benchmarks = list_benchmarks()
-    return [
-        b for b in benchmarks
-        if b.get("recipe_id") == recipe_id
-    ]
+    with _bench_cache_lock:
+        _ensure_cache_loaded()
+        return [
+            b for b in _bench_cache.values()
+            if b.get("recipe_id") == recipe_id
+        ]
 
 
 def get_recipe_latest(recipe_id: str) -> dict | None:
     """Return the latest completed benchmark for a recipe, or None."""
-    recipes = get_benchmarks_for_recipe(recipe_id)
-    for b in recipes:
-        if b.get("status") == "completed" and b.get("results"):
-            return b
-    return None
+    with _bench_cache_lock:
+        _ensure_cache_loaded()
+        recipes = [
+            b for b in _bench_cache.values()
+            if b.get("recipe_id") == recipe_id
+        ]
+        for b in sorted(recipes, key=lambda x: x.get("started_at", ""), reverse=True):
+            if b.get("status") == "completed" and b.get("results"):
+                return b
+        return None
 
 
 def get_latest_by_recipe() -> dict[str, dict]:
@@ -176,17 +239,19 @@ def get_latest_by_recipe() -> dict[str, dict]:
 
     Returns a dict keyed by recipe_id.
     """
-    benchmarks = list_benchmarks()
-    latest: dict[str, dict] = {}
-    for b in benchmarks:
-        rid = b.get("recipe_id")
-        if not rid or not b.get("results"):
-            continue
-        if b.get("status") != "completed":
-            continue
-        if rid not in latest:
-            latest[rid] = b
-    return latest
+    with _bench_cache_lock:
+        _ensure_cache_loaded()
+        latest: dict[str, dict] = {}
+        for b in _bench_cache.values():
+            rid = b.get("recipe_id")
+            if not rid or not b.get("results"):
+                continue
+            if b.get("status") != "completed":
+                continue
+            # Update if this is newer than what we have
+            if rid not in latest or b.get("started_at", "") > latest[rid].get("started_at", ""):
+                latest[rid] = b
+        return latest
 
 
 def compare_runs(ids: list[str]) -> dict | None:
@@ -195,12 +260,14 @@ def compare_runs(ids: list[str]) -> dict | None:
     Returns a dict with all runs and their pairwise differences.
     Returns None if any run is not found or has no results.
     """
-    runs: dict[str, dict] = {}
-    for bid in ids:
-        b = get_benchmark(bid)
-        if b is None or not b.get("results"):
-            return None
-        runs[bid] = b
+    with _bench_cache_lock:
+        _ensure_cache_loaded()
+        runs: dict[str, dict] = {}
+        for bid in ids:
+            b = _bench_cache.get(bid)
+            if b is None or not b.get("results"):
+                return None
+            runs[bid] = b
 
     if len(runs) < 2:
         return None
