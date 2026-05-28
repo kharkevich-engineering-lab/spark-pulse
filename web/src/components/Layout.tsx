@@ -29,7 +29,6 @@ function HeaderInner() {
     window.addEventListener("storage", () => { setTheme(getTheme()); setThemeKey(k => k + 1); });
   }, []);
 
-  const authEnabled = config?.auth_enabled ?? false;
   const gitUpdateEnabled = config?.git_update_enabled ?? false;
   // eslint-disable-next-line react-hooks/exhaustive-deps — only runs on storage event
   void themeKey;
@@ -45,7 +44,7 @@ function HeaderInner() {
         <RotateCw size={16} />
       </button>
       <ThemeToggle />
-      {authEnabled && isAuthenticated ? (
+      {isAuthenticated ? (
         <div className="flex items-center gap-2 ml-1">
           <span className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-surface-hover text-sm">
             <User size={14} />

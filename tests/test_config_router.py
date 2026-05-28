@@ -9,9 +9,13 @@ from spark_pulse.config import config
 class TestApiConfigEndpoint:
     """Tests for the /api/config endpoint."""
 
-    def test_config_returns_auth_enabled_false(self, monkeypatch):
-        """Config should report auth_enabled=False when disabled."""
-        monkeypatch.setenv("SPARK_PULSE_AUTH_ENABLED", "false")
+    def test_config_no_auth_fields(self, monkeypatch):
+        """Config should not include auth_enabled or oidc_configured.
+
+        The frontend handles authentication via 401 redirects,
+        so auth configuration details are not exposed.
+        """
+        monkeypatch.setenv("SPARK_PULSE_AUTH_ENABLED", "true")
 
         app = create_app()
         from fastapi.testclient import TestClient
@@ -21,22 +25,8 @@ class TestApiConfigEndpoint:
         resp = client.get("/api/config")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["auth_enabled"] is False
-        # oidc_configured is no longer exposed to the frontend
-
-    def test_config_returns_auth_enabled_true(self, monkeypatch):
-        """Config should report auth_enabled=True when enabled."""
-        monkeypatch.setenv("SPARK_PULSE_AUTH_ENABLED", "true")
-
-        app = create_app()
-        from fastapi.testclient import TestClient
-
-        client = TestClient(app, raise_server_exceptions=False)
-
-        resp = client.get("/api/config")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["auth_enabled"] is True
+        assert "auth_enabled" not in data
+        assert "oidc_configured" not in data
 
     def test_config_returns_mcp_enabled(self, monkeypatch):
         """Config should report mcp_enabled status."""
@@ -65,21 +55,3 @@ class TestApiConfigEndpoint:
         assert resp.status_code == 200
         data = resp.json()
         assert data["cluster_enabled"] is True
-
-    def test_config_does_not_expose_oidc_configured(self, monkeypatch):
-        """oidc_configured should not be in the API response.
-
-        The frontend only needs to know whether auth is enabled (auth_enabled).
-        The internal OIDC setup state is not exposed.
-        """
-        monkeypatch.setenv("SPARK_PULSE_AUTH_ENABLED", "true")
-
-        app = create_app()
-        from fastapi.testclient import TestClient
-
-        client = TestClient(app)
-
-        resp = client.get("/api/config")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "oidc_configured" not in data

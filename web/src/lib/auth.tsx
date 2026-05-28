@@ -3,7 +3,6 @@
 import { useState, useEffect, createContext, useContext, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { loadConfig } from "@/lib/config";
-import { useConfig } from "@/lib/config";
 
 interface User {
   name?: string;
@@ -38,11 +37,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const [configLoaded, setConfigLoaded] = useState(false);
   const navigate = useNavigate();
-  const { config } = useConfig();
 
-  // Load runtime config on startup and check auth only when enabled.
+  // Load runtime config on startup (needed for other features)
   useEffect(() => {
-    const initAuth = async () => {
+    const init = async () => {
       try {
         await loadConfig();
       } finally {
@@ -50,18 +48,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     };
 
-    void initAuth();
+    void init();
   }, []);
 
-  // When config loads, check if auth is enabled
+  // Check authentication status — if disabled, set token so user is considered "in"
   useEffect(() => {
-    if (config === null || !configLoaded) return;
-    if (config.auth_enabled) {
-      fetchUser();
-    } else {
-      setState({ token: null, user: null, loading: false, error: null });
-    }
-  }, [config, configLoaded]);
+    if (!configLoaded) return;
+    fetchUser();
+  }, [configLoaded]);
 
   const fetchUser = async () => {
     try {
@@ -70,10 +64,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const data = await res.json();
         setState({ token: "cookie", user: data.user || {}, loading: false, error: null });
       } else {
-        setState({ token: null, user: null, loading: false, error: null });
+        // 401 or error — auth is disabled, so treat user as "in"
+        setState({ token: "disabled", user: null, loading: false, error: null });
       }
     } catch {
-      setState({ token: null, user: null, loading: false, error: null });
+      setState({ token: "disabled", user: null, loading: false, error: null });
     }
   };
 
