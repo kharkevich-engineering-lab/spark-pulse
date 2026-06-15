@@ -135,7 +135,9 @@ class TestOciCollections:
 
     def test_list_collections_with_filter(self, client):
         """GET /api/oci/collections with registry filter."""
-        response = client.get("/api/oci/collections?registry=test-registry")
+        response = client.get(
+            "/api/oci/collections?registry=ghcr.io/kharkevich-engineering-lab/spark-pulse-recipes"
+        )
         assert response.status_code == 200
 
     def test_list_collections_nonexistent_registry(self, client):
@@ -149,23 +151,12 @@ class TestOciInstall:
 
     def test_install_collection(self, client):
         """POST /api/oci/install installs a collection."""
-        # First add a registry
-        client.post(
-            "/api/oci/registries",
-            json={
-                "name": "install-reg",
-                "url": "example.com/recipes",
-                "enabled": True,
-                "default": False,
-                "auth": {},
-            },
-        )
         response = client.post(
             "/api/oci/install",
             json={
-                "name": "test-coll",
+                "name": "spark-recipes",
                 "version": "1.0.0",
-                "registry": "install-reg",
+                "registry": "ghcr.io/kharkevich-engineering-lab/spark-pulse-recipes",
             },
         )
         # May succeed or fail depending on mock state, but should return 200 or 500

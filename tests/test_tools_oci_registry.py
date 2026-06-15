@@ -256,7 +256,7 @@ class TestInstallCollection:
         installed = install_collection(
             name="test-coll",
             version="1.0.0",
-            registry_name="test",
+            registry_name="test-registry",
         )
 
         assert len(installed) == 2
@@ -284,6 +284,7 @@ class TestInstallCollection:
                     installed = install_collection(
                         name="test",
                         version="1.0.0",
+                        registry_name="test-registry",
                         dry_run=True,
                     )
                     assert installed == []
@@ -354,7 +355,7 @@ class TestAutoUpdate:
         """Auto-update returns skipped when disabled."""
         monkeypatch.setenv("HOME", str(tmp_path))
 
-        with patch("spark_pulse.config.config") as mock_config:
+        with patch("spark_pulse.tools.oci_registry.config") as mock_config:
             mock_config.oci_auto_update_enabled = False
             result = run_auto_update()
             assert result.get("skipped") is True
