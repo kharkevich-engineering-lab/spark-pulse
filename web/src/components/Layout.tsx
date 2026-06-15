@@ -32,7 +32,7 @@ function HeaderInner() {
 
   const authEnabled = config?.auth_enabled ?? false;
   const gitUpdateEnabled = config?.git_update_enabled ?? false;
-  // eslint-disable-next-line react-hooks/exhaustive-deps — only runs on storage event
+  // themeKey is used to force re-render on storage event
   void themeKey;
 
   return (
