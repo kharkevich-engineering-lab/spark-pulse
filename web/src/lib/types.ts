@@ -200,3 +200,75 @@ export interface BenchmarkResult {
   params: Record<string, unknown>;
   results: Record<string, unknown> | null;
 }
+
+// ── OCI Registry Types ───────────────────────────────────────────────────────
+
+export interface OciRegistry {
+  name: string;
+  url: string;
+  enabled: boolean;
+  default: boolean;
+  auth_type: "token" | "username_password" | "none";
+  connected?: boolean;
+  error?: string;
+}
+
+export interface OciCollection {
+  name: string;
+  version: string;
+  description: string;
+  vendor: string;
+  license: string;
+  recipe_count: number;
+  digest: string;
+  registry: string;
+}
+
+export interface OciCollectionRecipe {
+  name: string;
+  description: string;
+  model: string;
+  container: string;
+  recipe_version: string;
+}
+
+export interface OciRecipeMeta {
+  name: string;
+  source: string;       // registry name
+  collection: string;
+  version: string;
+  digest: string;
+  installed_at: string;
+  updated_at: string;
+  local_changes: boolean;
+}
+
+export interface OciUpdateCheck {
+  collection: string;
+  current_version: string;
+  latest_version: string;
+  current_digest: string;
+  latest_digest: string;
+  local_changes: boolean;
+  added_recipes: string[];
+  modified_recipes: string[];
+}
+
+export interface OciUpdateApply {
+  collection: string;
+  target_version: string;
+  registry: string;
+}
+
+export interface OciUpdateResult {
+  collection: string;
+  success: boolean;
+  installed: string[];
+  error?: string;
+}
+
+export interface OciAutoUpdateSettings {
+  enabled: boolean;
+  schedule: string;
+  overwrite_local: boolean;
+}

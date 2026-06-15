@@ -1,4 +1,4 @@
-import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntry, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, GitUpdateStatus, GitUpdateAction, GitUpdateCheckResult, CustomRecipeInfo, CustomModInfo, ModFileMap, BenchmarkResult } from "@/lib/types";
+import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntry, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, GitUpdateStatus, GitUpdateAction, GitUpdateCheckResult, CustomRecipeInfo, CustomModInfo, ModFileMap, BenchmarkResult, OciRegistry, OciCollection, OciCollectionRecipe, OciRecipeMeta, OciUpdateCheck, OciUpdateApply, OciUpdateResult, OciAutoUpdateSettings } from "@/lib/types";
 
 const API = "/api";
 
@@ -196,6 +196,103 @@ export async function compareRuns(runIds: string[]): Promise<{
   }>("/benchmarks/compare", {
     method: "POST",
     body: JSON.stringify({ run_ids: runIds }),
+  });
+}
+
+// ── OCI Registry ─────────────────────────────────────────────────────────────
+
+export async function fetchOciRegistries(): Promise<OciRegistry[]> {
+  return json<OciRegistry[]>("/oci/registries");
+}
+
+export async function addOciRegistry(registry: Partial<OciRegistry>): Promise<OciRegistry> {
+  return json<OciRegistry>("/oci/registries", { method: "POST", body: JSON.stringify(registry) });
+}
+
+export async function updateOciRegistry(name: string, registry: Partial<OciRegistry>): Promise<OciRegistry> {
+  return json<OciRegistry>(`/oci/registries/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify(registry) });
+}
+
+export async function removeOciRegistry(name: string): Promise<void> {
+  await json(`/oci/registries/${encodeURIComponent(name)}`, { method: "DELETE" });
+}
+
+export async function testOciRegistry(name: string): Promise<{ ok: boolean; error?: string }> {
+  return json(`/oci/registries/${encodeURIComponent(name)}/test-connection`);
+}
+
+export async function fetchOciCollections(registry?: string, version?: string): Promise<OciCollection[]> {
+  const params = new URLSearchParams();
+  if (registry) params.set("registry", registry);
+  if (version) params.set("version", version);
+  const query = params.toString();
+  return json<OciCollection[]>(`/oci/collections${query ? `?${query}` : ""}`);
+}
+
+export async function installOciCollection(name: string, version: string, registry?: string): Promise<{ installed: string[] }> {
+  return json<{ installed: string[] }>("/oci/install", {
+    method: "POST",
+    body: JSON.stringify({ name, version, registry }),
+  });
+}
+
+export async function checkOciUpdates(collection?: string, registry?: string): Promise<OciUpdateCheck[]> {
+  const params = new URLSearchParams();
+  if (collection) params.set("collection", collection);
+  if (registry) params.set("registry", registry);
+  const query = params.toString();
+  return json<OciUpdateCheck[]>(`/oci/check${query ? `?${query}` : ""}`);
+}
+
+export async function applyOciUpdates(updates: OciUpdateApply[]): Promise<OciUpdateResult[]> {
+  return json<OciUpdateResult[]>("/oci/update", {
+    method: "POST",
+    body: JSON.stringify({ updates }),
+  });
+}
+
+export async function fetchOciMeta(): Promise<OciRecipeMeta[]> {
+  return json<OciRecipeMeta[]>("/oci/recipes/meta");
+}
+
+export async function fetchOciMetaByName(name: string): Promise<OciRecipeMeta> {
+  return json<OciRecipeMeta>(`/oci/recipes/meta/${encodeURIComponent(name)}`);
+}
+
+export async function fetchOciCollectionRecipes(name: string, version?: string, registry?: string): Promise<OciCollectionRecipe[]> {
+  const params = new URLSearchParams();
+  if (version) params.set("version", version);
+  if (registry) params.set("registry", registry);
+  const query = params.toString();
+  return json<OciCollectionRecipe[]>(`/oci/collections/${encodeURIComponent(name)}/recipes${query ? `?${query}` : ""}`);
+}
+
+export async function fetchOciAutoUpdateSettings(): Promise<OciAutoUpdateSettings> {
+  return json<OciAutoUpdateSettings>("/oci/auto-update/settings");
+}
+
+export async function updateOciAutoUpdateSettings(partial: Partial<OciAutoUpdateSettings>): Promise<OciAutoUpdateSettings> {
+  return json<OciAutoUpdateSettings>("/oci/auto-update/settings", {
+    method: "PUT",
+    body: JSON.stringify(partial),
+  });
+}
+
+export async function runOciAutoUpdate(): Promise<{ success?: boolean; skipped?: boolean; reason?: string; updated?: number; log?: string[]; error?: string }> {
+  return json("/oci/auto-update/run", { method: "POST" });
+}
+
+export async function installOciRecipe(body: { collection: string; recipe: string; version?: string; registry?: string; overwrite?: boolean }): Promise<{ success: boolean; recipe: string; action: string }> {
+  return json<{ success: boolean; recipe: string; action: string }>("/oci/recipes/install", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function updateOciRecipe(recipeName: string, body: { collection: string; version?: string; registry?: string }): Promise<{ success: boolean; recipe: string; action: string }> {
+  return json<{ success: boolean; recipe: string; action: string }>(`/oci/recipes/update/${encodeURIComponent(recipeName)}`, {
+    method: "POST",
+    body: JSON.stringify(body),
   });
 }
 

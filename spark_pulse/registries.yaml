@@ -1,0 +1,10 @@
+# OCI Recipe Registry Configuration
+# This file is bundled as a default. Users can edit ~/.config/spark-pulse/registries.yaml
+# to add, remove, or modify registries.
+
+registries:
+  - name: ghcr.io/kharkevich-engineering-lab/spark-pulse-recipes
+    url: ghcr.io/kharkevich-engineering-lab/spark-pulse-recipes
+    enabled: true
+    default: true
+    auth_type: none

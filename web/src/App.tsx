@@ -10,6 +10,7 @@ import CachePage from "@/pages/CachePage";
 import MCPPage from "@/pages/MCPPage";
 import SettingsPage from "@/pages/SettingsPage";
 import LoginPage from "@/pages/LoginPage";
+import OciRegistryPage from "@/pages/OciRegistryPage";
 import { initCsrfToken } from "@/lib/api";
 
 // Initialize CSRF token from meta tag (no-op if meta tag is absent)
@@ -43,6 +44,7 @@ function AppRoutes() {
             <Route path="/monitoring" element={<MemoryPage />} />
             <Route path="/cache" element={<CachePage />} />
             <Route path="/mcp" element={<MCPPage />} />
+            <Route path="/oci" element={<OciRegistryPage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Routes>
         </Layout>

@@ -203,6 +203,46 @@ class _Config:
             )
         )
 
+    # ── OCI Registry Settings ──────────────────────────────────────────────
+
+    @property
+    def oci_auto_update_enabled(self) -> bool:
+        return (
+            os.environ.get(
+                "OCI_AUTO_UPDATE_ENABLED",
+                str(self._data.get("oci_auto_update_enabled", False)),
+            ).lower()
+            == "true"
+        )
+
+    @oci_auto_update_enabled.setter
+    def oci_auto_update_enabled(self, value: bool) -> None:
+        self._data["oci_auto_update_enabled"] = value
+
+    @property
+    def oci_auto_update_schedule(self) -> str:
+        return str(
+            self._data.get("oci_auto_update_schedule", "0 2 * * *")
+        )
+
+    @oci_auto_update_schedule.setter
+    def oci_auto_update_schedule(self, value: str) -> None:
+        self._data["oci_auto_update_schedule"] = value
+
+    @property
+    def oci_auto_update_overwrite_local(self) -> bool:
+        return (
+            os.environ.get(
+                "OCI_AUTO_UPDATE_OVERWRITE_LOCAL",
+                str(self._data.get("oci_auto_update_overwrite_local", False)),
+            ).lower()
+            == "true"
+        )
+
+    @oci_auto_update_overwrite_local.setter
+    def oci_auto_update_overwrite_local(self, value: bool) -> None:
+        self._data["oci_auto_update_overwrite_local"] = value
+
     def save(self):
         # Legacy — keep for compat but user settings now go to settings.json
         user = _load_user_settings()

@@ -22,6 +22,7 @@ from spark_pulse.routers import (
     git_update as git_update_router,
     custom_recipes as custom_recipes_router,
     custom_files as custom_files_router,
+    oci as oci_router,
 )
 from spark_pulse.auth import AuthMiddleware, router as auth_router
 from spark_pulse.sse import router as sse_router
@@ -196,6 +197,7 @@ def create_app() -> FastAPI:
     app.include_router(config_router.router)
     app.include_router(git_update_router.router)
     app.include_router(benchmarking.router)
+    app.include_router(oci_router.router)
     app.include_router(auth_router)
     app.include_router(sse_router)
 

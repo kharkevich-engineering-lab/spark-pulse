@@ -66,4 +66,5 @@ include = ["spark_pulse*", "spark_pulse.*"]
 spark_pulse = [
     "ui/**/*",
     "service/templates/**/*",
+    "registries.yaml",
 ]
