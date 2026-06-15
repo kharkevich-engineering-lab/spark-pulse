@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -23,8 +24,6 @@ _BENCHMARKS_LOCK = FileLock(f"{_BENCHMARKS_PATH}.lock", timeout=30)
 _RETENTION_DAYS = 90
 
 # ── In-memory cache ──────────────────────────────────────────────────────────
-
-import threading
 
 # Cached data: {benchmark_id: record}
 _bench_cache: dict[str, dict] = {}
@@ -59,12 +58,15 @@ def _purge_expired(data: list[dict]) -> list[dict]:
     cutoff = datetime.now(timezone.utc).timestamp() - _RETENTION_DAYS * 86400
     before = len(data)
     data = [
-        b for b in data
-        if datetime.fromisoformat(b["started_at"]).timestamp() > cutoff
+        b for b in data if datetime.fromisoformat(b["started_at"]).timestamp() > cutoff
     ]
     purged = before - len(data)
     if purged > 0:
-        logger.info("Purged %d expired benchmark records (>%d days old)", purged, _RETENTION_DAYS)
+        logger.info(
+            "Purged %d expired benchmark records (>%d days old)",
+            purged,
+            _RETENTION_DAYS,
+        )
         _bench_cache_dirty = True
     return data
 
@@ -103,12 +105,15 @@ def _purge_expired(data: list[dict]) -> list[dict]:
     cutoff = datetime.now(timezone.utc).timestamp() - _RETENTION_DAYS * 86400
     before = len(data)
     data = [
-        b for b in data
-        if datetime.fromisoformat(b["started_at"]).timestamp() > cutoff
+        b for b in data if datetime.fromisoformat(b["started_at"]).timestamp() > cutoff
     ]
     purged = before - len(data)
     if purged > 0:
-        logger.info("Purged %d expired benchmark records (>%d days old)", purged, _RETENTION_DAYS)
+        logger.info(
+            "Purged %d expired benchmark records (>%d days old)",
+            purged,
+            _RETENTION_DAYS,
+        )
     return data
 
 
@@ -138,7 +143,12 @@ def create_benchmark(
 
     with _atomic_benchmarks() as benchmarks:
         benchmarks.append(record)
-        logger.info("Created benchmark %s for deployment %s (recipe: %s)", benchmark_id, deployment_id, recipe_name)
+        logger.info(
+            "Created benchmark %s for deployment %s (recipe: %s)",
+            benchmark_id,
+            deployment_id,
+            recipe_name,
+        )
 
     return record
 
@@ -148,7 +158,9 @@ def execute_benchmark(benchmark_id: str) -> None:
     logger.info("Executing benchmark %s", benchmark_id)
 
     with _atomic_benchmarks() as benchmarks:
-        record = next((b for b in benchmarks if b["benchmark_id"] == benchmark_id), None)
+        record = next(
+            (b for b in benchmarks if b["benchmark_id"] == benchmark_id), None
+        )
         if record is None:
             logger.warning("Benchmark %s not found for execution", benchmark_id)
             return
@@ -214,20 +226,14 @@ def get_benchmarks_for_recipe(recipe_id: str) -> list[dict]:
     """Return all benchmarks for a specific recipe, sorted by date descending."""
     with _bench_cache_lock:
         _ensure_cache_loaded()
-        return [
-            b for b in _bench_cache.values()
-            if b.get("recipe_id") == recipe_id
-        ]
+        return [b for b in _bench_cache.values() if b.get("recipe_id") == recipe_id]
 
 
 def get_recipe_latest(recipe_id: str) -> dict | None:
     """Return the latest completed benchmark for a recipe, or None."""
     with _bench_cache_lock:
         _ensure_cache_loaded()
-        recipes = [
-            b for b in _bench_cache.values()
-            if b.get("recipe_id") == recipe_id
-        ]
+        recipes = [b for b in _bench_cache.values() if b.get("recipe_id") == recipe_id]
         for b in sorted(recipes, key=lambda x: x.get("started_at", ""), reverse=True):
             if b.get("status") == "completed" and b.get("results"):
                 return b
@@ -249,7 +255,9 @@ def get_latest_by_recipe() -> dict[str, dict]:
             if b.get("status") != "completed":
                 continue
             # Update if this is newer than what we have
-            if rid not in latest or b.get("started_at", "") > latest[rid].get("started_at", ""):
+            if rid not in latest or b.get("started_at", "") > latest[rid].get(
+                "started_at", ""
+            ):
                 latest[rid] = b
         return latest
 
@@ -334,7 +342,11 @@ def get_baseline_comparison(benchmark_id: str) -> dict | None:
             continue
         current_val = results.get(key)
         baseline_val = baseline_results.get(key)
-        if isinstance(current_val, (int, float)) and isinstance(baseline_val, (int, float)) and baseline_val != 0:
+        if (
+            isinstance(current_val, (int, float))
+            and isinstance(baseline_val, (int, float))
+            and baseline_val != 0
+        ):
             diff_pct = ((current_val - baseline_val) / baseline_val) * 100
             comparison[key] = {
                 "current": current_val,

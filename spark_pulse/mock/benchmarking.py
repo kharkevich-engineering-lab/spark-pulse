@@ -117,7 +117,9 @@ def run_benchmark(
         "results": {
             "throughput": round(model_results["throughput"] * variation, 2),
             "latency_ms": round(model_results["latency_ms"] * variation, 2),
-            "decode_latency_ms": round(model_results["decode_latency_ms"] * variation, 2),
+            "decode_latency_ms": round(
+                model_results["decode_latency_ms"] * variation, 2
+            ),
             "gpu_memory_gb": round(model_results["gpu_memory_gb"] * variation, 1),
             "gpu_utilization": round(model_results["gpu_utilization"] * variation, 1),
             "prefill_speed": round(model_results["prefill_speed"] * variation, 1),
@@ -126,7 +128,9 @@ def run_benchmark(
 
     with _atomic_benchmarks() as benchmarks:
         benchmarks.append(benchmark_record)
-        logger.info("Mock benchmark %s completed for deployment %s", benchmark_id, deployment_id)
+        logger.info(
+            "Mock benchmark %s completed for deployment %s", benchmark_id, deployment_id
+        )
 
     return benchmark_record
 
@@ -262,7 +266,11 @@ def get_baseline_comparison(benchmark_id: str) -> dict | None:
     for key in set(list(results.keys()) + list(baseline_results.keys())):
         current_val = results.get(key)
         baseline_val = baseline_results.get(key)
-        if isinstance(current_val, (int, float)) and isinstance(baseline_val, (int, float)) and baseline_val != 0:
+        if (
+            isinstance(current_val, (int, float))
+            and isinstance(baseline_val, (int, float))
+            and baseline_val != 0
+        ):
             diff_pct = ((current_val - baseline_val) / baseline_val) * 100
             comparison[key] = {
                 "current": current_val,

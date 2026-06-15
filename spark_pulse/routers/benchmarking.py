@@ -29,7 +29,19 @@ class RunBenchmarkRequest(BaseModel):
                     port = int(port)
                 except (ValueError, TypeError):
                     raise ValueError(f"Invalid port value: {port}")
-                allowed_ports = {8000, 8001, 8002, 8003, 8004, 8005, 8006, 8007, 8008, 8009, 8010}
+                allowed_ports = {
+                    8000,
+                    8001,
+                    8002,
+                    8003,
+                    8004,
+                    8005,
+                    8006,
+                    8007,
+                    8008,
+                    8009,
+                    8010,
+                }
                 if port not in allowed_ports:
                     raise ValueError(
                         f"Port {port} not allowed. Allowed ports: {sorted(allowed_ports)}"
@@ -103,6 +115,7 @@ def run_benchmark(req: RunBenchmarkRequest, background_tasks: BackgroundTasks):
         recipe_id=req.recipe_id,
         recipe_name=req.recipe_name,
     )
-    background_tasks.add_task(tools.benchmarking.execute_benchmark, record["benchmark_id"])
+    background_tasks.add_task(
+        tools.benchmarking.execute_benchmark, record["benchmark_id"]
+    )
     return record
-

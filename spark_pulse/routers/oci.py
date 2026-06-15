@@ -15,9 +15,7 @@ from spark_pulse.tools.oci_registry import (
     add_registry,
     apply_updates,
     check_updates,
-    get_default_registry,
     get_oci_meta,
-    get_registry,
     install_collection,
     install_oci_recipe,
     list_collection_recipes,
@@ -38,6 +36,7 @@ router = APIRouter(prefix="/api/oci", tags=["oci"])
 
 
 # ── Registries ───────────────────────────────────────────────────────────────
+
 
 @router.get("/registries")
 def get_registries():
@@ -94,6 +93,7 @@ def test_connection(name: str):
 
 # ── Collections (Browse) ─────────────────────────────────────────────────────
 
+
 @router.get("/collections")
 def get_collections(
     registry: str = Query(None, description="Registry name to filter by"),
@@ -134,7 +134,9 @@ def get_collection_recipes(
     if is_simulation():
         return _mock_collection_recipes(name)
     try:
-        recipes = list_collection_recipes(collection_name=name, version=version, registry_name=registry)
+        recipes = list_collection_recipes(
+            collection_name=name, version=version, registry_name=registry
+        )
         return [
             {
                 "name": r.name,
@@ -153,6 +155,7 @@ def get_collection_recipes(
 
 
 # ── Install ──────────────────────────────────────────────────────────────────
+
 
 @router.post("/install")
 def post_install(body: dict):
@@ -193,7 +196,9 @@ def install_oci_recipe_endpoint(body: dict):
     overwrite = body.get("overwrite", False)
 
     if not collection or not recipe:
-        raise HTTPException(status_code=400, detail="collection and recipe are required")
+        raise HTTPException(
+            status_code=400, detail="collection and recipe are required"
+        )
 
     try:
         result = install_oci_recipe(
@@ -243,6 +248,7 @@ def update_oci_recipe_endpoint(
 
 # ── Update Check ─────────────────────────────────────────────────────────────
 
+
 @router.get("/check")
 def get_update_check(
     collection: str = Query(None, description="Filter by collection name"),
@@ -290,6 +296,7 @@ def post_update(body: dict):
 
 # ── Metadata ─────────────────────────────────────────────────────────────────
 
+
 @router.get("/recipes/meta")
 def get_oci_recipes_meta():
     """List all installed OCI recipes with their metadata."""
@@ -333,6 +340,7 @@ def get_oci_recipe_meta(recipe_name: str):
 
 
 # ── Auto-Update ──────────────────────────────────────────────────────────────
+
 
 @router.get("/auto-update/settings")
 def get_auto_update_settings():
@@ -383,6 +391,7 @@ def run_auto_update_endpoint():
 
 
 # ── Mock data (for development/testing) ──────────────────────────────────────
+
 
 def _mock_registries():
     return [
@@ -494,16 +503,64 @@ def _mock_collection_recipes(name: str) -> list[dict]:
     """Mock recipe listing for a collection."""
     recipes_map = {
         "spark-recipes": [
-            {"name": "spark-vllm-7b", "description": "Llama 3.1 8B inference with vLLM", "model": "meta-llama/Llama-3.1-8B-Instruct", "container": "vllm-node", "recipe_version": "1.0.0"},
-            {"name": "spark-vllm-13b", "description": "Llama 3.1 70B inference with vLLM", "model": "meta-llama/Llama-3.1-70B-Instruct", "container": "vllm-node", "recipe_version": "1.0.0"},
-            {"name": "spark-vllm-20b", "description": "Mistral 22B inference with vLLM", "model": "mistralai/Mistral-22B-Instruct-v0.1", "container": "vllm-node", "recipe_version": "1.0.0"},
-            {"name": "spark-vllm-40b", "description": "Mixtral 8x7B inference with vLLM", "model": "mistralai/Mixtral-8x7B-Instruct-v0.1", "container": "vllm-node", "recipe_version": "1.0.0"},
-            {"name": "spark-vllm-70b", "description": "Llama 3.1 70B optimized inference", "model": "meta-llama/Llama-3.1-70B-Instruct", "container": "vllm-node", "recipe_version": "1.0.0"},
+            {
+                "name": "spark-vllm-7b",
+                "description": "Llama 3.1 8B inference with vLLM",
+                "model": "meta-llama/Llama-3.1-8B-Instruct",
+                "container": "vllm-node",
+                "recipe_version": "1.0.0",
+            },
+            {
+                "name": "spark-vllm-13b",
+                "description": "Llama 3.1 70B inference with vLLM",
+                "model": "meta-llama/Llama-3.1-70B-Instruct",
+                "container": "vllm-node",
+                "recipe_version": "1.0.0",
+            },
+            {
+                "name": "spark-vllm-20b",
+                "description": "Mistral 22B inference with vLLM",
+                "model": "mistralai/Mistral-22B-Instruct-v0.1",
+                "container": "vllm-node",
+                "recipe_version": "1.0.0",
+            },
+            {
+                "name": "spark-vllm-40b",
+                "description": "Mixtral 8x7B inference with vLLM",
+                "model": "mistralai/Mixtral-8x7B-Instruct-v0.1",
+                "container": "vllm-node",
+                "recipe_version": "1.0.0",
+            },
+            {
+                "name": "spark-vllm-70b",
+                "description": "Llama 3.1 70B optimized inference",
+                "model": "meta-llama/Llama-3.1-70B-Instruct",
+                "container": "vllm-node",
+                "recipe_version": "1.0.0",
+            },
         ],
         "community-recipes": [
-            {"name": "community-llama-3-8b", "description": "Community-tuned Llama 3 8B", "model": "meta-llama/Llama-3-8B", "container": "vllm-node", "recipe_version": "0.3.0"},
-            {"name": "community-mixtral-8x7b", "description": "Community-tuned Mixtral 8x7B", "model": "mistralai/Mixtral-8x7B-Instruct-v0.1", "container": "vllm-node", "recipe_version": "0.3.0"},
-            {"name": "community-qwen-72b", "description": "Qwen 2.5 72B inference", "model": "Qwen/Qwen2.5-72B-Instruct", "container": "vllm-node", "recipe_version": "0.3.0"},
+            {
+                "name": "community-llama-3-8b",
+                "description": "Community-tuned Llama 3 8B",
+                "model": "meta-llama/Llama-3-8B",
+                "container": "vllm-node",
+                "recipe_version": "0.3.0",
+            },
+            {
+                "name": "community-mixtral-8x7b",
+                "description": "Community-tuned Mixtral 8x7B",
+                "model": "mistralai/Mixtral-8x7B-Instruct-v0.1",
+                "container": "vllm-node",
+                "recipe_version": "0.3.0",
+            },
+            {
+                "name": "community-qwen-72b",
+                "description": "Qwen 2.5 72B inference",
+                "model": "Qwen/Qwen2.5-72B-Instruct",
+                "container": "vllm-node",
+                "recipe_version": "0.3.0",
+            },
         ],
     }
     return recipes_map.get(name, [])
@@ -529,7 +586,9 @@ def _mock_update_recipe(recipe_name: str, body: dict) -> dict:
     collection = body.get("collection", "")
     key = f"{collection}/{recipe_name}"
     if key not in _mock_installed_recipes:
-        raise HTTPException(status_code=404, detail=f"Recipe '{recipe_name}' is not installed")
+        raise HTTPException(
+            status_code=404, detail=f"Recipe '{recipe_name}' is not installed"
+        )
     return {"success": True, "recipe": recipe_name, "action": "updated"}
 
 

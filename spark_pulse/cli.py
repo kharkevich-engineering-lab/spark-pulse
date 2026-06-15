@@ -201,6 +201,7 @@ def load_env(env_file: str):
 
 # ── OCI Recipe Commands ──────────────────────────────────────────────────────
 
+
 @main.group()
 def recipes():
     """Manage OCI recipe collections."""
@@ -226,11 +227,14 @@ def recipes_list(registry, version, as_json, dry_run):
         sys.exit(1)
 
     if not collections:
-        click.echo("No collections found. Configure registries with 'spark-pulse oci add'.")
+        click.echo(
+            "No collections found. Configure registries with 'spark-pulse oci add'."
+        )
         return
 
     if as_json:
         import json
+
         data = [
             {
                 "name": c.name,
@@ -248,7 +252,9 @@ def recipes_list(registry, version, as_json, dry_run):
         return
 
     # Table output
-    click.echo(f"{'Collection':<25} {'Version':<10} {'Description':<35} {'Vendor':<20} {'Recipes':>8}")
+    click.echo(
+        f"{'Collection':<25} {'Version':<10} {'Description':<35} {'Vendor':<20} {'Recipes':>8}"
+    )
     click.echo("─" * 98)
     for c in collections:
         desc = (c.description or "")[:33]
@@ -260,7 +266,9 @@ def recipes_list(registry, version, as_json, dry_run):
 
 @recipes.command("install")
 @click.argument("name")
-@click.option("--version", "version", default=None, help="Version tag (default: latest)")
+@click.option(
+    "--version", "version", default=None, help="Version tag (default: latest)"
+)
 @click.option("--registry", "registry", default=None, help="Registry name")
 @click.option("--dry-run", is_flag=True, help="Show what would be installed")
 def recipes_install(name, version, registry, dry_run):
@@ -333,11 +341,13 @@ def recipes_update(collection, update_all, registry, dry_run):
         if u.local_changes:
             click.echo(f"  Skipping {u.collection}: local changes detected")
             continue
-        update_params.append({
-            "collection": u.collection,
-            "target_version": u.latest_version,
-            "registry": registry,
-        })
+        update_params.append(
+            {
+                "collection": u.collection,
+                "target_version": u.latest_version,
+                "registry": registry,
+            }
+        )
 
     if not update_params:
         click.echo("No updates to apply.")
@@ -347,9 +357,14 @@ def recipes_update(collection, update_all, registry, dry_run):
         results = apply_updates(update_params)
         for r in results:
             if r["success"]:
-                click.echo(f"  ✓ Updated {r['collection']}: {len(r.get('installed', []))} recipes")
+                click.echo(
+                    f"  ✓ Updated {r['collection']}: {len(r.get('installed', []))} recipes"
+                )
             else:
-                click.echo(f"  ✗ Failed to update {r['collection']}: {r.get('error', 'unknown')}", err=True)
+                click.echo(
+                    f"  ✗ Failed to update {r['collection']}: {r.get('error', 'unknown')}",
+                    err=True,
+                )
     except Exception as exc:
         click.echo(f"Error applying updates: {exc}", err=True)
         sys.exit(1)
@@ -358,7 +373,9 @@ def recipes_update(collection, update_all, registry, dry_run):
 @recipes.command("auto-update")
 @click.option("--enable", is_flag=True, help="Enable auto-update")
 @click.option("--disable", is_flag=True, help="Disable auto-update")
-@click.option("--schedule", "schedule", default=None, help='Cron schedule (default: "0 2 * * *")')
+@click.option(
+    "--schedule", "schedule", default=None, help='Cron schedule (default: "0 2 * * *")'
+)
 @click.option("--dry-run", is_flag=True, help="Run once without scheduling")
 def recipes_auto_update(enable, disable, schedule, dry_run):
     """Configure or run OCI recipe auto-update."""
@@ -404,13 +421,15 @@ def oci_add_registry(name, url, set_default):
     from spark_pulse.tools.oci_registry import add_registry
 
     try:
-        reg = add_registry({
-            "name": name,
-            "url": url,
-            "enabled": True,
-            "default": set_default,
-            "auth": {},
-        })
+        reg = add_registry(
+            {
+                "name": name,
+                "url": url,
+                "enabled": True,
+                "default": set_default,
+                "auth": {},
+            }
+        )
         click.echo(f"Added registry '{reg['name']}' ({reg['url']}).")
     except Exception as exc:
         click.echo(f"Error: {exc}", err=True)
@@ -427,7 +446,9 @@ def oci_list_registries():
         click.echo("No registries configured.")
         return
 
-    click.echo(f"{'Name':<20} {'URL':<50} {'Enabled':<8} {'Default':<8} {'Connected':<8}")
+    click.echo(
+        f"{'Name':<20} {'URL':<50} {'Enabled':<8} {'Default':<8} {'Connected':<8}"
+    )
     click.echo("─" * 94)
     for r in regs:
         enabled = "yes" if r.get("enabled") else "no"

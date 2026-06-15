@@ -5,10 +5,6 @@ Provides simulated OCI operations without requiring actual registry access.
 
 from __future__ import annotations
 
-import hashlib
-import json
-from pathlib import Path
-from typing import Any
 
 from spark_pulse.tools.oci_registry import (
     CollectionInfo,
@@ -51,20 +47,70 @@ def mock_list_collections(registry_name: str | None = None, version: str | None 
     return collections
 
 
-def mock_list_collection_recipes(collection_name: str, registry_name: str | None = None, version: str | None = None):
+def mock_list_collection_recipes(
+    collection_name: str, registry_name: str | None = None, version: str | None = None
+):
     """Mock recipe listing for a collection."""
     recipes_map = {
         "spark-recipes": [
-            {"name": "spark-vllm-7b", "description": "Llama 3.1 8B inference with vLLM", "model": "meta-llama/Llama-3.1-8B-Instruct", "container": "vllm-node", "recipe_version": "1.0.0"},
-            {"name": "spark-vllm-13b", "description": "Llama 3.1 70B inference with vLLM", "model": "meta-llama/Llama-3.1-70B-Instruct", "container": "vllm-node", "recipe_version": "1.0.0"},
-            {"name": "spark-vllm-20b", "description": "Mistral 22B inference with vLLM", "model": "mistralai/Mistral-22B-Instruct-v0.1", "container": "vllm-node", "recipe_version": "1.0.0"},
-            {"name": "spark-vllm-40b", "description": "Mixtral 8x7B inference with vLLM", "model": "mistralai/Mixtral-8x7B-Instruct-v0.1", "container": "vllm-node", "recipe_version": "1.0.0"},
-            {"name": "spark-vllm-70b", "description": "Llama 3.1 70B optimized inference", "model": "meta-llama/Llama-3.1-70B-Instruct", "container": "vllm-node", "recipe_version": "1.0.0"},
+            {
+                "name": "spark-vllm-7b",
+                "description": "Llama 3.1 8B inference with vLLM",
+                "model": "meta-llama/Llama-3.1-8B-Instruct",
+                "container": "vllm-node",
+                "recipe_version": "1.0.0",
+            },
+            {
+                "name": "spark-vllm-13b",
+                "description": "Llama 3.1 70B inference with vLLM",
+                "model": "meta-llama/Llama-3.1-70B-Instruct",
+                "container": "vllm-node",
+                "recipe_version": "1.0.0",
+            },
+            {
+                "name": "spark-vllm-20b",
+                "description": "Mistral 22B inference with vLLM",
+                "model": "mistralai/Mistral-22B-Instruct-v0.1",
+                "container": "vllm-node",
+                "recipe_version": "1.0.0",
+            },
+            {
+                "name": "spark-vllm-40b",
+                "description": "Mixtral 8x7B inference with vLLM",
+                "model": "mistralai/Mixtral-8x7B-Instruct-v0.1",
+                "container": "vllm-node",
+                "recipe_version": "1.0.0",
+            },
+            {
+                "name": "spark-vllm-70b",
+                "description": "Llama 3.1 70B optimized inference",
+                "model": "meta-llama/Llama-3.1-70B-Instruct",
+                "container": "vllm-node",
+                "recipe_version": "1.0.0",
+            },
         ],
         "community-recipes": [
-            {"name": "community-llama-3-8b", "description": "Community-tuned Llama 3 8B", "model": "meta-llama/Llama-3-8B", "container": "vllm-node", "recipe_version": "0.3.0"},
-            {"name": "community-mixtral-8x7b", "description": "Community-tuned Mixtral 8x7B", "model": "mistralai/Mixtral-8x7B-Instruct-v0.1", "container": "vllm-node", "recipe_version": "0.3.0"},
-            {"name": "community-qwen-72b", "description": "Qwen 2.5 72B inference", "model": "Qwen/Qwen2.5-72B-Instruct", "container": "vllm-node", "recipe_version": "0.3.0"},
+            {
+                "name": "community-llama-3-8b",
+                "description": "Community-tuned Llama 3 8B",
+                "model": "meta-llama/Llama-3-8B",
+                "container": "vllm-node",
+                "recipe_version": "0.3.0",
+            },
+            {
+                "name": "community-mixtral-8x7b",
+                "description": "Community-tuned Mixtral 8x7B",
+                "model": "mistralai/Mixtral-8x7B-Instruct-v0.1",
+                "container": "vllm-node",
+                "recipe_version": "0.3.0",
+            },
+            {
+                "name": "community-qwen-72b",
+                "description": "Qwen 2.5 72B inference",
+                "model": "Qwen/Qwen2.5-72B-Instruct",
+                "container": "vllm-node",
+                "recipe_version": "0.3.0",
+            },
         ],
     }
     return recipes_map.get(collection_name, [])
@@ -126,6 +172,7 @@ mods: []
         }
         with open(meta_path, "w") as f:
             import yaml
+
             yaml.dump(meta, f)
 
         installed.append(filename)

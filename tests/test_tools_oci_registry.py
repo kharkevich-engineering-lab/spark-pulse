@@ -1,31 +1,20 @@
 """Tests for OCI registry tools module."""
 
-import json
-import os
-import tempfile
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-import yaml
 
 from spark_pulse.tools.oci_registry import (
-    OCI_CACHE_DIR,
-    RECIPES_DIR,
-    REGISTRIES_CONFIG,
     add_registry,
     apply_updates,
     check_updates,
     get_default_registry,
-    get_oci_meta,
     get_registry,
     install_collection,
     list_collections,
-    list_oci_recipes,
     list_registries,
     remove_registry,
     run_auto_update,
-    test_registry_connection,
     update_registry,
     _load_registries,
     _save_registries,
@@ -42,8 +31,8 @@ def temp_registries_file(tmp_path, monkeypatch):
     reg_file = test_dir / "registries.yaml"
     monkeypatch.setenv("HOME", str(tmp_path))
     # Re-import to pick up new HOME
-    import importlib
     import spark_pulse.tools.oci_registry as mod
+
     mod.REGISTRIES_CONFIG = reg_file
     mod.OCI_CACHE_DIR = tmp_path / ".cache" / "spark-pulse" / "oci"
     mod.RECIPES_DIR = test_dir / "recipes"
@@ -152,8 +141,8 @@ class TestRecipeMetadata:
     def test_write_and_read_recipe_meta(self, tmp_path, monkeypatch):
         """Writing and reading recipe metadata works."""
         monkeypatch.setenv("HOME", str(tmp_path))
-        import importlib
         import spark_pulse.tools.oci_registry as mod
+
         mod.RECIPES_DIR = tmp_path / "recipes"
         mod.RECIPES_DIR.mkdir(parents=True)
 
@@ -175,8 +164,8 @@ class TestRecipeMetadata:
     def test_read_nonexistent_meta(self, tmp_path, monkeypatch):
         """Reading non-existent metadata returns None."""
         monkeypatch.setenv("HOME", str(tmp_path))
-        import importlib
         import spark_pulse.tools.oci_registry as mod
+
         mod.RECIPES_DIR = tmp_path / "recipes"
         mod.RECIPES_DIR.mkdir(parents=True)
 
@@ -231,12 +220,18 @@ class TestInstallCollection:
     @patch("spark_pulse.tools.oci_registry._pull_oci_to_layout")
     @patch("spark_pulse.tools.oci_registry._extract_recipes_from_layout")
     def test_install_collection_success(
-        self, mock_extract, mock_pull, mock_collections, mock_get_reg, tmp_path, monkeypatch
+        self,
+        mock_extract,
+        mock_pull,
+        mock_collections,
+        mock_get_reg,
+        tmp_path,
+        monkeypatch,
     ):
         """Successful installation returns installed filenames."""
         monkeypatch.setenv("HOME", str(tmp_path))
-        import importlib
         import spark_pulse.tools.oci_registry as mod
+
         mod.RECIPES_DIR = tmp_path / "recipes"
 
         mock_get_reg.return_value = {"name": "test", "url": "test.com", "auth": {}}
@@ -244,8 +239,18 @@ class TestInstallCollection:
             MagicMock(name="test-coll", version="1.0.0", recipe_count=2)
         ]
         mock_extract.return_value = [
-            {"filename": "recipe1.yaml", "content": "test: 1", "digest": "sha256:abc", "size": 10},
-            {"filename": "recipe2.yaml", "content": "test: 2", "digest": "sha256:def", "size": 10},
+            {
+                "filename": "recipe1.yaml",
+                "content": "test: 1",
+                "digest": "sha256:abc",
+                "size": 10,
+            },
+            {
+                "filename": "recipe2.yaml",
+                "content": "test: 2",
+                "digest": "sha256:def",
+                "size": 10,
+            },
         ]
 
         installed = install_collection(
@@ -266,14 +271,16 @@ class TestInstallCollection:
     def test_install_collection_dry_run(self, sample_registry, tmp_path, monkeypatch):
         """Dry run returns empty list without installing."""
         monkeypatch.setenv("HOME", str(tmp_path))
-        import importlib
         import spark_pulse.tools.oci_registry as mod
+
         mod.RECIPES_DIR = tmp_path / "recipes"
 
         with patch("spark_pulse.tools.oci_registry.list_collections") as mock_cols:
             mock_cols.return_value = [MagicMock(name="test", version="1.0.0")]
             with patch("spark_pulse.tools.oci_registry._pull_oci_to_layout"):
-                with patch("spark_pulse.tools.oci_registry._extract_recipes_from_layout"):
+                with patch(
+                    "spark_pulse.tools.oci_registry._extract_recipes_from_layout"
+                ):
                     installed = install_collection(
                         name="test",
                         version="1.0.0",
@@ -288,8 +295,8 @@ class TestCheckUpdates:
     def test_check_updates_no_oci_recipes(self, tmp_path, monkeypatch):
         """Checking updates with no OCI recipes returns empty."""
         monkeypatch.setenv("HOME", str(tmp_path))
-        import importlib
         import spark_pulse.tools.oci_registry as mod
+
         mod.RECIPES_DIR = tmp_path / "recipes"
         mod.RECIPES_DIR.mkdir(parents=True)
 
@@ -303,15 +310,21 @@ class TestApplyUpdates:
     def test_apply_updates(self, sample_registry, tmp_path, monkeypatch):
         """Applying updates calls install_collection for each."""
         monkeypatch.setenv("HOME", str(tmp_path))
-        import importlib
         import spark_pulse.tools.oci_registry as mod
+
         mod.RECIPES_DIR = tmp_path / "recipes"
 
         with patch("spark_pulse.tools.oci_registry.install_collection") as mock_install:
             mock_install.return_value = ["recipe1.yaml"]
-            results = apply_updates([
-                {"collection": "test", "target_version": "2.0.0", "registry": "test"},
-            ])
+            results = apply_updates(
+                [
+                    {
+                        "collection": "test",
+                        "target_version": "2.0.0",
+                        "registry": "test",
+                    },
+                ]
+            )
             assert len(results) == 1
             assert results[0]["success"] is True
             assert results[0]["installed"] == ["recipe1.yaml"]
@@ -320,9 +333,15 @@ class TestApplyUpdates:
         """Failed updates return error info."""
         with patch("spark_pulse.tools.oci_registry.install_collection") as mock_install:
             mock_install.side_effect = ValueError("Collection not found")
-            results = apply_updates([
-                {"collection": "test", "target_version": "2.0.0", "registry": "test"},
-            ])
+            results = apply_updates(
+                [
+                    {
+                        "collection": "test",
+                        "target_version": "2.0.0",
+                        "registry": "test",
+                    },
+                ]
+            )
             assert len(results) == 1
             assert results[0]["success"] is False
             assert "not found" in results[0]["error"]
@@ -334,8 +353,6 @@ class TestAutoUpdate:
     def test_auto_update_disabled(self, tmp_path, monkeypatch):
         """Auto-update returns skipped when disabled."""
         monkeypatch.setenv("HOME", str(tmp_path))
-        import importlib
-        import spark_pulse.tools.oci_registry as mod
 
         with patch("spark_pulse.config.config") as mock_config:
             mock_config.oci_auto_update_enabled = False
@@ -345,8 +362,8 @@ class TestAutoUpdate:
     def test_auto_update_no_updates(self, sample_registry, tmp_path, monkeypatch):
         """Auto-update returns 0 updated when no updates available."""
         monkeypatch.setenv("HOME", str(tmp_path))
-        import importlib
         import spark_pulse.tools.oci_registry as mod
+
         mod.RECIPES_DIR = tmp_path / "recipes"
         mod.RECIPES_DIR.mkdir(parents=True)
 

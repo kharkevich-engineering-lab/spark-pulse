@@ -67,7 +67,9 @@ def test_oidc_configured_false_when_missing_client_secret(tmp_path, monkeypatch)
     )
     monkeypatch.setitem(auth.config._data, "oidc_client_id", "client-id")
     monkeypatch.setitem(auth.config._data, "oidc_client_secret", "")
-    monkeypatch.setattr(config_module, "_SECRETS_PATH", tmp_path / "missing_secrets.json")
+    monkeypatch.setattr(
+        config_module, "_SECRETS_PATH", tmp_path / "missing_secrets.json"
+    )
 
     assert auth._oidc_configured() is False
 

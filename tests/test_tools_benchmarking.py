@@ -29,6 +29,7 @@ def _bench_path(monkeypatch, tmp_path):
     )
     # Also reset the in-memory cache so tests don't see stale data
     from spark_pulse.tools import benchmarking
+
     benchmarking._reset_cache()
     monkeypatch.setattr(
         "spark_pulse.tools.benchmarking._RETENTION_DAYS",
@@ -41,10 +42,12 @@ def _bench_path(monkeypatch, tmp_path):
 def mock_llama_benchy(monkeypatch):
     """Inject a mock llama_benchy into sys.modules."""
     mock_llama_benchy = mock.MagicMock()
-    mock_llama_benchy.run = mock.MagicMock(return_value={
-        "throughput": 42.0,
-        "latency_ms": 10.0,
-    })
+    mock_llama_benchy.run = mock.MagicMock(
+        return_value={
+            "throughput": 42.0,
+            "latency_ms": 10.0,
+        }
+    )
     monkeypatch.setitem(sys.modules, "llama_benchy", mock_llama_benchy)
     return mock_llama_benchy
 
@@ -90,7 +93,8 @@ class TestCreateBenchmark:
         from spark_pulse.tools import benchmarking
 
         result = benchmarking.create_benchmark(
-            "dep-1", baseline_id="baseline-abc",
+            "dep-1",
+            baseline_id="baseline-abc",
         )
         assert result["baseline_id"] == "baseline-abc"
 
@@ -108,12 +112,15 @@ class TestCreateBenchmark:
 class TestExecuteBenchmark:
     """Test the execute_benchmark function."""
 
-    def test_execute_completes_with_mock_llama_benchy(self, monkeypatch, _bench_path, mock_llama_benchy):
+    def test_execute_completes_with_mock_llama_benchy(
+        self, monkeypatch, _bench_path, mock_llama_benchy
+    ):
         """execute_benchmark sets status='completed' and stores results."""
         from spark_pulse.tools import benchmarking
 
         record = benchmarking.create_benchmark(
-            "dep-1", params={"model": "m", "benchmarks": ["throughput"]},
+            "dep-1",
+            params={"model": "m", "benchmarks": ["throughput"]},
         )
         benchmark_id = record["benchmark_id"]
 
@@ -140,10 +147,14 @@ class TestExecuteBenchmark:
             data = json.loads(path.read_text())
             assert len(data) == 0
 
-    def test_execute_records_error_when_llama_benchy_fails(self, monkeypatch, _bench_path):
+    def test_execute_records_error_when_llama_benchy_fails(
+        self, monkeypatch, _bench_path
+    ):
         """execute_benchmark sets status='error' when llama_benchy raises."""
         mock_llama_benchy = mock.MagicMock()
-        mock_llama_benchy.run = mock.MagicMock(side_effect=RuntimeError("connection refused"))
+        mock_llama_benchy.run = mock.MagicMock(
+            side_effect=RuntimeError("connection refused")
+        )
         monkeypatch.setitem(sys.modules, "llama_benchy", mock_llama_benchy)
 
         from spark_pulse.tools import benchmarking
@@ -178,11 +189,15 @@ class TestListBenchmarks:
     def test_list_returns_sorted_descending(self, monkeypatch, _bench_path):
         """list_benchmarks returns results sorted by started_at descending."""
         bench_file = _bench_path / "benchmarks.json"
-        bench_file.write_text(json.dumps([
-            {"benchmark_id": "b2", "started_at": "2026-05-26T00:00:00Z"},
-            {"benchmark_id": "b1", "started_at": "2026-05-25T00:00:00Z"},
-            {"benchmark_id": "b3", "started_at": "2026-05-27T00:00:00Z"},
-        ]))
+        bench_file.write_text(
+            json.dumps(
+                [
+                    {"benchmark_id": "b2", "started_at": "2026-05-26T00:00:00Z"},
+                    {"benchmark_id": "b1", "started_at": "2026-05-25T00:00:00Z"},
+                    {"benchmark_id": "b3", "started_at": "2026-05-27T00:00:00Z"},
+                ]
+            )
+        )
 
         from spark_pulse.tools import benchmarking
 
@@ -199,9 +214,17 @@ class TestListBenchmarks:
     def test_get_benchmark_by_id(self, monkeypatch, _bench_path):
         """get_benchmark retrieves a single benchmark by ID."""
         bench_file = _bench_path / "benchmarks.json"
-        bench_file.write_text(json.dumps([
-            {"benchmark_id": "abc", "deployment_id": "d1", "started_at": "2026-05-27T00:00:00Z"},
-        ]))
+        bench_file.write_text(
+            json.dumps(
+                [
+                    {
+                        "benchmark_id": "abc",
+                        "deployment_id": "d1",
+                        "started_at": "2026-05-27T00:00:00Z",
+                    },
+                ]
+            )
+        )
 
         from spark_pulse.tools import benchmarking
 
@@ -221,11 +244,27 @@ class TestListBenchmarks:
     def test_get_benchmarks_for_recipe(self, monkeypatch, _bench_path):
         """get_benchmarks_for_recipe filters by recipe_id."""
         bench_file = _bench_path / "benchmarks.json"
-        bench_file.write_text(json.dumps([
-            {"benchmark_id": "b1", "recipe_id": "r1", "started_at": "2026-05-25T00:00:00Z"},
-            {"benchmark_id": "b2", "recipe_id": "r2", "started_at": "2026-05-25T00:00:00Z"},
-            {"benchmark_id": "b3", "recipe_id": "r1", "started_at": "2026-05-25T00:00:00Z"},
-        ]))
+        bench_file.write_text(
+            json.dumps(
+                [
+                    {
+                        "benchmark_id": "b1",
+                        "recipe_id": "r1",
+                        "started_at": "2026-05-25T00:00:00Z",
+                    },
+                    {
+                        "benchmark_id": "b2",
+                        "recipe_id": "r2",
+                        "started_at": "2026-05-25T00:00:00Z",
+                    },
+                    {
+                        "benchmark_id": "b3",
+                        "recipe_id": "r1",
+                        "started_at": "2026-05-25T00:00:00Z",
+                    },
+                ]
+            )
+        )
 
         from spark_pulse.tools import benchmarking
 
@@ -240,28 +279,46 @@ class TestListBenchmarks:
 class TestGetLatestByRecipe:
     """Test latest-by-recipe query functions."""
 
-    def test_get_latest_by_recipe_returns_latest_per_recipe(self, monkeypatch, _bench_path):
+    def test_get_latest_by_recipe_returns_latest_per_recipe(
+        self, monkeypatch, _bench_path
+    ):
         """get_latest_by_recipe returns one completed benchmark per recipe."""
         bench_file = _bench_path / "benchmarks.json"
-        bench_file.write_text(json.dumps([
-            {
-                "benchmark_id": "b1", "recipe_id": "r1", "status": "completed",
-                "started_at": "2026-05-25T00:00:00Z", "results": {"throughput": 40},
-            },
-            {
-                "benchmark_id": "b2", "recipe_id": "r1", "status": "completed",
-                "started_at": "2026-05-27T00:00:00Z", "results": {"throughput": 45},
-            },
-            {
-                "benchmark_id": "b3", "recipe_id": "r2", "status": "completed",
-                "started_at": "2026-05-26T00:00:00Z", "results": {"throughput": 30},
-            },
-            # No results — should be skipped
-            {
-                "benchmark_id": "b4", "recipe_id": "r3", "status": "running",
-                "started_at": "2026-05-27T00:00:00Z", "results": None,
-            },
-        ]))
+        bench_file.write_text(
+            json.dumps(
+                [
+                    {
+                        "benchmark_id": "b1",
+                        "recipe_id": "r1",
+                        "status": "completed",
+                        "started_at": "2026-05-25T00:00:00Z",
+                        "results": {"throughput": 40},
+                    },
+                    {
+                        "benchmark_id": "b2",
+                        "recipe_id": "r1",
+                        "status": "completed",
+                        "started_at": "2026-05-27T00:00:00Z",
+                        "results": {"throughput": 45},
+                    },
+                    {
+                        "benchmark_id": "b3",
+                        "recipe_id": "r2",
+                        "status": "completed",
+                        "started_at": "2026-05-26T00:00:00Z",
+                        "results": {"throughput": 30},
+                    },
+                    # No results — should be skipped
+                    {
+                        "benchmark_id": "b4",
+                        "recipe_id": "r3",
+                        "status": "running",
+                        "started_at": "2026-05-27T00:00:00Z",
+                        "results": None,
+                    },
+                ]
+            )
+        )
 
         from spark_pulse.tools import benchmarking
 
@@ -273,16 +330,26 @@ class TestGetLatestByRecipe:
     def test_get_recipe_latest(self, monkeypatch, _bench_path):
         """get_recipe_latest returns the latest completed benchmark for a recipe."""
         bench_file = _bench_path / "benchmarks.json"
-        bench_file.write_text(json.dumps([
-            {
-                "benchmark_id": "b1", "recipe_id": "r1", "status": "completed",
-                "started_at": "2026-05-25T00:00:00Z", "results": {"t": 40},
-            },
-            {
-                "benchmark_id": "b2", "recipe_id": "r1", "status": "completed",
-                "started_at": "2026-05-27T00:00:00Z", "results": {"t": 45},
-            },
-        ]))
+        bench_file.write_text(
+            json.dumps(
+                [
+                    {
+                        "benchmark_id": "b1",
+                        "recipe_id": "r1",
+                        "status": "completed",
+                        "started_at": "2026-05-25T00:00:00Z",
+                        "results": {"t": 40},
+                    },
+                    {
+                        "benchmark_id": "b2",
+                        "recipe_id": "r1",
+                        "status": "completed",
+                        "started_at": "2026-05-27T00:00:00Z",
+                        "results": {"t": 45},
+                    },
+                ]
+            )
+        )
 
         from spark_pulse.tools import benchmarking
 
@@ -293,12 +360,19 @@ class TestGetLatestByRecipe:
     def test_get_recipe_latest_no_results(self, monkeypatch, _bench_path):
         """get_recipe_latest returns None when no completed benchmarks exist."""
         bench_file = _bench_path / "benchmarks.json"
-        bench_file.write_text(json.dumps([
-            {
-                "benchmark_id": "b1", "recipe_id": "r1", "status": "running",
-                "started_at": "2026-05-27T00:00:00Z", "results": None,
-            },
-        ]))
+        bench_file.write_text(
+            json.dumps(
+                [
+                    {
+                        "benchmark_id": "b1",
+                        "recipe_id": "r1",
+                        "status": "running",
+                        "started_at": "2026-05-27T00:00:00Z",
+                        "results": None,
+                    },
+                ]
+            )
+        )
 
         from spark_pulse.tools import benchmarking
 
@@ -314,16 +388,24 @@ class TestCompareRuns:
     def test_compare_returns_differences(self, monkeypatch, _bench_path):
         """compare_runs returns values and pairwise differences."""
         bench_file = _bench_path / "benchmarks.json"
-        bench_file.write_text(json.dumps([
-            {
-                "benchmark_id": "b1", "recipe_name": "m1", "started_at": "2026-05-27T00:00:00Z",
-                "results": {"throughput": 40.0, "latency_ms": 10.0},
-            },
-            {
-                "benchmark_id": "b2", "recipe_name": "m2", "started_at": "2026-05-27T01:00:00Z",
-                "results": {"throughput": 50.0, "latency_ms": 8.0},
-            },
-        ]))
+        bench_file.write_text(
+            json.dumps(
+                [
+                    {
+                        "benchmark_id": "b1",
+                        "recipe_name": "m1",
+                        "started_at": "2026-05-27T00:00:00Z",
+                        "results": {"throughput": 40.0, "latency_ms": 10.0},
+                    },
+                    {
+                        "benchmark_id": "b2",
+                        "recipe_name": "m2",
+                        "started_at": "2026-05-27T01:00:00Z",
+                        "results": {"throughput": 50.0, "latency_ms": 8.0},
+                    },
+                ]
+            )
+        )
 
         from spark_pulse.tools import benchmarking
 
@@ -343,12 +425,18 @@ class TestCompareRuns:
     def test_compare_missing_run_id(self, monkeypatch, _bench_path):
         """compare_runs returns None when any run_id is not found."""
         bench_file = _bench_path / "benchmarks.json"
-        bench_file.write_text(json.dumps([
-            {
-                "benchmark_id": "b1", "recipe_name": "m1", "started_at": "2026-05-27T00:00:00Z",
-                "results": {"throughput": 40.0},
-            },
-        ]))
+        bench_file.write_text(
+            json.dumps(
+                [
+                    {
+                        "benchmark_id": "b1",
+                        "recipe_name": "m1",
+                        "started_at": "2026-05-27T00:00:00Z",
+                        "results": {"throughput": 40.0},
+                    },
+                ]
+            )
+        )
 
         from spark_pulse.tools import benchmarking
 
@@ -357,16 +445,24 @@ class TestCompareRuns:
     def test_compare_run_without_results(self, monkeypatch, _bench_path):
         """compare_runs returns None when a run has no results."""
         bench_file = _bench_path / "benchmarks.json"
-        bench_file.write_text(json.dumps([
-            {
-                "benchmark_id": "b1", "recipe_name": "m1", "started_at": "2026-05-27T00:00:00Z",
-                "results": {"throughput": 40.0},
-            },
-            {
-                "benchmark_id": "b2", "recipe_name": "m2", "started_at": "2026-05-27T01:00:00Z",
-                "results": None,
-            },
-        ]))
+        bench_file.write_text(
+            json.dumps(
+                [
+                    {
+                        "benchmark_id": "b1",
+                        "recipe_name": "m1",
+                        "started_at": "2026-05-27T00:00:00Z",
+                        "results": {"throughput": 40.0},
+                    },
+                    {
+                        "benchmark_id": "b2",
+                        "recipe_name": "m2",
+                        "started_at": "2026-05-27T01:00:00Z",
+                        "results": None,
+                    },
+                ]
+            )
+        )
 
         from spark_pulse.tools import benchmarking
 
@@ -375,12 +471,18 @@ class TestCompareRuns:
     def test_compare_single_run(self, monkeypatch, _bench_path):
         """compare_runs returns None for a single run."""
         bench_file = _bench_path / "benchmarks.json"
-        bench_file.write_text(json.dumps([
-            {
-                "benchmark_id": "b1", "recipe_name": "m1", "started_at": "2026-05-27T00:00:00Z",
-                "results": {"throughput": 40.0},
-            },
-        ]))
+        bench_file.write_text(
+            json.dumps(
+                [
+                    {
+                        "benchmark_id": "b1",
+                        "recipe_name": "m1",
+                        "started_at": "2026-05-27T00:00:00Z",
+                        "results": {"throughput": 40.0},
+                    },
+                ]
+            )
+        )
 
         from spark_pulse.tools import benchmarking
 
@@ -396,17 +498,25 @@ class TestGetBaselineComparison:
     def test_baseline_comparison_returns_differences(self, monkeypatch, _bench_path):
         """get_baseline_comparison computes diffs between a benchmark and its baseline."""
         bench_file = _bench_path / "benchmarks.json"
-        bench_file.write_text(json.dumps([
-            {
-                "benchmark_id": "baseline", "recipe_name": "m1", "started_at": "2026-05-27T00:00:00Z",
-                "results": {"throughput": 40.0},
-            },
-            {
-                "benchmark_id": "current", "baseline_id": "baseline", "recipe_name": "m2",
-                "started_at": "2026-05-27T01:00:00Z",
-                "results": {"throughput": 50.0},
-            },
-        ]))
+        bench_file.write_text(
+            json.dumps(
+                [
+                    {
+                        "benchmark_id": "baseline",
+                        "recipe_name": "m1",
+                        "started_at": "2026-05-27T00:00:00Z",
+                        "results": {"throughput": 40.0},
+                    },
+                    {
+                        "benchmark_id": "current",
+                        "baseline_id": "baseline",
+                        "recipe_name": "m2",
+                        "started_at": "2026-05-27T01:00:00Z",
+                        "results": {"throughput": 50.0},
+                    },
+                ]
+            )
+        )
 
         from spark_pulse.tools import benchmarking
 
@@ -420,13 +530,19 @@ class TestGetBaselineComparison:
     def test_baseline_comparison_no_baseline_id(self, monkeypatch, _bench_path):
         """get_baseline_comparison returns None when benchmark has no baseline_id."""
         bench_file = _bench_path / "benchmarks.json"
-        bench_file.write_text(json.dumps([
-            {
-                "benchmark_id": "b1", "baseline_id": None, "recipe_name": "m1",
-                "started_at": "2026-05-27T00:00:00Z",
-                "results": {"throughput": 40.0},
-            },
-        ]))
+        bench_file.write_text(
+            json.dumps(
+                [
+                    {
+                        "benchmark_id": "b1",
+                        "baseline_id": None,
+                        "recipe_name": "m1",
+                        "started_at": "2026-05-27T00:00:00Z",
+                        "results": {"throughput": 40.0},
+                    },
+                ]
+            )
+        )
 
         from spark_pulse.tools import benchmarking
 
@@ -435,13 +551,19 @@ class TestGetBaselineComparison:
     def test_baseline_comparison_missing_baseline(self, monkeypatch, _bench_path):
         """get_baseline_comparison returns None when baseline benchmark not found."""
         bench_file = _bench_path / "benchmarks.json"
-        bench_file.write_text(json.dumps([
-            {
-                "benchmark_id": "b1", "baseline_id": "nonexistent", "recipe_name": "m1",
-                "started_at": "2026-05-27T00:00:00Z",
-                "results": {"throughput": 40.0},
-            },
-        ]))
+        bench_file.write_text(
+            json.dumps(
+                [
+                    {
+                        "benchmark_id": "b1",
+                        "baseline_id": "nonexistent",
+                        "recipe_name": "m1",
+                        "started_at": "2026-05-27T00:00:00Z",
+                        "results": {"throughput": 40.0},
+                    },
+                ]
+            )
+        )
 
         from spark_pulse.tools import benchmarking
 
@@ -457,18 +579,22 @@ class TestPurgeExpired:
     def test_purge_removes_old_records(self, monkeypatch, _bench_path):
         """_purge_expired removes records older than retention days."""
         bench_file = _bench_path / "benchmarks.json"
-        bench_file.write_text(json.dumps([
-            {
-                "benchmark_id": "old",
-                "started_at": "2025-01-01T00:00:00Z",  # well over 90 days ago
-                "results": {"throughput": 40.0},
-            },
-            {
-                "benchmark_id": "new",
-                "started_at": "2026-05-27T00:00:00Z",
-                "results": {"throughput": 50.0},
-            },
-        ]))
+        bench_file.write_text(
+            json.dumps(
+                [
+                    {
+                        "benchmark_id": "old",
+                        "started_at": "2025-01-01T00:00:00Z",  # well over 90 days ago
+                        "results": {"throughput": 40.0},
+                    },
+                    {
+                        "benchmark_id": "new",
+                        "started_at": "2026-05-27T00:00:00Z",
+                        "results": {"throughput": 50.0},
+                    },
+                ]
+            )
+        )
 
         from spark_pulse.tools import benchmarking
 
@@ -480,9 +606,17 @@ class TestPurgeExpired:
         """_purge_expired keeps records within retention window."""
         bench_file = _bench_path / "benchmarks.json"
         recent = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        bench_file.write_text(json.dumps([
-            {"benchmark_id": "recent", "started_at": recent, "results": {"throughput": 40.0}},
-        ]))
+        bench_file.write_text(
+            json.dumps(
+                [
+                    {
+                        "benchmark_id": "recent",
+                        "started_at": recent,
+                        "results": {"throughput": 40.0},
+                    },
+                ]
+            )
+        )
 
         from spark_pulse.tools import benchmarking
 

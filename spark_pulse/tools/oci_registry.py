@@ -10,14 +10,11 @@ import hashlib
 import json
 import logging
 import os
-import re
 import shutil
 import subprocess
-import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 import yaml
 
@@ -39,17 +36,18 @@ RECIPE_INDEX_ARTIFACT = "application/vnd.delivery-station.recipe.index.v1+json"
 
 # ── Registry config ──────────────────────────────────────────────────────────
 
+
 def _load_registries() -> list[dict]:
     """Load registries from registries.yaml. Returns empty list on missing/invalid file.
-    
+
     Falls back to bundled spark_pulse/registries.yaml if user config doesn't exist.
     """
     user_config = REGISTRIES_CONFIG
     bundled_config = Path(__file__).parent / "registries.yaml"
-    
+
     # Use user config if it exists, otherwise fall back to bundled default
     config_path = user_config if user_config.exists() else bundled_config
-    
+
     if not config_path.exists():
         return []
     try:
@@ -86,13 +84,15 @@ def add_registry(registry: dict) -> dict:
     regs = _load_registries()
     # Deduplicate by name
     regs = [r for r in regs if r["name"] != registry["name"]]
-    regs.append({
-        "name": registry["name"],
-        "url": registry["url"],
-        "enabled": registry.get("enabled", True),
-        "default": registry.get("default", False),
-        "auth": registry.get("auth", {}),
-    })
+    regs.append(
+        {
+            "name": registry["name"],
+            "url": registry["url"],
+            "enabled": registry.get("enabled", True),
+            "default": registry.get("default", False),
+            "auth": registry.get("auth", {}),
+        }
+    )
     _save_registries(regs)
     return regs[-1]
 
@@ -157,6 +157,7 @@ def test_registry_connection(name: str) -> bool:
 
 # ── Auth helpers ─────────────────────────────────────────────────────────────
 
+
 def _auth_headers(auth: dict | None) -> dict[str, str]:
     """Build Basic auth header from auth config."""
     if not auth:
@@ -165,6 +166,7 @@ def _auth_headers(auth: dict | None) -> dict[str, str]:
         return {"Authorization": f"Bearer {auth['token']}"}
     if auth.get("type") == "username_password":
         import base64
+
         username = auth.get("username", "")
         password = auth.get("password", "")
         if auth.get("password_env"):
@@ -176,6 +178,7 @@ def _auth_headers(auth: dict | None) -> dict[str, str]:
 
 # ── OCI CLI wrapper (skopeo / oras) ─────────────────────────────────────────
 
+
 def _which(cmd: str) -> str | None:
     """Check if a command is available."""
     return shutil.which(cmd)
@@ -184,9 +187,7 @@ def _which(cmd: str) -> str | None:
 def _run_oci_cmd(cmd: list[str], timeout: int = 120) -> tuple[str, str, int]:
     """Run an OCI CLI command and return (stdout, stderr, returncode)."""
     try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout
-        )
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         return result.stdout, result.stderr, result.returncode
     except FileNotFoundError:
         return "", f"Command not found: {cmd[0]}", 127
@@ -234,8 +235,6 @@ def _fetch_oci_index(url: str, tag: str, auth: dict | None = None) -> dict:
 
     Returns the parsed index JSON.  Uses skopeo cat-manifest when available.
     """
-    headers = _auth_headers(auth)
-
     # skopeo cat-manifest
     if _which("skopeo"):
         cmd = ["skopeo", "cat", f"docker://{url}:{tag}"]
@@ -251,13 +250,16 @@ def _fetch_oci_index(url: str, tag: str, auth: dict | None = None) -> dict:
     raise RuntimeError(f"Failed to fetch OCI index {url}:{tag}")
 
 
-def _pull_oci_to_layout(url: str, tag: str, layout_dir: Path, auth: dict | None = None) -> None:
+def _pull_oci_to_layout(
+    url: str, tag: str, layout_dir: Path, auth: dict | None = None
+) -> None:
     """Pull an OCI image to a local OCI layout directory using skopeo."""
     layout_dir.mkdir(parents=True, exist_ok=True)
 
     if _which("skopeo"):
         cmd = [
-            "skopeo", "copy",
+            "skopeo",
+            "copy",
             f"docker://{url}:{tag}",
             f"oci:{layout_dir}",
         ]
@@ -339,12 +341,14 @@ def _extract_recipes_from_layout(layout_dir: Path, extract_dir: Path) -> list[di
         try:
             with open(layer_path) as f:
                 content = f.read()
-            extracted.append({
-                "filename": filename,
-                "content": content,
-                "digest": digest,
-                "size": size,
-            })
+            extracted.append(
+                {
+                    "filename": filename,
+                    "content": content,
+                    "digest": digest,
+                    "size": size,
+                }
+            )
         except Exception as exc:
             logger.warning("Failed to read layer %s: %s", layer_digest, exc)
 
@@ -352,6 +356,7 @@ def _extract_recipes_from_layout(layout_dir: Path, extract_dir: Path) -> list[di
 
 
 # ── High-level operations ────────────────────────────────────────────────────
+
 
 @dataclass
 class CollectionInfo:
@@ -365,7 +370,9 @@ class CollectionInfo:
     registry: str
 
 
-def list_collections(registry_name: str | None = None, version: str | None = None) -> list[CollectionInfo]:
+def list_collections(
+    registry_name: str | None = None, version: str | None = None
+) -> list[CollectionInfo]:
     """List all available recipe collections from one or more registries.
 
     Returns a list of CollectionInfo objects.
@@ -398,16 +405,18 @@ def list_collections(registry_name: str | None = None, version: str | None = Non
                 try:
                     index = _fetch_oci_index(url, tag, auth=reg.get("auth"))
                     annotations = index.get("annotations", {})
-                    results.append(CollectionInfo(
-                        name=annotations.get("name", "unknown"),
-                        version=tag,
-                        description=annotations.get("description", ""),
-                        vendor=annotations.get("vendor", ""),
-                        license=annotations.get("license", ""),
-                        recipe_count=len(index.get("manifests", [])),
-                        digest=index.get("digest", tag),
-                        registry=reg["name"],
-                    ))
+                    results.append(
+                        CollectionInfo(
+                            name=annotations.get("name", "unknown"),
+                            version=tag,
+                            description=annotations.get("description", ""),
+                            vendor=annotations.get("vendor", ""),
+                            license=annotations.get("license", ""),
+                            recipe_count=len(index.get("manifests", [])),
+                            digest=index.get("digest", tag),
+                            registry=reg["name"],
+                        )
+                    )
                 except Exception as exc:
                     logger.debug("Failed to parse index %s:%s: %s", url, tag, exc)
                     continue
@@ -420,6 +429,7 @@ def list_collections(registry_name: str | None = None, version: str | None = Non
 @dataclass
 class CollectionRecipe:
     """Individual recipe info from a collection."""
+
     name: str
     description: str
     model: str
@@ -469,15 +479,25 @@ def list_collection_recipes(
                     # Extract recipe info from manifest entries
                     for entry in index.get("manifests", []):
                         layer_annotations = entry.get("annotations", {})
-                        results.append(CollectionRecipe(
-                            name=layer_annotations.get("name", entry.get("digest", "unknown")),
-                            description=layer_annotations.get("org.opencontainers.image.description", ""),
-                            model=layer_annotations.get("model", ""),
-                            container=layer_annotations.get("container", ""),
-                            recipe_version=layer_annotations.get("recipe_version", tag),
-                        ))
+                        results.append(
+                            CollectionRecipe(
+                                name=layer_annotations.get(
+                                    "name", entry.get("digest", "unknown")
+                                ),
+                                description=layer_annotations.get(
+                                    "org.opencontainers.image.description", ""
+                                ),
+                                model=layer_annotations.get("model", ""),
+                                container=layer_annotations.get("container", ""),
+                                recipe_version=layer_annotations.get(
+                                    "recipe_version", tag
+                                ),
+                            )
+                        )
                 except Exception as exc:
-                    logger.debug("Failed to parse index for %s:%s: %s", collection_name, tag, exc)
+                    logger.debug(
+                        "Failed to parse index for %s:%s: %s", collection_name, tag, exc
+                    )
                     continue
         except Exception as exc:
             logger.warning("Failed to list tags for registry %s: %s", reg["name"], exc)
@@ -512,7 +532,9 @@ def install_collection(
     collections = list_collections(registry_name=reg["name"])
     matching = [c for c in collections if c.name == name and c.version == version]
     if not matching:
-        raise ValueError(f"Collection '{name}:{version}' not found in registry '{reg['name']}'")
+        raise ValueError(
+            f"Collection '{name}:{version}' not found in registry '{reg['name']}'"
+        )
 
     if dry_run:
         logger.info("DRY RUN: Would install %s:%s from %s", name, version, reg["name"])
@@ -607,7 +629,9 @@ def install_oci_recipe(
             break
 
     if not target:
-        raise ValueError(f"Recipe '{recipe_name}' not found in collection '{collection_name}'")
+        raise ValueError(
+            f"Recipe '{recipe_name}' not found in collection '{collection_name}'"
+        )
 
     # Check if already installed
     dest = RECIPES_DIR / target["filename"]
@@ -621,7 +645,10 @@ def install_oci_recipe(
                 return {"success": True, "recipe": recipe_name, "action": "up_to_date"}
             else:
                 action = "updated"
-                logger.info("Local modifications detected for %s — overwriting", target["filename"])
+                logger.info(
+                    "Local modifications detected for %s — overwriting",
+                    target["filename"],
+                )
         except OSError:
             action = "updated"
 
@@ -631,9 +658,17 @@ def install_oci_recipe(
         f.write(target["content"])
 
     # Update metadata
-    _write_recipe_meta(target["filename"], reg["name"], collection_name, version, target["digest"])
+    _write_recipe_meta(
+        target["filename"], reg["name"], collection_name, version, target["digest"]
+    )
 
-    logger.info("%s recipe %s from %s:%s", action.capitalize(), recipe_name, collection_name, version)
+    logger.info(
+        "%s recipe %s from %s:%s",
+        action.capitalize(),
+        recipe_name,
+        collection_name,
+        version,
+    )
     return {"success": True, "recipe": recipe_name, "action": action}
 
 
@@ -722,18 +757,18 @@ def check_updates(
         # Check for local modifications
         has_local_changes = any(m.local_changes for m in metas)
 
-        # Compare recipe lists
-        current_files = {m.name for m in metas}
         # We'd need to know what recipes are in the latest version
         # For now, just report version difference
-        updates.append(UpdateInfo(
-            collection=coll_name,
-            current_version=current_version,
-            latest_version=latest_info.version,
-            current_digest=metas[0].digest if metas else "",
-            latest_digest=latest_info.digest,
-            local_changes=has_local_changes,
-        ))
+        updates.append(
+            UpdateInfo(
+                collection=coll_name,
+                current_version=current_version,
+                latest_version=latest_info.version,
+                current_digest=metas[0].digest if metas else "",
+                latest_digest=latest_info.digest,
+                local_changes=has_local_changes,
+            )
+        )
 
     return updates
 
@@ -741,7 +776,7 @@ def check_updates(
 @dataclass
 class RecipeMeta:
     name: str
-    source: str          # registry name
+    source: str  # registry name
     collection: str
     version: str
     digest: str
@@ -806,7 +841,11 @@ def _read_recipe_meta(recipe_filename: str) -> RecipeMeta | None:
 
     # Check if the recipe file has local modifications
     base = Path(recipe_filename)
-    recipe_file = RECIPES_DIR / base.name if base.suffix in {".yaml", ".yml"} else RECIPES_DIR / recipe_filename
+    recipe_file = (
+        RECIPES_DIR / base.name
+        if base.suffix in {".yaml", ".yml"}
+        else RECIPES_DIR / recipe_filename
+    )
     local_changes = False
     if recipe_file.exists():
         try:
@@ -875,33 +914,46 @@ def apply_updates(
                 version=version,
                 registry_name=reg_name,
             )
-            results.append({
-                "collection": coll,
-                "success": True,
-                "installed": installed,
-            })
+            results.append(
+                {
+                    "collection": coll,
+                    "success": True,
+                    "installed": installed,
+                }
+            )
         except Exception as exc:
-            results.append({
-                "collection": coll,
-                "success": False,
-                "error": str(exc),
-            })
+            results.append(
+                {
+                    "collection": coll,
+                    "success": False,
+                    "error": str(exc),
+                }
+            )
 
     return results
 
 
 # ── Auto-update ──────────────────────────────────────────────────────────────
 
+
 def run_auto_update() -> dict:
     """Run the auto-update check and apply updates.
 
     Returns a summary dict with results.
     """
-    settings = config.oci_auto_update_enabled if hasattr(config, "oci_auto_update_enabled") else False
+    settings = (
+        config.oci_auto_update_enabled
+        if hasattr(config, "oci_auto_update_enabled")
+        else False
+    )
     if not settings:
         return {"skipped": True, "reason": "Auto-update disabled"}
 
-    overwrite = config.oci_auto_update_overwrite_local if hasattr(config, "oci_auto_update_overwrite_local") else False
+    overwrite = (
+        config.oci_auto_update_overwrite_local
+        if hasattr(config, "oci_auto_update_overwrite_local")
+        else False
+    )
 
     log_lines = []
 
@@ -927,24 +979,32 @@ def run_auto_update() -> dict:
             if upd.local_changes and not overwrite:
                 log(f"    Skipping {upd.collection}: local changes detected")
                 continue
-            update_params.append({
-                "collection": upd.collection,
-                "target_version": upd.latest_version,
-                "registry": None,  # Will use default
-            })
+            update_params.append(
+                {
+                    "collection": upd.collection,
+                    "target_version": upd.latest_version,
+                    "registry": None,  # Will use default
+                }
+            )
 
         if not update_params:
             log("No updates to apply (all have local changes)")
             return {"success": True, "updated": 0, "log": log_lines}
 
         results = apply_updates(update_params, overwrite_local=overwrite)
-        total_installed = sum(len(r.get("installed", [])) for r in results if r["success"])
+        total_installed = sum(
+            len(r.get("installed", [])) for r in results if r["success"]
+        )
 
         for r in results:
             if r["success"]:
-                log(f"  Updated {r['collection']}: {len(r['installed'])} recipes installed")
+                log(
+                    f"  Updated {r['collection']}: {len(r['installed'])} recipes installed"
+                )
             else:
-                log(f"  Failed to update {r['collection']}: {r.get('error', 'unknown')}")
+                log(
+                    f"  Failed to update {r['collection']}: {r.get('error', 'unknown')}"
+                )
 
         log(f"Auto-update complete: {total_installed} recipes updated")
         return {"success": True, "updated": total_installed, "log": log_lines}

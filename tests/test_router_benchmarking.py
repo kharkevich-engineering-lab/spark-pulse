@@ -266,11 +266,14 @@ class TestRunBenchmark:
             "results": None,
         }
 
-        with patch(
-            "spark_pulse.routers.benchmarking.tools.benchmarking.create_benchmark",
-            return_value=mock_result,
-        ), patch(
-            "spark_pulse.routers.benchmarking.tools.benchmarking.execute_benchmark",
+        with (
+            patch(
+                "spark_pulse.routers.benchmarking.tools.benchmarking.create_benchmark",
+                return_value=mock_result,
+            ),
+            patch(
+                "spark_pulse.routers.benchmarking.tools.benchmarking.execute_benchmark",
+            ),
         ):
             resp = app_client.post(
                 "/api/benchmarks",
@@ -298,11 +301,14 @@ class TestRunBenchmark:
             "results": None,
         }
 
-        with patch(
-            "spark_pulse.routers.benchmarking.tools.benchmarking.create_benchmark",
-            return_value=mock_result,
-        ), patch(
-            "spark_pulse.routers.benchmarking.tools.benchmarking.execute_benchmark",
+        with (
+            patch(
+                "spark_pulse.routers.benchmarking.tools.benchmarking.create_benchmark",
+                return_value=mock_result,
+            ),
+            patch(
+                "spark_pulse.routers.benchmarking.tools.benchmarking.execute_benchmark",
+            ),
         ):
             resp = app_client.post(
                 "/api/benchmarks",
@@ -353,11 +359,14 @@ class TestRunBenchmark:
             "results": None,
         }
 
-        with patch(
-            "spark_pulse.routers.benchmarking.tools.benchmarking.create_benchmark",
-            return_value=mock_result,
-        ), patch(
-            "spark_pulse.routers.benchmarking.tools.benchmarking.execute_benchmark",
+        with (
+            patch(
+                "spark_pulse.routers.benchmarking.tools.benchmarking.create_benchmark",
+                return_value=mock_result,
+            ),
+            patch(
+                "spark_pulse.routers.benchmarking.tools.benchmarking.execute_benchmark",
+            ),
         ):
             resp = app_client.post(
                 "/api/benchmarks",
@@ -382,14 +391,32 @@ class TestCompareRuns:
         """POST /api/benchmarks/compare returns comparison data."""
         mock_result = {
             "runs": {
-                "b1": {"benchmark_id": "b1", "recipe_name": "m1", "started_at": "2026-05-27T00:00:00Z", "results": {"throughput": 40.0}},
-                "b2": {"benchmark_id": "b2", "recipe_name": "m2", "started_at": "2026-05-27T01:00:00Z", "results": {"throughput": 50.0}},
+                "b1": {
+                    "benchmark_id": "b1",
+                    "recipe_name": "m1",
+                    "started_at": "2026-05-27T00:00:00Z",
+                    "results": {"throughput": 40.0},
+                },
+                "b2": {
+                    "benchmark_id": "b2",
+                    "recipe_name": "m2",
+                    "started_at": "2026-05-27T01:00:00Z",
+                    "results": {"throughput": 50.0},
+                },
             },
             "comparison": {
                 "throughput": {
                     "values": {
-                        "b1": {"value": 40.0, "recipe_name": "m1", "started_at": "2026-05-27T00:00:00Z"},
-                        "b2": {"value": 50.0, "recipe_name": "m2", "started_at": "2026-05-27T01:00:00Z"},
+                        "b1": {
+                            "value": 40.0,
+                            "recipe_name": "m1",
+                            "started_at": "2026-05-27T00:00:00Z",
+                        },
+                        "b2": {
+                            "value": 50.0,
+                            "recipe_name": "m2",
+                            "started_at": "2026-05-27T01:00:00Z",
+                        },
                     },
                     "differences": {"b1_vs_b2": {"difference_pct": -20.0}},
                 }
@@ -409,7 +436,12 @@ class TestCompareRuns:
         assert resp.status_code == 200
         data = resp.json()
         assert data["run_ids"] == ["b1", "b2"]
-        assert data["comparison"]["throughput"]["differences"]["b1_vs_b2"]["difference_pct"] == -20.0
+        assert (
+            data["comparison"]["throughput"]["differences"]["b1_vs_b2"][
+                "difference_pct"
+            ]
+            == -20.0
+        )
 
     def test_compare_too_few_runs(self, app_client):
         """POST /api/benchmarks/compare with <2 IDs returns 400."""

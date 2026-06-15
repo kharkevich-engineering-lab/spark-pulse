@@ -221,9 +221,7 @@ class _Config:
 
     @property
     def oci_auto_update_schedule(self) -> str:
-        return str(
-            self._data.get("oci_auto_update_schedule", "0 2 * * *")
-        )
+        return str(self._data.get("oci_auto_update_schedule", "0 2 * * *"))
 
     @oci_auto_update_schedule.setter
     def oci_auto_update_schedule(self, value: str) -> None:

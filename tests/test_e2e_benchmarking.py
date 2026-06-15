@@ -38,6 +38,7 @@ def e2e_benchmarking_config():
 def e2e_benchmarking_app(e2e_benchmarking_config):
     """Create test app with benchmarking enabled."""
     from spark_pulse.app import create_app
+
     return create_app()
 
 
@@ -140,14 +141,18 @@ class TestBenchmarkingApiE2E:
 
     def test_recipe_benchmarks_empty(self, e2e_benchmarking_server):
         """GET /api/benchmarks/recipe/{id} returns empty list for unknown recipe."""
-        resp = httpx.get(f"{e2e_benchmarking_server}/api/benchmarks/recipe/unknown-recipe")
+        resp = httpx.get(
+            f"{e2e_benchmarking_server}/api/benchmarks/recipe/unknown-recipe"
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert isinstance(data, list)
 
     def test_recipe_latest_not_found(self, e2e_benchmarking_server):
         """GET /api/benchmarks/recipe/{id}/latest returns 404 when no completed benchmark."""
-        resp = httpx.get(f"{e2e_benchmarking_server}/api/benchmarks/recipe/unknown/latest")
+        resp = httpx.get(
+            f"{e2e_benchmarking_server}/api/benchmarks/recipe/unknown/latest"
+        )
         assert resp.status_code == 404
         data = resp.json()
         assert "benchmark data" in data["detail"].lower()

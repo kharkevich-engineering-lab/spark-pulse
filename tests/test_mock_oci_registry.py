@@ -1,7 +1,5 @@
 """Tests for mock OCI registry provider."""
 
-import pytest
-
 from spark_pulse.mock.oci_registry import (
     mock_list_collections,
     mock_install_collection,
@@ -30,8 +28,10 @@ class TestMockOciRegistry:
         monkeypatch.setenv("HOME", str(tmp_path))
         import importlib
         import spark_pulse.tools.oci_registry as mod
+
         importlib.reload(mod)
         from spark_pulse.mock import oci_registry as mock_mod
+
         mock_mod.RECIPES_DIR = mod.RECIPES_DIR
 
         installed = mock_install_collection(
