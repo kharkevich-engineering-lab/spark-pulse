@@ -208,38 +208,7 @@ def _oras_pull_to_layout(
 def _oras_fetch_manifest(url: str, tag: str, auth: dict | None = None) -> dict:
     """Fetch and parse an OCI manifest using oras Python SDK."""
     client = _oras_client(auth)
-    # Use the underlying session to make a direct request
-    container = client.get_container(f"{url}:{tag}")
-    manifest_url = f"{client.prefix}://{container.manifest_url()}"
-    headers = {"Accept": OCI_INDEX_MEDIA}
-    response = client.session.get(manifest_url, headers=headers, timeout=60)
-
-    # Registry returned 401 and no explicit auth configured — try anonymous token
-    # (e.g., ghcr.io requires a token even for public repos)
-    if response.status_code == 401 and not auth:
-        www_auth = response.headers.get("www-authenticate", "")
-        if "Bearer" in www_auth:
-            # Parse realm and scope from www-authenticate header
-            # Format: Bearer realm="https://ghcr.io/token",service="ghcr.io",scope="repository:..."
-            import re
-
-            realm_match = re.search(r'realm="([^"]+)"', www_auth)
-            scope_match = re.search(r'scope="([^"]+)"', www_auth)
-            if realm_match and scope_match:
-                token_url = realm_match.group(1)
-                scope = scope_match.group(1)
-                try:
-                    token_resp = client.session.get(token_url, params={"scope": scope}, timeout=10)
-                    if token_resp.status_code == 200:
-                        token = token_resp.json().get("token")
-                        if token:
-                            client.session.headers["Authorization"] = f"Bearer {token}"
-                            response = client.session.get(manifest_url, headers=headers, timeout=60)
-                except Exception:
-                    pass  # Continue with original response if token request fails
-
-    response.raise_for_status()
-    return response.json()
+    return client.get_manifest(f"{url}:{tag}")
 
 
 def _fetch_oci_index(url: str, tag: str, auth: dict | None = None) -> dict:
