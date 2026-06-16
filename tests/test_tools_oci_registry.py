@@ -17,7 +17,10 @@ from spark_pulse.tools.oci_registry import (
     remove_registry,
     run_auto_update,
     update_registry,
+    _auth_headers,
     _load_registries,
+    _oras_client,
+    _oras_list_tags,
     _save_registries,
     _write_recipe_meta,
     _read_recipe_meta,
@@ -385,3 +388,114 @@ class TestAutoUpdate:
                 mock_check.return_value = []
                 result = run_auto_update()
                 assert result.get("updated") == 0
+
+
+class TestAuthHeaders:
+    """Tests for auth header generation."""
+
+    def test_auth_headers_none(self):
+        """No auth returns empty headers."""
+        assert _auth_headers(None) == {}
+
+    def test_auth_headers_empty_dict(self):
+        """Empty auth dict returns empty headers."""
+        assert _auth_headers({}) == {}
+
+    def test_auth_headers_token(self):
+        """Token auth returns Bearer header."""
+        result = _auth_headers({"type": "token", "token": "my-token"})
+        assert result == {"Authorization": "Bearer my-token"}
+
+    def test_auth_headers_username_password(self):
+        """Username/password auth returns Basic header."""
+        import base64
+
+        result = _auth_headers(
+            {"type": "username_password", "username": "user", "password": "pass"}
+        )
+        expected_creds = base64.b64encode(b"user:pass").decode()
+        assert result == {"Authorization": f"Basic {expected_creds}"}
+
+    def test_auth_headers_username_password_env(self, monkeypatch):
+        """Password env var is resolved."""
+        import base64
+
+        monkeypatch.setenv("MY_PASSWORD", "env-pass")
+        result = _auth_headers(
+            {
+                "type": "username_password",
+                "username": "user",
+                "password_env": "MY_PASSWORD",
+            }
+        )
+        expected_creds = base64.b64encode(b"user:env-pass").decode()
+        assert result == {"Authorization": f"Basic {expected_creds}"}
+
+
+class TestOrasClient:
+    """Tests for oras client creation."""
+
+    def test_oras_client_no_auth(self):
+        """Client without auth has no Authorization header."""
+        client = _oras_client()
+        assert "Authorization" not in client.session.headers
+
+    def test_oras_client_with_token_auth(self):
+        """Client with token auth has Authorization header."""
+        client = _oras_client(auth={"type": "token", "token": "my-token"})
+        assert client.session.headers.get("Authorization") == "Bearer my-token"
+
+    def test_oras_client_with_username_password_auth(self):
+        """Client with username/password auth has Authorization header."""
+        import base64
+
+        auth = {"type": "username_password", "username": "user", "password": "pass"}
+        client = _oras_client(auth=auth)
+        expected_creds = base64.b64encode(b"user:pass").decode()
+        assert client.session.headers.get("Authorization") == f"Basic {expected_creds}"
+
+
+class TestOrasListTags:
+    """Tests for oras list tags function."""
+
+    @patch("spark_pulse.tools.oci_registry._oras_client")
+    def test_list_tags_public_registry(self, mock_client_class):
+        """Public registry (no auth) lists tags correctly."""
+        mock_client = mock_client_class.return_value
+        mock_client.get_tags.return_value = ["1.0.0", "latest"]
+
+        tags = _oras_list_tags("ghcr.io/test/repo")
+
+        assert tags == ["1.0.0", "latest"]
+        mock_client_class.assert_called_once_with(None)
+        mock_client.get_tags.assert_called_once_with("ghcr.io/test/repo")
+
+    @patch("spark_pulse.tools.oci_registry._oras_client")
+    def test_list_tags_auth_registry(self, mock_client_class):
+        """Authenticated registry passes auth to client."""
+        mock_client = mock_client_class.return_value
+        mock_client.get_tags.return_value = ["1.0.0"]
+
+        auth = {"type": "token", "token": "secret"}
+        tags = _oras_list_tags("ghcr.io/test/repo", auth=auth)
+
+        assert tags == ["1.0.0"]
+        mock_client_class.assert_called_once_with(auth)
+
+    @patch("spark_pulse.tools.oci_registry._oras_client")
+    def test_list_tags_empty_response(self, mock_client_class):
+        """Empty tag list returns empty list."""
+        mock_client = mock_client_class.return_value
+        mock_client.get_tags.return_value = []
+
+        tags = _oras_list_tags("ghcr.io/test/repo")
+        assert tags == []
+
+    @patch("spark_pulse.tools.oci_registry._oras_client")
+    def test_list_tags_none_response(self, mock_client_class):
+        """None response returns empty list."""
+        mock_client = mock_client_class.return_value
+        mock_client.get_tags.return_value = None
+
+        tags = _oras_list_tags("ghcr.io/test/repo")
+        assert tags == []
