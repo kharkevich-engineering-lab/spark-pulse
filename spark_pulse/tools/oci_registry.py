@@ -140,13 +140,36 @@ def get_default_registry() -> dict | None:
 
 
 def test_registry_connection(name: str) -> bool:
-    """Test connectivity to a registry by listing tags."""
+    """Test connectivity to a registry.
+
+    First tries a simple HTTP HEAD check to the registry host.
+    Falls back to OCI tag listing if skopeo/oras/docker is available.
+    """
+    import httpx
+
     reg = get_registry(name)
     if not reg:
         return False
     url = reg.get("url", "")
     if not url:
         return False
+
+    # Extract host from URL (handle docker:// prefix if present)
+    host = url.replace("docker://", "").split("/")[0]
+    if not host:
+        return False
+
+    # Try simple HTTP HEAD check first
+    try:
+        with httpx.Client(timeout=10) as client:
+            # ghcr.io and other registries respond to HEAD on /
+            resp = client.head(f"https://{host}", follow_redirects=True)
+            if resp.status_code in (200, 401, 403, 404):
+                return True
+    except Exception:
+        pass
+
+    # Fallback: try OCI tag listing (requires skopeo/oras/docker)
     try:
         _oci_list_tags(url, auth=reg.get("auth"))
         return True
