@@ -214,7 +214,8 @@ def _oras_fetch_manifest(url: str, tag: str, auth: dict | None = None) -> dict:
     headers = {"Accept": OCI_INDEX_MEDIA}
     response = client.session.get(manifest_url, headers=headers, timeout=60)
 
-    # If registry requires auth and we don't have credentials, try anonymous token
+    # Registry returned 401 and no explicit auth configured — try anonymous token
+    # (e.g., ghcr.io requires a token even for public repos)
     if response.status_code == 401 and not auth:
         www_auth = response.headers.get("www-authenticate", "")
         if "Bearer" in www_auth:
