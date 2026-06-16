@@ -82,7 +82,7 @@ def delete_registry(name: str):
     return {"deleted": True}
 
 
-@router.post("/registries/{name}/test-connection")
+@router.get("/registries/{name}/test-connection")
 def test_connection(name: str):
     """Test connectivity to a registry."""
     if is_simulation():
