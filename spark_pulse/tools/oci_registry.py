@@ -199,7 +199,9 @@ def _oras_list_tags(url: str, auth: dict | None = None) -> list[str]:
     return tags or []
 
 
-def _oras_pull_to_layout(url: str, tag: str, layout_dir: Path, auth: dict | None = None) -> None:
+def _oras_pull_to_layout(
+    url: str, tag: str, layout_dir: Path, auth: dict | None = None
+) -> None:
     """Pull an OCI image to a local OCI layout directory using oras Python SDK."""
     layout_dir.mkdir(parents=True, exist_ok=True)
     client = _oras_client(auth)

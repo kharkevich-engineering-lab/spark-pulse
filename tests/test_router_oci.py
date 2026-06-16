@@ -123,7 +123,7 @@ class TestOciRegistries:
                 "auth": {},
             },
         )
-        response = client.post("/api/oci/registries/test-conn-reg/test-connection")
+        response = client.get("/api/oci/registries/test-conn-reg/test-connection")
         assert response.status_code == 200
         data = response.json()
         assert "ok" in data
