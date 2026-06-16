@@ -208,14 +208,7 @@ def _oras_pull_to_layout(
 def _oras_fetch_manifest(url: str, tag: str, auth: dict | None = None) -> dict:
     """Fetch and parse an OCI manifest using oras Python SDK."""
     client = _oras_client(auth)
-    # Use the underlying session to make a direct request
-    container = client.get_container(f"{url}:{tag}")
-    manifest_url = f"{client.prefix}://{container.manifest_url()}"
-    headers = {"Accept": OCI_INDEX_MEDIA}
-    response = client.session.get(manifest_url, headers=headers, timeout=60)
-    response.raise_for_status()
-    return response.json()
-    return response.json()
+    return client.get_manifest(f"{url}:{tag}")
 
 
 def _fetch_oci_index(url: str, tag: str, auth: dict | None = None) -> dict:
