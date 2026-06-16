@@ -57,13 +57,19 @@ def test_oidc_configured_false_when_missing_client_id(monkeypatch):
     assert auth._oidc_configured() is False
 
 
-def test_oidc_configured_false_when_missing_client_secret(monkeypatch):
+def test_oidc_configured_false_when_missing_client_secret(tmp_path, monkeypatch):
+    """OIDC should not be configured when client secret is empty (no fallback to secrets.json)."""
+    from spark_pulse import config as config_module
+
     monkeypatch.setenv("SPARK_PULSE_AUTH_ENABLED", "true")
     monkeypatch.setitem(
         auth.config._data, "oidc_provider_url", "https://issuer.example"
     )
     monkeypatch.setitem(auth.config._data, "oidc_client_id", "client-id")
     monkeypatch.setitem(auth.config._data, "oidc_client_secret", "")
+    monkeypatch.setattr(
+        config_module, "_SECRETS_PATH", tmp_path / "missing_secrets.json"
+    )
 
     assert auth._oidc_configured() is False
 

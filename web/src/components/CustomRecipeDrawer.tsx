@@ -76,6 +76,7 @@ export default function CustomRecipeDrawer({
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !recipe) return;
+    if (file.size > 1024 * 1024) { onError("File too large (max 1MB)"); return; }
     setUploading(true);
     try { setContent(await file.text()); }
     catch { onError("Failed to read file"); }

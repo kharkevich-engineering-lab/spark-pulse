@@ -21,6 +21,7 @@ dependencies = [
     "click>=8.0",
     "authlib>=1.3.0",
     "httpx>=0.28.0",
+    "filelock>=3.12.0",
 ]
 
 [project.optional-dependencies]
@@ -32,6 +33,9 @@ dev = [
 ]
 mcp = [
     "mcp>=1.0.0",
+]
+benchmarking = [
+    "llama-benchy>=0.1.0",
 ]
 
 [[project.maintainers]]
@@ -62,4 +66,5 @@ include = ["spark_pulse*", "spark_pulse.*"]
 spark_pulse = [
     "ui/**/*",
     "service/templates/**/*",
+    "registries.yaml",
 ]

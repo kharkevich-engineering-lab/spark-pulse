@@ -100,6 +100,40 @@ TOOLS = [
             "required": ["targets"],
         },
     },
+    {
+        "name": "list_benchmarks",
+        "description": "List all model benchmarks",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "get_benchmark",
+        "description": "Get details of a specific benchmark run",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"id": {"type": "string", "description": "Benchmark ID"}},
+            "required": ["id"],
+        },
+    },
+    {
+        "name": "get_latest_by_recipe",
+        "description": "Get the latest benchmark result for each model/recipe",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "compare_benchmarks",
+        "description": "Compare multiple benchmark runs against each other",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of benchmark IDs to compare",
+                },
+            },
+            "required": ["run_ids"],
+        },
+    },
 ]
 
 
@@ -146,6 +180,12 @@ HANDLERS: dict[str, Any] = {
     "list_cache": lambda args: _http("GET", "/cache"),
     "clean_cache": lambda args: _http(
         "POST", "/cache/clean", json_body={"targets": args["targets"]}
+    ),
+    "list_benchmarks": lambda args: _http("GET", "/benchmarks"),
+    "get_benchmark": lambda args: _http("GET", f"/benchmarks/{args['id']}"),
+    "get_latest_by_recipe": lambda args: _http("GET", "/benchmarks/latest-by-recipe"),
+    "compare_benchmarks": lambda args: _http(
+        "POST", "/benchmarks/compare", json_body={"run_ids": args["run_ids"]}
     ),
 }
 

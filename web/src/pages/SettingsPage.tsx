@@ -179,7 +179,7 @@ export default function SettingsPage() {
                 <input type="number" min="0" max="365" value={Number(form.job_retention_days ?? 7)} onChange={(e) => setForm({ ...form, job_retention_days: parseInt(e.target.value) || 0 })} className="w-24 px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm" />
                 <span className="text-sm text-text-muted">days</span>
               </div>
-              <p className="text-xs text-text-muted mt-1">Stopped and failed jobs older than this are removed automatically. 0 = keep forever.</p>
+              <p className="text-xs text-text-muted mt-1">Stopped and failed deployments older than this are removed automatically. 0 = keep forever.</p>
             </div>
 
             <div className="flex items-center justify-between pt-4 border-t border-border">

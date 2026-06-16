@@ -1,6 +1,6 @@
 /** Reusable modal/dialog components to replace browser confirm/alert. */
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertCircle, AlertTriangle, X } from "lucide-react";
 
 interface BaseModalProps {
@@ -28,14 +28,19 @@ function BaseModal({ open, onClose, title, children, actions, icon }: BaseModalP
   }, [open]);
 
   // Close on Escape key
+  const handleClose = useCallback(() => {
+    if (!open) return;
+    onClose();
+  }, [open, onClose]);
+
   useEffect(() => {
     if (!open) return;
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") handleClose();
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [open, onClose]);
+  }, [open, handleClose]);
 
   if (!open) return null;
 
@@ -104,7 +109,7 @@ export function ConfirmModal({ open, onClose, onConfirm, title, message, confirm
   useEffect(() => {
     if (!open) return;
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Enter" && !confirming) {
+      if (e.key === "Enter" && !confirming && !(e.target instanceof HTMLInputElement)) {
         e.preventDefault();
         handleConfirm();
       }

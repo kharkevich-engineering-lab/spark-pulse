@@ -28,3 +28,4 @@ spark_pulse/ui/
 *.tsbuildinfo
 .qwen/settings.json*
 .pytest_cache/
+.qwen/

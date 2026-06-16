@@ -1,4 +1,5 @@
 auth_enabled: false
+benchmarking_enabled: false
 cluster_enabled: false
 default_container: vllm-node
 git_update_auto_pull: false

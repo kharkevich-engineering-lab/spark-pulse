@@ -71,31 +71,22 @@ def configured_user(oidc_server):
 class TestApiConfig:
     """Test the SPA runtime config endpoint."""
 
-    def test_config_returns_oidc_status(self, app_client, monkeypatch):
-        """Config endpoint should report OIDC configuration status."""
+    def test_config_returns_mcp_enabled(self, app_client, monkeypatch):
+        """Config endpoint should report mcp_enabled status."""
+        monkeypatch.setitem(config._data, "mcp_enabled", True)
+
         resp = app_client.get("/api/config")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["auth_enabled"] is True
-        assert data["oidc_configured"] is True
+        assert data["mcp_enabled"] is True
 
-    def test_config_auth_disabled(self, monkeypatch):
-        """Config endpoint should report auth disabled when not configured."""
-        monkeypatch.setenv("SPARK_PULSE_AUTH_ENABLED", "false")
-        monkeypatch.setitem(config._data, "oidc_provider_url", "")
-        monkeypatch.setitem(config._data, "oidc_client_id", "")
-        monkeypatch.setitem(config._data, "oidc_client_secret", "")
-
-        app = create_app()
-        from fastapi.testclient import TestClient
-
-        client = TestClient(app)
-
-        resp = client.get("/api/config")
+    def test_config_no_auth_field(self, app_client, monkeypatch):
+        """Config should include auth_enabled but not oidc_configured."""
+        resp = app_client.get("/api/config")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["auth_enabled"] is False
-        assert data["oidc_configured"] is False
+        assert "auth_enabled" in data
+        assert "oidc_configured" not in data
 
 
 # ── Tests: OIDC login flow ──────────────────────────────────────────────────

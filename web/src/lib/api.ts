@@ -1,9 +1,24 @@
-import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntry, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, GitUpdateStatus, GitUpdateAction, GitUpdateCheckResult, CustomRecipeInfo, CustomModInfo, ModFileMap } from "@/lib/types";
+import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntry, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, GitUpdateStatus, GitUpdateAction, GitUpdateCheckResult, CustomRecipeInfo, CustomModInfo, ModFileMap, BenchmarkResult, OciRegistry, OciCollection, OciCollectionRecipe, OciRecipeMeta, OciUpdateCheck, OciUpdateApply, OciUpdateResult, OciAutoUpdateSettings } from "@/lib/types";
 
 const API = "/api";
 
+// ── CSRF token ───────────────────────────────────────────────────────────────
+
+let csrfToken: string | null = null;
+
+/** Read CSRF token from a meta tag. Call early (e.g. in app bootstrap). */
+export function initCsrfToken(): void {
+  const el = document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]');
+  csrfToken = el?.content ?? null;
+}
+
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json", ...((init?.headers as Record<string, string>) || {}) };
+  // Attach CSRF token on state-changing requests
+  const method = (init?.method || "GET").toUpperCase();
+  if ((method === "POST" || method === "PUT" || method === "DELETE" || method === "PATCH") && csrfToken) {
+    headers["X-CSRF-Token"] = csrfToken;
+  }
   const res = await fetch(`${API}${path}`, { headers, credentials: "include", ...init });
   if (res.status === 401) {
     // Redirect to login on any 401 (cookie-based auth — no token to check)
@@ -66,16 +81,24 @@ export async function triggerGitPull(): Promise<GitUpdateAction> { return json<G
 
 export function connectLogStream(deploymentId: string, onMessage: (event: string, data: unknown) => void): () => void {
   const es = new EventSource(`/sse/logs/${deploymentId}`);
-  es.addEventListener("log", (e: MessageEvent) => onMessage("log", JSON.parse(e.data)));
-  es.addEventListener("status", (e: MessageEvent) => onMessage("status", JSON.parse(e.data)));
-  es.addEventListener("error", (e: MessageEvent) => onMessage("error", JSON.parse(e.data)));
+  const parse = (raw: string) => {
+    try { return JSON.parse(raw); }
+    catch { return null; }
+  };
+  es.addEventListener("log", (e: MessageEvent) => { const d = parse(e.data); if (d !== null) onMessage("log", d); });
+  es.addEventListener("status", (e: MessageEvent) => { const d = parse(e.data); if (d !== null) onMessage("status", d); });
+  es.addEventListener("error", (e: MessageEvent) => { const d = parse(e.data); if (d !== null) onMessage("error", d); });
   return () => es.close();
 }
 
 export function connectMetricsStream(onMessage: (event: string, data: unknown) => void): () => void {
   const es = new EventSource("/sse/metrics");
-  es.addEventListener("metrics", (e: MessageEvent) => onMessage("metrics", JSON.parse(e.data)));
-  es.addEventListener("error", (e: MessageEvent) => onMessage("error", JSON.parse(e.data)));
+  const parse = (raw: string) => {
+    try { return JSON.parse(raw); }
+    catch { return null; }
+  };
+  es.addEventListener("metrics", (e: MessageEvent) => { const d = parse(e.data); if (d !== null) onMessage("metrics", d); });
+  es.addEventListener("error", (e: MessageEvent) => { const d = parse(e.data); if (d !== null) onMessage("error", d); });
   return () => es.close();
 }
 
@@ -105,6 +128,7 @@ export async function uploadCustomRecipe(file: File): Promise<{ id: string; name
   const formData = new FormData();
   formData.append("file", file);
   const headers: Record<string, string> = {};
+  if (csrfToken) headers["X-CSRF-Token"] = csrfToken;
   const res = await fetch(`${API}/custom-files/recipes/upload`, {
     headers,
     body: formData,
@@ -143,5 +167,144 @@ export async function syncSymlinks(mode: "create" | "remove"): Promise<{ recipes
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ mode }),
+  });
+}
+
+// ── Benchmarking ──────────────────────────────────────────────────────────────
+
+export async function fetchBenchmarks(): Promise<BenchmarkResult[]> {
+  return json<BenchmarkResult[]>("/benchmarks");
+}
+
+export async function fetchBenchmark(id: string): Promise<BenchmarkResult> {
+  return json<BenchmarkResult>(`/benchmarks/${id}`);
+}
+
+export async function fetchLatestByRecipe(): Promise<Record<string, BenchmarkResult>> {
+  return json<Record<string, BenchmarkResult>>("/benchmarks/latest-by-recipe");
+}
+
+export async function compareRuns(runIds: string[]): Promise<{
+  runs: Record<string, BenchmarkResult>;
+  comparison: Record<string, any>;
+  run_ids: string[];
+}> {
+  return json<{
+    runs: Record<string, BenchmarkResult>;
+    comparison: Record<string, any>;
+    run_ids: string[];
+  }>("/benchmarks/compare", {
+    method: "POST",
+    body: JSON.stringify({ run_ids: runIds }),
+  });
+}
+
+// ── OCI Registry ─────────────────────────────────────────────────────────────
+
+export async function fetchOciRegistries(): Promise<OciRegistry[]> {
+  return json<OciRegistry[]>("/oci/registries");
+}
+
+export async function addOciRegistry(registry: Partial<OciRegistry>): Promise<OciRegistry> {
+  return json<OciRegistry>("/oci/registries", { method: "POST", body: JSON.stringify(registry) });
+}
+
+export async function updateOciRegistry(name: string, registry: Partial<OciRegistry>): Promise<OciRegistry> {
+  return json<OciRegistry>(`/oci/registries/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify(registry) });
+}
+
+export async function removeOciRegistry(name: string): Promise<void> {
+  await json(`/oci/registries/${encodeURIComponent(name)}`, { method: "DELETE" });
+}
+
+export async function testOciRegistry(name: string): Promise<{ ok: boolean; error?: string }> {
+  return json(`/oci/registries/${encodeURIComponent(name)}/test-connection`);
+}
+
+export async function fetchOciCollections(registry?: string, version?: string): Promise<OciCollection[]> {
+  const params = new URLSearchParams();
+  if (registry) params.set("registry", registry);
+  if (version) params.set("version", version);
+  const query = params.toString();
+  return json<OciCollection[]>(`/oci/collections${query ? `?${query}` : ""}`);
+}
+
+export async function installOciCollection(name: string, version: string, registry?: string): Promise<{ installed: string[] }> {
+  return json<{ installed: string[] }>("/oci/install", {
+    method: "POST",
+    body: JSON.stringify({ name, version, registry }),
+  });
+}
+
+export async function checkOciUpdates(collection?: string, registry?: string): Promise<OciUpdateCheck[]> {
+  const params = new URLSearchParams();
+  if (collection) params.set("collection", collection);
+  if (registry) params.set("registry", registry);
+  const query = params.toString();
+  return json<OciUpdateCheck[]>(`/oci/check${query ? `?${query}` : ""}`);
+}
+
+export async function applyOciUpdates(updates: OciUpdateApply[]): Promise<OciUpdateResult[]> {
+  return json<OciUpdateResult[]>("/oci/update", {
+    method: "POST",
+    body: JSON.stringify({ updates }),
+  });
+}
+
+export async function fetchOciMeta(): Promise<OciRecipeMeta[]> {
+  return json<OciRecipeMeta[]>("/oci/recipes/meta");
+}
+
+export async function fetchOciMetaByName(name: string): Promise<OciRecipeMeta> {
+  return json<OciRecipeMeta>(`/oci/recipes/meta/${encodeURIComponent(name)}`);
+}
+
+export async function fetchOciCollectionRecipes(name: string, version?: string, registry?: string): Promise<OciCollectionRecipe[]> {
+  const params = new URLSearchParams();
+  if (version) params.set("version", version);
+  if (registry) params.set("registry", registry);
+  const query = params.toString();
+  return json<OciCollectionRecipe[]>(`/oci/collections/${encodeURIComponent(name)}/recipes${query ? `?${query}` : ""}`);
+}
+
+export async function fetchOciAutoUpdateSettings(): Promise<OciAutoUpdateSettings> {
+  return json<OciAutoUpdateSettings>("/oci/auto-update/settings");
+}
+
+export async function updateOciAutoUpdateSettings(partial: Partial<OciAutoUpdateSettings>): Promise<OciAutoUpdateSettings> {
+  return json<OciAutoUpdateSettings>("/oci/auto-update/settings", {
+    method: "PUT",
+    body: JSON.stringify(partial),
+  });
+}
+
+export async function runOciAutoUpdate(): Promise<{ success?: boolean; skipped?: boolean; reason?: string; updated?: number; log?: string[]; error?: string }> {
+  return json("/oci/auto-update/run", { method: "POST" });
+}
+
+export async function installOciRecipe(body: { collection: string; recipe: string; version?: string; registry?: string; overwrite?: boolean }): Promise<{ success: boolean; recipe: string; action: string }> {
+  return json<{ success: boolean; recipe: string; action: string }>("/oci/recipes/install", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function updateOciRecipe(recipeName: string, body: { collection: string; version?: string; registry?: string }): Promise<{ success: boolean; recipe: string; action: string }> {
+  return json<{ success: boolean; recipe: string; action: string }>(`/oci/recipes/update/${encodeURIComponent(recipeName)}`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function runBenchmark(body: {
+  deployment_id: string;
+  baseline_id?: string;
+  recipe_id?: string;
+  recipe_name?: string;
+  params?: Record<string, unknown>;
+}): Promise<BenchmarkResult> {
+  return json<BenchmarkResult>("/benchmarks", {
+    method: "POST",
+    body: JSON.stringify(body),
   });
 }

@@ -157,6 +157,16 @@ class _Config:
         )
 
     @property
+    def benchmarking_enabled(self) -> bool:
+        return (
+            os.environ.get(
+                "SPARK_PULSE_BENCHMARKING_ENABLED",
+                str(self._data.get("benchmarking_enabled", False)),
+            ).lower()
+            == "true"
+        )
+
+    @property
     def oidc_provider_url(self) -> str:
         return str(self._data.get("oidc_provider_url", ""))
 
@@ -192,6 +202,44 @@ class _Config:
                 "SPARK_PULSE_MCP_API_TOKEN", self._data.get("mcp_api_token", "")
             )
         )
+
+    # ── OCI Registry Settings ──────────────────────────────────────────────
+
+    @property
+    def oci_auto_update_enabled(self) -> bool:
+        return (
+            os.environ.get(
+                "OCI_AUTO_UPDATE_ENABLED",
+                str(self._data.get("oci_auto_update_enabled", False)),
+            ).lower()
+            == "true"
+        )
+
+    @oci_auto_update_enabled.setter
+    def oci_auto_update_enabled(self, value: bool) -> None:
+        self._data["oci_auto_update_enabled"] = value
+
+    @property
+    def oci_auto_update_schedule(self) -> str:
+        return str(self._data.get("oci_auto_update_schedule", "0 2 * * *"))
+
+    @oci_auto_update_schedule.setter
+    def oci_auto_update_schedule(self, value: str) -> None:
+        self._data["oci_auto_update_schedule"] = value
+
+    @property
+    def oci_auto_update_overwrite_local(self) -> bool:
+        return (
+            os.environ.get(
+                "OCI_AUTO_UPDATE_OVERWRITE_LOCAL",
+                str(self._data.get("oci_auto_update_overwrite_local", False)),
+            ).lower()
+            == "true"
+        )
+
+    @oci_auto_update_overwrite_local.setter
+    def oci_auto_update_overwrite_local(self, value: bool) -> None:
+        self._data["oci_auto_update_overwrite_local"] = value
 
     def save(self):
         # Legacy — keep for compat but user settings now go to settings.json

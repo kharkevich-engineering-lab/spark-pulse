@@ -20,6 +20,9 @@ def test_config_loads_yaml_when_present(tmp_path, monkeypatch):
     )
 
     monkeypatch.setattr(config_module, "_CONFIG_PATH", config_file)
+    monkeypatch.setattr(
+        config_module, "_SETTINGS_PATH", tmp_path / "missing_settings.json"
+    )
     cfg = config_module._Config()
 
     assert cfg.spark_vllm_path == "/opt/spark"
@@ -30,6 +33,9 @@ def test_config_loads_yaml_when_present(tmp_path, monkeypatch):
 def test_config_uses_defaults_when_file_missing(tmp_path, monkeypatch):
     missing = tmp_path / "missing.yaml"
     monkeypatch.setattr(config_module, "_CONFIG_PATH", missing)
+    monkeypatch.setattr(
+        config_module, "_SETTINGS_PATH", tmp_path / "missing_settings.json"
+    )
 
     cfg = config_module._Config()
 
@@ -45,6 +51,9 @@ def test_env_overrides_yaml_values(tmp_path, monkeypatch):
     )
 
     monkeypatch.setattr(config_module, "_CONFIG_PATH", config_file)
+    monkeypatch.setattr(
+        config_module, "_SETTINGS_PATH", tmp_path / "missing_settings.json"
+    )
     monkeypatch.setenv("SPARK_VLLM_PATH", "/from-env")
     monkeypatch.setenv("WEBUI_PORT", "9999")
 
@@ -75,8 +84,11 @@ def test_mcp_enabled_env_override(monkeypatch, env_value, expected):
     assert cfg.mcp_enabled is expected
 
 
-def test_auth_enabled_defaults_to_false(monkeypatch):
+def test_auth_enabled_defaults_to_false(tmp_path, monkeypatch):
     """Auth should be disabled by default."""
+    monkeypatch.setattr(
+        config_module, "_SETTINGS_PATH", tmp_path / "missing_settings.json"
+    )
     cfg = config_module._Config()
     assert cfg.auth_enabled is False
 
@@ -89,6 +101,9 @@ def test_auth_enabled_from_yaml(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.setattr(config_module, "_CONFIG_PATH", config_file)
+    monkeypatch.setattr(
+        config_module, "_SETTINGS_PATH", tmp_path / "missing_settings.json"
+    )
 
     cfg = config_module._Config()
     assert cfg.auth_enabled is True
@@ -102,26 +117,41 @@ def test_auth_enabled_env_overrides_yaml(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.setattr(config_module, "_CONFIG_PATH", config_file)
+    monkeypatch.setattr(
+        config_module, "_SETTINGS_PATH", tmp_path / "missing_settings.json"
+    )
     monkeypatch.setenv("SPARK_PULSE_AUTH_ENABLED", "true")
 
     cfg = config_module._Config()
     assert cfg.auth_enabled is True
 
 
-def test_oidc_provider_url_default(monkeypatch):
+def test_oidc_provider_url_default(tmp_path, monkeypatch):
     """OIDC provider URL should default to empty string."""
+    monkeypatch.setattr(
+        config_module, "_SETTINGS_PATH", tmp_path / "missing_settings.json"
+    )
     cfg = config_module._Config()
     assert cfg.oidc_provider_url == ""
 
 
-def test_oidc_client_id_default(monkeypatch):
+def test_oidc_client_id_default(tmp_path, monkeypatch):
     """OIDC client ID should default to empty string."""
+    monkeypatch.setattr(
+        config_module, "_SETTINGS_PATH", tmp_path / "missing_settings.json"
+    )
     cfg = config_module._Config()
     assert cfg.oidc_client_id == ""
 
 
-def test_oidc_client_secret_default(monkeypatch):
+def test_oidc_client_secret_default(tmp_path, monkeypatch):
     """OIDC client secret should default to empty string."""
+    monkeypatch.setattr(
+        config_module, "_SETTINGS_PATH", tmp_path / "missing_settings.json"
+    )
+    monkeypatch.setattr(
+        config_module, "_SECRETS_PATH", tmp_path / "missing_secrets.json"
+    )
     cfg = config_module._Config()
     assert cfg.oidc_client_secret == ""
 
@@ -141,6 +171,9 @@ def test_oidc_values_from_yaml(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.setattr(config_module, "_CONFIG_PATH", config_file)
+    monkeypatch.setattr(
+        config_module, "_SETTINGS_PATH", tmp_path / "missing_settings.json"
+    )
 
     cfg = config_module._Config()
     assert cfg.oidc_provider_url == "https://keycloak.example.com/realms/myrealm"
@@ -163,8 +196,11 @@ def test_mcp_path_default(monkeypatch):
     assert cfg.mcp_path == "/mcp"
 
 
-def test_mcp_api_token_default(monkeypatch):
+def test_mcp_api_token_default(tmp_path, monkeypatch):
     """MCP API token should default to empty string."""
+    monkeypatch.setattr(
+        config_module, "_SETTINGS_PATH", tmp_path / "missing_settings.json"
+    )
     cfg = config_module._Config()
     assert cfg.mcp_api_token == ""
 
@@ -177,6 +213,9 @@ def test_mcp_enabled_from_yaml(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.setattr(config_module, "_CONFIG_PATH", config_file)
+    monkeypatch.setattr(
+        config_module, "_SETTINGS_PATH", tmp_path / "missing_settings.json"
+    )
 
     cfg = config_module._Config()
     assert cfg.mcp_enabled is False

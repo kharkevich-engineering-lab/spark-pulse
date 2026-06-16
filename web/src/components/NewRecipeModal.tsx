@@ -34,6 +34,7 @@ export default function NewRecipeModal({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const processFile = useCallback(async (file: File) => {
+    if (file.size > 1024 * 1024) { onError("File too large (max 1MB)"); return; }
     setFilename(file.name);
     setValidationErrors([]);
     setContent("");
@@ -100,7 +101,7 @@ export default function NewRecipeModal({
     setFilename("");
     setValidationErrors([]);
     // Set a default YAML template
-    setContent("# Name of the recipe\nname: My Custom Recipe\n\n# Model identifier\nmodel: intel/qwen3.5-397b\n\n# Container image\ncontainer: vllm-node");
+    setContent("# Name of the recipe\nname: My Custom Recipe\n\n# Model identifier\nmodel: <model-id>\n\n# Container image\ncontainer: vllm-node");
     setRecipeName("My Custom Recipe");
   };
 
@@ -318,7 +319,7 @@ export default function NewRecipeModal({
                       }}
                       className="w-full h-[400px] px-4 py-3 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm resize-y"
                       spellCheck={false}
-                      placeholder="name: My Recipe&#10;model: intel/qwen&#10;container: vllm-node"
+                      placeholder="name: My Recipe&#10;model: <model-id>&#10;container: vllm-node"
                     />
                   </div>
                 </>

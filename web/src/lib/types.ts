@@ -169,6 +169,7 @@ export interface Settings {
   git_update_enabled: boolean;
   git_update_check_interval_seconds: number;
   git_update_auto_pull: boolean;
+  benchmarking_enabled: boolean;
   env_managed?: string[];
 }
 
@@ -185,4 +186,89 @@ export interface GitUpdateCheckResult {
   remote_date: string | null;
   has_uncommitted_changes: boolean;
   last_fetch_ok?: boolean;
+}
+
+export interface BenchmarkResult {
+  benchmark_id: string;
+  deployment_id: string;
+  recipe_id: string;
+  recipe_name: string;
+  baseline_id: string | null;
+  status: "running" | "completed" | "error";
+  started_at: string;
+  completed_at: string | null;
+  params: Record<string, unknown>;
+  results: Record<string, unknown> | null;
+}
+
+// ── OCI Registry Types ───────────────────────────────────────────────────────
+
+export interface OciRegistry {
+  name: string;
+  url: string;
+  enabled: boolean;
+  default: boolean;
+  auth_type: "token" | "username_password" | "none";
+  connected?: boolean;
+  error?: string;
+}
+
+export interface OciCollection {
+  name: string;
+  version: string;
+  description: string;
+  vendor: string;
+  license: string;
+  recipe_count: number;
+  digest: string;
+  registry: string;
+}
+
+export interface OciCollectionRecipe {
+  name: string;
+  description: string;
+  model: string;
+  container: string;
+  recipe_version: string;
+}
+
+export interface OciRecipeMeta {
+  name: string;
+  source: string;       // registry name
+  collection: string;
+  version: string;
+  digest: string;
+  installed_at: string;
+  updated_at: string;
+  local_changes: boolean;
+}
+
+export interface OciUpdateCheck {
+  collection: string;
+  current_version: string;
+  latest_version: string;
+  current_digest: string;
+  latest_digest: string;
+  local_changes: boolean;
+  added_recipes: string[];
+  modified_recipes: string[];
+}
+
+export interface OciUpdateApply {
+  collection: string;
+  target_version: string;
+  registry: string;
+}
+
+export interface OciUpdateResult {
+  collection: string;
+  success: boolean;
+  installed: string[];
+  error?: string;
+}
+
+export interface OciAutoUpdateSettings {
+  enabled: boolean;
+  schedule: string;
+  overwrite_local: boolean;
 }

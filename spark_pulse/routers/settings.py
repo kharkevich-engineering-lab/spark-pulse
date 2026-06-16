@@ -22,6 +22,7 @@ def _settings_response() -> dict:
         "git_update_enabled": config.git_update_enabled,
         "git_update_check_interval_seconds": config.git_update_check_interval_seconds,
         "git_update_auto_pull": config.git_update_auto_pull,
+        "benchmarking_enabled": config.benchmarking_enabled,
         "env_managed": config.env_managed,
     }
 
