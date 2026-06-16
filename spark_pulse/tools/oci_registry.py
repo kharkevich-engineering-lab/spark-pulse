@@ -9,7 +9,6 @@ import hashlib
 import json
 import logging
 import os
-import shutil
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -146,7 +145,7 @@ def test_registry_connection(name: str) -> bool:
     if not url:
         return False
     try:
-        tags = _oras_list_tags(url, auth=reg.get("auth"))
+        _oras_list_tags(url, auth=reg.get("auth"))
         return True  # If we can list tags (even empty), registry is reachable
     except Exception as exc:
         logger.debug("Registry %s connection test failed: %s", name, exc)
@@ -192,10 +191,7 @@ def _oras_client(auth: dict | None = None):
 def _oras_list_tags(url: str, auth: dict | None = None) -> list[str]:
     """List tags from an OCI registry using oras Python SDK."""
     client = _oras_client(auth)
-    # oras expects target in format registry/repository:tag
-    # For listing tags, we use the repository part without tag
-    repo = url.split("/")[-1] if "/" in url else url
-    tags = client.get_tags(f"{url}")
+    tags = client.get_tags(url)
     return tags or []
 
 
