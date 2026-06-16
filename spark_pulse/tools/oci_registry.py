@@ -179,12 +179,20 @@ def _auth_headers(auth: dict | None) -> dict[str, str]:
 def _oras_client(auth: dict | None = None):
     """Create an oras client with optional auth."""
     import oras.client
+    from requests.adapters import HTTPAdapter
+    from urllib3.util.retry import Retry
 
     headers = _auth_headers(auth)
     client = oras.client.OrasClient()
     if headers.get("Authorization"):
         # Set auth header for token auth
         client.session.headers.update(headers)
+    # Set timeout to prevent hanging requests
+    adapter = HTTPAdapter(max_retries=Retry(total=1, backoff_factor=0))
+    client.session.mount("http://", adapter)
+    client.session.mount("https://", adapter)
+    # Set default timeout for all requests
+    client.session.request = lambda *args, **kwargs: client.session.request(*args, timeout=10, **kwargs)
     return client
 
 
