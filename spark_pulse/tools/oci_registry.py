@@ -1,7 +1,6 @@
 """OCI registry tools — browse, pull, install recipe collections from OCI registries.
 
-Uses `skopeo` (preferred) or `oras` CLI for OCI operations.  Falls back to a
-pure-Python OCI manifest parser when neither is available (read-only ops only).
+Uses the `oras` Python SDK for all OCI operations (tag listing, pulling, layout management).
 """
 
 from __future__ import annotations
@@ -11,7 +10,6 @@ import json
 import logging
 import os
 import shutil
-import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -140,39 +138,16 @@ def get_default_registry() -> dict | None:
 
 
 def test_registry_connection(name: str) -> bool:
-    """Test connectivity to a registry.
-
-    First tries a simple HTTP HEAD check to the registry host.
-    Falls back to OCI tag listing if skopeo/oras/docker is available.
-    """
-    import httpx
-
+    """Test connectivity to a registry using oras Python SDK."""
     reg = get_registry(name)
     if not reg:
         return False
     url = reg.get("url", "")
     if not url:
         return False
-
-    # Extract host from URL (handle docker:// prefix if present)
-    host = url.replace("docker://", "").split("/")[0]
-    if not host:
-        return False
-
-    # Try simple HTTP HEAD check first
     try:
-        with httpx.Client(timeout=10) as client:
-            # ghcr.io and other registries respond to HEAD on /
-            resp = client.head(f"https://{host}", follow_redirects=True)
-            if resp.status_code in (200, 401, 403, 404):
-                return True
-    except Exception:
-        pass
-
-    # Fallback: try OCI tag listing (requires skopeo/oras/docker)
-    try:
-        _oci_list_tags(url, auth=reg.get("auth"))
-        return True
+        tags = _oras_list_tags(url, auth=reg.get("auth"))
+        return True  # If we can list tags (even empty), registry is reachable
     except Exception as exc:
         logger.debug("Registry %s connection test failed: %s", name, exc)
         return False
@@ -199,100 +174,64 @@ def _auth_headers(auth: dict | None) -> dict[str, str]:
     return {}
 
 
-# ── OCI CLI wrapper (skopeo / oras) ─────────────────────────────────────────
+# ── ORAS Python SDK wrapper ─────────────────────────────────────────────────
 
 
-def _which(cmd: str) -> str | None:
-    """Check if a command is available."""
-    return shutil.which(cmd)
+def _oras_client(auth: dict | None = None):
+    """Create an oras client with optional auth."""
+    import oras.client
 
-
-def _run_oci_cmd(cmd: list[str], timeout: int = 120) -> tuple[str, str, int]:
-    """Run an OCI CLI command and return (stdout, stderr, returncode)."""
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        return result.stdout, result.stderr, result.returncode
-    except FileNotFoundError:
-        return "", f"Command not found: {cmd[0]}", 127
-    except subprocess.TimeoutExpired:
-        return "", f"Command timed out after {timeout}s", 1
-
-
-def _oci_list_tags(url: str, auth: dict | None = None) -> list[str]:
-    """List tags from an OCI registry using skopeo or oras."""
     headers = _auth_headers(auth)
+    client = oras.client.OrasClient()
+    if headers.get("Authorization"):
+        # Set auth header for token auth
+        client.session.headers.update(headers)
+    return client
 
-    # Try skopeo first
-    if _which("skopeo"):
-        cmd = ["skopeo", "list-tags", f"docker://{url}"]
-        if headers.get("Authorization"):
-            # skopeo doesn't have a direct auth header flag; use env var
-            env = os.environ.copy()
-            env["REGISTRY_AUTH_FILE"] = "/dev/null"  # skip keyring
-            try:
-                result = subprocess.run(
-                    cmd, capture_output=True, text=True, timeout=60, env=env
-                )
-                if result.returncode == 0:
-                    return json.loads(result.stdout).get("Tags", [])
-            except Exception:
-                pass
 
-    # Try oras
-    if _which("oras"):
-        # oras doesn't have a simple list-tags either; try skopeo via docker
-        pass
+def _oras_list_tags(url: str, auth: dict | None = None) -> list[str]:
+    """List tags from an OCI registry using oras Python SDK."""
+    client = _oras_client(auth)
+    # oras expects target in format registry/repository:tag
+    # For listing tags, we use the repository part without tag
+    repo = url.split("/")[-1] if "/" in url else url
+    tags = client.get_tags(f"{url}")
+    return tags or []
 
-    # Fallback: try docker
-    if _which("docker"):
-        cmd = ["docker", "manifest", "list", f"docker://{url}", "--format", "{{.Ref}}"]
-        stdout, stderr, rc = _run_oci_cmd(cmd)
-        if rc == 0:
-            return [r.split("@")[-1] for r in stdout.strip().split("\n") if r]
 
-    raise RuntimeError("No OCI CLI available (skopeo, oras, or docker required)")
+def _oras_pull_to_layout(url: str, tag: str, layout_dir: Path, auth: dict | None = None) -> None:
+    """Pull an OCI image to a local OCI layout directory using oras Python SDK."""
+    layout_dir.mkdir(parents=True, exist_ok=True)
+    client = _oras_client(auth)
+    # Pull to the layout directory
+    client.pull(target=f"{url}:{tag}", outdir=str(layout_dir))
+
+
+def _oras_fetch_manifest(url: str, tag: str, auth: dict | None = None) -> dict:
+    """Fetch and parse an OCI manifest using oras Python SDK."""
+    import requests
+
+    client = _oras_client(auth)
+    # Use the underlying session to make a direct request
+    container = client.get_container(f"{url}:{tag}")
+    manifest_url = f"{client.prefix}://{container.manifest_url()}"
+    headers = {"Accept": OCI_INDEX_MEDIA}
+    response = client.session.get(manifest_url, headers=headers, timeout=60)
+    response.raise_for_status()
+    return response.json()
 
 
 def _fetch_oci_index(url: str, tag: str, auth: dict | None = None) -> dict:
-    """Fetch and parse an OCI index manifest.
-
-    Returns the parsed index JSON.  Uses skopeo cat-manifest when available.
-    """
-    # skopeo cat-manifest
-    if _which("skopeo"):
-        cmd = ["skopeo", "cat", f"docker://{url}:{tag}"]
-        env = os.environ.copy()
-        env["REGISTRY_AUTH_FILE"] = "/dev/null"
-        stdout, stderr, rc = _run_oci_cmd(cmd, timeout=120)
-        if rc == 0:
-            try:
-                return json.loads(stdout)
-            except json.JSONDecodeError:
-                raise RuntimeError(f"Invalid JSON from skopeo: {stdout[:200]}")
-
-    raise RuntimeError(f"Failed to fetch OCI index {url}:{tag}")
+    """Fetch and parse an OCI index manifest using oras Python SDK."""
+    return _oras_fetch_manifest(url, tag, auth=auth)
 
 
 def _pull_oci_to_layout(
     url: str, tag: str, layout_dir: Path, auth: dict | None = None
 ) -> None:
-    """Pull an OCI image to a local OCI layout directory using skopeo."""
+    """Pull an OCI image to a local OCI layout directory using oras Python SDK."""
     layout_dir.mkdir(parents=True, exist_ok=True)
-
-    if _which("skopeo"):
-        cmd = [
-            "skopeo",
-            "copy",
-            f"docker://{url}:{tag}",
-            f"oci:{layout_dir}",
-        ]
-        env = os.environ.copy()
-        env["REGISTRY_AUTH_FILE"] = "/dev/null"
-        stdout, stderr, rc = _run_oci_cmd(cmd, timeout=300)
-        if rc != 0:
-            raise RuntimeError(f"skopeo copy failed: {stderr[:500]}")
-    else:
-        raise RuntimeError("skopeo is required for pulling OCI images")
+    _oras_pull_to_layout(url, tag, layout_dir, auth=auth)
 
 
 def _extract_recipes_from_layout(layout_dir: Path, extract_dir: Path) -> list[dict]:
@@ -417,7 +356,7 @@ def list_collections(
             continue
 
         try:
-            tags = _oci_list_tags(url, auth=reg.get("auth"))
+            tags = _oras_list_tags(url, auth=reg.get("auth"))
             # Filter tags by version if specified
             if version:
                 tags = [t for t in tags if t == version]
@@ -486,7 +425,7 @@ def list_collection_recipes(
             continue
 
         try:
-            tags = _oci_list_tags(url, auth=reg.get("auth"))
+            tags = _oras_list_tags(url, auth=reg.get("auth"))
             if version:
                 tags = [t for t in tags if t == version]
             elif version == "":
