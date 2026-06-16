@@ -514,10 +514,14 @@ def _mock_install_collection(body: dict) -> dict:
     collections = _mock_collections()
     matching = [c for c in collections if c["name"] == name and c["version"] == version]
     if not matching:
-        raise HTTPException(status_code=404, detail=f"Collection '{name}:{version}' not found")
+        raise HTTPException(
+            status_code=404, detail=f"Collection '{name}:{version}' not found"
+        )
     # Return mock installed recipes
     recipes_map = {
-        "spark-recipes": [f"spark-vllm-{size}b.yaml" for size in ["7b", "13b", "20b", "40b", "70b"]],
+        "spark-recipes": [
+            f"spark-vllm-{size}b.yaml" for size in ["7b", "13b", "20b", "40b", "70b"]
+        ],
         "community-recipes": ["community-llama-3-8b.yaml"],
     }
     installed = recipes_map.get(name, [f"{name}.yaml"])
