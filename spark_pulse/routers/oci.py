@@ -101,7 +101,7 @@ def get_collections(
 ):
     """List available recipe collections from one or more registries."""
     if is_simulation():
-        return _mock_collections()
+        return _mock_collections(registry=registry, version=version)
     try:
         collections = list_collections(registry_name=registry, version=version)
         return [
@@ -160,6 +160,8 @@ def get_collection_recipes(
 @router.post("/install")
 def post_install(body: dict):
     """Install a recipe collection from an OCI registry."""
+    if is_simulation():
+        return _mock_install_collection(body)
     name = body.get("name")
     version = body.get("version")
     registry = body.get("registry")
@@ -474,8 +476,8 @@ def _mock_delete_registry(name: str) -> dict:
     raise HTTPException(status_code=404, detail=f"Registry '{name}' not found")
 
 
-def _mock_collections():
-    return [
+def _mock_collections(registry: str | None = None, version: str | None = None):
+    collections = [
         {
             "name": "spark-recipes",
             "version": "1.0.0",
@@ -497,6 +499,29 @@ def _mock_collections():
             "registry": "ghcr.io/kharkevich-engineering-lab/spark-pulse-recipes",
         },
     ]
+    if registry:
+        collections = [c for c in collections if c["registry"] == registry]
+    if version:
+        collections = [c for c in collections if c["version"] == version]
+    return collections
+
+
+def _mock_install_collection(body: dict) -> dict:
+    """Mock collection installation."""
+    name = body.get("name", "")
+    version = body.get("version", "")
+    # Check if collection exists in mock data
+    collections = _mock_collections()
+    matching = [c for c in collections if c["name"] == name and c["version"] == version]
+    if not matching:
+        raise HTTPException(status_code=404, detail=f"Collection '{name}:{version}' not found")
+    # Return mock installed recipes
+    recipes_map = {
+        "spark-recipes": [f"spark-vllm-{size}b.yaml" for size in ["7b", "13b", "20b", "40b", "70b"]],
+        "community-recipes": ["community-llama-3-8b.yaml"],
+    }
+    installed = recipes_map.get(name, [f"{name}.yaml"])
+    return {"installed": installed}
 
 
 def _mock_collection_recipes(name: str) -> list[dict]:

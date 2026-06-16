@@ -147,16 +147,17 @@ class TestOciCollections:
         assert response.status_code == 200
 
     def test_list_collections_nonexistent_registry(self, client):
-        """GET /api/oci/collections with non-existent registry returns 404."""
+        """GET /api/oci/collections with non-existent registry returns 200 with empty list."""
         response = client.get("/api/oci/collections?registry=nonexistent")
-        assert response.status_code == 404
+        assert response.status_code == 200
+        assert response.json() == []
 
 
 class TestOciInstall:
     """Tests for collection installation endpoint."""
 
     def test_install_collection(self, client):
-        """POST /api/oci/install installs a collection."""
+        """POST /api/oci/install installs a collection (sim mode returns 200)."""
         response = client.post(
             "/api/oci/install",
             json={
@@ -165,8 +166,9 @@ class TestOciInstall:
                 "registry": "ghcr.io/kharkevich-engineering-lab/spark-pulse-recipes",
             },
         )
-        # May succeed or fail depending on mock state, but should return 200 or 500
-        assert response.status_code in (200, 500)
+        assert response.status_code == 200
+        data = response.json()
+        assert "installed" in data
 
 
 class TestOciUpdates:

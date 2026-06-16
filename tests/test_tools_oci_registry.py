@@ -1,5 +1,6 @@
 """Tests for OCI registry tools module."""
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -236,7 +237,7 @@ class TestInstallCollection:
 
         mock_get_reg.return_value = {"name": "test-registry", "url": "test.com", "auth": {}}
         mock_collections.return_value = [
-            MagicMock(name="test-coll", version="1.0.0", recipe_count=2)
+            SimpleNamespace(name="test-coll", version="1.0.0", recipe_count=2)
         ]
         mock_extract.return_value = [
             {
@@ -278,7 +279,7 @@ class TestInstallCollection:
         with patch("spark_pulse.tools.oci_registry.get_registry") as mock_get_reg:
             mock_get_reg.return_value = {"name": "test-registry", "url": "test.com", "auth": {}}
             with patch("spark_pulse.tools.oci_registry.list_collections") as mock_cols:
-                mock_cols.return_value = [MagicMock(name="test", version="1.0.0")]
+                mock_cols.return_value = [SimpleNamespace(name="test", version="1.0.0")]
                 with patch("spark_pulse.tools.oci_registry._pull_oci_to_layout"):
                     with patch(
                         "spark_pulse.tools.oci_registry._extract_recipes_from_layout"
