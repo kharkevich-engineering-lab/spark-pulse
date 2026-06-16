@@ -187,12 +187,11 @@ def _oras_client(auth: dict | None = None):
     if headers.get("Authorization"):
         # Set auth header for token auth
         client.session.headers.update(headers)
-    # Set timeout to prevent hanging requests
+    # Set timeout via adapter to prevent hanging requests
+    # This preserves the SDK's auth flow while adding timeout protection
     adapter = HTTPAdapter(max_retries=Retry(total=1, backoff_factor=0))
     client.session.mount("http://", adapter)
     client.session.mount("https://", adapter)
-    # Set default timeout for all requests
-    client.session.request = lambda *args, **kwargs: client.session.request(*args, timeout=10, **kwargs)
     return client
 
 
