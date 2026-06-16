@@ -16,7 +16,6 @@ from unittest import mock
 
 import pytest
 
-
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
 
