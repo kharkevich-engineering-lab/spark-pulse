@@ -129,7 +129,7 @@ class TestRegistryConfig:
 
     def test_list_registries(self, sample_registry):
         """Listing registries includes connectivity status."""
-        with patch("spark_pulse.tools.oci_registry._oci_list_tags") as mock_tags:
+        with patch("spark_pulse.tools.oci_registry._oras_list_tags") as mock_tags:
             mock_tags.side_effect = Exception("Connection failed")
             regs = list_registries()
             assert len(regs) == 1
