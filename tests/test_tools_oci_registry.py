@@ -410,7 +410,9 @@ class TestAuthHeaders:
         """Username/password auth returns Basic header."""
         import base64
 
-        result = _auth_headers({"type": "username_password", "username": "user", "password": "pass"})
+        result = _auth_headers(
+            {"type": "username_password", "username": "user", "password": "pass"}
+        )
         expected_creds = base64.b64encode(b"user:pass").decode()
         assert result == {"Authorization": f"Basic {expected_creds}"}
 
@@ -420,7 +422,11 @@ class TestAuthHeaders:
 
         monkeypatch.setenv("MY_PASSWORD", "env-pass")
         result = _auth_headers(
-            {"type": "username_password", "username": "user", "password_env": "MY_PASSWORD"}
+            {
+                "type": "username_password",
+                "username": "user",
+                "password_env": "MY_PASSWORD",
+            }
         )
         expected_creds = base64.b64encode(b"user:env-pass").decode()
         assert result == {"Authorization": f"Basic {expected_creds}"}
