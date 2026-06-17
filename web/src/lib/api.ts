@@ -296,6 +296,21 @@ export async function updateOciRecipe(recipeName: string, body: { collection: st
   });
 }
 
+export async function clearOciCache(key?: string): Promise<{ cleared: number }> {
+  return json<{ cleared: number }>("/oci/cache/clear", {
+    method: "POST",
+    body: JSON.stringify(key ? { key } : {}),
+  });
+}
+
+export async function startOciBackgroundUpdater(): Promise<{ started: boolean }> {
+  return json<{ started: boolean }>("/oci/background/start", { method: "POST" });
+}
+
+export async function stopOciBackgroundUpdater(): Promise<{ stopped: boolean }> {
+  return json<{ stopped: boolean }>("/oci/background/stop", { method: "POST" });
+}
+
 export async function runBenchmark(body: {
   deployment_id: string;
   baseline_id?: string;

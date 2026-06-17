@@ -241,6 +241,24 @@ class _Config:
     def oci_auto_update_overwrite_local(self, value: bool) -> None:
         self._data["oci_auto_update_overwrite_local"] = value
 
+    @property
+    def oci_cache_ttl_seconds(self) -> int:
+        return int(
+            os.environ.get(
+                "OCI_CACHE_TTL_SECONDS",
+                str(self._data.get("oci_cache_ttl_seconds", 300)),
+            )
+        )
+
+    @property
+    def oci_background_check_interval_seconds(self) -> int:
+        return int(
+            os.environ.get(
+                "OCI_BACKGROUND_CHECK_INTERVAL_SECONDS",
+                str(self._data.get("oci_background_check_interval_seconds", 900)),
+            )
+        )
+
     def save(self):
         # Legacy — keep for compat but user settings now go to settings.json
         user = _load_user_settings()

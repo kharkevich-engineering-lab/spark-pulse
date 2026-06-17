@@ -15,6 +15,7 @@ from spark_pulse.tools.oci_registry import (
     add_registry,
     apply_updates,
     check_updates,
+    clear_oci_cache,
     get_oci_meta,
     install_collection,
     install_oci_recipe,
@@ -25,6 +26,8 @@ from spark_pulse.tools.oci_registry import (
     remove_registry,
     run_auto_update,
     save_auto_update_log,
+    start_background_updater,
+    stop_background_updater,
     test_registry_connection,
     update_oci_recipe,
     update_registry,
@@ -393,6 +396,28 @@ def run_auto_update_endpoint():
     except Exception as exc:
         logger.error("Auto-update run failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/cache/clear")
+def clear_cache_endpoint(body: dict = {}):
+    """Clear OCI meta cache. Optionally clear a specific cache entry."""
+    key = body.get("key")
+    result = clear_oci_cache(key)
+    return result
+
+
+@router.post("/background/start")
+def start_background_endpoint():
+    """Start the background update checker."""
+    start_background_updater()
+    return {"started": True}
+
+
+@router.post("/background/stop")
+def stop_background_endpoint():
+    """Stop the background update checker."""
+    stop_background_updater()
+    return {"stopped": True}
 
 
 # ── Mock data (for development/testing) ──────────────────────────────────────
