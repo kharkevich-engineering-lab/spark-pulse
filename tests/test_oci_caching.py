@@ -352,11 +352,11 @@ class TestOciCacheIntegration:
                     ],
                 ):
                     # First call - cache miss
-                    collections = self.mod.list_collections(registry_name="test-reg")
+                    self.mod.list_collections(registry_name="test-reg")
                     assert call_count[0] == 1
 
                     # Second call - cache hit
-                    collections = self.mod.list_collections(registry_name="test-reg")
+                    self.mod.list_collections(registry_name="test-reg")
                     assert call_count[0] == 1
 
                     # Clear cache
