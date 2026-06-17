@@ -133,9 +133,7 @@ class TestOciCache:
 
     def test_cache_path_creates_directory(self):
         """_cache_path creates the cache directory if it doesn't exist."""
-        with patch.object(
-            self.mod, "OCI_META_CACHE_DIR", self.cache_dir / "subdir"
-        ):
+        with patch.object(self.mod, "OCI_META_CACHE_DIR", self.cache_dir / "subdir"):
             # Accessing _cache_path should create the directory
             _ = self.mod._cache_path("test:key")
             assert (self.cache_dir / "subdir").exists()
@@ -267,7 +265,9 @@ class TestOciCacheIntegration:
     @pytest.fixture(autouse=True)
     def setup_cache(self, tmp_path, monkeypatch):
         """Set up a temporary cache directory and reload module."""
-        self.mod, self.cache_dir = _setup_oci_module(tmp_path, monkeypatch, cache_ttl=300)
+        self.mod, self.cache_dir = _setup_oci_module(
+            tmp_path, monkeypatch, cache_ttl=300
+        )
 
     def test_list_collections_uses_cache(self):
         """list_collections uses cache on second call."""
@@ -299,9 +299,13 @@ class TestOciCacheIntegration:
             with patch.object(
                 self.mod, "_fetch_oci_index", side_effect=mock_fetch_index
             ):
-                with patch.object(self.mod, "_load_registries", return_value=[
-                    {"name": "test-reg", "url": "example.com/repo", "enabled": True}
-                ]):
+                with patch.object(
+                    self.mod,
+                    "_load_registries",
+                    return_value=[
+                        {"name": "test-reg", "url": "example.com/repo", "enabled": True}
+                    ],
+                ):
                     # First call - should fetch from network
                     collections = self.mod.list_collections(registry_name="test-reg")
                     assert call_count[0] == 1
@@ -340,9 +344,13 @@ class TestOciCacheIntegration:
             with patch.object(
                 self.mod, "_fetch_oci_index", side_effect=mock_fetch_index
             ):
-                with patch.object(self.mod, "_load_registries", return_value=[
-                    {"name": "test-reg", "url": "example.com/repo", "enabled": True}
-                ]):
+                with patch.object(
+                    self.mod,
+                    "_load_registries",
+                    return_value=[
+                        {"name": "test-reg", "url": "example.com/repo", "enabled": True}
+                    ],
+                ):
                     # First call - cache miss
                     collections = self.mod.list_collections(registry_name="test-reg")
                     assert call_count[0] == 1

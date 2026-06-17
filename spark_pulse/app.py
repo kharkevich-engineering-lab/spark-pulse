@@ -28,7 +28,10 @@ from spark_pulse.auth import AuthMiddleware, router as auth_router
 from spark_pulse.sse import router as sse_router
 from spark_pulse.tools import is_simulation
 from spark_pulse.tools.git_update import check_updates
-from spark_pulse.tools.oci_registry import start_background_updater, stop_background_updater
+from spark_pulse.tools.oci_registry import (
+    start_background_updater,
+    stop_background_updater,
+)
 from spark_pulse.version import get_version
 from spark_pulse.mcp_http import handle_mcp, MCP_PATH
 

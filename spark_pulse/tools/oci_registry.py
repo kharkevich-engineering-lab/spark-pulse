@@ -128,7 +128,9 @@ def _background_update_loop() -> None:
             logger.info("OCI background update check started")
             updates = check_updates()
             if updates:
-                logger.info("OCI background update check found %d update(s)", len(updates))
+                logger.info(
+                    "OCI background update check found %d update(s)", len(updates)
+                )
                 for upd in updates:
                     logger.info(
                         "  %s: %s -> %s",
@@ -571,7 +573,9 @@ def list_collections(
                             )
                         )
                         # Write to cache
-                        _write_cache(cache_key, {"annotations": annotations, "index": index})
+                        _write_cache(
+                            cache_key, {"annotations": annotations, "index": index}
+                        )
                 except Exception as exc:
                     logger.debug("Failed to parse index %s:%s: %s", url, tag, exc)
                     continue
