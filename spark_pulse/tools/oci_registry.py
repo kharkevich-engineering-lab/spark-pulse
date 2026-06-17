@@ -320,6 +320,7 @@ class CollectionInfo:
     recipe_count: int
     digest: str
     registry: str
+    display_version: str = ""  # Human-readable version from annotations
 
 
 def list_collections(
@@ -357,6 +358,8 @@ def list_collections(
                 try:
                     index = _fetch_oci_index(url, tag, auth=reg.get("auth"))
                     annotations = index.get("annotations", {})
+                    # Prefer annotation version (e.g., "1.0.0") over raw tag (e.g., sha256:...)
+                    display_ver = annotations.get("version", tag)
                     results.append(
                         CollectionInfo(
                             name=annotations.get("name", "unknown"),
@@ -367,6 +370,7 @@ def list_collections(
                             recipe_count=len(index.get("manifests", [])),
                             digest=index.get("digest", tag),
                             registry=reg["name"],
+                            display_version=display_ver,
                         )
                     )
                 except Exception as exc:
@@ -387,6 +391,8 @@ class CollectionRecipe:
     model: str
     container: str
     recipe_version: str
+    solo_only: bool = False
+    cluster_only: bool = False
 
 
 def list_collection_recipes(
@@ -444,6 +450,8 @@ def list_collection_recipes(
                                 recipe_version=layer_annotations.get(
                                     "recipe_version", tag
                                 ),
+                                solo_only=bool(layer_annotations.get("solo_only", False)),
+                                cluster_only=bool(layer_annotations.get("cluster_only", False)),
                             )
                         )
                 except Exception as exc:

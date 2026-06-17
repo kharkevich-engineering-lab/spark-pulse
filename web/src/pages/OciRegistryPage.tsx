@@ -2,9 +2,9 @@
 
 import { useState, useEffect, useCallback } from "react";
 import {
-  Package, Settings as SettingsIcon, Download, RefreshCw,
+  Package, Settings as SettingsIcon, Download, RefreshCw, ListFilter,
   Plus, AlertCircle, CheckCircle2, Loader2, Clock, XCircle,
-  Check,
+  Check, Box, Network, Cpu,
 } from "lucide-react";
 import {
   fetchOciRegistries,
@@ -47,6 +47,7 @@ export default function OciRegistryPage() {
   const [newRegName, setNewRegName] = useState("");
   const [newRegUrl, setNewRegUrl] = useState("");
   const [autoUpdating, setAutoUpdating] = useState(false);
+  const [showAllVersions, setShowAllVersions] = useState(false);
 
   // Memoized fetchers to prevent infinite refetch loops
   const fetchCollections = useCallback(() => fetchOciCollections(selectedRegistry || undefined, selectedVersion || undefined), [selectedRegistry, selectedVersion]);
@@ -65,6 +66,26 @@ export default function OciRegistryPage() {
   const installedNames = new Set(ociMeta?.map(m => m.collection) || []);
   const updateMap = new Map<string, OciUpdateCheck>();
   updates?.forEach(u => updateMap.set(u.collection, u));
+
+  // Compute unique display versions (sorted by most recent first)
+  const uniqueVersions = showAllVersions
+    ? [...new Set(collections?.map(c => c.display_version) || [])]
+    : (() => {
+        // Group by display_version, take the first (most recent) collection for each
+        const seen = new Set<string>();
+        return (collections || []).filter(c => {
+          if (seen.has(c.display_version)) return false;
+          seen.add(c.display_version);
+          return true;
+        }).map(c => c.display_version);
+      })();
+
+  // Default to latest version when none selected
+  useEffect(() => {
+    if (!selectedVersion && uniqueVersions.length > 0) {
+      setSelectedVersion(uniqueVersions[0]);
+    }
+  }, [uniqueVersions, selectedVersion]);
 
   // ── Registry actions ────────────────────────────────────────────────────
 
@@ -343,10 +364,26 @@ export default function OciRegistryPage() {
               className="px-3 py-2 rounded-lg border border-border bg-surface text-sm min-w-[150px]"
             >
               <option value="">All Versions</option>
-              {[...new Set(collections?.map(c => c.version) || [])].map(v => (
+              {uniqueVersions.map(v => (
                 <option key={v} value={v}>{v}</option>
               ))}
             </select>
+            {collections && new Set(collections.map(c => c.display_version)).size > 1 && (
+              <button
+                onClick={() => {
+                  setShowAllVersions(!showAllVersions);
+                  setSelectedVersion("");
+                }}
+                className={`px-3 py-2 rounded-lg text-sm border transition-colors ${
+                  showAllVersions
+                    ? "bg-primary/15 text-primary border-primary"
+                    : "border-border hover:bg-surface-hover"
+                }`}
+                title={showAllVersions ? "Show latest only" : "Show all versions"}
+              >
+                <ListFilter size={16} />
+              </button>
+            )}
             <button
               onClick={() => refetchCols()}
               className="p-2 rounded-lg hover:bg-surface-hover transition-colors"
@@ -499,7 +536,7 @@ export default function OciRegistryPage() {
               </div>
               <button
                 onClick={() => setAddingRegistry(true)}
-                className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm bg-primary text-white hover:bg-primary/90 transition-colors"
               >
                 <Plus size={14} />
                 Add Registry
@@ -557,7 +594,7 @@ export default function OciRegistryPage() {
                     <button
                       onClick={handleAddRegistry}
                       disabled={!newRegName.trim() || !newRegUrl.trim()}
-                      className="px-4 py-2 rounded-lg text-sm bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                      className="px-4 py-2 rounded-lg text-sm bg-primary text-white hover:bg-primary/90 disabled:opacity-50"
                     >
                       Add
                     </button>
@@ -619,7 +656,7 @@ export default function OciRegistryPage() {
                   <button
                     onClick={handleRunAutoUpdate}
                     disabled={autoUpdating}
-                    className="px-4 py-2 rounded-lg text-sm bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 mt-6"
+                    className="px-4 py-2 rounded-lg text-sm bg-primary text-white hover:bg-primary/90 disabled:opacity-50 mt-6"
                   >
                     {autoUpdating ? (
                       <Loader2 size={16} className="animate-spin inline" />
@@ -685,9 +722,20 @@ export default function OciRegistryPage() {
                           )}
                         </div>
                         <p className="text-sm text-text-muted mt-1">{recipe.description}</p>
-                        <div className="flex items-center gap-3 mt-2 text-xs text-text-muted">
-                          <span>Model: {recipe.model || "N/A"}</span>
-                          <span>Container: {recipe.container || "N/A"}</span>
+                        <div className="flex items-center gap-2 mt-2 text-xs flex-wrap">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-tag-bg text-text-muted">
+                            <Box size={12} />{recipe.container || "N/A"}
+                          </span>
+                          {(recipe.solo_only || (!recipe.solo_only && !recipe.cluster_only)) && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-primary/20 text-primary">
+                              <Cpu size={11} />Solo
+                            </span>
+                          )}
+                          {(recipe.cluster_only || (!recipe.solo_only && !recipe.cluster_only)) && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-warning/20 text-warning">
+                              <Network size={11} />Cluster
+                            </span>
+                          )}
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
@@ -701,7 +749,7 @@ export default function OciRegistryPage() {
                           <>
                             <button
                               onClick={() => handleInstallRecipe(recipe.name, drawerCollection!)}
-                              className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs bg-primary text-primary-foreground hover:bg-primary/90 transition-colors font-medium"
+                              className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs bg-primary text-white hover:bg-primary/90 transition-colors font-medium"
                               title="Install this recipe"
                             >
                               <Download size={12} />
@@ -710,9 +758,9 @@ export default function OciRegistryPage() {
                             <button
                               onClick={() => handleUpdateRecipe(recipe.name, drawerCollection!)}
                               disabled={!isInstalled}
-                              className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs border transition-colors ${
+                              className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs border border-border transition-colors ${
                                 isInstalled
-                                  ? 'border-border hover:bg-surface-pressed'
+                                  ? 'hover:bg-surface-hover'
                                   : 'border-border/30 text-text-muted/30 cursor-not-allowed'
                               }`}
                               title={isInstalled ? "Update this recipe" : "Install first to enable update"}
@@ -735,10 +783,10 @@ export default function OciRegistryPage() {
           </div>
 
           {/* Install Collection Button - kept for bulk install */}
-          <div className="flex justify-end pt-2 border-t border-border">
+          <div className="flex justify-end pt-2 pr-4 border-t border-border">
             <button
               onClick={() => drawerCollection && handleInstall(drawerCollection)}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors font-medium text-sm"
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-white hover:bg-primary/90 transition-colors font-medium text-sm"
               title="Install all recipes in this collection"
             >
               <Download size={16} />

@@ -108,6 +108,7 @@ def get_collections(
             {
                 "name": c.name,
                 "version": c.version,
+                "display_version": c.display_version or c.version,
                 "description": c.description,
                 "vendor": c.vendor,
                 "license": c.license,
@@ -144,6 +145,8 @@ def get_collection_recipes(
                 "model": r.model or "",
                 "container": r.container or "",
                 "recipe_version": r.recipe_version or "",
+                "solo_only": r.solo_only,
+                "cluster_only": r.cluster_only,
             }
             for r in recipes
         ]

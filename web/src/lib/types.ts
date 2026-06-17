@@ -216,6 +216,7 @@ export interface OciRegistry {
 export interface OciCollection {
   name: string;
   version: string;
+  display_version: string;
   description: string;
   vendor: string;
   license: string;
@@ -230,6 +231,8 @@ export interface OciCollectionRecipe {
   model: string;
   container: string;
   recipe_version: string;
+  solo_only: boolean;
+  cluster_only: boolean;
 }
 
 export interface OciRecipeMeta {
