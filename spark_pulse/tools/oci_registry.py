@@ -598,7 +598,12 @@ def list_collections(
 
     deduplicated = []
     for key, cols in groups.items():
-        latest = max(cols, key=lambda c: _version_key(c.version) if c.version != "latest" else (0, 0, 0))
+        latest = max(
+            cols,
+            key=lambda c: (
+                _version_key(c.version) if c.version != "latest" else (0, 0, 0)
+            ),
+        )
         deduplicated.append(latest)
 
     return deduplicated
@@ -624,36 +629,36 @@ def _extract_recipe_from_layer(
     auth: dict | None = None,
 ) -> dict:
     """Extract recipe metadata from a layer blob when annotations are missing.
-    
+
     Fetches the individual recipe manifest, gets the layer digest,
     downloads the YAML content, and parses it for metadata.
     """
     import oras.client
-    
+
     client = oras.client.OrasClient()
     if auth:
         headers = _auth_headers(auth)
         if headers.get("Authorization"):
             client.session.headers.update(headers)
-    
+
     # Get the digest for this recipe manifest
     digest = entry.get("digest", "")
     if not digest:
         raise ValueError("No digest found in manifest entry")
-    
+
     # Fetch the individual recipe manifest
     manifest = client.get_manifest(f"{registry_url}@{digest}")
-    
+
     # Get the layer containing the YAML
     layers = manifest.get("layers", [])
     if not layers:
         raise ValueError("No layers found in recipe manifest")
-    
+
     layer = layers[0]
     layer_digest = layer.get("digest", "")
     if not layer_digest:
         raise ValueError("No layer digest found")
-    
+
     # Download the layer blob using oras client
     try:
         response = client.get_blob(registry_url, layer_digest)
@@ -662,14 +667,14 @@ def _extract_recipe_from_layer(
     except Exception as exc:
         logger.debug("Failed to fetch layer blob %s: %s", layer_digest, exc)
         raise
-    
+
     # Parse YAML to extract metadata
     try:
         recipe_data = yaml.safe_load(yaml_content) or {}
     except yaml.YAMLError as exc:
         logger.debug("Failed to parse recipe YAML: %s", exc)
         raise
-    
+
     # Extract fields from YAML
     name = recipe_data.get("name", digest.split(":")[-1])
     description = recipe_data.get("description", "")
@@ -677,7 +682,7 @@ def _extract_recipe_from_layer(
     container = recipe_data.get("container", "")
     solo_only = bool(recipe_data.get("solo_only", False))
     cluster_only = bool(recipe_data.get("cluster_only", False))
-    
+
     return {
         "name": name,
         "description": description,
@@ -731,18 +736,25 @@ def list_collection_recipes(
                     # Extract recipe info from manifest entries
                     for entry in index.get("manifests", []):
                         layer_annotations = entry.get("annotations", {})
-                        
+
                         # If annotations are missing or minimal, try to extract from YAML layer
                         recipe_name = layer_annotations.get("name")
                         if not recipe_name:
                             recipe_name = entry.get("digest", "unknown")
-                        
+
                         # Check if we have meaningful annotations
-                        has_annotations = any(k in layer_annotations for k in [
-                            "name", "model", "container", "description",
-                            "org.opencontainers.image.description", "recipe_version"
-                        ])
-                        
+                        has_annotations = any(
+                            k in layer_annotations
+                            for k in [
+                                "name",
+                                "model",
+                                "container",
+                                "description",
+                                "org.opencontainers.image.description",
+                                "recipe_version",
+                            ]
+                        )
+
                         if has_annotations:
                             # Use annotations directly
                             results.append(
@@ -774,7 +786,9 @@ def list_collection_recipes(
                             except Exception as exc:
                                 logger.debug(
                                     "Failed to extract recipe from layer for %s:%s: %s",
-                                    collection_name, tag, exc
+                                    collection_name,
+                                    tag,
+                                    exc,
                                 )
                                 # Fallback: use digest as name, empty other fields
                                 results.append(
