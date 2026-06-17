@@ -363,5 +363,5 @@ class TestOciCacheIntegration:
                     self.mod.clear_oci_cache()
 
                     # Third call - cache miss again
-                    collections = self.mod.list_collections(registry_name="test-reg")
+                    self.mod.list_collections(registry_name="test-reg")
                     assert call_count[0] == 2
