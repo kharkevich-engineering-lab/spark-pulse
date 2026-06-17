@@ -450,8 +450,12 @@ def list_collection_recipes(
                                 recipe_version=layer_annotations.get(
                                     "recipe_version", tag
                                 ),
-                                solo_only=bool(layer_annotations.get("solo_only", False)),
-                                cluster_only=bool(layer_annotations.get("cluster_only", False)),
+                                solo_only=bool(
+                                    layer_annotations.get("solo_only", False)
+                                ),
+                                cluster_only=bool(
+                                    layer_annotations.get("cluster_only", False)
+                                ),
                             )
                         )
                 except Exception as exc:
