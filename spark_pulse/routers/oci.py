@@ -31,6 +31,7 @@ from spark_pulse.tools.oci_registry import (
     test_registry_connection,
     update_oci_recipe,
     update_registry,
+    _oras_list_tags,
 )
 
 logger = logging.getLogger(__name__)
@@ -92,6 +93,28 @@ def test_connection(name: str):
         return {"ok": True, "registry": name}
     ok = test_registry_connection(name)
     return {"ok": ok, "registry": name}
+
+
+@router.get("/registries/{name}/versions")
+def get_registry_versions(name: str):
+    """Get available version tags for a registry."""
+    if is_simulation():
+        return {"versions": ["1.0.0", "1.0.1", "latest"]}
+    try:
+        regs = list_registries()
+        reg = next((r for r in regs if r["name"] == name), None)
+        if not reg:
+            raise HTTPException(status_code=404, detail=f"Registry '{name}' not found")
+        url = reg.get("url", "")
+        if not url:
+            return {"versions": []}
+        tags = _oras_list_tags(url, auth=reg.get("auth"))
+        return {"versions": sorted(tags, reverse=True)}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Failed to get versions for registry %s: %s", name, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 # ── Collections (Browse) ─────────────────────────────────────────────────────

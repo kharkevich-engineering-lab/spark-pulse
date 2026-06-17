@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import {
-  Package, Settings as SettingsIcon, Download, RefreshCw, ListFilter,
+  Package, Settings as SettingsIcon, Download, RefreshCw,
   Plus, AlertCircle, CheckCircle2, Loader2, Clock, XCircle,
   Check, Box, Network, Cpu,
 } from "lucide-react";
@@ -21,6 +21,7 @@ import {
   testOciRegistry,
   runOciAutoUpdate,
   fetchOciCollectionRecipes,
+  fetchOciRegistryVersions,
   installOciRecipe,
   updateOciRecipe,
 } from "@/lib/api";
@@ -36,8 +37,7 @@ type Tab = "browse" | "installed" | "settings";
 
 export default function OciRegistryPage() {
   const [activeTab, setActiveTab] = useState<Tab>("browse");
-  const [selectedRegistry, setSelectedRegistry] = useState<string>("");
-  const [selectedVersion, setSelectedVersion] = useState<string>("");
+
   const [alertModal, setAlertModal] = useState<{ title: string; message: string; open: boolean } | null>(null);
   const [drawerCollection, setDrawerCollection] = useState<OciCollection | null>(null);
   const [drawerRecipes, setDrawerRecipes] = useState<OciCollectionRecipe[]>([]);
@@ -47,10 +47,19 @@ export default function OciRegistryPage() {
   const [newRegName, setNewRegName] = useState("");
   const [newRegUrl, setNewRegUrl] = useState("");
   const [autoUpdating, setAutoUpdating] = useState(false);
-  const [showAllVersions, setShowAllVersions] = useState(false);
+  const [registryVersions, setRegistryVersions] = useState<Record<string, string[]>>({});
+  // Fetch versions for a registry
+  const fetchVersionsForRegistry = useCallback(async (regName: string) => {
+    try {
+      const result = await fetchOciRegistryVersions(regName);
+      setRegistryVersions(prev => ({ ...prev, [regName]: result.versions }));
+    } catch {
+      setRegistryVersions(prev => ({ ...prev, [regName]: [] }));
+    }
+  }, []);
 
   // Memoized fetchers to prevent infinite refetch loops
-  const fetchCollections = useCallback(() => fetchOciCollections(selectedRegistry || undefined, selectedVersion || undefined), [selectedRegistry, selectedVersion]);
+  const fetchCollections = useCallback(() => fetchOciCollections(), []);
   const fetchUpdates = useCallback(() => checkOciUpdates(), []);
 
   // Data queries
@@ -62,30 +71,15 @@ export default function OciRegistryPage() {
 
   useEffect(() => { setRefresh(refetchCols); }, [refetchCols]);
 
+  // Fetch versions for each registry when they change
+  useEffect(() => {
+    registries?.forEach(reg => fetchVersionsForRegistry(reg.name));
+  }, [registries, fetchVersionsForRegistry]);
+
   // Derived state
   const installedNames = new Set(ociMeta?.map(m => m.collection) || []);
   const updateMap = new Map<string, OciUpdateCheck>();
   updates?.forEach(u => updateMap.set(u.collection, u));
-
-  // Compute unique display versions (sorted by most recent first)
-  const uniqueVersions = showAllVersions
-    ? [...new Set(collections?.map(c => c.display_version) || [])]
-    : (() => {
-        // Group by display_version, take the first (most recent) collection for each
-        const seen = new Set<string>();
-        return (collections || []).filter(c => {
-          if (seen.has(c.display_version)) return false;
-          seen.add(c.display_version);
-          return true;
-        }).map(c => c.display_version);
-      })();
-
-  // Default to latest version when none selected
-  useEffect(() => {
-    if (!selectedVersion && uniqueVersions.length > 0) {
-      setSelectedVersion(uniqueVersions[0]);
-    }
-  }, [uniqueVersions, selectedVersion]);
 
   // ── Registry actions ────────────────────────────────────────────────────
 
@@ -113,7 +107,6 @@ export default function OciRegistryPage() {
   const handleRemoveRegistry = async (reg: OciRegistry) => {
     try {
       await removeOciRegistry(reg.name);
-      if (selectedRegistry === reg.name) setSelectedRegistry("");
       refetchRegs();
       refetchCols();
     } catch (e) {
@@ -346,53 +339,6 @@ export default function OciRegistryPage() {
       {/* Browse Tab */}
       {activeTab === "browse" && (
         <div className="space-y-6">
-          {/* Registry & Version Filters */}
-          <div className="flex items-center gap-3 p-4 rounded-xl bg-surface border border-border">
-            <select
-              value={selectedRegistry}
-              onChange={e => setSelectedRegistry(e.target.value)}
-              className="px-3 py-2 rounded-lg border border-border bg-surface text-sm min-w-[200px]"
-            >
-              <option value="">All Registries</option>
-              {registries?.map(r => (
-                <option key={r.name} value={r.name}>{r.name}</option>
-              ))}
-            </select>
-            <select
-              value={selectedVersion}
-              onChange={e => setSelectedVersion(e.target.value)}
-              className="px-3 py-2 rounded-lg border border-border bg-surface text-sm min-w-[150px]"
-            >
-              <option value="">All Versions</option>
-              {uniqueVersions.map(v => (
-                <option key={v} value={v}>{v}</option>
-              ))}
-            </select>
-            {collections && new Set(collections.map(c => c.display_version)).size > 1 && (
-              <button
-                onClick={() => {
-                  setShowAllVersions(!showAllVersions);
-                  setSelectedVersion("");
-                }}
-                className={`px-3 py-2 rounded-lg text-sm border transition-colors ${
-                  showAllVersions
-                    ? "bg-primary/15 text-primary border-primary"
-                    : "border-border hover:bg-surface-hover"
-                }`}
-                title={showAllVersions ? "Show latest only" : "Show all versions"}
-              >
-                <ListFilter size={16} />
-              </button>
-            )}
-            <button
-              onClick={() => refetchCols()}
-              className="p-2 rounded-lg hover:bg-surface-hover transition-colors"
-              title="Refresh"
-            >
-              <RefreshCw size={16} />
-            </button>
-          </div>
-
           {/* Collections Grid */}
           {colsLoading ? (
             <div className="flex items-center justify-center py-16">
@@ -552,9 +498,13 @@ export default function OciRegistryPage() {
                   <RegistryCard
                     key={reg.name}
                     reg={reg}
+                    versions={registryVersions[reg.name] || []}
                     onToggle={() => handleToggleRegistry(reg)}
                     onTest={() => handleTestRegistry(reg)}
                     onRemove={() => handleRemoveRegistry(reg)}
+                    onVersionChange={(version) => {
+                      console.log(`Registry ${reg.name} version changed to ${version}`);
+                    }}
                   />
                 ))}
               </div>
