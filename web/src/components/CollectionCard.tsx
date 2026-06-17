@@ -18,7 +18,7 @@ export default function CollectionCard({
       icon={
         <div className="flex items-center gap-2 shrink-0">
           <Package size={16} className="text-primary" />
-          <span className="text-xs text-text-muted font-mono">{collection.version}</span>
+          <span className="text-xs text-text-muted font-mono">{collection.display_version}</span>
         </div>
       }
       title={collection.name}

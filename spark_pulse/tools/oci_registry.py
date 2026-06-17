@@ -9,6 +9,8 @@ import hashlib
 import json
 import logging
 import os
+import threading
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 REGISTRIES_CONFIG = Path.home() / ".config" / "spark-pulse" / "registries.yaml"
 OCI_CACHE_DIR = Path.home() / ".cache" / "spark-pulse" / "oci"
+OCI_META_CACHE_DIR = OCI_CACHE_DIR / "meta_cache"
 RECIPES_DIR = Path.home() / ".config" / "spark-pulse" / "recipes"
 AUTO_UPDATE_LOG = Path.home() / ".local" / "share" / "spark-pulse" / "auto-update.log"
 
@@ -30,6 +33,179 @@ AUTO_UPDATE_LOG = Path.home() / ".local" / "share" / "spark-pulse" / "auto-updat
 OCI_INDEX_MEDIA = "application/vnd.oci.image.index.v1+json"
 OCI_MANIFEST_MEDIA = "application/vnd.oci.image.manifest.v1+json"
 RECIPE_INDEX_ARTIFACT = "application/vnd.delivery-station.recipe.index.v1+json"
+
+# ── Cache settings ───────────────────────────────────────────────────────────
+
+_DEFAULT_CACHE_TTL = 300  # 5 minutes
+
+# Background updater state
+_background_thread: threading.Thread | None = None
+_background_stop = threading.Event()
+
+
+def _cache_ttl() -> int:
+    """Return the cache TTL in seconds from config, with fallback."""
+    try:
+        return int(
+            os.environ.get(
+                "OCI_CACHE_TTL_SECONDS",
+                str(config.oci_cache_ttl_seconds),
+            )
+        )
+    except Exception:
+        return _DEFAULT_CACHE_TTL
+
+
+def _cache_key(registry_name: str, version: str) -> str:
+    """Generate a cache key from registry name and version."""
+    return f"{registry_name}:{version}"
+
+
+def _cache_path(key: str) -> Path:
+    """Get the cache file path for a given key."""
+    OCI_META_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    safe_key = key.replace(":", "_").replace("/", "_")
+    return OCI_META_CACHE_DIR / f"{safe_key}.json"
+
+
+def _read_cache(key: str) -> dict | None:
+    """Read cached data if it exists and is not expired.
+
+    Returns the cached data dict or None if cache miss/expired.
+    """
+    cache_file = _cache_path(key)
+    if not cache_file.exists():
+        return None
+
+    try:
+        with open(cache_file) as f:
+            data = json.load(f)
+
+        # Check TTL
+        cached_at = data.get("_cached_at", 0)
+        ttl = _cache_ttl()
+        if time.time() - cached_at > ttl:
+            cache_file.unlink(missing_ok=True)
+            return None
+
+        return data.get("data")
+    except Exception as exc:
+        logger.debug("Cache read failed for %s: %s", key, exc)
+        return None
+
+
+def _write_cache(key: str, data: dict) -> None:
+    """Write data to the cache with current timestamp."""
+    try:
+        cache_file = _cache_path(key)
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        cache_file.write_text(
+            json.dumps({"_cached_at": time.time(), "data": data}, indent=2)
+        )
+    except Exception as exc:
+        logger.debug("Cache write failed for %s: %s", key, exc)
+
+
+def _clear_cache(key: str | None = None) -> None:
+    """Clear cache. If key is None, clear all cache."""
+    if not OCI_META_CACHE_DIR.exists():
+        return
+    if key:
+        _cache_path(key).unlink(missing_ok=True)
+    else:
+        for f in OCI_META_CACHE_DIR.glob("*.json"):
+            f.unlink(missing_ok=True)
+
+
+# ── Background updater ───────────────────────────────────────────────────────
+
+
+def _background_update_loop() -> None:
+    """Background thread loop that periodically checks for updates."""
+    logger.info("OCI background updater started")
+    while not _background_stop.wait(timeout=_background_check_interval()):
+        try:
+            logger.info("OCI background update check started")
+            updates = check_updates()
+            if updates:
+                logger.info(
+                    "OCI background update check found %d update(s)", len(updates)
+                )
+                for upd in updates:
+                    logger.info(
+                        "  %s: %s -> %s",
+                        upd.collection,
+                        upd.current_version,
+                        upd.latest_version,
+                    )
+            else:
+                logger.debug("OCI background update check: no updates available")
+        except Exception as exc:
+            logger.warning("OCI background update check failed: %s", exc)
+
+
+def _background_check_interval() -> int:
+    """Return the background check interval from config."""
+    try:
+        return int(
+            os.environ.get(
+                "OCI_BACKGROUND_CHECK_INTERVAL_SECONDS",
+                str(config.oci_background_check_interval_seconds),
+            )
+        )
+    except Exception:
+        return 900  # 15 minutes default
+
+
+def start_background_updater() -> None:
+    """Start the background update checker thread."""
+    global _background_thread
+    if _background_thread and _background_thread.is_alive():
+        return
+
+    _background_stop.clear()
+    _background_thread = threading.Thread(
+        target=_background_update_loop,
+        name="oci-bg-updater",
+        daemon=True,
+    )
+    _background_thread.start()
+    logger.info(
+        "OCI background updater started (interval: %d s)",
+        _background_check_interval(),
+    )
+
+
+def stop_background_updater() -> None:
+    """Stop the background update checker thread."""
+    global _background_thread
+    _background_stop.set()
+    if _background_thread:
+        _background_thread.join(timeout=10)
+        _background_thread = None
+    logger.info("OCI background updater stopped")
+
+
+def clear_oci_cache(key: str | None = None) -> dict:
+    """Clear OCI meta cache. If key is None, clear all cache.
+
+    Returns a summary dict with cleared count.
+    """
+    if not OCI_META_CACHE_DIR.exists():
+        return {"cleared": 0}
+
+    if key:
+        cache_file = _cache_path(key)
+        if cache_file.exists():
+            cache_file.unlink()
+            return {"cleared": 1}
+        return {"cleared": 0}
+    else:
+        count = sum(1 for f in OCI_META_CACHE_DIR.glob("*.json"))
+        for f in OCI_META_CACHE_DIR.glob("*.json"):
+            f.unlink(missing_ok=True)
+        return {"cleared": count}
+
 
 # ── Registry config ──────────────────────────────────────────────────────────
 
@@ -320,6 +496,7 @@ class CollectionInfo:
     recipe_count: int
     digest: str
     registry: str
+    display_version: str = ""  # Human-readable version from annotations
 
 
 def list_collections(
@@ -327,7 +504,8 @@ def list_collections(
 ) -> list[CollectionInfo]:
     """List all available recipe collections from one or more registries.
 
-    Returns a list of CollectionInfo objects.
+    Uses file-based cache to avoid repeated network calls. Cache TTL is
+    configurable via config.oci_cache_ttl_seconds (default 5 minutes).
     """
     results = []
     registries = _load_registries()
@@ -355,20 +533,49 @@ def list_collections(
 
             for tag in tags:
                 try:
-                    index = _fetch_oci_index(url, tag, auth=reg.get("auth"))
-                    annotations = index.get("annotations", {})
-                    results.append(
-                        CollectionInfo(
-                            name=annotations.get("name", "unknown"),
-                            version=tag,
-                            description=annotations.get("description", ""),
-                            vendor=annotations.get("vendor", ""),
-                            license=annotations.get("license", ""),
-                            recipe_count=len(index.get("manifests", [])),
-                            digest=index.get("digest", tag),
-                            registry=reg["name"],
+                    cache_key = _cache_key(reg["name"], tag)
+                    cached = _read_cache(cache_key)
+
+                    if cached:
+                        logger.debug("Cache hit for %s", cache_key)
+                        annotations = cached.get("annotations", {})
+                        index = cached.get("index", {})
+                        display_ver = annotations.get("version", tag)
+                        results.append(
+                            CollectionInfo(
+                                name=annotations.get("name", "unknown"),
+                                version=tag,
+                                description=annotations.get("description", ""),
+                                vendor=annotations.get("vendor", ""),
+                                license=annotations.get("license", ""),
+                                recipe_count=len(index.get("manifests", [])),
+                                digest=index.get("digest", tag),
+                                registry=reg["name"],
+                                display_version=display_ver,
+                            )
                         )
-                    )
+                    else:
+                        index = _fetch_oci_index(url, tag, auth=reg.get("auth"))
+                        annotations = index.get("annotations", {})
+                        # Prefer annotation version (e.g., "1.0.0") over raw tag (e.g., sha256:...)
+                        display_ver = annotations.get("version", tag)
+                        results.append(
+                            CollectionInfo(
+                                name=annotations.get("name", "unknown"),
+                                version=tag,
+                                description=annotations.get("description", ""),
+                                vendor=annotations.get("vendor", ""),
+                                license=annotations.get("license", ""),
+                                recipe_count=len(index.get("manifests", [])),
+                                digest=index.get("digest", tag),
+                                registry=reg["name"],
+                                display_version=display_ver,
+                            )
+                        )
+                        # Write to cache
+                        _write_cache(
+                            cache_key, {"annotations": annotations, "index": index}
+                        )
                 except Exception as exc:
                     logger.debug("Failed to parse index %s:%s: %s", url, tag, exc)
                     continue
@@ -387,6 +594,8 @@ class CollectionRecipe:
     model: str
     container: str
     recipe_version: str
+    solo_only: bool = False
+    cluster_only: bool = False
 
 
 def list_collection_recipes(
@@ -443,6 +652,12 @@ def list_collection_recipes(
                                 container=layer_annotations.get("container", ""),
                                 recipe_version=layer_annotations.get(
                                     "recipe_version", tag
+                                ),
+                                solo_only=bool(
+                                    layer_annotations.get("solo_only", False)
+                                ),
+                                cluster_only=bool(
+                                    layer_annotations.get("cluster_only", False)
                                 ),
                             )
                         )

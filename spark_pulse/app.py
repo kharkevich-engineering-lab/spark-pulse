@@ -28,6 +28,10 @@ from spark_pulse.auth import AuthMiddleware, router as auth_router
 from spark_pulse.sse import router as sse_router
 from spark_pulse.tools import is_simulation
 from spark_pulse.tools.git_update import check_updates
+from spark_pulse.tools.oci_registry import (
+    start_background_updater,
+    stop_background_updater,
+)
 from spark_pulse.version import get_version
 from spark_pulse.mcp_http import handle_mcp, MCP_PATH
 
@@ -149,10 +153,14 @@ async def lifespan(app: FastAPI):
     # Start background git update scheduler
     _start_git_update_scheduler()
 
+    # Start OCI background update checker
+    start_background_updater()
+
     yield
 
     # Cleanup on shutdown
     _stop_git_update_scheduler()
+    stop_background_updater()
 
     # Remove symlinks for custom recipes and mods
     try:

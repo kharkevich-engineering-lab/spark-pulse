@@ -17,3 +17,8 @@ oidc_client_secret: ""
 oidc_provider_url: ""
 spark_vllm_path: /tmp/spark-vllm-docker
 webui_port: 8100
+oci_auto_update_enabled: false
+oci_auto_update_schedule: "0 2 * * *"
+oci_auto_update_overwrite_local: false
+oci_cache_ttl_seconds: 300
+oci_background_check_interval_seconds: 900
