@@ -190,7 +190,7 @@ class TestListCollections:
         self, mock_index, mock_tags, sample_registry
     ):
         """Listing collections from a registry returns parsed data.
-        
+
         Note: Deduplication keeps only the latest version for each (name, registry) pair.
         """
         mock_tags.return_value = ["1.0.0", "1.1.0"]
