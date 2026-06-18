@@ -1,5 +1,6 @@
 """Tests for OCI registry tools module."""
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -505,3 +506,340 @@ class TestOrasListTags:
 
         tags = _oras_list_tags("ghcr.io/test/repo")
         assert tags == []
+
+
+class TestOrasPullToLayout:
+    """Tests for _oras_pull_to_layout — OCI index traversal.
+
+    Regression tests for the fix that handles OCI artifacts with index
+    structure (index → recipe manifests → YAML layers) instead of flat layers.
+    """
+
+    @patch("spark_pulse.tools.oci_registry._oras_client")
+    def test_pull_traverses_index_structure(self, mock_client_class, tmp_path):
+        """Pulling from index artifact downloads YAML layers from recipe manifests."""
+        from spark_pulse.tools.oci_registry import _oras_pull_to_layout
+
+        mock_client = mock_client_class.return_value
+
+        # Simulate OCI index manifest (tagged)
+        def get_manifest_side_effect(target):
+            if target.endswith(":1.0.0"):
+                # Index manifest
+                return {
+                    "manifests": [
+                        {
+                            "digest": "sha256:recipe1",
+                            "annotations": {"name": "TestRecipe1"},
+                        },
+                        {
+                            "digest": "sha256:recipe2",
+                            "annotations": {"name": "TestRecipe2"},
+                        },
+                    ]
+                }
+            elif "sha256:recipe1" in target:
+                return {
+                    "layers": [
+                        {
+                            "digest": "sha256:yaml1",
+                            "size": 100,
+                            "annotations": {
+                                "org.opencontainers.image.title": "TestRecipe1.yaml"
+                            },
+                        }
+                    ]
+                }
+            elif "sha256:recipe2" in target:
+                return {
+                    "layers": [
+                        {
+                            "digest": "sha256:yaml2",
+                            "size": 200,
+                            "annotations": {
+                                "org.opencontainers.image.title": "TestRecipe2.yaml"
+                            },
+                        }
+                    ]
+                }
+            return {}
+
+        mock_client.get_manifest.side_effect = get_manifest_side_effect
+
+        # Make download_blob actually write files
+        def download_blob_side_effect(target, digest, outfile):
+            Path(outfile).write_text(f"# Recipe content for {Path(outfile).name}")
+
+        mock_client.download_blob.side_effect = download_blob_side_effect
+
+        layout_dir = tmp_path / "layout"
+        _oras_pull_to_layout("ghcr.io/test/repo", "1.0.0", layout_dir)
+
+        # Should have downloaded 2 YAML files
+        yaml_files = sorted(layout_dir.glob("*.yaml"))
+        assert len(yaml_files) == 2
+        assert yaml_files[0].name == "TestRecipe1.yaml"
+        assert yaml_files[1].name == "TestRecipe2.yaml"
+
+        # Verify download_blob was called for each layer
+        assert mock_client.download_blob.call_count == 2
+
+    @patch("spark_pulse.tools.oci_registry._oras_client")
+    def test_pull_uses_recipe_name_when_no_title(self, mock_client_class, tmp_path):
+        """Falls back to recipe name annotation when title is missing."""
+        from spark_pulse.tools.oci_registry import _oras_pull_to_layout
+
+        mock_client = mock_client_class.return_value
+
+        def get_manifest_side_effect(target):
+            if target.endswith(":1.0.0"):
+                return {
+                    "manifests": [
+                        {"digest": "sha256:r1", "annotations": {"name": "MyRecipe"}}
+                    ]
+                }
+            return {
+                "layers": [
+                    {
+                        "digest": "sha256:y1",
+                        "size": 50,
+                        "annotations": {"name": "MyRecipe"},  # name on layer, not title
+                    }
+                ]
+            }
+
+        mock_client.get_manifest.side_effect = get_manifest_side_effect
+
+        def download_blob_side_effect(target, digest, outfile):
+            Path(outfile).write_text("# Recipe content")
+
+        mock_client.download_blob.side_effect = download_blob_side_effect
+
+        layout_dir = tmp_path / "layout"
+        _oras_pull_to_layout("ghcr.io/test/repo", "1.0.0", layout_dir)
+
+        yaml_files = list(layout_dir.glob("*.yaml"))
+        assert len(yaml_files) == 1
+        assert yaml_files[0].name == "MyRecipe.yaml"
+
+    @patch("spark_pulse.tools.oci_registry._oras_client")
+    def test_pull_handles_empty_index(self, mock_client_class, tmp_path):
+        """Empty index produces no files."""
+        from spark_pulse.tools.oci_registry import _oras_pull_to_layout
+
+        mock_client = mock_client_class.return_value
+        mock_client.get_manifest.return_value = {"manifests": []}
+
+        layout_dir = tmp_path / "layout"
+        _oras_pull_to_layout("ghcr.io/test/repo", "1.0.0", layout_dir)
+
+        yaml_files = list(layout_dir.glob("*.yaml"))
+        assert len(yaml_files) == 0
+
+    @patch("spark_pulse.tools.oci_registry._oras_client")
+    def test_pull_handles_recipe_fetch_failure(self, mock_client_class, tmp_path):
+        """Continues when individual recipe manifest fetch fails."""
+        from spark_pulse.tools.oci_registry import _oras_pull_to_layout
+
+        mock_client = mock_client_class.return_value
+
+        call_count = [0]
+
+        def get_manifest_side_effect(target):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                # Index with 2 recipes
+                return {
+                    "manifests": [
+                        {
+                            "digest": "sha256:good",
+                            "annotations": {"name": "GoodRecipe"},
+                        },
+                        {"digest": "sha256:bad", "annotations": {"name": "BadRecipe"}},
+                    ]
+                }
+            elif "sha256:good" in target:
+                return {
+                    "layers": [
+                        {
+                            "digest": "sha256:y1",
+                            "size": 50,
+                            "annotations": {"name": "GoodRecipe"},
+                        }
+                    ]
+                }
+            else:
+                raise ValueError("Not Found")
+
+        mock_client.get_manifest.side_effect = get_manifest_side_effect
+
+        def download_blob_side_effect(target, digest, outfile):
+            Path(outfile).write_text("# Good recipe content")
+
+        mock_client.download_blob.side_effect = download_blob_side_effect
+
+        layout_dir = tmp_path / "layout"
+        _oras_pull_to_layout("ghcr.io/test/repo", "1.0.0", layout_dir)
+
+        # Should have the good recipe despite the bad one failing
+        yaml_files = list(layout_dir.glob("*.yaml"))
+        assert len(yaml_files) == 1
+        assert yaml_files[0].name == "GoodRecipe.yaml"
+
+    @patch("spark_pulse.tools.oci_registry._oras_client")
+    def test_pull_handles_layer_download_failure(self, mock_client_class, tmp_path):
+        """Continues when individual layer download fails."""
+        from spark_pulse.tools.oci_registry import _oras_pull_to_layout
+
+        mock_client = mock_client_class.return_value
+
+        def get_manifest_side_effect(target):
+            if target.endswith(":1.0.0"):
+                return {
+                    "manifests": [
+                        {"digest": "sha256:r1", "annotations": {"name": "Recipe1"}},
+                        {"digest": "sha256:r2", "annotations": {"name": "Recipe2"}},
+                    ]
+                }
+            elif "sha256:r1" in target:
+                return {
+                    "layers": [
+                        {
+                            "digest": "sha256:y1",
+                            "size": 50,
+                            "annotations": {"name": "Recipe1"},
+                        }
+                    ]
+                }
+            else:
+                return {
+                    "layers": [
+                        {
+                            "digest": "sha256:y2",
+                            "size": 50,
+                            "annotations": {"name": "Recipe2"},
+                        }
+                    ]
+                }
+
+        mock_client.get_manifest.side_effect = get_manifest_side_effect
+
+        call_count = [0]
+
+        def download_blob_side_effect(target, digest, outfile):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                Path(outfile).write_text("# Recipe1 content")
+            else:
+                raise OSError("Download failed")
+
+        mock_client.download_blob.side_effect = download_blob_side_effect
+
+        layout_dir = tmp_path / "layout"
+        _oras_pull_to_layout("ghcr.io/test/repo", "1.0.0", layout_dir)
+
+        yaml_files = list(layout_dir.glob("*.yaml"))
+        assert len(yaml_files) == 1
+        assert yaml_files[0].name == "Recipe1.yaml"
+
+
+class TestExtractRecipesFromLayout:
+    """Tests for _extract_recipes_from_layout — YAML file discovery.
+
+    Regression tests for the fix that scans for YAML files in flat directory
+    instead of expecting OCI layout structure (index.json + blobs/).
+    """
+
+    def test_extract_finds_yaml_files(self, tmp_path):
+        """Extracts all .yaml and .yml files from layout directory."""
+        from spark_pulse.tools.oci_registry import _extract_recipes_from_layout
+
+        layout_dir = tmp_path / "layout"
+        layout_dir.mkdir()
+
+        # Create test YAML files
+        (layout_dir / "recipe1.yaml").write_text("name: Recipe1\ntensor_parallel: 2")
+        (layout_dir / "recipe2.yml").write_text("name: Recipe2\ntensor_parallel: 4")
+        (layout_dir / "readme.txt").write_text("not a recipe")
+
+        extract_dir = tmp_path / "extracted"
+        recipes = _extract_recipes_from_layout(layout_dir, extract_dir)
+
+        assert len(recipes) == 2
+        filenames = {r["filename"] for r in recipes}
+        assert "recipe1.yaml" in filenames
+        assert "recipe2.yml" in filenames
+
+    def test_extract_returns_correct_content_and_digest(self, tmp_path):
+        """Extracted recipes have correct content and SHA256 digest."""
+        import hashlib
+
+        from spark_pulse.tools.oci_registry import _extract_recipes_from_layout
+
+        layout_dir = tmp_path / "layout"
+        layout_dir.mkdir()
+
+        content = "name: TestRecipe\nmodel: test-model"
+        (layout_dir / "TestRecipe.yaml").write_text(content)
+
+        extract_dir = tmp_path / "extracted"
+        recipes = _extract_recipes_from_layout(layout_dir, extract_dir)
+
+        assert len(recipes) == 1
+        assert recipes[0]["content"] == content
+        assert recipes[0]["filename"] == "TestRecipe.yaml"
+        assert recipes[0]["size"] == len(content.encode())
+        assert (
+            recipes[0]["digest"]
+            == f"sha256:{hashlib.sha256(content.encode()).hexdigest()}"
+        )
+
+    def test_extract_empty_directory(self, tmp_path):
+        """Empty layout directory returns empty list."""
+        from spark_pulse.tools.oci_registry import _extract_recipes_from_layout
+
+        layout_dir = tmp_path / "layout"
+        layout_dir.mkdir()
+
+        extract_dir = tmp_path / "extracted"
+        recipes = _extract_recipes_from_layout(layout_dir, extract_dir)
+
+        assert recipes == []
+
+    def test_extract_no_yaml_files(self, tmp_path):
+        """Directory with non-YAML files returns empty list."""
+        from spark_pulse.tools.oci_registry import _extract_recipes_from_layout
+
+        layout_dir = tmp_path / "layout"
+        layout_dir.mkdir()
+
+        (layout_dir / "data.json").write_text('{"key": "value"}')
+        (layout_dir / "script.py").write_text("print('hello')")
+
+        extract_dir = tmp_path / "extracted"
+        recipes = _extract_recipes_from_layout(layout_dir, extract_dir)
+
+        assert recipes == []
+
+    def test_extract_skips_unreadable_files(self, tmp_path):
+        """Unreadable YAML files are logged as warnings, not errors."""
+        from spark_pulse.tools.oci_registry import _extract_recipes_from_layout
+
+        layout_dir = tmp_path / "layout"
+        layout_dir.mkdir()
+
+        # Create a valid and an invalid YAML file
+        (layout_dir / "good.yaml").write_text("name: Good")
+        bad_file = layout_dir / "bad.yaml"
+        bad_file.write_text("name: Bad")
+        bad_file.chmod(0o000)  # Make unreadable
+
+        extract_dir = tmp_path / "extracted"
+        recipes = _extract_recipes_from_layout(layout_dir, extract_dir)
+
+        # Should only get the good recipe
+        assert len(recipes) == 1
+        assert recipes[0]["filename"] == "good.yaml"
+
+        # Restore permissions for test cleanup
+        bad_file.chmod(0o644)
