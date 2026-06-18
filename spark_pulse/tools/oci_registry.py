@@ -374,11 +374,61 @@ def _oras_list_tags(url: str, auth: dict | None = None) -> list[str]:
 def _oras_pull_to_layout(
     url: str, tag: str, layout_dir: Path, auth: dict | None = None
 ) -> None:
-    """Pull an OCI image to a local OCI layout directory using oras Python SDK."""
+    """Pull recipe YAML files from an OCI index artifact.
+
+    The artifact structure is:
+      index (tagged) → manifests[] → recipe manifests → layers[] → YAML files
+
+    The oras SDK's pull() only works for flat artifacts with direct layers,
+    so we manually traverse the index and download each recipe's YAML layer.
+    """
     layout_dir.mkdir(parents=True, exist_ok=True)
     client = _oras_client(auth)
-    # Pull to the layout directory
-    client.pull(target=f"{url}:{tag}", outdir=str(layout_dir))
+
+    # Fetch the index manifest
+    index = client.get_manifest(f"{url}:{tag}")
+
+    # Process each recipe manifest in the index
+    for recipe_ref in index.get("manifests", []):
+        recipe_digest = recipe_ref.get("digest", "")
+        if not recipe_digest:
+            continue
+
+        # Fetch the recipe manifest by digest
+        recipe_url = f"{url}@{recipe_digest}"
+        try:
+            recipe_manifest = client.get_manifest(recipe_url)
+        except Exception as exc:
+            logger.warning(
+                "Failed to fetch recipe manifest %s: %s", recipe_digest[:16], exc
+            )
+            continue
+
+        # Download each layer (YAML file) from the recipe manifest
+        for layer in recipe_manifest.get("layers", []):
+            layer_digest = layer.get("digest", "")
+            layer_size = layer.get("size", 0)
+            layer_annotations = layer.get("annotations", {})
+
+            # Determine filename from annotations
+            filename = layer_annotations.get("org.opencontainers.image.title", "")
+            if not filename:
+                # Use the recipe name annotation or digest
+                recipe_name = layer_annotations.get("name", "")
+                if recipe_name:
+                    filename = f"{recipe_name}.yaml"
+                else:
+                    filename = f"recipe-{layer_digest[:12]}.yaml"
+
+            # Download the layer content
+            layer_path = layout_dir / filename
+            try:
+                client.download_blob(recipe_url, layer_digest, str(layer_path))
+                logger.info("Pulled %s (%d bytes)", filename, layer_size)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to download layer %s: %s", layer_digest[:16], exc
+                )
 
 
 def _oras_fetch_manifest(url: str, tag: str, auth: dict | None = None) -> dict:
@@ -403,82 +453,31 @@ def _pull_oci_to_layout(
 def _extract_recipes_from_layout(layout_dir: Path, extract_dir: Path) -> list[dict]:
     """Extract recipe YAML files from an OCI layout directory.
 
-    Reads the index, finds child manifests, and extracts each recipe file.
-    Returns list of dicts with 'filename', 'content', 'digest', 'size'.
+    The oras Python SDK extracts layer files directly to layout_dir (flat structure),
+    so we scan for YAML files there. Returns list of dicts with 'filename', 'content',
+    'digest', 'size'.
     """
     extract_dir.mkdir(parents=True, exist_ok=True)
     extracted = []
 
-    # Read the OCI index
-    index_path = layout_dir / "index.json"
-    if not index_path.exists():
-        raise RuntimeError("Invalid OCI layout: missing index.json")
+    # Scan for YAML/YML files directly in layout_dir (flat structure from oras SDK)
+    yaml_files = sorted(layout_dir.glob("*.yaml")) + sorted(layout_dir.glob("*.yml"))
 
-    with open(index_path) as f:
-        index_data = json.load(f)
-
-    # Find the recipe index manifest
-    manifests = index_data.get("manifests", [])
-    recipe_manifest_ref = None
-    for m in manifests:
-        mt = m.get("mediaType", "")
-        art = m.get("artifactType", "")
-        if mt == OCI_INDEX_MEDIA or art == RECIPE_INDEX_ARTIFACT:
-            recipe_manifest_ref = m["digest"]
-            break
-
-    if not recipe_manifest_ref:
-        # Try the first manifest as fallback
-        if manifests:
-            recipe_manifest_ref = manifests[0]["digest"]
-        else:
-            raise RuntimeError("No manifests found in OCI layout")
-
-    # Read the recipe index (list of recipe manifests)
-    obj_dir = layout_dir / "blobs" / "sha256"
-    manifest_path = obj_dir / recipe_manifest_ref
-    if not manifest_path.exists():
-        raise RuntimeError(f"Manifest blob not found: {recipe_manifest_ref}")
-
-    with open(manifest_path) as f:
-        recipe_index = json.load(f)
-
-    # Each entry in manifests is a recipe manifest
-    for entry in recipe_index.get("manifests", []):
-        digest = entry.get("digest", "")
-        size = entry.get("size", 0)
-        # The layer inside the recipe manifest contains the YAML
-        layers = entry.get("layers", [])
-        if not layers:
-            continue
-
-        layer_digest = layers[0].get("digest", "")
-        layer_path = obj_dir / layer_digest
-        if not layer_path.exists():
-            logger.warning("Layer blob not found: %s", layer_digest)
-            continue
-
-        # Extract filename from annotations or use digest
-        annotations = entry.get("annotations", {})
-        filename = annotations.get("org.opencontainers.image.title", "")
-        if not filename:
-            filename = annotations.get("io.github.spark-pulse.recipe", "")
-        if not filename:
-            filename = f"recipe-{digest[:12]}.yaml"
-
+    for yaml_path in yaml_files:
         try:
-            with open(layer_path) as f:
-                content = f.read()
+            content = yaml_path.read_text()
+            digest = hashlib.sha256(content.encode()).hexdigest()
+            size = len(content.encode())
             extracted.append(
                 {
-                    "filename": filename,
+                    "filename": yaml_path.name,
                     "content": content,
-                    "digest": digest,
+                    "digest": f"sha256:{digest}",
                     "size": size,
                 }
             )
         except Exception as exc:
-            logger.warning("Failed to read layer %s: %s", layer_digest, exc)
+            logger.warning("Failed to read recipe %s: %s", yaml_path.name, exc)
 
     return extracted
 
