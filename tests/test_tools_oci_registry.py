@@ -393,7 +393,7 @@ class TestAutoUpdate:
                 mock_check.return_value = []
                 result = run_auto_update()
                 # When no updates, returns updated=0
-                assert result.get("updated") == 0 or result.get("skipped") == True
+                assert result.get("updated") == 0 or result.get("skipped")
 
 
 class TestAuthHeaders:
