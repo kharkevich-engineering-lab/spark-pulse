@@ -582,7 +582,31 @@ def list_collections(
         except Exception as exc:
             logger.warning("Failed to list tags for registry %s: %s", reg["name"], exc)
 
-    return results
+    # Deduplicate by (name, registry), keeping only the latest version
+    groups: dict[tuple[str, str], list[CollectionInfo]] = {}
+    for col in results:
+        key = (col.name, col.registry)
+        groups.setdefault(key, []).append(col)
+
+    def _version_key(v: str) -> tuple:
+        """Convert version string to sortable tuple."""
+        try:
+            parts = v.split(".")
+            return tuple(int(p) for p in parts)
+        except ValueError:
+            return (0,)
+
+    deduplicated = []
+    for key, cols in groups.items():
+        latest = max(
+            cols,
+            key=lambda c: (
+                _version_key(c.version) if c.version != "latest" else (0, 0, 0)
+            ),
+        )
+        deduplicated.append(latest)
+
+    return deduplicated
 
 
 @dataclass
@@ -596,6 +620,78 @@ class CollectionRecipe:
     recipe_version: str
     solo_only: bool = False
     cluster_only: bool = False
+
+
+def _extract_recipe_from_layer(
+    registry_url: str,
+    entry: dict,
+    tag: str,
+    auth: dict | None = None,
+) -> dict:
+    """Extract recipe metadata from a layer blob when annotations are missing.
+
+    Fetches the individual recipe manifest, gets the layer digest,
+    downloads the YAML content, and parses it for metadata.
+    """
+    import oras.client
+
+    client = oras.client.OrasClient()
+    if auth:
+        headers = _auth_headers(auth)
+        if headers.get("Authorization"):
+            client.session.headers.update(headers)
+
+    # Get the digest for this recipe manifest
+    digest = entry.get("digest", "")
+    if not digest:
+        raise ValueError("No digest found in manifest entry")
+
+    # Fetch the individual recipe manifest
+    manifest = client.get_manifest(f"{registry_url}@{digest}")
+
+    # Get the layer containing the YAML
+    layers = manifest.get("layers", [])
+    if not layers:
+        raise ValueError("No layers found in recipe manifest")
+
+    layer = layers[0]
+    layer_digest = layer.get("digest", "")
+    if not layer_digest:
+        raise ValueError("No layer digest found")
+
+    # Download the layer blob using oras client
+    try:
+        response = client.get_blob(registry_url, layer_digest)
+        response.raise_for_status()
+        yaml_content = response.text
+    except Exception as exc:
+        logger.debug("Failed to fetch layer blob %s: %s", layer_digest, exc)
+        raise
+
+    # Parse YAML to extract metadata
+    try:
+        recipe_data = yaml.safe_load(yaml_content) or {}
+    except yaml.YAMLError as exc:
+        logger.debug("Failed to parse recipe YAML: %s", exc)
+        raise
+
+    # Extract fields from YAML
+    name = recipe_data.get("name", digest.split(":")[-1])
+    description = recipe_data.get("description", "")
+    model = recipe_data.get("model", "")
+    container = recipe_data.get("container", "")
+    solo_only = bool(recipe_data.get("solo_only", False))
+    cluster_only = bool(recipe_data.get("cluster_only", False))
+
+    return {
+        "name": name,
+        "description": description,
+        "model": model,
+        "container": container,
+        "recipe_version": tag,
+        "solo_only": solo_only,
+        "cluster_only": cluster_only,
+    }
 
 
 def list_collection_recipes(
@@ -640,27 +736,72 @@ def list_collection_recipes(
                     # Extract recipe info from manifest entries
                     for entry in index.get("manifests", []):
                         layer_annotations = entry.get("annotations", {})
-                        results.append(
-                            CollectionRecipe(
-                                name=layer_annotations.get(
-                                    "name", entry.get("digest", "unknown")
-                                ),
-                                description=layer_annotations.get(
-                                    "org.opencontainers.image.description", ""
-                                ),
-                                model=layer_annotations.get("model", ""),
-                                container=layer_annotations.get("container", ""),
-                                recipe_version=layer_annotations.get(
-                                    "recipe_version", tag
-                                ),
-                                solo_only=bool(
-                                    layer_annotations.get("solo_only", False)
-                                ),
-                                cluster_only=bool(
-                                    layer_annotations.get("cluster_only", False)
-                                ),
-                            )
+
+                        # If annotations are missing or minimal, try to extract from YAML layer
+                        recipe_name = layer_annotations.get("name")
+                        if not recipe_name:
+                            recipe_name = entry.get("digest", "unknown")
+
+                        # Check if we have meaningful annotations
+                        has_annotations = any(
+                            k in layer_annotations
+                            for k in [
+                                "name",
+                                "model",
+                                "container",
+                                "description",
+                                "org.opencontainers.image.description",
+                                "recipe_version",
+                            ]
                         )
+
+                        if has_annotations:
+                            # Use annotations directly
+                            results.append(
+                                CollectionRecipe(
+                                    name=recipe_name,
+                                    description=layer_annotations.get(
+                                        "org.opencontainers.image.description", ""
+                                    ),
+                                    model=layer_annotations.get("model", ""),
+                                    container=layer_annotations.get("container", ""),
+                                    recipe_version=layer_annotations.get(
+                                        "recipe_version", tag
+                                    ),
+                                    solo_only=bool(
+                                        layer_annotations.get("solo_only", False)
+                                    ),
+                                    cluster_only=bool(
+                                        layer_annotations.get("cluster_only", False)
+                                    ),
+                                )
+                            )
+                        else:
+                            # Annotations missing — fetch layer YAML to extract metadata
+                            try:
+                                recipe_info = _extract_recipe_from_layer(
+                                    url, entry, tag, auth=reg.get("auth")
+                                )
+                                results.append(CollectionRecipe(**recipe_info))
+                            except Exception as exc:
+                                logger.debug(
+                                    "Failed to extract recipe from layer for %s:%s: %s",
+                                    collection_name,
+                                    tag,
+                                    exc,
+                                )
+                                # Fallback: use digest as name, empty other fields
+                                results.append(
+                                    CollectionRecipe(
+                                        name=recipe_name,
+                                        description="",
+                                        model="",
+                                        container="",
+                                        recipe_version=tag,
+                                        solo_only=False,
+                                        cluster_only=False,
+                                    )
+                                )
                 except Exception as exc:
                     logger.debug(
                         "Failed to parse index for %s:%s: %s", collection_name, tag, exc

@@ -221,6 +221,10 @@ export async function testOciRegistry(name: string): Promise<{ ok: boolean; erro
   return json(`/oci/registries/${encodeURIComponent(name)}/test-connection`);
 }
 
+export async function fetchOciRegistryVersions(name: string): Promise<{ versions: string[] }> {
+  return json(`/oci/registries/${encodeURIComponent(name)}/versions`);
+}
+
 export async function fetchOciCollections(registry?: string, version?: string): Promise<OciCollection[]> {
   const params = new URLSearchParams();
   if (registry) params.set("registry", registry);
