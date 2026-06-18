@@ -29,6 +29,7 @@ from spark_pulse.tools.oci_registry import (
     start_background_updater,
     stop_background_updater,
     test_registry_connection,
+    uninstall_oci_recipe,
     update_oci_recipe,
     update_registry,
     _oras_list_tags,
@@ -275,6 +276,15 @@ def update_oci_recipe_endpoint(
     except Exception as exc:
         logger.error("Recipe update failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.delete("/recipes/{recipe_name}")
+def uninstall_oci_recipe_endpoint(recipe_name: str):
+    """Uninstall an OCI-installed recipe."""
+    result = uninstall_oci_recipe(recipe_name)
+    if not result["success"]:
+        raise HTTPException(status_code=404, detail=f"Recipe '{recipe_name}' not found")
+    return result
 
 
 # ── Update Check ─────────────────────────────────────────────────────────────

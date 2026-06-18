@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import {
   Package, Settings as SettingsIcon, Download, RefreshCw,
   Plus, AlertCircle, CheckCircle2, Loader2, Clock, XCircle,
-  Check, Box, Network, Cpu,
+  Check, Box, Network, Cpu, Trash2,
 } from "lucide-react";
 import {
   fetchOciRegistries,
@@ -24,6 +24,7 @@ import {
   fetchOciRegistryVersions,
   installOciRecipe,
   updateOciRecipe,
+  uninstallOciRecipe,
 } from "@/lib/api";
 import type { OciRegistry, OciCollection, OciCollectionRecipe, OciUpdateCheck } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
@@ -218,6 +219,16 @@ export default function OciRegistryPage() {
         delete next[recipeName];
         return next;
       });
+    }
+  };
+
+  const handleUninstallRecipe = async (recipeName: string) => {
+    try {
+      await uninstallOciRecipe(recipeName);
+      setAlertModal({ title: "Success", message: `Uninstalled ${recipeName}`, open: true });
+      refetchMeta();
+    } catch (e) {
+      setAlertModal({ title: "Uninstall Failed", message: e instanceof Error ? e.message : "Unknown error", open: true });
     }
   };
 
@@ -451,11 +462,20 @@ export default function OciRegistryPage() {
                       </span>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3 text-sm text-text-muted">
-                    <span>Installed: {new Date(meta.installed_at).toLocaleDateString()}</span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm text-text-muted">
+                      {new Date(meta.installed_at).toLocaleDateString()}
+                    </span>
                     {meta.local_changes && (
-                      <span className="text-warning">Modified</span>
+                      <span className="text-warning text-xs">Modified</span>
                     )}
+                    <button
+                      onClick={() => handleUninstallRecipe(meta.name)}
+                      className="p-1.5 rounded-lg hover:bg-danger/10 text-text-muted hover:text-danger transition-colors"
+                      title="Uninstall this recipe"
+                    >
+                      <Trash2 size={16} />
+                    </button>
                   </div>
                 </div>
               ))}
@@ -697,27 +717,35 @@ export default function OciRegistryPage() {
                           <Check size={16} className="text-success" />
                         ) : (
                           <>
-                            <button
-                              onClick={() => handleInstallRecipe(recipe.name, drawerCollection!)}
-                              className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs bg-primary text-white hover:bg-primary/90 transition-colors font-medium"
-                              title="Install this recipe"
-                            >
-                              <Download size={12} />
-                              Install
-                            </button>
-                            <button
-                              onClick={() => handleUpdateRecipe(recipe.name, drawerCollection!)}
-                              disabled={!isInstalled}
-                              className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs border border-border transition-colors ${
-                                isInstalled
-                                  ? 'hover:bg-surface-hover'
-                                  : 'border-border/30 text-text-muted/30 cursor-not-allowed'
-                              }`}
-                              title={isInstalled ? "Update this recipe" : "Install first to enable update"}
-                            >
-                              <RefreshCw size={12} />
-                              Update
-                            </button>
+                            {isInstalled ? (
+                              <>
+                                <button
+                                  onClick={() => handleUpdateRecipe(recipe.name, drawerCollection!)}
+                                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs bg-warning text-warning-foreground hover:bg-warning/90 transition-colors font-medium"
+                                  title="Update this recipe"
+                                >
+                                  <RefreshCw size={12} />
+                                  Update
+                                </button>
+                                <button
+                                  onClick={() => handleUninstallRecipe(recipe.name)}
+                                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs border border-border hover:bg-danger/10 hover:text-danger hover:border-danger transition-colors"
+                                  title="Uninstall this recipe"
+                                >
+                                  <Trash2 size={12} />
+                                  Uninstall
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                onClick={() => handleInstallRecipe(recipe.name, drawerCollection!)}
+                                className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs bg-primary text-white hover:bg-primary/90 transition-colors font-medium"
+                                title="Install this recipe"
+                              >
+                                <Download size={12} />
+                                Install
+                              </button>
+                            )}
                           </>
                         )}
                       </div>
