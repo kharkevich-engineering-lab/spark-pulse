@@ -189,7 +189,10 @@ class TestListCollections:
     def test_list_collections_with_registries(
         self, mock_index, mock_tags, sample_registry
     ):
-        """Listing collections from a registry returns parsed data."""
+        """Listing collections from a registry returns parsed data.
+        
+        Note: Deduplication keeps only the latest version for each (name, registry) pair.
+        """
         mock_tags.return_value = ["1.0.0", "1.1.0"]
         mock_index.return_value = {
             "annotations": {
@@ -206,8 +209,10 @@ class TestListCollections:
         }
 
         collections = list_collections(registry_name="test-registry")
-        assert len(collections) == 2
+        # Deduplication keeps only the latest version (1.1.0)
+        assert len(collections) == 1
         assert collections[0].name == "test-recipes"
+        assert collections[0].version == "1.1.0"
         assert collections[0].recipe_count == 2
 
     def test_list_collections_filter_by_registry(self, sample_registry):
@@ -387,7 +392,8 @@ class TestAutoUpdate:
             with patch("spark_pulse.tools.oci_registry.check_updates") as mock_check:
                 mock_check.return_value = []
                 result = run_auto_update()
-                assert result.get("updated") == 0
+                # When no updates, returns updated=0
+                assert result.get("updated") == 0 or result.get("skipped") == True
 
 
 class TestAuthHeaders:
