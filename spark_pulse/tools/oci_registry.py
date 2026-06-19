@@ -1081,7 +1081,11 @@ def uninstall_oci_recipe(recipe_name: str) -> dict:
 
     # Derive recipe filename from meta
     base = meta.name
-    recipe_file = RECIPES_DIR / base if base.endswith((".yaml", ".yml")) else RECIPES_DIR / f"{base}.yaml"
+    recipe_file = (
+        RECIPES_DIR / base
+        if base.endswith((".yaml", ".yml"))
+        else RECIPES_DIR / f"{base}.yaml"
+    )
     meta_file = recipe_file.with_suffix(recipe_file.suffix + ".meta")
 
     # Remove symlink first
@@ -1096,8 +1100,15 @@ def uninstall_oci_recipe(recipe_name: str) -> dict:
         meta_file.unlink()
         removed.append(str(meta_file))
 
-    logger.info("Uninstalled OCI recipe %s (removed %d file(s))", recipe_name, len(removed))
-    return {"success": True, "recipe": recipe_name, "action": "uninstalled", "removed": removed}
+    logger.info(
+        "Uninstalled OCI recipe %s (removed %d file(s))", recipe_name, len(removed)
+    )
+    return {
+        "success": True,
+        "recipe": recipe_name,
+        "action": "uninstalled",
+        "removed": removed,
+    }
 
 
 @dataclass
