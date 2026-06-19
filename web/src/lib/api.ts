@@ -300,6 +300,12 @@ export async function updateOciRecipe(recipeName: string, body: { collection: st
   });
 }
 
+export async function uninstallOciRecipe(recipeName: string): Promise<{ success: boolean; recipe: string; action: string }> {
+  return json<{ success: boolean; recipe: string; action: string }>(`/oci/recipes/${encodeURIComponent(recipeName)}`, {
+    method: "DELETE",
+  });
+}
+
 export async function clearOciCache(key?: string): Promise<{ cleared: number }> {
   return json<{ cleared: number }>("/oci/cache/clear", {
     method: "POST",
