@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
-import { fetchSettings, updateSettings, fetchSecrets, saveSecrets, deleteSecret, fetchGitUpdateStatus, triggerGitFetch, triggerGitPull } from "@/lib/api";
+import { fetchSettings, updateSettings, fetchSecrets, saveSecrets, deleteSecret, fetchGitUpdateStatus, triggerGitFetch, triggerGitPull, runDiscovery, applyNcclDefaults, type DiscoveryResult, type ValidationResult } from "@/lib/api";
 import { useQuery } from "@/hooks/useQuery";
-import { Settings as SettingsIcon, Loader2, AlertCircle, Check, KeyRound, Eye, EyeOff, Trash2, Lock, Server, Clock, GitBranch, GitCommit, ArrowDownUp } from "lucide-react";
+import { Settings as SettingsIcon, Loader2, AlertCircle, Check, KeyRound, Eye, EyeOff, Trash2, Lock, Server, Clock, GitBranch, GitCommit, ArrowDownUp, Network, Radio, Wifi, WifiOff } from "lucide-react";
 import { AlertModal } from "@/components/Modal";
 import { setRefresh } from "@/lib/refresh";
 
@@ -21,6 +21,18 @@ export default function SettingsPage() {
     </span>
   );
 
+  // ── Docker / NCCL helpers ──────────────────────────────────────────────
+  const dockerCfg = form.docker as Record<string, unknown> | undefined;
+  const ncclCfg = form.nccl as Record<string, unknown> | undefined;
+  const getDocker = <K extends keyof NonNullable<typeof dockerCfg>>(key: K, def: NonNullable<typeof dockerCfg>[K]) =>
+    (dockerCfg?.[key] ?? def) as NonNullable<typeof dockerCfg>[K];
+  const getNccl = <K extends keyof NonNullable<typeof ncclCfg>>(key: K, def: NonNullable<typeof ncclCfg>[K]) =>
+    (ncclCfg?.[key] ?? def) as NonNullable<typeof ncclCfg>[K];
+  const setDocker = <K extends keyof NonNullable<typeof dockerCfg>>(key: K, val: NonNullable<typeof dockerCfg>[K]) =>
+    setForm({ ...form, docker: { ...(dockerCfg ?? {}), [key]: val } });
+  const setNccl = <K extends keyof NonNullable<typeof ncclCfg>>(key: K, val: NonNullable<typeof ncclCfg>[K]) =>
+    setForm({ ...form, nccl: { ...(ncclCfg ?? {}), [key]: val } });
+
   // HF Token state
   const [hfToken, setHfToken] = useState("");
   const [showToken, setShowToken] = useState(false);
@@ -31,6 +43,13 @@ export default function SettingsPage() {
   const { data: gitStatus, refetch: refetchGitStatus, loading: gitLoading } = useQuery(fetchGitUpdateStatus);
   const [gitActionLoading, setGitActionLoading] = useState<string | null>(null);
   const [gitError, setGitError] = useState<string | null>(null);
+
+  // Network discovery state
+  const [discoveryResult, setDiscoveryResult] = useState<DiscoveryResult | null>(null);
+  const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
+  const [discoveryLoading, setDiscoveryLoading] = useState(false);
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
+  const [applyingNccl, setApplyingNccl] = useState(false);
 
   const isDirty = settings != null && Object.keys(form).some(
     (k) => JSON.stringify(form[k]) !== JSON.stringify((settings as unknown as Record<string, unknown>)[k])
@@ -104,6 +123,39 @@ export default function SettingsPage() {
     }
   };
 
+  const handleDiscover = async () => {
+    setDiscoveryError(null);
+    setDiscoveryLoading(true);
+    try {
+      const response = await runDiscovery();
+      setDiscoveryResult(response.detected);
+      setValidationResult(response.validation);
+    } catch (e) {
+      setDiscoveryError(e instanceof Error ? e.message : "Discovery failed");
+    } finally {
+      setDiscoveryLoading(false);
+    }
+  };
+
+  const handleApplyNccl = async () => {
+    if (!discoveryResult?.nccl_defaults) return;
+    setApplyingNccl(true);
+    try {
+      await applyNcclDefaults({
+        socket_ifname: discoveryResult.nccl_defaults.socket_ifname,
+        ib_hca: discoveryResult.nccl_defaults.ib_hca,
+        ib_disable: discoveryResult.nccl_defaults.ib_disable,
+      });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+      refetch();
+    } catch (e) {
+      setAlertModal({ title: "Error", message: e instanceof Error ? e.message : "Failed to apply NCCL defaults" });
+    } finally {
+      setApplyingNccl(false);
+    }
+  };
+
   const inputCls = "w-full px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm";
 
   if (loading) return <div className="flex justify-center py-20"><Loader2 className="animate-spin text-primary" size={32} /></div>;
@@ -160,6 +212,193 @@ export default function SettingsPage() {
               {saving ? "Saving…" : saved ? "Saved!" : "Save settings"}
             </button>
             {saved && <span className="text-xs text-success">Saved to <code className="font-mono">~/.config/spark-pulse/settings.json</code></span>}
+          </div>
+        </div>
+
+        {/* ── Docker Config ── */}
+        <div className="rounded-xl bg-surface border border-border p-5 space-y-4">
+          <div className="flex items-center gap-2 pb-3 border-b border-border">
+            <Server size={16} className="text-primary" />
+            <h3 className="font-semibold">Docker</h3>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">Privileged mode</p>
+              <p className="text-xs text-text-muted mt-0.5">Grant full host access (needed for GPU devices). Less secure but simpler.</p>
+            </div>
+            <button type="button" onClick={() => setDocker("privileged", !getDocker("privileged", true) as boolean)} className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${getDocker("privileged", true) ? "bg-primary" : "bg-border"}`}>
+              <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${getDocker("privileged", true) ? "translate-x-5" : "translate-x-0"}`} />
+            </button>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Memory limit (GB)</label>
+            <input type="number" min="1" step="1" value={Number(getDocker("memory_limit_gb", 110))} onChange={(e) => setDocker("memory_limit_gb", parseInt(e.target.value) || 110)} className={inputCls} placeholder="110" />
+            <p className="text-xs text-text-muted mt-1">Container memory limit. Set to 0 to disable.</p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">SHM size (GB)</label>
+            <input type="number" min="1" step="1" value={Number(getDocker("shm_size_gb", 64))} onChange={(e) => setDocker("shm_size_gb", parseInt(e.target.value) || 64)} className={inputCls} placeholder="64" />
+            <p className="text-xs text-text-muted mt-1">/dev/shm size for shared memory.</p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">PID limit</label>
+            <input type="number" min="64" step="64" value={Number(getDocker("pids_limit", 4096))} onChange={(e) => setDocker("pids_limit", parseInt(e.target.value) || 4096)} className={inputCls} placeholder="4096" />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">NCCL socket interface</label>
+            <input type="text" value={String(getNccl("socket_ifname", "") || "")} onChange={(e) => setNccl("socket_ifname", e.target.value || null)} className={inputCls} placeholder="auto-detect" />
+            <p className="text-xs text-text-muted mt-1">Leave empty to auto-detect. E.g. eth0, enp3s0.</p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">NCCL InfiniBand HCA</label>
+            <input type="text" value={String(getNccl("ib_hca", "") || "")} onChange={(e) => setNccl("ib_hca", e.target.value || null)} className={inputCls} placeholder="auto-detect" />
+            <p className="text-xs text-text-muted mt-1">InfiniBand HCA selector. E.g. GPU,mlx5_*. Leave empty for default.</p>
+          </div>
+
+          {/* ── Network Discovery ── */}
+          <div className="pt-4 border-t border-border space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Network size={16} className="text-primary" />
+                <h4 className="font-semibold text-sm">Network Discovery</h4>
+              </div>
+              <button
+                type="button"
+                onClick={handleDiscover}
+                disabled={discoveryLoading}
+                className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover disabled:opacity-50 text-white font-medium text-xs transition-colors flex items-center gap-1.5"
+              >
+                {discoveryLoading ? <Loader2 className="animate-spin" size={12} /> : <Radio size={12} />}
+                Discover
+              </button>
+            </div>
+
+            {discoveryError && (
+              <div className="text-xs text-danger flex items-center gap-1.5">
+                <AlertCircle size={12} />
+                <span>{discoveryError}</span>
+              </div>
+            )}
+
+            {discoveryResult && (
+              <div className="space-y-3">
+                {/* Local IP */}
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-text-muted">Local IP</span>
+                  <code className="px-2 py-0.5 rounded bg-bg font-mono text-xs">
+                    {discoveryResult.local_ip || <span className="text-text-muted">not detected</span>}
+                  </code>
+                </div>
+
+                {/* Ethernet interface */}
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-text-muted">Ethernet</span>
+                  <code className="px-2 py-0.5 rounded bg-bg font-mono text-xs">
+                    {discoveryResult.ethernet_if || <span className="text-text-muted">not detected</span>}
+                  </code>
+                </div>
+
+                {/* InfiniBand */}
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-text-muted">InfiniBand</span>
+                  <span className="flex items-center gap-1 text-xs">
+                    {discoveryResult.infiniband_present ? (
+                      <>
+                        <Wifi size={12} className="text-success" />
+                        <span className="text-success">{discoveryResult.infiniband_devices.length} HCA{discoveryResult.infiniband_devices.length > 1 ? "s" : ""}</span>
+                      </>
+                    ) : (
+                      <>
+                        <WifiOff size={12} className="text-text-muted" />
+                        <span className="text-text-muted">not present</span>
+                      </>
+                    )}
+                  </span>
+                </div>
+
+                {/* IB devices detail */}
+                {discoveryResult.infiniband_present && discoveryResult.infiniband_devices.length > 0 && (
+                  <div className="text-xs text-text-muted space-y-0.5 pl-1">
+                    {discoveryResult.infiniband_devices.map((dev) => (
+                      <div key={dev.hca} className="flex items-center gap-1.5">
+                        <span className="font-mono">{dev.hca}</span>
+                        <span className={`px-1.5 py-0.5 rounded ${dev.state === "ACTIVE" ? "bg-success/15 text-success" : "bg-warning/15 text-warning"}`}>
+                          {dev.state}
+                        </span>
+                        {dev.ports.length > 0 && <span>ports: {dev.ports.join(",")}</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* NCCL defaults */}
+                {discoveryResult.nccl_defaults && (
+                  <div className="pt-2 border-t border-border space-y-1.5">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-text-muted">NCCL socket</span>
+                      <code className="px-2 py-0.5 rounded bg-bg font-mono text-xs">{discoveryResult.nccl_defaults.socket_ifname}</code>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-text-muted">NCCL IB HCA</span>
+                      <code className="px-2 py-0.5 rounded bg-bg font-mono text-xs">
+                        {discoveryResult.nccl_defaults.ib_hca || "none"}
+                      </code>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-text-muted">NCCL IB disabled</span>
+                      <span className={`text-xs font-medium ${discoveryResult.nccl_defaults.ib_disable ? "text-warning" : "text-success"}`}>
+                        {discoveryResult.nccl_defaults.ib_disable ? "yes" : "no"}
+                      </span>
+                    </div>
+
+                    {/* Apply button */}
+                    <button
+                      type="button"
+                      onClick={handleApplyNccl}
+                      disabled={applyingNccl}
+                      className="w-full mt-2 px-3 py-2 rounded-lg border border-primary/50 hover:border-primary text-primary hover:bg-primary/5 disabled:opacity-50 text-xs font-medium transition-colors flex items-center justify-center gap-1.5"
+                    >
+                      {applyingNccl ? <Loader2 className="animate-spin" size={12} /> : <Check size={12} />}
+                      Apply detected NCCL settings
+                    </button>
+                  </div>
+                )}
+
+                {/* Validation */}
+                {validationResult && (
+                  <div className={`pt-2 border-t border-border text-xs space-y-1 ${!validationResult.healthy ? "text-danger" : validationResult.warnings.length > 0 ? "text-warning" : "text-success"}`}>
+                    <div className="flex items-center gap-1.5 font-medium">
+                      {validationResult.healthy ? <Check size={12} /> : <AlertCircle size={12} />}
+                      Network: {validationResult.healthy ? "Healthy" : "Issues found"}
+                    </div>
+                    {validationResult.warnings.length > 0 && (
+                      <div className="pl-3.5 space-y-0.5">
+                        {validationResult.warnings.map((w, i) => (
+                          <div key={i}>⚠ {w}</div>
+                        ))}
+                      </div>
+                    )}
+                    {validationResult.errors.length > 0 && (
+                      <div className="pl-3.5 space-y-0.5">
+                        {validationResult.errors.map((e, i) => (
+                          <div key={i}>✕ {e}</div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {!discoveryResult && !discoveryLoading && (
+              <p className="text-xs text-text-muted">Click "Discover" to detect network interfaces and generate NCCL defaults.</p>
+            )}
           </div>
         </div>
 

@@ -333,3 +333,79 @@ export async function runBenchmark(body: {
     body: JSON.stringify(body),
   });
 }
+
+// ── Network Discovery ────────────────────────────────────────────────────────
+
+export interface DiscoveryInterface {
+  name: string;
+  ip: string | null;
+  mtu: number;
+  is_up: boolean;
+  type: "ethernet" | "infiniband" | "loopback" | "docker" | "other";
+}
+
+export interface InfinibandDevice {
+  hca: string;
+  ports: number[];
+  net_devices: string[];
+  state: string;
+}
+
+export interface NcclDefaults {
+  socket_ifname: string;
+  ib_hca: string | null;
+  ib_disable: boolean;
+}
+
+export interface DiscoveredConfig {
+  nccl: {
+    debug: string | null;
+    socket_ifname: string | null;
+    ib_hca: string | null;
+  };
+  discovery_available: boolean;
+}
+
+export interface DiscoveryResult {
+  local_ip: string | null;
+  ethernet_if: string | null;
+  infiniband_present: boolean;
+  infiniband_devices: InfinibandDevice[];
+  interfaces: DiscoveryInterface[];
+  nccl_defaults: NcclDefaults | null;
+  validation_errors: string[];
+}
+
+export interface ValidationResult {
+  healthy: boolean;
+  warnings: string[];
+  errors: string[];
+}
+
+export interface DiscoveryResponse {
+  detected: DiscoveryResult;
+  validation: ValidationResult;
+}
+
+export async function runDiscovery(): Promise<DiscoveryResponse> {
+  return json<DiscoveryResponse>("/discovery", { method: "POST" });
+}
+
+export async function getDiscovered(): Promise<DiscoveredConfig> {
+  return json<DiscoveredConfig>("/discovery");
+}
+
+export async function applyNcclDefaults(body: {
+  socket_ifname: string;
+  ib_hca: string | null;
+  ib_disable: boolean;
+}): Promise<{ success: boolean; applied: NcclDefaults }> {
+  return json<{ success: boolean; applied: NcclDefaults }>("/discovery/apply-nccl", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function getValidation(): Promise<ValidationResult> {
+  return json<ValidationResult>("/discovery/validation");
+}

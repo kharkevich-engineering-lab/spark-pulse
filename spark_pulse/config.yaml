@@ -22,3 +22,19 @@ oci_auto_update_schedule: "0 2 * * *"
 oci_auto_update_overwrite_local: false
 oci_cache_ttl_seconds: 300
 oci_background_check_interval_seconds: 900
+docker:
+  privileged: true
+  memory_limit_gb: 110
+  memory_swap_limit_gb: null
+  pids_limit: 4096
+  shm_size_gb: 64
+  nofile_limit: 1048576
+  cache_dirs:
+    - ~/.cache/vllm
+    - ~/.cache/flashinfer
+    - ~/.triton
+  keep_entrypoint: false
+nccl:
+  debug: null
+  socket_ifname: null
+  ib_hca: null

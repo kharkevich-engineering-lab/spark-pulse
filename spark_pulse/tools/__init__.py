@@ -17,6 +17,13 @@ if _sim_mode:
         recipes as recipes,
         deployments as deployments,
         benchmarking as benchmarking,
+        custom_files as custom_files,
+        custom_recipes as custom_recipes,
+        mods as mods,
+        git_update as git_update,
+        docker as docker,
+        network as network,
+        discovery as discovery,
     )
 else:
     from spark_pulse.tools import (
@@ -25,6 +32,13 @@ else:
         recipes as recipes,
         deployments as deployments,
         benchmarking as benchmarking,
+        custom_files as custom_files,
+        custom_recipes as custom_recipes,
+        mods as mods,
+        git_update as git_update,
+        docker as docker,
+        network as network,
+        discovery as discovery,
     )
 
 

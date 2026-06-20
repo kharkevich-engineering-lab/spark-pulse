@@ -300,5 +300,57 @@ class _Config:
             return ""
         return "\u2022" * 8 + token[-4:]
 
+    # ── Docker / NCCL ────────────────────────────────────────────────────────
+
+    @property
+    def docker_privileged(self) -> bool:
+        return bool(self._data.get("docker", {}).get("privileged", True))
+
+    @property
+    def docker_memory_limit_gb(self) -> float | None:
+        val = self._data.get("docker", {}).get("memory_limit_gb")
+        return float(val) if val else None
+
+    @property
+    def docker_memory_swap_limit_gb(self) -> float | None:
+        val = self._data.get("docker", {}).get("memory_swap_limit_gb")
+        return float(val) if val else None
+
+    @property
+    def docker_pids_limit(self) -> int:
+        return int(self._data.get("docker", {}).get("pids_limit", 4096))
+
+    @property
+    def docker_shm_size_gb(self) -> int:
+        return int(self._data.get("docker", {}).get("shm_size_gb", 64))
+
+    @property
+    def docker_nofile_limit(self) -> int:
+        return int(self._data.get("docker", {}).get("nofile_limit", 1048576))
+
+    @property
+    def docker_cache_dirs(self) -> list[str]:
+        return self._data.get("docker", {}).get("cache_dirs", [
+            "~/.cache/vllm",
+            "~/.cache/flashinfer",
+            "~/.triton",
+        ])
+
+    @property
+    def docker_keep_entrypoint(self) -> bool:
+        return bool(self._data.get("docker", {}).get("keep_entrypoint", False))
+
+    @property
+    def nccl_debug(self) -> str | None:
+        return self._data.get("nccl", {}).get("debug")
+
+    @property
+    def nccl_socket_ifname(self) -> str | None:
+        return self._data.get("nccl", {}).get("socket_ifname")
+
+    @property
+    def nccl_ib_hca(self) -> str | None:
+        return self._data.get("nccl", {}).get("ib_hca")
+
 
 config = _Config()
