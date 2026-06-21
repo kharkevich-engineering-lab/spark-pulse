@@ -521,3 +521,13 @@ export async function rollbackMod(body: ModRollbackRequest): Promise<ModRollback
     body: JSON.stringify(body),
   });
 }
+
+// ── Cluster ──────────────────────────────────────────────────────────────────
+
+export async function reconcileClusters(): Promise<any> {
+  return json("/cluster/reconcile", { method: "POST" });
+}
+
+export async function getLockStatus(resource: string): Promise<any> {
+  return json(`/cluster/lock/${encodeURIComponent(resource)}`);
+}

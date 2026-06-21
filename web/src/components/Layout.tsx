@@ -5,9 +5,40 @@ import { cn } from "@/lib/utils";
 import { useConfig } from "@/lib/config";
 import { Activity, Bot, Copyright, Database, Flame, ListChecks, LogOut, Menu, Moon, MoonStar, Package, RotateCw, Settings, Sun, User, X, Zap, Server } from "lucide-react";
 import { SiGithub, SiPypi } from "@icons-pack/react-simple-icons";
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import { Link, useLocation } from "react-router-dom";
 import GitUpdateNotification from "@/components/Notifications";
+import { useSSEConnection } from "@/hooks/useSSEConnection";
+import { SSEConnectionState } from "@/lib/operations";
+import { useSSEStore } from "@/lib/operationStore";
+
+// ── SSE Connection Indicator ─────────────────────────────────────────────────
+
+function SSEConnectionIndicator() {
+  // Call hook at top level — manages the EventSource connection
+  const emptyCallback = useCallback(() => {}, []);
+  useSSEConnection("/sse/health", emptyCallback, {
+    maxRetries: 3,
+    retryDelayMs: 5000,
+  });
+
+  // Subscribe to store for real-time status updates — read directly, no local state
+  const connection = useSSEStore((s) => s.connections.get("/sse/health"));
+  const isConnected = connection?.state === SSEConnectionState.CONNECTED;
+
+  return (
+    <div
+      className="p-2 rounded-lg transition-colors"
+      title={isConnected ? "SSE Connected" : "SSE Disconnected"}
+    >
+      <div
+        className={`w-2 h-2 rounded-full ${
+          isConnected ? "bg-success" : "bg-danger"
+        }`}
+      />
+    </div>
+  );
+}
 
 const NAV = [
   { href: "/", label: "Recipes & Mods", icon: Zap },
@@ -38,6 +69,7 @@ function HeaderInner() {
 
   return (
     <div className="hidden lg:flex fixed top-4 right-4 z-50 items-center gap-1.5">
+      <SSEConnectionIndicator />
       {gitUpdateEnabled && <GitUpdateNotification />}
       <button
         onClick={doRefresh}

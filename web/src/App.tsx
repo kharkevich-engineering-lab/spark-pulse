@@ -12,6 +12,7 @@ import SettingsPage from "@/pages/SettingsPage";
 import LoginPage from "@/pages/LoginPage";
 import OciRegistryPage from "@/pages/OciRegistryPage";
 import ClusterPage from "@/pages/ClusterPage";
+import { ErrorBoundary, DefaultErrorFallback } from "@/components/ErrorBoundary";
 import { initCsrfToken } from "@/lib/api";
 
 // Initialize CSRF token from meta tag (no-op if meta tag is absent)
@@ -60,7 +61,9 @@ export default function App() {
     <BrowserRouter>
       <AuthProvider>
         <ConfigProvider>
-          <AppRoutes />
+          <ErrorBoundary fallback={<DefaultErrorFallback />}>
+            <AppRoutes />
+          </ErrorBoundary>
         </ConfigProvider>
       </AuthProvider>
     </BrowserRouter>

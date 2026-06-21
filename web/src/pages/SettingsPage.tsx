@@ -3,6 +3,7 @@ import { fetchSettings, updateSettings, fetchSecrets, saveSecrets, deleteSecret,
 import { useQuery } from "@/hooks/useQuery";
 import { Settings as SettingsIcon, Loader2, AlertCircle, Check, KeyRound, Eye, EyeOff, Trash2, Lock, Server, Clock, GitBranch, GitCommit, ArrowDownUp, Network, Radio, Wifi, WifiOff } from "lucide-react";
 import { AlertModal } from "@/components/Modal";
+import { HealthMonitorControls } from "@/components/HealthBadge";
 import { setRefresh } from "@/lib/refresh";
 
 export default function SettingsPage() {
@@ -48,6 +49,9 @@ export default function SettingsPage() {
   const [discoveryResult, setDiscoveryResult] = useState<DiscoveryResult | null>(null);
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
   const [discoveryLoading, setDiscoveryLoading] = useState(false);
+
+  // Health monitoring state
+  const [isHealthMonitoring, setIsHealthMonitoring] = useState(false);
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
   const [applyingNccl, setApplyingNccl] = useState(false);
 
@@ -259,6 +263,21 @@ export default function SettingsPage() {
             <label className="block text-sm font-medium mb-1">NCCL InfiniBand HCA</label>
             <input type="text" value={String(getNccl("ib_hca", "") || "")} onChange={(e) => setNccl("ib_hca", e.target.value || null)} className={inputCls} placeholder="auto-detect" />
             <p className="text-xs text-text-muted mt-1">InfiniBand HCA selector. E.g. GPU,mlx5_*. Leave empty for default.</p>
+          </div>
+
+          {/* ── Health Monitoring ── */}
+          <div className="pt-4 border-t border-border space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <AlertCircle size={16} className="text-primary" />
+                <h4 className="font-semibold text-sm">Health Monitoring</h4>
+              </div>
+            </div>
+            <p className="text-xs text-text-muted">Enable continuous health monitoring for deployments and clusters.</p>
+            <HealthMonitorControls
+              isMonitoring={isHealthMonitoring}
+              onToggle={() => setIsHealthMonitoring(!isHealthMonitoring)}
+            />
           </div>
 
           {/* ── Network Discovery ── */}

@@ -1,10 +1,14 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { fetchDeployments, stopDeployment, connectLogStream, runBenchmark } from "@/lib/api";
 import { useQuery } from "@/hooks/useQuery";
+import { useSSEConnection } from "@/hooks/useSSEConnection";
 import StatusBadge from "@/components/StatusBadge";
+import HealthBadge from "@/components/HealthBadge";
+import EventStreamViewer from "@/components/EventStreamViewer";
 import { ConfirmModal, AlertModal } from "@/components/Modal";
 import { Square, X, Trash2, Loader2, AlertCircle, Terminal, Flame } from "lucide-react";
 import { setRefresh } from "@/lib/refresh";
+import type { DeploymentEvent } from "@/lib/operations";
 
 export default function InferencePage() {
   const { data: deployments, loading, error, refetch } = useQuery(fetchDeployments);
@@ -18,6 +22,27 @@ export default function InferencePage() {
   const [alertModal, setAlertModal] = useState<{ title: string; message: string } | null>(null);
   const [benchmarkModal, setBenchmarkModal] = useState<{ id: string; name: string; recipeId: string; recipeName: string } | null>(null);
   const [isBenchmarking, setIsBenchmarking] = useState(false);
+
+  // SSE connection for deployment events
+  const [deploymentEvents, setDeploymentEvents] = useState<DeploymentEvent[]>([]);
+  const handleDeploymentEvent = useCallback((_event: string, data: unknown) => {
+    if (data && typeof data === "object" && "type" in data) {
+      const evt = data as Record<string, unknown>;
+      setDeploymentEvents((prev) => [
+        {
+          event_id: (evt.event_id as string) || crypto.randomUUID(),
+          timestamp: (evt.timestamp as string) || new Date().toISOString(),
+          event_type: (evt.type as any) || "unknown",
+          message: (evt.message as string) || "",
+          resource: (evt.resource as string) || "",
+          resource_type: (evt.resource_type as any) || "deployment",
+          node: evt.node as string | undefined,
+        },
+        ...prev,
+      ].slice(0, 100));
+    }
+  }, []);
+  useSSEConnection("/sse/deployments", handleDeploymentEvent);
 
   const handleBenchmark = async () => {
     if (!benchmarkModal) return;
@@ -103,6 +128,7 @@ export default function InferencePage() {
                 <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: dep.status === "running" ? "var(--color-success)" : dep.status === "error" ? "var(--color-danger)" : dep.status === "pending" ? "var(--color-warning)" : "var(--color-text-muted)" }} />
                 <div className="flex-1 min-w-0"><p className="font-medium truncate">{dep.name}</p><p className="text-xs text-text-muted">{dep.recipe_id}</p></div>
                 {dep.port && <span className="text-sm font-mono text-text-muted shrink-0">:{dep.port}</span>}
+                <HealthBadge status={dep.status === "running" ? "healthy" as any : dep.status === "error" ? "unhealthy" as any : "unknown" as any} size="sm" />
                 <StatusBadge status={dep.status} />
                 {dep.pid && <span className="text-xs font-mono text-text-muted shrink-0">PID: {dep.pid}</span>}
                 <span className="text-xs text-text-muted shrink-0">{new Date(dep.created_at).toLocaleString()}</span>
@@ -119,8 +145,16 @@ export default function InferencePage() {
                     {streaming[dep.id] ? <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />Streaming</span> : <span>Stream stopped</span>}
                     <button onClick={() => toggle(dep.id)} className="ml-auto text-primary hover:underline">Hide</button>
                   </div>
-                  <div ref={(el) => { logRef.current[dep.id] = el; }} onScroll={() => handleLogScroll(dep.id)} className="p-4 bg-bg font-mono text-sm text-text h-[calc(100vh-16rem)] overflow-auto whitespace-pre-wrap">
+                  <div ref={(el) => { logRef.current[dep.id] = el; }} onScroll={() => handleLogScroll(dep.id)} className="p-4 bg-bg font-mono text-sm text-text h-[calc(100vh-20rem)] overflow-auto whitespace-pre-wrap">
                     {(logs[dep.id] || ["No logs yet..."]).map((line, i) => <div key={i} className="leading-relaxed text-text-muted last:text-text">{line}</div>)}
+                  </div>
+                  {/* Event Stream Viewer */}
+                  <div className="border-t border-border p-4">
+                    <EventStreamViewer
+                      events={deploymentEvents.filter(e => e.resource === dep.id)}
+                      resource={dep.id}
+                      onClear={() => setDeploymentEvents(prev => prev.filter(e => e.resource !== dep.id))}
+                    />
                   </div>
                 </div>
               )}
