@@ -1,0 +1,48 @@
+[
+  {
+    "benchmark_id": "62a0afa8-ea17-47d0-810f-d147825325f0",
+    "deployment_id": "test-deployment",
+    "recipe_id": "",
+    "recipe_name": "",
+    "baseline_id": null,
+    "status": "completed",
+    "started_at": "2026-06-20T19:41:12.266116+00:00",
+    "completed_at": "2026-06-20T19:41:12.266116+00:00",
+    "params": {
+      "benchmarks": [
+        "throughput"
+      ]
+    },
+    "results": {
+      "throughput": 43.64,
+      "latency_ms": 11.87,
+      "decode_latency_ms": 6.85,
+      "gpu_memory_gb": 65.1,
+      "gpu_utilization": 90.9,
+      "prefill_speed": 309.4
+    }
+  },
+  {
+    "benchmark_id": "b3ffa26f-9610-4703-ac37-3b2a5207ee13",
+    "deployment_id": "test-deployment",
+    "recipe_id": "",
+    "recipe_name": "",
+    "baseline_id": null,
+    "status": "completed",
+    "started_at": "2026-06-20T19:41:22.842684+00:00",
+    "completed_at": "2026-06-20T19:41:22.842684+00:00",
+    "params": {
+      "benchmarks": [
+        "throughput"
+      ]
+    },
+    "results": {
+      "throughput": 45.36,
+      "latency_ms": 12.34,
+      "decode_latency_ms": 7.13,
+      "gpu_memory_gb": 67.6,
+      "gpu_utilization": 94.5,
+      "prefill_speed": 321.7
+    }
+  }
+]
