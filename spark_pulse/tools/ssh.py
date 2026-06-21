@@ -3,6 +3,8 @@
 Provides a unified interface for executing commands and copying files
 to remote nodes via SSH. The default implementation uses OpenSSH subprocess.
 
+Includes structured error classification for debugging SSH issues.
+
 Can be swapped for Paramiko, AsyncSSH, or mock implementations without
 changing orchestration code.
 """
@@ -12,9 +14,34 @@ from __future__ import annotations
 import logging
 import subprocess
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
+
+
+class SSHErrorType(str, Enum):
+    """Classification of SSH errors."""
+
+    AUTH = "auth"                    # Invalid credentials, key rejected
+    TIMEOUT = "timeout"              # Connection timed out
+    NETWORK = "network"              # Host unreachable, connection refused
+    HOST_KEY = "host_key"            # Host key verification failed
+    PERMISSION_DENIED = "permission_denied"  # Auth succeeded but command denied
+    UNKNOWN = "unknown"              # Unclassified error
+
+
+@dataclass(frozen=True, slots=True)
+class SSHError(Exception):
+    """Structured SSH error with classification."""
+
+    error_type: SSHErrorType
+    host: str
+    message: str
+    stderr: str = ""
+
+    def __str__(self) -> str:
+        return f"SSHError({self.error_type.value}: {self.host} - {self.message})"
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,10 +185,18 @@ class OpenSSHClient(SSHClient):
                 stderr=result.stderr or "",
             )
         except subprocess.TimeoutExpired:
-            return SSHResult(
-                returncode=-1,
-                stdout="",
-                stderr=f"Command timed out after {timeout}s",
+            raise SSHError(
+                error_type=SSHErrorType.TIMEOUT,
+                host=host,
+                message=f"Command '{command}' timed out after {timeout}s",
+            )
+        except subprocess.CalledProcessError as e:
+            error_type = self._classify_ssh_error(e.returncode, e.stderr)
+            raise SSHError(
+                error_type=error_type,
+                host=host,
+                message=e.stderr.decode() if isinstance(e.stderr, bytes) else str(e.stderr),
+                stderr=e.stderr.decode() if isinstance(e.stderr, bytes) else str(e.stderr),
             )
         except Exception as e:
             return SSHResult(
@@ -169,6 +204,27 @@ class OpenSSHClient(SSHClient):
                 stdout="",
                 stderr=str(e),
             )
+    
+    @staticmethod
+    def _classify_ssh_error(returncode: int, stderr: str) -> SSHErrorType:
+        """Classify SSH error based on return code and stderr."""
+        stderr_lower = stderr.lower() if stderr else ""
+        
+        if "permission denied" in stderr_lower:
+            if "publickey" in stderr_lower or "keyboard-interactive" in stderr_lower:
+                return SSHErrorType.AUTH
+            return SSHErrorType.PERMISSION_DENIED
+        
+        if "host key verification failed" in stderr_lower:
+            return SSHErrorType.HOST_KEY
+        
+        if "connection timed out" in stderr_lower or "timed out" in stderr_lower:
+            return SSHErrorType.TIMEOUT
+        
+        if "connection refused" in stderr_lower or "no route to host" in stderr_lower:
+            return SSHErrorType.NETWORK
+        
+        return SSHErrorType.UNKNOWN
 
     def copy(
         self,

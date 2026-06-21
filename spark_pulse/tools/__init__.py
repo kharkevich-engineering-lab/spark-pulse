@@ -30,6 +30,11 @@ if _sim_mode:
         ray as ray,
         parallelism as parallelism,
         cluster_health as cluster_health,
+        launch_script as launch_script,
+        health as health,
+        reconciliation as reconciliation,
+        locking as locking,
+        events as events,
     )
 else:
     from spark_pulse.tools import (
@@ -52,6 +57,11 @@ else:
         ray as ray,
         parallelism as parallelism,
         cluster_health as cluster_health,
+        launch_script as launch_script,
+        health as health,
+        reconciliation as reconciliation,
+        locking as locking,
+        events as events,
     )
 
 

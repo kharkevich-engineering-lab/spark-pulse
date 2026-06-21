@@ -328,3 +328,104 @@ export interface ClusterValidateRequest {
 export interface ClusterRollbackRequest {
   name: string;
 }
+
+// ── Launch Script Types (Phase 4) ────────────────────────────────────────────
+
+export interface LaunchScriptValidation {
+  healthy: boolean;
+  warnings: string[];
+  errors: string[];
+}
+
+export interface LaunchScriptInfo {
+  path: string;
+  command_line: string | null;
+  parallelism: { tp: number; pp: number; dp: number };
+  backend: string | null;
+  has_model_flag: boolean;
+  is_valid: boolean;
+  validation: LaunchScriptValidation | null;
+}
+
+export interface LaunchScriptResolveResult {
+  path: string;
+  exists: boolean;
+  is_file: boolean;
+}
+
+export interface PatchedScriptBundle {
+  original_script: string;
+  total_nodes: number;
+  master_addr: string;
+  master_port: number;
+  scripts: Record<number, string>;
+}
+
+export interface LaunchScriptResolveRequest {
+  path: string;
+}
+
+export interface LaunchScriptAnalyzeRequest {
+  path: string;
+}
+
+export interface LaunchScriptValidateRequest {
+  path: string;
+}
+
+export interface LaunchScriptPatchRequest {
+  path: string;
+  total_nodes: number;
+  master_addr?: string;
+  master_port?: number;
+}
+
+// ── Mod Deployment Types (Phase 4) ───────────────────────────────────────────
+
+export interface ModValidationResult {
+  healthy: boolean;
+  warnings: string[];
+  errors: string[];
+}
+
+export interface ModDeploymentResult {
+  mod_name: string;
+  target: "head" | "workers" | "all";
+  completed_nodes: string[];
+  failed_nodes: string[];
+}
+
+export interface ModRollbackResult {
+  rolled_back_nodes: string[];
+}
+
+export interface ModValidateRequest {
+  path: string;
+}
+
+export interface ModApplyRequest {
+  mod_name: string;
+  mod_path: string;
+  target: "head" | "workers" | "all";
+  cluster_state?: ClusterState;
+}
+
+export interface ModRollbackRequest {
+  mod_name: string;
+  mod_path: string;
+  target: "head" | "workers" | "all";
+  completed_nodes: string[];
+  cluster_state?: ClusterState;
+}
+
+// ── Deployment Summary (Phase 4) ─────────────────────────────────────────────
+
+export interface DeploymentSummary {
+  launch_script: string | null;
+  parallelism: { tp: number; pp: number; dp: number };
+  total_nodes: number;
+  total_gpus: number;
+  applied_mods: string[];
+  ray_enabled: boolean;
+  ray_ready: boolean;
+}

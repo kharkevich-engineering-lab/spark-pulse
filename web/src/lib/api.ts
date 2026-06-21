@@ -449,3 +449,75 @@ export async function rollbackCluster(body: ClusterRollbackRequest): Promise<Clu
     body: JSON.stringify(body),
   });
 }
+
+// ── Launch Script (Phase 4) ──────────────────────────────────────────────────
+
+import type {
+  LaunchScriptInfo,
+  LaunchScriptResolveResult,
+  LaunchScriptResolveRequest,
+  LaunchScriptAnalyzeRequest,
+  LaunchScriptValidateRequest,
+  LaunchScriptPatchRequest,
+  PatchedScriptBundle,
+} from "@/lib/types";
+
+export async function resolveLaunchScript(body: LaunchScriptResolveRequest): Promise<LaunchScriptResolveResult> {
+  return json<LaunchScriptResolveResult>("/launch-script/resolve", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function analyzeLaunchScript(body: LaunchScriptAnalyzeRequest): Promise<LaunchScriptInfo> {
+  return json<LaunchScriptInfo>("/launch-script/analyze", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function validateLaunchScript(body: LaunchScriptValidateRequest): Promise<{ healthy: boolean; warnings: string[]; errors: string[] }> {
+  return json<{ healthy: boolean; warnings: string[]; errors: string[] }>("/launch-script/validate", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function patchLaunchScript(body: LaunchScriptPatchRequest): Promise<PatchedScriptBundle> {
+  return json<PatchedScriptBundle>("/launch-script/patch", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+// ── Mod Deployment (Phase 4) ─────────────────────────────────────────────────
+
+import type {
+  ModValidationResult,
+  ModDeploymentResult,
+  ModRollbackResult,
+  ModValidateRequest,
+  ModApplyRequest,
+  ModRollbackRequest,
+} from "@/lib/types";
+
+export async function validateMod(body: ModValidateRequest): Promise<ModValidationResult> {
+  return json<ModValidationResult>("/mods/validate", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function applyMod(body: ModApplyRequest): Promise<ModDeploymentResult> {
+  return json<ModDeploymentResult>("/mods/apply", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function rollbackMod(body: ModRollbackRequest): Promise<ModRollbackResult> {
+  return json<ModRollbackResult>("/mods/rollback", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}

@@ -174,3 +174,52 @@ async def sse_git_update():
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# ── Deployment events SSE ────────────────────────────────────────────────────
+
+from spark_pulse.tools.events import EventBroadcaster, EventType
+
+# Module-level event broadcaster singleton
+_event_broadcaster: EventBroadcaster | None = None
+
+
+def _get_event_broadcaster() -> EventBroadcaster:
+    """Get or create the default event broadcaster."""
+    global _event_broadcaster
+    if _event_broadcaster is None:
+        _event_broadcaster = EventBroadcaster()
+    return _event_broadcaster
+
+
+async def deployment_events_generator() -> AsyncGenerator[str, None]:
+    """Stream deployment events via SSE.
+    
+    Subscribes to the EventBroadcaster and yields events as they arrive.
+    """
+    broadcaster = _get_event_broadcaster()
+    queue = await broadcaster.subscribe()
+    try:
+        while True:
+            event_data = await queue.get()
+            yield f"data: {json.dumps(event_data)}\n\n"
+    except asyncio.CancelledError:
+        await broadcaster.unsubscribe(queue)
+
+
+@router.get("/events/deployments")
+async def sse_deployment_events():
+    """Stream deployment lifecycle events via SSE.
+    
+    Events include cluster starting, container started, Ray ready,
+    health check results, and deployment completion.
+    """
+    return StreamingResponse(
+        deployment_events_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

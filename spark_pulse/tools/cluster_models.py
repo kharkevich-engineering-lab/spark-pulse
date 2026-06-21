@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Any, Literal
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,7 +40,13 @@ class ClusterNode:
 
 @dataclass(frozen=True, slots=True)
 class ClusterState:
-    """Complete cluster state — derived from Docker labels (source of truth)."""
+    """Complete cluster state — derived from Docker labels (source of truth).
+
+    Phase 4 additions:
+    - launch_script: resolved path of the active launch script
+    - applied_mods: list of mod names applied during deployment
+    - parallelism: parsed parallelism config (tp/pp/dp) from the script
+    """
 
     name: str
     head: ClusterNode
@@ -49,6 +55,12 @@ class ClusterState:
     ray_ready: bool = False
     created_at: datetime = field(
         default_factory=lambda: datetime.now(timezone.utc)
+    )
+    # Phase 4 additions
+    launch_script: str | None = None
+    applied_mods: list[str] = field(default_factory=list)
+    parallelism: dict[str, int] = field(
+        default_factory=lambda: {"tp": 1, "pp": 1, "dp": 1}
     )
 
     @property
@@ -72,6 +84,19 @@ class ClusterState:
     def is_running(self) -> bool:
         """Whether the entire cluster is running."""
         return all(n.is_running for n in [self.head, *self.workers])
+
+    @property
+    def deployment_summary(self) -> dict[str, Any]:
+        """Human-readable deployment summary for frontend display."""
+        return {
+            "launch_script": self.launch_script,
+            "parallelism": self.parallelism,
+            "total_nodes": self.total_nodes,
+            "total_gpus": self.total_gpus,
+            "applied_mods": self.applied_mods,
+            "ray_enabled": self.ray_enabled,
+            "ray_ready": self.ray_ready,
+        }
 
     def node_by_ip(self, ip: str) -> ClusterNode | None:
         """Look up a node by its IP address."""

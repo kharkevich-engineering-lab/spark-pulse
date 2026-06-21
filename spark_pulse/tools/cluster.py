@@ -18,6 +18,7 @@ from typing import Any, Literal
 
 from spark_pulse.tools.cluster_models import ClusterNode, ClusterState
 from spark_pulse.tools.cluster_health import validate_cluster, ValidationResult
+from spark_pulse.tools.events import EventBroadcaster, EventType
 from spark_pulse.tools.parallelism import (
     ClusterCapacity,
     NodeCapacity,
@@ -50,18 +51,21 @@ class ClusterOrchestrator:
         self,
         remote_docker: RemoteDockerService | None = None,
         ssh_client: SSHClient | None = None,
+        event_broadcaster: EventBroadcaster | None = None,
     ):
         """Initialize cluster orchestrator.
 
         Args:
             remote_docker: RemoteDockerService for container operations.
             ssh_client: SSH transport for remote operations.
+            event_broadcaster: EventBroadcaster for emitting lifecycle events.
         """
         self._docker = remote_docker or RemoteDockerService(
             ssh_client or OpenSSHClient()
         )
         self._ssh = ssh_client or OpenSSHClient()
         self._ray = RayManager(self._docker)
+        self._events = event_broadcaster or EventBroadcaster()
 
     def start_cluster(
         self,
@@ -109,6 +113,13 @@ class ClusterOrchestrator:
         started_containers: list[tuple[str, str]] = []  # [(ip, name)]
 
         try:
+            # Emit cluster starting event
+            self._events.emit_cluster_event(
+                EventType.CLUSTER_STARTING,
+                name,
+                f"Starting cluster {name} on {head_ip} + {len(worker_ips)} workers",
+            )
+
             # 1. Validate capacity
             logger.info("Validating cluster capacity for %s", name)
             # Parse parallelism from env vars or docker config
@@ -131,6 +142,13 @@ class ClusterOrchestrator:
             )
             started_containers.append((head_ip, head_name))
 
+            # Emit head container started event
+            self._events.emit_cluster_event(
+                EventType.HEAD_CONTAINER_STARTED,
+                name,
+                f"Head container started on {head_ip}",
+            )
+
             # 3. Start worker nodes
             worker_nodes: list[ClusterNode] = []
             for i, worker_ip in enumerate(worker_ips):
@@ -148,6 +166,13 @@ class ClusterOrchestrator:
                     status="running",
                     gpu_count=gpu_count,
                 ))
+
+                # Emit worker container started event
+                self._events.emit_cluster_event(
+                    EventType.WORKER_CONTAINER_STARTED,
+                    name,
+                    f"Worker {i} started on {worker_ip}",
+                )
 
             # Update head node
             head_node = ClusterNode(
@@ -169,6 +194,12 @@ class ClusterOrchestrator:
                 ray_ready = self._ray.ensure_ray_head(
                     head_name, head_ip, port=env_vars.get("RAY_PORT", 29501)
                 )
+                if ray_ready:
+                    self._events.emit_cluster_event(
+                        EventType.RAY_HEAD_READY,
+                        name,
+                        "Ray head is ready",
+                    )
 
             # 6. Ensure Ray workers
             if not no_ray:
@@ -190,8 +221,21 @@ class ClusterOrchestrator:
             )
 
             validation = validate_cluster(cluster_state, self._docker)
-            if not validation.healthy:
+            if validation.healthy:
+                self._events.emit_cluster_event(
+                    EventType.CLUSTER_HEALTHY,
+                    name,
+                    "Cluster health check passed",
+                )
+            else:
                 logger.warning("Cluster validation warnings/errors: %s", validation.errors or validation.warnings)
+
+            # Emit cluster start complete event
+            self._events.emit_cluster_event(
+                EventType.CLUSTER_START_COMPLETE,
+                name,
+                f"Cluster {name} is ready ({cluster_state.total_nodes} nodes)",
+            )
 
             logger.info("Cluster %s started successfully (%d nodes)", name, cluster_state.total_nodes)
             return cluster_state

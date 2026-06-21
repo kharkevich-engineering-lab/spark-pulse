@@ -10,12 +10,14 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 
 from spark_pulse.tools.cluster import (
     ClusterOrchestrator,
     ModDeployment,
 )
 from spark_pulse.tools.cluster_health import ValidationResult
+from spark_pulse.tools.locking import LockManager, LockType
 from spark_pulse.tools.remote_docker import RemoteDockerService
 
 logger = logging.getLogger(__name__)
@@ -24,6 +26,9 @@ router = APIRouter(prefix="/api/cluster", tags=["cluster"])
 
 # Module-level orchestrator instance (created on first use)
 _orchestrator: ClusterOrchestrator | None = None
+
+# Module-level lock manager instance
+_lock_manager = LockManager()
 
 
 def _get_orchestrator() -> ClusterOrchestrator:
@@ -51,10 +56,26 @@ def start_cluster(body: dict[str, Any]):
         mod_deployments: list[dict] — Mods to deploy (optional)
         no_ray: bool — Skip Ray startup (optional)
     """
+    name = body.get("name", "")
+    if not name:
+        raise HTTPException(status_code=400, detail="Cluster name is required")
+
+    # Acquire lock to prevent concurrent operations
+    lock_result = _lock_manager.acquire(
+        LockType.CLUSTER_START,
+        name,
+        owner="api",
+        timeout=300,
+    )
+    if not lock_result.success:
+        return JSONResponse(
+            status_code=409,
+            content={"error": lock_result.error},
+        )
+
     try:
         orchestrator = _get_orchestrator()
 
-        name = body.get("name", "")
         image = body.get("image", "")
         head_ip = body.get("head_ip", "")
         worker_ips = body.get("worker_ips", [])
@@ -107,9 +128,13 @@ def start_cluster(body: dict[str, Any]):
             "healthy": state.healthy,
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Failed to start cluster: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        _lock_manager.release(LockType.CLUSTER_START, name)
 
 
 @router.post("/stop")
@@ -119,15 +144,35 @@ def stop_cluster(body: dict[str, Any]):
     Request body:
         name: str — Cluster name
     """
+    name = body.get("name", "")
+    if not name:
+        raise HTTPException(status_code=400, detail="Cluster name is required")
+
+    # Acquire lock to prevent concurrent operations
+    lock_result = _lock_manager.acquire(
+        LockType.CLUSTER_STOP,
+        name,
+        owner="api",
+        timeout=300,
+    )
+    if not lock_result.success:
+        return JSONResponse(
+            status_code=409,
+            content={"error": lock_result.error},
+        )
+
     try:
         orchestrator = _get_orchestrator()
-        name = body.get("name", "")
         orchestrator.stop_cluster(name)
         return {"name": name, "status": "stopped"}
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Failed to stop cluster: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        _lock_manager.release(LockType.CLUSTER_STOP, name)
 
 
 @router.get("/status")
@@ -215,18 +260,38 @@ def rollback_cluster(body: dict[str, Any]):
         head_ip: str — Head node IP
         worker_ips: list[str] — Worker node IPs
     """
+    name = body.get("name", "")
+    if not name:
+        raise HTTPException(status_code=400, detail="Cluster name is required")
+
+    # Acquire lock to prevent concurrent operations
+    lock_result = _lock_manager.acquire(
+        LockType.CLUSTER_ROLLBACK,
+        name,
+        owner="api",
+        timeout=300,
+    )
+    if not lock_result.success:
+        return JSONResponse(
+            status_code=409,
+            content={"error": lock_result.error},
+        )
+
     try:
         orchestrator = _get_orchestrator()
-        name = body.get("name", "")
         head_ip = body.get("head_ip", "")
         worker_ips = body.get("worker_ips", [])
 
         orchestrator.rollback_cluster(name, head_ip, worker_ips)
         return {"name": name, "status": "rolled_back"}
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Failed to rollback cluster: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        _lock_manager.release(LockType.CLUSTER_ROLLBACK, name)
 
 
 @router.get("/list")

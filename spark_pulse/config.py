@@ -352,5 +352,20 @@ class _Config:
     def nccl_ib_hca(self) -> str | None:
         return self._data.get("nccl", {}).get("ib_hca")
 
+    @property
+    def nccl_ib_disable(self) -> bool:
+        return bool(self._data.get("nccl", {}).get("ib_disable", False))
+
+    # ── Mod Settings ───────────────────────────────────────────────────────
+
+    @property
+    def mod_network_policy(self) -> str:
+        """Get mod network access policy: allow, warn, or deny."""
+        return str(self._data.get("mod", {}).get("network_policy", "warn"))
+
+    @property
+    def nccl_ib_hca(self) -> str | None:
+        return self._data.get("nccl", {}).get("ib_hca")
+
 
 config = _Config()

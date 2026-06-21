@@ -26,6 +26,8 @@ from spark_pulse.routers import (
     docker as docker_router,
     discovery as discovery_router,
     cluster as cluster_router,
+    launch_script as launch_script_router,
+    health as health_router,
 )
 from spark_pulse.auth import AuthMiddleware, router as auth_router
 from spark_pulse.sse import router as sse_router
@@ -35,6 +37,8 @@ from spark_pulse.tools.oci_registry import (
     start_background_updater,
     stop_background_updater,
 )
+from spark_pulse.tools.reconciliation import reconcile_all
+from spark_pulse.tools.health import load_health_tracking, HealthMonitor
 from spark_pulse.version import get_version
 from spark_pulse.mcp_http import handle_mcp, MCP_PATH
 
@@ -42,6 +46,18 @@ from spark_pulse.mcp_http import handle_mcp, MCP_PATH
 
 _git_update_task: threading.Timer | None = None
 _git_update_running = False
+
+# ── Health monitor singleton ─────────────────────────────────────────────────
+
+_health_monitor: HealthMonitor | None = None
+
+
+def _get_health_monitor() -> HealthMonitor:
+    """Get or create the default health monitor."""
+    global _health_monitor
+    if _health_monitor is None:
+        _health_monitor = HealthMonitor(check_interval=30.0)
+    return _health_monitor
 
 
 def _git_update_loop():
@@ -159,6 +175,35 @@ async def lifespan(app: FastAPI):
     # Start OCI background update checker
     start_background_updater()
 
+    # Run startup reconciliation to recover deployment/cluster state
+    try:
+        result = reconcile_all()
+        print(
+            f"Reconciliation complete: {result.clusters_reconciled} clusters, "
+            f"{result.deployments_reconciled} deployments, "
+            f"{result.orphaned_containers_cleaned} orphans cleaned"
+        )
+        if result.errors:
+            for err in result.errors:
+                print(f"Reconciliation warning: {err}")
+    except Exception as e:
+        print(f"Warning: reconciliation failed: {e}")
+
+    # Restore health monitoring tracking from disk
+    try:
+        monitor = _get_health_monitor()
+        tracked = load_health_tracking()
+        for dep in tracked.get("deployments", []):
+            monitor.track_deployment(dep["id"], dep.get("info", {}))
+        for cl in tracked.get("clusters", []):
+            monitor.track_cluster(cl["name"], cl.get("info", {}))
+        n_deps = len(tracked.get("deployments", []))
+        n_clus = len(tracked.get("clusters", []))
+        if n_deps or n_clus:
+            print(f"Restored {n_deps} deployments, {n_clus} clusters from health tracking")
+    except Exception as e:
+        print(f"Warning: health tracking restore failed: {e}")
+
     yield
 
     # Cleanup on shutdown
@@ -212,6 +257,8 @@ def create_app() -> FastAPI:
     app.include_router(docker_router.router)
     app.include_router(discovery_router.router)
     app.include_router(cluster_router.router)
+    app.include_router(launch_script_router.router)
+    app.include_router(health_router.router)
     app.include_router(auth_router)
     app.include_router(sse_router)
 
