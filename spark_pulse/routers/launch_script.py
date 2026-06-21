@@ -130,8 +130,7 @@ def patch_launch_script(req: dict[str, Any]) -> dict[str, Any]:
             "master_addr": bundle.master_addr,
             "master_port": bundle.master_port,
             "scripts": {
-                str(rank): str(script)
-                for rank, script in bundle.scripts.items()
+                str(rank): str(script) for rank, script in bundle.scripts.items()
             },
         }
 

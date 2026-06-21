@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
 
 from spark_pulse.mock.cluster import MockClusterOrchestrator
-from spark_pulse.tools.cluster import ClusterOrchestrator, ModDeployment
-from spark_pulse.tools.cluster_models import ClusterState
+from spark_pulse.tools.cluster import ModDeployment
 
 
 class TestMockClusterOrchestrator:
@@ -84,8 +82,12 @@ class TestMockClusterOrchestrator:
     def test_executed_operations_tracked(self):
         orchestrator = MockClusterOrchestrator()
         orchestrator.start_cluster(
-            name="test", image="test", head_ip="10.0.0.1",
-            worker_ips=[], env_vars={}, docker_config={},
+            name="test",
+            image="test",
+            head_ip="10.0.0.1",
+            worker_ips=[],
+            env_vars={},
+            docker_config={},
         )
         orchestrator.stop_cluster("test")
 
@@ -107,8 +109,12 @@ class TestMockClusterOrchestrator:
     def test_reset_clears_state(self):
         orchestrator = MockClusterOrchestrator()
         orchestrator.start_cluster(
-            name="test", image="test", head_ip="10.0.0.1",
-            worker_ips=[], env_vars={}, docker_config={},
+            name="test",
+            image="test",
+            head_ip="10.0.0.1",
+            worker_ips=[],
+            env_vars={},
+            docker_config={},
         )
         assert len(orchestrator.clusters) == 1
 

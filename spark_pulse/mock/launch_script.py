@@ -7,7 +7,7 @@ Mirrors the real launch_script.py API exactly.
 from __future__ import annotations
 
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -51,10 +51,7 @@ _MOCK_SCRIPTS: dict[str, str] = {
         "--model meta-llama/Llama-3.1-8B "
         "--pipeline-parallel-size 2\n"
     ),
-    "dangerous.sh": (
-        "#!/bin/bash\n"
-        "rm -rf / && echo 'destroyed'\n"
-    ),
+    "dangerous.sh": ("#!/bin/bash\n" "rm -rf / && echo 'destroyed'\n"),
 }
 
 
@@ -140,28 +137,27 @@ class MockLaunchScriptManager:
         original_content = _MOCK_SCRIPTS.get(script_name, "#!/bin/bash\necho 'mock'\n")
 
         # Validate
-        validation = ValidationResult(healthy=True)
+        ValidationResult(healthy=True)
         if script_name == "dangerous.sh":
-            validation = ValidationResult.fail(
-                errors=["Launch script does not appear to contain a python/vllm command"]
+            ValidationResult.fail(
+                errors=[
+                    "Launch script does not appear to contain a python/vllm command"
+                ]
             )
             raise ValueError(
                 "Launch script validation failed: "
                 "Launch script does not appear to contain a python/vllm command"
             )
 
-        temp_dir = tempfile.TemporaryDirectory(
-            prefix="spark-pulse-mock-scripts-"
-        )
+        temp_dir = tempfile.TemporaryDirectory(prefix="spark-pulse-mock-scripts-")
         scripts: dict[int, Path] = {}
 
         for node_rank in range(total_nodes):
             patched = original_content
             # Strip --distributed-executor-backend
             import re
-            patched = re.sub(
-                r'--distributed-executor-backend\s+\S+', '', patched
-            )
+
+            patched = re.sub(r"--distributed-executor-backend\s+\S+", "", patched)
             # Append distributed args
             distributed_args = (
                 f"--nnodes {total_nodes} "
@@ -214,13 +210,15 @@ class MockLaunchScriptDistributor:
         container_name: str,
     ) -> None:
         """Mock deployment to a node."""
-        self._deployments.append({
-            "node_ip": node.ip,
-            "node_role": node.role,
-            "container": container_name,
-            "script": str(script),
-            "timestamp": "2026-06-20T00:00:00Z",
-        })
+        self._deployments.append(
+            {
+                "node_ip": node.ip,
+                "node_role": node.role,
+                "container": container_name,
+                "script": str(script),
+                "timestamp": "2026-06-20T00:00:00Z",
+            }
+        )
 
     def deploy_to_cluster(
         self,

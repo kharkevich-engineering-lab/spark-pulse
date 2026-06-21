@@ -16,9 +16,7 @@ from spark_pulse.tools.cluster import (
     ClusterOrchestrator,
     ModDeployment,
 )
-from spark_pulse.tools.cluster_health import ValidationResult
 from spark_pulse.tools.locking import LockManager, LockType
-from spark_pulse.tools.remote_docker import RemoteDockerService
 
 logger = logging.getLogger(__name__)
 
@@ -229,15 +227,18 @@ def validate_cluster(body: dict[str, Any]):
         name = body.get("name", "")
         state = orchestrator.get_cluster_status(name)
 
-        validation = orchestrator._docker is not None and hasattr(
-            orchestrator._docker,
-            "_local",
-        ) and not (
-            state is not None
+        validation = (
+            orchestrator._docker is not None
+            and hasattr(
+                orchestrator._docker,
+                "_local",
+            )
+            and not (state is not None)
         )
 
         # Use the remote_docker from orchestrator
         from spark_pulse.tools.cluster_health import validate_cluster as _validate
+
         validation = _validate(state, orchestrator._docker)
 
         return {
@@ -297,7 +298,7 @@ def rollback_cluster(body: dict[str, Any]):
 @router.get("/list")
 def list_clusters():
     """List all known clusters by scanning Docker labels.
-    
+
     Returns a list of all cluster states found via container labels.
     """
     try:
@@ -306,7 +307,7 @@ def list_clusters():
         all_containers = orchestrator._docker.list_managed_containers(
             "", {"spark-pulse.cluster": ""}
         )
-        
+
         # Group by cluster name
         clusters: dict[str, list] = {}
         for container in all_containers:
@@ -316,40 +317,51 @@ def list_clusters():
                 continue
             if cluster_name not in clusters:
                 clusters[cluster_name] = []
-            clusters[cluster_name].append({
-                "name": container.name,
-                "role": labels.get("spark-pulse.role", "unknown"),
-                "status": container.status or "stopped",
-                "ip": labels.get("spark-pulse.head_ip", ""),
-            })
-        
+            clusters[cluster_name].append(
+                {
+                    "name": container.name,
+                    "role": labels.get("spark-pulse.role", "unknown"),
+                    "status": container.status or "stopped",
+                    "ip": labels.get("spark-pulse.head_ip", ""),
+                }
+            )
+
         result = []
         for name, nodes in clusters.items():
             head = next((n for n in nodes if n["role"] == "head"), None)
             workers = [n for n in nodes if n["role"] == "worker"]
             if head:
-                result.append({
-                    "name": name,
-                    "head": {
-                        "ip": head.get("ip", ""),
-                        "container": head["name"],
-                        "status": "running" if "running" in head["status"] else "stopped",
+                result.append(
+                    {
+                        "name": name,
+                        "head": {
+                            "ip": head.get("ip", ""),
+                            "container": head["name"],
+                            "status": (
+                                "running" if "running" in head["status"] else "stopped"
+                            ),
+                            "ray_ready": False,
+                            "gpu_count": 0,
+                        },
+                        "workers": [
+                            {
+                                "ip": w.get("ip", ""),
+                                "container": w["name"],
+                                "status": (
+                                    "running" if "running" in w["status"] else "stopped"
+                                ),
+                                "ray_ready": False,
+                                "gpu_count": 0,
+                            }
+                            for w in workers
+                        ],
+                        "ray_enabled": True,
                         "ray_ready": False,
-                        "gpu_count": 0,
-                    },
-                    "workers": [{
-                        "ip": w.get("ip", ""),
-                        "container": w["name"],
-                        "status": "running" if "running" in w["status"] else "stopped",
-                        "ray_ready": False,
-                        "gpu_count": 0,
-                    } for w in workers],
-                    "ray_enabled": True,
-                    "ray_ready": False,
-                    "total_nodes": 1 + len(workers),
-                    "healthy": all("running" in n["status"] for n in nodes),
-                })
-        
+                        "total_nodes": 1 + len(workers),
+                        "healthy": all("running" in n["status"] for n in nodes),
+                    }
+                )
+
         return result
 
     except Exception as e:

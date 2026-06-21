@@ -28,7 +28,7 @@ _HEALTH_TRACKING_FILE = Path.home() / ".config" / "spark-pulse" / "health_tracki
 
 def save_health_tracking(tracked: dict[str, dict]) -> None:
     """Persist tracked clusters/deployments to disk.
-    
+
     Format: {"deployments": [...], "clusters": [...]}
     """
     _HEALTH_TRACKING_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -53,41 +53,49 @@ def load_health_tracking() -> dict[str, list]:
         return {"deployments": [], "clusters": []}
 
 
-def _retry_with_backoff(func: Any, *args: Any, max_retries: int = MAX_RETRIES, **kwargs: Any) -> Any:
+def _retry_with_backoff(
+    func: Any, *args: Any, max_retries: int = MAX_RETRIES, **kwargs: Any
+) -> Any:
     """Execute a function with exponential backoff retry logic.
-    
+
     Args:
         func: Function to execute
         *args: Positional arguments for the function
         max_retries: Maximum number of retry attempts
         **kwargs: Keyword arguments for the function
-    
+
     Returns:
         Result from the function
-    
+
     Raises:
         Exception: The last exception if all retries fail
     """
     last_exception: Exception | None = None
-    
+
     for attempt in range(max_retries):
         try:
             return func(*args, **kwargs)
         except Exception as e:
             last_exception = e
             if attempt < max_retries - 1:
-                delay = min(RETRY_BASE_DELAY * (2 ** attempt), RETRY_MAX_DELAY)
+                delay = min(RETRY_BASE_DELAY * (2**attempt), RETRY_MAX_DELAY)
                 logger.warning(
                     "Health check attempt %d/%d failed for %s: %s. Retrying in %.1fs...",
-                    attempt + 1, max_retries, func.__name__, e, delay,
+                    attempt + 1,
+                    max_retries,
+                    func.__name__,
+                    e,
+                    delay,
                 )
                 time.sleep(delay)
             else:
                 logger.error(
                     "Health check failed after %d attempts for %s: %s",
-                    max_retries, func.__name__, e,
+                    max_retries,
+                    func.__name__,
+                    e,
                 )
-    
+
     if last_exception:
         raise last_exception
     raise RuntimeError("Unexpected retry failure")
@@ -102,7 +110,9 @@ class DeploymentHealth:
     ray_status: str = "unknown"  # ready, not_ready, error, n/a
     process_status: str = "unknown"  # alive, dead, unknown
     error: str | None = None
-    checked_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    checked_at: str = field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
 
 
 @dataclass(frozen=True)
@@ -116,7 +126,9 @@ class ClusterHealth:
     ray_ready: bool = False
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
-    checked_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    checked_at: str = field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
 
 
 class HealthMonitor:
@@ -157,7 +169,9 @@ class HealthMonitor:
             self._thread = None
         logger.info("Health monitor stopped")
 
-    def track_deployment(self, deployment_id: str, deployment_info: dict[str, Any]) -> None:
+    def track_deployment(
+        self, deployment_id: str, deployment_info: dict[str, Any]
+    ) -> None:
         """Add a deployment to health monitoring."""
         with self._lock:
             self._tracked[deployment_id] = {
@@ -180,25 +194,27 @@ class HealthMonitor:
         with self._lock:
             self._tracked.pop(identifier, None)
         self._persist_state()
-    
+
     def _persist_state(self) -> None:
         """Convert in-memory tracking to persisted format and save."""
         tracked = self._persist_state_dict()
         save_health_tracking(tracked)
-    
+
     def _persist_state_dict(self) -> dict[str, list]:
         """Convert in-memory tracking to persisted format."""
         return {
             "deployments": [
-                {"id": k, **v} for k, v in self._tracked.items()
+                {"id": k, **v}
+                for k, v in self._tracked.items()
                 if v.get("type") == "deployment"
             ],
             "clusters": [
-                {"name": k, **v} for k, v in self._tracked.items()
+                {"name": k, **v}
+                for k, v in self._tracked.items()
                 if v.get("type") == "cluster"
             ],
         }
-    
+
     @classmethod
     def restore_from_persistence(cls) -> dict[str, list]:
         """Load and return persisted tracking state."""
@@ -231,7 +247,11 @@ class HealthMonitor:
                         data={
                             "type": data["type"],
                             "id": identifier,
-                            "health": health.__dict__ if hasattr(health, "__dict__") else health,
+                            "health": (
+                                health.__dict__
+                                if hasattr(health, "__dict__")
+                                else health
+                            ),
                         },
                     )
             except Exception as e:
@@ -243,7 +263,7 @@ class HealthMonitor:
         deployment_info: dict[str, Any],
     ) -> DeploymentHealth:
         """Check health of a solo deployment."""
-        from spark_pulse.tools import docker, deployments
+        from spark_pulse.tools import docker
 
         try:
             docker_service = docker.DockerService()
@@ -253,7 +273,9 @@ class HealthMonitor:
                 status = docker_service.get_container_status(
                     name=container_name,
                 )
-                container_status = status.get("status", "unknown") if status else "unknown"
+                container_status = (
+                    status.get("status", "unknown") if status else "unknown"
+                )
             else:
                 container_status = "unknown"
 

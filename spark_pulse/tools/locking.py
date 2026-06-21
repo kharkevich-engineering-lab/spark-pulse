@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
@@ -194,8 +194,7 @@ class LockManager:
         """
         now = datetime.now(timezone.utc)
         expired_keys = [
-            key for key, info in self._locks.items()
-            if now >= info.expires_at
+            key for key, info in self._locks.items() if now >= info.expires_at
         ]
 
         with self._lock:
@@ -215,10 +214,7 @@ class LockManager:
         """
         now = datetime.now(timezone.utc)
         with self._lock:
-            return [
-                info for info in self._locks.values()
-                if now < info.expires_at
-            ]
+            return [info for info in self._locks.values() if now < info.expires_at]
 
     @staticmethod
     def _make_key(lock_type: LockType, resource: str) -> str:

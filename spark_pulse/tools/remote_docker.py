@@ -10,17 +10,12 @@ from __future__ import annotations
 
 import json
 import logging
-import subprocess
-from dataclasses import dataclass, asdict
-from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any
 
 from spark_pulse.tools.ssh import SSHClient, OpenSSHClient, SSHResult
 from spark_pulse.tools.docker import (
     DockerService,
     ContainerInfo,
-    ContainerMetadata,
-    _LABEL_PREFIX,
 )
 
 logger = logging.getLogger(__name__)
@@ -105,10 +100,12 @@ class RemoteDockerService:
         if docker_config.get("memory_limit_gb"):
             cmd_parts.extend(["--memory", f"{docker_config['memory_limit_gb']}g"])
         if docker_config.get("memory_swap_limit_gb"):
-            cmd_parts.extend([
-                "--memory-swap",
-                f"{docker_config['memory_swap_limit_gb']}g",
-            ])
+            cmd_parts.extend(
+                [
+                    "--memory-swap",
+                    f"{docker_config['memory_swap_limit_gb']}g",
+                ]
+            )
         if docker_config.get("pids_limit"):
             cmd_parts.extend(["--pids-limit", str(docker_config["pids_limit"])])
         if docker_config.get("shm_size_gb"):
@@ -170,7 +167,9 @@ class RemoteDockerService:
             host, f"docker stop -t {timeout} {name}", timeout=timeout + 10
         )
         if not result.ok:
-            logger.warning("Failed to stop container %s on %s: %s", name, host, result.stderr)
+            logger.warning(
+                "Failed to stop container %s on %s: %s", name, host, result.stderr
+            )
 
     def exec_container(
         self,
@@ -274,13 +273,15 @@ class RemoteDockerService:
                 continue
             try:
                 info = json.loads(line.strip())
-                containers.append(ContainerInfo(
-                    container_id=info.get("ID", ""),
-                    name=info.get("Names", ""),
-                    image=info.get("Image", ""),
-                    status=info.get("Status", ""),
-                    labels=labels or {},
-                ))
+                containers.append(
+                    ContainerInfo(
+                        container_id=info.get("ID", ""),
+                        name=info.get("Names", ""),
+                        image=info.get("Image", ""),
+                        status=info.get("Status", ""),
+                        labels=labels or {},
+                    )
+                )
             except json.JSONDecodeError:
                 continue
 

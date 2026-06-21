@@ -9,9 +9,9 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any
 
-from spark_pulse.tools.docker import ContainerInfo, ContainerMetadata, _LABEL_PREFIX
+from spark_pulse.tools.docker import ContainerInfo
 
 
 @dataclass
@@ -58,15 +58,17 @@ class MockRemoteDockerService:
         **kwargs,
     ) -> str:
         """Run container on local or remote node (mocked)."""
-        self._executed_commands.append({
-            "action": "run_container",
-            "host": host,
-            "image": image,
-            "name": name,
-            "env_vars": env_vars,
-            "docker_config": docker_config,
-            "labels": labels,
-        })
+        self._executed_commands.append(
+            {
+                "action": "run_container",
+                "host": host,
+                "image": image,
+                "name": name,
+                "env_vars": env_vars,
+                "docker_config": docker_config,
+                "labels": labels,
+            }
+        )
 
         container = MockRemoteContainer(
             name=name,
@@ -85,12 +87,14 @@ class MockRemoteDockerService:
         timeout: int = 10,
     ) -> None:
         """Stop container on local or remote node (mocked)."""
-        self._executed_commands.append({
-            "action": "stop_container",
-            "host": host,
-            "name": name,
-            "timeout": timeout,
-        })
+        self._executed_commands.append(
+            {
+                "action": "stop_container",
+                "host": host,
+                "name": name,
+                "timeout": timeout,
+            }
+        )
 
         if name in self._containers:
             self._containers[name].status = "exited"
@@ -103,13 +107,15 @@ class MockRemoteDockerService:
         timeout: int = 30,
     ) -> dict[str, Any]:
         """Execute command inside container (mocked)."""
-        self._executed_commands.append({
-            "action": "exec_container",
-            "host": host,
-            "container": container,
-            "command": command,
-            "timeout": timeout,
-        })
+        self._executed_commands.append(
+            {
+                "action": "exec_container",
+                "host": host,
+                "container": container,
+                "command": command,
+                "timeout": timeout,
+            }
+        )
 
         # Return mock responses based on command
         cmd_str = " ".join(command)
@@ -164,35 +170,38 @@ class MockRemoteDockerService:
         labels: dict[str, str] | None = None,
     ) -> list[ContainerInfo]:
         """List containers matching labels (mocked)."""
-        self._executed_commands.append({
-            "action": "list_managed_containers",
-            "host": host,
-            "labels": labels,
-        })
+        self._executed_commands.append(
+            {
+                "action": "list_managed_containers",
+                "host": host,
+                "labels": labels,
+            }
+        )
 
         results = []
         for container in self._containers.values():
             if labels:
                 # Check if all filter labels match
-                if all(
-                    container.labels.get(k) == v
-                    for k, v in labels.items()
-                ):
-                    results.append(ContainerInfo(
+                if all(container.labels.get(k) == v for k, v in labels.items()):
+                    results.append(
+                        ContainerInfo(
+                            container_id=container.id,
+                            name=container.name,
+                            image=container.image,
+                            status=container.status,
+                            labels=container.labels,
+                        )
+                    )
+            else:
+                results.append(
+                    ContainerInfo(
                         container_id=container.id,
                         name=container.name,
                         image=container.image,
                         status=container.status,
                         labels=container.labels,
-                    ))
-            else:
-                results.append(ContainerInfo(
-                    container_id=container.id,
-                    name=container.name,
-                    image=container.image,
-                    status=container.status,
-                    labels=container.labels,
-                ))
+                    )
+                )
 
         return results
 

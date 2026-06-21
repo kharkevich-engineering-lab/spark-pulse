@@ -12,7 +12,6 @@ from typing import Any, Literal
 
 from spark_pulse.tools.launch_script import ValidationResult
 
-
 # Simulated mod directory structure
 _MODS: list[dict[str, Any]] = [
     {
@@ -87,26 +86,20 @@ def validate_mod_content(mod_path: Path) -> ValidationResult:
     # Simulate dangerous mod detection
     if "dangerous" in mod_name.lower():
         return ValidationResult.fail(
-            errors=[
-                "Dangerous pattern detected in run.sh: rm\\s+-rf\\s+/"
-            ],
+            errors=["Dangerous pattern detected in run.sh: rm\\s+-rf\\s+/"],
             warnings=["run.sh uses sudo"],
         )
 
     # Simulate size limit exceeded
     if "oversized" in mod_name.lower():
         return ValidationResult.fail(
-            errors=[
-                "Mod exceeds maximum size 52428800 bytes"
-            ],
+            errors=["Mod exceeds maximum size 52428800 bytes"],
         )
 
     # Simulate zip bomb
     if "zipbomb" in mod_name.lower():
         return ValidationResult.fail(
-            errors=[
-                "Possible zip bomb: compression ratio 15.3x"
-            ],
+            errors=["Possible zip bomb: compression ratio 15.3x"],
         )
 
     # Valid mod with optional warnings

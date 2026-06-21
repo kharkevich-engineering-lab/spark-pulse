@@ -11,12 +11,11 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
+from spark_pulse.config import config
 from spark_pulse.tools import is_simulation
 from spark_pulse.tools.docker import (
-    ContainerInfo,
     ContainerMetadata,
     DockerService,
-    get_container_by_deployment,
     get_container_status,
     list_managed_containers,
     run_container,
@@ -230,8 +229,9 @@ def get_container_logs(name: str, tail: int = 100):
         if is_simulation():
             return {
                 "logs": [
-                    f"[sim] Line {i}: Container {name} log entry",
-                ] * min(tail, 10),
+                    f"[sim] Line {idx}: Container {name} log entry"
+                    for idx in range(min(tail, 10))
+                ],
             }
 
         service = DockerService()

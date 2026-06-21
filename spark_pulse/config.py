@@ -330,11 +330,14 @@ class _Config:
 
     @property
     def docker_cache_dirs(self) -> list[str]:
-        return self._data.get("docker", {}).get("cache_dirs", [
-            "~/.cache/vllm",
-            "~/.cache/flashinfer",
-            "~/.triton",
-        ])
+        return self._data.get("docker", {}).get(
+            "cache_dirs",
+            [
+                "~/.cache/vllm",
+                "~/.cache/flashinfer",
+                "~/.triton",
+            ],
+        )
 
     @property
     def docker_keep_entrypoint(self) -> bool:
@@ -362,10 +365,6 @@ class _Config:
     def mod_network_policy(self) -> str:
         """Get mod network access policy: allow, warn, or deny."""
         return str(self._data.get("mod", {}).get("network_policy", "warn"))
-
-    @property
-    def nccl_ib_hca(self) -> str | None:
-        return self._data.get("nccl", {}).get("ib_hca")
 
 
 config = _Config()

@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
-import pytest
 
 from spark_pulse.tools.mods import (
     ModDeployment,
@@ -139,11 +136,25 @@ class MockRemoteDocker:
     def __init__(self):
         self.calls: list[dict] = []
 
-    def exec_container(self, host: str, container: str, command: list[str], timeout: int = 30) -> None:
-        self.calls.append({"type": "exec", "host": host, "container": container, "command": command})
+    def exec_container(
+        self, host: str, container: str, command: list[str], timeout: int = 30
+    ) -> None:
+        self.calls.append(
+            {"type": "exec", "host": host, "container": container, "command": command}
+        )
 
-    def copy_to_container(self, host: str, container: str, local_path: str, remote_path: str) -> None:
-        self.calls.append({"type": "copy", "host": host, "container": container, "local": local_path, "remote": remote_path})
+    def copy_to_container(
+        self, host: str, container: str, local_path: str, remote_path: str
+    ) -> None:
+        self.calls.append(
+            {
+                "type": "copy",
+                "host": host,
+                "container": container,
+                "local": local_path,
+                "remote": remote_path,
+            }
+        )
 
 
 class TestModOrchestrator:

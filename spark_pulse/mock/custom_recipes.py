@@ -144,7 +144,10 @@ def get_customized_recipe(
     # Merge defaults (user overrides original defaults)
     custom_defaults = customization.get("defaults")
     if custom_defaults:
-        recipe = {**recipe, "defaults": {**recipe.get("defaults", {}), **custom_defaults}}
+        recipe = {
+            **recipe,
+            "defaults": {**recipe.get("defaults", {}), **custom_defaults},
+        }
 
     # Direct field overrides
     for field in ("command", "env", "build_args", "container", "model"):

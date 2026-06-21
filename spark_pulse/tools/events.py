@@ -7,7 +7,6 @@ deployment progress tracking in the frontend.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -53,9 +52,7 @@ class DeploymentEvent:
     """Structured deployment event."""
 
     event_type: EventType
-    timestamp: datetime = field(
-        default_factory=lambda: datetime.now(timezone.utc)
-    )
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     resource: str = ""  # cluster name or deployment id
     resource_type: str = ""  # "cluster" or "deployment"
     message: str = ""
@@ -123,13 +120,15 @@ class EventBroadcaster:
         metadata: dict[str, Any] | None = None,
     ) -> None:
         """Convenience method for cluster events."""
-        await self.emit(DeploymentEvent(
-            event_type=event_type,
-            resource=cluster_name,
-            resource_type="cluster",
-            message=message,
-            metadata=metadata or {},
-        ))
+        await self.emit(
+            DeploymentEvent(
+                event_type=event_type,
+                resource=cluster_name,
+                resource_type="cluster",
+                message=message,
+                metadata=metadata or {},
+            )
+        )
 
     async def emit_deployment_event(
         self,
@@ -139,13 +138,15 @@ class EventBroadcaster:
         metadata: dict[str, Any] | None = None,
     ) -> None:
         """Convenience method for deployment events."""
-        await self.emit(DeploymentEvent(
-            event_type=event_type,
-            resource=deployment_id,
-            resource_type="deployment",
-            message=message,
-            metadata=metadata or {},
-        ))
+        await self.emit(
+            DeploymentEvent(
+                event_type=event_type,
+                resource=deployment_id,
+                resource_type="deployment",
+                message=message,
+                metadata=metadata or {},
+            )
+        )
 
     @property
     def subscriber_count(self) -> int:

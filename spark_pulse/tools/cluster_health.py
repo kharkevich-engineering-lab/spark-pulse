@@ -7,11 +7,9 @@ comprehensive health checks to prevent silent failures.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
 from spark_pulse.tools.cluster_models import ClusterState
 from spark_pulse.tools.remote_docker import RemoteDockerService
-from spark_pulse.tools.ssh import SSHResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,7 +88,8 @@ def validate_cluster(
     # Check Ray on head
     if cluster_state.ray_enabled:
         head_status = remote_docker.exec_container(
-            "", cluster_state.head.container_name,
+            "",
+            cluster_state.head.container_name,
             ["ray", "status"],
             timeout=10,
         )
@@ -100,7 +99,8 @@ def validate_cluster(
         # Check Ray on each worker
         for worker in cluster_state.workers:
             worker_status = remote_docker.exec_container(
-                "", worker.container_name,
+                "",
+                worker.container_name,
                 ["ray", "status"],
                 timeout=10,
             )
@@ -112,7 +112,8 @@ def validate_cluster(
     # Check GPU accessibility on all nodes
     for node in all_nodes:
         gpu_check = remote_docker.exec_container(
-            "", node.container_name,
+            "",
+            node.container_name,
             ["nvidia-smi", "--query-gpu=count", "--format=csv,noheader"],
             timeout=10,
         )
@@ -125,7 +126,8 @@ def validate_cluster(
     nccl_vars = {}
     for node in all_nodes:
         nccl_check = remote_docker.exec_container(
-            "", node.container_name,
+            "",
+            node.container_name,
             ["env"],
             timeout=10,
         )

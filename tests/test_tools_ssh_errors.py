@@ -13,23 +13,28 @@ from spark_pulse.tools.ssh import (
 
 
 class TestSSHErrorClassification:
-    @pytest.mark.parametrize("stderr,expected", [
-        ("Permission denied (publickey).", SSHErrorType.AUTH),
-        ("Permission denied (keyboard-interactive).", SSHErrorType.AUTH),
-        ("Permission denied (other).", SSHErrorType.PERMISSION_DENIED),
-        ("Host key verification failed.", SSHErrorType.HOST_KEY),
-        ("Connection timed out.", SSHErrorType.TIMEOUT),
-        ("Connection refused.", SSHErrorType.NETWORK),
-        ("No route to host.", SSHErrorType.NETWORK),
-        ("Some unknown error.", SSHErrorType.UNKNOWN),
-    ])
+    @pytest.mark.parametrize(
+        "stderr,expected",
+        [
+            ("Permission denied (publickey).", SSHErrorType.AUTH),
+            ("Permission denied (keyboard-interactive).", SSHErrorType.AUTH),
+            ("Permission denied (other).", SSHErrorType.PERMISSION_DENIED),
+            ("Host key verification failed.", SSHErrorType.HOST_KEY),
+            ("Connection timed out.", SSHErrorType.TIMEOUT),
+            ("Connection refused.", SSHErrorType.NETWORK),
+            ("No route to host.", SSHErrorType.NETWORK),
+            ("Some unknown error.", SSHErrorType.UNKNOWN),
+        ],
+    )
     def test_classify_ssh_error(self, stderr, expected):
         result = OpenSSHClient._classify_ssh_error(255, stderr)
         assert result == expected
 
     def test_case_insensitive(self):
         # Should match regardless of case
-        result = OpenSSHClient._classify_ssh_error(255, "PERMISSION DENIED (PUBLICKEY).")
+        result = OpenSSHClient._classify_ssh_error(
+            255, "PERMISSION DENIED (PUBLICKEY)."
+        )
         assert result == SSHErrorType.AUTH
 
     def test_empty_stderr(self):

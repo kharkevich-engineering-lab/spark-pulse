@@ -6,22 +6,13 @@ real Docker, SSH, or Ray access.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from spark_pulse.mock.cluster_health import ValidationResult
-from spark_pulse.mock.parallelism import (
-    ClusterCapacity as MockClusterCapacity,
-    NodeCapacity as MockNodeCapacity,
-    parse_parallelism as mock_parse_parallelism,
-    validate_cluster_capacity as mock_validate_cluster_capacity,
-)
 from spark_pulse.mock.ray import MockRayManager
 from spark_pulse.mock.remote_docker import MockRemoteDockerService
 from spark_pulse.tools.cluster_models import ClusterNode, ClusterState
-from spark_pulse.tools.remote_docker import RemoteDockerService
-from spark_pulse.tools.ssh import SSHClient
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,13 +65,15 @@ class MockClusterOrchestrator:
         no_ray: bool = False,
     ) -> ClusterState:
         """Start cluster (mocked)."""
-        self._executed_operations.append({
-            "action": "start_cluster",
-            "name": name,
-            "image": image,
-            "head_ip": head_ip,
-            "worker_ips": worker_ips,
-        })
+        self._executed_operations.append(
+            {
+                "action": "start_cluster",
+                "name": name,
+                "image": image,
+                "head_ip": head_ip,
+                "worker_ips": worker_ips,
+            }
+        )
 
         gpu_count = docker_config.get("gpu_count", 8)
         head_node = ClusterNode(
@@ -94,14 +87,16 @@ class MockClusterOrchestrator:
 
         worker_nodes = []
         for i, worker_ip in enumerate(worker_ips):
-            worker_nodes.append(ClusterNode(
-                ip=worker_ip,
-                role="worker",
-                container_name=f"{name}-worker-{i}",
-                status="running" if self._scenario != "failed" else "error",
-                gpu_count=gpu_count,
-                ray_ready=not no_ray and self._ray_ready,
-            ))
+            worker_nodes.append(
+                ClusterNode(
+                    ip=worker_ip,
+                    role="worker",
+                    container_name=f"{name}-worker-{i}",
+                    status="running" if self._scenario != "failed" else "error",
+                    gpu_count=gpu_count,
+                    ray_ready=not no_ray and self._ray_ready,
+                )
+            )
 
         cluster_state = ClusterState(
             name=name,
@@ -122,19 +117,23 @@ class MockClusterOrchestrator:
         worker_ips: list[str],
     ) -> None:
         """Rollback cluster (mocked)."""
-        self._executed_operations.append({
-            "action": "rollback_cluster",
-            "name": name,
-            "head_ip": head_ip,
-            "worker_ips": worker_ips,
-        })
+        self._executed_operations.append(
+            {
+                "action": "rollback_cluster",
+                "name": name,
+                "head_ip": head_ip,
+                "worker_ips": worker_ips,
+            }
+        )
 
     def stop_cluster(self, name: str) -> None:
         """Stop cluster (mocked)."""
-        self._executed_operations.append({
-            "action": "stop_cluster",
-            "name": name,
-        })
+        self._executed_operations.append(
+            {
+                "action": "stop_cluster",
+                "name": name,
+            }
+        )
 
         if name in self._clusters:
             # Create new state with stopped nodes (ClusterNode is frozen)
@@ -169,10 +168,12 @@ class MockClusterOrchestrator:
 
     def get_cluster_status(self, name: str) -> ClusterState:
         """Get cluster status (mocked)."""
-        self._executed_operations.append({
-            "action": "get_cluster_status",
-            "name": name,
-        })
+        self._executed_operations.append(
+            {
+                "action": "get_cluster_status",
+                "name": name,
+            }
+        )
 
         if name in self._clusters:
             return self._clusters[name]
@@ -196,9 +197,7 @@ class MockClusterOrchestrator:
         head_port: int = 29501,
     ) -> bool:
         """Ensure Ray worker (mocked)."""
-        return self._ray.ensure_ray_worker(
-            container, worker_ip, head_ip, head_port
-        )
+        return self._ray.ensure_ray_worker(container, worker_ip, head_ip, head_port)
 
     @property
     def docker(self) -> MockRemoteDockerService:

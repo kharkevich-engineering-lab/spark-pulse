@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any
 
 from spark_pulse.tools.locking import (
     LockInfo,
-    LockManager,
     LockResult,
     LockType,
 )
@@ -14,7 +12,7 @@ from spark_pulse.tools.locking import (
 
 class MockLockManager:
     """Mock lock manager for simulation mode.
-    
+
     Scenarios:
     - "default": always succeeds
     - "contention": returns 409 conflict
@@ -42,6 +40,7 @@ class MockLockManager:
         if self.scenario == "expired":
             # Simulate expired lock
             from datetime import datetime, timezone, timedelta
+
             expired_at = datetime.now(timezone.utc) - timedelta(seconds=1)
             lock_info = LockInfo(
                 lock_type=lock_type,
@@ -53,6 +52,7 @@ class MockLockManager:
             return LockResult(success=True, lock=lock_info)
         # Default: always succeeds
         from datetime import datetime, timezone, timedelta
+
         now = datetime.now(timezone.utc)
         lock_info = LockInfo(
             lock_type=lock_type,

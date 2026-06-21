@@ -8,12 +8,9 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
-
-from spark_pulse.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +27,7 @@ IMAGE_LABEL = "spark_pulse.image"
 CONTAINER_NAME_LABEL = "spark_pulse.container_name"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class ReconciliationResult:
     """Result of a reconciliation pass."""
 
@@ -54,13 +51,13 @@ def _parse_bool(raw: str) -> bool:
 
 def _reconstruct_cluster_state(labels: dict[str, str]) -> dict[str, Any] | None:
     """Reconstruct cluster state from Docker container labels.
-    
+
     Returns None if required labels are missing or malformed.
     """
     cluster_name = labels.get(CLUSTER_LABEL)
     if not cluster_name:
         return None
-    
+
     head_ip = labels.get(HEAD_IP_LABEL, "")
     worker_ips = _parse_worker_ips(labels.get(WORKER_IPS_LABEL, ""))
     ray_enabled = _parse_bool(labels.get(RAY_ENABLED_LABEL, "true"))
@@ -68,9 +65,9 @@ def _reconstruct_cluster_state(labels: dict[str, str]) -> dict[str, Any] | None:
     created_at = labels.get(CREATED_AT_LABEL, "")
     image = labels.get(IMAGE_LABEL, "")
     container_name = labels.get(CONTAINER_NAME_LABEL, "")
-    
+
     now = datetime.now(timezone.utc).isoformat()
-    
+
     return {
         "name": cluster_name,
         "head_ip": head_ip,
@@ -86,19 +83,19 @@ def _reconstruct_cluster_state(labels: dict[str, str]) -> dict[str, Any] | None:
 
 def _reconstruct_deployment(labels: dict[str, str]) -> dict[str, Any] | None:
     """Reconstruct solo deployment state from Docker container labels.
-    
+
     Returns None if required labels are missing or malformed.
     """
     deployment_name = labels.get(DEPLOYMENT_LABEL)
     if not deployment_name:
         return None
-    
+
     container_name = labels.get(CONTAINER_NAME_LABEL, "")
     image = labels.get(IMAGE_LABEL, "")
     created_at = labels.get(CREATED_AT_LABEL, "")
-    
+
     now = datetime.now(timezone.utc).isoformat()
-    
+
     return {
         "id": deployment_name,
         "container_name": container_name,
@@ -113,22 +110,22 @@ def reconcile_clusters(
     remote_docker: Any = None,
 ) -> list[dict[str, Any]]:
     """Reconstruct cluster state from Docker labels.
-    
+
     1. List all containers with label spark_pulse.cluster present
     2. Group by cluster name
     3. For each group, reconstruct cluster state from labels
     4. Return list of cluster state dicts
-    
+
     Args:
         remote_docker: RemoteDockerService instance (mock or real).
                       If None, uses simulation mode.
-    
+
     Returns:
         List of reconstructed cluster state dicts.
     """
     if os.environ.get("SIMULATION_MODE", "0") == "1":
         return _reconcile_clusters_mock()
-    
+
     return _reconcile_clusters_real(remote_docker)
 
 
@@ -141,7 +138,7 @@ def _reconcile_clusters_mock() -> list[dict[str, Any]]:
 def _reconcile_clusters_real(remote_docker: Any = None) -> list[dict[str, Any]]:
     """Real reconciliation using Docker SDK or RemoteDockerService."""
     clusters: list[dict[str, Any]] = []
-    
+
     try:
         if remote_docker is not None:
             # Use RemoteDockerService for remote nodes
@@ -158,6 +155,7 @@ def _reconcile_clusters_real(remote_docker: Any = None) -> list[dict[str, Any]]:
             # Use local Docker SDK
             try:
                 import docker as docker_sdk
+
                 client = docker_sdk.from_env()
                 containers = client.containers.list(
                     filters={"label": f"{CLUSTER_LABEL}=*"},
@@ -178,7 +176,7 @@ def _reconcile_clusters_real(remote_docker: Any = None) -> list[dict[str, Any]]:
                 return []
     except Exception as e:
         logger.error(f"Failed to reconcile clusters: {e}")
-    
+
     return clusters
 
 
@@ -186,22 +184,22 @@ def reconcile_deployments(
     docker: Any = None,
 ) -> list[dict[str, Any]]:
     """Reconcile solo deployments from Docker labels.
-    
+
     1. List all containers with label spark_pulse.deployment present
     2. For each container, check if deployment record exists
     3. If not, create deployment record from labels
     4. If yes, update status from container state
-    
+
     Args:
         docker: DockerService instance (mock or real).
                 If None, uses simulation mode.
-    
+
     Returns:
         List of updated deployment dicts.
     """
-    if is_simulation():
+    if os.environ.get("SIMULATION_MODE", "0") == "1":
         return _reconcile_deployments_mock()
-    
+
     return _reconcile_deployments_real(docker)
 
 
@@ -214,10 +212,11 @@ def _reconcile_deployments_mock() -> list[dict[str, Any]]:
 def _reconcile_deployments_real(docker: Any = None) -> list[dict[str, Any]]:
     """Real reconciliation using Docker SDK."""
     deployments_list: list[dict[str, Any]] = []
-    
+
     try:
         try:
             import docker as docker_sdk
+
             client = docker_sdk.from_env()
             containers = client.containers.list(
                 filters={"label": f"{DEPLOYMENT_LABEL}=*"},
@@ -237,7 +236,7 @@ def _reconcile_deployments_real(docker: Any = None) -> list[dict[str, Any]]:
             return []
     except Exception as e:
         logger.error(f"Failed to reconcile deployments: {e}")
-    
+
     return deployments_list
 
 
@@ -246,18 +245,18 @@ def reconcile_all(
     remote_docker: Any = None,
 ) -> ReconciliationResult:
     """Run full reconciliation pass.
-    
+
     Called at server startup via app.py lifespan.
-    
+
     Args:
         docker: DockerService for solo deployments.
         remote_docker: RemoteDockerService for cluster deployments.
-    
+
     Returns:
         ReconciliationResult with counts and errors.
     """
     result = ReconciliationResult()
-    
+
     # Reconcile clusters
     try:
         clusters = reconcile_clusters(remote_docker)
@@ -270,7 +269,7 @@ def reconcile_all(
         error_msg = f"Cluster reconciliation failed: {e}"
         logger.error(error_msg)
         result.errors.append(error_msg)
-    
+
     # Reconcile solo deployments
     try:
         deployments_list = reconcile_deployments(docker)
@@ -283,7 +282,7 @@ def reconcile_all(
         error_msg = f"Deployment reconciliation failed: {e}"
         logger.error(error_msg)
         result.errors.append(error_msg)
-    
+
     # Detect and clean orphaned containers
     try:
         result.orphaned_containers_cleaned = _clean_orphaned_containers()
@@ -291,56 +290,59 @@ def reconcile_all(
         error_msg = f"Orphan cleanup failed: {e}"
         logger.error(error_msg)
         result.errors.append(error_msg)
-    
+
     logger.info(
         "Reconciliation complete: %d clusters, %d deployments, %d orphans cleaned",
         result.clusters_reconciled,
         result.deployments_reconciled,
         result.orphaned_containers_cleaned,
     )
-    
+
     return result
 
 
 def _clean_orphaned_containers() -> int:
     """Detect and remove containers with spark_pulse labels that no longer
     have corresponding deployment/cluster records.
-    
+
     Returns:
         Number of orphaned containers cleaned.
     """
     cleaned = 0
-    
+
     try:
         import docker as docker_sdk
+
         client = docker_sdk.from_env()
-        
+
         # Find all containers with our labels
         all_containers = client.containers.list(all=True)
         spark_containers = [
-            c for c in all_containers
-            if (c.labels or {}).get(CLUSTER_LABEL) or (c.labels or {}).get(DEPLOYMENT_LABEL)
+            c
+            for c in all_containers
+            if (c.labels or {}).get(CLUSTER_LABEL)
+            or (c.labels or {}).get(DEPLOYMENT_LABEL)
         ]
-        
+
         for container in spark_containers:
             labels = container.labels or {}
             cluster_name = labels.get(CLUSTER_LABEL)
             deployment_name = labels.get(DEPLOYMENT_LABEL)
-            
+
             # Check if this container has a corresponding record
             is_orphaned = False
-            
+
             if cluster_name:
                 # Check if cluster state exists
                 # In production, this would query the deployment store
                 # For now, we consider stopped containers as potential orphans
                 if container.status == "exited":
                     is_orphaned = True
-            
+
             if deployment_name:
                 if container.status == "exited":
                     is_orphaned = True
-            
+
             if is_orphaned:
                 logger.info(
                     "Cleaning orphaned container: %s (status: %s)",
@@ -349,10 +351,10 @@ def _clean_orphaned_containers() -> int:
                 )
                 container.remove(force=True)
                 cleaned += 1
-                
+
     except ImportError:
         logger.warning("Docker SDK not available, skipping orphan cleanup")
     except Exception as e:
         logger.error(f"Failed to clean orphaned containers: {e}")
-    
+
     return cleaned

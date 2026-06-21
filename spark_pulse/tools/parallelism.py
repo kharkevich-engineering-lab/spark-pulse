@@ -7,9 +7,8 @@ that the cluster has sufficient GPU capacity.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,15 +68,9 @@ def parse_parallelism(command: str | Path) -> dict[str, int]:
         return result
 
     # Pattern for --long-flag=value or --long-flag value (space-separated)
-    long_pattern = re.compile(
-        r"-{1,2}(?:tensor-parallel-size|tp)[=\s]+(\d+)"
-    )
-    pp_pattern = re.compile(
-        r"-{1,2}(?:pipeline-parallel-size|pp)[=\s]+(\d+)"
-    )
-    dp_pattern = re.compile(
-        r"-{1,2}(?:data-parallel-size|dp)[=\s]+(\d+)"
-    )
+    long_pattern = re.compile(r"-{1,2}(?:tensor-parallel-size|tp)[=\s]+(\d+)")
+    pp_pattern = re.compile(r"-{1,2}(?:pipeline-parallel-size|pp)[=\s]+(\d+)")
+    dp_pattern = re.compile(r"-{1,2}(?:data-parallel-size|dp)[=\s]+(\d+)")
 
     # Extract values
     tp_match = long_pattern.search(command)

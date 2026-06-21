@@ -15,7 +15,6 @@ import logging
 import subprocess
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -23,17 +22,22 @@ logger = logging.getLogger(__name__)
 class SSHErrorType(str, Enum):
     """Classification of SSH errors."""
 
-    AUTH = "auth"                    # Invalid credentials, key rejected
-    TIMEOUT = "timeout"              # Connection timed out
-    NETWORK = "network"              # Host unreachable, connection refused
-    HOST_KEY = "host_key"            # Host key verification failed
+    AUTH = "auth"  # Invalid credentials, key rejected
+    TIMEOUT = "timeout"  # Connection timed out
+    NETWORK = "network"  # Host unreachable, connection refused
+    HOST_KEY = "host_key"  # Host key verification failed
     PERMISSION_DENIED = "permission_denied"  # Auth succeeded but command denied
-    UNKNOWN = "unknown"              # Unclassified error
+    UNKNOWN = "unknown"  # Unclassified error
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class SSHError(Exception):
-    """Structured SSH error with classification."""
+    """Structured SSH error with classification.
+
+    Note: Not using slots=True to maintain Python 3.14 compatibility.
+    Dataclass-based exceptions with slots=True cause TypeError in Python 3.14
+    due to stricter exception type checking in the CPython exception handling.
+    """
 
     error_type: SSHErrorType
     host: str
@@ -195,8 +199,12 @@ class OpenSSHClient(SSHClient):
             raise SSHError(
                 error_type=error_type,
                 host=host,
-                message=e.stderr.decode() if isinstance(e.stderr, bytes) else str(e.stderr),
-                stderr=e.stderr.decode() if isinstance(e.stderr, bytes) else str(e.stderr),
+                message=(
+                    e.stderr.decode() if isinstance(e.stderr, bytes) else str(e.stderr)
+                ),
+                stderr=(
+                    e.stderr.decode() if isinstance(e.stderr, bytes) else str(e.stderr)
+                ),
             )
         except Exception as e:
             return SSHResult(
@@ -204,26 +212,26 @@ class OpenSSHClient(SSHClient):
                 stdout="",
                 stderr=str(e),
             )
-    
+
     @staticmethod
     def _classify_ssh_error(returncode: int, stderr: str) -> SSHErrorType:
         """Classify SSH error based on return code and stderr."""
         stderr_lower = stderr.lower() if stderr else ""
-        
+
         if "permission denied" in stderr_lower:
             if "publickey" in stderr_lower or "keyboard-interactive" in stderr_lower:
                 return SSHErrorType.AUTH
             return SSHErrorType.PERMISSION_DENIED
-        
+
         if "host key verification failed" in stderr_lower:
             return SSHErrorType.HOST_KEY
-        
+
         if "connection timed out" in stderr_lower or "timed out" in stderr_lower:
             return SSHErrorType.TIMEOUT
-        
+
         if "connection refused" in stderr_lower or "no route to host" in stderr_lower:
             return SSHErrorType.NETWORK
-        
+
         return SSHErrorType.UNKNOWN
 
     def copy(
@@ -259,7 +267,9 @@ class OpenSSHClient(SSHClient):
         user_host = f"{self._user}@{host}" if self._user else host
         try:
             args = [
-                "rsync", "-avz", "-e",
+                "rsync",
+                "-avz",
+                "-e",
                 " ".join(self._build_scp_args()),
                 f"{local_dir}/",
                 f"{user_host}:{remote_dir}/",

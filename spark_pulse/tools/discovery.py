@@ -9,9 +9,7 @@ Approach: uses psutil first, falls back to subprocess + /sys scanning.
 
 from __future__ import annotations
 
-import json
 import logging
-import os
 import socket
 import subprocess
 from dataclasses import dataclass, field
@@ -88,7 +86,9 @@ def _try_import_psutil():
         return None
 
 
-def _classify_interface(name: str) -> Literal["ethernet", "infiniband", "loopback", "docker", "other"]:
+def _classify_interface(
+    name: str,
+) -> Literal["ethernet", "infiniband", "loopback", "docker", "other"]:
     """Classify a network interface by name patterns."""
     if name == "lo":
         return "loopback"
@@ -496,12 +496,16 @@ def validate_network() -> ValidationResult:
                     f"InfiniBand HCA {dev.hca} is {dev.state} (expected ACTIVE)"
                 )
         if not any(d.state == "ACTIVE" for d in ib_devices):
-            result.warnings.append("No active InfiniBand HCAs found — NCCL will use Ethernet")
+            result.warnings.append(
+                "No active InfiniBand HCAs found — NCCL will use Ethernet"
+            )
 
         # Check /dev/infiniband
         dev_ib = Path("/dev/infiniband")
         if not dev_ib.exists():
-            result.warnings.append("/dev/infiniband does not exist — IB devices may not be accessible")
+            result.warnings.append(
+                "/dev/infiniband does not exist — IB devices may not be accessible"
+            )
 
     # Check 6: Common ports availability
     for port in [29500, 29501, 29502]:

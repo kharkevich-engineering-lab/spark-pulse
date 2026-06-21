@@ -29,9 +29,8 @@ class TestRemoteDockerService:
         # Local run should use _local.run_container, not _run_remote
         # This test verifies the method dispatch logic
         try:
-            result = service.run_container(
-                "", "test-image", "test-container",
-                {}, {"privileged": True}, {}
+            service.run_container(
+                "", "test-image", "test-container", {}, {"privileged": True}, {}
             )
             # If Docker is available, it should succeed
             # If not, it may raise — that's OK for this test
@@ -48,9 +47,8 @@ class TestRemoteDockerService:
         )
         service = RemoteDockerService(ssh_client=mock_ssh)
 
-        result = service.run_container(
-            "10.0.0.2", "test-image", "test-container",
-            {}, {"privileged": True}, {}
+        service.run_container(
+            "10.0.0.2", "test-image", "test-container", {}, {"privileged": True}, {}
         )
 
         assert mock_ssh.exec.called

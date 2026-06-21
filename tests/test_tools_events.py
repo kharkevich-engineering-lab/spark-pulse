@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
 import pytest
-import pytest_asyncio
 
 from spark_pulse.tools.events import (
     DeploymentEvent,
@@ -117,13 +115,13 @@ class TestEventBroadcaster:
     async def test_multiple_subscribers(self, broadcaster):
         queue1 = await broadcaster.subscribe()
         queue2 = await broadcaster.subscribe()
-        
+
         event = DeploymentEvent(
             event_type=EventType.CLUSTER_HEALTHY,
             resource="test-cluster",
         )
         await broadcaster.emit(event)
-        
+
         data1 = await queue1.get()
         data2 = await queue2.get()
         assert data1["type"] == data2["type"] == "cluster_healthy"

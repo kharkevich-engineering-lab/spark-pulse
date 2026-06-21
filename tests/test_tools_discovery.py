@@ -1,7 +1,7 @@
 """Tests for network discovery tool module (simulation mode)."""
 
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from spark_pulse.tools import discovery, is_simulation
 from spark_pulse.tools.discovery import (
@@ -10,12 +10,8 @@ from spark_pulse.tools.discovery import (
     NCCLConfig,
     DiscoveryResult,
     ValidationResult,
-    detect_network_interfaces,
-    detect_local_ip,
-    detect_infiniband_devices,
     build_nccl_defaults,
     validate_network,
-    run_discovery,
 )
 
 
@@ -109,7 +105,9 @@ class TestDataModels:
             infiniband_present=False,
             infiniband_devices=[],
             interfaces=[],
-            nccl_defaults=NCCLConfig(socket_ifname="eth0", ib_hca=None, ib_disable=True),
+            nccl_defaults=NCCLConfig(
+                socket_ifname="eth0", ib_hca=None, ib_disable=True
+            ),
         )
         assert result.local_ip == "192.168.1.100"
         assert result.ethernet_if == "eth0"
@@ -133,6 +131,7 @@ class TestInterfaceClassification:
     def test_ethernet_interface(self):
         """Test ethernet interface classification."""
         from spark_pulse.tools.discovery import _classify_interface
+
         assert _classify_interface("eth0") == "ethernet"
         assert _classify_interface("eth1") == "ethernet"
         assert _classify_interface("enp3s0") == "ethernet"
@@ -140,6 +139,7 @@ class TestInterfaceClassification:
     def test_infiniband_interface(self):
         """Test infiniband interface classification."""
         from spark_pulse.tools.discovery import _classify_interface
+
         assert _classify_interface("ib0") == "infiniband"
         assert _classify_interface("ib1") == "infiniband"
         assert _classify_interface("mlx5_0") == "infiniband"
@@ -147,17 +147,20 @@ class TestInterfaceClassification:
     def test_loopback_interface(self):
         """Test loopback interface classification."""
         from spark_pulse.tools.discovery import _classify_interface
+
         assert _classify_interface("lo") == "loopback"
 
     def test_docker_interface(self):
         """Test docker interface classification."""
         from spark_pulse.tools.discovery import _classify_interface
+
         assert _classify_interface("docker0") == "docker"
         assert _classify_interface("br-abc123") == "docker"
 
     def test_unknown_interface(self):
         """Test unknown interface classification."""
         from spark_pulse.tools.discovery import _classify_interface
+
         assert _classify_interface("wlan0") == "other"
         assert _classify_interface("veth123") == "other"
 
@@ -240,7 +243,9 @@ class TestBuildNcclDefaults:
     def test_ethernet_only_no_ib(self):
         """Test NCCL defaults when only ethernet is available."""
         interfaces = [
-            NetworkInterface(name="eth0", ip="192.168.1.100", mtu=1500, is_up=True, type="ethernet"),
+            NetworkInterface(
+                name="eth0", ip="192.168.1.100", mtu=1500, is_up=True, type="ethernet"
+            ),
         ]
         discovery_result = DiscoveryResult(
             local_ip="192.168.1.100",
@@ -259,11 +264,17 @@ class TestBuildNcclDefaults:
     def test_ethernet_with_active_ib(self):
         """Test NCCL defaults when ethernet + active IB available."""
         interfaces = [
-            NetworkInterface(name="eth0", ip="10.0.0.10", mtu=1500, is_up=True, type="ethernet"),
-            NetworkInterface(name="ib0", ip=None, mtu=4096, is_up=True, type="infiniband"),
+            NetworkInterface(
+                name="eth0", ip="10.0.0.10", mtu=1500, is_up=True, type="ethernet"
+            ),
+            NetworkInterface(
+                name="ib0", ip=None, mtu=4096, is_up=True, type="infiniband"
+            ),
         ]
         ib_devices = [
-            InfinibandDevice(hca="mlx5_0", ports=[1, 2], net_devices=["ib0"], state="ACTIVE"),
+            InfinibandDevice(
+                hca="mlx5_0", ports=[1, 2], net_devices=["ib0"], state="ACTIVE"
+            ),
         ]
         discovery_result = DiscoveryResult(
             local_ip="10.0.0.10",
@@ -282,10 +293,14 @@ class TestBuildNcclDefaults:
     def test_ethernet_with_down_ib(self):
         """Test NCCL defaults when IB is present but down."""
         interfaces = [
-            NetworkInterface(name="eth0", ip="192.168.1.50", mtu=1500, is_up=True, type="ethernet"),
+            NetworkInterface(
+                name="eth0", ip="192.168.1.50", mtu=1500, is_up=True, type="ethernet"
+            ),
         ]
         ib_devices = [
-            InfinibandDevice(hca="mlx5_0", ports=[1, 2], net_devices=["ib0"], state="DOWN"),
+            InfinibandDevice(
+                hca="mlx5_0", ports=[1, 2], net_devices=["ib0"], state="DOWN"
+            ),
         ]
         discovery_result = DiscoveryResult(
             local_ip="192.168.1.50",
@@ -304,7 +319,9 @@ class TestBuildNcclDefaults:
     def test_no_ethernet_interface(self):
         """Test NCCL defaults when no ethernet interface is available."""
         interfaces = [
-            NetworkInterface(name="lo", ip="127.0.0.1", mtu=65536, is_up=True, type="loopback"),
+            NetworkInterface(
+                name="lo", ip="127.0.0.1", mtu=65536, is_up=True, type="loopback"
+            ),
         ]
         discovery_result = DiscoveryResult(
             local_ip=None,
@@ -323,14 +340,26 @@ class TestValidation:
 
     def test_healthy_network(self):
         """Test validation for a healthy network."""
-        with patch("spark_pulse.tools.discovery.detect_network_interfaces") as mock_ifaces, \
-             patch("spark_pulse.tools.discovery.detect_local_ip") as mock_ip, \
-             patch("spark_pulse.tools.discovery.detect_infiniband_devices") as mock_ib, \
-             patch("spark_pulse.tools.discovery._port_available") as mock_port:
+        with (
+            patch(
+                "spark_pulse.tools.discovery.detect_network_interfaces"
+            ) as mock_ifaces,
+            patch("spark_pulse.tools.discovery.detect_local_ip") as mock_ip,
+            patch("spark_pulse.tools.discovery.detect_infiniband_devices") as mock_ib,
+            patch("spark_pulse.tools.discovery._port_available") as mock_port,
+        ):
 
             mock_ifaces.return_value = [
-                NetworkInterface(name="eth0", ip="192.168.1.100", mtu=1500, is_up=True, type="ethernet"),
-                NetworkInterface(name="lo", ip="127.0.0.1", mtu=65536, is_up=True, type="loopback"),
+                NetworkInterface(
+                    name="eth0",
+                    ip="192.168.1.100",
+                    mtu=1500,
+                    is_up=True,
+                    type="ethernet",
+                ),
+                NetworkInterface(
+                    name="lo", ip="127.0.0.1", mtu=65536, is_up=True, type="loopback"
+                ),
             ]
             mock_ip.return_value = "192.168.1.100"
             mock_ib.return_value = []
@@ -343,13 +372,19 @@ class TestValidation:
 
     def test_missing_ethernet(self):
         """Test validation when no ethernet interface is up."""
-        with patch("spark_pulse.tools.discovery.detect_network_interfaces") as mock_ifaces, \
-             patch("spark_pulse.tools.discovery.detect_local_ip") as mock_ip, \
-             patch("spark_pulse.tools.discovery.detect_infiniband_devices") as mock_ib, \
-             patch("spark_pulse.tools.discovery._port_available") as mock_port:
+        with (
+            patch(
+                "spark_pulse.tools.discovery.detect_network_interfaces"
+            ) as mock_ifaces,
+            patch("spark_pulse.tools.discovery.detect_local_ip") as mock_ip,
+            patch("spark_pulse.tools.discovery.detect_infiniband_devices") as mock_ib,
+            patch("spark_pulse.tools.discovery._port_available") as mock_port,
+        ):
 
             mock_ifaces.return_value = [
-                NetworkInterface(name="lo", ip="127.0.0.1", mtu=65536, is_up=True, type="loopback"),
+                NetworkInterface(
+                    name="lo", ip="127.0.0.1", mtu=65536, is_up=True, type="loopback"
+                ),
             ]
             mock_ip.return_value = None
             mock_ib.return_value = []
@@ -361,13 +396,23 @@ class TestValidation:
 
     def test_port_in_use(self):
         """Test validation when common ports are in use."""
-        with patch("spark_pulse.tools.discovery.detect_network_interfaces") as mock_ifaces, \
-             patch("spark_pulse.tools.discovery.detect_local_ip") as mock_ip, \
-             patch("spark_pulse.tools.discovery.detect_infiniband_devices") as mock_ib, \
-             patch("spark_pulse.tools.discovery._port_available") as mock_port:
+        with (
+            patch(
+                "spark_pulse.tools.discovery.detect_network_interfaces"
+            ) as mock_ifaces,
+            patch("spark_pulse.tools.discovery.detect_local_ip") as mock_ip,
+            patch("spark_pulse.tools.discovery.detect_infiniband_devices") as mock_ib,
+            patch("spark_pulse.tools.discovery._port_available") as mock_port,
+        ):
 
             mock_ifaces.return_value = [
-                NetworkInterface(name="eth0", ip="192.168.1.100", mtu=1500, is_up=True, type="ethernet"),
+                NetworkInterface(
+                    name="eth0",
+                    ip="192.168.1.100",
+                    mtu=1500,
+                    is_up=True,
+                    type="ethernet",
+                ),
             ]
             mock_ip.return_value = "192.168.1.100"
             mock_ib.return_value = []
@@ -442,6 +487,7 @@ class TestMockDiscoveryProvider:
 
         set_mock_scenario("dgx")
         from spark_pulse.mock.discovery import _get_default_provider
+
         assert _get_default_provider().scenario == "dgx"
 
         reset_mock_scenario()

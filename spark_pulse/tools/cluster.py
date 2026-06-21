@@ -12,12 +12,12 @@ Depends on:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Literal
 
 from spark_pulse.tools.cluster_models import ClusterNode, ClusterState
-from spark_pulse.tools.cluster_health import validate_cluster, ValidationResult
+from spark_pulse.tools.cluster_health import validate_cluster
 from spark_pulse.tools.events import EventBroadcaster, EventType
 from spark_pulse.tools.parallelism import (
     ClusterCapacity,
@@ -129,7 +129,9 @@ class ClusterOrchestrator:
             # Build cluster capacity from node count and GPU config
             gpu_count = docker_config.get("gpu_count", 8)
             nodes = [NodeCapacity(gpu_count=gpu_count)] * (1 + len(worker_ips))
-            is_valid, message = validate_cluster_capacity(parallelism, ClusterCapacity(nodes=nodes))
+            is_valid, message = validate_cluster_capacity(
+                parallelism, ClusterCapacity(nodes=nodes)
+            )
             if not is_valid:
                 raise RuntimeError(f"Cluster capacity validation failed: {message}")
 
@@ -153,19 +155,28 @@ class ClusterOrchestrator:
             worker_nodes: list[ClusterNode] = []
             for i, worker_ip in enumerate(worker_ips):
                 worker_name = f"{name}-worker-{i}"
-                worker_labels = self._build_labels(name, "worker", worker_ip, head_ip=head_ip, node_rank=i)
+                worker_labels = self._build_labels(
+                    name, "worker", worker_ip, head_ip=head_ip, node_rank=i
+                )
                 logger.info("Starting worker node %s at %s", worker_name, worker_ip)
                 self._docker.run_container(
-                    worker_ip, image, worker_name, env_vars, docker_config, worker_labels
+                    worker_ip,
+                    image,
+                    worker_name,
+                    env_vars,
+                    docker_config,
+                    worker_labels,
                 )
                 started_containers.append((worker_ip, worker_name))
-                worker_nodes.append(ClusterNode(
-                    ip=worker_ip,
-                    role="worker",
-                    container_name=worker_name,
-                    status="running",
-                    gpu_count=gpu_count,
-                ))
+                worker_nodes.append(
+                    ClusterNode(
+                        ip=worker_ip,
+                        role="worker",
+                        container_name=worker_name,
+                        status="running",
+                        gpu_count=gpu_count,
+                    )
+                )
 
                 # Emit worker container started event
                 self._events.emit_cluster_event(
@@ -186,7 +197,9 @@ class ClusterOrchestrator:
             # 4. Apply mods
             if mod_deployments:
                 logger.info("Applying %d mod deployments", len(mod_deployments))
-                self._apply_mods(mod_deployments, head_name, [w.container_name for w in worker_nodes])
+                self._apply_mods(
+                    mod_deployments, head_name, [w.container_name for w in worker_nodes]
+                )
 
             # 5. Ensure Ray head
             ray_ready = False
@@ -206,7 +219,9 @@ class ClusterOrchestrator:
                 for i, worker_ip in enumerate(worker_ips):
                     worker_name = f"{name}-worker-{i}"
                     self._ray.ensure_ray_worker(
-                        worker_name, worker_ip, head_ip,
+                        worker_name,
+                        worker_ip,
+                        head_ip,
                         head_port=env_vars.get("RAY_PORT", 29501),
                     )
 
@@ -228,7 +243,10 @@ class ClusterOrchestrator:
                     "Cluster health check passed",
                 )
             else:
-                logger.warning("Cluster validation warnings/errors: %s", validation.errors or validation.warnings)
+                logger.warning(
+                    "Cluster validation warnings/errors: %s",
+                    validation.errors or validation.warnings,
+                )
 
             # Emit cluster start complete event
             self._events.emit_cluster_event(
@@ -237,7 +255,11 @@ class ClusterOrchestrator:
                 f"Cluster {name} is ready ({cluster_state.total_nodes} nodes)",
             )
 
-            logger.info("Cluster %s started successfully (%d nodes)", name, cluster_state.total_nodes)
+            logger.info(
+                "Cluster %s started successfully (%d nodes)",
+                name,
+                cluster_state.total_nodes,
+            )
             return cluster_state
 
         except Exception as e:
@@ -327,7 +349,11 @@ class ClusterOrchestrator:
                 role=role,
                 container_name=container.name,
                 container_id=container.container_id,
-                status="running" if container.status and "running" in container.status else "stopped",
+                status=(
+                    "running"
+                    if container.status and "running" in container.status
+                    else "stopped"
+                ),
             )
 
             if role == "head":
@@ -340,15 +366,13 @@ class ClusterOrchestrator:
 
         # Check Ray status
         ray_ready = False
-        ray_enabled = any(
-            "spark-pulse.ray" in (c.labels or {})
-            for c in containers
-        )
+        ray_enabled = any("spark-pulse.ray" in (c.labels or {}) for c in containers)
 
         if ray_enabled:
             try:
                 ray_status = self._docker.exec_container(
-                    "", head_node.container_name,
+                    "",
+                    head_node.container_name,
                     ["ray", "status"],
                     timeout=10,
                 )

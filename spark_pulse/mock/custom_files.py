@@ -5,8 +5,6 @@ Returns deterministic results without touching the filesystem.
 
 from __future__ import annotations
 
-from typing import Any
-
 
 def create_symlinks(spark_vllm_path: str) -> dict[str, list[str]]:
     """Simulate creating symlinks for custom recipes and mods.

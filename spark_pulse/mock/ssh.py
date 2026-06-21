@@ -60,11 +60,13 @@ class MockSSHClient:
         batch_mode: bool = True,
     ) -> SSHResult:
         """Execute command on remote host (mocked)."""
-        self._executed_commands.append({
-            "host": host,
-            "command": command,
-            "timeout": timeout,
-        })
+        self._executed_commands.append(
+            {
+                "host": host,
+                "command": command,
+                "timeout": timeout,
+            }
+        )
 
         if host in self._fail_hosts:
             return SSHResult(
@@ -111,12 +113,14 @@ class MockSSHClient:
         timeout: int = 30,
     ) -> None:
         """SCP file to remote host (mocked)."""
-        self._executed_commands.append({
-            "action": "copy",
-            "local": local_path,
-            "host": host,
-            "remote": remote_path,
-        })
+        self._executed_commands.append(
+            {
+                "action": "copy",
+                "local": local_path,
+                "host": host,
+                "remote": remote_path,
+            }
+        )
 
     def copy_dir(
         self,
@@ -126,12 +130,14 @@ class MockSSHClient:
         timeout: int = 60,
     ) -> None:
         """SCP directory to remote host (mocked)."""
-        self._executed_commands.append({
-            "action": "copy_dir",
-            "local": local_dir,
-            "host": host,
-            "remote": remote_dir,
-        })
+        self._executed_commands.append(
+            {
+                "action": "copy_dir",
+                "local": local_dir,
+                "host": host,
+                "remote": remote_dir,
+            }
+        )
 
     @property
     def executed_commands(self) -> list[dict[str, Any]]:

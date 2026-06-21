@@ -62,7 +62,9 @@ class MockHealthMonitor:
         """Mock stop — no-op."""
         pass
 
-    def track_deployment(self, deployment_id: str, deployment_info: dict[str, Any]) -> None:
+    def track_deployment(
+        self, deployment_id: str, deployment_info: dict[str, Any]
+    ) -> None:
         """Track a deployment."""
         self._tracked[deployment_id] = {"type": "deployment", "info": deployment_info}
 
@@ -74,7 +76,9 @@ class MockHealthMonitor:
         """Untrack an identifier."""
         self._tracked.pop(identifier, None)
 
-    def check_deployment(self, deployment_id: str, deployment_info: dict[str, Any]) -> MockDeploymentHealth:
+    def check_deployment(
+        self, deployment_id: str, deployment_info: dict[str, Any]
+    ) -> MockDeploymentHealth:
         """Check mock deployment health."""
         if self._scenario == "healthy":
             return MockDeploymentHealth(
@@ -97,7 +101,9 @@ class MockHealthMonitor:
                 error="Container crashed",
             )
 
-    def check_cluster(self, cluster_name: str, cluster_info: dict[str, Any]) -> MockClusterHealth:
+    def check_cluster(
+        self, cluster_name: str, cluster_info: dict[str, Any]
+    ) -> MockClusterHealth:
         """Check mock cluster health."""
         if self._scenario == "healthy":
             return MockClusterHealth(

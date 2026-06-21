@@ -6,15 +6,12 @@ from typing import Any
 
 from spark_pulse.tools.reconciliation import (
     ReconciliationResult,
-    reconcile_clusters,
-    reconcile_deployments,
-    reconcile_all,
 )
 
 
 class MockReconciler:
     """Mock reconciliation for simulation mode.
-    
+
     Scenarios:
     - "default": all healthy, no orphans
     - "orphaned": has orphaned containers to clean
@@ -36,7 +33,9 @@ class MockReconciler:
             return []  # Simulate failure
         return []  # No deployments in simulation mode
 
-    def reconcile_all(self, docker: Any = None, remote_docker: Any = None) -> ReconciliationResult:
+    def reconcile_all(
+        self, docker: Any = None, remote_docker: Any = None
+    ) -> ReconciliationResult:
         """Mock full reconciliation."""
         if self.scenario == "orphaned":
             return ReconciliationResult(
@@ -50,7 +49,10 @@ class MockReconciler:
                 clusters_reconciled=0,
                 deployments_reconciled=0,
                 orphaned_containers_cleaned=0,
-                errors=["Cluster reconciliation failed (mock)", "Deployment reconciliation failed (mock)"],
+                errors=[
+                    "Cluster reconciliation failed (mock)",
+                    "Deployment reconciliation failed (mock)",
+                ],
             )
         return ReconciliationResult(
             clusters_reconciled=0,

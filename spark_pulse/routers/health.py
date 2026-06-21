@@ -21,7 +21,7 @@ def check_deployment_health(deployment_id: str) -> dict[str, Any]:
     Returns DeploymentHealth as dict.
     """
     try:
-        monitor = health.get_health_monitor()
+        health.get_health_monitor()
         # For API endpoint, do a direct check rather than using the monitor
         from spark_pulse.tools import docker
 
@@ -82,7 +82,11 @@ def check_cluster_health(cluster_name: str) -> dict[str, Any]:
             "ray_ready": state.ray_ready,
             "warnings": [],
             "errors": (
-                [f"Worker {w.ip} is {w.status}" for w in state.workers if w.status != "running"]
+                [
+                    f"Worker {w.ip} is {w.status}"
+                    for w in state.workers
+                    if w.status != "running"
+                ]
                 if not state.healthy
                 else []
             ),
@@ -99,7 +103,7 @@ def check_cluster_health(cluster_name: str) -> dict[str, Any]:
 def start_health_monitor() -> dict[str, Any]:
     """Start the background health monitor."""
     try:
-        monitor = health.start_health_monitor()
+        health.start_health_monitor()
         return {"started": True, "message": "Health monitor started"}
     except Exception as e:
         return {"started": False, "error": str(e)}

@@ -4,8 +4,6 @@ Verifies that ContainerMetadata can be serialized to Docker labels
 and deserialized back without data loss.
 """
 
-import pytest
-
 from spark_pulse.tools.docker import ContainerMetadata
 
 

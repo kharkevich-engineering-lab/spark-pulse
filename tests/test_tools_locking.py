@@ -8,7 +8,6 @@ from datetime import datetime, timezone, timedelta
 from spark_pulse.tools.locking import (
     LockInfo,
     LockManager,
-    LockResult,
     LockType,
 )
 

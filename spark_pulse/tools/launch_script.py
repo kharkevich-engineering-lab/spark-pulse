@@ -10,7 +10,6 @@ from __future__ import annotations
 import re
 import tempfile
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +34,9 @@ class ValidationResult:
         )
 
     @classmethod
-    def fail(cls, errors: list[str], warnings: list[str] | None = None) -> ValidationResult:
+    def fail(
+        cls, errors: list[str], warnings: list[str] | None = None
+    ) -> ValidationResult:
         """Create a failed validation result."""
         return cls(
             healthy=False,
@@ -120,9 +121,7 @@ def validate_launch_script(script_path: Path) -> ValidationResult:
     errors: list[str] = []
 
     if not script_path.exists():
-        return ValidationResult.fail(
-            errors=[f"Launch script not found: {script_path}"]
-        )
+        return ValidationResult.fail(errors=[f"Launch script not found: {script_path}"])
 
     if not script_path.is_file():
         return ValidationResult.fail(
@@ -132,28 +131,28 @@ def validate_launch_script(script_path: Path) -> ValidationResult:
     try:
         content = script_path.read_text(errors="replace")
     except OSError as e:
-        return ValidationResult.fail(
-            errors=[f"Cannot read launch script: {e}"]
-        )
+        return ValidationResult.fail(errors=[f"Cannot read launch script: {e}"])
 
     # Check for python/vllm command
-    has_python = bool(re.search(r'\bpython\b', content))
-    has_vllm = bool(re.search(r'\bvllm\b', content))
-    has_exec = bool(re.search(r'^\s*exec\s', content, re.MULTILINE))
+    has_python = bool(re.search(r"\bpython\b", content))
+    has_vllm = bool(re.search(r"\bvllm\b", content))
+    has_exec = bool(re.search(r"^\s*exec\s", content, re.MULTILINE))
 
     if not (has_python or has_vllm or has_exec):
-        errors.append(
-            "Launch script does not appear to contain a python/vllm command"
-        )
+        errors.append("Launch script does not appear to contain a python/vllm command")
 
     # Check for --model flag
-    has_model = bool(re.search(r'--model\s', content)) or bool(
-        re.search(r'--model=', content)
+    has_model = bool(re.search(r"--model\s", content)) or bool(
+        re.search(r"--model=", content)
     )
     if not has_model:
         warnings.append("Launch script does not contain --model flag")
 
-    return ValidationResult.ok(warnings=warnings) if not errors else ValidationResult.fail(errors)
+    return (
+        ValidationResult.ok(warnings=warnings)
+        if not errors
+        else ValidationResult.fail(errors)
+    )
 
 
 def analyze_launch_script(script_path: Path) -> LaunchScriptInfo:
@@ -179,9 +178,9 @@ def analyze_launch_script(script_path: Path) -> LaunchScriptInfo:
     command_line: str | None = None
     for line in content.splitlines():
         stripped = line.strip()
-        if re.match(r'\bpython\b', stripped) or re.match(r'\bvllm\b', stripped):
+        if re.match(r"\bpython\b", stripped) or re.match(r"\bvllm\b", stripped):
             # Skip comment lines
-            if not stripped.startswith('#'):
+            if not stripped.startswith("#"):
                 command_line = stripped
                 break
 
@@ -193,16 +192,18 @@ def analyze_launch_script(script_path: Path) -> LaunchScriptInfo:
 
     # Detect distributed backend
     backend: str | None = None
-    if re.search(r'--distributed-executor-backend\s+ray\b', content) or \
-       re.search(r'--distributed-executor-backend=ray\b', content):
+    if re.search(r"--distributed-executor-backend\s+ray\b", content) or re.search(
+        r"--distributed-executor-backend=ray\b", content
+    ):
         backend = "ray"
-    elif re.search(r'--distributed-executor-backend\s+mp\b', content) or \
-         re.search(r'--distributed-executor-backend=mp\b', content):
+    elif re.search(r"--distributed-executor-backend\s+mp\b", content) or re.search(
+        r"--distributed-executor-backend=mp\b", content
+    ):
         backend = "mp"
 
     # Check for --model flag
-    has_model = bool(re.search(r'--model\s', content)) or bool(
-        re.search(r'--model=', content)
+    has_model = bool(re.search(r"--model\s", content)) or bool(
+        re.search(r"--model=", content)
     )
 
     return LaunchScriptInfo(
@@ -231,6 +232,7 @@ class LaunchScriptManager:
     def _default_spark_path() -> Path:
         """Get default spark-vllm-docker path from environment or config."""
         from spark_pulse.config import config
+
         return Path(config.spark_vllm_path)
 
     def resolve(self, path: str) -> Path:
@@ -298,12 +300,8 @@ class LaunchScriptManager:
         content = script_path.read_text(errors="replace")
 
         # Strip --distributed-executor-backend and its value
-        content = re.sub(
-            r'--distributed-executor-backend\s+\S+', '', content
-        )
-        content = re.sub(
-            r'--distributed-executor-backend=\S+', '', content
-        )
+        content = re.sub(r"--distributed-executor-backend\s+\S+", "", content)
+        content = re.sub(r"--distributed-executor-backend=\S+", "", content)
 
         # Create temp directory for patched scripts
         temp_dir = tempfile.TemporaryDirectory(prefix="spark-pulse-scripts-")
@@ -317,14 +315,14 @@ class LaunchScriptManager:
             filtered_lines: list[str] = []
             for line in lines:
                 stripped = line.strip()
-                if stripped == '' or stripped == '\\':
+                if stripped == "" or stripped == "\\":
                     continue
                 filtered_lines.append(line)
-            patched = '\n'.join(filtered_lines)
+            patched = "\n".join(filtered_lines)
 
             # Strip trailing backslash from last line
-            if patched.endswith('\\'):
-                patched = patched.rstrip('\\').rstrip()
+            if patched.endswith("\\"):
+                patched = patched.rstrip("\\").rstrip()
 
             # Append distributed args
             distributed_args = (
@@ -386,9 +384,7 @@ class LaunchScriptDistributor:
             container_name: Name of the target container
         """
         if self._docker is None:
-            raise RuntimeError(
-                "LaunchScriptDistributor requires a RemoteDockerService"
-            )
+            raise RuntimeError("LaunchScriptDistributor requires a RemoteDockerService")
 
         remote_path = "/workspace/exec-script.sh"
 
@@ -494,17 +490,14 @@ def validate_mod_content(
     errors: list[str] = []
 
     if not mod_path.exists():
-        return ValidationResult.fail(
-            errors=[f"Mod path does not exist: {mod_path}"]
-        )
+        return ValidationResult.fail(errors=[f"Mod path does not exist: {mod_path}"])
 
     # Size check
     try:
         mod_size = mod_path.stat().st_size
         if mod_size > MAX_MOD_SIZE:
             errors.append(
-                f"Mod exceeds maximum size {MAX_MOD_SIZE} bytes "
-                f"(got {mod_size})"
+                f"Mod exceeds maximum size {MAX_MOD_SIZE} bytes " f"(got {mod_size})"
             )
     except OSError as e:
         errors.append(f"Cannot stat mod path: {e}")
@@ -517,18 +510,23 @@ def validate_mod_content(
             content = run_sh.read_text(errors="replace")
             for pattern in DANGEROUS_PATTERNS:
                 if re.search(pattern, content):
-                    errors.append(
-                        f"Dangerous pattern detected in run.sh: {pattern}"
-                    )
+                    errors.append(f"Dangerous pattern detected in run.sh: {pattern}")
 
             # Warn on sudo usage
             if "sudo" in content:
                 warnings.append("run.sh uses sudo")
 
             # Network access check
-            network_patterns = [r"\bcurl\b", r"\bwget\b", r"\bpip\s+install\b", r"\bapt\b", r"\byum\b", r"\bdnf\b"]
+            network_patterns = [
+                r"\bcurl\b",
+                r"\bwget\b",
+                r"\bpip\s+install\b",
+                r"\bapt\b",
+                r"\byum\b",
+                r"\bdnf\b",
+            ]
             has_network = any(re.search(p, content) for p in network_patterns)
-            
+
             if has_network:
                 if network_policy == "deny":
                     errors.append(
@@ -548,13 +546,10 @@ def validate_mod_content(
     if mod_path.suffix == ".zip":
         try:
             import zipfile
+
             with zipfile.ZipFile(mod_path) as zf:
-                total_uncompressed = sum(
-                    info.file_size for info in zf.infolist()
-                )
-                total_compressed = sum(
-                    info.compress_size for info in zf.infolist()
-                )
+                total_uncompressed = sum(info.file_size for info in zf.infolist())
+                total_compressed = sum(info.compress_size for info in zf.infolist())
                 if total_compressed > 0:
                     ratio = total_uncompressed / total_compressed
                     if ratio > 10:

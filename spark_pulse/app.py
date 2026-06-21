@@ -200,7 +200,9 @@ async def lifespan(app: FastAPI):
         n_deps = len(tracked.get("deployments", []))
         n_clus = len(tracked.get("clusters", []))
         if n_deps or n_clus:
-            print(f"Restored {n_deps} deployments, {n_clus} clusters from health tracking")
+            print(
+                f"Restored {n_deps} deployments, {n_clus} clusters from health tracking"
+            )
     except Exception as e:
         print(f"Warning: health tracking restore failed: {e}")
 

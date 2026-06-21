@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import logging
 import subprocess
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -114,8 +114,7 @@ class DockerService:
             except Exception as exc:
                 self._import_error = exc
                 raise RuntimeError(
-                    "Docker daemon not available. Is Docker running? "
-                    f"Error: {exc}"
+                    "Docker daemon not available. Is Docker running? " f"Error: {exc}"
                 ) from exc
         return self._client
 
@@ -196,8 +195,7 @@ class DockerService:
         # Add port mappings if specified
         if port_mappings:
             host_config["port_bindings"] = {
-                p.split(":")[0]: [{"HostPort": p.split(":")[1]}]
-                for p in port_mappings
+                p.split(":")[0]: [{"HostPort": p.split(":")[1]}] for p in port_mappings
             }
 
         # Clear entrypoint if requested
@@ -317,7 +315,6 @@ class DockerService:
         Returns:
             Command output string, or Popen if daemon=True.
         """
-        import docker
 
         client = self.client
         if isinstance(container, str):
@@ -336,7 +333,6 @@ class DockerService:
         Returns:
             List of ContainerInfo for all managed containers.
         """
-        import docker
 
         client = self.client
         containers = client.containers.list(
@@ -354,7 +350,6 @@ class DockerService:
         Returns:
             ContainerInfo if found, None otherwise.
         """
-        import docker
 
         client = self.client
         containers = client.containers.list(
@@ -377,7 +372,6 @@ class DockerService:
         Returns:
             List of ContainerInfo matching the recipe.
         """
-        import docker
 
         client = self.client
         containers = client.containers.list(
@@ -399,7 +393,11 @@ class DockerService:
         if isinstance(container.image, str):
             image = container.image
         else:
-            image = container.image.tags[0] if getattr(container.image, "tags", None) else container.image.id
+            image = (
+                container.image.tags[0]
+                if getattr(container.image, "tags", None)
+                else container.image.id
+            )
         return ContainerInfo(
             id=container.id,
             name=container.name,

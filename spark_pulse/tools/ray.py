@@ -8,10 +8,8 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
 
 from spark_pulse.tools.remote_docker import RemoteDockerService
-from spark_pulse.tools.ssh import SSHResult
 
 logger = logging.getLogger(__name__)
 
@@ -64,8 +62,17 @@ class RayManager:
         # Start Ray head
         logger.info("Starting Ray head in %s at %s:%d", container, node_ip, port)
         result = self._docker.exec_container(
-            "", container,
-            ["ray", "start", "--block", "--head", "--node-ip-address", node_ip, f"--port={port}"],
+            "",
+            container,
+            [
+                "ray",
+                "start",
+                "--block",
+                "--head",
+                "--node-ip-address",
+                node_ip,
+                f"--port={port}",
+            ],
             timeout=timeout,
         )
 
@@ -74,7 +81,9 @@ class RayManager:
             return False
 
         # Wait for Ray to become ready
-        return self.wait_for_cluster_ready(container, timeout=timeout, poll_interval=poll_interval)
+        return self.wait_for_cluster_ready(
+            container, timeout=timeout, poll_interval=poll_interval
+        )
 
     def ensure_ray_worker(
         self,
@@ -112,14 +121,20 @@ class RayManager:
         address = f"{head_ip}:{head_port}"
         logger.info(
             "Starting Ray worker in %s connecting to %s",
-            container, address,
+            container,
+            address,
         )
         result = self._docker.exec_container(
-            "", container,
+            "",
+            container,
             [
-                "ray", "start", "--block",
-                "--address", address,
-                "--node-ip-address", worker_ip,
+                "ray",
+                "start",
+                "--block",
+                "--address",
+                address,
+                "--node-ip-address",
+                worker_ip,
             ],
             timeout=timeout,
         )
@@ -129,7 +144,9 @@ class RayManager:
             return False
 
         # Wait for worker to connect
-        return self.wait_for_cluster_ready(container, timeout=timeout, poll_interval=poll_interval)
+        return self.wait_for_cluster_ready(
+            container, timeout=timeout, poll_interval=poll_interval
+        )
 
     def wait_for_cluster_ready(
         self,
@@ -167,7 +184,8 @@ class RayManager:
             Ray status output string.
         """
         result = self._docker.exec_container(
-            "", container,
+            "",
+            container,
             ["ray", "status"],
             timeout=10,
         )
@@ -189,7 +207,8 @@ class RayManager:
         """
         try:
             result = self._docker.exec_container(
-                "", container,
+                "",
+                container,
                 ["ray", "status"],
                 timeout=timeout,
             )
@@ -216,7 +235,8 @@ class RayManager:
         """
         try:
             result = self._docker.exec_container(
-                "", container,
+                "",
+                container,
                 ["ray", "status"],
                 timeout=timeout,
             )

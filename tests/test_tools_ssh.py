@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from spark_pulse.tools.ssh import SSHClient, SSHResult, OpenSSHClient
+from spark_pulse.tools.ssh import SSHResult, OpenSSHClient, SSHError, SSHErrorType
 
 
 class TestSSHResult:
@@ -60,13 +60,18 @@ class TestOpenSSHClient:
             # SSH may not be available in test environment
             pass
 
-    def test_exec_timeout_returns_error(self):
-        """Test that timeout returns error result."""
+    def test_exec_timeout_raises_ssh_error(self):
+        """Test that timeout raises SSHError with TIMEOUT classification."""
         client = OpenSSHClient()
-        # This should return an error result, not raise
-        result = client.exec("192.0.2.1", "echo hello", timeout=1)
-        assert isinstance(result, SSHResult)
-        assert result.ok is False
+        # Timeout should raise SSHError, not return SSHResult
+        import pytest
+
+        with pytest.raises(SSHError) as exc_info:
+            client.exec("192.0.2.1", "echo hello", timeout=1)
+        error = exc_info.value
+        assert error.error_type == SSHErrorType.TIMEOUT
+        assert error.host == "192.0.2.1"
+        assert "timed out" in error.message.lower()
 
 
 class TestModuleFunctions:

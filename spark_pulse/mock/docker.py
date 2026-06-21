@@ -9,7 +9,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any
 
 
 @dataclass
@@ -83,7 +83,9 @@ class MockContainersManager:
             raise NotFound(f"Container {name} not found")
         return container
 
-    def list(self, all: bool = False, filters: dict[str, Any] | None = None) -> list[MockContainer]:
+    def list(
+        self, all: bool = False, filters: dict[str, Any] | None = None
+    ) -> list[MockContainer]:
         """List containers with optional label filters."""
         containers = list(self._containers.values())
         if not all:
@@ -96,20 +98,19 @@ class MockContainersManager:
                 if "=" in label_filter:
                     label_key, label_val = label_filter.split("=", 1)
                     containers = [
-                        c for c in containers
+                        c
+                        for c in containers
                         if (c.labels or {}).get(label_key) == label_val
                     ]
                 else:
                     containers = [
-                        c for c in containers
-                        if label_filter in (c.labels or {})
+                        c for c in containers if label_filter in (c.labels or {})
                     ]
             # Handle specific label key:value filters
             for key, value in filters.items():
                 if key.startswith("spark-pulse.") and key != "label":
                     containers = [
-                        c for c in containers
-                        if (c.labels or {}).get(key) == str(value)
+                        c for c in containers if (c.labels or {}).get(key) == str(value)
                     ]
 
         return containers
@@ -168,16 +169,19 @@ class MockDockerClient:
 
 class NotFound(Exception):
     """Simulated docker.errors.NotFound."""
+
     pass
 
 
 class APIError(Exception):
     """Simulated docker.errors.APIError."""
+
     pass
 
 
 class ImageNotFound(Exception):
     """Simulated docker.errors.ImageNotFound."""
+
     pass
 
 

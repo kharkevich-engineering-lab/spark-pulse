@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 
 from spark_pulse.tools.parallelism import (
     ClusterCapacity,
@@ -26,11 +25,13 @@ class TestParseParallelism:
     def test_default_values_path(self):
         import tempfile
         import os
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("# empty script")
             path = f.name
         try:
             from pathlib import Path
+
             result = parse_parallelism(Path(path))
             assert result == {"tp": 1, "pp": 1, "dp": 1}
         finally:

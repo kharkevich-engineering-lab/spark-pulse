@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import timezone
 
 from spark_pulse.tools.cluster_models import ClusterNode, ClusterState
 
@@ -260,17 +259,25 @@ class TestClusterState:
         assert state.all_containers() == ["h", "w0"]
 
     def test_is_running_all_running(self):
-        head = ClusterNode(ip="10.0.0.1", role="head", container_name="h", status="running")
+        head = ClusterNode(
+            ip="10.0.0.1", role="head", container_name="h", status="running"
+        )
         workers = [
-            ClusterNode(ip="10.0.0.2", role="worker", container_name="w0", status="running"),
+            ClusterNode(
+                ip="10.0.0.2", role="worker", container_name="w0", status="running"
+            ),
         ]
         state = ClusterState(name="test", head=head, workers=workers)
         assert state.is_running is True
 
     def test_is_running_one_stopped(self):
-        head = ClusterNode(ip="10.0.0.1", role="head", container_name="h", status="running")
+        head = ClusterNode(
+            ip="10.0.0.1", role="head", container_name="h", status="running"
+        )
         workers = [
-            ClusterNode(ip="10.0.0.2", role="worker", container_name="w0", status="stopped"),
+            ClusterNode(
+                ip="10.0.0.2", role="worker", container_name="w0", status="stopped"
+            ),
         ]
         state = ClusterState(name="test", head=head, workers=workers)
         assert state.is_running is False

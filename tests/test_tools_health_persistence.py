@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import json
-import tempfile
-from pathlib import Path
 
 import pytest
 
@@ -26,13 +24,13 @@ class TestHealthTrackingPersistence:
             "spark_pulse.tools.health._HEALTH_TRACKING_FILE",
             tracking_file,
         )
-        
+
         tracked = {
             "deployments": [{"id": "dep-1", "type": "deployment"}],
             "clusters": [{"name": "cluster-1", "type": "cluster"}],
         }
         save_health_tracking(tracked)
-        
+
         assert tracking_file.exists()
         loaded = load_health_tracking()
         assert loaded == tracked
@@ -43,7 +41,7 @@ class TestHealthTrackingPersistence:
             tracking_file,
         )
         assert tracking_file.exists() is False
-        
+
         loaded = load_health_tracking()
         assert loaded == {"deployments": [], "clusters": []}
 
@@ -53,7 +51,7 @@ class TestHealthTrackingPersistence:
             tracking_file,
         )
         tracking_file.write_text("not valid json {{{")
-        
+
         loaded = load_health_tracking()
         assert loaded == {"deployments": [], "clusters": []}
 
@@ -63,7 +61,7 @@ class TestHealthTrackingPersistence:
             "spark_pulse.tools.health._HEALTH_TRACKING_FILE",
             nested,
         )
-        
+
         save_health_tracking({"deployments": [], "clusters": []})
         assert nested.exists()
 
@@ -79,10 +77,10 @@ class TestHealthMonitorPersistence:
             "spark_pulse.tools.health._HEALTH_TRACKING_FILE",
             tracking_file,
         )
-        
+
         monitor.track_deployment("dep-1", {"container_name": "test"})
         assert tracking_file.exists()
-        
+
         data = json.loads(tracking_file.read_text())
         assert len(data["deployments"]) == 1
         assert data["deployments"][0]["id"] == "dep-1"
@@ -93,10 +91,10 @@ class TestHealthMonitorPersistence:
             "spark_pulse.tools.health._HEALTH_TRACKING_FILE",
             tracking_file,
         )
-        
+
         monitor.track_cluster("cluster-1", {"head_ip": "10.0.0.1"})
         assert tracking_file.exists()
-        
+
         data = json.loads(tracking_file.read_text())
         assert len(data["clusters"]) == 1
         assert data["clusters"][0]["name"] == "cluster-1"
@@ -107,10 +105,10 @@ class TestHealthMonitorPersistence:
             "spark_pulse.tools.health._HEALTH_TRACKING_FILE",
             tracking_file,
         )
-        
+
         monitor.track_deployment("dep-1", {})
         monitor.untrack("dep-1")
-        
+
         data = json.loads(tracking_file.read_text())
         assert len(data["deployments"]) == 0
 
@@ -120,12 +118,12 @@ class TestHealthMonitorPersistence:
             "spark_pulse.tools.health._HEALTH_TRACKING_FILE",
             tracking_file,
         )
-        
+
         tracked = {
             "deployments": [{"id": "dep-1", "type": "deployment", "info": {}}],
             "clusters": [{"name": "cluster-1", "type": "cluster", "info": {}}],
         }
         save_health_tracking(tracked)
-        
+
         loaded = HealthMonitor.restore_from_persistence()
         assert loaded == tracked

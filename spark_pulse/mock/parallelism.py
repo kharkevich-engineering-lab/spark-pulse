@@ -5,8 +5,7 @@ Mirrors the real parallelism.py API exactly for testing.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,9 +131,7 @@ def validate_cluster_capacity(
             f"Insufficient nodes: need {num_groups} groups (pp×dp), have {num_nodes}",
         )
 
-    capable_nodes = sum(
-        1 for n in cluster_capacity.nodes if n.gpu_count >= tp
-    )
+    capable_nodes = sum(1 for n in cluster_capacity.nodes if n.gpu_count >= tp)
     if capable_nodes < num_groups:
         return (
             False,

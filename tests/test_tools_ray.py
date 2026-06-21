@@ -10,7 +10,9 @@ from spark_pulse.tools.ray import RayManager
 class TestRayManager:
     """Tests for RayManager."""
 
-    def _make_service(self, ray_ready: bool = True, fail_containers: list | None = None):
+    def _make_service(
+        self, ray_ready: bool = True, fail_containers: list | None = None
+    ):
         """Create a mock RemoteDockerService for RayManager."""
         service = MagicMock()
         service.exec_container.return_value = MagicMock(
@@ -46,7 +48,7 @@ class TestRayManager:
         service.get_container_status.return_value = {"running": True}
 
         manager = RayManager(service)
-        result = manager.ensure_ray_head("test-container", "10.0.0.1")
+        manager.ensure_ray_head("test-container", "10.0.0.1")
         # Should succeed (Ray was started)
         assert service.exec_container.called
 
@@ -55,9 +57,7 @@ class TestRayManager:
         service = self._make_service(ray_ready=True)
         manager = RayManager(service)
 
-        result = manager.ensure_ray_worker(
-            "worker-container", "10.0.0.2", "10.0.0.1"
-        )
+        result = manager.ensure_ray_worker("worker-container", "10.0.0.2", "10.0.0.1")
         assert result is True
 
     def test_ensure_ray_worker_starts_new(self):
@@ -65,9 +65,7 @@ class TestRayManager:
         service = self._make_service(ray_ready=True)
         manager = RayManager(service)
 
-        result = manager.ensure_ray_worker(
-            "worker-container", "10.0.0.2", "10.0.0.1"
-        )
+        manager.ensure_ray_worker("worker-container", "10.0.0.2", "10.0.0.1")
         assert service.exec_container.called
 
     def test_wait_for_cluster_ready_timeout(self):

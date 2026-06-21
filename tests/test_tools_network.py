@@ -1,7 +1,5 @@
 """Tests for network env var builder tool."""
 
-import pytest
-
 from spark_pulse.tools.network import (
     get_env_flags,
     get_basic_env,

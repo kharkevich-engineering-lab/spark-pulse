@@ -12,7 +12,7 @@ Scenarios:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
 
 from spark_pulse.tools.discovery import (
@@ -34,32 +34,70 @@ class MockDiscoveryProvider:
         """Return mock interfaces for the current scenario."""
         if self.scenario == "single_gpu":
             return [
-                NetworkInterface(name="eth0", ip="192.168.1.100", mtu=1500, is_up=True, type="ethernet"),
-                NetworkInterface(name="lo", ip="127.0.0.1", mtu=65536, is_up=True, type="loopback"),
-                NetworkInterface(name="docker0", ip="172.17.0.1", mtu=1500, is_up=True, type="docker"),
+                NetworkInterface(
+                    name="eth0",
+                    ip="192.168.1.100",
+                    mtu=1500,
+                    is_up=True,
+                    type="ethernet",
+                ),
+                NetworkInterface(
+                    name="lo", ip="127.0.0.1", mtu=65536, is_up=True, type="loopback"
+                ),
+                NetworkInterface(
+                    name="docker0", ip="172.17.0.1", mtu=1500, is_up=True, type="docker"
+                ),
             ]
         if self.scenario == "dgx":
             return [
-                NetworkInterface(name="eth0", ip="10.0.0.10", mtu=1500, is_up=True, type="ethernet"),
-                NetworkInterface(name="ib0", ip=None, mtu=4096, is_up=True, type="infiniband"),
-                NetworkInterface(name="ib1", ip=None, mtu=4096, is_up=True, type="infiniband"),
-                NetworkInterface(name="lo", ip="127.0.0.1", mtu=65536, is_up=True, type="loopback"),
-                NetworkInterface(name="docker0", ip="172.17.0.1", mtu=1500, is_up=True, type="docker"),
+                NetworkInterface(
+                    name="eth0", ip="10.0.0.10", mtu=1500, is_up=True, type="ethernet"
+                ),
+                NetworkInterface(
+                    name="ib0", ip=None, mtu=4096, is_up=True, type="infiniband"
+                ),
+                NetworkInterface(
+                    name="ib1", ip=None, mtu=4096, is_up=True, type="infiniband"
+                ),
+                NetworkInterface(
+                    name="lo", ip="127.0.0.1", mtu=65536, is_up=True, type="loopback"
+                ),
+                NetworkInterface(
+                    name="docker0", ip="172.17.0.1", mtu=1500, is_up=True, type="docker"
+                ),
             ]
         if self.scenario == "multi_node":
             return [
-                NetworkInterface(name="eth0", ip="10.0.0.10", mtu=1500, is_up=True, type="ethernet"),
-                NetworkInterface(name="ib0", ip=None, mtu=4096, is_up=True, type="infiniband"),
-                NetworkInterface(name="ib1", ip=None, mtu=4096, is_up=True, type="infiniband"),
-                NetworkInterface(name="ib2", ip=None, mtu=4096, is_up=True, type="infiniband"),
-                NetworkInterface(name="ib3", ip=None, mtu=4096, is_up=True, type="infiniband"),
-                NetworkInterface(name="lo", ip="127.0.0.1", mtu=65536, is_up=True, type="loopback"),
+                NetworkInterface(
+                    name="eth0", ip="10.0.0.10", mtu=1500, is_up=True, type="ethernet"
+                ),
+                NetworkInterface(
+                    name="ib0", ip=None, mtu=4096, is_up=True, type="infiniband"
+                ),
+                NetworkInterface(
+                    name="ib1", ip=None, mtu=4096, is_up=True, type="infiniband"
+                ),
+                NetworkInterface(
+                    name="ib2", ip=None, mtu=4096, is_up=True, type="infiniband"
+                ),
+                NetworkInterface(
+                    name="ib3", ip=None, mtu=4096, is_up=True, type="infiniband"
+                ),
+                NetworkInterface(
+                    name="lo", ip="127.0.0.1", mtu=65536, is_up=True, type="loopback"
+                ),
             ]
         # broken_ib
         return [
-            NetworkInterface(name="eth0", ip="192.168.1.50", mtu=1500, is_up=True, type="ethernet"),
-            NetworkInterface(name="ib0", ip=None, mtu=4096, is_up=False, type="infiniband"),
-            NetworkInterface(name="lo", ip="127.0.0.1", mtu=65536, is_up=True, type="loopback"),
+            NetworkInterface(
+                name="eth0", ip="192.168.1.50", mtu=1500, is_up=True, type="ethernet"
+            ),
+            NetworkInterface(
+                name="ib0", ip=None, mtu=4096, is_up=False, type="infiniband"
+            ),
+            NetworkInterface(
+                name="lo", ip="127.0.0.1", mtu=65536, is_up=True, type="loopback"
+            ),
         ]
 
     def get_infiniband_devices(self) -> list[InfinibandDevice]:
@@ -68,21 +106,39 @@ class MockDiscoveryProvider:
             return []
         if self.scenario == "dgx":
             return [
-                InfinibandDevice(hca="mlx5_0", ports=[1, 2], net_devices=["ib0"], state="ACTIVE"),
-                InfinibandDevice(hca="mlx5_1", ports=[1, 2], net_devices=["ib1"], state="ACTIVE"),
-                InfinibandDevice(hca="mlx5_2", ports=[1, 2], net_devices=[], state="ACTIVE"),
-                InfinibandDevice(hca="mlx5_3", ports=[1, 2], net_devices=[], state="ACTIVE"),
+                InfinibandDevice(
+                    hca="mlx5_0", ports=[1, 2], net_devices=["ib0"], state="ACTIVE"
+                ),
+                InfinibandDevice(
+                    hca="mlx5_1", ports=[1, 2], net_devices=["ib1"], state="ACTIVE"
+                ),
+                InfinibandDevice(
+                    hca="mlx5_2", ports=[1, 2], net_devices=[], state="ACTIVE"
+                ),
+                InfinibandDevice(
+                    hca="mlx5_3", ports=[1, 2], net_devices=[], state="ACTIVE"
+                ),
             ]
         if self.scenario == "multi_node":
             return [
-                InfinibandDevice(hca="mlx5_0", ports=[1, 2], net_devices=["ib0"], state="ACTIVE"),
-                InfinibandDevice(hca="mlx5_1", ports=[1, 2], net_devices=["ib1"], state="ACTIVE"),
-                InfinibandDevice(hca="mlx5_2", ports=[1, 2], net_devices=["ib2"], state="ACTIVE"),
-                InfinibandDevice(hca="mlx5_3", ports=[1, 2], net_devices=["ib3"], state="ACTIVE"),
+                InfinibandDevice(
+                    hca="mlx5_0", ports=[1, 2], net_devices=["ib0"], state="ACTIVE"
+                ),
+                InfinibandDevice(
+                    hca="mlx5_1", ports=[1, 2], net_devices=["ib1"], state="ACTIVE"
+                ),
+                InfinibandDevice(
+                    hca="mlx5_2", ports=[1, 2], net_devices=["ib2"], state="ACTIVE"
+                ),
+                InfinibandDevice(
+                    hca="mlx5_3", ports=[1, 2], net_devices=["ib3"], state="ACTIVE"
+                ),
             ]
         # broken_ib
         return [
-            InfinibandDevice(hca="mlx5_0", ports=[1, 2], net_devices=["ib0"], state="DOWN"),
+            InfinibandDevice(
+                hca="mlx5_0", ports=[1, 2], net_devices=["ib0"], state="DOWN"
+            ),
         ]
 
     def get_local_ip(self) -> str | None:
@@ -173,7 +229,9 @@ def _get_default_provider() -> MockDiscoveryProvider:
     return _default_provider
 
 
-def set_mock_scenario(scenario: Literal["single_gpu", "dgx", "multi_node", "broken_ib"]) -> None:
+def set_mock_scenario(
+    scenario: Literal["single_gpu", "dgx", "multi_node", "broken_ib"],
+) -> None:
     """Set the mock scenario for all subsequent discovery calls."""
     global _default_provider
     _default_provider = MockDiscoveryProvider(scenario=scenario)

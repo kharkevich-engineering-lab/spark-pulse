@@ -68,13 +68,15 @@ class TestValidateCluster:
         workers = []
         if worker_statuses:
             for i, status in enumerate(worker_statuses):
-                workers.append(ClusterNode(
-                    ip=f"10.0.0.{i+2}",
-                    role="worker",
-                    container_name=f"cluster-worker-{i}",
-                    status=status,
-                    gpu_count=8,
-                ))
+                workers.append(
+                    ClusterNode(
+                        ip=f"10.0.0.{i+2}",
+                        role="worker",
+                        container_name=f"cluster-worker-{i}",
+                        status=status,
+                        gpu_count=8,
+                    )
+                )
         return ClusterState(name="test", head=head, workers=workers)
 
     def test_all_nodes_running(self):
@@ -125,8 +127,12 @@ class TestValidateCluster:
         # ray status succeeds, nvidia-smi fails, env succeeds
         mock_docker.exec_container.side_effect = [
             MagicMock(ok=True, stdout="OK", stderr=""),  # ray status on head
-            MagicMock(ok=False, stdout="", stderr="nvidia-smi not found"),  # nvidia-smi on head
-            MagicMock(ok=True, stdout="NCCL_SOCKET_IFNAME=eth0", stderr=""),  # env on head
+            MagicMock(
+                ok=False, stdout="", stderr="nvidia-smi not found"
+            ),  # nvidia-smi on head
+            MagicMock(
+                ok=True, stdout="NCCL_SOCKET_IFNAME=eth0", stderr=""
+            ),  # env on head
         ]
 
         result = validate_cluster(state, mock_docker)
@@ -143,8 +149,12 @@ class TestValidateCluster:
             MagicMock(ok=True, stdout="OK", stderr=""),  # ray status on worker
             MagicMock(ok=True, stdout="1", stderr=""),  # nvidia-smi on head
             MagicMock(ok=True, stdout="1", stderr=""),  # nvidia-smi on worker
-            MagicMock(ok=True, stdout="NCCL_SOCKET_IFNAME=eth0", stderr=""),  # env on head
-            MagicMock(ok=True, stdout="NCCL_SOCKET_IFNAME=ib0", stderr=""),  # env on worker
+            MagicMock(
+                ok=True, stdout="NCCL_SOCKET_IFNAME=eth0", stderr=""
+            ),  # env on head
+            MagicMock(
+                ok=True, stdout="NCCL_SOCKET_IFNAME=ib0", stderr=""
+            ),  # env on worker
         ]
 
         result = validate_cluster(state, mock_docker)

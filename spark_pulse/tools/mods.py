@@ -13,8 +13,6 @@ from typing import Any, Literal
 
 from spark_pulse.config import config
 from spark_pulse.tools.launch_script import (
-    DANGEROUS_PATTERNS,
-    MAX_MOD_SIZE,
     ValidationResult,
     validate_mod_content as validate_mod_content_raw,
 )
@@ -90,7 +88,7 @@ class ModOrchestrator:
                     mod_deployment.mod_name,
                 )
                 completed.append(node.ip)
-            except Exception as e:
+            except Exception:
                 failed.append(node.ip)
 
         return ModDeployment(
@@ -152,9 +150,7 @@ class ModOrchestrator:
     ) -> None:
         """Apply a mod to a single node's container."""
         if self._docker is None:
-            raise RuntimeError(
-                "ModOrchestrator requires a RemoteDockerService"
-            )
+            raise RuntimeError("ModOrchestrator requires a RemoteDockerService")
 
         container_name = node.container_name
         remote_path = f"/workspace/mods/{mod_name}"
@@ -200,9 +196,7 @@ class ModOrchestrator:
     ) -> None:
         """Remove a mod from a single node's container."""
         if self._docker is None:
-            raise RuntimeError(
-                "ModOrchestrator requires a RemoteDockerService"
-            )
+            raise RuntimeError("ModOrchestrator requires a RemoteDockerService")
 
         self._docker.exec_container(
             host=node.ip,

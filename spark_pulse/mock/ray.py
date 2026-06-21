@@ -38,12 +38,14 @@ class MockRayManager:
         poll_interval: float = 2,
     ) -> bool:
         """Ensure Ray head is running (mocked)."""
-        self._executed_operations.append({
-            "action": "ensure_ray_head",
-            "container": container,
-            "node_ip": node_ip,
-            "port": port,
-        })
+        self._executed_operations.append(
+            {
+                "action": "ensure_ray_head",
+                "container": container,
+                "node_ip": node_ip,
+                "port": port,
+            }
+        )
 
         if container in self._fail_containers:
             return False
@@ -59,13 +61,15 @@ class MockRayManager:
         poll_interval: float = 2,
     ) -> bool:
         """Ensure Ray worker is connected (mocked)."""
-        self._executed_operations.append({
-            "action": "ensure_ray_worker",
-            "container": container,
-            "worker_ip": worker_ip,
-            "head_ip": head_ip,
-            "head_port": head_port,
-        })
+        self._executed_operations.append(
+            {
+                "action": "ensure_ray_worker",
+                "container": container,
+                "worker_ip": worker_ip,
+                "head_ip": head_ip,
+                "head_port": head_port,
+            }
+        )
 
         if container in self._fail_containers:
             return False
@@ -78,19 +82,23 @@ class MockRayManager:
         poll_interval: float = 2,
     ) -> bool:
         """Poll ray status until responsive (mocked)."""
-        self._executed_operations.append({
-            "action": "wait_for_cluster_ready",
-            "container": container,
-            "timeout": timeout,
-        })
+        self._executed_operations.append(
+            {
+                "action": "wait_for_cluster_ready",
+                "container": container,
+                "timeout": timeout,
+            }
+        )
         return self._ready
 
     def get_ray_status(self, container: str) -> str:
         """Return ray status output (mocked)."""
-        self._executed_operations.append({
-            "action": "get_ray_status",
-            "container": container,
-        })
+        self._executed_operations.append(
+            {
+                "action": "get_ray_status",
+                "container": container,
+            }
+        )
         return "Cluster is ready" if self._ready else "Ray not started"
 
     @property

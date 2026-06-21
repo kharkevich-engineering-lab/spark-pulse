@@ -10,6 +10,7 @@ from starlette.responses import StreamingResponse
 
 # Use factory to get correct tools (real or mock) based on SIMULATION_MODE
 from spark_pulse.tools import system
+from spark_pulse.tools.events import EventBroadcaster
 from spark_pulse import tools
 from spark_pulse.config import config
 
@@ -178,8 +179,6 @@ async def sse_git_update():
 
 # ── Deployment events SSE ────────────────────────────────────────────────────
 
-from spark_pulse.tools.events import EventBroadcaster, EventType
-
 # Module-level event broadcaster singleton
 _event_broadcaster: EventBroadcaster | None = None
 
@@ -194,7 +193,7 @@ def _get_event_broadcaster() -> EventBroadcaster:
 
 async def deployment_events_generator() -> AsyncGenerator[str, None]:
     """Stream deployment events via SSE.
-    
+
     Subscribes to the EventBroadcaster and yields events as they arrive.
     """
     broadcaster = _get_event_broadcaster()
@@ -210,7 +209,7 @@ async def deployment_events_generator() -> AsyncGenerator[str, None]:
 @router.get("/events/deployments")
 async def sse_deployment_events():
     """Stream deployment lifecycle events via SSE.
-    
+
     Events include cluster starting, container started, Ray ready,
     health check results, and deployment completion.
     """

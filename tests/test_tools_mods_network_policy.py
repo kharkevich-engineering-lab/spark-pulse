@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -59,10 +58,10 @@ class TestModNetworkPolicy:
             mod = tmp_path / f"mod-{pattern}"
             mod.mkdir()
             self._create_run_sh(mod, f"#!/bin/bash\n{pattern} something")
-            
+
             result_deny = validate_mod_content(mod, network_policy="deny")
             assert result_deny.healthy is False, f"Failed for pattern: {pattern}"
-            
+
             result_warn = validate_mod_content(mod, network_policy="warn")
             assert result_warn.healthy is True, f"Failed for warn pattern: {pattern}"
             assert len(result_warn.warnings) > 0

@@ -53,9 +53,7 @@ class ClusterState:
     workers: list[ClusterNode] = field(default_factory=list)
     ray_enabled: bool = True
     ray_ready: bool = False
-    created_at: datetime = field(
-        default_factory=lambda: datetime.now(timezone.utc)
-    )
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     # Phase 4 additions
     launch_script: str | None = None
     applied_mods: list[str] = field(default_factory=list)

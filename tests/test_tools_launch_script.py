@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import os
 import tempfile
 from pathlib import Path
 
 import pytest
 
 from spark_pulse.tools.launch_script import (
-    LaunchScriptInfo,
     LaunchScriptManager,
     LaunchScriptDistributor,
     PatchedScriptBundle,
@@ -150,8 +148,7 @@ class TestLaunchScriptManager:
     def test_analyze(self, tmp_path):
         script = tmp_path / "test.sh"
         script.write_text(
-            "#!/bin/bash\n"
-            "python model.py --model test --tensor-parallel-size 2\n"
+            "#!/bin/bash\n" "python model.py --model test --tensor-parallel-size 2\n"
         )
         manager = LaunchScriptManager()
         info = manager.analyze(script)
@@ -182,7 +179,7 @@ class TestLaunchScriptManager:
             # Check that each script has distributed args
             for rank, script_path in bundle.scripts.items():
                 content = script_path.read_text()
-                assert f"--nnodes 3" in content
+                assert "--nnodes 3" in content
                 assert f"--node-rank {rank}" in content
                 assert "--master-addr 10.0.0.1" in content
                 assert "--master-port 29500" in content
@@ -321,6 +318,7 @@ class TestValidateModContent:
 
     def test_zip_bomb_detection(self, tmp_path):
         import zipfile
+
         mod_dir = tmp_path / "zipbomb.zip"
         with zipfile.ZipFile(mod_dir, "w") as zf:
             zf.writestr("small.txt", "x" * 100)

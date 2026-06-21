@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from spark_pulse.tools.reconciliation import (
     ReconciliationResult,
@@ -10,8 +9,6 @@ from spark_pulse.tools.reconciliation import (
     _parse_bool,
     _reconstruct_cluster_state,
     _reconstruct_deployment,
-    reconcile_clusters,
-    reconcile_deployments,
     reconcile_all,
 )
 
@@ -19,7 +16,9 @@ from spark_pulse.tools.reconciliation import (
 class TestParseWorkerIPs:
     def test_comma_separated(self):
         assert _parse_worker_ips("10.0.0.1,10.0.0.2,10.0.0.3") == [
-            "10.0.0.1", "10.0.0.2", "10.0.0.3"
+            "10.0.0.1",
+            "10.0.0.2",
+            "10.0.0.3",
         ]
 
     def test_single_ip(self):
@@ -29,9 +28,7 @@ class TestParseWorkerIPs:
         assert _parse_worker_ips("") == []
 
     def test_whitespace(self):
-        assert _parse_worker_ips(" 10.0.0.1 , 10.0.0.2 ") == [
-            "10.0.0.1", "10.0.0.2"
-        ]
+        assert _parse_worker_ips(" 10.0.0.1 , 10.0.0.2 ") == ["10.0.0.1", "10.0.0.2"]
 
 
 class TestParseBool:
