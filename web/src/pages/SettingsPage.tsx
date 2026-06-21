@@ -432,6 +432,44 @@ export default function SettingsPage() {
             </div>
           </div>
 
+          {/* Cluster Config */}
+          <div className="rounded-xl bg-surface border border-border p-5 space-y-4">
+            <div className="flex items-center gap-2 pb-3 border-b border-border">
+              <Server size={16} className="text-primary" />
+              <h3 className="font-semibold">Cluster Orchestration</h3>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Default cluster image</label>
+              <input type="text" value={String(getDocker("cluster_image", "eugr/spark-vllm-docker:latest"))} onChange={(e) => setDocker("cluster_image", e.target.value)} className={inputCls} placeholder="eugr/spark-vllm-docker:latest" />
+              <p className="text-xs text-text-muted mt-1">Docker image used for cluster nodes.</p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Ray head port</label>
+              <input type="number" min="1024" max="65535" value={Number(getDocker("ray_port", 29501))} onChange={(e) => setDocker("ray_port", parseInt(e.target.value) || 29501)} className={inputCls} placeholder="29501" />
+              <p className="text-xs text-text-muted mt-1">Port for Ray head communication.</p>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium">Default GPU count per node</p>
+                <p className="text-xs text-text-muted mt-0.5">Used for cluster capacity validation.</p>
+              </div>
+              <input type="number" min="1" max="8" value={Number(getDocker("gpu_count", 8))} onChange={(e) => setDocker("gpu_count", parseInt(e.target.value) || 8)} className="w-20 px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm text-center" />
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium">Enable cluster mode</p>
+                <p className="text-xs text-text-muted mt-0.5">Allow multi-node cluster deployments.</p>
+              </div>
+              <button type="button" onClick={() => setDocker("cluster_enabled", !getDocker("cluster_enabled", false) as boolean)} className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${getDocker("cluster_enabled", false) ? "bg-primary" : "bg-border"}`}>
+                <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${getDocker("cluster_enabled", false) ? "translate-x-5" : "translate-x-0"}`} />
+              </button>
+            </div>
+          </div>
+
           {/* Git Auto-Update */}
           <div className="rounded-xl bg-surface border border-border p-5 space-y-4">
             <div className="flex items-center gap-2 pb-3 border-b border-border">

@@ -25,6 +25,7 @@ from spark_pulse.routers import (
     oci as oci_router,
     docker as docker_router,
     discovery as discovery_router,
+    cluster as cluster_router,
 )
 from spark_pulse.auth import AuthMiddleware, router as auth_router
 from spark_pulse.sse import router as sse_router
@@ -210,6 +211,7 @@ def create_app() -> FastAPI:
     app.include_router(oci_router.router)
     app.include_router(docker_router.router)
     app.include_router(discovery_router.router)
+    app.include_router(cluster_router.router)
     app.include_router(auth_router)
     app.include_router(sse_router)
 

@@ -409,3 +409,43 @@ export async function applyNcclDefaults(body: {
 export async function getValidation(): Promise<ValidationResult> {
   return json<ValidationResult>("/discovery/validation");
 }
+
+// ── Cluster Orchestration ────────────────────────────────────────────────────
+
+import type { ClusterState, ClusterValidationResult, StartClusterRequest, StopClusterRequest, ClusterValidateRequest, ClusterRollbackRequest } from "@/lib/types";
+
+export async function startCluster(body: StartClusterRequest): Promise<ClusterState> {
+  return json<ClusterState>("/cluster/start", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function stopCluster(body: StopClusterRequest): Promise<{ name: string; status: string }> {
+  return json<{ name: string; status: string }>("/cluster/stop", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function getClusterStatus(name: string): Promise<ClusterState> {
+  return json<ClusterState>(`/cluster/status?name=${encodeURIComponent(name)}`);
+}
+
+export async function listClusters(): Promise<ClusterState[]> {
+  return json<ClusterState[]>("/cluster/list");
+}
+
+export async function validateCluster(body: ClusterValidateRequest): Promise<ClusterValidationResult> {
+  return json<ClusterValidationResult>("/cluster/validate", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function rollbackCluster(body: ClusterRollbackRequest): Promise<ClusterState> {
+  return json<ClusterState>("/cluster/rollback", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}

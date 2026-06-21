@@ -275,3 +275,56 @@ export interface OciAutoUpdateSettings {
   schedule: string;
   overwrite_local: boolean;
 }
+
+// ── Cluster Orchestration Types ──────────────────────────────────────────────
+
+export interface ClusterNodeInfo {
+  ip: string;
+  container: string;
+  status: "starting" | "running" | "stopped" | "error";
+  ray_ready: boolean;
+  gpu_count: number;
+}
+
+export interface ClusterState {
+  name: string;
+  head: ClusterNodeInfo;
+  workers: ClusterNodeInfo[];
+  ray_enabled: boolean;
+  ray_ready: boolean;
+  total_nodes: number;
+  healthy: boolean;
+}
+
+export interface ClusterValidationResult {
+  healthy: boolean;
+  warnings: string[];
+  errors: string[];
+}
+
+export interface StartClusterRequest {
+  name: string;
+  image: string;
+  head_ip: string;
+  worker_ips: string[];
+  env: Record<string, string>;
+  docker_config: Record<string, unknown>;
+  mod_deployments?: { path: string; target: string }[];
+  no_ray?: boolean;
+}
+
+export interface StopClusterRequest {
+  name: string;
+}
+
+export interface ClusterStatusRequest {
+  name: string;
+}
+
+export interface ClusterValidateRequest {
+  name: string;
+}
+
+export interface ClusterRollbackRequest {
+  name: string;
+}

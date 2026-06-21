@@ -13,4 +13,10 @@ from spark_pulse.mock import (
     docker,
     network,
     discovery,
+    ssh,
+    remote_docker,
+    cluster,
+    ray,
+    parallelism,
+    cluster_health,
 )

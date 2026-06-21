@@ -24,6 +24,12 @@ if _sim_mode:
         docker as docker,
         network as network,
         discovery as discovery,
+        ssh as ssh,
+        remote_docker as remote_docker,
+        cluster as cluster,
+        ray as ray,
+        parallelism as parallelism,
+        cluster_health as cluster_health,
     )
 else:
     from spark_pulse.tools import (
@@ -39,6 +45,13 @@ else:
         docker as docker,
         network as network,
         discovery as discovery,
+        cluster_models as cluster_models,
+        ssh as ssh,
+        remote_docker as remote_docker,
+        cluster as cluster,
+        ray as ray,
+        parallelism as parallelism,
+        cluster_health as cluster_health,
     )
 
 
