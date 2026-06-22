@@ -128,20 +128,36 @@ def e2e_app(e2e_config):
 @pytest.fixture(scope="module")
 def e2e_server(e2e_app):
     """Run a test server for e2e tests."""
+    import socket
     import threading
+    import time
 
     from uvicorn import Config, Server
 
-    config = Config(app=e2e_app, host="127.0.0.1", port=0, log_level="error")
+    # Use a random port in the ephemeral range since Config.port is not
+    # updated by uvicorn >=0.47 after binding (stays at the initial value).
+    # We bind a socket ourselves to get the actual port, then pass it via
+    # the `fd` parameter workaround by choosing a free port explicitly.
+    port = 9499
+    for _attempt in range(50):
+        try:
+            test_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            test_sock.bind(("127.0.0.1", port))
+            test_sock.close()
+            break
+        except OSError:
+            port += 1
+    else:
+        raise RuntimeError("Could not find an available port for test server")
+
+    config = Config(app=e2e_app, host="127.0.0.1", port=port, log_level="error")
     server = Server(config)
 
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
 
     # Wait for server to be ready
-    import time
-
-    base_url = f"http://127.0.0.1:{config.port}"
+    base_url = f"http://127.0.0.1:{port}"
     for _ in range(30):
         try:
             httpx.get(f"{base_url}/health", timeout=1)
