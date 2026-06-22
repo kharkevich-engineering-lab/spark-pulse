@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from contextlib import contextmanager
@@ -109,7 +107,9 @@ _RECIPES = [
 
 _CUSTOM_RECIPES_DIR = Path.home() / ".config" / "spark-pulse" / "custom_recipes"
 _CUSTOM_MODS_DIR = Path.home() / ".config" / "spark-pulse" / "custom_mods"
-_CUSTOM_RECIPES_PATH = Path(__file__).resolve().parent.parent / "data" / "custom_recipes.json"
+_CUSTOM_RECIPES_PATH = (
+    Path(__file__).resolve().parent.parent / "data" / "custom_recipes.json"
+)
 _CUSTOM_RECIPES_LOCK = FileLock(f"{_CUSTOM_RECIPES_PATH}.lock", timeout=30)
 
 
@@ -136,7 +136,7 @@ def _recipe_id_from_path(recipe_dir: Path, recipe_file: Path) -> str:
 
 def _load_customizations() -> dict[str, Any]:
     """Load custom recipe customizations."""
-    custom_path = getattr(custom_recipes, '_CUSTOM_PATH', None)
+    custom_path = getattr(custom_recipes, "_CUSTOM_PATH", None)
     if custom_path is None:
         # Fallback to the default path
         custom_path = _CUSTOM_RECIPES_PATH
@@ -154,7 +154,7 @@ def _load_customizations() -> dict[str, Any]:
 
 def _save_customizations(data: dict[str, Any]) -> None:
     """Save custom recipe customizations."""
-    custom_path = getattr(custom_recipes, '_CUSTOM_PATH', None)
+    custom_path = getattr(custom_recipes, "_CUSTOM_PATH", None)
     if custom_path is None:
         custom_path = _CUSTOM_RECIPES_PATH
     custom_path.parent.mkdir(parents=True, exist_ok=True)
@@ -173,7 +173,9 @@ def _atomic_customizations():
         _save_customizations(data)
 
 
-def _load_customized_recipe(recipe_id: str, spark_path: Path | None = None) -> dict | None:
+def _load_customized_recipe(
+    recipe_id: str, spark_path: Path | None = None
+) -> dict | None:
     """Load a recipe from spark_path if it exists."""
     spark_path = spark_path or Path(__file__).resolve().parent.parent.parent
     recipe_dir = Path(spark_path) / "recipes"
@@ -312,7 +314,9 @@ def build_launch_command(recipe: dict[str, Any], params: dict[str, Any]) -> str:
     if tp:
         cmd = cmd.replace("{-tp}", f"--tensor-parallel-size {tp}")
     if gpu_mem:
-        cmd = cmd.replace("{--gpu-memory-utilization}", f"--gpu-memory-utilization {gpu_mem}")
+        cmd = cmd.replace(
+            "{--gpu-memory-utilization}", f"--gpu-memory-utilization {gpu_mem}"
+        )
     if max_len:
         cmd = cmd.replace("{--max-model-len}", f"--max-model-len {max_len}")
 
@@ -343,9 +347,17 @@ def save_customization(recipe_id: str, customization: dict[str, Any]) -> bool:
     """Save a recipe customization."""
     data = _load_customizations()
     # Store all meaningful customizable fields
-    customizable = {"port", "tensor_parallel", "gpu_memory_utilization",
-                     "max_num_seqs", "env", "build_args", "privileged",
-                     "command", "mods"}
+    customizable = {
+        "port",
+        "tensor_parallel",
+        "gpu_memory_utilization",
+        "max_num_seqs",
+        "env",
+        "build_args",
+        "privileged",
+        "command",
+        "mods",
+    }
     filtered = {k: v for k, v in customization.items() if k in customizable}
     if filtered:
         data[recipe_id] = filtered
@@ -365,9 +377,13 @@ def delete_customization(recipe_id: str) -> bool:
     return False
 
 
-def get_customized_recipe(recipe_id: str, spark_path: Path | None = None) -> dict[str, Any] | None:
+def get_customized_recipe(
+    recipe_id: str, spark_path: Path | None = None
+) -> dict[str, Any] | None:
     """Get a recipe with customizations applied."""
-    recipe = get_recipe(recipe_id, spark_path) or _load_customized_recipe(recipe_id, spark_path)
+    recipe = get_recipe(recipe_id, spark_path) or _load_customized_recipe(
+        recipe_id, spark_path
+    )
     if recipe is None:
         return None
     customization = get_customization(recipe_id)
@@ -452,15 +468,17 @@ def list_custom_mods() -> list[dict[str, Any]]:
             description = ""
             run_sh = item / "run.sh"
             for line in run_sh.read_text().split("\n"):
-                if line.startswith('#'):
-                    description = line.lstrip('# ').strip()
+                if line.startswith("#"):
+                    description = line.lstrip("# ").strip()
                 else:
                     break
-            mods.append({
-                "name": item.name,
-                "path": str(item),
-                "description": description,
-            })
+            mods.append(
+                {
+                    "name": item.name,
+                    "path": str(item),
+                    "description": description,
+                }
+            )
     return mods
 
 
@@ -477,10 +495,12 @@ def get_mod_files(mod_name: str) -> dict[str, Any] | None:
                 content = f.read_text()
             except (OSError, UnicodeDecodeError):
                 content = None
-            files.append({
-                "path": str(rel),
-                "content": content,
-            })
+            files.append(
+                {
+                    "path": str(rel),
+                    "content": content,
+                }
+            )
     return {"name": mod_name, "path": str(mod_dir), "files": files}
 
 
@@ -502,6 +522,7 @@ def delete_mod(mod_name: str) -> bool:
     mod_dir = _CUSTOM_MODS_DIR / mod_name
     if mod_dir.exists():
         import shutil
+
         shutil.rmtree(mod_dir)
         return True
     return False

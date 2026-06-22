@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
@@ -77,13 +76,41 @@ EXPECTED_CACHE_DIRS = [
 def get_cache_dirs() -> list[dict[str, str]]:
     """Return expected cache directories to scan (matching real module format)."""
     return [
-        {"name": "HF Model Cache", "path": "/home/user/.cache/huggingface/hub", "description": "Downloaded HuggingFace models"},
-        {"name": "vLLM Cache", "path": "/home/user/.cache/vllm", "description": "vLLM internal cache"},
-        {"name": "FlashInfer Cache", "path": "/home/user/.cache/flashinfer", "description": "FlashInfer JIT cache"},
-        {"name": "Triton Cache", "path": "/home/user/.triton", "description": "Triton compiler cache"},
-        {"name": "CCache", "path": "/home/user/.ccache", "description": "CUDA/C++ compilation cache"},
-        {"name": "uv Pip Cache", "path": "/home/user/.cache/uv", "description": "Python package cache"},
-        {"name": "Wheels (spark-vllm)", "path": "/tmp/spark-vllm-docker/wheels", "description": "Built/installed wheels"},
+        {
+            "name": "HF Model Cache",
+            "path": "/home/user/.cache/huggingface/hub",
+            "description": "Downloaded HuggingFace models",
+        },
+        {
+            "name": "vLLM Cache",
+            "path": "/home/user/.cache/vllm",
+            "description": "vLLM internal cache",
+        },
+        {
+            "name": "FlashInfer Cache",
+            "path": "/home/user/.cache/flashinfer",
+            "description": "FlashInfer JIT cache",
+        },
+        {
+            "name": "Triton Cache",
+            "path": "/home/user/.triton",
+            "description": "Triton compiler cache",
+        },
+        {
+            "name": "CCache",
+            "path": "/home/user/.ccache",
+            "description": "CUDA/C++ compilation cache",
+        },
+        {
+            "name": "uv Pip Cache",
+            "path": "/home/user/.cache/uv",
+            "description": "Python package cache",
+        },
+        {
+            "name": "Wheels (spark-vllm)",
+            "path": "/tmp/spark-vllm-docker/wheels",
+            "description": "Built/installed wheels",
+        },
     ]
 
 

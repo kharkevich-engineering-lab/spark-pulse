@@ -7,18 +7,7 @@ work correctly.
 
 from __future__ import annotations
 
-from typing import Any
-
 # Import real system module for test compatibility
-from spark_pulse.tools.system import (
-    get_gpu_stats,
-    get_gpu_process_stats,
-    get_cpu_stats,
-    get_disk_stats,
-    kill_gpu_process,
-    get_all_memory,
-    enrich_gpu_process_tracking,
-)
 
 # Pre-canned mock data (used when subprocess.getoutput is NOT mocked)
 _GPU_STATS = [

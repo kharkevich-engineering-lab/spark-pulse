@@ -70,10 +70,12 @@ def e2e_config(spark_vllm_dir, custom_recipe_file):
 
     # Patch custom recipes path (both standalone and inline synthetic module)
     import spark_pulse.tools.custom_recipes as cr
+
     cr._CUSTOM_PATH = custom_recipe_file
 
     # Also patch the synthetic custom_recipes submodule inside mock/recipes.py
     import spark_pulse.mock.recipes as mock_recipes
+
     mock_recipes.custom_recipes._CUSTOM_PATH = custom_recipe_file
 
     return config

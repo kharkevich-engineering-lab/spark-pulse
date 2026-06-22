@@ -16,7 +16,9 @@ logger = logging.getLogger(__name__)
 # ── Constants (must match real module for monkeypatching to work) ────────────
 
 _RETENTION_DAYS = 90
-_BENCHMARKS_PATH: Path = Path(__file__).resolve().parent.parent / "data" / "benchmarks.json"
+_BENCHMARKS_PATH: Path = (
+    Path(__file__).resolve().parent.parent / "data" / "benchmarks.json"
+)
 _BENCHMARKS_LOCK = FileLock(f"{_BENCHMARKS_PATH}.lock", timeout=30)
 
 # Realistic pre-canned benchmark results keyed by model family
