@@ -7,7 +7,11 @@ work correctly.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from typing import Any
+
 # Import real system module for test compatibility
+# This allows parsing tests to work when subprocess is mocked
 
 # Pre-canned mock data (used when subprocess.getoutput is NOT mocked)
 _GPU_STATS = [
@@ -52,3 +56,54 @@ _DISK_STATS = [
         "usage_percent": 64.9,
     },
 ]
+
+# ── Delegation functions ───────────────────────────────────────────────────
+# These delegate to the real implementation so that subprocess-mocked tests
+# work correctly.  The real module is only imported lazily to avoid importing
+# things that are unavailable in the test environment when simulating.
+
+
+def _resolve_module() -> Any:
+    """Return the real system module, loading it lazily."""
+    import importlib
+    return importlib.import_module("spark_pulse.tools.system")
+
+
+def get_gpu_stats() -> list[dict[str, Any]]:
+    """Return GPU stats by delegating to the real implementation."""
+    return _resolve_module().get_gpu_stats()
+
+
+def get_gpu_process_stats() -> list[dict[str, Any]]:
+    """Return GPU process stats by delegating to the real implementation."""
+    return _resolve_module().get_gpu_process_stats()
+
+
+def get_cpu_stats() -> dict[str, Any]:
+    """Return CPU stats by delegating to the real implementation."""
+    return _resolve_module().get_cpu_stats()
+
+
+def get_disk_stats() -> list[dict[str, Any]]:
+    """Return disk stats by delegating to the real implementation."""
+    return _resolve_module().get_disk_stats()
+
+
+def kill_gpu_process(pid: int) -> dict[str, Any]:
+    """Kill a GPU process by delegating to the real implementation."""
+    return _resolve_module().kill_gpu_process(pid)
+
+
+def get_all_memory() -> dict[str, Any]:
+    """Return all memory info by delegating to the real implementation."""
+    return _resolve_module().get_all_memory()
+
+
+def enrich_gpu_process_tracking(
+    process_list: list[dict[str, Any]],
+    running_deployments: list[dict[str, Any]],
+) -> None:
+    """Mark processes that correspond to running deployments."""
+    running_pids = {d["pid"] for d in running_deployments}
+    for proc in process_list:
+        proc["is_tracked"] = proc["pid"] in running_pids
