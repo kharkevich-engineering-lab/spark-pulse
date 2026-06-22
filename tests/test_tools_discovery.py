@@ -348,7 +348,6 @@ class TestValidation:
             patch("spark_pulse.tools.discovery.detect_infiniband_devices") as mock_ib,
             patch("spark_pulse.tools.discovery._port_available") as mock_port,
         ):
-
             mock_ifaces.return_value = [
                 NetworkInterface(
                     name="eth0",
@@ -380,7 +379,6 @@ class TestValidation:
             patch("spark_pulse.tools.discovery.detect_infiniband_devices") as mock_ib,
             patch("spark_pulse.tools.discovery._port_available") as mock_port,
         ):
-
             mock_ifaces.return_value = [
                 NetworkInterface(
                     name="lo", ip="127.0.0.1", mtu=65536, is_up=True, type="loopback"
@@ -404,7 +402,6 @@ class TestValidation:
             patch("spark_pulse.tools.discovery.detect_infiniband_devices") as mock_ib,
             patch("spark_pulse.tools.discovery._port_available") as mock_port,
         ):
-
             mock_ifaces.return_value = [
                 NetworkInterface(
                     name="eth0",

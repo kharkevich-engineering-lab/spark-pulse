@@ -70,7 +70,7 @@ class TestValidateCluster:
             for i, status in enumerate(worker_statuses):
                 workers.append(
                     ClusterNode(
-                        ip=f"10.0.0.{i+2}",
+                        ip=f"10.0.0.{i + 2}",
                         role="worker",
                         container_name=f"cluster-worker-{i}",
                         status=status,

@@ -114,7 +114,7 @@ class DockerService:
             except Exception as exc:
                 self._import_error = exc
                 raise RuntimeError(
-                    "Docker daemon not available. Is Docker running? " f"Error: {exc}"
+                    f"Docker daemon not available. Is Docker running? Error: {exc}"
                 ) from exc
         return self._client
 

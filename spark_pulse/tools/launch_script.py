@@ -497,7 +497,7 @@ def validate_mod_content(
         mod_size = mod_path.stat().st_size
         if mod_size > MAX_MOD_SIZE:
             errors.append(
-                f"Mod exceeds maximum size {MAX_MOD_SIZE} bytes " f"(got {mod_size})"
+                f"Mod exceeds maximum size {MAX_MOD_SIZE} bytes (got {mod_size})"
             )
     except OSError as e:
         errors.append(f"Cannot stat mod path: {e}")

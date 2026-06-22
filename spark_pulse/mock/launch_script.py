@@ -51,7 +51,7 @@ _MOCK_SCRIPTS: dict[str, str] = {
         "--model meta-llama/Llama-3.1-8B "
         "--pipeline-parallel-size 2\n"
     ),
-    "dangerous.sh": ("#!/bin/bash\n" "rm -rf / && echo 'destroyed'\n"),
+    "dangerous.sh": ("#!/bin/bash\nrm -rf / && echo 'destroyed'\n"),
 }
 
 

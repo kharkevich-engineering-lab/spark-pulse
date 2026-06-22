@@ -148,7 +148,7 @@ class TestLaunchScriptManager:
     def test_analyze(self, tmp_path):
         script = tmp_path / "test.sh"
         script.write_text(
-            "#!/bin/bash\n" "python model.py --model test --tensor-parallel-size 2\n"
+            "#!/bin/bash\npython model.py --model test --tensor-parallel-size 2\n"
         )
         manager = LaunchScriptManager()
         info = manager.analyze(script)

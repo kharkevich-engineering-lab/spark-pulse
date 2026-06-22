@@ -232,7 +232,6 @@ def _load_customized_recipe(
     return None
 
 
-
 def list_recipes(spark_path: Path | None = None) -> list[dict[str, Any]]:
     """Scan all YAML files in the recipes directory (when spark_path provided),
     or return mock recipe list when no spark_path."""
