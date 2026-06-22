@@ -7,7 +7,6 @@ work correctly.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from typing import Any
 
 # Import real system module for test compatibility
@@ -66,6 +65,7 @@ _DISK_STATS = [
 def _resolve_module() -> Any:
     """Return the real system module, loading it lazily."""
     import importlib
+
     return importlib.import_module("spark_pulse.tools.system")
 
 
