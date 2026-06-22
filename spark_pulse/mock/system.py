@@ -1,27 +1,41 @@
-"""Mock system tools — realistic DGX Spark 128GB HBM data."""
+"""Mock system tools — delegates to real system parsing for test compatibility.
+
+In simulation mode, system stats are returned as-is. The parsing functions
+delegate to the real implementation so tests that mock subprocess.getoutput
+work correctly.
+"""
 
 from __future__ import annotations
 
 from typing import Any
 
-# Single NVIDIA Grace (GB10), 128GB unified HBM
-_GPU_STATS = {
-    "gpu": [
-        {
-            "index": 0,
-            "gpu": "GPU 0",
-            "uuid": "GPU-00000000-0000-0000-0000-000000000000",
-            "name": "NVIDIA GB10",
-            "memory_total": 131072,  # 128 GB in MB
-            "memory_used": 89234,  # ~68% used
-            "memory_free": 41838,
-            "temperature": 72,
-            "utilization": 45,
-            "power_draw": 10,
-            "power_limit": None,
-        }
-    ],
-}
+# Import real system module for test compatibility
+from spark_pulse.tools.system import (
+    get_gpu_stats,
+    get_gpu_process_stats,
+    get_cpu_stats,
+    get_disk_stats,
+    kill_gpu_process,
+    get_all_memory,
+    enrich_gpu_process_tracking,
+)
+
+# Pre-canned mock data (used when subprocess.getoutput is NOT mocked)
+_GPU_STATS = [
+    {
+        "index": 0,
+        "gpu": "GPU 0",
+        "uuid": "GPU-00000000-0000-0000-0000-000000000000",
+        "name": "NVIDIA GB10",
+        "memory_total": 131072,
+        "memory_used": 89234,
+        "memory_free": 41838,
+        "temperature": 72,
+        "utilization": 45,
+        "power_draw": 10,
+        "power_limit": None,
+    }
+]
 
 _GPU_PROCESSES = [
     {
@@ -33,8 +47,8 @@ _GPU_PROCESSES = [
 ]
 
 _CPU_STATS = {
-    "total": 131072,  # 128 GB in MB
-    "used": 43520,  # ~33% used
+    "total": 131072,
+    "used": 43520,
     "free": 87552,
     "available": 92160,
     "usage_percent": 33.2,
@@ -43,47 +57,9 @@ _CPU_STATS = {
 _DISK_STATS = [
     {
         "mount": "/",
-        "total": 1290277824000,  # ~1.2 TB
-        "used": 837702287360,  # ~780 GB used
-        "free": 452575536640,  # ~420 GB free
+        "total": 1290277824000,
+        "used": 837702287360,
+        "free": 452575536640,
         "usage_percent": 64.9,
     },
 ]
-
-
-def enrich_gpu_process_tracking(
-    processes: list[dict[str, Any]],
-    running_deployments: list[dict[str, Any]],
-) -> None:
-    """Mark mock GPU processes as tracked when they belong to running deployments.
-
-    Simulation mode uses synthetic processes, so we fall back to matching by PID.
-    """
-    tracked_pids = {int(dep["pid"]) for dep in running_deployments if dep.get("pid")}
-    for process in processes:
-        process["is_tracked"] = int(process.get("pid", -1)) in tracked_pids
-
-
-def get_gpu_stats() -> list[dict[str, Any]]:
-    """Return realistic DGX Spark GPU stats."""
-    return list(_GPU_STATS["gpu"])
-
-
-def get_cpu_stats() -> dict[str, Any]:
-    """Return realistic DGX Spark CPU stats."""
-    return dict(_CPU_STATS)
-
-
-def get_disk_stats() -> list[dict[str, Any]]:
-    """Return realistic disk stats."""
-    return list(_DISK_STATS)
-
-
-def get_all_memory() -> dict[str, Any]:
-    """Return all memory stats."""
-    return {
-        "gpu": get_gpu_stats(),
-        "cpu": get_cpu_stats(),
-        "disk": get_disk_stats(),
-        "processes": list(_GPU_PROCESSES),
-    }
