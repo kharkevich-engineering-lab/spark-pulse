@@ -29,4 +29,7 @@ spark_pulse/ui/
 .qwen/settings.json*
 .pytest_cache/
 .qwen/
+web/playwright-report/
+web/test-results/
+web/tests/e2e/
 .ralph/
