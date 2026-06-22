@@ -67,7 +67,7 @@ echo "🧪 Running E2E tests..."
 echo ""
 
 cd web
-npx playwright test $headed $ui_mode $debug $file --config=../tests/e2e/playwright.config.ts
+npx playwright test $headed $ui_mode $debug $file --config=tests/e2e/playwright.config.ts
 set -l exit_code $status
 
 echo ""

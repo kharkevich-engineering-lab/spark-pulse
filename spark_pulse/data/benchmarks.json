@@ -216,5 +216,23 @@
     "results": {
       "error": "llama-benchy is not installed. Install it with: pip install spark-pulse[benchmarking]"
     }
+  },
+  {
+    "benchmark_id": "65ae46f2-21dc-4cea-b653-1b144c8c264e",
+    "deployment_id": "test-deployment",
+    "recipe_id": "",
+    "recipe_name": "",
+    "baseline_id": null,
+    "status": "error",
+    "started_at": "2026-06-22T03:33:43.378352+00:00",
+    "completed_at": "2026-06-22T03:33:43.380131+00:00",
+    "params": {
+      "benchmarks": [
+        "throughput"
+      ]
+    },
+    "results": {
+      "error": "llama-benchy is not installed. Install it with: pip install spark-pulse[benchmarking]"
+    }
   }
 ]

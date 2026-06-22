@@ -20,12 +20,6 @@ from unittest.mock import patch
 import pytest
 import httpx
 
-# Ensure we use the CI venv for playwright if available
-try:
-    __import__("playwright.sync_api")
-except ImportError:
-    pytest.skip("playwright not installed", allow_module_level=True)
-
 from spark_pulse.app import create_app
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
