@@ -29,3 +29,4 @@ spark_pulse/ui/
 .qwen/settings.json*
 .pytest_cache/
 .qwen/
+.ralph/
