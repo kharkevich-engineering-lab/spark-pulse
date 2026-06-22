@@ -30,6 +30,7 @@ dependencies = [
 dev = [
     "black>=24.8.0",
     "pytest>=8.0",
+    "pytest-asyncio>=0.24.0",
     "pytest-env>=1.6.0",
     "httpx>=0.28",
     "oidc-provider-mock>=0.4.0",
@@ -59,6 +60,7 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "--tb=short -v"
 env = ["SIMULATION_MODE=1"]
+asyncio_mode = "auto"
 
 # ── Packaging ───────────────────────────────────────────────────────────────
 
