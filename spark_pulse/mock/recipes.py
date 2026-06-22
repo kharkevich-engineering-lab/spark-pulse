@@ -11,6 +11,8 @@ from contextlib import contextmanager
 import yaml
 from filelock import FileLock
 
+from spark_pulse.config import config
+
 # Default mock recipes (used when no spark_path is provided)
 _RECIPES = [
     {
@@ -233,10 +235,10 @@ import json
 def list_recipes(spark_path: Path | None = None) -> list[dict[str, Any]]:
     """Scan all YAML files in the recipes directory (when spark_path provided),
     or return mock recipe list when no spark_path."""
-    if spark_path is not None:
-        recipe_dir = Path(spark_path) / "recipes"
-        if not recipe_dir.is_dir():
-            return []
+    if spark_path is None:
+        spark_path = Path(config.spark_vllm_path)
+    recipe_dir = spark_path / "recipes"
+    if recipe_dir.is_dir():
         recipes = []
         for yaml_file in _iter_recipe_files(recipe_dir):
             try:
@@ -267,26 +269,23 @@ def list_recipes(spark_path: Path | None = None) -> list[dict[str, Any]]:
 
 def get_recipe(recipe_id: str, spark_path: Path | None = None) -> dict[str, Any] | None:
     """Load a specific recipe by relative path id or display name.
-    Uses spark_path if provided, otherwise returns mock data."""
-    if spark_path is not None:
-        recipe = _load_customized_recipe(recipe_id, spark_path)
-        if recipe is None:
-            return None
-        # Apply customizations like the real module
-        customization = get_customization(recipe_id)
-        if customization:
-            for key in ("command", "mods", "env", "build_args", "defaults"):
-                if key in customization:
-                    if key == "defaults":
-                        recipe[key] = {**recipe.get(key, {}), **customization[key]}
-                    else:
-                        recipe[key] = customization[key]
-        return recipe
-
-    for r in _RECIPES:
-        if r["name"] == recipe_id:
-            return {"id": r["name"], **r}
-    return None
+    Uses spark_path if provided, otherwise falls back to config.spark_vllm_path
+    and finally returns mock data."""
+    if spark_path is None:
+        spark_path = Path(config.spark_vllm_path)
+    recipe = _load_customized_recipe(recipe_id, spark_path)
+    if recipe is None:
+        return None
+    # Apply customizations like the real module
+    customization = get_customization(recipe_id)
+    if customization:
+        for key in ("command", "mods", "env", "build_args", "defaults"):
+            if key in customization:
+                if key == "defaults":
+                    recipe[key] = {**recipe.get(key, {}), **customization[key]}
+                else:
+                    recipe[key] = customization[key]
+    return recipe
 
 
 def build_launch_command(recipe: dict[str, Any], params: dict[str, Any]) -> str:
