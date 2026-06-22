@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+import json
 from pathlib import Path
 from typing import Any
-from contextlib import contextmanager
 
+import types
 import yaml
 from filelock import FileLock
 
@@ -229,9 +231,6 @@ def _load_customized_recipe(
             continue
     return None
 
-
-# Import json at the module level
-import json
 
 
 def list_recipes(spark_path: Path | None = None) -> list[dict[str, Any]]:
@@ -530,9 +529,7 @@ def delete_mod(mod_name: str) -> bool:
 
 # ── Test compatibility: create custom_recipes submodule ──────────────────────
 
-import types as _types
-
-_custom_recipes_mod = _types.ModuleType("custom_recipes")
+_custom_recipes_mod = types.ModuleType("custom_recipes")
 _custom_recipes_mod.__file__ = __file__
 _custom_recipes_mod._CUSTOM_PATH = _CUSTOM_RECIPES_PATH
 _custom_recipes_mod.get_customization = get_customization
