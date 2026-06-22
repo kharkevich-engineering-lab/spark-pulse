@@ -35,6 +35,16 @@ jobs:
       - name: Run Python tests
         run: |
           pytest --tb=short -v tests/
+      - name: Run UI unit tests
+        working-directory: web
+        run: npm run test:run
+      - name: Start mock backend for Playwright
+        run: |
+          SIMULATION_MODE=1 uvicorn spark_pulse.app:app --host 0.0.0.0 --port 8100 --workers 1 &
+          for i in $(seq 1 30); do curl -sf http://localhost:8100/health && break; sleep 1; done || exit 1
+      - name: Run Playwright e2e tests
+        working-directory: web
+        run: npm run test:e2e
   pre-commit:
     name: Run pre-commit
     runs-on: ubuntu-latest
