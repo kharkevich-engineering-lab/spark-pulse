@@ -14,11 +14,16 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Literal
 
-from spark_pulse.tools.cluster_models import ClusterNode, ClusterState
 from spark_pulse.tools.cluster_health import validate_cluster
+from spark_pulse.tools.cluster_models import ClusterNode, ClusterState
+from spark_pulse.tools.docker import ContainerMetadata
 from spark_pulse.tools.events import EventBroadcaster, EventType
+from spark_pulse.tools.labels import CLUSTER_LABEL
+from spark_pulse.tools.mods import ModDeployment as ModPayload
+from spark_pulse.tools.mods import ModOrchestrator
 from spark_pulse.tools.parallelism import (
     ClusterCapacity,
     NodeCapacity,
@@ -27,7 +32,7 @@ from spark_pulse.tools.parallelism import (
 )
 from spark_pulse.tools.ray import RayManager
 from spark_pulse.tools.remote_docker import RemoteDockerService
-from spark_pulse.tools.ssh import SSHClient, OpenSSHClient
+from spark_pulse.tools.ssh import OpenSSHClient, SSHClient
 
 logger = logging.getLogger(__name__)
 
@@ -137,10 +142,10 @@ class ClusterOrchestrator:
 
             # 2. Start head node
             head_name = f"{name}-head"
-            head_labels = self._build_labels(name, "head", head_ip)
+            head_metadata = self._build_metadata(name, image, "head", no_ray=no_ray)
             logger.info("Starting head node %s at %s", head_name, head_ip)
             self._docker.run_container(
-                head_ip, image, head_name, env_vars, docker_config, head_labels
+                head_ip, image, head_name, env_vars, docker_config, head_metadata
             )
             started_containers.append((head_ip, head_name))
 
@@ -155,8 +160,13 @@ class ClusterOrchestrator:
             worker_nodes: list[ClusterNode] = []
             for i, worker_ip in enumerate(worker_ips):
                 worker_name = f"{name}-worker-{i}"
-                worker_labels = self._build_labels(
-                    name, "worker", worker_ip, head_ip=head_ip, node_rank=i
+                worker_metadata = self._build_metadata(
+                    name,
+                    image,
+                    "worker",
+                    head_ip=head_ip,
+                    node_rank=i + 1,
+                    no_ray=no_ray,
                 )
                 logger.info("Starting worker node %s at %s", worker_name, worker_ip)
                 self._docker.run_container(
@@ -165,7 +175,7 @@ class ClusterOrchestrator:
                     worker_name,
                     env_vars,
                     docker_config,
-                    worker_labels,
+                    worker_metadata,
                 )
                 started_containers.append((worker_ip, worker_name))
                 worker_nodes.append(
@@ -195,11 +205,16 @@ class ClusterOrchestrator:
             )
 
             # 4. Apply mods
+            applied_mods: list[str] = []
             if mod_deployments:
                 logger.info("Applying %d mod deployments", len(mod_deployments))
-                self._apply_mods(
-                    mod_deployments, head_name, [w.container_name for w in worker_nodes]
+                pending_state = ClusterState(
+                    name=name,
+                    head=head_node,
+                    workers=worker_nodes,
+                    ray_enabled=not no_ray,
                 )
+                applied_mods = self._apply_mods(mod_deployments, pending_state)
 
             # 5. Ensure Ray head
             ray_ready = False
@@ -233,6 +248,8 @@ class ClusterOrchestrator:
                 ray_enabled=not no_ray,
                 ray_ready=ray_ready,
                 created_at=datetime.now(timezone.utc),
+                launch_script=launch_script,
+                applied_mods=applied_mods,
             )
 
             validation = validate_cluster(cluster_state, self._docker)
@@ -308,9 +325,7 @@ class ClusterOrchestrator:
         logger.info("Stopping cluster %s...", name)
 
         # List all containers with cluster label
-        containers = self._docker.list_managed_containers(
-            "", {"spark-pulse.cluster": name}
-        )
+        containers = self._docker.list_managed_containers("", {CLUSTER_LABEL: name})
 
         for container in containers:
             logger.info("Stopping container %s", container.name)
@@ -332,23 +347,20 @@ class ClusterOrchestrator:
         Returns:
             ClusterState reconstructed from container labels.
         """
-        containers = self._docker.list_managed_containers(
-            "", {"spark-pulse.cluster": name}
-        )
+        containers = self._docker.list_managed_containers("", {CLUSTER_LABEL: name})
 
         head_node: ClusterNode | None = None
         worker_nodes: list[ClusterNode] = []
 
         for container in containers:
-            labels = container.labels or {}
-            role = labels.get("spark-pulse.role", "")
-            ip = labels.get("spark-pulse.head_ip", container.name)
+            role = container.metadata.role
+            ip = container.metadata.head_ip or container.name
 
             node = ClusterNode(
                 ip=ip,
                 role=role,
                 container_name=container.name,
-                container_id=container.container_id,
+                container_id=container.id,
                 status=(
                     "running"
                     if container.status and "running" in container.status
@@ -366,7 +378,7 @@ class ClusterOrchestrator:
 
         # Check Ray status
         ray_ready = False
-        ray_enabled = any("spark-pulse.ray" in (c.labels or {}) for c in containers)
+        ray_enabled = any(c.metadata.ray_enabled for c in containers)
 
         if ray_enabled:
             try:
@@ -428,49 +440,73 @@ class ClusterOrchestrator:
 
     # ── Private helpers ──────────────────────────────────────────────────
 
-    def _build_labels(
+    def _build_metadata(
         self,
         cluster_name: str,
+        image: str,
         role: str,
-        node_ip: str,
         head_ip: str | None = None,
         node_rank: int = 0,
-    ) -> dict[str, str]:
-        """Build Docker labels for a cluster node container."""
-        labels = {
-            "spark-pulse.managed": "true",
-            "spark-pulse.cluster": cluster_name,
-            "spark-pulse.role": role,
-            "spark-pulse.node_rank": str(node_rank),
-        }
-        if head_ip:
-            labels["spark-pulse.head_ip"] = head_ip
-        return labels
+        no_ray: bool = False,
+    ) -> ContainerMetadata:
+        """Build container metadata (i.e. spark-pulse labels) for a node."""
+        return ContainerMetadata(
+            deployment=cluster_name,
+            recipe="",
+            image=image,
+            mode="cluster",
+            cluster=cluster_name,
+            role=role,
+            node_rank=node_rank,
+            head_ip=head_ip or "",
+            ray_enabled=not no_ray,
+        )
 
     def _apply_mods(
         self,
         mod_deployments: list[ModDeployment],
-        head_container: str,
-        worker_containers: list[str],
-    ) -> None:
-        """Apply mods to correct nodes based on target.
+        cluster_state: ClusterState,
+    ) -> list[str]:
+        """Apply mods to the right nodes through the ModOrchestrator.
 
         Args:
-            mod_deployments: List of mods to deploy.
-            head_container: Head container name.
-            worker_containers: List of worker container names.
+            mod_deployments: Mods to deploy, with their target node set.
+            cluster_state: The cluster the mods are applied to.
+
+        Returns:
+            Names of the mods that were applied to every target node.
+
+        Raises:
+            RuntimeError: If a mod failed on any of its target nodes. The
+                caller rolls the cluster back.
         """
+        orchestrator = ModOrchestrator(ssh_client=self._ssh, remote_docker=self._docker)
+        applied: list[str] = []
+
         for mod in mod_deployments:
-            logger.info("Deploying mod %s (target: %s)", mod.path, mod.target)
+            mod_path = Path(mod.path)
+            mod_name = mod_path.name
+            logger.info("Deploying mod %s (target: %s)", mod_name, mod.target)
 
-            targets: list[str] = []
-            if mod.target in ("head", "all"):
-                targets.append(head_container)
-            if mod.target in ("workers", "all"):
-                targets.extend(worker_containers)
+            result = orchestrator.apply_mod_cluster(
+                ModPayload(
+                    mod_name=mod_name,
+                    mod_path=mod_path,
+                    target=mod.target,
+                ),
+                cluster_state,
+            )
+            if result.failed_nodes:
+                orchestrator.rollback_mod(result, cluster_state)
+                raise RuntimeError(
+                    f"Mod {mod_name} failed on nodes: "
+                    f"{', '.join(result.failed_nodes)}"
+                )
+            applied.append(mod_name)
+            self._events.emit_cluster_event(
+                EventType.MOD_APPLIED,
+                cluster_state.name,
+                f"Mod {mod_name} applied to {len(result.completed_nodes)} node(s)",
+            )
 
-            for container in targets:
-                # Copy mod files into container
-                # Note: In production, this would use the remote docker service
-                # For now, log the action
-                logger.info("Applying mod %s to %s", mod.path, container)
+        return applied

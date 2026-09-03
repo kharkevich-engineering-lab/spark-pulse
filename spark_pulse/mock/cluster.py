@@ -225,3 +225,7 @@ class MockClusterOrchestrator:
         self._clusters.clear()
         self._docker.reset()
         self._ray.reset()
+
+
+# The simulation-mode name that ``spark_pulse.tools`` re-exports.
+ClusterOrchestrator = MockClusterOrchestrator
