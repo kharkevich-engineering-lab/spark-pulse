@@ -13,6 +13,10 @@ from filelock import FileLock
 
 from spark_pulse.config import config
 
+# Parsing/resolution logic is shared with the real module so both listings
+# report the same schema fields and sources.
+import spark_pulse.tools.recipes as _real_recipes
+
 # Default mock recipes (used when no spark_path is provided)
 _RECIPES = [
     {
@@ -232,39 +236,36 @@ def _load_customized_recipe(
     return None
 
 
+def _canned(recipe: dict[str, Any]) -> dict[str, Any]:
+    """Shape a canned recipe like a parsed one."""
+    out = {"id": recipe["name"], "is_customized": False, **recipe}
+    out.setdefault("recipe_version", "1")
+    out.setdefault("engine", None)
+    out.setdefault("engines", ["vllm"])
+    out["params"] = dict(recipe.get("defaults", {}))
+    return out
+
+
 def list_recipes(spark_path: Path | None = None) -> list[dict[str, Any]]:
     """Scan all YAML files in the recipes directory (when spark_path provided),
-    or return mock recipe list when no spark_path."""
+    or return mock recipe list when no spark_path.
+
+    Parsing is delegated to the real module so simulation mode reports the
+    same schema fields (recipe_version, engine, engines, params) and the same
+    sources (including `imported/`) as production.
+    """
     if spark_path is None:
         spark_path = Path(config.spark_vllm_path)
-    recipe_dir = spark_path / "recipes"
-    if recipe_dir.is_dir():
+    spark_path = Path(spark_path)
+    payloads = _real_recipes.iter_recipe_payloads(spark_path)
+    if payloads or (spark_path / "recipes").is_dir():
         recipes = []
-        for yaml_file in _iter_recipe_files(recipe_dir):
-            try:
-                with open(yaml_file) as f:
-                    data = yaml.safe_load(f)
-                recipe_id = _recipe_id_from_path(recipe_dir, yaml_file)
-                if data:
-                    is_custom = bool(has_customization(recipe_id))
-                    recipes.append(
-                        {
-                            "id": recipe_id,
-                            "name": data.get("name", yaml_file.stem),
-                            "model": data.get("model", "unknown"),
-                            "container": data.get("container", "vllm-node"),
-                            "description": data.get("description", ""),
-                            "solo_only": bool(data.get("solo_only", False)),
-                            "cluster_only": bool(data.get("cluster_only", False)),
-                            "mods": data.get("mods", []),
-                            "defaults": data.get("defaults", {}),
-                            "is_customized": is_custom,
-                        }
-                    )
-            except (yaml.YAMLError, OSError):
-                continue
+        for payload in payloads:
+            summary = {f: payload[f] for f in _real_recipes.SUMMARY_FIELDS}
+            summary["is_customized"] = bool(has_customization(payload["id"]))
+            recipes.append(summary)
         return recipes
-    return [{"id": r["name"], "is_customized": False, **r} for r in _RECIPES]
+    return [_canned(r) for r in _RECIPES]
 
 
 def get_recipe(recipe_id: str, spark_path: Path | None = None) -> dict[str, Any] | None:
@@ -273,18 +274,15 @@ def get_recipe(recipe_id: str, spark_path: Path | None = None) -> dict[str, Any]
     and finally returns mock data."""
     if spark_path is None:
         spark_path = Path(config.spark_vllm_path)
-    recipe = _load_customized_recipe(recipe_id, spark_path)
+    recipe = _real_recipes.resolve_recipe(recipe_id, Path(spark_path))
+    if recipe is None:
+        for canned in _RECIPES:
+            if canned["name"] == recipe_id:
+                recipe = _canned(canned)
+                break
     if recipe is None:
         return None
-    # Apply customizations like the real module
-    customization = get_customization(recipe_id)
-    if customization:
-        for key in ("command", "mods", "env", "build_args", "defaults"):
-            if key in customization:
-                if key == "defaults":
-                    recipe[key] = {**recipe.get(key, {}), **customization[key]}
-                else:
-                    recipe[key] = customization[key]
+    _real_recipes.apply_customization(recipe, recipe["id"], get_customization)
     return recipe
 
 

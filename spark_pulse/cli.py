@@ -208,6 +208,55 @@ def recipes():
     pass
 
 
+@recipes.command("validate")
+@click.argument(
+    "targets", nargs=-1, required=True, type=click.Path(exists=True, path_type=Path)
+)
+@click.option("--json", "as_json", is_flag=True, help="Output results as JSON")
+def recipes_validate(targets, as_json):
+    """Validate recipe files against the published schema.
+
+    TARGETS may be recipe files or directories (scanned recursively).
+    Exits non-zero when any recipe fails validation.
+    """
+    from spark_pulse.tools.recipe_schema import (
+        validate_recipe_dir,
+        validate_recipe_file,
+    )
+
+    results = []
+    for target in targets:
+        if target.is_dir():
+            results.extend(validate_recipe_dir(target))
+        else:
+            results.append(validate_recipe_file(target))
+
+    if as_json:
+        import json as _json
+
+        click.echo(_json.dumps(results, indent=2))
+    else:
+        if not results:
+            click.echo("No recipe files found.")
+        for result in results:
+            if result["ok"]:
+                click.echo(
+                    f"  OK    {result['path']} "
+                    f"(v{result['recipe_version']}, {result['name']})"
+                )
+            else:
+                click.echo(f"  FAIL  {result['path']}")
+                for err in result["errors"]:
+                    where = f"{err['path']}: " if err["path"] else ""
+                    click.echo(f"          {where}{err['message']}")
+
+    failed = [r for r in results if not r["ok"]]
+    if not as_json:
+        click.echo(f"\n{len(results) - len(failed)} valid, {len(failed)} invalid.")
+    if failed:
+        sys.exit(1)
+
+
 @recipes.command("list")
 @click.option("--registry", "registry", default=None, help="Registry name to filter by")
 @click.option("--version", "version", default=None, help="Version tag to filter by")
