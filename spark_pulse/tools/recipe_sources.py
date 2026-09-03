@@ -8,9 +8,13 @@ rendering a launch command for an engine.
 
 Sources, in listing order:
 
+* ``spark_pulse/recipes`` shipped inside the package (ids prefixed
+  ``bundled/``) — engine-neutral v2 recipes that work without any checkout,
 * the ``recipes/`` directory of the spark-vllm-docker checkout (which is also
   where ``custom-*`` and ``oci-*`` symlinks live), and
 * ``~/.config/spark-pulse/imported/recipes`` (ids prefixed ``imported/``).
+
+Every payload carries a ``source`` label so the UI can tell them apart.
 """
 
 from __future__ import annotations
@@ -30,6 +34,18 @@ from spark_pulse.tools.recipe_schema import RecipeV1, RecipeV2
 logger = logging.getLogger(__name__)
 
 DEFAULT_CONTAINER = "vllm-node"
+
+#: Recipes shipped inside the package. Ids are prefixed so they never collide
+#: with an upstream, ``custom-``, ``oci-`` or ``imported/`` recipe.
+BUNDLED_SOURCE_PREFIX = "bundled"
+BUNDLED_RECIPES_DIR = Path(__file__).resolve().parent.parent / "recipes"
+
+#: Source labels a payload can carry, in listing order.
+SOURCE_BUNDLED = "bundled"
+SOURCE_CUSTOM = "custom"
+SOURCE_OCI = "oci"
+SOURCE_IMPORTED = "imported"
+SOURCE_UPSTREAM = "upstream"
 
 #: Placeholders that only Spark Pulse ever understood — upstream's
 #: ``run-recipe.py`` has no such thing. Deprecated in favour of plain
@@ -52,6 +68,8 @@ SUMMARY_FIELDS = (
     "recipe_version",
     "engine",
     "engines",
+    "engine_support",
+    "source",
 )
 
 
@@ -104,6 +122,41 @@ def recipe_id_from_path(recipe_dir: Path, recipe_file: Path) -> str:
     return str(rel)
 
 
+def bundled_recipes_dir() -> Path:
+    """Directory holding the recipes shipped inside the package."""
+    return BUNDLED_RECIPES_DIR
+
+
+def iter_bundled_recipe_files() -> list[Path]:
+    """Every bundled recipe file, sorted."""
+    directory = bundled_recipes_dir()
+    if not directory.is_dir():
+        return []
+    files: list[Path] = []
+    for pattern in ("*.yaml", "*.yml"):
+        files.extend(directory.rglob(pattern))
+    return sorted(set(files))
+
+
+def _bundled_recipe_id(recipe_file: Path) -> str:
+    rel = recipe_file.relative_to(bundled_recipes_dir())
+    return f"{BUNDLED_SOURCE_PREFIX}/{rel.with_suffix('').as_posix()}"
+
+
+def source_of(recipe_id: str) -> str:
+    """Label the source a recipe id came from."""
+    if recipe_id.startswith(f"{BUNDLED_SOURCE_PREFIX}/"):
+        return SOURCE_BUNDLED
+    if recipe_id.startswith(f"{IMPORT_SOURCE_PREFIX}/"):
+        return SOURCE_IMPORTED
+    leaf = recipe_id.rsplit("/", 1)[-1]
+    if leaf.startswith("custom-"):
+        return SOURCE_CUSTOM
+    if leaf.startswith("oci-"):
+        return SOURCE_OCI
+    return SOURCE_UPSTREAM
+
+
 def _imported_recipe_id(recipe_file: Path) -> str:
     rel = recipe_file.relative_to(imported_recipes_dir())
     return f"{IMPORT_SOURCE_PREFIX}/{rel.with_suffix('').as_posix()}"
@@ -112,6 +165,8 @@ def _imported_recipe_id(recipe_file: Path) -> str:
 def candidate_files(spark_path: Path) -> list[tuple[str, Path]]:
     """Return ``(recipe_id, file)`` pairs for every known recipe source."""
     pairs: list[tuple[str, Path]] = []
+    for path in iter_bundled_recipe_files():
+        pairs.append((_bundled_recipe_id(path), path))
     recipe_dir = spark_path / "recipes"
     for path in iter_recipe_files(recipe_dir):
         pairs.append((recipe_id_from_path(recipe_dir, path), path))
@@ -135,19 +190,73 @@ def parse_file(path: Path, recipe_id: str) -> RecipeV1 | RecipeV2 | None:
         return None
 
 
+def engine_support(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Per-engine ``supported`` / ``reason`` for one flattened recipe payload.
+
+    Asking the engine plugins themselves is the point: the deploy form must
+    offer exactly what ``plan()`` will accept, with the same wording when it
+    refuses. Engines are not switchable, so importing them here is safe; the
+    import is local to keep ``tools`` import order unperturbed.
+    """
+    from spark_pulse.engines import EngineError, get_registry
+
+    try:
+        registry = get_registry()
+        specs = registry.list()
+    except Exception:  # pragma: no cover - defensive: never break listing
+        logger.debug("Engine registry unavailable; reporting no engine support")
+        return []
+
+    out: list[dict[str, Any]] = []
+    for name in sorted({spec.engine for spec in specs}):
+        try:
+            engine = registry.engine(name)
+            supported, reason = engine.supports(payload)
+        except EngineError as exc:
+            supported, reason = False, str(exc)
+        out.append(
+            {
+                "engine": name,
+                "supported": bool(supported),
+                "reason": reason,
+                "enabled": bool(registry.enabled(name)),
+            }
+        )
+    return out
+
+
+def _engine_specs(recipe: RecipeV2) -> dict[str, dict[str, Any]]:
+    """Every per-engine block, so a payload keeps args/env/image per engine.
+
+    The flat payload names one engine's image, mods and env at the top level
+    (whichever the recipe defaults to); without this the other engines' blocks
+    would be lost the moment a recipe left the parser.
+    """
+    return {
+        name: {
+            "image": spec.image,
+            "mods": list(spec.mods),
+            "env": dict(spec.env),
+            "args": spec.args_string(),
+            "command": spec.command,
+        }
+        for name, spec in recipe.engines.items()
+    }
+
+
 def to_payload(
     recipe: RecipeV1 | RecipeV2, recipe_id: str, fallback_name: str
 ) -> dict[str, Any]:
     """Flatten a parsed recipe into the dict shape the API has always served.
 
     v1 callers keep ``container`` / ``defaults`` / ``command``; every recipe
-    additionally reports ``recipe_version``, ``engine``, ``engines`` and
-    ``params``.
+    additionally reports ``recipe_version``, ``engine``, ``engines``,
+    ``engine_specs``, ``engine_support``, ``source`` and ``params``.
     """
     if isinstance(recipe, RecipeV2):
         spec = recipe.engine_spec()
         params = recipe.params.as_dict()
-        return {
+        payload = {
             "id": recipe_id,
             "name": recipe.name or fallback_name,
             "model": recipe.model or "unknown",
@@ -165,9 +274,13 @@ def to_payload(
             "recipe_version": "2",
             "engine": recipe.engine,
             "engines": recipe.engine_names(),
+            "engine_specs": _engine_specs(recipe),
+            "source": source_of(recipe_id),
         }
+        payload["engine_support"] = engine_support(payload)
+        return payload
 
-    return {
+    payload = {
         "id": recipe_id,
         "name": recipe.name or fallback_name,
         "model": recipe.model or "unknown",
@@ -185,7 +298,11 @@ def to_payload(
         "recipe_version": "1",
         "engine": None,
         "engines": recipe.engines,
+        "engine_specs": {},
+        "source": source_of(recipe_id),
     }
+    payload["engine_support"] = engine_support(payload)
+    return payload
 
 
 def iter_recipe_payloads(spark_path: Path) -> list[dict[str, Any]]:
@@ -204,7 +321,15 @@ def resolve_recipe(recipe_id: str, spark_path: Path) -> dict[str, Any] | None:
     recipe_dir = spark_path / "recipes"
 
     candidates: list[tuple[str, Path]] = []
-    if recipe_id.startswith(f"{IMPORT_SOURCE_PREFIX}/"):
+    if recipe_id.startswith(f"{BUNDLED_SOURCE_PREFIX}/"):
+        rel = recipe_id[len(BUNDLED_SOURCE_PREFIX) + 1 :]
+        base = bundled_recipes_dir()
+        for suffix in (".yaml", ".yml"):
+            path = base / f"{rel}{suffix}"
+            if path.is_file():
+                candidates.append((recipe_id, path))
+                break
+    elif recipe_id.startswith(f"{IMPORT_SOURCE_PREFIX}/"):
         rel = recipe_id[len(IMPORT_SOURCE_PREFIX) + 1 :]
         base = imported_recipes_dir()
         for suffix in (".yaml", ".yml", ""):
@@ -254,6 +379,11 @@ def apply_customization(recipe: dict[str, Any], customization: dict | None) -> N
     for field in ("command", "env", "build_args", "container", "model", "mods"):
         if field in customization:
             recipe[field] = customization[field]
+
+    # A customization can add a ``command``, which pins the recipe to one
+    # engine; the support table has to follow it.
+    if "command" in customization:
+        recipe["engine_support"] = engine_support(recipe)
 
 
 # ── Command rendering ────────────────────────────────────────────────────────

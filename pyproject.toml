@@ -76,5 +76,6 @@ spark_pulse = [
     "service/templates/**/*",
     "registries.yaml",
     "engines/defaults/*.yaml",
+    "recipes/*.yaml",
     "schemas/*.json",
 ]

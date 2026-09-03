@@ -1,0 +1,33 @@
+# Bundled recipe: MoE mid-size model, the everyday driver on a single 128 GB GB10.
+recipe_version: "2"
+name: Qwen3.5-35B-A3B-FP8
+model: Qwen/Qwen3.5-35B-A3B-FP8
+description: >-
+  Qwen3.5 35B A3B in FP8. A 3B-active MoE, so it is fast on one GB10 while the
+  full 35B of weights still fit in 128 GB unified memory alongside a 64k cache.
+
+engine: vllm
+
+constraints:
+  solo_only: false
+  cluster_only: false
+
+params:
+  host: 0.0.0.0
+  tensor_parallel: 1
+  pipeline_parallel: 1
+  gpu_memory_utilization: 0.8
+  max_model_len: 65536
+  max_num_batched_tokens: 8192
+  max_num_seqs: 32
+
+engines:
+  vllm:
+    image: vllm-node
+    args: >-
+      --enable-prefix-caching --enable-auto-tool-choice
+      --tool-call-parser hermes --reasoning-parser qwen3
+  sglang:
+    args: >-
+      --tool-call-parser qwen25 --reasoning-parser qwen3
+      --chunked-prefill-size 8192
