@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic import ValidationError
 
 from spark_pulse.config import config
 from spark_pulse.engines.base import Engine, EngineError, EngineSpec
@@ -104,7 +105,7 @@ def parse_index(data: dict[str, Any], source: str) -> list[EngineSpec]:
         payload["source"] = source
         try:
             specs.append(EngineSpec.model_validate(payload))
-        except Exception as exc:  # pragma: no cover - defensive
+        except ValidationError as exc:  # pragma: no cover - defensive
             logger.warning("Skipping engine entry in %s: %s", source, exc)
     return specs
 
@@ -126,7 +127,7 @@ def load_bundled_specs(defaults_dir: Path | None = None) -> list[EngineSpec]:
         data["source"] = "bundled"
         try:
             specs.append(EngineSpec.model_validate(data))
-        except Exception as exc:
+        except ValidationError as exc:
             logger.warning("Skipping bundled engine %s: %s", path.name, exc)
     return specs
 
