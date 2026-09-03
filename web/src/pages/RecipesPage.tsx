@@ -12,6 +12,7 @@ import CustomRecipeDrawer from "@/components/CustomRecipeDrawer";
 import CustomModDrawer from "@/components/CustomModDrawer";
 import NewRecipeModal from "@/components/NewRecipeModal";
 import NewModModal from "@/components/NewModModal";
+import RecipeImportPanel from "@/components/RecipeImportPanel";
 import { setRefresh } from "@/lib/refresh";
 
 // ── File-kind badge colours ──────────────────────────────────────────────────
@@ -421,6 +422,8 @@ export default function RecipesPage() {
             </>
           ) : (
             <>
+              <RecipeImportPanel onImported={refetch} />
+
               {recipes && recipes.length > 0 && (
                 <>
                   <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">

@@ -149,6 +149,9 @@ class TestImportFromGit:
 
         def fake_run(cmd, **kwargs):
             calls.append(cmd)
+            if "clone" not in cmd:
+                # provenance lookups (rev-parse / remote get-url)
+                return subprocess.CompletedProcess(cmd, 1, "", "")
             target = Path(cmd[-1])
             target.parent.mkdir(parents=True, exist_ok=True)
             import shutil
