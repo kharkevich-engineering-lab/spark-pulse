@@ -74,8 +74,15 @@ def create_deployment(
     model: str | None = None,
     extra_args: list[str] | None = None,
     allow_missing_model: bool = False,
+    raw_params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Start a deployment on whichever runtime the config selects."""
+    """Start a deployment on whichever runtime the config selects.
+
+    ``params`` carries the recipe defaults merged in, which is what the
+    upstream runner expects. ``raw_params`` is what the caller actually asked
+    for; the native path needs it to tell an explicit setting apart from a
+    recipe default.
+    """
     if config.runtime != RUNTIME_NAME:
         return tools.deployments.create_deployment(
             recipe_id=recipe_id,
@@ -93,7 +100,7 @@ def create_deployment(
     return tools.native_runtime.create_deployment(
         recipe_id=recipe_id,
         name=name,
-        params=params,
+        params=raw_params if raw_params is not None else params,
         nodes=None,
         engine=engine,
         variant=variant,

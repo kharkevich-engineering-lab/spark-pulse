@@ -254,6 +254,61 @@ class TestCreateEndpoint:
             c.name for c in env["docker"].list_managed_containers()
         ]
 
+    def test_recipe_defaults_do_not_defeat_the_solo_override(self, client, env):
+        """A recipe default is not an explicit request.
+
+        The route merges recipe defaults into params for the upstream runner
+        and the display command. If those merged params reach the native path,
+        a recipe's ``tensor_parallel: 2`` looks like the operator asked for it
+        and solo stops forcing tp=1 — which strands a one-GPU box on ``-tp 2``.
+        """
+        tp_recipe = {
+            **RECIPE,
+            "command": "vllm serve Qwen/Qwen3-8B --port {port} -tp {tensor_parallel}",
+            "defaults": {"port": 8000, "tensor_parallel": 2},
+        }
+        with (
+            patch.object(
+                tools.recipes,
+                "get_recipe",
+                side_effect=lambda rid, *a, **kw: tp_recipe,
+            ),
+            _runtime("native"),
+        ):
+            response = client.post(
+                "/api/deployments",
+                json={"recipe_id": "qwen3-8b", "name": "x", "params": {}},
+            )
+
+        assert response.status_code == 200
+        assert "-tp 1" in response.json()["launch_command"]
+
+    def test_an_explicit_tensor_parallel_is_still_honoured(self, client, env):
+        tp_recipe = {
+            **RECIPE,
+            "command": "vllm serve Qwen/Qwen3-8B --port {port} -tp {tensor_parallel}",
+            "defaults": {"port": 8000, "tensor_parallel": 2},
+        }
+        with (
+            patch.object(
+                tools.recipes,
+                "get_recipe",
+                side_effect=lambda rid, *a, **kw: tp_recipe,
+            ),
+            _runtime("native"),
+        ):
+            response = client.post(
+                "/api/deployments",
+                json={
+                    "recipe_id": "qwen3-8b",
+                    "name": "x",
+                    "params": {"tensor_parallel": 2},
+                },
+            )
+
+        assert response.status_code == 200
+        assert "-tp 2" in response.json()["launch_command"]
+
     def test_create_under_native_refuses_a_cluster(self, client):
         with _runtime("native"):
             response = client.post(

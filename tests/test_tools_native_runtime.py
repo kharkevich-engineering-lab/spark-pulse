@@ -375,6 +375,50 @@ class TestStart:
 # ── Lifecycle ───────────────────────────────────────────────────────────────
 
 
+class TestMods:
+    """Mods are the part upstream's bash did for us; get the contract right."""
+
+    @pytest.fixture
+    def checkout(self, tmp_path):
+        """A spark-vllm-docker-shaped checkout with one real mod."""
+        mod = tmp_path / "mods" / "fix-qwen"
+        mod.mkdir(parents=True)
+        (mod / "run.sh").write_text("#!/bin/bash\ncp t.jinja $WORKSPACE_DIR/x.jinja\n")
+        (mod / "t.jinja").write_text("{}")
+        with patch.object(
+            type(nr.config), "spark_vllm_path", property(lambda self: str(tmp_path))
+        ):
+            yield tmp_path
+
+    def test_a_repo_relative_mod_path_resolves(self, checkout):
+        # Recipes name mods the way upstream does, from the checkout root.
+        assert nr._resolve_mod_dir("mods/fix-qwen").name == "fix-qwen"
+
+    def test_a_bare_mod_name_resolves_too(self, checkout):
+        assert nr._resolve_mod_dir("fix-qwen").name == "fix-qwen"
+
+    def test_a_missing_mod_fails_the_deploy(self, checkout):
+        # Skipping it silently costs 15 minutes and an unexplained engine error.
+        with pytest.raises(nr.NativeRuntimeError, match="no run.sh"):
+            nr._resolve_mod_dir("mods/not-here")
+
+    def test_mods_run_with_workspace_dir_set_to_the_engine_workdir(
+        self, native, docker, checkout
+    ):
+        plan = native.plan("qwen3-8b-mods")
+        plan.mods = ["mods/fix-qwen"]
+
+        native.start(plan, docker=docker, wait=True)
+
+        container = docker.client.containers.get(plan.container.name)
+        ran = [c for c in container.executed_commands if "run.sh" in c]
+        assert ran, "the mod's run.sh was never executed"
+        # Recipes reference mod-dropped files by bare name, so this must be the
+        # image workdir, not /workspace.
+        assert f"WORKSPACE_DIR={plan.workdir}" in ran[0]
+        assert plan.workdir == "/workspace/vllm"
+
+
 class TestLifecycle:
     def _running(self, native, docker):
         plan = native.plan("qwen3-8b")
@@ -444,6 +488,22 @@ class TestLifecycle:
 
 
 # ── Port allocation ─────────────────────────────────────────────────────────
+
+
+class TestDeleteTearsDown:
+    def test_delete_stops_the_container_even_after_an_error(
+        self, native, docker, records
+    ):
+        plan = native.plan("qwen3-8b")
+        native.start(plan, docker=docker, wait=True)
+        native._update_record(plan.deployment_id, status="error")
+
+        native.delete_deployment(plan.deployment_id, docker=docker)
+
+        # An errored deployment still owns a running container; dropping the
+        # record without stopping it leaks the GPU.
+        names = [c.name for c in docker.client.containers.list(all=True)]
+        assert plan.container.name not in names
 
 
 class TestAllocatePort:

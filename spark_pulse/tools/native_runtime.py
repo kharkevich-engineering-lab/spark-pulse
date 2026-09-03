@@ -171,6 +171,7 @@ class DeployPlan:
     ranks: list[dict[str, Any]]
     container: ContainerSpec
     cache_mounts: list[str]
+    workdir: str = ""
     warnings: list[str] = field(default_factory=list)
     runtime: str = RUNTIME_NAME
     created_at: str = field(default_factory=_now)
@@ -581,6 +582,7 @@ def plan(
         readiness_path=readiness,
         readiness_url=f"http://127.0.0.1:{port}{readiness}",
         metrics_path=engine_obj.metrics_path(),
+        workdir=engine_obj.spec.runtime.workdir or "/workspace",
         mods=mods,
         params=merged,
         extra_args=list(extra_args or []),
@@ -628,27 +630,47 @@ def _record_from_plan(plan_obj: DeployPlan, status: str) -> dict[str, Any]:
 # ── Starting ─────────────────────────────────────────────────────────────────
 
 
+def _resolve_mod_dir(mod: str) -> Path:
+    """Locate a recipe's mod on disk.
+
+    Recipes name mods the way upstream does, relative to the checkout root
+    (``mods/fix-x``), but a bare name is accepted too.
+    """
+    root = Path(config.spark_vllm_path)
+    candidates = [root / mod]
+    if not mod.startswith("mods/"):
+        candidates.append(root / "mods" / mod)
+    for candidate in candidates:
+        if (candidate / "run.sh").is_file():
+            return candidate
+    raise NativeRuntimeError(
+        f"mod '{mod}' has no run.sh under {root}; looked in "
+        + ", ".join(str(c) for c in candidates)
+    )
+
+
 def _apply_mods(docker: Any, plan_obj: DeployPlan, warnings: list[str]) -> list[str]:
-    """Copy each mod into the container and run its ``run.sh``, upstream style."""
+    """Copy each mod into the container and run its ``run.sh``, upstream style.
+
+    ``WORKSPACE_DIR`` is the image's working directory, as upstream sets it
+    from ``$PWD``: mods drop files there and recipes reference them by bare
+    name (``--chat-template unsloth.jinja``).
+    """
     applied: list[str] = []
-    mods_root = Path(config.spark_vllm_path) / "mods"
-    workdir = "/workspace"
+    workdir = plan_obj.workdir or "/workspace"
     for mod in plan_obj.mods:
-        mod_dir = mods_root / mod
-        run_sh = mod_dir / "run.sh"
-        if not run_sh.is_file():
-            warnings.append(f"mod '{mod}' has no run.sh at {mod_dir}; skipped")
-            continue
-        remote = f"{MODS_DIR}/{mod}"
+        mod_dir = _resolve_mod_dir(mod)
+        name = mod_dir.name
+        remote = f"{MODS_DIR}/{name}"
         docker.exec_in_container(plan_obj.container.name, ["mkdir", "-p", remote])
         for path in sorted(mod_dir.iterdir()):
-            if path.is_file():
-                docker.copy_to_container(
-                    plan_obj.container.name, str(path), f"{remote}/{path.name}"
-                )
+            # docker cp takes files and directories alike.
+            docker.copy_to_container(
+                plan_obj.container.name, str(path), f"{remote}/{path.name}"
+            )
         result = docker.exec_in_container(
             plan_obj.container.name,
-            ["bash", "-lc", f"WORKSPACE_DIR={workdir} bash {remote}/run.sh"],
+            ["bash", "-lc", f"cd {remote} && WORKSPACE_DIR={workdir} bash run.sh"],
         )
         if not result.ok:
             raise NativeRuntimeError(
@@ -936,8 +958,9 @@ def delete_deployment(deployment_id: str, docker: Any | None = None) -> bool:
     record = get_deployment(deployment_id)
     if record is None:
         return False
-    if record.get("status") not in ("stopped", "error"):
-        stop_deployment(deployment_id, docker=docker)
+    # Always tear the container down, whatever the record says: a deployment
+    # that errored during readiness still has a container running.
+    stop_deployment(deployment_id, docker=docker)
     records = _load_records()
     remaining = [r for r in records if r.get("id") != deployment_id]
     if len(remaining) == len(records):

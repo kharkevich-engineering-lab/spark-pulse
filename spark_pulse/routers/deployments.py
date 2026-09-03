@@ -67,9 +67,14 @@ def create_deployment(req: dict):
     if recipe is None:
         raise HTTPException(status_code=404, detail=f"Recipe '{recipe_id}' not found")
 
-    params = {**recipe.get("defaults", {}), **req.get("params", {})}
-    params["port"] = params.get("port", 8000)
-    params["host"] = params.get("host", "0.0.0.0")
+    # Merged params drive the upstream path and the display command. The
+    # native path gets the caller's own params: merging defaults in here would
+    # look like an explicit tensor-parallel request and defeat the solo
+    # override that upstream's runner applies.
+    raw_params = req.get("params") or {}
+    params = {**recipe.get("defaults", {}), **raw_params}
+    params.setdefault("port", 8000)
+    params.setdefault("host", "0.0.0.0")
 
     # Build the vLLM serve command for display/logging
     launch_cmd = tools.recipes.build_launch_command(recipe, params)
@@ -79,6 +84,7 @@ def create_deployment(req: dict):
             recipe_id=recipe_id,
             name=name,
             params=params,
+            raw_params=raw_params,
             nodes=req.get("nodes"),
             launch_command=launch_cmd,
             engine=req.get("engine"),
