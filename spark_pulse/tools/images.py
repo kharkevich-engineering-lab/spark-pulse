@@ -148,7 +148,15 @@ def _spec_entry(spec: Any, docker: Any) -> dict[str, Any]:
     present = info is not None
 
     digest = local_digest(info, repository) or tag_digest
-    drift = bool(advertised and tag_digest and tag_digest != advertised)
+    # The advertised content already being here is what matters to a deploy:
+    # the tag pointing somewhere older is then only a naming detail, not an
+    # update. Reporting drift in that case contradicts the digests shown
+    # beside it.
+    advertised_is_local = bool(advertised) and advertised in (digest, tag_digest)
+    drift = (
+        bool(advertised and tag_digest and tag_digest != advertised)
+        and not advertised_is_local
+    )
 
     return {
         "ref": ref,
@@ -170,6 +178,7 @@ def _spec_entry(spec: Any, docker: Any) -> dict[str, Any]:
         "index_digest": advertised,
         "digest_drift": drift,
         "update_available": drift or not present,
+        "tag_is_stale": bool(advertised and tag_digest and tag_digest != advertised),
     }
 
 

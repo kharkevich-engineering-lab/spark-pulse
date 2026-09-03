@@ -139,6 +139,28 @@ class TestDigestDrift:
         assert entry["digest_drift"] is False
         assert entry["update_available"] is False
 
+    def test_a_stale_tag_is_not_an_update_when_the_content_is_here(
+        self, catalogue, registry
+    ):
+        """Pulling by digest leaves the tag pointing at older content.
+
+        The advertised image is on the host, so a deploy downloads nothing.
+        Calling that an available update contradicts the two identical digests
+        shown next to it; the stale tag is reported separately.
+        """
+        local = images.local_digest(catalogue.image_info(VLLM_REF), VLLM_REPO)
+        with (
+            self._with_advertised_digest(registry, local),
+            patch.object(images, "local_digest", side_effect=lambda info, repo: local),
+        ):
+            entry = next(
+                e for e in images.list_images() if e["engine_key"] == "vllm/default"
+            )
+
+        assert entry["local_digest"] == entry["index_digest"]
+        assert entry["digest_drift"] is False
+        assert entry["update_available"] is False
+
     def test_no_drift_claimed_when_the_index_advertises_nothing(self, catalogue):
         """Bundled specs carry no digest — absence of data is not drift."""
         entry = images.get_image(VLLM_REF)
