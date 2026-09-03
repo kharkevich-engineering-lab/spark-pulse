@@ -407,7 +407,9 @@ def _build_env(
             ib_if=node.ib_if if node else "",
         )
     )
-    env.update({str(k): str(v) for k, v in (recipe.get("env") or {}).items()})
+    # Per-engine env, so deploying a v2 recipe on its non-default engine does
+    # not inherit the other engine's variables.
+    env.update(engine_obj.block_env(recipe))
     env.setdefault("HF_HOME", HF_CACHE_IN_CONTAINER)
     token = config.hf_token
     if token:
@@ -482,7 +484,7 @@ def plan(
 
     resolved_model = _resolve_model(recipe, model, allow_missing_model, warnings)
 
-    mods = [str(m) for m in (recipe.get("mods") or [])]
+    mods = engine_obj.block_mods(recipe)
     if mods and not engine_obj.supports_mods():
         raise NativeRuntimeError(
             f"recipe '{recipe_id}' needs mods ({', '.join(mods)}) but engine "

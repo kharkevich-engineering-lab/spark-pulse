@@ -375,6 +375,49 @@ class TestStart:
 # ── Lifecycle ───────────────────────────────────────────────────────────────
 
 
+class TestPerEngineBlocks:
+    """A v2 recipe's non-default engine must not inherit the default's setup."""
+
+    V2 = {
+        "id": "two-engine",
+        "recipe_version": "2",
+        "name": "Two engines",
+        "model": "Qwen/Qwen3-8B",
+        "engine": "vllm",
+        "params": {"port": 8000, "host": "0.0.0.0"},
+        "engine_specs": {
+            "vllm": {"env": {"VLLM_ONLY": "1"}, "mods": ["mods/vllm-only"]},
+            "sglang": {"env": {"SGLANG_ONLY": "1"}, "mods": []},
+        },
+        "defaults": {"port": 8000},
+        "env": {"VLLM_ONLY": "1"},
+        "mods": ["mods/vllm-only"],
+    }
+
+    @pytest.fixture
+    def two_engine(self, native):
+        with patch.object(
+            tools.recipes,
+            "get_recipe",
+            side_effect=lambda rid, *a, **kw: (
+                self.V2 if rid == "two-engine" else RECIPES.get(rid)
+            ),
+        ):
+            yield native
+
+    def test_the_non_default_engine_gets_its_own_env(self, two_engine):
+        plan = two_engine.plan("two-engine", engine="sglang")
+        env = plan.container.env
+        assert env.get("SGLANG_ONLY") == "1"
+        assert "VLLM_ONLY" not in env
+
+    def test_the_non_default_engine_gets_its_own_mods(self, two_engine):
+        # The default engine's mods would otherwise be applied to an engine
+        # that cannot even run them.
+        assert two_engine.plan("two-engine", engine="sglang").mods == []
+        assert two_engine.plan("two-engine", engine="vllm").mods == ["mods/vllm-only"]
+
+
 class TestMods:
     """Mods are the part upstream's bash did for us; get the contract right."""
 

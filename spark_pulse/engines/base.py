@@ -348,6 +348,23 @@ class Engine:
                     return block
         return {}
 
+    def block_mods(self, recipe: dict[str, Any]) -> list[str]:
+        """Mods for this engine.
+
+        A per-engine block wins outright, for the same reason ``_block_env``
+        does: the flattened payload's top-level ``mods`` belongs to whichever
+        engine the recipe defaults to.
+        """
+        block = self._engine_block(recipe)
+        source = block.get("mods") if isinstance(block.get("mods"), list) else None
+        if source is None and not block:
+            source = recipe.get("mods")
+        return [str(m) for m in (source or [])]
+
+    def block_env(self, recipe: dict[str, Any]) -> dict[str, str]:
+        """Public alias for :meth:`_block_env`, used by the deploy runtime."""
+        return self._block_env(recipe)
+
     def _block_args(self, recipe: dict[str, Any]) -> str:
         """The engine-specific argument tail, normalised to one string."""
         args = self._engine_block(recipe).get("args")
