@@ -99,6 +99,56 @@ def test_supports_rejects_v1_recipes_with_a_vllm_command(engine):
     assert "engine-specific command" in reason
 
 
+def test_supports_accepts_a_recipe_that_only_defaults_to_vllm(engine):
+    """`engine:` names the default engine; it does not pin the recipe."""
+    recipe = {**RECIPE, "engine": "vllm", "engines": {"vllm": {}, "sglang": {}}}
+    assert engine.supports(recipe) == (True, "")
+
+
+def test_supports_rejects_a_recipe_that_names_only_vllm(engine):
+    ok, reason = engine.supports({**RECIPE, "engine": "vllm"})
+    assert ok is False
+    assert "vllm" in reason
+
+
+def test_supports_reads_the_flattened_engine_list(engine):
+    """The API serves `engines` as a list of names, not a mapping."""
+    ok, reason = engine.supports({**RECIPE, "engines": ["vllm"]})
+    assert ok is False
+    assert "only declares engines: vllm" in reason
+    assert engine.supports({**RECIPE, "engines": ["vllm", "sglang"]}) == (True, "")
+
+
+def test_engine_specific_args_from_a_flattened_payload(engine):
+    """`engine_specs` keeps each engine's args once a recipe is flattened."""
+    recipe = {
+        **RECIPE,
+        "engines": ["vllm", "sglang"],
+        "engine_specs": {
+            "vllm": {"args": "--enable-prefix-caching", "env": {"VLLM_ONLY": "1"}},
+            "sglang": {"args": "--tool-call-parser qwen25", "env": {"SGL_ONLY": "1"}},
+        },
+        "env": {"VLLM_ONLY": "1"},
+    }
+    result = engine.render(recipe)
+    assert result.command.endswith("--tool-call-parser qwen25")
+    assert "--enable-prefix-caching" not in result.command
+    # The flattened top-level env belongs to the recipe's default engine.
+    assert result.env["SGL_ONLY"] == "1"
+    assert "VLLM_ONLY" not in result.env
+
+
+def test_models_endpoint_is_separate_from_readiness(engine):
+    """Readiness is /health; the served model id comes from /v1/models."""
+    assert engine.readiness_path() == "/health"
+    assert engine.models_path() == "/v1/models"
+
+
+def test_tiktoken_files_are_mounted_and_pointed_at(engine):
+    assert "~/tiktoken_encodings" in engine.cache_mounts()
+    assert engine.base_env()["TIKTOKEN_ENCODINGS_BASE"] == "/root/tiktoken_encodings"
+
+
 def test_render_refuses_v1_recipe(engine):
     with pytest.raises(EngineError, match="engine-specific command"):
         engine.render({"id": "x", "model": "m", "command": "vllm serve M"})
@@ -123,4 +173,7 @@ def test_declarative_accessors(engine):
     assert profile["privileged"] is False
     assert profile["shm_size_gb"] == 32
     assert profile["devices"] == ["/dev/infiniband"]
+    assert profile["ipc_host"] is True
+    assert profile["network_host"] is True
+    assert profile["ulimits"] == {"memlock": "-1", "stack": "67108864"}
     assert engine.default_image().endswith("/sglang:0.1.0")
