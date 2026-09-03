@@ -165,6 +165,8 @@ async def sse_models():
             "X-Accel-Buffering": "no",
         },
     )
+
+
 # ── Deployment events SSE ────────────────────────────────────────────────────
 
 # Module-level event broadcaster singleton
