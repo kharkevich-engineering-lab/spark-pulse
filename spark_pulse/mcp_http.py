@@ -212,6 +212,44 @@ TOOLS = [
             "required": ["recipe_id"],
         },
     },
+    {
+        "name": "plan_deployment",
+        "description": (
+            "Dry run a deployment: resolve engine, image, model, mods, port, "
+            "rendered command and container profile without starting anything"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "recipe_id": {"type": "string", "description": "Recipe id or name"},
+                "engine": {
+                    "type": "string",
+                    "description": "Engine override (vllm, sglang)",
+                },
+                "variant": {"type": "string", "description": "Engine variant"},
+                "model": {"type": "string", "description": "Model override"},
+                "params": {"type": "object", "description": "Parameter overrides"},
+                "extra_args": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Extra engine args appended to the command",
+                },
+                "nodes": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Node hosts; head first. Empty means solo.",
+                },
+                "allow_missing_model": {
+                    "type": "boolean",
+                    "description": (
+                        "Plan even when the model is not in the local catalogue "
+                        "(default true for a dry run)"
+                    ),
+                },
+            },
+            "required": ["recipe_id"],
+        },
+    },
 ]
 
 
@@ -297,6 +335,20 @@ HANDLERS: dict[str, Any] = {
             "extra_args": args.get("extra_args", []),
             "nodes": args.get("nodes", []),
             "solo": args.get("solo", False),
+        },
+    ),
+    "plan_deployment": lambda args: _http(
+        "POST",
+        "/deployments/plan",
+        json_body={
+            "recipe_id": args["recipe_id"],
+            "engine": args.get("engine"),
+            "variant": args.get("variant"),
+            "model": args.get("model"),
+            "params": args.get("params", {}),
+            "extra_args": args.get("extra_args", []),
+            "nodes": args.get("nodes", []),
+            "allow_missing_model": args.get("allow_missing_model", True),
         },
     ),
 }
