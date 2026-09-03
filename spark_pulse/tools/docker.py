@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -106,6 +107,40 @@ def _labels_match(labels: dict[str, str], wanted: dict[str, str] | None) -> bool
         elif labels.get(key) != value:
             return False
     return True
+
+
+# ── Image reference helpers ──────────────────────────────────────────────────
+
+# Pull progress is aggregated across layers and reported at most this often.
+PULL_PROGRESS_INTERVAL = 1.0
+
+
+def split_ref(ref: str) -> tuple[str, str]:
+    """Split an image reference into ``(repository, tag_or_digest)``.
+
+    ``repo@sha256:...`` keeps the digest as the tag, which is what the
+    low-level ``api.pull`` wants; ``repo:tag`` splits on the last colon that is
+    not part of a registry host:port; a bare repo defaults to ``latest``.
+    """
+    ref = (ref or "").strip()
+    if not ref:
+        return "", ""
+    if "@" in ref:
+        repo, _, digest = ref.partition("@")
+        return repo, digest
+    head, sep, tail = ref.rpartition(":")
+    # A colon in the last path segment is a tag; one before a "/" is a port.
+    if sep and "/" not in tail:
+        return head, tail
+    return ref, "latest"
+
+
+def _pull_percent(layers: dict[str, dict[str, int]]) -> tuple[int, int, float]:
+    """Aggregate per-layer download counters into (done, total, percent)."""
+    done = sum(layer.get("current", 0) for layer in layers.values())
+    total = sum(layer.get("total", 0) for layer in layers.values())
+    percent = (done / total * 100.0) if total else 0.0
+    return done, total, round(min(percent, 100.0), 2)
 
 
 @dataclass
@@ -381,6 +416,158 @@ class DockerService:
             metadata=metadata,
             labels=labels,
         )
+
+    # ── Images ─────────────────────────────────────────────────────────────
+
+    def image_exists(self, ref: str) -> bool:
+        """Whether the image reference resolves to an image on this host."""
+        if not ref:
+            return False
+        try:
+            self.client.images.get(ref)
+            return True
+        except Exception as exc:
+            if "not found" in str(exc).lower() or "no such image" in str(exc).lower():
+                return False
+            logger.debug("image_exists(%s) failed: %s", ref, exc)
+            return False
+
+    def image_info(self, ref: str) -> dict[str, Any] | None:
+        """Return ``{id, size_bytes, created, repo_tags, repo_digests}`` or None."""
+        try:
+            image = self.client.images.get(ref)
+        except Exception:
+            return None
+        attrs = getattr(image, "attrs", None) or {}
+        return {
+            "id": getattr(image, "id", "") or attrs.get("Id", ""),
+            "size_bytes": int(attrs.get("Size") or 0),
+            "created": attrs.get("Created"),
+            "repo_tags": list(attrs.get("RepoTags") or []),
+            "repo_digests": list(attrs.get("RepoDigests") or []),
+        }
+
+    def pull_image(
+        self,
+        ref: str,
+        progress: Any | None = None,
+        interval: float = PULL_PROGRESS_INTERVAL,
+    ) -> dict[str, Any]:
+        """Pull ``ref``, reporting aggregated progress through ``progress``.
+
+        The low-level API streams one status dict per layer chunk, which is far
+        too chatty to forward as events. Layer counters are folded into a
+        single ``{bytes_done, bytes_total, percent, layers}`` snapshot and the
+        callback fires at most once per ``interval`` seconds, plus once at the
+        end.
+        """
+        if not ref:
+            raise RuntimeError("pull_image needs an image reference")
+        repo, tag = split_ref(ref)
+        layers: dict[str, dict[str, int]] = {}
+        # Seeded with "now" so the first snapshot waits a full interval rather
+        # than firing on the very first chunk.
+        last_emit = time.monotonic()
+        last_status = ""
+
+        def _emit(force: bool = False) -> None:
+            nonlocal last_emit
+            if progress is None:
+                return
+            now = time.monotonic()
+            if not force and now - last_emit < interval:
+                return
+            last_emit = now
+            done, total, percent = _pull_percent(layers)
+            progress(
+                {
+                    "ref": ref,
+                    "status": last_status,
+                    "layers": len(layers),
+                    "bytes_done": done,
+                    "bytes_total": total,
+                    "percent": percent,
+                }
+            )
+
+        try:
+            stream = self.client.api.pull(repo, tag=tag, stream=True, decode=True)
+            for chunk in stream:
+                if not isinstance(chunk, dict):
+                    continue
+                error = chunk.get("error") or chunk.get("errorDetail")
+                if error:
+                    message = (
+                        error.get("message") if isinstance(error, dict) else str(error)
+                    )
+                    raise RuntimeError(f"pull of {ref} failed: {message}")
+                status = str(chunk.get("status") or "")
+                if status:
+                    last_status = status
+                layer_id = str(chunk.get("id") or "")
+                detail = chunk.get("progressDetail") or {}
+                if layer_id and isinstance(detail, dict) and detail.get("total"):
+                    entry = layers.setdefault(layer_id, {"current": 0, "total": 0})
+                    entry["total"] = int(detail.get("total") or entry["total"])
+                    if status.startswith("Download"):
+                        entry["current"] = int(detail.get("current") or 0)
+                    elif status in ("Pull complete", "Already exists"):
+                        entry["current"] = entry["total"]
+                elif layer_id and status in ("Pull complete", "Already exists"):
+                    entry = layers.setdefault(layer_id, {"current": 0, "total": 0})
+                    entry["current"] = entry["total"]
+                _emit()
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            raise RuntimeError(f"pull of {ref} failed: {exc}") from exc
+
+        done, total, _ = _pull_percent(layers)
+        last_status = "pull complete"
+        for entry in layers.values():
+            entry["current"] = entry["total"]
+        _emit(force=True)
+        info = self.image_info(ref) or {}
+        return {
+            "ref": ref,
+            "repository": repo,
+            "tag": tag,
+            "bytes_done": max(done, 0),
+            "bytes_total": max(total, 0),
+            "percent": 100.0,
+            "id": info.get("id", ""),
+            "size_bytes": info.get("size_bytes", 0),
+        }
+
+    def remove_image(self, ref: str, force: bool = False) -> bool:
+        """Remove a local image. Returns False when it was not present."""
+        try:
+            self.client.images.remove(ref, force=force)
+            return True
+        except Exception as exc:
+            if "not found" in str(exc).lower() or "no such image" in str(exc).lower():
+                return False
+            raise RuntimeError(f"could not remove image {ref}: {exc}") from exc
+
+    def list_images(self) -> list[dict[str, Any]]:
+        """Return every local image as ``image_info``-shaped dicts."""
+        try:
+            images = self.client.images.list()
+        except Exception as exc:
+            raise RuntimeError(f"could not list images: {exc}") from exc
+        out: list[dict[str, Any]] = []
+        for image in images:
+            attrs = getattr(image, "attrs", None) or {}
+            out.append(
+                {
+                    "id": getattr(image, "id", "") or attrs.get("Id", ""),
+                    "size_bytes": int(attrs.get("Size") or 0),
+                    "created": attrs.get("Created"),
+                    "repo_tags": list(attrs.get("RepoTags") or []),
+                    "repo_digests": list(attrs.get("RepoDigests") or []),
+                }
+            )
+        return out
 
     def stop_container(self, name: str, timeout: int = 30) -> bool:
         """Stop and remove a container by name.
@@ -671,3 +858,28 @@ def list_managed_containers(
 def get_container_by_deployment(deployment: str) -> ContainerInfo | None:
     """Convenience function to find container by deployment name."""
     return _get_service().get_container_by_deployment(deployment)
+
+
+def image_exists(ref: str) -> bool:
+    """Convenience function: is the image present on this host?"""
+    return _get_service().image_exists(ref)
+
+
+def pull_image(ref: str, progress: Any | None = None) -> dict[str, Any]:
+    """Convenience function to pull an image with aggregated progress."""
+    return _get_service().pull_image(ref, progress)
+
+
+def image_info(ref: str) -> dict[str, Any] | None:
+    """Convenience function to inspect a local image."""
+    return _get_service().image_info(ref)
+
+
+def list_images() -> list[dict[str, Any]]:
+    """Convenience function to list local images."""
+    return _get_service().list_images()
+
+
+def remove_image(ref: str, force: bool = False) -> bool:
+    """Convenience function to remove a local image."""
+    return _get_service().remove_image(ref, force=force)
