@@ -140,23 +140,6 @@ export interface RecipeFormRef {
   getDeployName: () => string;
 }
 
-export interface GitUpdateStatus {
-  git_available: boolean;
-  is_repo: boolean;
-  local_version: string | null;
-  version_available: boolean;
-  has_uncommitted_changes: boolean;
-  remote_version?: string | null;
-  local_date?: string | null;
-  remote_date?: string | null;
-}
-
-export interface GitUpdateSettings {
-  git_update_enabled: boolean;
-  git_update_check_interval_seconds: number;
-  git_update_auto_pull: boolean;
-}
-
 export interface Settings {
   spark_vllm_path: string;
   default_container: string;
@@ -166,26 +149,8 @@ export interface Settings {
   webui_port: number;
   cluster_enabled: boolean;
   job_retention_days: number;
-  git_update_enabled: boolean;
-  git_update_check_interval_seconds: number;
-  git_update_auto_pull: boolean;
   benchmarking_enabled: boolean;
   env_managed?: string[];
-}
-
-export interface GitUpdateAction {
-  success: boolean;
-  error?: string;
-}
-
-export interface GitUpdateCheckResult {
-  available: boolean;
-  local_version: string | null;
-  remote_version: string | null;
-  local_date: string | null;
-  remote_date: string | null;
-  has_uncommitted_changes: boolean;
-  last_fetch_ok?: boolean;
 }
 
 export interface BenchmarkResult {

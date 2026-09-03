@@ -24,7 +24,6 @@ def get_config():
         "auth_enabled": config.auth_enabled,
         "mcp_enabled": config.mcp_enabled,
         "cluster_enabled": config.cluster_enabled,
-        "git_update_enabled": config.git_update_enabled,
         "benchmarking_enabled": config.benchmarking_enabled,
         "simulation_mode": is_simulation(),
     }

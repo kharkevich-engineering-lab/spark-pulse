@@ -10,7 +10,6 @@ export interface AppConfig {
   auth_enabled: boolean;
   mcp_enabled: boolean;
   cluster_enabled: boolean;
-  git_update_enabled: boolean;
   benchmarking_enabled: boolean;
   simulation_mode: boolean;
 }
@@ -19,7 +18,6 @@ const DEFAULT_CONFIG: AppConfig = {
   auth_enabled: false,
   mcp_enabled: true,
   cluster_enabled: false,
-  git_update_enabled: true,
   benchmarking_enabled: false,
   simulation_mode: true,
 };
@@ -47,10 +45,6 @@ export function getConfig(): AppConfig {
     return { ...DEFAULT_CONFIG };
   }
   return cachedConfig;
-}
-
-export function isGitUpdateEnabled(): boolean {
-  return getConfig().git_update_enabled;
 }
 
 // ── React context for config ───────────────────────────────────────────────

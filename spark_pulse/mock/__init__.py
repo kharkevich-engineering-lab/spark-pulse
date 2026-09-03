@@ -9,7 +9,6 @@ from spark_pulse.mock import (
     custom_files as custom_files,
     custom_recipes as custom_recipes,
     mods as mods,
-    git_update as git_update,
     docker as docker,
     network as network,
     discovery as discovery,

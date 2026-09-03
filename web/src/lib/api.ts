@@ -1,4 +1,4 @@
-import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntry, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, GitUpdateStatus, GitUpdateAction, GitUpdateCheckResult, CustomRecipeInfo, CustomModInfo, ModFileMap, BenchmarkResult, OciRegistry, OciCollection, OciCollectionRecipe, OciRecipeMeta, OciUpdateCheck, OciUpdateApply, OciUpdateResult, OciAutoUpdateSettings } from "@/lib/types";
+import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntry, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, CustomRecipeInfo, CustomModInfo, ModFileMap, BenchmarkResult, OciRegistry, OciCollection, OciCollectionRecipe, OciRecipeMeta, OciUpdateCheck, OciUpdateApply, OciUpdateResult, OciAutoUpdateSettings } from "@/lib/types";
 
 const API = "/api";
 
@@ -72,10 +72,6 @@ export async function deleteRecipeCustomization(recipeId: string): Promise<{ del
 
 // ── Git Update ───────────────────────────────────────────────────────────────
 
-export async function fetchGitUpdateStatus(): Promise<GitUpdateStatus> { return json<GitUpdateStatus>("/git-update/status"); }
-export async function triggerGitUpdateCheck(): Promise<GitUpdateCheckResult> { return json<GitUpdateCheckResult>("/git-update/check", { method: "POST" }); }
-export async function triggerGitFetch(): Promise<GitUpdateAction> { return json<GitUpdateAction>("/git-update/fetch", { method: "POST" }); }
-export async function triggerGitPull(): Promise<GitUpdateAction> { return json<GitUpdateAction>("/git-update/pull", { method: "POST" }); }
 
 // ── SSE ─────────────────────────────────────────────────────────────────────
 

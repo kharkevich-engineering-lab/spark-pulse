@@ -12,7 +12,6 @@ from starlette.responses import StreamingResponse
 from spark_pulse.tools import system
 from spark_pulse.tools.events import EventBroadcaster
 from spark_pulse import tools
-from spark_pulse.config import config
 
 router = APIRouter(prefix="/sse", tags=["sse"])
 
@@ -123,51 +122,6 @@ async def sse_logs(deployment_id: str):
     """Stream deployment logs via SSE."""
     return StreamingResponse(
         log_generator(deployment_id),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
-
-async def git_update_generator() -> AsyncGenerator[str, None]:
-    """Emit SSE events when git updates are available or checks complete.
-
-    Polls git update status at the configured interval and emits events
-    when the update availability state changes.
-    """
-    from spark_pulse.tools.git_update import check_updates
-
-    last_available = None
-    interval = config.git_update_check_interval_seconds
-
-    while True:
-        try:
-            result = check_updates(config.spark_vllm_path)
-            is_available = result.get("available", False)
-
-            if last_available is not None and is_available != last_available:
-                # State changed — emit update_available event
-                event_type = "update_available" if is_available else "update_installed"
-                yield f"event: {event_type}\ndata: {json.dumps(result)}\n\n"
-
-            # Always emit a heartbeat/check_completed after each check
-            yield f"event: check_completed\ndata: {json.dumps(result)}\n\n"
-
-            last_available = is_available
-        except Exception as e:
-            yield f'event: error\ndata: {{"message": "{e}"}}\n\n'
-
-        await asyncio.sleep(interval)
-
-
-@router.get("/git-update")
-async def sse_git_update():
-    """Stream git update events via SSE."""
-    return StreamingResponse(
-        git_update_generator(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
