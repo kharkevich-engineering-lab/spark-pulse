@@ -14,9 +14,9 @@ from typing import Any
 # Import real types so isinstance checks work across mock/real boundary
 from spark_pulse.tools.docker import (
     ContainerInfo,
-    ContainerMetadata,
     DockerService,
 )
+from spark_pulse.tools.labels import LABEL_PREFIX
 
 
 @dataclass
@@ -113,12 +113,18 @@ class MockContainersManager:
                     containers = [
                         c for c in containers if label_filter in (c.labels or {})
                     ]
-            # Handle specific label key:value filters
+            # Handle specific label key:value filters. An empty value means
+            # "carries this label key", matching the real service's semantics.
             for key, value in filters.items():
-                if key.startswith("spark-pulse.") and key != "label":
-                    containers = [
-                        c for c in containers if (c.labels or {}).get(key) == str(value)
-                    ]
+                if key.startswith(LABEL_PREFIX) and key != "label":
+                    if value == "":
+                        containers = [c for c in containers if key in (c.labels or {})]
+                    else:
+                        containers = [
+                            c
+                            for c in containers
+                            if (c.labels or {}).get(key) == str(value)
+                        ]
 
         return containers
 
@@ -177,19 +183,13 @@ class MockDockerClient:
 class NotFound(Exception):
     """Simulated docker.errors.NotFound."""
 
-    pass
-
 
 class APIError(Exception):
     """Simulated docker.errors.APIError."""
 
-    pass
-
 
 class ImageNotFound(Exception):
     """Simulated docker.errors.ImageNotFound."""
-
-    pass
 
 
 # ── Mock service ─────────────────────────────────────────────────────────────
@@ -207,8 +207,9 @@ def _get_mock_client() -> MockDockerClient:
 
 def reset_mock() -> None:
     """Reset the mock state (for testing)."""
-    global _mock_client
+    global _mock_client, _service
     _mock_client = MockDockerClient()
+    _service = None
 
 
 def list_mock_containers() -> list[dict[str, Any]]:
@@ -226,130 +227,36 @@ def list_mock_containers() -> list[dict[str, Any]]:
     ]
 
 
-# ── Mock DockerService methods ───────────────────────────────────────────────
+# ── Mock DockerService ───────────────────────────────────────────────────────
+
+# The real DockerService drives any duck-typed client, so the mock service is
+# just the real one wired to MockDockerClient. No monkey-patching: the real
+# implementation stays intact for the contract tests.
 
 
-def _mock_run_container(self, **kwargs: Any) -> ContainerInfo:
-    mock = self._client or _get_mock_client()
-    image = kwargs.get("image", "")
-    name = kwargs.get("name", "")
-    env_vars = kwargs.get("env_vars") or {}
-    metadata = kwargs.get("metadata") or ContainerMetadata()
-    labels = metadata.to_labels()
-    labels["spark-pulse.name"] = name
+class MockDockerService(DockerService):
+    """DockerService backed by the in-memory MockDockerClient."""
 
-    container = mock.containers.run(
-        image=image,
-        name=name,
-        detach=True,
-        environment=env_vars,
-        labels=labels,
-        host_config=mock.create_host_config(privileged=True),
-        entrypoint=[],
-        remove=True,
-    )
+    def __init__(self, client: Any | None = None):
+        super().__init__(client or _get_mock_client())
 
-    metadata.created_at = datetime.now(timezone.utc).isoformat()
-    return ContainerInfo(
-        id=container.id,
-        name=container.name,
-        status="running",
-        image=image,
-        metadata=metadata,
-    )
-
-
-def _mock_stop_container(self, name: str) -> bool:
-    mock = self._client or _get_mock_client()
-    return mock.containers.stop_and_remove(name)
-
-
-def _mock_get_container_status(self, name: str) -> dict[str, Any]:
-    mock = self._client or _get_mock_client()
-    try:
-        container = mock.containers.get(name)
-        return {
-            "status": container.status,
-            "id": container.id,
-            "state": container.attrs.get("State", {}),
-            "error": None,
-        }
-    except NotFound:
-        return {
-            "status": "missing",
-            "id": None,
-            "state": {},
-            "error": f"Container '{name}' not found",
-        }
-
-
-def _mock_list_managed_containers(self) -> list[ContainerInfo]:
-    mock = self._client or _get_mock_client()
-    containers = mock.containers.list(all=True)
-    results: list[ContainerInfo] = []
-    for c in containers:
-        labels = c.labels or {}
-        if labels.get("spark-pulse.managed") == "true":
-            meta = ContainerMetadata.from_labels(labels)
-            results.append(
-                ContainerInfo(
-                    id=c.id,
-                    name=c.name,
-                    status=c.status,
-                    image=c.image,
-                    metadata=meta,
-                )
-            )
-    return results
-
-
-def _mock_get_container_by_deployment(self, deployment: str) -> ContainerInfo | None:
-    mock = self._client or _get_mock_client()
-    containers = mock.containers.list(
-        all=True,
-        filters={
-            "label": "spark-pulse.managed=true",
-            "spark-pulse.deployment": deployment,
-        },
-    )
-    # Also check without label filter since mock might not track managed containers
-    if not containers:
-        containers = mock.containers.list(all=True)
-    for c in containers:
-        if (
-            getattr(c, "name", "") == deployment
-            or (c.labels or {}).get("spark-pulse.deployment") == deployment
-        ):
-            meta = ContainerMetadata.from_labels(c.labels)
-            return ContainerInfo(
-                id=c.id,
-                name=c.name,
-                status=c.status,
-                image=c.image,
-                metadata=meta,
-            )
-    return None
-
-
-# ── Monkey-patch DockerService with mock implementations ──────────────────────
-
-DockerService.run_container = _mock_run_container
-DockerService.stop_container = _mock_stop_container
-DockerService.get_container_status = _mock_get_container_status
-DockerService.list_managed_containers = _mock_list_managed_containers
-DockerService.get_container_by_deployment = _mock_get_container_by_deployment
+    def copy_to_container(
+        self, container: str, local_path: str, remote_path: str
+    ) -> bool:
+        """Pretend the file was copied into the container."""
+        return True
 
 
 # ── Module-level convenience functions (mirrors spark_pulse.tools.docker) ────
 
-_service: DockerService | None = None
+_service: MockDockerService | None = None
 
 
-def _get_service() -> DockerService:
-    """Get the global DockerService instance."""
+def _get_service() -> MockDockerService:
+    """Get the global mock DockerService instance."""
     global _service
     if _service is None:
-        _service = DockerService()
+        _service = MockDockerService()
     return _service
 
 
@@ -358,9 +265,9 @@ def run_container(**kwargs: Any) -> ContainerInfo:
     return _get_service().run_container(**kwargs)
 
 
-def stop_container(name: str) -> bool:
+def stop_container(name: str, timeout: int = 30) -> bool:
     """Convenience function to stop a container."""
-    return _get_service().stop_container(name)
+    return _get_service().stop_container(name, timeout=timeout)
 
 
 def get_container_status(name: str) -> dict[str, Any]:
@@ -368,9 +275,11 @@ def get_container_status(name: str) -> dict[str, Any]:
     return _get_service().get_container_status(name)
 
 
-def list_managed_containers() -> list[ContainerInfo]:
+def list_managed_containers(
+    labels: dict[str, str] | None = None,
+) -> list[ContainerInfo]:
     """Convenience function to list all managed containers."""
-    return _get_service().list_managed_containers()
+    return _get_service().list_managed_containers(labels)
 
 
 def get_container_by_deployment(deployment: str) -> ContainerInfo | None:

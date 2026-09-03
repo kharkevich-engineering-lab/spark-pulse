@@ -11,59 +11,149 @@ from __future__ import annotations
 
 import logging
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
+
+from spark_pulse.tools.labels import (
+    CLUSTER_LABEL,
+    CREATED_AT_LABEL,
+    DEPLOYMENT_LABEL,
+    HEAD_IP_LABEL,
+    IMAGE_LABEL,
+    LABEL_PREFIX,
+    MANAGED_FILTER,
+    MANAGED_LABEL,
+    MEMORY_LIMIT_LABEL,
+    MODE_LABEL,
+    NAME_LABEL,
+    NODE_RANK_LABEL,
+    PRIVILEGED_LABEL,
+    RAY_ENABLED_LABEL,
+    RECIPE_LABEL,
+    ROLE_LABEL,
+    SHM_SIZE_LABEL,
+    VERSION_LABEL,
+)
 
 logger = logging.getLogger(__name__)
 
 # ── Data Models ──────────────────────────────────────────────────────────────
 
-_LABEL_PREFIX = "spark-pulse."
+# Kept for backwards compatibility with callers that imported the private name.
+_LABEL_PREFIX = LABEL_PREFIX
+
+
+@dataclass(frozen=True, slots=True)
+class ExecResult:
+    """Result of a command executed inside a container.
+
+    Shaped like ``SSHResult`` so local and remote execs are interchangeable.
+    """
+
+    returncode: int
+    stdout: str = ""
+    stderr: str = ""
+
+    @property
+    def ok(self) -> bool:
+        """Whether the command succeeded."""
+        return self.returncode == 0
+
+
+def _missing_status(name: str) -> dict[str, Any]:
+    """Status dict for a container that does not exist."""
+    return {
+        "status": "missing",
+        "running": False,
+        "id": None,
+        "state": {},
+        "error": f"Container '{name}' not found",
+    }
+
+
+def _decode(raw: Any) -> str:
+    """Decode docker exec output (bytes or str) to text."""
+    if raw is None:
+        return ""
+    if isinstance(raw, bytes):
+        return raw.decode(errors="replace")
+    return str(raw)
+
+
+def _labels_match(labels: dict[str, str], wanted: dict[str, str] | None) -> bool:
+    """Whether ``labels`` satisfies every filter in ``wanted``.
+
+    An empty filter value matches any container carrying that label key.
+    """
+    for key, value in (wanted or {}).items():
+        if value == "":
+            if key not in labels:
+                return False
+        elif labels.get(key) != value:
+            return False
+    return True
 
 
 @dataclass
 class ContainerMetadata:
-    """Self-describing metadata stored as Docker labels."""
+    """Self-describing metadata stored as Docker labels.
 
-    deployment: str
-    recipe: str
-    image: str
+    This is the single metadata shape for every container service — local
+    (:class:`DockerService`), remote (``RemoteDockerService``) and mock.
+    """
+
+    deployment: str = ""
+    recipe: str = ""
+    image: str = ""
     mode: str = "solo"
     created_at: str | None = None
     memory_limit_gb: float | None = None
     shm_size_gb: float = 64
     privileged: bool = True
+    # Cluster membership — empty for solo deployments.
+    cluster: str = ""
+    role: str = ""
+    node_rank: int = 0
+    head_ip: str = ""
+    ray_enabled: bool = False
 
     def to_labels(self) -> dict[str, str]:
         """Serialize to Docker label dict (prefix: spark-pulse.)."""
-        prefix = _LABEL_PREFIX
-        return {
-            f"{prefix}managed": "true",
-            f"{prefix}deployment": self.deployment,
-            f"{prefix}recipe": self.recipe,
-            f"{prefix}image": self.image,
-            f"{prefix}mode": self.mode,
-            f"{prefix}created_at": self.created_at or "",
-            f"{prefix}version": "1",
-            f"{prefix}memory_limit_gb": (
+        labels = {
+            MANAGED_LABEL: "true",
+            DEPLOYMENT_LABEL: self.deployment,
+            RECIPE_LABEL: self.recipe,
+            IMAGE_LABEL: self.image,
+            MODE_LABEL: self.mode,
+            CREATED_AT_LABEL: self.created_at or "",
+            VERSION_LABEL: "1",
+            MEMORY_LIMIT_LABEL: (
                 str(self.memory_limit_gb) if self.memory_limit_gb else ""
             ),
-            f"{prefix}shm_size_gb": str(self.shm_size_gb),
-            f"{prefix}privileged": "true" if self.privileged else "false",
+            SHM_SIZE_LABEL: str(self.shm_size_gb),
+            PRIVILEGED_LABEL: "true" if self.privileged else "false",
         }
+        if self.cluster:
+            labels[CLUSTER_LABEL] = self.cluster
+            labels[ROLE_LABEL] = self.role
+            labels[NODE_RANK_LABEL] = str(self.node_rank)
+            labels[RAY_ENABLED_LABEL] = "true" if self.ray_enabled else "false"
+            if self.head_ip:
+                labels[HEAD_IP_LABEL] = self.head_ip
+        return labels
 
     @classmethod
-    def from_labels(cls, labels: dict[str, str] | None) -> "ContainerMetadata":
+    def from_labels(cls, labels: dict[str, str] | None) -> ContainerMetadata:
         """Deserialize from Docker labels."""
         if labels is None:
             labels = {}
-        prefix = _LABEL_PREFIX
 
         def _get(key: str, default: str = "") -> str:
-            return labels.get(f"{prefix}{key}", default)
+            return labels.get(f"{LABEL_PREFIX}{key}", default)
 
         mem = _get("memory_limit_gb")
+        rank = _get("node_rank")
         return cls(
             deployment=_get("deployment"),
             recipe=_get("recipe"),
@@ -73,18 +163,28 @@ class ContainerMetadata:
             memory_limit_gb=float(mem) if mem else None,
             shm_size_gb=float(_get("shm_size_gb", "64")),
             privileged=_get("privileged", "true") == "true",
+            cluster=_get("cluster"),
+            role=_get("role"),
+            node_rank=int(rank) if rank.isdigit() else 0,
+            head_ip=_get("head_ip"),
+            ray_enabled=_get("ray_enabled") == "true",
         )
 
 
 @dataclass
 class ContainerInfo:
-    """Immutable snapshot of a managed container."""
+    """Immutable snapshot of a managed container.
+
+    ``labels`` carries the raw Docker labels so consumers can read keys that
+    :class:`ContainerMetadata` does not model; ``metadata`` is the parsed view.
+    """
 
     id: str
     name: str
     status: str  # running | stopped | missing
     image: str
-    metadata: ContainerMetadata
+    metadata: ContainerMetadata = field(default_factory=lambda: ContainerMetadata())
+    labels: dict[str, str] = field(default_factory=dict)
 
 
 # ── Docker Service ───────────────────────────────────────────────────────────
@@ -158,7 +258,7 @@ class DockerService:
 
         client = self.client
         labels = metadata.to_labels()
-        labels[f"{_LABEL_PREFIX}name"] = name
+        labels[NAME_LABEL] = name
 
         # Build volume mounts for cache dirs
         volumes: dict[str, dict[str, str]] = {}
@@ -218,19 +318,22 @@ class DockerService:
             raise RuntimeError(f"Docker API error: {exc}") from exc
 
         metadata.created_at = datetime.now(timezone.utc).isoformat()
+        labels[CREATED_AT_LABEL] = metadata.created_at
         return ContainerInfo(
             id=container.id,
             name=container.name,
             status="running",
             image=image,
             metadata=metadata,
+            labels=labels,
         )
 
-    def stop_container(self, name: str) -> bool:
+    def stop_container(self, name: str, timeout: int = 30) -> bool:
         """Stop and remove a container by name.
 
         Args:
             name: Container name.
+            timeout: Seconds to wait before killing the container.
 
         Returns:
             True if the container was stopped and removed.
@@ -240,7 +343,7 @@ class DockerService:
         client = self.client
         try:
             container = client.containers.get(name)
-            container.stop(timeout=30)
+            container.stop(timeout=timeout)
             container.remove(force=True)
             return True
         except docker.errors.NotFound:
@@ -260,7 +363,7 @@ class DockerService:
             name: Container name.
 
         Returns:
-            Dict with keys: status, id, state, error (if any).
+            Dict with keys: status, running, id, state, error (if any).
         """
         import docker
 
@@ -269,77 +372,120 @@ class DockerService:
             container = client.containers.get(name)
             return {
                 "status": container.status,
+                "running": container.status == "running",
                 "id": container.id,
                 "state": container.attrs.get("State", {}),
                 "error": None,
             }
         except docker.errors.NotFound:
-            return {
-                "status": "missing",
-                "id": None,
-                "state": {},
-                "error": f"Container '{name}' not found",
-            }
-        except Exception as exc:
-            # Catch mock NotFound or other errors
-            exc_str = str(exc)
-            if "not found" in exc_str.lower():
-                return {
-                    "status": "missing",
-                    "id": None,
-                    "state": {},
-                    "error": f"Container '{name}' not found",
-                }
-            raise
+            return _missing_status(name)
         except docker.errors.APIError as exc:
             return {
                 "status": "error",
+                "running": False,
                 "id": None,
                 "state": {},
                 "error": str(exc),
             }
+        except Exception as exc:
+            # Catch mock NotFound or other errors
+            if "not found" in str(exc).lower():
+                return _missing_status(name)
+            raise
 
     def exec_in_container(
         self,
         container: str | Any,
-        command: str,
-        daemon: bool = False,
-    ) -> str | subprocess.Popen:
-        """Execute command inside a running container.
+        command: str | list[str],
+        detach: bool = False,
+    ) -> ExecResult:
+        """Execute a command inside a running container.
 
         Args:
             container: Container name or Container object.
-            command: Command to execute.
-            daemon: If True, run in background and return Popen.
+            command: Command to execute, as a string or argv list.
+            detach: If True, run in the background and return immediately.
 
         Returns:
-            Command output string, or Popen if daemon=True.
+            ExecResult with returncode, stdout and stderr. A detached exec
+            returns an empty successful result.
         """
 
         client = self.client
         if isinstance(container, str):
             container = client.containers.get(container)
 
-        if daemon:
-            proc = container.exec_run(command, demux=True)
-            return proc
-        else:
-            output = container.exec_run(command, demux=True)
-            return output.output.decode() if output.output else ""
+        if isinstance(command, (list, tuple)):
+            command = list(command)
 
-    def list_managed_containers(self) -> list[ContainerInfo]:
+        result = container.exec_run(command, demux=True, detach=detach)
+        if detach:
+            return ExecResult(returncode=0, stdout="", stderr="")
+
+        output = getattr(result, "output", None)
+        if isinstance(output, tuple):
+            raw_out, raw_err = output
+        else:
+            raw_out, raw_err = output, None
+        exit_code = getattr(result, "exit_code", 0)
+        return ExecResult(
+            returncode=int(exit_code or 0),
+            stdout=_decode(raw_out),
+            stderr=_decode(raw_err),
+        )
+
+    def copy_to_container(
+        self,
+        container: str,
+        local_path: str,
+        remote_path: str,
+    ) -> bool:
+        """Copy a local file into a container via ``docker cp``.
+
+        Args:
+            container: Container name or ID.
+            local_path: Path on the host.
+            remote_path: Destination path inside the container.
+
+        Returns:
+            True when the copy succeeded.
+        """
+        proc = subprocess.run(
+            ["docker", "cp", local_path, f"{container}:{remote_path}"],
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode != 0:
+            logger.error(
+                "docker cp %s -> %s:%s failed: %s",
+                local_path,
+                container,
+                remote_path,
+                proc.stderr.strip(),
+            )
+        return proc.returncode == 0
+
+    def list_managed_containers(
+        self,
+        labels: dict[str, str] | None = None,
+    ) -> list[ContainerInfo]:
         """Return all Spark Pulse managed containers via label filter.
+
+        Args:
+            labels: Extra label filters. A value of ``""`` matches any
+                container carrying that label key.
 
         Returns:
             List of ContainerInfo for all managed containers.
         """
 
         client = self.client
-        containers = client.containers.list(
-            all=True,
-            filters={"label": f"{_LABEL_PREFIX}managed=true"},
-        )
-        return [self._container_to_info(c) for c in containers]
+        filters: dict[str, Any] = {"label": MANAGED_FILTER}
+        for key, value in (labels or {}).items():
+            filters[key] = value
+        containers = client.containers.list(all=True, filters=filters)
+        infos = [self._container_to_info(c) for c in containers]
+        return [i for i in infos if _labels_match(i.labels, labels)]
 
     def get_container_by_deployment(self, deployment: str) -> ContainerInfo | None:
         """Find container by deployment name (from labels).
@@ -355,8 +501,8 @@ class DockerService:
         containers = client.containers.list(
             all=True,
             filters={
-                "label": f"{_LABEL_PREFIX}managed=true",
-                f"{_LABEL_PREFIX}deployment": deployment,
+                "label": MANAGED_FILTER,
+                DEPLOYMENT_LABEL: deployment,
             },
         )
         if containers:
@@ -377,8 +523,8 @@ class DockerService:
         containers = client.containers.list(
             all=True,
             filters={
-                "label": f"{_LABEL_PREFIX}managed=true",
-                f"{_LABEL_PREFIX}recipe": recipe,
+                "label": MANAGED_FILTER,
+                RECIPE_LABEL: recipe,
             },
         )
         return [self._container_to_info(c) for c in containers]
@@ -404,6 +550,7 @@ class DockerService:
             status=container.status,
             image=image,
             metadata=metadata,
+            labels=dict(labels),
         )
 
     @staticmethod
@@ -451,9 +598,11 @@ def get_container_status(name: str) -> dict[str, Any]:
     return _get_service().get_container_status(name)
 
 
-def list_managed_containers() -> list[ContainerInfo]:
+def list_managed_containers(
+    labels: dict[str, str] | None = None,
+) -> list[ContainerInfo]:
     """Convenience function to list all managed containers."""
-    return _get_service().list_managed_containers()
+    return _get_service().list_managed_containers(labels)
 
 
 def get_container_by_deployment(deployment: str) -> ContainerInfo | None:
