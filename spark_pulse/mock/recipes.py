@@ -13,9 +13,9 @@ from filelock import FileLock
 
 from spark_pulse.config import config
 
-# Parsing/resolution logic is shared with the real module so both listings
-# report the same schema fields and sources.
-import spark_pulse.tools.recipes as _real_recipes
+# Discovery/parsing is shared with the real tools via a module that has no mock
+# twin, so importing it never disturbs the SIMULATION_MODE module switch.
+from spark_pulse.tools import recipe_sources
 
 # Default mock recipes (used when no spark_path is provided)
 _RECIPES = [
@@ -287,14 +287,12 @@ def list_recipes(spark_path: Path | None = None) -> list[dict[str, Any]]:
     if spark_path is None:
         spark_path = Path(config.spark_vllm_path)
     spark_path = Path(spark_path)
-    payloads = _real_recipes.iter_recipe_payloads(spark_path)
+    payloads = recipe_sources.iter_recipe_payloads(spark_path)
     if payloads or (spark_path / "recipes").is_dir():
-        recipes = []
-        for payload in payloads:
-            summary = {f: payload[f] for f in _real_recipes.SUMMARY_FIELDS}
-            summary["is_customized"] = bool(has_customization(payload["id"]))
-            recipes.append(summary)
-        return recipes
+        return [
+            recipe_sources.summarize(p, bool(has_customization(p["id"])))
+            for p in payloads
+        ]
     return [_canned(r) for r in _RECIPES]
 
 
@@ -304,7 +302,7 @@ def get_recipe(recipe_id: str, spark_path: Path | None = None) -> dict[str, Any]
     and finally returns mock data."""
     if spark_path is None:
         spark_path = Path(config.spark_vllm_path)
-    recipe = _real_recipes.resolve_recipe(recipe_id, Path(spark_path))
+    recipe = recipe_sources.resolve_recipe(recipe_id, Path(spark_path))
     if recipe is None:
         for canned in _RECIPES:
             if canned["name"] == recipe_id:
@@ -312,7 +310,7 @@ def get_recipe(recipe_id: str, spark_path: Path | None = None) -> dict[str, Any]
                 break
     if recipe is None:
         return None
-    _real_recipes.apply_customization(recipe, recipe["id"], get_customization)
+    recipe_sources.apply_customization(recipe, get_customization(recipe["id"]))
     return recipe
 
 

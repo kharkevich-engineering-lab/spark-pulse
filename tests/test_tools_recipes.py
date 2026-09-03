@@ -1,6 +1,13 @@
 import json
+import sys
 
 from spark_pulse.tools import recipes
+
+# `recipes` above is the mock under SIMULATION_MODE=1, which is what the API
+# serves in simulation. Discovery/parsing/rendering is shared with the real
+# tools through recipe_sources (no mock twin), so tests that are about that
+# logic address it directly.
+from spark_pulse.tools import recipe_sources
 
 
 def test_list_recipes_parses_valid_and_skips_bad_yaml(tmp_path):
@@ -248,7 +255,7 @@ def test_get_recipe_returns_v2_detail(tmp_path):
 
 
 def test_list_recipes_includes_imported_source(tmp_path, monkeypatch):
-    from spark_pulse.tools import recipe_import
+    recipe_import = sys.modules["spark_pulse.tools.recipe_import"]
 
     imported = tmp_path / "imported"
     (imported / "recipes" / "cluster").mkdir(parents=True)
@@ -268,7 +275,7 @@ def test_list_recipes_includes_imported_source(tmp_path, monkeypatch):
 
 
 def test_get_recipe_resolves_an_imported_id(tmp_path, monkeypatch):
-    from spark_pulse.tools import recipe_import
+    recipe_import = sys.modules["spark_pulse.tools.recipe_import"]
 
     imported = tmp_path / "imported"
     (imported / "recipes").mkdir(parents=True)
@@ -285,7 +292,7 @@ def test_get_recipe_resolves_an_imported_id(tmp_path, monkeypatch):
     assert out["name"] == "Imported Tiny"
 
 
-def test_build_launch_command_supports_plain_placeholders():
+def test_render_command_supports_plain_placeholders():
     recipe = {
         "command": (
             "vllm serve --port {port} -tp {tensor_parallel} "
@@ -293,7 +300,7 @@ def test_build_launch_command_supports_plain_placeholders():
             "--max-model-len {max_model_len}"
         )
     }
-    cmd = recipes.build_launch_command(
+    cmd = recipe_sources.render_command(
         recipe,
         {
             "port": 9100,
@@ -304,26 +311,25 @@ def test_build_launch_command_supports_plain_placeholders():
     )
 
     assert cmd == (
-        "vllm serve --port 9100 -tp 4 "
-        "--gpu-memory-utilization 0.9 --max-model-len 2048"
+        "vllm serve --port 9100 -tp 4 --gpu-memory-utilization 0.9 --max-model-len 2048"
     )
 
 
-def test_build_launch_command_warns_on_deprecated_placeholders(caplog):
+def test_render_command_warns_on_deprecated_placeholders(caplog):
     recipe = {"id": "legacy", "command": "vllm serve {-tp}"}
 
     with caplog.at_level("WARNING"):
-        cmd = recipes.build_launch_command(recipe, {"tensor_parallel": 2})
+        cmd = recipe_sources.render_command(recipe, {"tensor_parallel": 2})
 
     assert "--tensor-parallel-size 2" in cmd
     assert "deprecated" in caplog.text
     assert "legacy" in caplog.text
 
 
-def test_build_launch_command_does_not_warn_for_modern_recipes(caplog):
+def test_render_command_does_not_warn_for_modern_recipes(caplog):
     recipe = {"id": "modern", "command": "vllm serve -tp {tensor_parallel}"}
 
     with caplog.at_level("WARNING"):
-        recipes.build_launch_command(recipe, {"tensor_parallel": 2})
+        recipe_sources.render_command(recipe, {"tensor_parallel": 2})
 
     assert "deprecated" not in caplog.text

@@ -4,6 +4,7 @@ from spark_pulse.mock import (
     system as system,
     cache as cache,
     recipes as recipes,
+    recipe_import as recipe_import,
     deployments as deployments,
     benchmarking as benchmarking,
     custom_files as custom_files,

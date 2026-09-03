@@ -2,11 +2,17 @@
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
-from spark_pulse.tools import recipe_import
+import spark_pulse.tools.recipe_import  # noqa: F401  (load the real submodule)
+
+# The suite runs with SIMULATION_MODE=1, so `from spark_pulse.tools import
+# recipe_import` would hand back the mock. These tests are about the real
+# importer, so address it through sys.modules.
+recipe_import = sys.modules["spark_pulse.tools.recipe_import"]
 
 VALID_V1 = """
 name: TinyLlama

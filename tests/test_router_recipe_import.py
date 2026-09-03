@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 from fastapi.testclient import TestClient
 
+import spark_pulse.tools.recipe_import  # noqa: F401  (load the real submodule)
 from spark_pulse import tools
 from spark_pulse.app import create_app
-from spark_pulse.tools import recipe_import
+
+# SIMULATION_MODE=1 is forced for the suite; these tests drive the router
+# against the real importer, so reach for the submodule explicitly.
+recipe_import = sys.modules["spark_pulse.tools.recipe_import"]
 
 VALID_V1 = """
 name: TinyLlama

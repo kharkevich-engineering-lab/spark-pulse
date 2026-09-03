@@ -18,7 +18,12 @@ if str(REPO_ROOT) not in sys.path:
 
 @pytest.fixture(autouse=True)
 def isolate_imported_recipes(tmp_path, monkeypatch):
-    """Keep recipe listing away from the developer's real ~/.config import dir."""
-    from spark_pulse.tools import recipe_import
+    """Keep recipe listing away from the developer's real ~/.config import dir.
 
-    monkeypatch.setattr(recipe_import, "IMPORTED_DIR", tmp_path / "_imported")
+    Both the real and the mock importer read the real module's ``IMPORTED_DIR``
+    (the mock re-exports the path helpers), so patching it there covers both.
+    """
+    import spark_pulse.tools.recipe_import  # noqa: F401
+
+    real = sys.modules["spark_pulse.tools.recipe_import"]
+    monkeypatch.setattr(real, "IMPORTED_DIR", tmp_path / "_imported")
