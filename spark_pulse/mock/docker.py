@@ -20,6 +20,14 @@ from spark_pulse.tools.labels import LABEL_PREFIX
 
 
 @dataclass
+class MockExecResult:
+    """Simulated result of ``Container.exec_run``."""
+
+    exit_code: int = 0
+    output: Any = b""
+
+
+@dataclass
 class MockContainer:
     """Simulated Docker container."""
 
@@ -28,6 +36,7 @@ class MockContainer:
     status: str = "running"
     image: str = ""
     labels: dict[str, str] = field(default_factory=dict)
+    executed_commands: list[str] = field(default_factory=list)
     _removed: bool = field(default=False, repr=False)
     attrs: dict[str, Any] = field(
         default_factory=lambda: {
@@ -50,6 +59,19 @@ class MockContainer:
         """Simulate removing the container."""
         self._removed = True
         self.status = "removed"
+
+    def exec_run(
+        self,
+        command: str | list[str],
+        demux: bool = False,
+        detach: bool = False,
+        **_kwargs: Any,
+    ) -> "MockExecResult":
+        """Simulate executing a command inside the container."""
+        text = command if isinstance(command, str) else " ".join(command)
+        self.executed_commands.append(text)
+        output = f"{text.split()[-1] if text else ''}\n".encode()
+        return MockExecResult(exit_code=0, output=(output, None) if demux else output)
 
 
 class MockContainersManager:
@@ -94,7 +116,7 @@ class MockContainersManager:
         self, all: bool = False, filters: dict[str, Any] | None = None
     ) -> list[MockContainer]:
         """List containers with optional label filters."""
-        containers = list(self._containers.values())
+        containers = [c for c in self._containers.values() if not c._removed]
         if not all:
             containers = [c for c in containers if c.status == "running"]
 
