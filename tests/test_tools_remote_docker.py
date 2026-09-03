@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+from spark_pulse.tools.docker import ContainerInfo, ContainerMetadata
 from spark_pulse.tools.remote_docker import RemoteDockerService
 
 
@@ -30,7 +31,12 @@ class TestRemoteDockerService:
         # This test verifies the method dispatch logic
         try:
             service.run_container(
-                "", "test-image", "test-container", {}, {"privileged": True}, {}
+                "",
+                "test-image",
+                "test-container",
+                {},
+                {"privileged": True},
+                ContainerMetadata(deployment="test-container"),
             )
             # If Docker is available, it should succeed
             # If not, it may raise — that's OK for this test
@@ -47,13 +53,23 @@ class TestRemoteDockerService:
         )
         service = RemoteDockerService(ssh_client=mock_ssh)
 
-        service.run_container(
-            "10.0.0.2", "test-image", "test-container", {}, {"privileged": True}, {}
+        info = service.run_container(
+            "10.0.0.2",
+            "test-image",
+            "test-container",
+            {},
+            {"privileged": True},
+            ContainerMetadata(deployment="test-container"),
         )
 
         assert mock_ssh.exec.called
         call_args = mock_ssh.exec.call_args
         assert call_args[0][0] == "10.0.0.2"
+        assert isinstance(info, ContainerInfo)
+        assert info.id == "container-id-123"
+        assert info.labels["spark-pulse.managed"] == "true"
+        # Labels reach the remote docker CLI
+        assert "--label" in call_args[0][1]
 
     def test_stop_container_local(self):
         """Test stopping container on local node."""
