@@ -134,6 +134,45 @@ TOOLS = [
             "required": ["run_ids"],
         },
     },
+    {
+        "name": "list_engines",
+        "description": "List available serving engines with capabilities, image ref and digest",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "render_launch",
+        "description": (
+            "Dry run: render the per-rank launch scripts for a recipe on an engine"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "recipe_id": {"type": "string", "description": "Recipe id or name"},
+                "engine": {
+                    "type": "string",
+                    "description": "Engine override (vllm, sglang)",
+                },
+                "variant": {"type": "string", "description": "Engine variant"},
+                "model": {"type": "string", "description": "Model override"},
+                "params": {"type": "object", "description": "Parameter overrides"},
+                "extra_args": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Extra engine args appended to the command",
+                },
+                "nodes": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Node hosts; head first. Empty means solo.",
+                },
+                "solo": {
+                    "type": "boolean",
+                    "description": "Force a single-node render",
+                },
+            },
+            "required": ["recipe_id"],
+        },
+    },
 ]
 
 
@@ -186,6 +225,21 @@ HANDLERS: dict[str, Any] = {
     "get_latest_by_recipe": lambda args: _http("GET", "/benchmarks/latest-by-recipe"),
     "compare_benchmarks": lambda args: _http(
         "POST", "/benchmarks/compare", json_body={"run_ids": args["run_ids"]}
+    ),
+    "list_engines": lambda args: _http("GET", "/engines"),
+    "render_launch": lambda args: _http(
+        "POST",
+        "/engines/render",
+        json_body={
+            "recipe_id": args["recipe_id"],
+            "engine": args.get("engine"),
+            "variant": args.get("variant"),
+            "model": args.get("model"),
+            "params": args.get("params", {}),
+            "extra_args": args.get("extra_args", []),
+            "nodes": args.get("nodes", []),
+            "solo": args.get("solo", False),
+        },
     ),
 }
 
