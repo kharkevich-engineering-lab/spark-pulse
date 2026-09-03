@@ -3,6 +3,10 @@ benchmarking_enabled: false
 cluster_enabled: false
 default_container: vllm-node
 job_retention_days: 7
+# Deployment runtime: "upstream" forks spark-vllm-docker's run-recipe.sh,
+# "native" drives Docker from Python via the engine registry (solo only).
+runtime: upstream
+deploy_ready_timeout_seconds: 900
 default_gpu_mem_util: 0.8
 default_port_range_end: 9100
 default_port_range_start: 9000

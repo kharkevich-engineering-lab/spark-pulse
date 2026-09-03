@@ -20,6 +20,8 @@ def _settings_response() -> dict:
         "webui_port": config.webui_port,
         "cluster_enabled": config.cluster_enabled,
         "job_retention_days": config.job_retention_days,
+        "runtime": config.runtime,
+        "deploy_ready_timeout_seconds": config.deploy_ready_timeout_seconds,
         "benchmarking_enabled": config.benchmarking_enabled,
         "default_engine": config.default_engine,
         "engine_indexes": config.engine_indexes,

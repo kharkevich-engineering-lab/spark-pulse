@@ -121,6 +121,32 @@ class _Config:
         return int(self._data.get("job_retention_days", 7))
 
     @property
+    def runtime(self) -> str:
+        """Deployment runtime: ``upstream`` (run-recipe.sh) or ``native``.
+
+        Anything unrecognised falls back to ``upstream`` — a typo must never
+        silently switch the deploy path.
+        """
+        value = (
+            str(
+                os.environ.get(
+                    "SPARK_PULSE_RUNTIME", self._data.get("runtime", "upstream")
+                )
+            )
+            .strip()
+            .lower()
+        )
+        return value if value in ("upstream", "native") else "upstream"
+
+    @property
+    def native_runtime(self) -> bool:
+        return self.runtime == "native"
+
+    @property
+    def deploy_ready_timeout_seconds(self) -> int:
+        return int(self._data.get("deploy_ready_timeout_seconds", 900))
+
+    @property
     def auth_enabled(self) -> bool:
         return (
             os.environ.get(
@@ -370,6 +396,17 @@ class _Config:
                 "~/.triton",
             ],
         )
+
+    @property
+    def docker_overrides(self) -> dict:
+        """Raw ``docker:`` block — only keys the user actually set.
+
+        The ``docker_*`` accessors always answer with a default, so they cannot
+        say whether a value was configured. The native container spec needs
+        that distinction to merge config on top of the engine's own profile.
+        """
+        value = self._data.get("docker")
+        return dict(value) if isinstance(value, dict) else {}
 
     @property
     def docker_keep_entrypoint(self) -> bool:
