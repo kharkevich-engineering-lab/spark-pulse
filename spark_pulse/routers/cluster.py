@@ -12,10 +12,8 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
-from spark_pulse.tools.cluster import (
-    ClusterOrchestrator,
-    ModDeployment,
-)
+from spark_pulse import tools
+from spark_pulse.tools.labels import CLUSTER_LABEL, HEAD_IP_LABEL, ROLE_LABEL
 from spark_pulse.tools.locking import LockManager, LockType
 
 logger = logging.getLogger(__name__)
@@ -23,17 +21,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/cluster", tags=["cluster"])
 
 # Module-level orchestrator instance (created on first use)
-_orchestrator: ClusterOrchestrator | None = None
+_orchestrator: Any = None
 
 # Module-level lock manager instance
 _lock_manager = LockManager()
 
 
-def _get_orchestrator() -> ClusterOrchestrator:
-    """Get or create the default cluster orchestrator."""
+def _get_orchestrator() -> Any:
+    """Get or create the default cluster orchestrator (real or mock)."""
     global _orchestrator
     if _orchestrator is None:
-        _orchestrator = ClusterOrchestrator()
+        _orchestrator = tools.cluster.ClusterOrchestrator()
     return _orchestrator
 
 
@@ -86,7 +84,7 @@ def start_cluster(body: dict[str, Any]):
         mods = None
         if mod_deployments:
             mods = [
-                ModDeployment(path=m["path"], target=m["target"])
+                tools.cluster.ModDeployment(path=m["path"], target=m["target"])
                 for m in mod_deployments
             ]
 
@@ -227,19 +225,7 @@ def validate_cluster(body: dict[str, Any]):
         name = body.get("name", "")
         state = orchestrator.get_cluster_status(name)
 
-        validation = (
-            orchestrator._docker is not None
-            and hasattr(
-                orchestrator._docker,
-                "_local",
-            )
-            and not (state is not None)
-        )
-
-        # Use the remote_docker from orchestrator
-        from spark_pulse.tools.cluster_health import validate_cluster as _validate
-
-        validation = _validate(state, orchestrator._docker)
+        validation = tools.cluster_health.validate_cluster(state, orchestrator._docker)
 
         return {
             "healthy": validation.healthy,
@@ -305,14 +291,14 @@ def list_clusters():
         orchestrator = _get_orchestrator()
         # List all containers with cluster labels
         all_containers = orchestrator._docker.list_managed_containers(
-            "", {"spark-pulse.cluster": ""}
+            "", {CLUSTER_LABEL: ""}
         )
 
         # Group by cluster name
         clusters: dict[str, list] = {}
         for container in all_containers:
             labels = container.labels or {}
-            cluster_name = labels.get("spark-pulse.cluster", "")
+            cluster_name = labels.get(CLUSTER_LABEL, "")
             if not cluster_name:
                 continue
             if cluster_name not in clusters:
@@ -320,9 +306,9 @@ def list_clusters():
             clusters[cluster_name].append(
                 {
                     "name": container.name,
-                    "role": labels.get("spark-pulse.role", "unknown"),
+                    "role": labels.get(ROLE_LABEL, "unknown"),
                     "status": container.status or "stopped",
-                    "ip": labels.get("spark-pulse.head_ip", ""),
+                    "ip": labels.get(HEAD_IP_LABEL, ""),
                 }
             )
 
@@ -366,4 +352,46 @@ def list_clusters():
 
     except Exception as e:
         logger.error("Failed to list clusters: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Reconciliation and locks ─────────────────────────────────────────────────
+
+
+@router.post("/reconcile")
+def reconcile():
+    """Rebuild cluster and deployment state from Docker container labels.
+
+    Containers are the source of truth; this is the same pass the server runs
+    at startup, exposed so the UI can trigger it on demand.
+    """
+    try:
+        result = tools.reconciliation.reconcile_all()
+        return {
+            "clusters_reconciled": result.clusters_reconciled,
+            "deployments_reconciled": result.deployments_reconciled,
+            "orphaned_containers_cleaned": result.orphaned_containers_cleaned,
+            "errors": result.errors,
+        }
+    except Exception as e:
+        logger.error("Reconciliation failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/lock/{resource}")
+def get_lock_status(resource: str):
+    """Return the active locks held on a cluster or deployment resource."""
+    try:
+        locks = [
+            lock.to_dict()
+            for lock in _lock_manager.get_active_locks()
+            if lock.resource == resource
+        ]
+        return {
+            "resource": resource,
+            "locked": bool(locks),
+            "locks": locks,
+        }
+    except Exception as e:
+        logger.error("Failed to get lock status for %s: %s", resource, e)
         raise HTTPException(status_code=500, detail=str(e))

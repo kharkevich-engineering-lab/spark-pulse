@@ -12,6 +12,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from spark_pulse.config import config
+from spark_pulse.tools import is_simulation
 
 router = APIRouter(prefix="/api/config", tags=["config"])
 
@@ -25,5 +26,5 @@ def get_config():
         "cluster_enabled": config.cluster_enabled,
         "git_update_enabled": config.git_update_enabled,
         "benchmarking_enabled": config.benchmarking_enabled,
-        "simulation_mode": True,  # TODO: derive from spark_pulse.tools.is_simulation()
+        "simulation_mode": is_simulation(),
     }
