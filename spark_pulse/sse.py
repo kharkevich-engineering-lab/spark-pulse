@@ -49,18 +49,50 @@ async def sse_metrics():
     )
 
 
+async def _native_log_generator(deployment_id: str) -> AsyncGenerator[str, None]:
+    """Poll ``docker logs`` for a native deployment and emit the new lines.
+
+    A native deployment writes to its container's stdout, not to a file, so the
+    tail is a diff against what was already sent rather than a file offset.
+    """
+    seen = 0
+    last_status: str | None = None
+    while True:
+        text = tools.deploy_dispatch.get_logs(deployment_id, 1000)
+        lines = [line for line in text.splitlines() if line]
+        for line in lines[seen:]:
+            yield f"event: log\ndata: {json.dumps({'text': line})}\n\n"
+        seen = max(seen, len(lines))
+
+        dep = tools.deploy_dispatch.get_deployment(deployment_id)
+        if not dep:
+            break
+        status = dep.get("status")
+        if status != last_status:
+            last_status = status
+            yield f"event: status\ndata: {json.dumps({'status': status})}\n\n"
+        if status in ("stopped", "error"):
+            break
+        await asyncio.sleep(2)
+
+
 async def log_generator(deployment_id: str) -> AsyncGenerator[str, None]:
     """Emit existing log lines then tail for new ones until deployment stops."""
     dep = next(
         (
             d
-            for d in tools.deployments.list_deployments()
+            for d in tools.deploy_dispatch.list_deployments()
             if d.get("id") == deployment_id
         ),
         None,
     )
     if not dep:
         yield f"event: error\ndata: {json.dumps({'message': 'Deployment not found'})}\n\n"
+        return
+
+    if dep.get("runtime") == "native":
+        async for chunk in _native_log_generator(deployment_id):
+            yield chunk
         return
 
     log_path = dep.get("log_path")
@@ -102,7 +134,7 @@ async def log_generator(deployment_id: str) -> AsyncGenerator[str, None]:
         dep = next(
             (
                 d
-                for d in tools.deployments.list_deployments()
+                for d in tools.deploy_dispatch.list_deployments()
                 if d.get("id") == deployment_id
             ),
             None,
@@ -165,6 +197,8 @@ async def sse_models():
             "X-Accel-Buffering": "no",
         },
     )
+
+
 # ── Deployment events SSE ────────────────────────────────────────────────────
 
 # Module-level event broadcaster singleton
@@ -184,6 +218,9 @@ async def deployment_events_generator() -> AsyncGenerator[str, None]:
 
     Subscribes to the EventBroadcaster and yields events as they arrive.
     """
+    # Native deploys run on request and worker threads; hand them this loop so
+    # their lifecycle events reach the broadcaster.
+    tools.native_runtime.register_event_loop(asyncio.get_running_loop())
     broadcaster = _get_event_broadcaster()
     queue = await broadcaster.subscribe()
     try:
