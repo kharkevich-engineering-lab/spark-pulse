@@ -16,6 +16,24 @@ from unittest import mock
 
 import pytest
 
+# ── Relative timestamps ──────────────────────────────────────────────────────
+#
+# The retention window is 90 days, so fixture timestamps must be relative to
+# now — hardcoded dates silently start failing once they age past the window.
+
+
+def _ago(days: float) -> str:
+    """An ISO-8601 UTC timestamp `days` days before now."""
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - days * 86400))
+
+
+_DAY1 = _ago(3)  # oldest of the three recent fixtures
+_DAY2 = _ago(2)
+_DAY3 = _ago(1)  # newest
+_DAY3_LATER = _ago(1 - 1 / 24)  # an hour after _DAY3
+_LONG_AGO = _ago(400)  # well outside the retention window
+
+
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
 
@@ -191,9 +209,9 @@ class TestListBenchmarks:
         bench_file.write_text(
             json.dumps(
                 [
-                    {"benchmark_id": "b2", "started_at": "2026-05-26T00:00:00Z"},
-                    {"benchmark_id": "b1", "started_at": "2026-05-25T00:00:00Z"},
-                    {"benchmark_id": "b3", "started_at": "2026-05-27T00:00:00Z"},
+                    {"benchmark_id": "b2", "started_at": _DAY2},
+                    {"benchmark_id": "b1", "started_at": _DAY1},
+                    {"benchmark_id": "b3", "started_at": _DAY3},
                 ]
             )
         )
@@ -219,7 +237,7 @@ class TestListBenchmarks:
                     {
                         "benchmark_id": "abc",
                         "deployment_id": "d1",
-                        "started_at": "2026-05-27T00:00:00Z",
+                        "started_at": _DAY3,
                     },
                 ]
             )
@@ -249,17 +267,17 @@ class TestListBenchmarks:
                     {
                         "benchmark_id": "b1",
                         "recipe_id": "r1",
-                        "started_at": "2026-05-25T00:00:00Z",
+                        "started_at": _DAY1,
                     },
                     {
                         "benchmark_id": "b2",
                         "recipe_id": "r2",
-                        "started_at": "2026-05-25T00:00:00Z",
+                        "started_at": _DAY1,
                     },
                     {
                         "benchmark_id": "b3",
                         "recipe_id": "r1",
-                        "started_at": "2026-05-25T00:00:00Z",
+                        "started_at": _DAY1,
                     },
                 ]
             )
@@ -290,21 +308,21 @@ class TestGetLatestByRecipe:
                         "benchmark_id": "b1",
                         "recipe_id": "r1",
                         "status": "completed",
-                        "started_at": "2026-05-25T00:00:00Z",
+                        "started_at": _DAY1,
                         "results": {"throughput": 40},
                     },
                     {
                         "benchmark_id": "b2",
                         "recipe_id": "r1",
                         "status": "completed",
-                        "started_at": "2026-05-27T00:00:00Z",
+                        "started_at": _DAY3,
                         "results": {"throughput": 45},
                     },
                     {
                         "benchmark_id": "b3",
                         "recipe_id": "r2",
                         "status": "completed",
-                        "started_at": "2026-05-26T00:00:00Z",
+                        "started_at": _DAY2,
                         "results": {"throughput": 30},
                     },
                     # No results — should be skipped
@@ -312,7 +330,7 @@ class TestGetLatestByRecipe:
                         "benchmark_id": "b4",
                         "recipe_id": "r3",
                         "status": "running",
-                        "started_at": "2026-05-27T00:00:00Z",
+                        "started_at": _DAY3,
                         "results": None,
                     },
                 ]
@@ -336,14 +354,14 @@ class TestGetLatestByRecipe:
                         "benchmark_id": "b1",
                         "recipe_id": "r1",
                         "status": "completed",
-                        "started_at": "2026-05-25T00:00:00Z",
+                        "started_at": _DAY1,
                         "results": {"t": 40},
                     },
                     {
                         "benchmark_id": "b2",
                         "recipe_id": "r1",
                         "status": "completed",
-                        "started_at": "2026-05-27T00:00:00Z",
+                        "started_at": _DAY3,
                         "results": {"t": 45},
                     },
                 ]
@@ -366,7 +384,7 @@ class TestGetLatestByRecipe:
                         "benchmark_id": "b1",
                         "recipe_id": "r1",
                         "status": "running",
-                        "started_at": "2026-05-27T00:00:00Z",
+                        "started_at": _DAY3,
                         "results": None,
                     },
                 ]
@@ -393,13 +411,13 @@ class TestCompareRuns:
                     {
                         "benchmark_id": "b1",
                         "recipe_name": "m1",
-                        "started_at": "2026-05-27T00:00:00Z",
+                        "started_at": _DAY3,
                         "results": {"throughput": 40.0, "latency_ms": 10.0},
                     },
                     {
                         "benchmark_id": "b2",
                         "recipe_name": "m2",
-                        "started_at": "2026-05-27T01:00:00Z",
+                        "started_at": _DAY3_LATER,
                         "results": {"throughput": 50.0, "latency_ms": 8.0},
                     },
                 ]
@@ -430,7 +448,7 @@ class TestCompareRuns:
                     {
                         "benchmark_id": "b1",
                         "recipe_name": "m1",
-                        "started_at": "2026-05-27T00:00:00Z",
+                        "started_at": _DAY3,
                         "results": {"throughput": 40.0},
                     },
                 ]
@@ -450,13 +468,13 @@ class TestCompareRuns:
                     {
                         "benchmark_id": "b1",
                         "recipe_name": "m1",
-                        "started_at": "2026-05-27T00:00:00Z",
+                        "started_at": _DAY3,
                         "results": {"throughput": 40.0},
                     },
                     {
                         "benchmark_id": "b2",
                         "recipe_name": "m2",
-                        "started_at": "2026-05-27T01:00:00Z",
+                        "started_at": _DAY3_LATER,
                         "results": None,
                     },
                 ]
@@ -476,7 +494,7 @@ class TestCompareRuns:
                     {
                         "benchmark_id": "b1",
                         "recipe_name": "m1",
-                        "started_at": "2026-05-27T00:00:00Z",
+                        "started_at": _DAY3,
                         "results": {"throughput": 40.0},
                     },
                 ]
@@ -503,14 +521,14 @@ class TestGetBaselineComparison:
                     {
                         "benchmark_id": "baseline",
                         "recipe_name": "m1",
-                        "started_at": "2026-05-27T00:00:00Z",
+                        "started_at": _DAY3,
                         "results": {"throughput": 40.0},
                     },
                     {
                         "benchmark_id": "current",
                         "baseline_id": "baseline",
                         "recipe_name": "m2",
-                        "started_at": "2026-05-27T01:00:00Z",
+                        "started_at": _DAY3_LATER,
                         "results": {"throughput": 50.0},
                     },
                 ]
@@ -536,7 +554,7 @@ class TestGetBaselineComparison:
                         "benchmark_id": "b1",
                         "baseline_id": None,
                         "recipe_name": "m1",
-                        "started_at": "2026-05-27T00:00:00Z",
+                        "started_at": _DAY3,
                         "results": {"throughput": 40.0},
                     },
                 ]
@@ -557,7 +575,7 @@ class TestGetBaselineComparison:
                         "benchmark_id": "b1",
                         "baseline_id": "nonexistent",
                         "recipe_name": "m1",
-                        "started_at": "2026-05-27T00:00:00Z",
+                        "started_at": _DAY3,
                         "results": {"throughput": 40.0},
                     },
                 ]
@@ -583,12 +601,12 @@ class TestPurgeExpired:
                 [
                     {
                         "benchmark_id": "old",
-                        "started_at": "2025-01-01T00:00:00Z",  # well over 90 days ago
+                        "started_at": _LONG_AGO,  # well over 90 days ago
                         "results": {"throughput": 40.0},
                     },
                     {
                         "benchmark_id": "new",
-                        "started_at": "2026-05-27T00:00:00Z",
+                        "started_at": _DAY3,
                         "results": {"throughput": 50.0},
                     },
                 ]
