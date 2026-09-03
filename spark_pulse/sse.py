@@ -199,6 +199,46 @@ async def sse_models():
     )
 
 
+async def images_generator() -> AsyncGenerator[str, None]:
+    """Stream engine image events (pull progress, deletions, syncs) via SSE.
+
+    Same shape as ``/sse/models``: subscribe to the shared broadcaster, forward
+    only ``image`` events, and hand the running loop to the images tool so pull
+    jobs on worker threads can emit onto it.
+
+    Image pulls that happen *inside* a deploy are deployment-scoped and reach
+    ``/sse/events/deployments`` instead — they belong to that deployment's
+    timeline, not to the catalogue.
+    """
+    from spark_pulse import tools
+
+    tools.images.register_event_loop(asyncio.get_running_loop())
+    broadcaster = _get_event_broadcaster()
+    queue = await broadcaster.subscribe()
+    try:
+        while True:
+            event_data = await queue.get()
+            if event_data.get("resource_type") != "image":
+                continue
+            yield f"data: {json.dumps(event_data)}\n\n"
+    except asyncio.CancelledError:
+        await broadcaster.unsubscribe(queue)
+
+
+@router.get("/images")
+async def sse_images():
+    """Stream engine image pull progress via SSE."""
+    return StreamingResponse(
+        images_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 # ── Deployment events SSE ────────────────────────────────────────────────────
 
 # Module-level event broadcaster singleton

@@ -3,7 +3,7 @@ import { doRefresh } from "@/lib/refresh";
 import { type ThemeMode, getTheme, setTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import { useConfig } from "@/lib/config";
-import { Activity, Bot, Boxes, Copyright, Database, Flame, ListChecks, LogOut, Menu, Moon, MoonStar, Package, RotateCw, Settings, Sun, User, X, Zap, Server } from "lucide-react";
+import { Activity, Bot, Boxes, Copyright, Database, Flame, Layers, ListChecks, LogOut, Menu, Moon, MoonStar, Package, RotateCw, Settings, Sun, User, X, Zap, Server } from "lucide-react";
 import { SiGithub, SiPypi } from "@icons-pack/react-simple-icons";
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { Link, useLocation } from "react-router-dom";
@@ -46,6 +46,7 @@ const NAV = [
   { href: "/benchmarking", label: "Benchmarking", icon: Flame },
   { href: "/monitoring", label: "Monitoring", icon: Activity },
   { href: "/models", label: "Models", icon: Boxes },
+  { href: "/images", label: "Images", icon: Layers },
   { href: "/cache", label: "Cache", icon: Database },
   { href: "/mcp", label: "MCP", icon: Bot },
   { href: "/oci", label: "OCI Registry", icon: Package },

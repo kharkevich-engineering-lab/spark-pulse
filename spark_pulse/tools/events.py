@@ -60,6 +60,16 @@ class EventType(str, Enum):
     MODEL_DOWNLOAD_CANCELLED = "model.download.cancelled"
     MODEL_DELETED = "model.deleted"
 
+    # Engine image catalogue
+    IMAGE_PULL_QUEUED = "image.pull.queued"
+    IMAGE_PULL_STARTED = "image.pull.started"
+    IMAGE_PULL_PROGRESS = "image.pull.progress"
+    IMAGE_PULL_COMPLETED = "image.pull.completed"
+    IMAGE_PULL_FAILED = "image.pull.failed"
+    IMAGE_PULL_CANCELLED = "image.pull.cancelled"
+    IMAGE_DELETED = "image.deleted"
+    IMAGE_SYNCED = "image.synced"
+
 
 @dataclass(frozen=True, slots=True)
 class DeploymentEvent:

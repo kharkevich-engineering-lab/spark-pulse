@@ -372,6 +372,120 @@ class TestStart:
         assert record["status"] == "running"
 
 
+# ── Image pull ──────────────────────────────────────────────────────────────
+
+
+def _forget_image(docker, ref: str) -> None:
+    """Drop an image from the simulated host so a deploy has to pull it.
+
+    The mock client seeds the published engine images, which is what the
+    Images page wants but not what a pull test wants.
+    """
+    try:
+        docker.client.images.remove(ref)
+    except Exception:
+        pass
+
+
+class TestImagePull:
+    """The pull is explicit and visible — the worst of the first hardware run."""
+
+    def test_plan_reports_a_present_image(self, native, docker):
+        """A pulled image is reported present, with its size, and no warning."""
+        plan = native.plan("qwen3-8b")
+        docker.client.images.add(plan.image_ref, size=26_843_545_600)
+
+        with patch.object(nr, "_docker_service", return_value=docker):
+            replanned = native.plan("qwen3-8b")
+
+        assert replanned.image_present is True
+        assert replanned.image_size_bytes == 26_843_545_600
+        assert not any("will be pulled" in w for w in replanned.warnings)
+
+    def test_plan_warns_when_the_image_is_absent(self, native, docker):
+        """A missing image is a warning, never a planning failure."""
+        plan = native.plan("qwen3-8b")
+        _forget_image(docker, plan.image_ref)
+        with patch.object(nr, "_docker_service", return_value=docker):
+            plan = native.plan("qwen3-8b")
+
+        assert plan.image_present is False
+        assert plan.image_size_bytes is None
+        assert any("will be pulled" in w for w in plan.warnings)
+
+    def test_start_pulls_the_image_and_emits_events(self, native, docker):
+        """A missing image is pulled before the container, with progress."""
+        events: list[tuple[str, dict]] = []
+
+        def _capture(event_type, deployment_id, message="", metadata=None):
+            events.append((event_type.value, metadata or {}))
+
+        plan = native.plan("qwen3-8b")
+        _forget_image(docker, plan.container.image)
+        with patch.object(nr, "publish_event", side_effect=_capture):
+            record = native.start(plan, docker=docker, wait=True)
+
+        assert record["status"] == "running"
+        names = [name for name, _ in events]
+        assert "image.pull.started" in names
+        assert "image.pull.progress" in names
+        assert "image.pull.completed" in names
+        # The pull happens before the container exists.
+        assert names.index("image.pull.completed") < names.index(
+            "deployment_container_started"
+        )
+        percents = [
+            meta["percent"] for name, meta in events if name == "image.pull.progress"
+        ]
+        assert percents and percents[-1] == 100.0
+        assert docker.image_exists(plan.container.image)
+
+    def test_start_skips_the_pull_when_the_image_is_present(self, native, docker):
+        """No pull events when the host already has the image."""
+        plan = native.plan("qwen3-8b")
+        docker.client.images.add(plan.container.image)
+        events: list[str] = []
+
+        with patch.object(
+            nr,
+            "publish_event",
+            side_effect=lambda t, *a, **kw: events.append(t.value),
+        ):
+            native.start(plan, docker=docker, wait=True)
+
+        assert not [e for e in events if e.startswith("image.pull")]
+
+    def test_a_failed_pull_fails_the_deployment(self, native, docker):
+        """A pull failure surfaces as an errored deployment, not a stuck one."""
+        plan = native.plan("qwen3-8b")
+        _forget_image(docker, plan.container.image)
+        with patch.object(
+            docker, "pull_image", side_effect=RuntimeError("registry unreachable")
+        ):
+            record = native.start(plan, docker=docker, wait=True)
+
+        assert record["status"] == "error"
+        assert "registry unreachable" in record["error_message"]
+
+    def test_the_record_shows_pulling_while_the_pull_runs(self, native, docker):
+        """GET /api/deployments/{id} tells the truth during a long pull."""
+        plan = native.plan("qwen3-8b")
+        _forget_image(docker, plan.container.image)
+        seen: list[str] = []
+
+        real_pull = docker.pull_image
+
+        def _watching_pull(ref, progress=None, **kwargs):
+            record = nr.get_deployment(plan.deployment_id)
+            seen.append(str((record or {}).get("status")))
+            return real_pull(ref, progress, **kwargs)
+
+        with patch.object(docker, "pull_image", side_effect=_watching_pull):
+            native.start(plan, docker=docker, wait=True)
+
+        assert seen == ["pulling"]
+
+
 # ── Lifecycle ───────────────────────────────────────────────────────────────
 
 

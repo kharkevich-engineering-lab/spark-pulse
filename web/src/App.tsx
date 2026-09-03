@@ -8,6 +8,7 @@ import BenchmarkingPage from "@/pages/BenchmarkingPage";
 import MemoryPage from "@/pages/MemoryPage";
 import CachePage from "@/pages/CachePage";
 import ModelsPage from "@/pages/ModelsPage";
+import ImagesPage from "@/pages/ImagesPage";
 import MCPPage from "@/pages/MCPPage";
 import SettingsPage from "@/pages/SettingsPage";
 import LoginPage from "@/pages/LoginPage";
@@ -47,6 +48,7 @@ function AppRoutes() {
             <Route path="/benchmarking" element={<BenchmarkingRoute />} />
             <Route path="/monitoring" element={<MemoryPage />} />
             <Route path="/models" element={<ModelsPage />} />
+            <Route path="/images" element={<ImagesPage />} />
             <Route path="/cache" element={<CachePage />} />
             <Route path="/mcp" element={<MCPPage />} />
             <Route path="/oci" element={<OciRegistryPage />} />

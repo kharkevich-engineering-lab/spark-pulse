@@ -634,6 +634,10 @@ export interface DeployPlan {
   ranks: LaunchScript[];
   container: DeployContainerSpec;
   cache_mounts: string[];
+  /** Whether the image is already on this host, from the plan's own check. */
+  image_present: boolean;
+  /** Size of the local copy when there is one; null when it must be pulled. */
+  image_size_bytes: number | null;
   warnings: string[];
   runtime: string;
   created_at: string;
@@ -739,5 +743,80 @@ export interface ModelPresence {
 export interface ModelDeleteResult {
   deleted: string;
   path: string;
+  freed_bytes: number;
+}
+
+// ── Engine images ──────────────────────────────────────────────────
+
+export interface ImageEntry {
+  ref: string;
+  repository: string;
+  tag: string;
+  tagged_ref: string;
+  engine: string;
+  variant: string;
+  engine_key: string;
+  version: string;
+  legacy_tags: string[];
+  source: string;
+  description: string;
+  present: boolean;
+  image_id: string;
+  size_bytes: number;
+  created: string | null;
+  /** Digest of the copy on this host, from the image's RepoDigests. */
+  local_digest: string;
+  /** Digest the engine index advertises for this version, when it has one. */
+  index_digest: string;
+  /** The index advertises a digest the local tag no longer resolves to. */
+  digest_drift: boolean;
+  update_available: boolean;
+}
+
+export type ImagePullStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+
+export interface ImagePullJob {
+  id: string;
+  ref: string;
+  repository: string;
+  tag: string;
+  status: ImagePullStatus;
+  bytes_done: number;
+  bytes_total: number;
+  percent: number;
+  layers: number;
+  current_status: string | null;
+  image_id: string | null;
+  error: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface ImageSyncNodeResult {
+  node: string;
+  ok: boolean;
+  skipped: boolean;
+  error: string | null;
+  duration_s: number;
+}
+
+export interface ImageSyncResult {
+  ref: string;
+  image_id: string;
+  ok: boolean;
+  results: ImageSyncNodeResult[];
+}
+
+export interface ImagePresence {
+  ref: string;
+  local: boolean;
+  image_id: string;
+  nodes: { node: string; present: boolean; image_id: string; matches: boolean; error: string | null }[];
+}
+
+export interface ImageDeleteResult {
+  deleted: string;
+  image_id: string;
   freed_bytes: number;
 }

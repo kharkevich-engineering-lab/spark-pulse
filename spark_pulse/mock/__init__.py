@@ -25,6 +25,7 @@ from spark_pulse.mock import (
     locking as locking,
     events as events,
     models as models,
+    images as images,
     native_runtime as native_runtime,
     deploy_dispatch as deploy_dispatch,
 )

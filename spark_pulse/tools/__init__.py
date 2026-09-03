@@ -43,6 +43,7 @@ if _sim_mode:
         native_runtime as native_runtime,
         deploy_dispatch as deploy_dispatch,
         models as models,
+        images as images,
     )
 else:
     from spark_pulse.tools import (
@@ -73,6 +74,7 @@ else:
         native_runtime as native_runtime,
         deploy_dispatch as deploy_dispatch,
         models as models,
+        images as images,
     )
 
 

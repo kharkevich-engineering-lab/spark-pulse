@@ -24,6 +24,7 @@ from spark_pulse.tools.docker import (
     DockerService,
     ExecResult,
     _labels_match,
+    split_ref,
 )
 from spark_pulse.tools.labels import MANAGED_FILTER
 from spark_pulse.tools.ssh import OpenSSHClient, SSHClient, SSHResult
@@ -340,6 +341,94 @@ class RemoteDockerService:
             "state": state,
             "error": None,
         }
+
+    # ── Images ─────────────────────────────────────────────────────────────
+
+    def image_exists(self, host: str, ref: str) -> bool:
+        """Whether ``ref`` is present on the local or a remote node."""
+        if not ref:
+            return False
+        if not host:
+            return self._local.image_exists(ref)
+        result = self._ssh.exec(
+            host,
+            f"docker image inspect {shlex.quote(ref)} --format '{{{{.Id}}}}'",
+            timeout=30,
+        )
+        return bool(result.ok and result.stdout.strip())
+
+    def image_id(self, host: str, ref: str) -> str:
+        """Return the image ID of ``ref`` on a node, or "" when absent."""
+        if not host:
+            info = self._local.image_info(ref)
+            return str((info or {}).get("id") or "")
+        result = self._ssh.exec(
+            host,
+            f"docker image inspect {shlex.quote(ref)} --format '{{{{.Id}}}}'",
+            timeout=30,
+        )
+        return result.stdout.strip() if result.ok else ""
+
+    def pull_image(
+        self,
+        host: str,
+        ref: str,
+        progress: Any | None = None,
+        timeout: int = 7200,
+    ) -> dict[str, Any]:
+        """Pull ``ref`` on a node.
+
+        Locally this is the SDK path with real layer aggregation; over SSH the
+        docker CLI is run non-interactively, so a single terminal progress
+        snapshot is reported when it finishes.
+        """
+        if not ref:
+            raise RuntimeError("pull_image needs an image reference")
+        if not host:
+            return self._local.pull_image(ref, progress)
+        repo, tag = split_ref(ref)
+        result = self._ssh.exec(
+            host, f"docker pull {shlex.quote(ref)}", timeout=timeout
+        )
+        if not result.ok:
+            raise RuntimeError(
+                f"docker pull {ref} failed on {host}: "
+                f"{(result.stderr or result.stdout or '').strip()}"
+            )
+        size = self._image_size(host, ref)
+        snapshot = {
+            "ref": ref,
+            "status": "pull complete",
+            "layers": 0,
+            "bytes_done": size,
+            "bytes_total": size,
+            "percent": 100.0,
+        }
+        if progress is not None:
+            progress(snapshot)
+        return {
+            "ref": ref,
+            "repository": repo,
+            "tag": tag,
+            "bytes_done": size,
+            "bytes_total": size,
+            "percent": 100.0,
+            "id": self.image_id(host, ref),
+            "size_bytes": size,
+        }
+
+    def _image_size(self, host: str, ref: str) -> int:
+        """Best-effort size in bytes of ``ref`` on a remote node."""
+        result = self._ssh.exec(
+            host,
+            f"docker image inspect {shlex.quote(ref)} --format '{{{{.Size}}}}'",
+            timeout=30,
+        )
+        raw = (result.stdout or "").strip()
+        try:
+            return int(raw)
+        except ValueError:
+            return 0
 
     def list_managed_containers(
         self,

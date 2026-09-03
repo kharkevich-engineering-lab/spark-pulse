@@ -96,6 +96,37 @@ class MockRemoteDockerService:
             labels=labels,
         )
 
+    def image_exists(self, host: str, ref: str) -> bool:
+        """Whether the image is present on a (simulated) node."""
+        self._executed_commands.append(
+            {"action": "image_exists", "host": host, "ref": ref}
+        )
+        from spark_pulse.mock import docker as mock_docker
+
+        return mock_docker.image_exists(ref)
+
+    def image_id(self, host: str, ref: str) -> str:
+        """The simulated image ID on a node, or "" when absent."""
+        from spark_pulse.mock import docker as mock_docker
+
+        info = mock_docker.image_info(ref)
+        return str((info or {}).get("id") or "")
+
+    def pull_image(
+        self,
+        host: str,
+        ref: str,
+        progress: Any | None = None,
+        timeout: int = 7200,
+    ) -> dict[str, Any]:
+        """Pull an image on a (simulated) node."""
+        self._executed_commands.append(
+            {"action": "pull_image", "host": host, "ref": ref}
+        )
+        from spark_pulse.mock import docker as mock_docker
+
+        return mock_docker.pull_image(ref, progress)
+
     def stop_container(
         self,
         host: str,

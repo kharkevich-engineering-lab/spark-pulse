@@ -1,4 +1,4 @@
-import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntry, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, CustomRecipeInfo, CustomModInfo, ModFileMap, BenchmarkResult, OciRegistry, OciCollection, OciCollectionRecipe, OciRecipeMeta, OciUpdateCheck, OciUpdateApply, OciUpdateResult, OciAutoUpdateSettings, EngineListResponse, EngineDetail, EngineIndexRefreshResult, RenderRequest, RenderResult, ModelEntry, ModelSource, ModelDownloadJob, ModelSyncResult, ModelPresence, ModelDeleteResult, RecipeImportResult, RecipeImportStatus, DeployPlan, DeployPlanRequest } from "@/lib/types";
+import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntry, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, CustomRecipeInfo, CustomModInfo, ModFileMap, BenchmarkResult, OciRegistry, OciCollection, OciCollectionRecipe, OciRecipeMeta, OciUpdateCheck, OciUpdateApply, OciUpdateResult, OciAutoUpdateSettings, EngineListResponse, EngineDetail, EngineIndexRefreshResult, RenderRequest, RenderResult, ModelEntry, ModelSource, ModelDownloadJob, ModelSyncResult, ModelPresence, ModelDeleteResult, ImageEntry, ImagePullJob, ImageSyncResult, ImagePresence, ImageDeleteResult, RecipeImportResult, RecipeImportStatus, DeployPlan, DeployPlanRequest } from "@/lib/types";
 
 const API = "/api";
 
@@ -588,4 +588,43 @@ export async function fetchModelPresence(id: string, nodes: string[]): Promise<M
 
 export async function deleteModel(id: string): Promise<ModelDeleteResult> {
   return json<ModelDeleteResult>(`/models/${id}`, { method: "DELETE" });
+}
+
+// ── Engine images ──────────────────────────────────────────────────
+//
+// An image ref carries slashes and colons, so it never goes in the path: the
+// catalogue is flat and every ref-taking call passes it in the body or query.
+
+export async function fetchImages(): Promise<ImageEntry[]> {
+  return (await json<{ images: ImageEntry[] }>("/images")).images;
+}
+
+export async function startImagePull(ref: string): Promise<ImagePullJob> {
+  return json<ImagePullJob>("/images/pull", { method: "POST", body: JSON.stringify({ ref }) });
+}
+
+export async function fetchImagePulls(): Promise<ImagePullJob[]> {
+  return (await json<{ jobs: ImagePullJob[] }>("/images/pulls")).jobs;
+}
+
+export async function fetchImagePull(jobId: string): Promise<ImagePullJob> {
+  return json<ImagePullJob>(`/images/pulls/${jobId}`);
+}
+
+export async function cancelImagePull(jobId: string): Promise<ImagePullJob> {
+  return json<ImagePullJob>(`/images/pulls/${jobId}/cancel`, { method: "POST" });
+}
+
+export async function deleteImage(ref: string): Promise<ImageDeleteResult> {
+  return json<ImageDeleteResult>(`/images?ref=${encodeURIComponent(ref)}`, { method: "DELETE" });
+}
+
+export async function syncImageToNodes(ref: string, nodes: string[], sshUser?: string): Promise<ImageSyncResult> {
+  return json<ImageSyncResult>("/images/sync", { method: "POST", body: JSON.stringify({ ref, nodes, ssh_user: sshUser }) });
+}
+
+export async function fetchImagePresence(ref: string, nodes: string[]): Promise<ImagePresence> {
+  return json<ImagePresence>(
+    `/images/presence?ref=${encodeURIComponent(ref)}&nodes=${encodeURIComponent(nodes.join(','))}`,
+  );
 }

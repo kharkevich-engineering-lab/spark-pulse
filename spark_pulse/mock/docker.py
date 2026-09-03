@@ -6,6 +6,7 @@ Mirrors the real docker.py API exactly.
 
 from __future__ import annotations
 
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -15,6 +16,7 @@ from typing import Any
 from spark_pulse.tools.docker import (
     ContainerInfo,
     DockerService,
+    split_ref,
 )
 
 
@@ -80,6 +82,136 @@ class MockContainer:
         self.log_lines.append(f"[mock] exec: {text}")
         output = f"{text.split()[-1] if text else ''}\n".encode()
         return MockExecResult(exit_code=0, output=(output, None) if demux else output)
+
+
+@dataclass
+class MockImage:
+    """Simulated Docker image."""
+
+    id: str = field(default_factory=lambda: "sha256:" + uuid.uuid4().hex * 2)
+    tags: list[str] = field(default_factory=list)
+    attrs: dict[str, Any] = field(default_factory=dict)
+
+
+# A few engine images the simulated host already has, plus one it has not.
+_SEED_IMAGES: list[tuple[str, str, int, str]] = [
+    (
+        "ghcr.io/kharkevich-engineering-lab/spark-pulse-engine/vllm:0.1.0",
+        "sha256:" + "a1" * 32,
+        26_843_545_600,
+        "2026-08-20T10:00:00Z",
+    ),
+    (
+        "ghcr.io/kharkevich-engineering-lab/spark-pulse-engine/sglang:0.1.0",
+        "sha256:" + "b2" * 32,
+        22_548_578_304,
+        "2026-08-22T09:30:00Z",
+    ),
+]
+
+# Layer plan used to simulate a pull: (layer id, bytes).
+_MOCK_PULL_LAYERS = [
+    ("d1a5f0c9", 8_589_934_592),
+    ("e2b6a1d0", 10_737_418_240),
+    ("f3c7b2e1", 7_516_192_768),
+]
+_MOCK_PULL_TICK = 0.05
+
+
+class MockImagesManager:
+    """Simulates ``docker.DockerClient.images``."""
+
+    def __init__(self):
+        self._images: dict[str, MockImage] = {}
+        for ref, image_id, size, created in _SEED_IMAGES:
+            self.add(ref, image_id=image_id, size=size, created=created)
+
+    def add(
+        self,
+        ref: str,
+        image_id: str | None = None,
+        size: int = 1_073_741_824,
+        created: str | None = None,
+    ) -> MockImage:
+        """Register an image as present on the simulated host."""
+        repo, tag = split_ref(ref)
+        image = MockImage(
+            id=image_id or ("sha256:" + uuid.uuid4().hex * 2),
+            tags=[f"{repo}:{tag}"] if not tag.startswith("sha256:") else [],
+        )
+        image.attrs = {
+            "Id": image.id,
+            "Size": size,
+            "Created": created or datetime.now(timezone.utc).isoformat(),
+            "RepoTags": list(image.tags),
+            "RepoDigests": [f"{repo}@{image.id}"],
+        }
+        self._images[ref] = image
+        if not tag.startswith("sha256:"):
+            self._images[f"{repo}:{tag}"] = image
+        return image
+
+    def get(self, ref: str) -> MockImage:
+        image = self._images.get(ref)
+        if image is None:
+            raise ImageNotFound(f"No such image: {ref}")
+        return image
+
+    def list(self, **_kwargs: Any) -> list[MockImage]:
+        seen: dict[str, MockImage] = {}
+        for image in self._images.values():
+            seen[image.id] = image
+        return list(seen.values())
+
+    def remove(self, ref: str, force: bool = False, **_kwargs: Any) -> None:
+        image = self._images.get(ref)
+        if image is None:
+            raise ImageNotFound(f"No such image: {ref}")
+        for key in [k for k, v in self._images.items() if v is image]:
+            del self._images[key]
+
+
+class MockLowLevelAPI:
+    """Simulates ``docker.DockerClient.api`` — only what pulls need."""
+
+    def __init__(self, images: MockImagesManager):
+        self._images = images
+
+    def pull(
+        self,
+        repository: str,
+        tag: str = "latest",
+        stream: bool = True,
+        decode: bool = True,
+        **_kwargs: Any,
+    ):
+        """Yield layer status dicts the way the real streaming pull does."""
+        ref = (
+            f"{repository}@{tag}"
+            if tag.startswith("sha256:")
+            else f"{repository}:{tag}"
+        )
+        yield {"status": f"Pulling from {repository}", "id": tag}
+        total = 0
+        for layer_id, size in _MOCK_PULL_LAYERS:
+            total += size
+            for step in (1, 2, 3, 4):
+                time.sleep(_MOCK_PULL_TICK)
+                yield {
+                    "status": "Downloading",
+                    "id": layer_id,
+                    "progressDetail": {
+                        "current": int(size * step / 4),
+                        "total": size,
+                    },
+                }
+            yield {
+                "status": "Pull complete",
+                "id": layer_id,
+                "progressDetail": {"current": size, "total": size},
+            }
+        self._images.add(ref, size=total)
+        yield {"status": f"Status: Downloaded newer image for {ref}"}
 
 
 class MockContainersManager:
@@ -169,6 +301,8 @@ class MockDockerClient:
 
     def __init__(self):
         self.containers = MockContainersManager()
+        self.images = MockImagesManager()
+        self.api = MockLowLevelAPI(self.images)
 
     def create_host_config(
         self,
@@ -268,6 +402,19 @@ class MockDockerService(DockerService):
         """Pretend the file was copied into the container."""
         return True
 
+    def pull_image(
+        self,
+        ref: str,
+        progress: Any | None = None,
+        interval: float = 0.0,
+    ) -> dict[str, Any]:
+        """Pull through the real aggregation code over the simulated stream.
+
+        The interval defaults to 0 so the handful of simulated ticks all reach
+        the caller instead of being throttled into a single event.
+        """
+        return super().pull_image(ref, progress, interval=interval)
+
 
 # ── Module-level convenience functions (mirrors spark_pulse.tools.docker) ────
 
@@ -307,3 +454,28 @@ def list_managed_containers(
 def get_container_by_deployment(deployment: str) -> ContainerInfo | None:
     """Convenience function to find container by deployment name."""
     return _get_service().get_container_by_deployment(deployment)
+
+
+def image_exists(ref: str) -> bool:
+    """Convenience function: is the image present on the simulated host?"""
+    return _get_service().image_exists(ref)
+
+
+def pull_image(ref: str, progress: Any | None = None) -> dict[str, Any]:
+    """Convenience function to simulate an image pull."""
+    return _get_service().pull_image(ref, progress)
+
+
+def image_info(ref: str) -> dict[str, Any] | None:
+    """Convenience function to inspect a simulated image."""
+    return _get_service().image_info(ref)
+
+
+def list_images() -> list[dict[str, Any]]:
+    """Convenience function to list simulated images."""
+    return _get_service().list_images()
+
+
+def remove_image(ref: str, force: bool = False) -> bool:
+    """Convenience function to remove a simulated image."""
+    return _get_service().remove_image(ref, force=force)

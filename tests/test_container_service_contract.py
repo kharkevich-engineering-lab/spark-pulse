@@ -27,6 +27,7 @@ from spark_pulse.tools.docker import (
     ContainerMetadata,
     DockerService,
     ExecResult,
+    split_ref,
 )
 from spark_pulse.tools.labels import (
     CLUSTER_LABEL,
@@ -43,7 +44,12 @@ from spark_pulse.tools.remote_docker import RemoteDockerService
 from spark_pulse.tools.ssh import SSHResult
 
 IMAGE = "ghcr.io/example/engine:latest"
+IMAGE_SIZE = 26_843_545_600
+MISSING_IMAGE = "ghcr.io/example/engine:not-pulled"
 IDLE_COMMAND = ["sleep", "infinity"]
+
+# Layer plan the fake SDK client streams back for a pull.
+FAKE_LAYERS = [("layer-a", 4_000), ("layer-b", 6_000)]
 
 
 def _metadata(deployment: str, **overrides) -> ContainerMetadata:
@@ -108,9 +114,57 @@ def _fake_sdk_client() -> MagicMock:
     def _remove(name):
         store.pop(name, None)
 
+    images: dict[str, MagicMock] = {}
+
+    def _make_image(ref: str, size: int = 3) -> MagicMock:
+        image = MagicMock(name=f"Image({ref})")
+        image.id = f"sha256:{abs(hash(ref)):064x}"[:71]
+        image.attrs = {
+            "Id": image.id,
+            "Size": size,
+            "Created": "2026-01-01T00:00:00Z",
+            "RepoTags": [ref],
+            "RepoDigests": [f"{ref.split(':')[0]}@{image.id}"],
+        }
+        images[ref] = image
+        return image
+
+    _make_image(IMAGE, size=IMAGE_SIZE)
+
+    def _image_get(ref):
+        if ref not in images:
+            raise _NotFound(f"No such image: {ref}")
+        return images[ref]
+
+    def _pull(repository, tag="latest", stream=True, decode=True, **_kwargs):
+        ref = f"{repository}:{tag}"
+
+        def _stream():
+            for layer_id, size in FAKE_LAYERS:
+                for step in (1, 2):
+                    yield {
+                        "status": "Downloading",
+                        "id": layer_id,
+                        "progressDetail": {
+                            "current": size // 2 * step,
+                            "total": size,
+                        },
+                    }
+                yield {
+                    "status": "Pull complete",
+                    "id": layer_id,
+                    "progressDetail": {"current": size, "total": size},
+                }
+            _make_image(ref, size=sum(s for _, s in FAKE_LAYERS))
+
+        return _stream()
+
     client.containers.run.side_effect = _make_container
     client.containers.get.side_effect = _get
     client.containers.list.side_effect = _list
+    client.images.get.side_effect = _image_get
+    client.images.list.side_effect = lambda **_kw: list(images.values())
+    client.api.pull.side_effect = _pull
     client._remove = _remove
     return client
 
@@ -122,6 +176,9 @@ def _fake_ssh_client() -> MagicMock:
     """A MagicMock SSHClient that answers like the docker CLI on a remote node."""
     ssh = MagicMock(name="SSHClient")
     store: dict[str, dict] = {}
+    remote_images: dict[str, dict] = {
+        IMAGE: {"Id": "sha256:remote-engine", "Size": IMAGE_SIZE}
+    }
 
     def _exec(host, command, timeout=30, **_kwargs):
         if command.startswith("docker run"):
@@ -143,6 +200,17 @@ def _fake_ssh_client() -> MagicMock:
         if command.startswith("docker ps"):
             lines = "\n".join(json.dumps(c) for c in store.values())
             return SSHResult(returncode=0, stdout=lines, stderr="")
+        if command.startswith("docker image inspect"):
+            ref = command.split()[3]
+            if ref not in remote_images:
+                return SSHResult(returncode=1, stdout="", stderr="No such image")
+            field = "Id" if ".Id" in command else "Size"
+            value = remote_images[ref][field]
+            return SSHResult(returncode=0, stdout=f"{value}\n", stderr="")
+        if command.startswith("docker pull"):
+            ref = command.split()[2]
+            remote_images[ref] = {"Id": f"sha256:{ref}", "Size": IMAGE_SIZE}
+            return SSHResult(returncode=0, stdout=f"Downloaded {ref}\n", stderr="")
         if command.startswith("docker exec"):
             return SSHResult(returncode=0, stdout="contract-ok\n", stderr="")
         if command.startswith("docker stop"):
@@ -188,6 +256,12 @@ class _LocalAdapter:
     def stop(self, name: str) -> bool:
         return self.service.stop_container(name)
 
+    def image_exists(self, ref: str) -> bool:
+        return self.service.image_exists(ref)
+
+    def pull_image(self, ref: str, progress=None):
+        return self.service.pull_image(ref, progress)
+
     def reconcile_deployments(self) -> list[dict]:
         return _reconcile_deployments_real(self.service)
 
@@ -219,6 +293,12 @@ class _RemoteAdapter:
     def stop(self, name: str) -> bool:
         return self.service.stop_container(self.HOST, name)
 
+    def image_exists(self, ref: str) -> bool:
+        return self.service.image_exists(self.HOST, ref)
+
+    def pull_image(self, ref: str, progress=None):
+        return self.service.pull_image(self.HOST, ref, progress)
+
     def reconcile_deployments(self) -> list[dict]:
         raise NotImplementedError
 
@@ -230,7 +310,9 @@ class _RemoteAdapter:
 def service(request):
     """Yield each container service behind the same adapter interface."""
     if request.param == "mock":
-        return _LocalAdapter(MockDockerService(MockDockerClient()))
+        client = MockDockerClient()
+        client.images.add(IMAGE, size=IMAGE_SIZE)
+        return _LocalAdapter(MockDockerService(client))
     if request.param == "docker-sdk":
         return _LocalAdapter(DockerService(client=_fake_sdk_client()))
     return _RemoteAdapter(
@@ -320,6 +402,79 @@ class TestContainerServiceContract:
         assert service.exec("contract-idle", IDLE_COMMAND).ok
         assert service.stop("contract-idle") is True
         assert "contract-idle" not in [c.name for c in service.list_managed()]
+
+
+class TestImageContract:
+    """Every container service answers the same questions about images."""
+
+    def test_image_exists_is_true_for_a_present_image(self, service):
+        assert service.image_exists(IMAGE) is True
+
+    def test_image_exists_is_false_for_a_missing_image(self, service):
+        assert service.image_exists(MISSING_IMAGE) is False
+
+    def test_pull_makes_the_image_present(self, service):
+        """A pull returns a completed summary and the image is then local."""
+        result = service.pull_image(MISSING_IMAGE)
+
+        assert result["ref"] == MISSING_IMAGE
+        assert result["percent"] == 100.0
+        assert result["bytes_total"] >= 0
+        assert service.image_exists(MISSING_IMAGE) is True
+
+    def test_pull_reports_progress(self, service):
+        """Progress snapshots are aggregated over layers, never per-chunk."""
+        seen: list[dict] = []
+        service.pull_image(MISSING_IMAGE, seen.append)
+
+        assert seen, "the pull reported no progress at all"
+        for snapshot in seen:
+            assert snapshot["ref"] == MISSING_IMAGE
+            assert 0 <= snapshot["percent"] <= 100
+            assert snapshot["bytes_done"] <= snapshot["bytes_total"]
+        assert seen[-1]["percent"] == 100.0
+
+
+class TestPullAggregation:
+    """The layer folding and throttling that keeps pull events readable."""
+
+    def test_progress_is_throttled_to_one_event_per_interval(self):
+        """Many layer chunks collapse into one snapshot per interval."""
+        docker = DockerService(client=_fake_sdk_client())
+        seen: list[dict] = []
+
+        # A one-hour interval means only the forced final snapshot survives.
+        docker.pull_image(MISSING_IMAGE, seen.append, interval=3600)
+
+        assert len(seen) == 1
+        assert seen[0]["percent"] == 100.0
+
+    def test_progress_aggregates_every_layer(self):
+        """The reported total is the sum of the layers, not the last one."""
+        docker = DockerService(client=_fake_sdk_client())
+        seen: list[dict] = []
+
+        docker.pull_image(MISSING_IMAGE, seen.append, interval=0)
+
+        total = sum(size for _, size in FAKE_LAYERS)
+        assert seen[-1]["bytes_total"] == total
+        assert seen[-1]["layers"] == len(FAKE_LAYERS)
+        assert seen[-1]["bytes_done"] == total
+        assert seen[-1]["percent"] == 100.0
+
+    @pytest.mark.parametrize(
+        "ref,expected",
+        [
+            ("ghcr.io/org/img:1.2.3", ("ghcr.io/org/img", "1.2.3")),
+            ("ghcr.io/org/img", ("ghcr.io/org/img", "latest")),
+            ("registry:5000/org/img", ("registry:5000/org/img", "latest")),
+            ("registry:5000/org/img:v2", ("registry:5000/org/img", "v2")),
+            ("ghcr.io/org/img@sha256:abc", ("ghcr.io/org/img", "sha256:abc")),
+        ],
+    )
+    def test_split_ref(self, ref, expected):
+        """References split into (repository, tag-or-digest) for api.pull."""
+        assert split_ref(ref) == expected
 
 
 class TestReconciliationContract:
