@@ -1,7 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import DeployOptions, { eligibleEngines, parseExtraArgs } from "@/components/DeployOptions";
+import DeployOptions, {
+  describeImagePresence,
+  eligibleEngines,
+  parseExtraArgs,
+} from "@/components/DeployOptions";
 import type { EngineSummary, RecipeDetail } from "@/lib/types";
 
 vi.mock("@/lib/api", () => ({
@@ -207,5 +211,68 @@ describe("DeployOptions", () => {
       expect(screen.getByText(/cannot run this recipe/)).toBeInTheDocument(),
     );
     expect(screen.queryByTestId("deploy-plan")).not.toBeInTheDocument();
+  });
+});
+
+describe("describeImagePresence", () => {
+  it("says how much will download when the image is absent", () => {
+    expect(describeImagePresence({ image_present: false, image_size_bytes: null })).toBe(
+      "image not pulled, several GB will download first",
+    );
+  });
+
+  it("quotes the known size when the plan has one", () => {
+    expect(
+      describeImagePresence({ image_present: false, image_size_bytes: 26_843_545_600 }),
+    ).toBe("image not pulled, 25.0 GB will download first");
+  });
+
+  it("says the image is pulled, with its size", () => {
+    expect(
+      describeImagePresence({ image_present: true, image_size_bytes: 26_843_545_600 }),
+    ).toBe("pulled · 25.0 GB");
+  });
+});
+
+describe("DeployOptions image presence", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(fetchEngines).mockResolvedValue({ engines: [engine("vllm")] } as never);
+    vi.mocked(fetchModels).mockResolvedValue([] as never);
+  });
+
+  it("warns in the preview when the deploy would have to pull first", async () => {
+    vi.mocked(planDeployment).mockResolvedValue({
+      ...PLAN,
+      image_present: false,
+      image_size_bytes: 26_843_545_600,
+    } as never);
+    render(<DeployOptions recipe={V1_RECIPE} value={{ engine: "vllm" }} onChange={vi.fn()} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /deploy options/i }));
+
+    await user.click(screen.getByRole("button", { name: /preview/i }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("image not pulled, 25.0 GB will download first"),
+      ).toBeInTheDocument(),
+    );
+  });
+
+  it("says nothing alarming when the image is already there", async () => {
+    vi.mocked(planDeployment).mockResolvedValue({
+      ...PLAN,
+      image_present: true,
+      image_size_bytes: 26_843_545_600,
+    } as never);
+    render(<DeployOptions recipe={V1_RECIPE} value={{ engine: "vllm" }} onChange={vi.fn()} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /deploy options/i }));
+
+    await user.click(screen.getByRole("button", { name: /preview/i }));
+
+    await waitFor(() => expect(screen.getByText("pulled · 25.0 GB")).toBeInTheDocument());
+    expect(screen.queryByText(/will download first/)).not.toBeInTheDocument();
   });
 });

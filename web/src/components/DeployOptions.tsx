@@ -12,6 +12,7 @@ import { useEffect, useMemo, useState } from "react";
 import { fetchEngines, fetchModels, planDeployment } from "@/lib/api";
 import type { DeployPlan, EngineSummary, RecipeDetail } from "@/lib/types";
 import { AlertCircle, ChevronDown, Eye, Loader2 } from "lucide-react";
+import { formatSize } from "@/lib/utils";
 
 export interface DeployOptionsValue {
   engine?: string;
@@ -28,6 +29,19 @@ export function parseExtraArgs(raw: string): string[] {
       ? token.slice(1, -1)
       : token,
   );
+}
+
+/** What the plan says about the image being on this host, in one line.
+ *
+ * An absent image used to mean a silent multi-minute download once the deploy
+ * had started; saying so here is the whole point of asking the plan.
+ */
+export function describeImagePresence(plan: Pick<DeployPlan, "image_present" | "image_size_bytes">): string {
+  if (plan.image_present) {
+    return plan.image_size_bytes ? `pulled · ${formatSize(plan.image_size_bytes)}` : "pulled";
+  }
+  const size = plan.image_size_bytes ? formatSize(plan.image_size_bytes) : "several GB";
+  return `image not pulled, ${size} will download first`;
 }
 
 /** Engines that may run this recipe. A `command:` template is vLLM-only. */
@@ -183,6 +197,10 @@ export default function DeployOptions({
                 </dd>
                 <dt className="text-text-muted">Image</dt>
                 <dd className="font-mono truncate">{plan.image_ref}</dd>
+                <dt className="text-text-muted">On this host</dt>
+                <dd className={plan.image_present ? "font-mono" : "font-mono text-warning"}>
+                  {describeImagePresence(plan)}
+                </dd>
                 <dt className="text-text-muted">Model</dt>
                 <dd className="font-mono truncate">{plan.model || "(from the command)"}</dd>
                 <dt className="text-text-muted">Port</dt>
