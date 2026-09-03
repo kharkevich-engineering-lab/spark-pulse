@@ -1,4 +1,4 @@
-import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntry, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, CustomRecipeInfo, CustomModInfo, ModFileMap, BenchmarkResult, OciRegistry, OciCollection, OciCollectionRecipe, OciRecipeMeta, OciUpdateCheck, OciUpdateApply, OciUpdateResult, OciAutoUpdateSettings } from "@/lib/types";
+import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntry, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, CustomRecipeInfo, CustomModInfo, ModFileMap, BenchmarkResult, OciRegistry, OciCollection, OciCollectionRecipe, OciRecipeMeta, OciUpdateCheck, OciUpdateApply, OciUpdateResult, OciAutoUpdateSettings, EngineListResponse, EngineDetail, EngineIndexRefreshResult, RenderRequest, RenderResult } from "@/lib/types";
 
 const API = "/api";
 
@@ -69,9 +69,6 @@ export async function fetchMod(id: string): Promise<ModDetail> { return json<Mod
 export async function fetchRecipeCustomization(recipeId: string): Promise<RecipeCustomization> { return json<RecipeCustomization>(`/recipes/customize/${encodeURIComponent(recipeId)}`); }
 export async function saveRecipeCustomization(recipeId: string, customization: RecipeCustomization): Promise<RecipeCustomization> { return json<RecipeCustomization>(`/recipes/customize/${encodeURIComponent(recipeId)}`, { method: "PUT", body: JSON.stringify(customization) }); }
 export async function deleteRecipeCustomization(recipeId: string): Promise<{ deleted: boolean }> { return json<{ deleted: boolean }>(`/recipes/customize/${encodeURIComponent(recipeId)}`, { method: "DELETE" }); }
-
-// ── Git Update ───────────────────────────────────────────────────────────────
-
 
 // ── SSE ─────────────────────────────────────────────────────────────────────
 
@@ -527,3 +524,10 @@ export async function reconcileClusters(): Promise<any> {
 export async function getLockStatus(resource: string): Promise<any> {
   return json(`/cluster/lock/${encodeURIComponent(resource)}`);
 }
+
+// ── Engines ─────────────────────────────────────────────────────────────────
+
+export async function fetchEngines(): Promise<EngineListResponse> { return json<EngineListResponse>("/engines"); }
+export async function fetchEngine(engine: string, variant = "default"): Promise<EngineDetail> { return json<EngineDetail>(`/engines/${engine}/${variant}`); }
+export async function refreshEngines(): Promise<EngineIndexRefreshResult> { return json<EngineIndexRefreshResult>("/engines/refresh", { method: "POST" }); }
+export async function renderLaunch(body: RenderRequest): Promise<RenderResult> { return json<RenderResult>("/engines/render", { method: "POST", body: JSON.stringify(body) }); }

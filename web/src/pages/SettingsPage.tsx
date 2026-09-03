@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
-import { fetchSettings, updateSettings, fetchSecrets, saveSecrets, deleteSecret, runDiscovery, applyNcclDefaults, type DiscoveryResult, type ValidationResult } from "@/lib/api";
+import { fetchSettings, updateSettings, fetchSecrets, saveSecrets, deleteSecret, runDiscovery, applyNcclDefaults, fetchEngines, refreshEngines, type DiscoveryResult, type ValidationResult } from "@/lib/api";
 import { useQuery } from "@/hooks/useQuery";
-import { Settings as SettingsIcon, Loader2, AlertCircle, Check, KeyRound, Eye, EyeOff, Trash2, Lock, Server, Clock, Network, Radio, Wifi, WifiOff } from "lucide-react";
+import { Settings as SettingsIcon, Loader2, AlertCircle, Check, KeyRound, Eye, EyeOff, Trash2, Lock, Server, Clock, Network, Radio, Wifi, WifiOff, Cpu, RefreshCw } from "lucide-react";
+import { EngineList } from "@/components/EngineBadge";
 import { AlertModal } from "@/components/Modal";
 import { HealthMonitorControls } from "@/components/HealthBadge";
 import { setRefresh } from "@/lib/refresh";
@@ -39,6 +40,10 @@ export default function SettingsPage() {
   const [showToken, setShowToken] = useState(false);
   const [savingToken, setSavingToken] = useState(false);
   const [savedToken, setSavedToken] = useState(false);
+
+  // Engine registry state
+  const { data: engineData, refetch: refetchEngines, loading: enginesLoading } = useQuery(fetchEngines);
+  const [refreshingEngines, setRefreshingEngines] = useState(false);
 
 
   // Network discovery state
@@ -127,6 +132,18 @@ export default function SettingsPage() {
       setAlertModal({ title: "Error", message: e instanceof Error ? e.message : "Failed to apply NCCL defaults" });
     } finally {
       setApplyingNccl(false);
+    }
+  };
+
+  const handleRefreshEngines = async () => {
+    setRefreshingEngines(true);
+    try {
+      await refreshEngines();
+      await refetchEngines();
+    } catch (e) {
+      setAlertModal({ title: "Error", message: e instanceof Error ? e.message : "Engine refresh failed" });
+    } finally {
+      setRefreshingEngines(false);
     }
   };
 
@@ -456,6 +473,32 @@ export default function SettingsPage() {
               <button type="button" onClick={() => setDocker("cluster_enabled", !getDocker("cluster_enabled", false) as boolean)} className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${getDocker("cluster_enabled", false) ? "bg-primary" : "bg-border"}`}>
                 <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${getDocker("cluster_enabled", false) ? "translate-x-5" : "translate-x-0"}`} />
               </button>
+            </div>
+          </div>
+
+          {/* Engines */}
+          <div className="rounded-xl bg-surface border border-border p-5 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-border">
+              <div className="flex items-center gap-2">
+                <Cpu size={16} className="text-primary" />
+                <h3 className="font-semibold">Engines</h3>
+              </div>
+              <button onClick={handleRefreshEngines} disabled={refreshingEngines} className="px-2.5 py-1 rounded-lg border border-border hover:border-primary/50 text-text-muted hover:text-text text-xs transition-colors flex items-center gap-1.5 disabled:opacity-50" title="Re-fetch the configured engine indexes">
+                <RefreshCw size={13} className={refreshingEngines ? "animate-spin" : ""} />
+                Refresh
+              </button>
+            </div>
+
+            {enginesLoading && !engineData ? (
+              <div className="flex justify-center py-4"><Loader2 className="animate-spin text-primary" size={20} /></div>
+            ) : (
+              <EngineList engines={engineData?.engines ?? []} defaultEngine={engineData?.default_engine ?? ""} />
+            )}
+
+            <div className="pt-3 border-t border-border">
+              <label className="block text-sm font-medium mb-1">Default engine</label>
+              <input type="text" value={String(form.default_engine ?? "vllm")} onChange={(e) => setForm({ ...form, default_engine: e.target.value })} className={inputCls} placeholder="vllm" />
+              <p className="text-xs text-text-muted mt-1">Used when neither the deploy request nor the recipe names an engine.</p>
             </div>
           </div>
 

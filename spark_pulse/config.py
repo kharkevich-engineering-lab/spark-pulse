@@ -232,6 +232,50 @@ class _Config:
             )
         )
 
+    # ── Engines ────────────────────────────────────────────────────────────
+
+    @property
+    def default_engine(self) -> str:
+        return str(
+            os.environ.get(
+                "SPARK_PULSE_DEFAULT_ENGINE", self._data.get("default_engine", "vllm")
+            )
+        )
+
+    @property
+    def engine_indexes(self) -> list[str]:
+        """OCI references of engine index artifacts, in priority order."""
+        raw = os.environ.get("SPARK_PULSE_ENGINE_INDEXES")
+        if raw is not None:
+            return [r.strip() for r in raw.split(",") if r.strip()]
+        value = self._data.get("engine_indexes") or []
+        if isinstance(value, str):
+            return [v.strip() for v in value.split(",") if v.strip()]
+        return [str(v) for v in value]
+
+    @property
+    def engine_index_cache_ttl_seconds(self) -> int:
+        return int(
+            os.environ.get(
+                "SPARK_PULSE_ENGINE_INDEX_CACHE_TTL_SECONDS",
+                str(self._data.get("engine_index_cache_ttl_seconds", 3600)),
+            )
+        )
+
+    @property
+    def engines(self) -> dict:
+        value = self._data.get("engines")
+        return value if isinstance(value, dict) else {}
+
+    def engine_enabled(self, engine: str) -> bool:
+        """Whether *engine* may be selected. Unknown engines default to on."""
+        entry = self.engines.get(engine)
+        if isinstance(entry, dict):
+            return bool(entry.get("enabled", True))
+        if isinstance(entry, bool):
+            return entry
+        return True
+
     def save(self):
         # Legacy — keep for compat but user settings now go to settings.json
         user = _load_user_settings()
