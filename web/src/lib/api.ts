@@ -1,4 +1,4 @@
-import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntry, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, CustomRecipeInfo, CustomModInfo, ModFileMap, BenchmarkResult, OciRegistry, OciCollection, OciCollectionRecipe, OciRecipeMeta, OciUpdateCheck, OciUpdateApply, OciUpdateResult, OciAutoUpdateSettings, EngineListResponse, EngineDetail, EngineIndexRefreshResult, RenderRequest, RenderResult } from "@/lib/types";
+import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntry, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, CustomRecipeInfo, CustomModInfo, ModFileMap, BenchmarkResult, OciRegistry, OciCollection, OciCollectionRecipe, OciRecipeMeta, OciUpdateCheck, OciUpdateApply, OciUpdateResult, OciAutoUpdateSettings, EngineListResponse, EngineDetail, EngineIndexRefreshResult, RenderRequest, RenderResult, ModelEntry, ModelSource, ModelDownloadJob, ModelSyncResult, ModelPresence, ModelDeleteResult } from "@/lib/types";
 
 const API = "/api";
 
@@ -531,3 +531,49 @@ export async function fetchEngines(): Promise<EngineListResponse> { return json<
 export async function fetchEngine(engine: string, variant = "default"): Promise<EngineDetail> { return json<EngineDetail>(`/engines/${engine}/${variant}`); }
 export async function refreshEngines(): Promise<EngineIndexRefreshResult> { return json<EngineIndexRefreshResult>("/engines/refresh", { method: "POST" }); }
 export async function renderLaunch(body: RenderRequest): Promise<RenderResult> { return json<RenderResult>("/engines/render", { method: "POST", body: JSON.stringify(body) }); }
+
+// ── Models ───────────────────────────────────────────────────────────────────
+
+export async function fetchModels(): Promise<ModelEntry[]> {
+  return (await json<{ models: ModelEntry[] }>("/models")).models;
+}
+
+export async function fetchModel(id: string): Promise<ModelEntry> {
+  return json<ModelEntry>(`/models/${id}`);
+}
+
+export async function fetchModelSources(): Promise<ModelSource[]> {
+  return (await json<{ sources: ModelSource[] }>("/models/sources")).sources;
+}
+
+export async function saveModelSources(sources: ModelSource[]): Promise<ModelSource[]> {
+  return (await json<{ sources: ModelSource[] }>("/models/sources", { method: "PUT", body: JSON.stringify({ sources }) })).sources;
+}
+
+export async function startModelDownload(body: { model: string; source?: string; revision?: string; allow_patterns?: string[] }): Promise<ModelDownloadJob> {
+  return json<ModelDownloadJob>("/models/download", { method: "POST", body: JSON.stringify(body) });
+}
+
+export async function fetchModelDownloads(): Promise<ModelDownloadJob[]> {
+  return (await json<{ jobs: ModelDownloadJob[] }>("/models/downloads")).jobs;
+}
+
+export async function fetchModelDownload(jobId: string): Promise<ModelDownloadJob> {
+  return json<ModelDownloadJob>(`/models/downloads/${jobId}`);
+}
+
+export async function cancelModelDownload(jobId: string): Promise<ModelDownloadJob> {
+  return json<ModelDownloadJob>(`/models/downloads/${jobId}/cancel`, { method: "POST" });
+}
+
+export async function syncModelToNodes(id: string, nodes: string[], sshUser?: string): Promise<ModelSyncResult> {
+  return json<ModelSyncResult>(`/models/${id}/sync`, { method: "POST", body: JSON.stringify({ nodes, ssh_user: sshUser }) });
+}
+
+export async function fetchModelPresence(id: string, nodes: string[]): Promise<ModelPresence> {
+  return json<ModelPresence>(`/models/${id}/presence?nodes=${encodeURIComponent(nodes.join(","))}`);
+}
+
+export async function deleteModel(id: string): Promise<ModelDeleteResult> {
+  return json<ModelDeleteResult>(`/models/${id}`, { method: "DELETE" });
+}

@@ -46,6 +46,15 @@ class EventType(str, Enum):
     HEALTH_CHECK_FAILED = "health_check_failed"
     HEALTH_CHECK_RECOVERED = "health_check_recovered"
 
+    # Model catalogue
+    MODEL_DOWNLOAD_QUEUED = "model.download.queued"
+    MODEL_DOWNLOAD_STARTED = "model.download.started"
+    MODEL_DOWNLOAD_PROGRESS = "model.download.progress"
+    MODEL_DOWNLOAD_COMPLETED = "model.download.completed"
+    MODEL_DOWNLOAD_FAILED = "model.download.failed"
+    MODEL_DOWNLOAD_CANCELLED = "model.download.cancelled"
+    MODEL_DELETED = "model.deleted"
+
 
 @dataclass(frozen=True, slots=True)
 class DeploymentEvent:
