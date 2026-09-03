@@ -23,6 +23,11 @@ _RECIPES = [
         "name": "qwen3.5-397b-int4",
         "model": "Intel/Qwen3.5-397B-INT4-AutoRound",
         "container": "vllm-node-tf5",
+        "command": (
+            "vllm serve Intel/Qwen3.5-397B-INT4-AutoRound --host {host} --port {port} "
+            "-tp {tensor_parallel} "
+            "--gpu-memory-utilization {gpu_memory_utilization}"
+        ),
         "description": "Qwen3.5 397B INT4 quantized with AutoRound. Best quality but requires multi-node cluster.",
         "solo_only": False,
         "cluster_only": True,
@@ -38,6 +43,11 @@ _RECIPES = [
         "name": "qwen3.5-122b-fp8",
         "model": "Qwen3.5-122B-FP8",
         "container": "vllm-node",
+        "command": (
+            "vllm serve Qwen3.5-122B-FP8 --host {host} --port {port} "
+            "-tp {tensor_parallel} "
+            "--gpu-memory-utilization {gpu_memory_utilization}"
+        ),
         "description": "Qwen3.5 122B in FP8 format. Good balance of quality and memory usage.",
         "solo_only": False,
         "cluster_only": False,
@@ -53,6 +63,11 @@ _RECIPES = [
         "name": "minimax-m2-awq",
         "model": "QuantTrio/MiniMax-M2-AWQ",
         "container": "vllm-node",
+        "command": (
+            "vllm serve QuantTrio/MiniMax-M2-AWQ --host {host} --port {port} "
+            "-tp {tensor_parallel} "
+            "--gpu-memory-utilization {gpu_memory_utilization}"
+        ),
         "description": "MiniMax-M2 with AWQ quantization. Strong reasoning and coding capabilities.",
         "solo_only": False,
         "cluster_only": True,
@@ -68,6 +83,11 @@ _RECIPES = [
         "name": "glm-4.7-flash",
         "model": "cyankiwi/GLM-4.7-Flash-AWQ",
         "container": "vllm-node-tf5",
+        "command": (
+            "vllm serve cyankiwi/GLM-4.7-Flash-AWQ --host {host} --port {port} "
+            "-tp {tensor_parallel} "
+            "--gpu-memory-utilization {gpu_memory_utilization}"
+        ),
         "description": "GLM-4.7 Flash with AWQ. Fast inference with good quality.",
         "solo_only": False,
         "cluster_only": False,
@@ -83,6 +103,11 @@ _RECIPES = [
         "name": "gpt-oss-120b",
         "model": "openai/gpt-oss-120b",
         "container": "vllm-node-mxfp4",
+        "command": (
+            "vllm serve openai/gpt-oss-120b --host {host} --port {port} "
+            "-tp {tensor_parallel} "
+            "--gpu-memory-utilization {gpu_memory_utilization}"
+        ),
         "description": "GPT-OSS 120B from openai. Requires MXFP4 container for best performance.",
         "solo_only": True,
         "cluster_only": False,
@@ -98,6 +123,11 @@ _RECIPES = [
         "name": "nemotron-3-super",
         "model": "Nemotron-3-Super-120B",
         "container": "vllm-node",
+        "command": (
+            "vllm serve Nemotron-3-Super-120B --host {host} --port {port} "
+            "-tp {tensor_parallel} "
+            "--gpu-memory-utilization {gpu_memory_utilization}"
+        ),
         "description": "NVIDIA Nemotron-3-Super 120B with NVFP4 quantization. Reasoning-focused model.",
         "solo_only": False,
         "cluster_only": False,

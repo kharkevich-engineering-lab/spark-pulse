@@ -1,0 +1,39 @@
+# Recipe v2: the same model expressed for two engines.
+recipe_version: "2"
+name: Qwen3.5-122B-FP8
+model: Qwen/Qwen3.5-122B-A10B-FP8
+description: Qwen3.5 122B in FP8, tuned for a two-node Spark cluster.
+
+engine: vllm
+
+constraints:
+  solo_only: false
+  cluster_only: true
+  min_nodes: 2
+
+params:
+  port: 8000
+  host: 0.0.0.0
+  tensor_parallel: 2
+  gpu_memory_utilization: 0.8
+  max_model_len: 262144
+  max_num_batched_tokens: 8192
+
+engines:
+  vllm:
+    image: vllm-node
+    mods:
+      - fix-qwen3.5-chat-template
+    env: {}
+    args: >-
+      --load-format instanttensor --enable-prefix-caching
+      --tool-call-parser qwen3_coder --reasoning-parser qwen3
+  sglang:
+    image: sglang-node
+    env:
+      NCCL_IB_DISABLE: "0"
+    args:
+      - --tool-call-parser
+      - qwen25
+      - --mem-fraction-static
+      - "0.85"
