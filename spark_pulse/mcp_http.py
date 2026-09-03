@@ -101,6 +101,28 @@ TOOLS = [
         },
     },
     {
+        "name": "list_images",
+        "description": (
+            "List the engine image catalogue: which images are present locally, "
+            "their size and engine, and whether a newer digest is available"
+        ),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "pull_image",
+        "description": "Start an engine image pull job and return the job record",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "ref": {
+                    "type": "string",
+                    "description": "Image reference, e.g. ghcr.io/org/vllm:0.1.0",
+                },
+            },
+            "required": ["ref"],
+        },
+    },
+    {
         "name": "list_models",
         "description": "List the model catalogue (cached HF models and local sources)",
         "inputSchema": {"type": "object", "properties": {}},
@@ -296,6 +318,10 @@ HANDLERS: dict[str, Any] = {
     "list_cache": lambda args: _http("GET", "/cache"),
     "clean_cache": lambda args: _http(
         "POST", "/cache/clean", json_body={"targets": args["targets"]}
+    ),
+    "list_images": lambda args: _http("GET", "/images"),
+    "pull_image": lambda args: _http(
+        "POST", "/images/pull", json_body={"ref": args["ref"]}
     ),
     "list_models": lambda args: _http("GET", "/models"),
     "download_model": lambda args: _http(

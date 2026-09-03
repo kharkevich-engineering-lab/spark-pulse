@@ -16,6 +16,7 @@ from spark_pulse.routers import (
     memory,
     cache,
     models as models_router,
+    images as images_router,
     settings,
     mods,
     benchmarking,
@@ -188,6 +189,7 @@ def create_app() -> FastAPI:
     app.include_router(memory.router)
     app.include_router(cache.router)
     app.include_router(models_router.router)
+    app.include_router(images_router.router)
     app.include_router(settings.router)
     app.include_router(mods.router)
     app.include_router(config_router.router)
