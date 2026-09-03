@@ -124,7 +124,10 @@ class EngineSpec(BaseModel):
             return ""
         if self.digest:
             return f"{self.image}@{self.digest}"
-        return f"{self.image}:{self.tag or self.version}"
+        tag = self.tag or self.version
+        if "/" in tag:  # already a full reference
+            return tag
+        return f"{self.image}:{tag}"
 
     def summary(self) -> dict[str, Any]:
         """Compact dict for the REST layer."""

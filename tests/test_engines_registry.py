@@ -113,6 +113,45 @@ def test_image_ref_prefers_digest(registry):
     assert spec.image_ref.endswith("@sha256:abc")
 
 
+def test_index_entry_without_digest_yields_a_well_formed_ref():
+    from spark_pulse.engines.registry import parse_index
+
+    image = "ghcr.io/example/spark-pulse-engine/vllm-b12x"
+    specs = parse_index(
+        {
+            "engines": [
+                {
+                    "id": "vllm-b12x",
+                    "engine": "vllm",
+                    "variant": "b12x",
+                    "version": "0.1.0",
+                    "image": image,
+                    "tag": f"{image}:0.1.0",
+                    "ref": f"{image}:0.1.0",
+                    "digest": None,
+                    "spec": {
+                        "schema_version": "1",
+                        "engine": "vllm",
+                        "variant": "b12x",
+                        "image": image,
+                        "version": "0.1.0",
+                        "sources": {},
+                        "runtime": {
+                            "serve": "vllm serve",
+                            "readiness": "/v1/models",
+                            "ports": {"api": 8000},
+                        },
+                        "capabilities": {},
+                    },
+                }
+            ]
+        },
+        "test-index",
+    )
+    assert len(specs) == 1
+    assert specs[0].image_ref == f"{image}:0.1.0"
+
+
 # ── Legacy tags ──────────────────────────────────────────────────────────────
 
 

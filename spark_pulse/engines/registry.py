@@ -100,6 +100,12 @@ def parse_index(data: dict[str, Any], source: str) -> list[EngineSpec]:
         for field_name in ("image", "version", "tag", "digest", "description"):
             if entry.get(field_name) and not payload.get(field_name):
                 payload[field_name] = entry[field_name]
+        # Index entries carry ``tag`` as the full ``image:version`` reference;
+        # the spec wants the bare tag.
+        tag = payload.get("tag")
+        image = payload.get("image") or ""
+        if isinstance(tag, str) and image and tag.startswith(image + ":"):
+            payload["tag"] = tag[len(image) + 1 :]
         if entry.get("legacy_tags") and not payload.get("legacy_tags"):
             payload["legacy_tags"] = entry["legacy_tags"]
         payload["source"] = source

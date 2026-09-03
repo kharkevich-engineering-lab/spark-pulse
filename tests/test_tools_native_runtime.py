@@ -271,6 +271,13 @@ class TestPlan:
         # Engine cache dirs land under /root, as upstream mounts them.
         assert all(v.startswith("/root") or v.startswith("/") for v in mounts.values())
 
+    def test_hf_cache_is_mounted_exactly_once(self, native):
+        # The engine declares ~/.cache/huggingface itself and HF_HOME targets
+        # the same container path; docker refuses duplicate destinations.
+        mounts = native.plan("qwen3-8b").container.mounts
+        targets = list(mounts.values())
+        assert targets.count("/root/.cache/huggingface") == 1
+
     def test_env_carries_engine_and_recipe_variables(self, native):
         env = native.plan("qwen3-8b").container.env
         assert env["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"

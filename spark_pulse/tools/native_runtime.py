@@ -425,6 +425,11 @@ def _build_mounts(engine_obj: Engine) -> tuple[dict[str, str], list[str]]:
         hf_home = str(tools.models.hf_home())
     except Exception:  # pragma: no cover - defensive
         hf_home = _expand("~/.cache/huggingface")
+    # HF_HOME wins over any engine-declared cache that targets the same path;
+    # docker refuses two binds on one container destination.
+    for host, target in list(mounts.items()):
+        if target == HF_CACHE_IN_CONTAINER:
+            del mounts[host]
     mounts[hf_home] = HF_CACHE_IN_CONTAINER
     return mounts, declared
 
