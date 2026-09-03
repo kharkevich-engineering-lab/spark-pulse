@@ -171,6 +171,8 @@ class DeployPlan:
     ranks: list[dict[str, Any]]
     container: ContainerSpec
     cache_mounts: list[str]
+    image_present: bool = True
+    image_size_bytes: int | None = None
     workdir: str = ""
     warnings: list[str] = field(default_factory=list)
     runtime: str = RUNTIME_NAME
@@ -192,6 +194,32 @@ def container_name_for(deployment_id: str) -> str:
 def _docker_service() -> Any:
     """The container service for this process (real or mock)."""
     return tools.docker._get_service()
+
+
+def _inspect_image(image_ref: str, warnings: list[str]) -> tuple[bool, int | None]:
+    """Report whether ``image_ref`` is on this host, and how big it is.
+
+    A missing image is not a planning failure — it just means the deploy has a
+    pull in front of it, which is exactly what the caller wants to be told
+    about up front. An unreachable Docker daemon is reported the same way: the
+    presence is unknown, so assume a pull.
+    """
+    try:
+        docker = _docker_service()
+        if docker.image_exists(image_ref):
+            info = docker.image_info(image_ref) or {}
+            return True, int(info.get("size_bytes") or 0) or None
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("could not inspect image %s: %s", image_ref, exc)
+        warnings.append(
+            f"could not check whether image '{image_ref}' is present: {exc}"
+        )
+        return False, None
+    warnings.append(
+        f"image '{image_ref}' is not on this host; it will be pulled before "
+        "the container starts, which can take tens of minutes"
+    )
+    return False, None
 
 
 def _expand(path: str) -> str:
@@ -564,6 +592,8 @@ def plan(
         entrypoint_clear=not config.docker_keep_entrypoint,
     )
 
+    image_present, image_size = _inspect_image(image_ref, warnings)
+
     readiness = engine_obj.readiness_path()
     return DeployPlan(
         deployment_id=dep_id,
@@ -590,6 +620,8 @@ def plan(
         ranks=[r.to_dict() for r in ranks],
         container=container,
         cache_mounts=cache_mounts,
+        image_present=image_present,
+        image_size_bytes=image_size,
         warnings=warnings,
     )
 
@@ -621,6 +653,7 @@ def _record_from_plan(plan_obj: DeployPlan, status: str) -> dict[str, Any]:
         "image_ref": plan_obj.image_ref,
         "model": plan_obj.model,
         "container_name": plan_obj.container.name,
+        "image_present": plan_obj.image_present,
         "node_count": plan_obj.node_count,
         "mods": plan_obj.mods,
         "readiness_url": plan_obj.readiness_url,
@@ -752,6 +785,61 @@ def _wait_ready(
     )
 
 
+# ── Image pull ───────────────────────────────────────────────────────────────
+
+
+def _pull_image_if_missing(docker: Any, plan_obj: DeployPlan) -> bool:
+    """Pull the plan's image before the container is created, with progress.
+
+    ``containers.run`` pulls implicitly and silently, so a deploy against an
+    image the host lacks used to sit with no output for the tens of minutes a
+    26 GB engine image takes. Doing it here makes the wait visible: the record
+    goes to ``pulling`` and aggregated progress events flow over SSE.
+
+    Returns True when a pull actually ran. Raises :class:`NativeRuntimeError`
+    when the pull fails.
+    """
+    dep_id = plan_obj.deployment_id
+    ref = plan_obj.container.image
+    try:
+        if docker.image_exists(ref):
+            return False
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("image presence check failed for %s: %s", ref, exc)
+
+    _update_record(dep_id, status="pulling")
+    publish_event(
+        EventType.IMAGE_PULL_STARTED,
+        dep_id,
+        f"pulling {ref}",
+        {"image_ref": ref, "percent": 0.0},
+    )
+
+    def _progress(snapshot: dict[str, Any]) -> None:
+        publish_event(
+            EventType.IMAGE_PULL_PROGRESS,
+            dep_id,
+            f"pulling {ref}: {snapshot.get('percent', 0)}%",
+            {"image_ref": ref, **snapshot},
+        )
+
+    try:
+        result = docker.pull_image(ref, _progress)
+    except Exception as exc:
+        message = f"could not pull image {ref}: {exc}"
+        publish_event(EventType.IMAGE_PULL_FAILED, dep_id, message, {"image_ref": ref})
+        raise NativeRuntimeError(message) from exc
+
+    publish_event(
+        EventType.IMAGE_PULL_COMPLETED,
+        dep_id,
+        f"pulled {ref}",
+        {"image_ref": ref, **(result if isinstance(result, dict) else {})},
+    )
+    _update_record(dep_id, status="starting", image_present=True)
+    return True
+
+
 def start(
     plan_obj: DeployPlan,
     docker: Any | None = None,
@@ -792,6 +880,11 @@ def start(
             dep_id, status="error", error_message=message, stopped_at=_now()
         )
         return updated or {**record, "status": "error", "error_message": message}
+
+    try:
+        _pull_image_if_missing(docker, plan_obj)
+    except NativeRuntimeError as exc:
+        return _fail(str(exc))
 
     metadata = ContainerMetadata.from_labels(spec.labels)
     try:
