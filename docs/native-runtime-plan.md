@@ -440,10 +440,17 @@ and four in the deploy path itself:
 7. The create route merged recipe defaults into params before the native path saw them, so a recipe's `tensor_parallel: 2` looked like an explicit request and solo stopped forcing `tp=1`. A one-GPU box was stranded on `-tp 2`.
 8. Deleting an errored deployment dropped the record without stopping its container, leaking the GPU.
 
-Still open, worth fixing before the native path becomes the default:
+Both of the gaps this run exposed are now closed, and SGLang has since been
+proven through the same path:
 
-- **Image pulls block the deploy silently.** `containers.run` pulls implicitly, so a deploy against an image the host has not got sits with no output for the tens of minutes a 26 GB engine image takes. `plan()` should report whether the image is present locally, and the runtime should pull explicitly with progress events before starting the container.
-- **Digest drift.** Republishing an engine version changes its digest, so a host that pulled `0.1.0` yesterday needs a fresh pull today for the same version string. Either treat a version as immutable and bump it on every publish, or surface "a newer digest is available" in the images UI.
+- **Image pulls are an explicit, visible step.** The plan reports whether the image is on the host and how large it is, the deploy form says so before you press the button, and the runtime pulls with throttled progress events while the deployment sits in a `pulling` state. Verified on hardware: a real pull job reported byte-accurate progress and completed.
+- **Digest drift is surfaced.** The images catalogue compares what the index advertises against what the host holds, distinguishing "this needs downloading" from "your tag points at older content but the advertised image is already here". Verified on hardware against two republished engine images.
+- **SGLang runs through the native path.** `bundled/qwen2.5-0.5b-instruct` on SGLang was ready in 46 s, served `/v1/models`, and tore down cleanly. Two engines, one control plane, engine-neutral recipes.
+
+Still open before the native path becomes the default:
+
+- **Native cluster (phase 4).** Multi-node is still refused under `runtime: native`. This is the last thing standing between us and deleting the `run-recipe.sh` fork.
+- **Recipe v2 coverage.** Only three bundled recipes are engine-neutral; everything imported from upstream is a v1 vLLM command and therefore vLLM-only by construction.
 
 ## 6. Things to fix regardless of the plan
 
