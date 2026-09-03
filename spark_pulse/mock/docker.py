@@ -37,6 +37,7 @@ class MockContainer:
     image: str = ""
     labels: dict[str, str] = field(default_factory=dict)
     executed_commands: list[str] = field(default_factory=list)
+    log_lines: list[str] = field(default_factory=list)
     _removed: bool = field(default=False, repr=False)
     attrs: dict[str, Any] = field(
         default_factory=lambda: {
@@ -48,6 +49,13 @@ class MockContainer:
             }
         }
     )
+
+    def logs(self, tail: int | str = "all", **_kwargs: Any) -> bytes:
+        """Simulate ``docker logs`` over the recorded lines."""
+        lines = self.log_lines
+        if isinstance(tail, int):
+            lines = lines[-tail:]
+        return ("\n".join(lines) + ("\n" if lines else "")).encode()
 
     def stop(self, timeout: int = 10) -> None:
         """Simulate stopping the container."""
@@ -70,6 +78,7 @@ class MockContainer:
         """Simulate executing a command inside the container."""
         text = command if isinstance(command, str) else " ".join(command)
         self.executed_commands.append(text)
+        self.log_lines.append(f"[mock] exec: {text}")
         output = f"{text.split()[-1] if text else ''}\n".encode()
         return MockExecResult(exit_code=0, output=(output, None) if demux else output)
 
@@ -90,6 +99,8 @@ class MockContainersManager:
         host_config: dict[str, Any] | None = None,
         entrypoint: list[str] | None = None,
         remove: bool = True,
+        command: str | list[str] | None = None,
+        **_kwargs: Any,
     ) -> MockContainer:
         """Simulate running a container."""
         container = MockContainer(
@@ -98,6 +109,7 @@ class MockContainersManager:
             status="running",
             image=image,
             labels=labels or {},
+            log_lines=[f"[mock] started {name} from {image}"],
         )
         container.attrs["Image"] = image
         self._containers[name] = container
@@ -185,6 +197,7 @@ class MockDockerClient:
         network_mode: str | None = None,
         volumes: dict[str, dict[str, str]] | None = None,
         port_bindings: dict[str, Any] | None = None,
+        **extra: Any,
     ) -> dict[str, Any]:
         """Simulate creating a host config (returns dict for mock)."""
         return {
@@ -199,6 +212,7 @@ class MockDockerClient:
             "network_mode": network_mode,
             "volumes": volumes,
             "port_bindings": port_bindings,
+            **extra,
         }
 
 

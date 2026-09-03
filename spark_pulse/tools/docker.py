@@ -233,6 +233,14 @@ class DockerService:
         port_mappings: list[str] | None = None,
         entrypoint_clear: bool = True,
         detach: bool = True,
+        command: str | list[str] | None = None,
+        mounts: dict[str, str] | None = None,
+        network_host: bool | None = None,
+        ipc_host: bool = False,
+        devices: list[str] | None = None,
+        cap_add: list[str] | None = None,
+        ulimits: dict[str, str] | None = None,
+        auto_remove: bool = True,
     ) -> ContainerInfo:
         """Build and start a container with spark-pulse labels.
 
@@ -250,6 +258,18 @@ class DockerService:
             port_mappings: Port mappings like ["8000:8000"].
             entrypoint_clear: Clear the image entrypoint.
             detach: Run in detached mode.
+            command: Container command — the native runtime starts an idle
+                container (``sleep infinity``) and execs into it afterwards.
+            mounts: Explicit ``host_path -> container_path`` bind mounts, on
+                top of ``cache_dirs`` (which mount at the same path).
+            network_host: Force host networking on/off. ``None`` keeps the
+                legacy behaviour (host unless ports are published).
+            ipc_host: Share the host IPC namespace.
+            devices: Device paths to expose, e.g. ``/dev/infiniband``.
+            cap_add: Extra capabilities (added to the non-privileged default).
+            ulimits: Extra ulimits as ``{name: "soft[:hard]"}``.
+            auto_remove: Remove the container when it exits. The native
+                runtime turns this off so ``docker logs`` survives a crash.
 
         Returns:
             ContainerInfo for the created container.
@@ -269,6 +289,28 @@ class DockerService:
                     "bind": container_dir,
                     "mode": "rw",
                 }
+        for host_path, container_path in (mounts or {}).items():
+            volumes[host_path] = {"bind": container_path, "mode": "rw"}
+
+        limits = [
+            docker.types.Ulimit(name="nofile", soft=nofile_limit, hard=nofile_limit)
+        ]
+        for name_, raw in (ulimits or {}).items():
+            if name_ == "nofile":
+                continue
+            soft, _, hard = str(raw).partition(":")
+            limits.append(
+                docker.types.Ulimit(name=name_, soft=int(soft), hard=int(hard or soft))
+            )
+
+        if network_host is None:
+            network_mode = "host" if not port_mappings else None
+        else:
+            network_mode = "host" if network_host else None
+
+        extra_caps = list(cap_add or [])
+        if not privileged and "IPC_LOCK" not in extra_caps:
+            extra_caps.append("IPC_LOCK")
 
         # Build host config
         host_config = client.create_host_config(
@@ -277,20 +319,20 @@ class DockerService:
             memory_swap=self._calc_memory_swap(memory_limit_gb),
             pids_limit=pids_limit,
             shm_size=f"{shm_size_gb}g",
-            ulimits=[
-                docker.types.Ulimit(
-                    name="nofile", soft=nofile_limit, hard=nofile_limit
-                ),
-            ],
+            ulimits=limits,
             device_requests=(
                 [docker.types.DeviceRequest(count=-1, capabilities=[["gpu"]])]
                 if privileged
                 else []
             ),
-            cap_add=(["IPC_LOCK"] if not privileged else None),
-            network_mode="host" if not port_mappings else None,
+            cap_add=(extra_caps if not privileged else None),
+            network_mode=network_mode,
             volumes=volumes,
         )
+        if ipc_host:
+            host_config["ipc_mode"] = "host"
+        if devices:
+            host_config["devices"] = [f"{d}:{d}:rwm" for d in devices]
 
         # Add port mappings if specified
         if port_mappings:
@@ -302,16 +344,18 @@ class DockerService:
         entrypoint = [] if entrypoint_clear else None
 
         try:
-            container = client.containers.run(
-                image,
-                name=name,
-                detach=detach,
-                environment=env_vars,
-                labels=labels,
-                host_config=host_config,
-                entrypoint=entrypoint,
-                remove=True,
-            )
+            kwargs: dict[str, Any] = {
+                "name": name,
+                "detach": detach,
+                "environment": env_vars,
+                "labels": labels,
+                "host_config": host_config,
+                "entrypoint": entrypoint,
+                "remove": auto_remove,
+            }
+            if command is not None:
+                kwargs["command"] = command
+            container = client.containers.run(image, **kwargs)
         except docker.errors.ImageNotFound:
             raise RuntimeError(f"Image not found: {image}")
         except docker.errors.APIError as exc:
@@ -433,6 +477,22 @@ class DockerService:
             stdout=_decode(raw_out),
             stderr=_decode(raw_err),
         )
+
+    def get_logs(self, name: str, tail: int = 200) -> str:
+        """Return the tail of a container's stdout/stderr.
+
+        The native runtime redirects the serve script into PID 1's stdout, so
+        this is the deployment log.
+        """
+        client = self.client
+        try:
+            container = client.containers.get(name)
+        except Exception as exc:
+            if "not found" in str(exc).lower():
+                return f"Container '{name}' not found"
+            raise
+        raw = container.logs(tail=tail)
+        return _decode(raw)
 
     def copy_to_container(
         self,
