@@ -9,6 +9,11 @@ job_retention_days: 7
 default_gpu_mem_util: 0.8
 default_port_range_end: 9100
 default_port_range_start: 9000
+model_sources:
+  - name: hf
+    type: hf_hub
+    endpoint: https://huggingface.co
+    token_secret: hf_token
 mcp_enabled: true
 mcp_path: /mcp
 mcp_api_token: ""

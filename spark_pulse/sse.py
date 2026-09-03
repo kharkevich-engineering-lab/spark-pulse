@@ -132,6 +132,42 @@ async def sse_logs(deployment_id: str):
     )
 
 
+async def models_generator() -> AsyncGenerator[str, None]:
+    """Stream model catalogue events (download progress, deletions) via SSE.
+
+    Subscribes to the shared EventBroadcaster and forwards only ``model``
+    events. The running loop is registered with the models tool so download
+    jobs, which run on worker threads, can emit onto it.
+    """
+    from spark_pulse import tools
+
+    tools.models.register_event_loop(asyncio.get_running_loop())
+    broadcaster = _get_event_broadcaster()
+    queue = await broadcaster.subscribe()
+    try:
+        while True:
+            event_data = await queue.get()
+            if event_data.get("resource_type") != "model":
+                continue
+            yield f"data: {json.dumps(event_data)}\n\n"
+    except asyncio.CancelledError:
+        await broadcaster.unsubscribe(queue)
+
+
+@router.get("/models")
+async def sse_models():
+    """Stream model download progress via SSE."""
+    return StreamingResponse(
+        models_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 async def git_update_generator() -> AsyncGenerator[str, None]:
     """Emit SSE events when git updates are available or checks complete.
 

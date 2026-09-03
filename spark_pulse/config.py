@@ -183,6 +183,16 @@ class _Config:
         return str(secrets.get("oidc_client_secret", ""))
 
     @property
+    def model_sources(self) -> list:
+        """Configured model sources (HF hub / mirrors / local paths)."""
+        raw = self._data.get("model_sources") or []
+        return [dict(s) for s in raw if isinstance(s, dict)]
+
+    @model_sources.setter
+    def model_sources(self, value: list) -> None:
+        self._data["model_sources"] = value
+
+    @property
     def mcp_enabled(self) -> bool:
         return (
             os.environ.get(
@@ -292,6 +302,11 @@ class _Config:
         secrets = _load_secrets()
         secrets.pop(key, None)
         _save_secrets(secrets)
+
+    def get_secret(self, key: str) -> str:
+        """Return an arbitrary stored secret (env var takes priority)."""
+        env_name = key.upper()
+        return os.environ.get(env_name, "") or str(_load_secrets().get(key, ""))
 
     def hf_token_masked(self) -> str:
         """Return a masked representation safe to send to the UI."""

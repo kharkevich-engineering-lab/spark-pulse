@@ -35,6 +35,7 @@ if _sim_mode:
         reconciliation as reconciliation,
         locking as locking,
         events as events,
+        models as models,
     )
 else:
     from spark_pulse.tools import (
@@ -62,6 +63,7 @@ else:
         reconciliation as reconciliation,
         locking as locking,
         events as events,
+        models as models,
     )
 
 

@@ -101,6 +101,45 @@ TOOLS = [
         },
     },
     {
+        "name": "list_models",
+        "description": "List the model catalogue (cached HF models and local sources)",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "download_model",
+        "description": "Start a model download job and return the job record",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "model": {"type": "string", "description": "HuggingFace model id"},
+                "source": {
+                    "type": "string",
+                    "description": "Model source name (default: first configured)",
+                },
+                "revision": {
+                    "type": "string",
+                    "description": "Model revision (branch, tag or commit sha)",
+                },
+                "allow_patterns": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional glob filter for downloaded files",
+                },
+            },
+            "required": ["model"],
+        },
+    },
+    {
+        "name": "model_download_status",
+        "description": "Get one download job by id, or all jobs when id is omitted",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "job_id": {"type": "string", "description": "Download job ID"}
+            },
+        },
+    },
+    {
         "name": "list_benchmarks",
         "description": "List all model benchmarks",
         "inputSchema": {"type": "object", "properties": {}},
@@ -180,6 +219,25 @@ HANDLERS: dict[str, Any] = {
     "list_cache": lambda args: _http("GET", "/cache"),
     "clean_cache": lambda args: _http(
         "POST", "/cache/clean", json_body={"targets": args["targets"]}
+    ),
+    "list_models": lambda args: _http("GET", "/models"),
+    "download_model": lambda args: _http(
+        "POST",
+        "/models/download",
+        json_body={
+            "model": args["model"],
+            "source": args.get("source"),
+            "revision": args.get("revision"),
+            "allow_patterns": args.get("allow_patterns"),
+        },
+    ),
+    "model_download_status": lambda args: _http(
+        "GET",
+        (
+            f"/models/downloads/{args['job_id']}"
+            if args.get("job_id")
+            else "/models/downloads"
+        ),
     ),
     "list_benchmarks": lambda args: _http("GET", "/benchmarks"),
     "get_benchmark": lambda args: _http("GET", f"/benchmarks/{args['id']}"),
