@@ -474,7 +474,9 @@ class TestDistribution:
         assert "timed out" in result["results"][0]["error"]
 
     def test_presence_checks_each_node(self, hf_home):
-        client = _RecordingSSHClient(exec_returncode=lambda host: 0 if host == "n1" else 1)
+        client = _RecordingSSHClient(
+            exec_returncode=lambda host: 0 if host == "n1" else 1
+        )
         result = models_tool.presence("acme/plain-7b", ["n1", "n2"], client=client)
         assert result["local"] is True
         assert result["nodes"] == [
@@ -484,7 +486,9 @@ class TestDistribution:
         assert all(cmd.startswith("test -d ") for _, cmd in client.execs)
 
     def test_presence_surfaces_transport_errors(self, hf_home):
-        client = _RecordingSSHClient(exec_returncode=255, exec_stderr="connection refused")
+        client = _RecordingSSHClient(
+            exec_returncode=255, exec_stderr="connection refused"
+        )
         result = models_tool.presence("acme/plain-7b", ["n1"], client=client)
         assert result["nodes"][0] == {
             "node": "n1",

@@ -429,3 +429,90 @@ export interface DeploymentSummary {
   ray_enabled: boolean;
   ray_ready: boolean;
 }
+
+// ── Models ───────────────────────────────────────────────────────────────────
+
+export interface ModelSource {
+  name: string;
+  type: "hf_hub" | "local_path";
+  endpoint?: string;
+  token_secret?: string;
+  path?: string;
+}
+
+export interface ModelConfigSummary {
+  architectures: string[];
+  model_type: string | null;
+  torch_dtype: string | null;
+  quantization: string[];
+  quantization_method: string | null;
+}
+
+export interface ModelRevision {
+  revision: string;
+  path: string;
+  size_bytes: number;
+  last_modified: string | null;
+  refs: string[];
+  config: ModelConfigSummary | null;
+}
+
+export interface ModelEntry {
+  id: string;
+  source: string;
+  source_type: "hf_cache" | "local_path";
+  path: string;
+  repo_path?: string;
+  revision: string | null;
+  revisions: ModelRevision[];
+  size_bytes: number;
+  last_modified: string | null;
+  config: ModelConfigSummary | null;
+  referenced_by: string[];
+}
+
+export type DownloadStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+
+export interface ModelDownloadJob {
+  id: string;
+  model: string;
+  source: string;
+  endpoint?: string | null;
+  revision: string | null;
+  allow_patterns: string[] | null;
+  status: DownloadStatus;
+  bytes_done: number;
+  bytes_total: number;
+  current_file: string | null;
+  path: string | null;
+  error: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface ModelSyncNodeResult {
+  node: string;
+  ok: boolean;
+  error: string | null;
+  duration_s: number;
+}
+
+export interface ModelSyncResult {
+  model: string;
+  path: string;
+  ok: boolean;
+  results: ModelSyncNodeResult[];
+}
+
+export interface ModelPresence {
+  model: string;
+  local: boolean;
+  nodes: { node: string; present: boolean; error: string | null }[];
+}
+
+export interface ModelDeleteResult {
+  deleted: string;
+  path: string;
+  freed_bytes: number;
+}
