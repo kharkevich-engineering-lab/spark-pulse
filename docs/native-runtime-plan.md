@@ -420,13 +420,25 @@ Each phase is shippable and keeps `runtime: upstream` working until phase 4.
 
 ## 5b. Findings from the first native deploy on hardware (2026-09-03)
 
-Verified on a real GB10 against `feat/docker-mgmt`. Four defects were found
-that no simulation test caught, all fixed:
+Verified on a real GB10 against `feat/docker-mgmt`. The native path now
+deploys end to end: the `qwen3.5-35b-a3b-fp8` recipe planned, started an idle
+container, applied both of its mods, served on vLLM in 242 s, answered
+`/v1/models`, and tore down leaving no container behind.
+
+Eight defects were found along the way that no simulation test caught, all
+fixed with regression tests. Four in the plumbing:
 
 1. Index entries without a digest produced `image:image:tag` refs, because the published index carries `tag` as a full reference while the spec wants a bare tag.
 2. The engine's declared HF cache and `HF_HOME` both bound `/root/.cache/huggingface`; docker refuses two binds on one destination.
 3. `DockerService.run_container` called `create_host_config`, which only exists on the low-level API client. Container start failed immediately.
 4. Extra label constraints were passed as top-level docker filter keys, which the API rejects with a 400. Startup reconciliation silently matched nothing.
+
+and four in the deploy path itself:
+
+5. Mods were looked up under `<checkout>/mods/mods/<name>`, because recipes name them from the checkout root. Every mod was skipped with a warning, and the engine failed fifteen minutes later on a chat template the mod was supposed to install.
+6. Mods ran with `WORKSPACE_DIR=/workspace`, but upstream sets it to the image working directory, which is where recipes expect mod-dropped files to land.
+7. The create route merged recipe defaults into params before the native path saw them, so a recipe's `tensor_parallel: 2` looked like an explicit request and solo stopped forcing `tp=1`. A one-GPU box was stranded on `-tp 2`.
+8. Deleting an errored deployment dropped the record without stopping its container, leaking the GPU.
 
 Still open, worth fixing before the native path becomes the default:
 
