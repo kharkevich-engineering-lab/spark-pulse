@@ -1,0 +1,408 @@
+"""Contract tests: the three container services must agree.
+
+Spark Pulse has three implementations of the same container service:
+
+* ``DockerService`` — local node, Docker SDK.
+* ``RemoteDockerService`` — remote node, docker CLI over SSH.
+* ``MockDockerService`` — simulation mode, in-memory.
+
+They are used interchangeably (the cluster orchestrator does not know which
+one it holds), so the same scenario is run against all three here: start a
+container carrying ``spark-pulse.*`` labels, list it back, exec in it, stop
+it, and reconcile it from its labels. Each is driven through a fake at its
+own boundary — a mocked docker SDK client and a mocked SSH client — so the
+production code paths, not stand-ins for them, are what run.
+"""
+
+from __future__ import annotations
+
+import json
+from unittest.mock import MagicMock
+
+import pytest
+
+from spark_pulse.mock.docker import MockDockerService, MockDockerClient
+from spark_pulse.tools.docker import (
+    ContainerInfo,
+    ContainerMetadata,
+    DockerService,
+    ExecResult,
+)
+from spark_pulse.tools.labels import (
+    CLUSTER_LABEL,
+    DEPLOYMENT_LABEL,
+    MANAGED_LABEL,
+    RECIPE_LABEL,
+    ROLE_LABEL,
+)
+from spark_pulse.tools.reconciliation import (
+    _reconcile_clusters_real,
+    _reconcile_deployments_real,
+)
+from spark_pulse.tools.remote_docker import RemoteDockerService
+from spark_pulse.tools.ssh import SSHResult
+
+IMAGE = "ghcr.io/example/engine:latest"
+IDLE_COMMAND = ["sleep", "infinity"]
+
+
+def _metadata(deployment: str, **overrides) -> ContainerMetadata:
+    """Metadata for a solo deployment, overridable for cluster cases."""
+    fields = {
+        "deployment": deployment,
+        "recipe": "qwen3-contract",
+        "image": IMAGE,
+        "mode": "solo",
+    }
+    fields.update(overrides)
+    return ContainerMetadata(**fields)
+
+
+# ── Fake docker SDK client (for the real DockerService) ─────────────────────
+
+
+def _fake_sdk_client() -> MagicMock:
+    """A MagicMock shaped like ``docker.DockerClient`` over a dict of containers."""
+    client = MagicMock(name="DockerClient")
+    store: dict[str, MagicMock] = {}
+
+    class _NotFound(Exception):
+        pass
+
+    def _make_container(image, name, labels, **_kwargs):
+        container = MagicMock(name=f"Container({name})")
+        container.id = f"id-{name}"
+        container.name = name
+        container.status = "running"
+        container.image = image
+        container.labels = dict(labels or {})
+        container.attrs = {"State": {"Status": "running", "Running": True}}
+        exec_result = MagicMock()
+        exec_result.exit_code = 0
+        exec_result.output = (b"contract-ok\n", None)
+        container.exec_run.return_value = exec_result
+        container.remove.side_effect = lambda force=False: store.pop(name, None)
+        store[name] = container
+        return container
+
+    def _get(name):
+        if name not in store:
+            raise _NotFound(f"Container {name} not found")
+        return store[name]
+
+    def _list(all=False, filters=None):  # noqa: A002 — mirrors the SDK kwarg
+        containers = list(store.values())
+        if not all:
+            containers = [c for c in containers if c.status == "running"]
+        label_filter = (filters or {}).get("label")
+        if label_filter:
+            key, _, value = label_filter.partition("=")
+            containers = [c for c in containers if c.labels.get(key) == value]
+        return containers
+
+    def _remove(name):
+        store.pop(name, None)
+
+    client.create_host_config.side_effect = lambda **kwargs: dict(kwargs)
+    client.containers.run.side_effect = _make_container
+    client.containers.get.side_effect = _get
+    client.containers.list.side_effect = _list
+    client._remove = _remove
+    return client
+
+
+# ── Fake SSH client (for RemoteDockerService) ───────────────────────────────
+
+
+def _fake_ssh_client() -> MagicMock:
+    """A MagicMock SSHClient that answers like the docker CLI on a remote node."""
+    ssh = MagicMock(name="SSHClient")
+    store: dict[str, dict] = {}
+
+    def _exec(host, command, timeout=30, **_kwargs):
+        if command.startswith("docker run"):
+            name = _flag_value(command, "--name")
+            labels = {}
+            parts = command.split()
+            for i, part in enumerate(parts):
+                if part == "--label":
+                    key, _, value = parts[i + 1].strip("'").partition("=")
+                    labels[key] = value
+            store[name] = {
+                "ID": f"id-{name}",
+                "Names": name,
+                "Image": parts[-1],
+                "State": "running",
+                "Labels": ",".join(f"{k}={v}" for k, v in labels.items()),
+            }
+            return SSHResult(returncode=0, stdout=f"id-{name}\n", stderr="")
+        if command.startswith("docker ps"):
+            lines = "\n".join(json.dumps(c) for c in store.values())
+            return SSHResult(returncode=0, stdout=lines, stderr="")
+        if command.startswith("docker exec"):
+            return SSHResult(returncode=0, stdout="contract-ok\n", stderr="")
+        if command.startswith("docker stop"):
+            name = command.split()[-1]
+            if name not in store:
+                return SSHResult(returncode=1, stdout="", stderr="No such container")
+            del store[name]
+            return SSHResult(returncode=0, stdout=name, stderr="")
+        return SSHResult(returncode=1, stdout="", stderr=f"unexpected: {command}")
+
+    ssh.exec.side_effect = _exec
+    return ssh
+
+
+def _flag_value(command: str, flag: str) -> str:
+    parts = command.split()
+    return parts[parts.index(flag) + 1]
+
+
+# ── Uniform adapters over the three services ────────────────────────────────
+
+
+class _LocalAdapter:
+    """Drives a service with DockerService's local signatures."""
+
+    def __init__(self, service):
+        self.service = service
+
+    def run(self, name: str, metadata: ContainerMetadata) -> ContainerInfo:
+        return self.service.run_container(
+            image=IMAGE,
+            name=name,
+            env_vars={"SPARK_PULSE_CONTRACT": "1"},
+            metadata=metadata,
+        )
+
+    def list_managed(self, labels=None) -> list[ContainerInfo]:
+        return self.service.list_managed_containers(labels)
+
+    def exec(self, name: str, argv: list[str]) -> ExecResult:
+        return self.service.exec_in_container(name, argv)
+
+    def stop(self, name: str) -> bool:
+        return self.service.stop_container(name)
+
+    def reconcile_deployments(self) -> list[dict]:
+        return _reconcile_deployments_real(self.service)
+
+
+class _RemoteAdapter:
+    """Drives RemoteDockerService against a remote host."""
+
+    HOST = "10.0.0.2"
+
+    def __init__(self, service: RemoteDockerService):
+        self.service = service
+
+    def run(self, name: str, metadata: ContainerMetadata) -> ContainerInfo:
+        return self.service.run_container(
+            self.HOST,
+            IMAGE,
+            name,
+            {"SPARK_PULSE_CONTRACT": "1"},
+            {"privileged": True, "shm_size_gb": 64},
+            metadata,
+        )
+
+    def list_managed(self, labels=None) -> list[ContainerInfo]:
+        return self.service.list_managed_containers(self.HOST, labels)
+
+    def exec(self, name: str, argv: list[str]) -> ExecResult:
+        return self.service.exec_container(self.HOST, name, argv)
+
+    def stop(self, name: str) -> bool:
+        return self.service.stop_container(self.HOST, name)
+
+    def reconcile_deployments(self) -> list[dict]:
+        raise NotImplementedError
+
+
+@pytest.fixture(
+    params=["mock", "docker-sdk", "remote-ssh"],
+    ids=["mock", "docker-sdk", "remote-ssh"],
+)
+def service(request):
+    """Yield each container service behind the same adapter interface."""
+    if request.param == "mock":
+        return _LocalAdapter(MockDockerService(MockDockerClient()))
+    if request.param == "docker-sdk":
+        return _LocalAdapter(DockerService(client=_fake_sdk_client()))
+    return _RemoteAdapter(
+        RemoteDockerService(
+            ssh_client=_fake_ssh_client(),
+            docker_service=DockerService(client=_fake_sdk_client()),
+        )
+    )
+
+
+# ── The contract ────────────────────────────────────────────────────────────
+
+
+class TestContainerServiceContract:
+    """The same scenario, run against every container service."""
+
+    def test_run_returns_container_info_with_labels(self, service):
+        """A started container is described by ContainerInfo and spark-pulse labels."""
+        info = service.run("contract-run", _metadata("contract-run"))
+
+        assert isinstance(info, ContainerInfo)
+        assert info.name == "contract-run"
+        assert info.id
+        assert info.status == "running"
+        assert info.image == IMAGE
+        assert info.labels[MANAGED_LABEL] == "true"
+        assert info.labels[DEPLOYMENT_LABEL] == "contract-run"
+        assert info.labels[RECIPE_LABEL] == "qwen3-contract"
+        assert info.metadata.deployment == "contract-run"
+
+    def test_list_managed_finds_the_container(self, service):
+        """A started container comes back from list_managed_containers."""
+        service.run("contract-list", _metadata("contract-list"))
+
+        containers = service.list_managed()
+        names = [c.name for c in containers]
+        assert "contract-list" in names
+
+        found = next(c for c in containers if c.name == "contract-list")
+        assert found.metadata.deployment == "contract-list"
+        assert found.metadata.recipe == "qwen3-contract"
+        assert found.labels[MANAGED_LABEL] == "true"
+
+    def test_list_managed_filters_by_label(self, service):
+        """Label filters select the right containers, and an empty value means any."""
+        service.run(
+            "contract-head",
+            _metadata("contract-cluster", cluster="contract-cluster", role="head"),
+        )
+        service.run("contract-solo", _metadata("contract-solo"))
+
+        in_cluster = service.list_managed({CLUSTER_LABEL: "contract-cluster"})
+        assert [c.name for c in in_cluster] == ["contract-head"]
+        assert in_cluster[0].metadata.role == "head"
+
+        any_cluster = service.list_managed({CLUSTER_LABEL: ""})
+        assert [c.name for c in any_cluster] == ["contract-head"]
+
+        heads = service.list_managed({ROLE_LABEL: "head"})
+        assert [c.name for c in heads] == ["contract-head"]
+
+    def test_exec_returns_exec_result(self, service):
+        """Exec returns an ok/stdout/stderr result, never a bare string."""
+        service.run("contract-exec", _metadata("contract-exec"))
+
+        result = service.exec("contract-exec", ["echo", "contract-ok"])
+
+        assert isinstance(result, ExecResult)
+        assert result.ok
+        assert result.returncode == 0
+        assert "contract-ok" in result.stdout
+
+    def test_stop_removes_the_container(self, service):
+        """Stopping a container removes it from the managed listing."""
+        service.run("contract-stop", _metadata("contract-stop"))
+        assert service.stop("contract-stop") is True
+
+        names = [c.name for c in service.list_managed()]
+        assert "contract-stop" not in names
+
+    def test_idle_container_lifecycle(self, service):
+        """The full run -> list -> exec -> stop sequence used by the deploy path."""
+        info = service.run("contract-idle", _metadata("contract-idle"))
+        assert info.status == "running"
+
+        assert "contract-idle" in [c.name for c in service.list_managed()]
+        assert service.exec("contract-idle", IDLE_COMMAND).ok
+        assert service.stop("contract-idle") is True
+        assert "contract-idle" not in [c.name for c in service.list_managed()]
+
+
+class TestReconciliationContract:
+    """Reconciliation rebuilds state from the labels the services actually write."""
+
+    # The public reconcile_* functions short-circuit to a no-op under
+    # SIMULATION_MODE, which pytest forces on; the _real variants are what runs
+    # in production, so those are what is exercised here.
+
+    def test_reconcile_finds_a_solo_deployment(self):
+        """A container started by DockerService is reconciled from its labels."""
+        docker = DockerService(client=_fake_sdk_client())
+        docker.run_container(
+            image=IMAGE,
+            name="contract-reconcile",
+            env_vars={},
+            metadata=_metadata("contract-reconcile"),
+        )
+
+        deployments = _reconcile_deployments_real(docker)
+
+        assert len(deployments) == 1
+        assert deployments[0]["id"] == "contract-reconcile"
+        assert deployments[0]["container_name"] == "contract-reconcile"
+        assert deployments[0]["image"] == IMAGE
+        assert deployments[0]["status"] == "running"
+
+    def test_reconcile_finds_a_mock_deployment(self):
+        """The same holds for the simulation-mode service."""
+        docker = MockDockerService(MockDockerClient())
+        docker.run_container(
+            image=IMAGE,
+            name="contract-reconcile-mock",
+            env_vars={},
+            metadata=_metadata("contract-reconcile-mock"),
+        )
+
+        deployments = _reconcile_deployments_real(docker)
+
+        assert [d["id"] for d in deployments] == ["contract-reconcile-mock"]
+
+    def test_reconcile_finds_a_cluster(self):
+        """A cluster container started over SSH is reconciled from its labels."""
+        remote = RemoteDockerService(
+            ssh_client=_fake_ssh_client(),
+            docker_service=DockerService(client=_fake_sdk_client()),
+        )
+        remote.run_container(
+            _RemoteAdapter.HOST,
+            IMAGE,
+            "contract-cluster-head",
+            {},
+            {},
+            _metadata(
+                "contract-cluster",
+                mode="cluster",
+                cluster="contract-cluster",
+                role="head",
+                head_ip="10.0.0.2",
+                ray_enabled=True,
+            ),
+        )
+
+        # Reconciliation asks the local node; point it at the same fake host.
+        remote_view = _PinnedHost(remote, _RemoteAdapter.HOST)
+        clusters = _reconcile_clusters_real(remote_view)
+
+        assert len(clusters) == 1
+        assert clusters[0]["name"] == "contract-cluster"
+        assert clusters[0]["head_ip"] == "10.0.0.2"
+        assert clusters[0]["ray_enabled"] is True
+        assert clusters[0]["image"] == IMAGE
+
+    def test_reconcile_ignores_unlabelled_containers(self):
+        """Containers without our labels are not adopted."""
+        client = _fake_sdk_client()
+        client.containers.run(IMAGE, name="someone-elses", labels={"other": "1"})
+
+        assert _reconcile_deployments_real(DockerService(client=client)) == []
+
+
+class _PinnedHost:
+    """Adapts a RemoteDockerService so ``host=""`` reaches a fixed remote node."""
+
+    def __init__(self, service: RemoteDockerService, host: str):
+        self._service = service
+        self._host = host
+
+    def list_managed_containers(self, host, labels=None):
+        return self._service.list_managed_containers(host or self._host, labels)

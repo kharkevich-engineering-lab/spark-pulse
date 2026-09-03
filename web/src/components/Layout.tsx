@@ -7,7 +7,6 @@ import { Activity, Bot, Copyright, Database, Flame, ListChecks, LogOut, Menu, Mo
 import { SiGithub, SiPypi } from "@icons-pack/react-simple-icons";
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { Link, useLocation } from "react-router-dom";
-import GitUpdateNotification from "@/components/Notifications";
 import { useSSEConnection } from "@/hooks/useSSEConnection";
 import { SSEConnectionState } from "@/lib/operations";
 import { useSSEStore } from "@/lib/operationStore";
@@ -63,14 +62,12 @@ function HeaderInner() {
   }, []);
 
   const authEnabled = config?.auth_enabled ?? false;
-  const gitUpdateEnabled = config?.git_update_enabled ?? false;
   // themeKey is used to force re-render on storage event
   void themeKey;
 
   return (
     <div className="hidden lg:flex fixed top-4 right-4 z-50 items-center gap-1.5">
       <SSEConnectionIndicator />
-      {gitUpdateEnabled && <GitUpdateNotification />}
       <button
         onClick={doRefresh}
         className="p-2 rounded-lg hover:bg-surface-hover transition-colors"
@@ -122,7 +119,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [version, setVersion] = useState("");
   const { config } = useConfig();
   const benchmarkingEnabled = config?.benchmarking_enabled ?? false;
-  const gitUpdateEnabled = config?.git_update_enabled ?? false;
 
   useEffect(() => {
     fetch("/version")
@@ -133,9 +129,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   const navItems = useMemo(() => NAV.filter((item) => {
     if (item.href === "/benchmarking") return benchmarkingEnabled;
-    if (item.href === "/git-update") return gitUpdateEnabled;
     return true;
-  }), [benchmarkingEnabled, gitUpdateEnabled]);
+  }), [benchmarkingEnabled]);
 
   return (
     <div className="flex h-screen bg-bg text-text">

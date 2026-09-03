@@ -304,10 +304,11 @@ class HealthMonitor:
         cluster_info: dict[str, Any],
     ) -> ClusterHealth:
         """Check health of a cluster deployment."""
-        from spark_pulse.tools import cluster as cluster_tool
+        from spark_pulse import tools
 
         try:
-            state = cluster_tool.get_cluster_status(name=cluster_name)
+            orchestrator = tools.cluster.ClusterOrchestrator()
+            state = orchestrator.get_cluster_status(cluster_name)
             if state is None:
                 return ClusterHealth(
                     cluster_name=cluster_name,

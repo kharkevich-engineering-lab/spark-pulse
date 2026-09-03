@@ -8,6 +8,11 @@ from __future__ import annotations
 
 import os
 
+# ``cluster_models`` and ``labels`` hold pure data and constants with no
+# behaviour to simulate, so they are real-only and intentionally have no mock
+# twin. Everything else must exist in both packages.
+from spark_pulse.tools import labels as labels
+
 _sim_mode = os.environ.get("SIMULATION_MODE", "0") == "1"
 
 if _sim_mode:
@@ -20,7 +25,6 @@ if _sim_mode:
         custom_files as custom_files,
         custom_recipes as custom_recipes,
         mods as mods,
-        git_update as git_update,
         docker as docker,
         network as network,
         discovery as discovery,
@@ -46,7 +50,6 @@ else:
         custom_files as custom_files,
         custom_recipes as custom_recipes,
         mods as mods,
-        git_update as git_update,
         docker as docker,
         network as network,
         discovery as discovery,

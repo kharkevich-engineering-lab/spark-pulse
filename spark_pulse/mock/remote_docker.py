@@ -1,7 +1,8 @@
 """Mock Remote Docker service for simulation mode.
 
-Mirrors the real remote_docker.py API exactly for testing without
-real Docker or SSH access.
+Mirrors the real remote_docker.py API exactly — same argument shapes, same
+return types (:class:`ContainerInfo`, :class:`ExecResult`) — for testing
+without real Docker or SSH access.
 """
 
 from __future__ import annotations
@@ -11,7 +12,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from spark_pulse.tools.docker import ContainerInfo
+from spark_pulse.tools.docker import (
+    ContainerInfo,
+    ContainerMetadata,
+    ExecResult,
+    _labels_match,
+)
 
 
 @dataclass
@@ -45,7 +51,7 @@ class MockRemoteDockerService:
         """
         self._containers: dict[str, MockRemoteContainer] = {}
         self._scenario = scenario
-        self._executed_commands: list[dict[str, Any]] = []  # Fixed: was field()
+        self._executed_commands: list[dict[str, Any]] = []
 
     def run_container(
         self,
@@ -53,11 +59,14 @@ class MockRemoteDockerService:
         image: str,
         name: str,
         env_vars: dict[str, str],
-        docker_config: dict,
-        labels: dict[str, str],
-        **kwargs,
-    ) -> str:
+        docker_config: dict[str, Any],
+        metadata: ContainerMetadata,
+        **kwargs: Any,
+    ) -> ContainerInfo:
         """Run container on local or remote node (mocked)."""
+        if not metadata.image:
+            metadata.image = image
+        labels = metadata.to_labels()
         self._executed_commands.append(
             {
                 "action": "run_container",
@@ -78,14 +87,21 @@ class MockRemoteDockerService:
             status="running" if self._scenario != "failed" else "error",
         )
         self._containers[name] = container
-        return container.id
+        return ContainerInfo(
+            id=container.id,
+            name=name,
+            status=container.status,
+            image=image,
+            metadata=metadata,
+            labels=labels,
+        )
 
     def stop_container(
         self,
         host: str,
         name: str,
         timeout: int = 10,
-    ) -> None:
+    ) -> bool:
         """Stop container on local or remote node (mocked)."""
         self._executed_commands.append(
             {
@@ -98,6 +114,8 @@ class MockRemoteDockerService:
 
         if name in self._containers:
             self._containers[name].status = "exited"
+            return True
+        return False
 
     def exec_container(
         self,
@@ -105,7 +123,7 @@ class MockRemoteDockerService:
         container: str,
         command: list[str],
         timeout: int = 30,
-    ) -> dict[str, Any]:
+    ) -> ExecResult:
         """Execute command inside container (mocked)."""
         self._executed_commands.append(
             {
@@ -120,33 +138,33 @@ class MockRemoteDockerService:
         # Return mock responses based on command
         cmd_str = " ".join(command)
         if "ray status" in cmd_str:
-            return {
-                "returncode": 0,
-                "stdout": "Cluster is ready",
-                "stderr": "",
-                "ok": True,
-            }
+            return ExecResult(returncode=0, stdout="Cluster is ready. OK")
         if "nvidia-smi" in cmd_str:
-            return {
-                "returncode": 0,
-                "stdout": "1",
-                "stderr": "",
-                "ok": True,
-            }
+            return ExecResult(returncode=0, stdout="1")
         if cmd_str == "env":
-            return {
-                "returncode": 0,
-                "stdout": "NCCL_SOCKET_IFNAME=eth0",
-                "stderr": "",
-                "ok": True,
-            }
+            return ExecResult(returncode=0, stdout="NCCL_SOCKET_IFNAME=eth0")
 
-        return {
-            "returncode": 0,
-            "stdout": "",
-            "stderr": "",
-            "ok": True,
-        }
+        return ExecResult(returncode=0)
+
+    def copy_to_container(
+        self,
+        host: str,
+        container: str,
+        local_path: str,
+        remote_path: str,
+        timeout: int = 120,
+    ) -> bool:
+        """Copy a file into a container (mocked)."""
+        self._executed_commands.append(
+            {
+                "action": "copy_to_container",
+                "host": host,
+                "container": container,
+                "local_path": local_path,
+                "remote_path": remote_path,
+            }
+        )
+        return self._scenario != "failed"
 
     def get_container_status(
         self,
@@ -159,10 +177,21 @@ class MockRemoteDockerService:
             return {
                 "status": c.status,
                 "running": c.is_running,
-                "pid": 12345,
-                "started_at": datetime.now(timezone.utc).isoformat(),
+                "id": c.id,
+                "state": {
+                    "Running": c.is_running,
+                    "Pid": 12345,
+                    "StartedAt": datetime.now(timezone.utc).isoformat(),
+                },
+                "error": None,
             }
-        return {"status": "not_found", "running": False}
+        return {
+            "status": "missing",
+            "running": False,
+            "id": None,
+            "state": {},
+            "error": f"Container '{name}' not found",
+        }
 
     def list_managed_containers(
         self,
@@ -178,30 +207,20 @@ class MockRemoteDockerService:
             }
         )
 
-        results = []
+        results: list[ContainerInfo] = []
         for container in self._containers.values():
-            if labels:
-                # Check if all filter labels match
-                if all(container.labels.get(k) == v for k, v in labels.items()):
-                    results.append(
-                        ContainerInfo(
-                            container_id=container.id,
-                            name=container.name,
-                            image=container.image,
-                            status=container.status,
-                            labels=container.labels,
-                        )
-                    )
-            else:
-                results.append(
-                    ContainerInfo(
-                        container_id=container.id,
-                        name=container.name,
-                        image=container.image,
-                        status=container.status,
-                        labels=container.labels,
-                    )
+            if not _labels_match(container.labels, labels):
+                continue
+            results.append(
+                ContainerInfo(
+                    id=container.id,
+                    name=container.name,
+                    image=container.image,
+                    status=container.status,
+                    metadata=ContainerMetadata.from_labels(container.labels),
+                    labels=container.labels,
                 )
+            )
 
         return results
 
@@ -217,3 +236,7 @@ class MockRemoteDockerService:
     def clear_containers(self) -> None:
         """Remove all simulated containers."""
         self._containers.clear()
+
+
+# The simulation-mode name that ``spark_pulse.tools`` re-exports.
+RemoteDockerService = MockRemoteDockerService

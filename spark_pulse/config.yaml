@@ -2,9 +2,6 @@ auth_enabled: false
 benchmarking_enabled: false
 cluster_enabled: false
 default_container: vllm-node
-git_update_auto_pull: false
-git_update_check_interval_seconds: 3600
-git_update_enabled: true
 job_retention_days: 7
 default_gpu_mem_util: 0.8
 default_port_range_end: 9100
