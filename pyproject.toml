@@ -34,6 +34,7 @@ dev = [
     "pytest-env>=1.6.0",
     "httpx>=0.28",
     "oidc-provider-mock>=0.4.0",
+    "jsonschema>=4.20",
 ]
 mcp = [
     "mcp>=1.0.0",
@@ -73,4 +74,5 @@ spark_pulse = [
     "ui/**/*",
     "service/templates/**/*",
     "registries.yaml",
+    "schemas/*.json",
 ]
