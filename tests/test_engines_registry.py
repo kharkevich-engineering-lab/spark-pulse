@@ -15,7 +15,8 @@ from spark_pulse.engines.registry import (
     parse_index,
 )
 
-FAKE_INDEX = textwrap.dedent("""
+FAKE_INDEX = textwrap.dedent(
+    """
     apiVersion: spark-pulse.io/v1
     kind: EngineIndex
     engines:
@@ -59,7 +60,8 @@ FAKE_INDEX = textwrap.dedent("""
             readiness: /v1/models
             ports: {api: 8000}
           capabilities: {mods: true}
-    """).strip()
+    """
+).strip()
 
 
 @pytest.fixture
