@@ -17,6 +17,28 @@ export interface RecipeSummary {
   engines: string[];
   /** Engine-neutral parameters. Mirrors `defaults` for v1 recipes. */
   params: Record<string, unknown>;
+  /** Where the recipe came from: bundled, upstream, custom, oci or imported. */
+  source: string;
+  /** Whether each known engine can run this recipe, and why not when it cannot. */
+  engine_support: RecipeEngineSupport[];
+}
+
+/** One engine's verdict on a recipe, as the backend's engine plugin reports it. */
+export interface RecipeEngineSupport {
+  engine: string;
+  supported: boolean;
+  /** Empty when supported; otherwise the plan-time refusal, verbatim. */
+  reason: string;
+  enabled: boolean;
+}
+
+/** Per-engine overrides from a v2 recipe, kept whole after flattening. */
+export interface RecipeEngineSpec {
+  image: string | null;
+  mods: string[];
+  env: Record<string, string>;
+  args: string;
+  command: string | null;
 }
 
 export interface RecipeDetail extends RecipeSummary {
@@ -24,6 +46,7 @@ export interface RecipeDetail extends RecipeSummary {
   env: Record<string, string>;
   build_args: string[];
   min_nodes: number | null;
+  engine_specs: Record<string, RecipeEngineSpec>;
 }
 
 // ── Importing recipes from an upstream checkout ─────────────────────────────
@@ -500,6 +523,8 @@ export interface EngineSummary {
   verified: EngineVerification[];
   ports: EnginePorts;
   readiness: string;
+  /** Where the served model id is reported; SGLang's differs from readiness. */
+  models_endpoint: string | null;
   metrics: string | null;
   source: string;
   enabled: boolean;

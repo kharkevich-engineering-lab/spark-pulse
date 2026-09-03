@@ -20,9 +20,12 @@ runtime:
   models_endpoint: /v1/models
   metrics: /metrics
   ports: {api: 30000, rendezvous: 50000}
-  cache_mounts: [~/.cache/huggingface]
+  # ~/tiktoken_encodings is mounted at /root/tiktoken_encodings; gpt-oss needs
+  # the encoding files offline, and an empty directory costs nothing otherwise.
+  cache_mounts: [~/.cache/huggingface, ~/tiktoken_encodings]
   env:
     HF_HOME: /root/.cache/huggingface
+    TIKTOKEN_ENCODINGS_BASE: /root/tiktoken_encodings
     NCCL_IB_DISABLE: "0"
     NCCL_NET_GDR_LEVEL: "5"
     NCCL_TIMEOUT: "1200000"
@@ -35,6 +38,8 @@ runtime:
     ulimits: {memlock: "-1", stack: "67108864"}
     keepalive: sleep infinity
   multi_node:
+    # Multi-node only: FlashInfer's all-reduce fusion uses CUDA IPC, which
+    # fails across nodes with "invalid device context". Solo must not carry it.
     style: sglang
     extra_args: [--enable-dp-attention]
   param_flags:

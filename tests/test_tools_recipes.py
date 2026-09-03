@@ -10,6 +10,15 @@ from spark_pulse.tools import recipes
 from spark_pulse.tools import recipe_sources
 
 
+def without_bundled(entries: list[dict]) -> list[dict]:
+    """Drop the recipes shipped inside the package.
+
+    Bundled recipes are always listed, so tests about a temporary checkout
+    filter them out rather than pretending they are absent.
+    """
+    return [e for e in entries if e.get("source") != recipe_sources.SOURCE_BUNDLED]
+
+
 def test_list_recipes_parses_valid_and_skips_bad_yaml(tmp_path):
     recipe_dir = tmp_path / "recipes"
     recipe_dir.mkdir()
@@ -26,7 +35,7 @@ defaults:
     )
     (recipe_dir / "broken.yaml").write_text("name: [", encoding="utf-8")
 
-    out = recipes.list_recipes(spark_path=tmp_path)
+    out = without_bundled(recipes.list_recipes(spark_path=tmp_path))
 
     assert len(out) == 1
     assert out[0]["id"] == "valid"
@@ -214,7 +223,7 @@ def test_list_recipes_reports_schema_fields_for_v1(tmp_path):
         encoding="utf-8",
     )
 
-    out = recipes.list_recipes(spark_path=tmp_path)[0]
+    out = without_bundled(recipes.list_recipes(spark_path=tmp_path))[0]
 
     assert out["recipe_version"] == "1"
     assert out["engine"] is None
@@ -227,7 +236,7 @@ def test_list_recipes_reports_schema_fields_for_v2(tmp_path):
     recipe_dir.mkdir()
     (recipe_dir / "structured.yaml").write_text(V2_RECIPE, encoding="utf-8")
 
-    out = recipes.list_recipes(spark_path=tmp_path)[0]
+    out = without_bundled(recipes.list_recipes(spark_path=tmp_path))[0]
 
     assert out["recipe_version"] == "2"
     assert out["engine"] == "vllm"
@@ -270,7 +279,7 @@ def test_list_recipes_includes_imported_source(tmp_path, monkeypatch):
         "name: Local\nmodel: org/local\n", encoding="utf-8"
     )
 
-    ids = [r["id"] for r in recipes.list_recipes(spark_path=tmp_path)]
+    ids = [r["id"] for r in without_bundled(recipes.list_recipes(spark_path=tmp_path))]
     assert ids == ["local", "imported/cluster/big"]
 
 

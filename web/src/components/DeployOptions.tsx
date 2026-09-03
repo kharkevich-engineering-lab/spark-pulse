@@ -30,13 +30,46 @@ export function parseExtraArgs(raw: string): string[] {
   );
 }
 
-/** Engines that may run this recipe. A `command:` template is vLLM-only. */
+export interface EngineChoice {
+  engine: EngineSummary;
+  supported: boolean;
+  /** Empty when supported; otherwise why this engine cannot run the recipe. */
+  reason: string;
+}
+
+/** Every enabled engine with the backend's verdict on this recipe.
+ *
+ * The verdict comes from `recipe.engine_support`, which the API computes with
+ * the same engine plugins that plan the deployment, so the picker offers
+ * exactly what a deploy would accept. Older payloads without that field fall
+ * back to the one rule the frontend can apply on its own: a `command:`
+ * template is written in vLLM's flags.
+ */
+export function engineChoices(engines: EngineSummary[], recipe: RecipeDetail): EngineChoice[] {
+  const support = new Map((recipe.engine_support ?? []).map((e) => [e.engine, e]));
+  const hasCommand = Boolean(recipe.command && recipe.command.trim());
+
+  return engines
+    .filter((e) => e.enabled)
+    .map((engine) => {
+      const reported = support.get(engine.engine);
+      if (reported) {
+        return { engine, supported: reported.supported, reason: reported.reason };
+      }
+      const supported = !hasCommand || engine.engine === "vllm";
+      return {
+        engine,
+        supported,
+        reason: supported ? "" : "recipe carries an engine-specific command for 'vllm'",
+      };
+    });
+}
+
+/** Engines that may actually run this recipe. */
 export function eligibleEngines(engines: EngineSummary[], recipe: RecipeDetail): EngineSummary[] {
-  const enabled = engines.filter((e) => e.enabled);
-  if (recipe.command && recipe.command.trim()) {
-    return enabled.filter((e) => e.engine === "vllm");
-  }
-  return enabled;
+  return engineChoices(engines, recipe)
+    .filter((c) => c.supported)
+    .map((c) => c.engine);
 }
 
 export default function DeployOptions({
@@ -65,7 +98,9 @@ export default function DeployOptions({
       .catch(() => setModels([]));
   }, []);
 
-  const available = useMemo(() => eligibleEngines(engines, recipe), [engines, recipe]);
+  const choices = useMemo(() => engineChoices(engines, recipe), [engines, recipe]);
+  const available = useMemo(() => choices.filter((c) => c.supported), [choices]);
+  const unavailable = useMemo(() => choices.filter((c) => !c.supported), [choices]);
 
   const preview = async () => {
     setPlanning(true);
@@ -111,12 +146,29 @@ export default function DeployOptions({
               className="w-full px-3 py-2 rounded-lg bg-surface border border-border focus:border-primary focus:outline-none font-mono text-sm"
             >
               <option value="">Recipe default</option>
-              {available.map((engine) => (
+              {available.map(({ engine }) => (
                 <option key={engine.key} value={engine.engine}>
                   {engine.engine} · {engine.version}
                 </option>
               ))}
             </select>
+
+            {unavailable.length > 0 && (
+              <ul className="mt-2 space-y-1" data-testid="engines-unavailable">
+                {unavailable.map(({ engine, reason }) => (
+                  <li
+                    key={engine.key}
+                    className="flex items-start gap-1.5 text-xs text-text-muted"
+                  >
+                    <AlertCircle size={13} className="shrink-0 mt-0.5" />
+                    <span>
+                      <span className="font-mono">{engine.engine}</span> unavailable
+                      {reason ? `: ${reason}` : ""}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
 
           <div>

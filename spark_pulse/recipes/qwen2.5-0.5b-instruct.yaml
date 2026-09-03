@@ -1,0 +1,32 @@
+# Bundled recipe: the smallest useful model, used as the smoke test for both
+# engines. Cheap enough to load in under a minute on a single GB10.
+recipe_version: "2"
+name: Qwen2.5-0.5B-Instruct
+model: Qwen/Qwen2.5-0.5B-Instruct
+description: >-
+  Tiny instruct model for smoke-testing a node. Runs on one GB10 in seconds and
+  is deliberately frugal: 8k context and a small static memory fraction, so it
+  can share a box with something else.
+
+# Default engine when the request does not override it. Both engines are
+# described below, so the deploy form offers either one.
+engine: vllm
+
+constraints:
+  solo_only: false
+  cluster_only: false
+
+params:
+  host: 0.0.0.0
+  tensor_parallel: 1
+  pipeline_parallel: 1
+  gpu_memory_utilization: 0.2
+  max_model_len: 8192
+  max_num_seqs: 16
+
+engines:
+  vllm:
+    image: vllm-node
+    args: --enable-prefix-caching
+  sglang:
+    args: --chunked-prefill-size 2048

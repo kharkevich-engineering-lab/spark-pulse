@@ -1,0 +1,29 @@
+# Bundled recipe: a dense mid-size model, the counterpart to the MoE recipe.
+recipe_version: "2"
+name: Qwen3.8-27B
+model: Qwen/Qwen3.8-27B
+description: >-
+  Dense 27B in bf16. Weights are about 54 GB, so a single 128 GB GB10 serves it
+  with room for a 32k context; every parameter is active, so expect lower
+  throughput than the 35B MoE recipe.
+
+engine: vllm
+
+constraints:
+  solo_only: false
+  cluster_only: false
+
+params:
+  host: 0.0.0.0
+  tensor_parallel: 1
+  pipeline_parallel: 1
+  gpu_memory_utilization: 0.85
+  max_model_len: 32768
+  max_num_seqs: 16
+
+engines:
+  vllm:
+    image: vllm-node
+    args: --enable-prefix-caching --reasoning-parser qwen3
+  sglang:
+    args: --reasoning-parser qwen3 --chunked-prefill-size 4096

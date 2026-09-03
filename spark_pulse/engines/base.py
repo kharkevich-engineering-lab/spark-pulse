@@ -146,6 +146,7 @@ class EngineSpec(BaseModel):
             "verified": [v.model_dump() for v in self.verified],
             "ports": self.runtime.ports.model_dump(),
             "readiness": self.runtime.readiness,
+            "models_endpoint": self.runtime.models_endpoint,
             "metrics": self.runtime.metrics,
             "source": self.source,
         }
@@ -247,6 +248,14 @@ class Engine:
     def readiness_path(self) -> str:
         return self.spec.runtime.readiness
 
+    def models_path(self) -> str | None:
+        """Endpoint that reports the served model id, if the engine has one.
+
+        Distinct from :meth:`readiness_path`: SGLang answers readiness on
+        ``/health`` but only names the model on ``/v1/models``.
+        """
+        return self.spec.runtime.models_endpoint
+
     def metrics_path(self) -> str | None:
         return self.spec.runtime.metrics
 
@@ -282,10 +291,87 @@ class Engine:
         raise NotImplementedError
 
     def supports(self, recipe: dict[str, Any]) -> tuple[bool, str]:
-        """Whether this engine can run *recipe*; second item is the reason."""
+        """Whether this engine can run *recipe*; second item is the reason.
+
+        Three signals, in order:
+
+        * a top-level ``command`` template is written in one engine's flags and
+          pins the recipe to it (a v1 recipe names no engine and is vLLM's);
+        * an ``engines`` block (or the flattened list of engine names the API
+          serves) enumerates the engines the recipe describes;
+        * ``engine`` alone is only the *default* engine, so it pins nothing —
+          except when the recipe says nothing else about engines at all.
+        """
+        command = str(recipe.get("command") or "").strip()
+        pin = recipe.get("engine") or ("vllm" if command else None)
+        if command and pin != self.name:
+            return (
+                False,
+                (
+                    f"recipe carries an engine-specific command for '{pin}' "
+                    f"({pin} flags cannot run on {self.name})"
+                ),
+            )
+        declared = self.declared_engines(recipe)
+        if declared:
+            if self.name not in declared:
+                return False, f"recipe only declares engines: {', '.join(declared)}"
+        elif pin and pin != self.name:
+            return False, f"recipe names engine '{pin}'"
         return True, ""
 
     # -- helpers shared by concrete engines --------------------------------
+
+    @staticmethod
+    def declared_engines(recipe: dict[str, Any]) -> list[str]:
+        """Engine names a recipe declares.
+
+        A parsed v2 document carries ``engines`` as a mapping; the flattened
+        payload the API serves carries it as a list of names, with the mapping
+        kept under ``engine_specs``. Both are understood.
+        """
+        for key in ("engines", "engine_specs"):
+            value = recipe.get(key)
+            if isinstance(value, dict) and value:
+                return sorted(value)
+            if isinstance(value, (list, tuple)) and value:
+                return [str(v) for v in value]
+        return []
+
+    def _engine_block(self, recipe: dict[str, Any]) -> dict[str, Any]:
+        """This engine's per-engine override block, from either shape."""
+        for key in ("engine_specs", "engines"):
+            value = recipe.get(key)
+            if isinstance(value, dict):
+                block = value.get(self.name)
+                if isinstance(block, dict):
+                    return block
+        return {}
+
+    def _block_args(self, recipe: dict[str, Any]) -> str:
+        """The engine-specific argument tail, normalised to one string."""
+        args = self._engine_block(recipe).get("args")
+        if args is None:
+            args = recipe.get("args")
+        if args is None:
+            return ""
+        if isinstance(args, (list, tuple)):
+            return " ".join(str(a) for a in args)
+        return str(args)
+
+    def _block_env(self, recipe: dict[str, Any]) -> dict[str, str]:
+        """Environment for this engine.
+
+        A per-engine block wins outright rather than merging: the flattened
+        payload's top-level ``env`` belongs to whichever engine the recipe
+        defaults to, so merging it would leak one engine's variables into
+        another's launch.
+        """
+        block = self._engine_block(recipe)
+        source = block.get("env") if isinstance(block.get("env"), dict) else None
+        if source is None and not block:
+            source = recipe.get("env")
+        return {str(k): str(v) for k, v in (source or {}).items()}
 
     def _resolved_params(
         self, recipe: dict[str, Any], params: dict[str, Any] | None
