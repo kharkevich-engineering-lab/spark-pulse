@@ -312,34 +312,6 @@ class DockerService:
         if not privileged and "IPC_LOCK" not in extra_caps:
             extra_caps.append("IPC_LOCK")
 
-        # Build host config
-        host_config = client.create_host_config(
-            privileged=privileged,
-            memory=self._gb_to_bytes(memory_limit_gb) if memory_limit_gb else None,
-            memory_swap=self._calc_memory_swap(memory_limit_gb),
-            pids_limit=pids_limit,
-            shm_size=f"{shm_size_gb}g",
-            ulimits=limits,
-            device_requests=(
-                [docker.types.DeviceRequest(count=-1, capabilities=[["gpu"]])]
-                if privileged
-                else []
-            ),
-            cap_add=(extra_caps if not privileged else None),
-            network_mode=network_mode,
-            volumes=volumes,
-        )
-        if ipc_host:
-            host_config["ipc_mode"] = "host"
-        if devices:
-            host_config["devices"] = [f"{d}:{d}:rwm" for d in devices]
-
-        # Add port mappings if specified
-        if port_mappings:
-            host_config["port_bindings"] = {
-                p.split(":")[0]: [{"HostPort": p.split(":")[1]}] for p in port_mappings
-            }
-
         # Clear entrypoint if requested
         entrypoint = [] if entrypoint_clear else None
 
@@ -349,10 +321,35 @@ class DockerService:
                 "detach": detach,
                 "environment": env_vars,
                 "labels": labels,
-                "host_config": host_config,
                 "entrypoint": entrypoint,
                 "remove": auto_remove,
+                "privileged": privileged,
+                "pids_limit": pids_limit,
+                "shm_size": f"{shm_size_gb}g",
+                "ulimits": limits,
+                "device_requests": [
+                    docker.types.DeviceRequest(count=-1, capabilities=[["gpu"]])
+                ],
+                "volumes": volumes,
             }
+            if memory_limit_gb:
+                kwargs["mem_limit"] = self._gb_to_bytes(memory_limit_gb)
+                memswap = self._calc_memory_swap(memory_limit_gb)
+                if memswap is not None:
+                    kwargs["memswap_limit"] = memswap
+            if not privileged and extra_caps:
+                kwargs["cap_add"] = extra_caps
+            if network_mode:
+                kwargs["network_mode"] = network_mode
+            if ipc_host:
+                kwargs["ipc_mode"] = "host"
+            if devices:
+                kwargs["devices"] = [f"{d}:{d}:rwm" for d in devices]
+            if port_mappings:
+                # "host:container" -> {container: host}
+                kwargs["ports"] = {
+                    p.split(":")[1]: int(p.split(":")[0]) for p in port_mappings
+                }
             if command is not None:
                 kwargs["command"] = command
             container = client.containers.run(image, **kwargs)
