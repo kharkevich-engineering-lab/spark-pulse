@@ -113,15 +113,8 @@ class VllmEngine(Engine):
         env.update(self.spec.runtime.env)
         return env
 
-    def supports(self, recipe: dict[str, Any]) -> tuple[bool, str]:
-        engine = recipe.get("engine")
-        if engine and engine != self.name:
-            return False, f"recipe pins engine '{engine}'"
-        engines = recipe.get("engines")
-        if isinstance(engines, dict) and engines and self.name not in engines:
-            listed = ", ".join(sorted(engines))
-            return False, f"recipe only declares engines: {listed}"
-        return True, ""
+    # ``supports`` is the base implementation; a v1 ``command`` template is
+    # vLLM's own, so it never refuses one.
 
     # -- rendering ---------------------------------------------------------
 
@@ -174,7 +167,7 @@ class VllmEngine(Engine):
             eth_if=node.eth_if if node else "",
             ib_if=node.ib_if if node else "",
         )
-        env.update({str(k): str(v) for k, v in (recipe.get("env") or {}).items()})
+        env.update(self._block_env(recipe))
 
         return LaunchScript(
             node_rank=node_rank,
@@ -197,14 +190,7 @@ class VllmEngine(Engine):
         return " ".join(parts)
 
     def _engine_args(self, recipe: dict[str, Any]) -> str:
-        engines = recipe.get("engines")
-        if isinstance(engines, dict):
-            block = engines.get(self.name)
-            if isinstance(block, dict) and block.get("args"):
-                return str(block["args"])
-        if recipe.get("args"):
-            return str(recipe["args"])
-        return ""
+        return self._block_args(recipe)
 
     def _multi_node_args(self, topology: Topology, node_rank: int) -> str:
         head = topology.head

@@ -54,23 +54,9 @@ class SglangEngine(Engine):
             env["NCCL_IB_HCA"] = ib_if
         return env
 
-    def supports(self, recipe: dict[str, Any]) -> tuple[bool, str]:
-        engine = recipe.get("engine")
-        if engine and engine != self.name:
-            return False, f"recipe pins engine '{engine}'"
-        if str(recipe.get("command") or "").strip():
-            return (
-                False,
-                (
-                    "recipe carries an engine-specific command "
-                    "(vLLM v1 flags cannot run on SGLang)"
-                ),
-            )
-        engines = recipe.get("engines")
-        if isinstance(engines, dict) and engines and self.name not in engines:
-            listed = ", ".join(sorted(engines))
-            return False, f"recipe only declares engines: {listed}"
-        return True, ""
+    # ``supports`` is the base implementation: a top-level ``command`` is
+    # written in another engine's flags and pins the recipe to it, while a bare
+    # ``engine:`` only names the default engine.
 
     # -- rendering ---------------------------------------------------------
 
@@ -143,7 +129,7 @@ class SglangEngine(Engine):
             eth_if=node.eth_if if node else "",
             ib_if=node.ib_if if node else "",
         )
-        env.update({str(k): str(v) for k, v in (recipe.get("env") or {}).items()})
+        env.update(self._block_env(recipe))
 
         return LaunchScript(
             node_rank=node_rank,
@@ -154,11 +140,4 @@ class SglangEngine(Engine):
         )
 
     def _engine_args(self, recipe: dict[str, Any]) -> str:
-        engines = recipe.get("engines")
-        if isinstance(engines, dict):
-            block = engines.get(self.name)
-            if isinstance(block, dict) and block.get("args"):
-                return " ".join(str(block["args"]).split())
-        if recipe.get("args"):
-            return " ".join(str(recipe["args"]).split())
-        return ""
+        return " ".join(self._block_args(recipe).split())
