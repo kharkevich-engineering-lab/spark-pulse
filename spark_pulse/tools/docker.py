@@ -81,6 +81,19 @@ def _decode(raw: Any) -> str:
     return str(raw)
 
 
+def _label_filter(labels: dict[str, str] | None = None) -> list[str]:
+    """Build docker's ``label`` filter list.
+
+    Docker accepts only its own filter keys, so extra label constraints belong
+    inside the ``label`` list: ``key`` matches presence, ``key=value`` matches
+    a value.
+    """
+    out = [MANAGED_FILTER]
+    for key, value in (labels or {}).items():
+        out.append(key if value == "" else f"{key}={value}")
+    return out
+
+
 def _labels_match(labels: dict[str, str], wanted: dict[str, str] | None) -> bool:
     """Whether ``labels`` satisfies every filter in ``wanted``.
 
@@ -537,10 +550,9 @@ class DockerService:
         """
 
         client = self.client
-        filters: dict[str, Any] = {"label": MANAGED_FILTER}
-        for key, value in (labels or {}).items():
-            filters[key] = value
-        containers = client.containers.list(all=True, filters=filters)
+        containers = client.containers.list(
+            all=True, filters={"label": _label_filter(labels)}
+        )
         infos = [self._container_to_info(c) for c in containers]
         return [i for i in infos if _labels_match(i.labels, labels)]
 
@@ -557,10 +569,7 @@ class DockerService:
         client = self.client
         containers = client.containers.list(
             all=True,
-            filters={
-                "label": MANAGED_FILTER,
-                DEPLOYMENT_LABEL: deployment,
-            },
+            filters={"label": _label_filter({DEPLOYMENT_LABEL: deployment})},
         )
         if containers:
             return self._container_to_info(containers[0])
@@ -579,10 +588,7 @@ class DockerService:
         client = self.client
         containers = client.containers.list(
             all=True,
-            filters={
-                "label": MANAGED_FILTER,
-                RECIPE_LABEL: recipe,
-            },
+            filters={"label": _label_filter({RECIPE_LABEL: recipe})},
         )
         return [self._container_to_info(c) for c in containers]
 

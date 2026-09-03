@@ -16,7 +16,6 @@ from spark_pulse.tools.docker import (
     ContainerInfo,
     DockerService,
 )
-from spark_pulse.tools.labels import LABEL_PREFIX
 
 
 @dataclass
@@ -133,32 +132,19 @@ class MockContainersManager:
             containers = [c for c in containers if c.status == "running"]
 
         if filters:
-            # Handle "label" filter (Docker SDK format: "key=value" or just "key")
-            if "label" in filters:
-                label_filter = filters["label"]
-                if "=" in label_filter:
-                    label_key, label_val = label_filter.split("=", 1)
-                    containers = [
-                        c
-                        for c in containers
-                        if (c.labels or {}).get(label_key) == label_val
-                    ]
-                else:
-                    containers = [
-                        c for c in containers if label_filter in (c.labels or {})
-                    ]
-            # Handle specific label key:value filters. An empty value means
-            # "carries this label key", matching the real service's semantics.
-            for key, value in filters.items():
-                if key.startswith(LABEL_PREFIX) and key != "label":
-                    if value == "":
-                        containers = [c for c in containers if key in (c.labels or {})]
-                    else:
+            # Docker's ``label`` filter takes a list (a bare string is also
+            # accepted): "key" matches presence, "key=value" matches a value.
+            raw = filters.get("label")
+            if raw is not None:
+                terms = [raw] if isinstance(raw, str) else list(raw)
+                for term in terms:
+                    if "=" in term:
+                        key, value = term.split("=", 1)
                         containers = [
-                            c
-                            for c in containers
-                            if (c.labels or {}).get(key) == str(value)
+                            c for c in containers if (c.labels or {}).get(key) == value
                         ]
+                    else:
+                        containers = [c for c in containers if term in (c.labels or {})]
 
         return containers
 

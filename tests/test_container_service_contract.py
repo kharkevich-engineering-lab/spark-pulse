@@ -94,16 +94,20 @@ def _fake_sdk_client() -> MagicMock:
         containers = list(store.values())
         if not all:
             containers = [c for c in containers if c.status == "running"]
-        label_filter = (filters or {}).get("label")
-        if label_filter:
-            key, _, value = label_filter.partition("=")
-            containers = [c for c in containers if c.labels.get(key) == value]
+        # Docker takes the label filter as a list: "key" matches presence,
+        # "key=value" matches a value.
+        raw = (filters or {}).get("label")
+        for term in [raw] if isinstance(raw, str) else list(raw or []):
+            if "=" in term:
+                key, _, value = term.partition("=")
+                containers = [c for c in containers if c.labels.get(key) == value]
+            else:
+                containers = [c for c in containers if term in c.labels]
         return containers
 
     def _remove(name):
         store.pop(name, None)
 
-    client.create_host_config.side_effect = lambda **kwargs: dict(kwargs)
     client.containers.run.side_effect = _make_container
     client.containers.get.side_effect = _get
     client.containers.list.side_effect = _list
