@@ -24,4 +24,7 @@ from spark_pulse.mock import (
     reconciliation as reconciliation,
     locking as locking,
     events as events,
+    models as models,
+    native_runtime as native_runtime,
+    deploy_dispatch as deploy_dispatch,
 )

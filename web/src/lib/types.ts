@@ -81,6 +81,17 @@ export interface Deployment {
   stopped_at: string | null;
   error_message: string | null;
   launch_command?: string;
+  /** "native" when the deployment runs as a container we drive ourselves;
+   *  absent or "upstream" when it was launched via run-recipe.sh. */
+  runtime?: string;
+  engine?: string;
+  variant?: string;
+  image_ref?: string;
+  model?: string;
+  container_name?: string;
+  node_count?: number;
+  mods?: string[];
+  ready?: boolean;
 }
 
 export interface GPUStats {
@@ -199,6 +210,8 @@ export interface Settings {
   cluster_enabled: boolean;
   job_retention_days: number;
   benchmarking_enabled: boolean;
+  runtime?: string;
+  deploy_ready_timeout_seconds?: number;
   default_engine?: string;
   engine_indexes?: string[];
   engine_index_cache_ttl_seconds?: number;
@@ -535,6 +548,70 @@ export interface LaunchScript {
   command: string;
   env: Record<string, string>;
   script: string;
+}
+
+// ── Deployment plan (dry run) ────────────────────────────────────────────────
+
+export interface DeployPlanRequest {
+  recipe_id: string;
+  name?: string;
+  engine?: string;
+  variant?: string;
+  model?: string;
+  params?: Record<string, unknown>;
+  extra_args?: string[];
+  nodes?: string[];
+  allow_missing_model?: boolean;
+}
+
+export interface DeployContainerSpec {
+  image: string;
+  name: string;
+  command: string;
+  env: Record<string, string>;
+  labels: Record<string, string>;
+  mounts: Record<string, string>;
+  privileged: boolean;
+  ipc_host: boolean;
+  network_host: boolean;
+  shm_size_gb: number;
+  devices: string[];
+  cap_add: string[];
+  ulimits: Record<string, string>;
+  memory_limit_gb: number | null;
+  pids_limit: number;
+  nofile_limit: number;
+  port_mappings: string[];
+  entrypoint_clear: boolean;
+}
+
+export interface DeployPlan {
+  deployment_id: string;
+  recipe_id: string;
+  recipe_name: string;
+  name: string;
+  engine: string;
+  variant: string;
+  image_ref: string;
+  model: string;
+  solo: boolean;
+  nodes: string[];
+  node_count: number;
+  port: number;
+  rendezvous_port: number | null;
+  readiness_path: string;
+  readiness_url: string;
+  metrics_path: string | null;
+  mods: string[];
+  params: Record<string, unknown>;
+  extra_args: string[];
+  launch_command: string;
+  ranks: LaunchScript[];
+  container: DeployContainerSpec;
+  cache_mounts: string[];
+  warnings: string[];
+  runtime: string;
+  created_at: string;
 }
 
 export interface RenderResult {

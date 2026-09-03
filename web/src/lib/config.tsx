@@ -12,6 +12,8 @@ export interface AppConfig {
   cluster_enabled: boolean;
   benchmarking_enabled: boolean;
   simulation_mode: boolean;
+  /** "upstream" (run-recipe.sh) or "native" (containers we drive ourselves). */
+  runtime: string;
 }
 
 const DEFAULT_CONFIG: AppConfig = {
@@ -20,6 +22,7 @@ const DEFAULT_CONFIG: AppConfig = {
   cluster_enabled: false,
   benchmarking_enabled: false,
   simulation_mode: true,
+  runtime: "upstream",
 };
 
 let cachedConfig: AppConfig | null = null;

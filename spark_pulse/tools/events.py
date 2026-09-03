@@ -37,6 +37,11 @@ class EventType(str, Enum):
     CLUSTER_ROLLBACK_COMPLETED = "cluster_rollback_completed"
 
     # Deployment lifecycle
+    DEPLOYMENT_PLANNED = "deployment_planned"
+    DEPLOYMENT_CONTAINER_STARTED = "deployment_container_started"
+    DEPLOYMENT_MODS_APPLIED = "deployment_mods_applied"
+    DEPLOYMENT_SERVING = "deployment_serving"
+    DEPLOYMENT_READY = "deployment_ready"
     DEPLOYMENT_STARTING = "deployment_starting"
     DEPLOYMENT_STARTED = "deployment_started"
     DEPLOYMENT_STOPPED = "deployment_stopped"

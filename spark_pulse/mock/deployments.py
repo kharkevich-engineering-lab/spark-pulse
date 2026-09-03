@@ -76,6 +76,16 @@ def stop_deployment(deployment_id: str) -> dict[str, Any] | None:
     return None
 
 
+def delete_deployment(deployment_id: str) -> bool:
+    """Permanently remove a deployment record (for stopped/error jobs)."""
+    saved = _load()
+    remaining = [d for d in saved if d.get("id") != deployment_id]
+    if len(remaining) == len(saved):
+        return False
+    _save(remaining)
+    return True
+
+
 def get_logs(deployment_id: str, lines: int = 200) -> str:
     """Return mock log output for a deployment."""
     dep = next((d for d in _load() if d.get("id") == deployment_id), None)

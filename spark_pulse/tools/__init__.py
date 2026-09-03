@@ -40,6 +40,8 @@ if _sim_mode:
         reconciliation as reconciliation,
         locking as locking,
         events as events,
+        native_runtime as native_runtime,
+        deploy_dispatch as deploy_dispatch,
         models as models,
     )
 else:
@@ -68,6 +70,8 @@ else:
         reconciliation as reconciliation,
         locking as locking,
         events as events,
+        native_runtime as native_runtime,
+        deploy_dispatch as deploy_dispatch,
         models as models,
     )
 

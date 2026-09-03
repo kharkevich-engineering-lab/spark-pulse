@@ -1,4 +1,4 @@
-import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntry, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, CustomRecipeInfo, CustomModInfo, ModFileMap, BenchmarkResult, OciRegistry, OciCollection, OciCollectionRecipe, OciRecipeMeta, OciUpdateCheck, OciUpdateApply, OciUpdateResult, OciAutoUpdateSettings, EngineListResponse, EngineDetail, EngineIndexRefreshResult, RenderRequest, RenderResult, ModelEntry, ModelSource, ModelDownloadJob, ModelSyncResult, ModelPresence, ModelDeleteResult, RecipeImportResult, RecipeImportStatus } from "@/lib/types";
+import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntry, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, CustomRecipeInfo, CustomModInfo, ModFileMap, BenchmarkResult, OciRegistry, OciCollection, OciCollectionRecipe, OciRecipeMeta, OciUpdateCheck, OciUpdateApply, OciUpdateResult, OciAutoUpdateSettings, EngineListResponse, EngineDetail, EngineIndexRefreshResult, RenderRequest, RenderResult, ModelEntry, ModelSource, ModelDownloadJob, ModelSyncResult, ModelPresence, ModelDeleteResult, RecipeImportResult, RecipeImportStatus, DeployPlan, DeployPlanRequest } from "@/lib/types";
 
 const API = "/api";
 
@@ -46,7 +46,10 @@ export async function fetchRecipeImportStatus(): Promise<RecipeImportStatus> {
 // ── Deployments ─────────────────────────────────────────────────────────────
 
 export async function fetchDeployments(): Promise<Deployment[]> { return json<Deployment[]>("/deployments"); }
-export async function createDeployment(body: { recipe_id: string; name: string; params: Record<string, unknown>; nodes?: string[] }): Promise<Deployment> { return json<Deployment>("/deployments", { method: "POST", body: JSON.stringify(body) }); }
+export async function createDeployment(body: { recipe_id: string; name: string; params: Record<string, unknown>; nodes?: string[]; engine?: string; variant?: string; model?: string; extra_args?: string[]; allow_missing_model?: boolean }): Promise<Deployment> { return json<Deployment>("/deployments", { method: "POST", body: JSON.stringify(body) }); }
+/** Dry run: resolve engine, image, model and the rendered command without deploying. */
+export async function planDeployment(body: DeployPlanRequest): Promise<DeployPlan> { return json<DeployPlan>("/deployments/plan", { method: "POST", body: JSON.stringify(body) }); }
+export async function fetchDeployment(id: string): Promise<Deployment> { return json<Deployment>(`/deployments/${id}`); }
 export async function stopDeployment(id: string): Promise<void> { await json(`/deployments/${id}`, { method: "DELETE" }); }
 export async function fetchLogs(id: string, n = 200): Promise<{ logs: string }> { return json(`/deployments/${id}/logs?lines=${n}`); }
 
