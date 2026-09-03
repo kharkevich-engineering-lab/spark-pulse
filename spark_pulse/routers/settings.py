@@ -3,6 +3,7 @@
 from fastapi import APIRouter, HTTPException
 
 from spark_pulse.config import config
+from spark_pulse.engines import reset_registry
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -23,6 +24,10 @@ def _settings_response() -> dict:
         "git_update_check_interval_seconds": config.git_update_check_interval_seconds,
         "git_update_auto_pull": config.git_update_auto_pull,
         "benchmarking_enabled": config.benchmarking_enabled,
+        "default_engine": config.default_engine,
+        "engine_indexes": config.engine_indexes,
+        "engine_index_cache_ttl_seconds": config.engine_index_cache_ttl_seconds,
+        "engines": config.engines,
         "env_managed": config.env_managed,
     }
 
@@ -37,6 +42,9 @@ def update_settings(req: dict):
     config.update(
         **{k: v for k, v in req.items() if v is not None and k != "env_managed"}
     )
+    # Engine settings feed the registry; drop it so the next call rebuilds.
+    if any(k.startswith(("engine", "default_engine")) for k in req):
+        reset_registry()
     return _settings_response()
 
 
