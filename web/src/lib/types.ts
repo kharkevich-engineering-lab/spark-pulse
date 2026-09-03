@@ -170,6 +170,10 @@ export interface Settings {
   git_update_check_interval_seconds: number;
   git_update_auto_pull: boolean;
   benchmarking_enabled: boolean;
+  default_engine?: string;
+  engine_indexes?: string[];
+  engine_index_cache_ttl_seconds?: number;
+  engines?: Record<string, { enabled?: boolean }>;
   env_managed?: string[];
 }
 
@@ -428,4 +432,107 @@ export interface DeploymentSummary {
   applied_mods: string[];
   ray_enabled: boolean;
   ray_ready: boolean;
+// ── Engines ─────────────────────────────────────────────────────────────────
+
+export interface EngineCapabilities {
+  mods?: boolean;
+  pr_mods?: boolean;
+  solo?: boolean;
+  cluster?: boolean;
+  mesh?: boolean;
+}
+
+export interface EngineVerification {
+  nodes: number;
+  model: string;
+  date: string;
+  tp?: number;
+  pp?: number;
+  notes?: string;
+}
+
+export interface EnginePorts {
+  api: number;
+  rendezvous?: number | null;
+}
+
+export interface EngineSummary {
+  engine: string;
+  variant: string;
+  key: string;
+  description: string;
+  image: string;
+  image_ref: string;
+  version: string;
+  tag: string;
+  digest: string | null;
+  legacy_tags: string[];
+  capabilities: EngineCapabilities;
+  verified: EngineVerification[];
+  ports: EnginePorts;
+  readiness: string;
+  metrics: string | null;
+  source: string;
+  enabled: boolean;
+}
+
+export interface EngineDetail extends EngineSummary {
+  runtime: Record<string, unknown>;
+  sources: Record<string, unknown>;
+  arch: string[];
+  gpu_arch: string[];
+}
+
+export interface EngineListResponse {
+  default_engine: string;
+  engines: EngineSummary[];
+}
+
+export interface EngineIndexRefreshResult {
+  refreshed: boolean;
+  reason?: string;
+  engines: number;
+  indexes: { ref: string; status: string; engines?: number; error?: string }[];
+}
+
+export interface RenderNode {
+  host: string;
+  ip?: string;
+  eth_if?: string;
+  ib_if?: string;
+}
+
+export interface RenderRequest {
+  recipe_id: string;
+  engine?: string;
+  variant?: string;
+  model?: string;
+  params?: Record<string, unknown>;
+  extra_args?: string[];
+  nodes?: (RenderNode | string)[];
+  solo?: boolean;
+}
+
+export interface LaunchScript {
+  node_rank: number;
+  host: string;
+  command: string;
+  env: Record<string, string>;
+  script: string;
+}
+
+export interface RenderResult {
+  recipe_id: string;
+  engine: string;
+  variant: string;
+  image_ref: string;
+  model: string;
+  solo: boolean;
+  nodes: string[];
+  readiness: string;
+  metrics: string | null;
+  ports: EnginePorts;
+  cache_mounts: string[];
+  container: Record<string, unknown>;
+  ranks: LaunchScript[];
 }

@@ -1,4 +1,4 @@
-import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntry, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, GitUpdateStatus, GitUpdateAction, GitUpdateCheckResult, CustomRecipeInfo, CustomModInfo, ModFileMap, BenchmarkResult, OciRegistry, OciCollection, OciCollectionRecipe, OciRecipeMeta, OciUpdateCheck, OciUpdateApply, OciUpdateResult, OciAutoUpdateSettings } from "@/lib/types";
+import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntry, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, GitUpdateStatus, GitUpdateAction, GitUpdateCheckResult, CustomRecipeInfo, CustomModInfo, ModFileMap, BenchmarkResult, OciRegistry, OciCollection, OciCollectionRecipe, OciRecipeMeta, OciUpdateCheck, OciUpdateApply, OciUpdateResult, OciAutoUpdateSettings, EngineListResponse, EngineDetail, EngineIndexRefreshResult, RenderRequest, RenderResult } from "@/lib/types";
 
 const API = "/api";
 
@@ -531,3 +531,9 @@ export async function reconcileClusters(): Promise<any> {
 export async function getLockStatus(resource: string): Promise<any> {
   return json(`/cluster/lock/${encodeURIComponent(resource)}`);
 }
+// ── Engines ─────────────────────────────────────────────────────────────────
+
+export async function fetchEngines(): Promise<EngineListResponse> { return json<EngineListResponse>("/engines"); }
+export async function fetchEngine(engine: string, variant = "default"): Promise<EngineDetail> { return json<EngineDetail>(`/engines/${engine}/${variant}`); }
+export async function refreshEngines(): Promise<EngineIndexRefreshResult> { return json<EngineIndexRefreshResult>("/engines/refresh", { method: "POST" }); }
+export async function renderLaunch(body: RenderRequest): Promise<RenderResult> { return json<RenderResult>("/engines/render", { method: "POST", body: JSON.stringify(body) }); }
