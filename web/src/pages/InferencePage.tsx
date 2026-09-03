@@ -126,7 +126,21 @@ export default function InferencePage() {
             <div key={dep.id} className="rounded-xl bg-surface border border-border overflow-hidden">
               <div className="flex items-center gap-4 p-4 cursor-pointer hover:bg-surface-hover" onClick={() => toggle(dep.id)}>
                 <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: dep.status === "running" ? "var(--color-success)" : dep.status === "error" ? "var(--color-danger)" : dep.status === "pending" ? "var(--color-warning)" : "var(--color-text-muted)" }} />
-                <div className="flex-1 min-w-0"><p className="font-medium truncate">{dep.name}</p><p className="text-xs text-text-muted">{dep.recipe_id}</p></div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium truncate">{dep.name}</p>
+                  <p className="text-xs text-text-muted truncate">
+                    {dep.recipe_id}
+                    {dep.model ? ` · ${dep.model}` : ""}
+                  </p>
+                </div>
+                {dep.runtime === "native" && (
+                  <span
+                    className="hidden md:inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono bg-primary/15 text-primary border border-primary/30 shrink-0"
+                    title={dep.image_ref || undefined}
+                  >
+                    {dep.engine || "native"}
+                  </span>
+                )}
                 {dep.port && <span className="text-sm font-mono text-text-muted shrink-0">:{dep.port}</span>}
                 <HealthBadge status={dep.status === "running" ? "healthy" as any : dep.status === "error" ? "unhealthy" as any : "unknown" as any} size="sm" />
                 <StatusBadge status={dep.status} />
@@ -141,6 +155,18 @@ export default function InferencePage() {
               </div>
               {expandedId === dep.id && (
                 <div className="border-t border-border">
+                  {dep.runtime === "native" && (
+                    <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 px-4 py-3 bg-bg text-xs border-b border-border">
+                      <dt className="text-text-muted">Engine</dt>
+                      <dd className="font-mono truncate">{dep.engine}{dep.variant ? `/${dep.variant}` : ""}</dd>
+                      <dt className="text-text-muted">Image</dt>
+                      <dd className="font-mono truncate">{dep.image_ref}</dd>
+                      <dt className="text-text-muted">Model</dt>
+                      <dd className="font-mono truncate">{dep.model || "(from the command)"}</dd>
+                      <dt className="text-text-muted">Container</dt>
+                      <dd className="font-mono truncate">{dep.container_name}</dd>
+                    </dl>
+                  )}
                   <div className="flex items-center gap-2 px-4 py-2 bg-bg text-xs text-text-muted">
                     {streaming[dep.id] ? <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />Streaming</span> : <span>Stream stopped</span>}
                     <button onClick={() => toggle(dep.id)} className="ml-auto text-primary hover:underline">Hide</button>
