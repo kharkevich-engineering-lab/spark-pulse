@@ -1,7 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import DeployOptions, { eligibleEngines, parseExtraArgs } from "@/components/DeployOptions";
+import DeployOptions, {
+  eligibleEngines,
+  engineChoices,
+  parseExtraArgs,
+} from "@/components/DeployOptions";
 import type { EngineSummary, RecipeDetail } from "@/lib/types";
 
 vi.mock("@/lib/api", () => ({
@@ -50,6 +54,32 @@ const V1_RECIPE = {
 } as unknown as RecipeDetail;
 
 const V2_RECIPE = { ...V1_RECIPE, id: "generic", command: "" } as RecipeDetail;
+
+/** A bundled v2 recipe: the API reports a verdict per engine. */
+const DUAL_ENGINE_RECIPE = {
+  ...V2_RECIPE,
+  id: "bundled/qwen2.5-0.5b-instruct",
+  engines: ["vllm", "sglang"],
+  engine_support: [
+    { engine: "sglang", supported: true, reason: "", enabled: true },
+    { engine: "vllm", supported: true, reason: "", enabled: true },
+  ],
+} as unknown as RecipeDetail;
+
+/** A v1 recipe: the API explains why SGLang cannot run it. */
+const REPORTED_V1_RECIPE = {
+  ...V1_RECIPE,
+  engines: ["vllm"],
+  engine_support: [
+    {
+      engine: "sglang",
+      supported: false,
+      reason: "recipe carries an engine-specific command for 'vllm'",
+      enabled: true,
+    },
+    { engine: "vllm", supported: true, reason: "", enabled: true },
+  ],
+} as unknown as RecipeDetail;
 
 const PLAN = {
   deployment_id: "abc123",
@@ -117,6 +147,31 @@ describe("eligibleEngines", () => {
     const engines = [engine("vllm"), engine("sglang", { enabled: false })];
     expect(eligibleEngines(engines, V2_RECIPE).map((e) => e.engine)).toEqual(["vllm"]);
   });
+
+  it("follows the API's per-engine verdict over the command heuristic", () => {
+    const engines = [engine("vllm"), engine("sglang")];
+    expect(eligibleEngines(engines, DUAL_ENGINE_RECIPE).map((e) => e.engine)).toEqual([
+      "vllm",
+      "sglang",
+    ]);
+  });
+
+  it("drops an engine the API reports as unsupported, keeping its reason", () => {
+    const engines = [engine("vllm"), engine("sglang")];
+    const choices = engineChoices(engines, REPORTED_V1_RECIPE);
+
+    expect(choices.filter((c) => c.supported).map((c) => c.engine.engine)).toEqual(["vllm"]);
+    const refused = choices.find((c) => c.engine.engine === "sglang");
+    expect(refused?.supported).toBe(false);
+    expect(refused?.reason).toContain("engine-specific command");
+  });
+
+  it("falls back to the command heuristic when no verdict is reported", () => {
+    const engines = [engine("vllm"), engine("sglang")];
+    const refused = engineChoices(engines, V1_RECIPE).find((c) => c.engine.engine === "sglang");
+    expect(refused?.supported).toBe(false);
+    expect(refused?.reason).toContain("engine-specific command");
+  });
 });
 
 describe("DeployOptions", () => {
@@ -147,6 +202,27 @@ describe("DeployOptions", () => {
       screen.getByLabelText("Engine").querySelectorAll("option"),
     ).map((o) => o.textContent);
     expect(options).toEqual(["Recipe default", "vllm · 0.1.0"]);
+  });
+
+  it("says why an engine is unavailable", async () => {
+    render(<DeployOptions recipe={REPORTED_V1_RECIPE} value={{}} onChange={vi.fn()} />);
+    await open();
+
+    await waitFor(() => expect(screen.getByTestId("engines-unavailable")).toBeInTheDocument());
+    expect(screen.getByText(/unavailable/)).toBeInTheDocument();
+    expect(screen.getByText(/engine-specific command/)).toBeInTheDocument();
+  });
+
+  it("offers both engines for a recipe that declares both", async () => {
+    render(<DeployOptions recipe={DUAL_ENGINE_RECIPE} value={{}} onChange={vi.fn()} />);
+    await open();
+
+    await waitFor(() => expect(screen.getByLabelText("Engine")).toBeInTheDocument());
+    const options = Array.from(screen.getByLabelText("Engine").querySelectorAll("option")).map(
+      (o) => o.textContent,
+    );
+    expect(options).toEqual(["Recipe default", "vllm · 0.1.0", "sglang · 0.1.0"]);
+    expect(screen.queryByTestId("engines-unavailable")).not.toBeInTheDocument();
   });
 
   it("reports the chosen engine and model override", async () => {
