@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-
 from spark_pulse.tools.reconciliation import (
     ReconciliationResult,
-    _parse_worker_ips,
     _parse_bool,
+    _parse_worker_ips,
     _reconstruct_cluster_state,
     _reconstruct_deployment,
     reconcile_all,
@@ -48,14 +47,14 @@ class TestParseBool:
 class TestReconstructClusterState:
     def test_full_labels(self):
         labels = {
-            "spark_pulse.cluster": "test-cluster",
-            "spark_pulse.head_ip": "10.0.0.1",
-            "spark_pulse.worker_ips": "10.0.0.2,10.0.0.3",
-            "spark_pulse.ray_enabled": "true",
-            "spark_pulse.ray_ready": "true",
-            "spark_pulse.created_at": "2024-01-01T00:00:00+00:00",
-            "spark_pulse.image": "vllm:latest",
-            "spark_pulse.container_name": "test-cluster-head",
+            "spark-pulse.cluster": "test-cluster",
+            "spark-pulse.head_ip": "10.0.0.1",
+            "spark-pulse.worker_ips": "10.0.0.2,10.0.0.3",
+            "spark-pulse.ray_enabled": "true",
+            "spark-pulse.ray_ready": "true",
+            "spark-pulse.created_at": "2024-01-01T00:00:00+00:00",
+            "spark-pulse.image": "vllm:latest",
+            "spark-pulse.name": "test-cluster-head",
         }
         result = _reconstruct_cluster_state(labels)
         assert result is not None
@@ -66,13 +65,13 @@ class TestReconstructClusterState:
         assert result["ray_ready"] is True
 
     def test_missing_cluster_label(self):
-        labels = {"spark_pulse.head_ip": "10.0.0.1"}
+        labels = {"spark-pulse.head_ip": "10.0.0.1"}
         assert _reconstruct_cluster_state(labels) is None
 
     def test_partial_labels(self):
         labels = {
-            "spark_pulse.cluster": "partial-cluster",
-            "spark_pulse.head_ip": "10.0.0.1",
+            "spark-pulse.cluster": "partial-cluster",
+            "spark-pulse.head_ip": "10.0.0.1",
         }
         result = _reconstruct_cluster_state(labels)
         assert result is not None
@@ -83,9 +82,9 @@ class TestReconstructClusterState:
 class TestReconstructDeployment:
     def test_full_labels(self):
         labels = {
-            "spark_pulse.deployment": "test-deployment",
-            "spark_pulse.container_name": "test-container",
-            "spark_pulse.image": "vllm:latest",
+            "spark-pulse.deployment": "test-deployment",
+            "spark-pulse.name": "test-container",
+            "spark-pulse.image": "vllm:latest",
         }
         result = _reconstruct_deployment(labels)
         assert result is not None
@@ -93,7 +92,7 @@ class TestReconstructDeployment:
         assert result["container_name"] == "test-container"
 
     def test_missing_deployment_label(self):
-        labels = {"spark_pulse.container_name": "test-container"}
+        labels = {"spark-pulse.name": "test-container"}
         assert _reconstruct_deployment(labels) is None
 
 

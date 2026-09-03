@@ -60,3 +60,25 @@ class MockReconciler:
             orphaned_containers_cleaned=0,
             errors=[],
         )
+
+
+# ── Module-level API (mirrors spark_pulse.tools.reconciliation) ──────────────
+
+_reconciler = MockReconciler()
+
+
+def reconcile_clusters(remote_docker: Any = None) -> list[dict]:
+    """Mock cluster reconciliation."""
+    return _reconciler.reconcile_clusters(remote_docker)
+
+
+def reconcile_deployments(docker: Any = None) -> list[dict]:
+    """Mock deployment reconciliation."""
+    return _reconciler.reconcile_deployments(docker)
+
+
+def reconcile_all(
+    docker: Any = None, remote_docker: Any = None
+) -> ReconciliationResult:
+    """Mock full reconciliation."""
+    return _reconciler.reconcile_all(docker, remote_docker)
