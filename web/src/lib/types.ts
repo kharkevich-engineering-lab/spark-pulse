@@ -9,14 +9,63 @@ export interface RecipeSummary {
   mods: string[];
   defaults: Record<string, unknown>;
   is_customized: boolean;
+  /** "1" (upstream format) or "2" (structured, multi-engine). */
+  recipe_version: string;
+  /** Preferred engine, or null when the recipe does not name one. */
+  engine: string | null;
+  /** Engine names this recipe can run on. v1 recipes are vLLM-only. */
+  engines: string[];
+  /** Engine-neutral parameters. Mirrors `defaults` for v1 recipes. */
+  params: Record<string, unknown>;
 }
 
 export interface RecipeDetail extends RecipeSummary {
   command: string;
   env: Record<string, string>;
   build_args: string[];
-  recipe_version: string;
+  min_nodes: number | null;
 }
+
+// ── Importing recipes from an upstream checkout ─────────────────────────────
+
+export type RecipeImportStatusKind = "ok" | "skipped" | "error";
+
+export interface RecipeImportRecipeEntry {
+  file: string;
+  id: string | null;
+  status: RecipeImportStatusKind;
+  message: string;
+  name?: string;
+  recipe_version?: string;
+}
+
+export interface RecipeImportModEntry {
+  name: string;
+  status: RecipeImportStatusKind;
+  message: string;
+}
+
+export interface RecipeImportCounts {
+  ok: number;
+  skipped: number;
+  error: number;
+}
+
+export interface RecipeImportResult {
+  source: string;
+  source_url: string | null;
+  ref: string | null;
+  git_sha: string | null;
+  imported_at: string;
+  dest: string;
+  recipes: RecipeImportRecipeEntry[];
+  mods: RecipeImportModEntry[];
+  counts: { recipes: RecipeImportCounts; mods: RecipeImportCounts };
+}
+
+export type RecipeImportStatus =
+  | { imported: false }
+  | ({ imported: true } & RecipeImportResult);
 
 export interface Deployment {
   id: string;

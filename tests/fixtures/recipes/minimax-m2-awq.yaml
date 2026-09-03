@@ -1,0 +1,35 @@
+# Recipe: MiniMax-M2-AWQ
+# vLLM serving MiniMax-M2-AWQ with Ray distributed backend
+
+name: MiniMax-M2-AWQ
+container: vllm-node
+
+model: QuantTrio/MiniMax-M2-AWQ
+
+cluster_only: true
+solo_only: false
+
+mods: []
+build_args: []
+
+defaults:
+  port: 8000
+  host: 0.0.0.0
+  tensor_parallel: 2
+  gpu_memory_utilization: 0.8
+  max_model_len: 128000
+
+env: {}
+
+command: |
+  vllm serve QuantTrio/MiniMax-M2-AWQ \
+      --port {port} \
+      --host {host} \
+      --gpu-memory-utilization {gpu_memory_utilization} \
+      -tp {tensor_parallel} \
+      --distributed-executor-backend ray \
+      --max-model-len {max_model_len} \
+      --load-format fastsafetensors \
+      --enable-auto-tool-choice \
+      --tool-call-parser minimax_m2 \
+      --reasoning-parser minimax_m2

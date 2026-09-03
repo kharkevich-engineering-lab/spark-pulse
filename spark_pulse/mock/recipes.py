@@ -13,12 +13,21 @@ from filelock import FileLock
 
 from spark_pulse.config import config
 
+# Discovery/parsing is shared with the real tools via a module that has no mock
+# twin, so importing it never disturbs the SIMULATION_MODE module switch.
+from spark_pulse.tools import recipe_sources
+
 # Default mock recipes (used when no spark_path is provided)
 _RECIPES = [
     {
         "name": "qwen3.5-397b-int4",
         "model": "Intel/Qwen3.5-397B-INT4-AutoRound",
         "container": "vllm-node-tf5",
+        "command": (
+            "vllm serve Intel/Qwen3.5-397B-INT4-AutoRound --host {host} --port {port} "
+            "-tp {tensor_parallel} "
+            "--gpu-memory-utilization {gpu_memory_utilization}"
+        ),
         "description": "Qwen3.5 397B INT4 quantized with AutoRound. Best quality but requires multi-node cluster.",
         "solo_only": False,
         "cluster_only": True,
@@ -34,6 +43,11 @@ _RECIPES = [
         "name": "qwen3.5-122b-fp8",
         "model": "Qwen3.5-122B-FP8",
         "container": "vllm-node",
+        "command": (
+            "vllm serve Qwen3.5-122B-FP8 --host {host} --port {port} "
+            "-tp {tensor_parallel} "
+            "--gpu-memory-utilization {gpu_memory_utilization}"
+        ),
         "description": "Qwen3.5 122B in FP8 format. Good balance of quality and memory usage.",
         "solo_only": False,
         "cluster_only": False,
@@ -49,6 +63,11 @@ _RECIPES = [
         "name": "minimax-m2-awq",
         "model": "QuantTrio/MiniMax-M2-AWQ",
         "container": "vllm-node",
+        "command": (
+            "vllm serve QuantTrio/MiniMax-M2-AWQ --host {host} --port {port} "
+            "-tp {tensor_parallel} "
+            "--gpu-memory-utilization {gpu_memory_utilization}"
+        ),
         "description": "MiniMax-M2 with AWQ quantization. Strong reasoning and coding capabilities.",
         "solo_only": False,
         "cluster_only": True,
@@ -64,6 +83,11 @@ _RECIPES = [
         "name": "glm-4.7-flash",
         "model": "cyankiwi/GLM-4.7-Flash-AWQ",
         "container": "vllm-node-tf5",
+        "command": (
+            "vllm serve cyankiwi/GLM-4.7-Flash-AWQ --host {host} --port {port} "
+            "-tp {tensor_parallel} "
+            "--gpu-memory-utilization {gpu_memory_utilization}"
+        ),
         "description": "GLM-4.7 Flash with AWQ. Fast inference with good quality.",
         "solo_only": False,
         "cluster_only": False,
@@ -79,6 +103,11 @@ _RECIPES = [
         "name": "gpt-oss-120b",
         "model": "openai/gpt-oss-120b",
         "container": "vllm-node-mxfp4",
+        "command": (
+            "vllm serve openai/gpt-oss-120b --host {host} --port {port} "
+            "-tp {tensor_parallel} "
+            "--gpu-memory-utilization {gpu_memory_utilization}"
+        ),
         "description": "GPT-OSS 120B from openai. Requires MXFP4 container for best performance.",
         "solo_only": True,
         "cluster_only": False,
@@ -94,6 +123,11 @@ _RECIPES = [
         "name": "nemotron-3-super",
         "model": "Nemotron-3-Super-120B",
         "container": "vllm-node",
+        "command": (
+            "vllm serve Nemotron-3-Super-120B --host {host} --port {port} "
+            "-tp {tensor_parallel} "
+            "--gpu-memory-utilization {gpu_memory_utilization}"
+        ),
         "description": "NVIDIA Nemotron-3-Super 120B with NVFP4 quantization. Reasoning-focused model.",
         "solo_only": False,
         "cluster_only": False,
@@ -232,39 +266,34 @@ def _load_customized_recipe(
     return None
 
 
+def _canned(recipe: dict[str, Any]) -> dict[str, Any]:
+    """Shape a canned recipe like a parsed one."""
+    out = {"id": recipe["name"], "is_customized": False, **recipe}
+    out.setdefault("recipe_version", "1")
+    out.setdefault("engine", None)
+    out.setdefault("engines", ["vllm"])
+    out["params"] = dict(recipe.get("defaults", {}))
+    return out
+
+
 def list_recipes(spark_path: Path | None = None) -> list[dict[str, Any]]:
     """Scan all YAML files in the recipes directory (when spark_path provided),
-    or return mock recipe list when no spark_path."""
+    or return mock recipe list when no spark_path.
+
+    Parsing is delegated to the real module so simulation mode reports the
+    same schema fields (recipe_version, engine, engines, params) and the same
+    sources (including `imported/`) as production.
+    """
     if spark_path is None:
         spark_path = Path(config.spark_vllm_path)
-    recipe_dir = spark_path / "recipes"
-    if recipe_dir.is_dir():
-        recipes = []
-        for yaml_file in _iter_recipe_files(recipe_dir):
-            try:
-                with open(yaml_file) as f:
-                    data = yaml.safe_load(f)
-                recipe_id = _recipe_id_from_path(recipe_dir, yaml_file)
-                if data:
-                    is_custom = bool(has_customization(recipe_id))
-                    recipes.append(
-                        {
-                            "id": recipe_id,
-                            "name": data.get("name", yaml_file.stem),
-                            "model": data.get("model", "unknown"),
-                            "container": data.get("container", "vllm-node"),
-                            "description": data.get("description", ""),
-                            "solo_only": bool(data.get("solo_only", False)),
-                            "cluster_only": bool(data.get("cluster_only", False)),
-                            "mods": data.get("mods", []),
-                            "defaults": data.get("defaults", {}),
-                            "is_customized": is_custom,
-                        }
-                    )
-            except (yaml.YAMLError, OSError):
-                continue
-        return recipes
-    return [{"id": r["name"], "is_customized": False, **r} for r in _RECIPES]
+    spark_path = Path(spark_path)
+    payloads = recipe_sources.iter_recipe_payloads(spark_path)
+    if payloads or (spark_path / "recipes").is_dir():
+        return [
+            recipe_sources.summarize(p, bool(has_customization(p["id"])))
+            for p in payloads
+        ]
+    return [_canned(r) for r in _RECIPES]
 
 
 def get_recipe(recipe_id: str, spark_path: Path | None = None) -> dict[str, Any] | None:
@@ -273,18 +302,15 @@ def get_recipe(recipe_id: str, spark_path: Path | None = None) -> dict[str, Any]
     and finally returns mock data."""
     if spark_path is None:
         spark_path = Path(config.spark_vllm_path)
-    recipe = _load_customized_recipe(recipe_id, spark_path)
+    recipe = recipe_sources.resolve_recipe(recipe_id, Path(spark_path))
+    if recipe is None:
+        for canned in _RECIPES:
+            if canned["name"] == recipe_id:
+                recipe = _canned(canned)
+                break
     if recipe is None:
         return None
-    # Apply customizations like the real module
-    customization = get_customization(recipe_id)
-    if customization:
-        for key in ("command", "mods", "env", "build_args", "defaults"):
-            if key in customization:
-                if key == "defaults":
-                    recipe[key] = {**recipe.get(key, {}), **customization[key]}
-                else:
-                    recipe[key] = customization[key]
+    recipe_sources.apply_customization(recipe, get_customization(recipe["id"]))
     return recipe
 
 

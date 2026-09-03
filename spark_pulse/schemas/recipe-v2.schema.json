@@ -1,0 +1,146 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://kharkevich-engineering-lab.github.io/spark-pulse/schemas/recipe-v2.schema.json",
+  "title": "Spark Pulse Recipe v2",
+  "description": "Recipe format v2 - separates engine-neutral parameters from engine-specific launch details so one recipe can target several serving engines.",
+  "type": "object",
+  "required": ["recipe_version", "name", "model"],
+  "properties": {
+    "recipe_version": {
+      "description": "Schema version. Must be \"2\" for this format.",
+      "enum": ["2", 2]
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable name for this recipe.",
+      "minLength": 1
+    },
+    "model": {
+      "type": "string",
+      "description": "Default model id (HuggingFace repo id or local path). Overridable at deploy time.",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string",
+      "description": "Short description of what this recipe does."
+    },
+    "engine": {
+      "type": "string",
+      "description": "Preferred engine name (e.g. vllm, sglang). Omit to use the configured default engine.",
+      "minLength": 1
+    },
+    "constraints": {
+      "type": "object",
+      "description": "Topology constraints enforced at plan time.",
+      "properties": {
+        "solo_only": {
+          "type": "boolean",
+          "description": "This recipe can only run on a single node."
+        },
+        "cluster_only": {
+          "type": "boolean",
+          "description": "This recipe requires more than one node."
+        },
+        "min_nodes": {
+          "type": "integer",
+          "description": "Minimum number of nodes required.",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "params": {
+      "type": "object",
+      "description": "Engine-neutral parameters. Each engine maps these onto its own flags. Extra keys are allowed and passed through.",
+      "properties": {
+        "port": {
+          "type": "integer",
+          "description": "Listen port for the OpenAI-compatible endpoint.",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "host": {
+          "type": "string",
+          "description": "Host address to bind (e.g. 0.0.0.0)."
+        },
+        "tensor_parallel": {
+          "type": "integer",
+          "description": "Tensor-parallel degree.",
+          "minimum": 1
+        },
+        "pipeline_parallel": {
+          "type": "integer",
+          "description": "Pipeline-parallel degree.",
+          "minimum": 1
+        },
+        "gpu_memory_utilization": {
+          "type": "number",
+          "description": "Fraction of GPU memory to use.",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "max_model_len": {
+          "type": "integer",
+          "description": "Maximum context length.",
+          "minimum": 1
+        },
+        "max_num_batched_tokens": {
+          "type": "integer",
+          "description": "Maximum tokens per batch.",
+          "minimum": 1
+        },
+        "max_num_seqs": {
+          "type": "integer",
+          "description": "Maximum concurrent sequences.",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": true
+    },
+    "engines": {
+      "type": "object",
+      "description": "Per-engine overrides. The keys are engine names; a recipe runs only on the engines it lists (plus the generic path when it lists none).",
+      "propertyNames": { "pattern": "^[a-z0-9][a-z0-9._-]*$" },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "image": {
+            "type": "string",
+            "description": "Container image override. Defaults to the engine's own image."
+          },
+          "mods": {
+            "type": "array",
+            "description": "Engine mods to apply before serving (vLLM only today).",
+            "items": { "type": "string" }
+          },
+          "env": {
+            "type": "object",
+            "description": "Extra environment variables for the container.",
+            "additionalProperties": true
+          },
+          "args": {
+            "description": "Engine-specific argument tail. May reference {params} placeholders.",
+            "oneOf": [
+              { "type": "string" },
+              { "type": "array", "items": { "type": "string" } }
+            ]
+          },
+          "command": {
+            "type": "string",
+            "description": "Full command template for this engine, bypassing rendering."
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "command": {
+      "type": "string",
+      "description": "Escape hatch: a full command template. Pins the recipe to one engine, so `engine` is required alongside it.",
+      "minLength": 1
+    }
+  },
+  "dependencies": {
+    "command": { "required": ["engine"] }
+  },
+  "additionalProperties": true
+}
