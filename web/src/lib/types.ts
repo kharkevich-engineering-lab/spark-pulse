@@ -432,6 +432,8 @@ export interface DeploymentSummary {
   applied_mods: string[];
   ray_enabled: boolean;
   ray_ready: boolean;
+}
+
 // ── Engines ─────────────────────────────────────────────────────────────────
 
 export interface EngineCapabilities {

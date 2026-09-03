@@ -152,6 +152,7 @@ def test_parse_index_skips_junk_entries():
 
 
 def test_refresh_loads_from_a_local_index_file(monkeypatch, tmp_path, index_file):
+    monkeypatch.setattr("spark_pulse.engines.registry._is_simulation", lambda: False)
     monkeypatch.setattr(
         type(_config()), "engine_indexes", property(lambda self: [str(index_file)])
     )
@@ -174,6 +175,7 @@ def test_refresh_loads_from_a_local_index_file(monkeypatch, tmp_path, index_file
 
 
 def test_refresh_survives_a_missing_index(monkeypatch, tmp_path):
+    monkeypatch.setattr("spark_pulse.engines.registry._is_simulation", lambda: False)
     missing = tmp_path / "nope.yaml"
     monkeypatch.setattr(
         type(_config()), "engine_indexes", property(lambda self: [str(missing)])
@@ -191,6 +193,7 @@ def test_refresh_survives_a_missing_index(monkeypatch, tmp_path):
 
 
 def test_refresh_caches_to_disk_and_reload_uses_it(monkeypatch, tmp_path, index_file):
+    monkeypatch.setattr("spark_pulse.engines.registry._is_simulation", lambda: False)
     monkeypatch.setattr(
         type(_config()), "engine_indexes", property(lambda self: [str(index_file)])
     )

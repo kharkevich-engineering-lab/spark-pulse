@@ -97,7 +97,18 @@ class TestGetEngine:
 
 
 class TestRefresh:
-    def test_refresh_reports_per_index_status(self, client):
+    def test_refresh_is_a_no_op_in_simulation_mode(self, client):
+        response = client.post("/api/engines/refresh")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["refreshed"] is False
+        assert "simulation" in data["reason"]
+        assert data["engines"] == 2
+
+    def test_refresh_reports_per_index_status(self, client, monkeypatch):
+        monkeypatch.setattr(
+            "spark_pulse.engines.registry._is_simulation", lambda: False
+        )
         response = client.post("/api/engines/refresh")
         assert response.status_code == 200
         data = response.json()

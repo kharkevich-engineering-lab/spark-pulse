@@ -531,6 +531,7 @@ export async function reconcileClusters(): Promise<any> {
 export async function getLockStatus(resource: string): Promise<any> {
   return json(`/cluster/lock/${encodeURIComponent(resource)}`);
 }
+
 // ── Engines ─────────────────────────────────────────────────────────────────
 
 export async function fetchEngines(): Promise<EngineListResponse> { return json<EngineListResponse>("/engines"); }
