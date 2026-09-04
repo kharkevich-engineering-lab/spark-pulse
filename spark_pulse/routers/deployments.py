@@ -68,9 +68,9 @@ def create_deployment(req: dict):
         raise HTTPException(status_code=404, detail=f"Recipe '{recipe_id}' not found")
 
     # Merged params drive the upstream path and the display command. The
-    # native path gets the caller's own params: merging defaults in here would
-    # look like an explicit tensor-parallel request and defeat the solo
-    # override that upstream's runner applies.
+    # native path gets the caller's own params, so that it can tell an explicit
+    # request apart from a recipe default when it reports why something was
+    # refused.
     raw_params = req.get("params") or {}
     params = {**recipe.get("defaults", {}), **raw_params}
     params.setdefault("port", 8000)

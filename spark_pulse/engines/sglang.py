@@ -4,6 +4,10 @@ SGLang has no ``command`` template concept: the launch line is always built
 from engine-neutral params mapped through ``param_flags``, and the rendezvous
 flags (``--nnodes/--node-rank/--dist-init-addr``) are passed even for a single
 node, matching the hardware-verified invocation in section 1.5 of the plan.
+
+Unlike vLLM, SGLang honours ``--dist-init-addr`` at one node too, so at one
+node it is pointed at loopback rather than at the fabric address: loopback is
+both correct there and robust when the fabric link is down or unaddressed.
 """
 
 from __future__ import annotations
@@ -45,13 +49,10 @@ class SglangEngine(Engine):
         node_ip: str = "",
         eth_if: str = "",
         ib_if: str = "",
+        node_count: int = 1,
     ) -> dict[str, str]:
         env: dict[str, str] = dict(self.spec.runtime.env)
-        if eth_if:
-            env["NCCL_SOCKET_IFNAME"] = eth_if
-            env["GLOO_SOCKET_IFNAME"] = eth_if
-        if ib_if:
-            env["NCCL_IB_HCA"] = ib_if
+        env.update(self.pinning_env(eth_if, ib_if, node_count))
         return env
 
     # ``supports`` is the base implementation: a top-level ``command`` is
@@ -96,8 +97,9 @@ class SglangEngine(Engine):
             parts.extend([model_arg, resolved_model])
         parts.extend(self._flag_args(resolved, order=_PARAM_ORDER))
 
-        head = topology.head
-        dist_addr = head.address() if head else "127.0.0.1"
+        # SGLang reads this address even at one node, where the fabric is not
+        # involved at all — so point it at loopback there.
+        dist_addr = "127.0.0.1" if topology.size == 1 else topology.head.address()
         rendezvous = self.rendezvous_port() or 50000
         parts.extend(
             [
@@ -123,17 +125,20 @@ class SglangEngine(Engine):
 
         command = " ".join(p for p in parts if p).strip()
 
-        node = topology.node(node_rank)
+        # The topology is total and the rank is checked above, so there is
+        # always a node here.
+        node = topology.nodes[node_rank]
         env = self.base_env(
-            node_ip=node.ip if node else "",
-            eth_if=node.eth_if if node else "",
-            ib_if=node.ib_if if node else "",
+            node_ip=node.ip,
+            eth_if=node.eth_if,
+            ib_if=node.ib_if,
+            node_count=topology.size,
         )
         env.update(self._block_env(recipe))
 
         return LaunchScript(
             node_rank=node_rank,
-            host=node.host if node else "",
+            host=node.host,
             command=command,
             env=env,
             script=self._script(env, command),

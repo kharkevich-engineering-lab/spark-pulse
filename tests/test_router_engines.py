@@ -129,10 +129,16 @@ class TestRender:
         assert data["readiness"] == "/v1/models"
         assert data["solo"] is True
         assert len(data["ranks"]) == 1
+        # One node renders exactly like every other size, rendezvous flags
+        # included, and against loopback because no node was named.
         assert data["ranks"][0]["command"] == (
-            "vllm serve Qwen/Qwen3-8B --port 8000 --tensor-parallel-size 1"
+            "vllm serve Qwen/Qwen3-8B --port 8000 --tensor-parallel-size 2"
+            " --nnodes 1 --node-rank 0 --master-addr 127.0.0.1 --master-port 29501"
         )
         assert data["ranks"][0]["env"]["NCCL_IB_DISABLE"] == "0"
+        # No interface is pinned at one node.
+        assert data["ranks"][0]["env"]["GLOO_SOCKET_IFNAME"] == "lo"
+        assert "NCCL_SOCKET_IFNAME" not in data["ranks"][0]["env"]
 
     def test_render_two_nodes_returns_a_script_per_rank(self, client):
         response = client.post(
