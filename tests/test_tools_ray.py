@@ -1,110 +1,170 @@
-"""Tests for RayManager."""
+"""Tests for RayManager.
+
+Every assertion here is about *which node* the command ran on, because that is
+what was broken: ``ensure_ray_worker`` took a worker IP, used it to build the
+``--address`` flag, and then execed against the control node's own Docker
+daemon, because the container service's host argument defaulted to empty. A
+worker's Ray process was started on the head, every time.
+"""
 
 from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
+from spark_pulse.tools.docker import ExecResult
+from spark_pulse.tools.node_service import Node
 from spark_pulse.tools.ray import RayManager
 
+HEAD = "10.0.0.1"
+WORKER = "10.0.0.2"
 
-class TestRayManager:
-    """Tests for RayManager."""
 
-    def _make_service(
-        self, ray_ready: bool = True, fail_containers: list | None = None
-    ):
-        """Create a mock RemoteDockerService for RayManager."""
-        service = MagicMock()
-        service.exec_container.return_value = MagicMock(
-            ok=True,
-            stdout="Cluster is ready" if ray_ready else "",
-            stderr="",
-        )
+class RecordingServices:
+    """A node resolver that hands out one recording service per node."""
+
+    def __init__(self, answers=None):
+        self.calls: list[tuple[str, str, list[str]]] = []
+        self._answers = answers or (lambda argv: ExecResult(0, "Cluster is ready. OK"))
+        self._services: dict[str, MagicMock] = {}
+
+    def __call__(self, node: Node) -> MagicMock:
+        key = node.address or node.id
+        service = self._services.get(key)
+        if service is None:
+            service = MagicMock(name=f"NodeService({key})")
+
+            def _exec(container, command, detach=False, timeout=None, _key=key):
+                self.calls.append((_key, container, list(command)))
+                return self._answers(list(command))
+
+            service.exec_in_container.side_effect = _exec
+            self._services[key] = service
         return service
 
-    def test_ensure_ray_head_already_ready(self):
-        """Test ensure_ray_head when Ray is already running."""
-        service = self._make_service(ray_ready=True)
-        manager = RayManager(service)
+    def nodes_touched(self) -> list[str]:
+        seen: list[str] = []
+        for node, _, _ in self.calls:
+            if node not in seen:
+                seen.append(node)
+        return seen
 
-        # First call returns ready, second call confirms
-        result = manager.ensure_ray_head("test-container", "10.0.0.1")
-        assert result is True
 
-    def test_ensure_ray_head_starts_new(self):
-        """Test ensure_ray_head starts Ray when not running."""
-        call_count = [0]
+def _never_ready(argv):
+    """A node whose ``ray status`` says nothing useful."""
+    if argv[:2] == ["ray", "status"]:
+        return ExecResult(0, "not ready yet")
+    return ExecResult(0, "")
 
-        def mock_exec(*args, **kwargs):
-            call_count[0] += 1
-            if call_count[0] == 1:
-                # First call: ray status — not ready
-                return MagicMock(ok=False, stdout="", stderr="Ray not started")
-            # Subsequent calls: ray start succeeds
-            return MagicMock(ok=True, stdout="", stderr="")
 
-        service = MagicMock()
-        service.exec_container.side_effect = mock_exec
-        service.get_container_status.return_value = {"running": True}
+class TestRayRunsOnTheNodeItNames:
+    """The regression the empty host hid."""
 
-        manager = RayManager(service)
-        manager.ensure_ray_head("test-container", "10.0.0.1")
-        # Should succeed (Ray was started)
-        assert service.exec_container.called
+    def test_the_worker_is_started_on_the_worker(self):
+        services = RecordingServices()
+        manager = RayManager(services)
 
-    def test_ensure_ray_worker_already_connected(self):
-        """Test ensure_ray_worker when already connected."""
-        service = self._make_service(ray_ready=True)
-        manager = RayManager(service)
+        assert manager.ensure_ray_worker("c-worker-0", WORKER, HEAD) is True
 
-        result = manager.ensure_ray_worker("worker-container", "10.0.0.2", "10.0.0.1")
-        assert result is True
+        assert services.nodes_touched() == [WORKER]
+        assert HEAD not in services.nodes_touched()
 
-    def test_ensure_ray_worker_starts_new(self):
-        """Test ensure_ray_worker starts Ray connection."""
-        service = self._make_service(ray_ready=True)
-        manager = RayManager(service)
+    def test_the_head_is_started_on_the_head(self):
+        services = RecordingServices()
+        manager = RayManager(services)
 
-        manager.ensure_ray_worker("worker-container", "10.0.0.2", "10.0.0.1")
-        assert service.exec_container.called
+        assert manager.ensure_ray_head("c-head", HEAD) is True
 
-    def test_wait_for_cluster_ready_timeout(self):
-        """Test wait_for_cluster_ready returns False on timeout."""
-        service = MagicMock()
-        service.exec_container.return_value = MagicMock(
-            ok=True,
-            stdout="not ready yet",
-            stderr="",
+        assert services.nodes_touched() == [HEAD]
+
+    def test_a_worker_that_needs_starting_still_only_touches_that_worker(self):
+        answers = iter(
+            [
+                ExecResult(1, "", "Ray not started"),  # status probe
+                ExecResult(0, ""),  # ray start
+                ExecResult(0, "Cluster is ready. OK"),  # readiness poll
+            ]
         )
-        manager = RayManager(service)
+        services = RecordingServices(answers=lambda _argv: next(answers))
+        manager = RayManager(services)
 
-        result = manager.wait_for_cluster_ready(
-            "test-container", timeout=1, poll_interval=0.1
+        assert manager.ensure_ray_worker("c-worker-0", WORKER, HEAD) is True
+
+        assert services.nodes_touched() == [WORKER]
+        start = next(
+            argv for _, _, argv in services.calls if argv[:2] == ["ray", "start"]
         )
-        assert result is False
+        assert "--address" in start
+        assert f"{HEAD}:29501" in start
+        assert start[start.index("--node-ip-address") + 1] == WORKER
 
-    def test_get_ray_status(self):
-        """Test get_ray_status returns output."""
-        service = MagicMock()
-        service.exec_container.return_value = MagicMock(
-            ok=True,
-            stdout="Cluster is ready",
-            stderr="",
+    def test_the_head_start_command_carries_the_head_address(self):
+        answers = iter(
+            [
+                ExecResult(1, "", "Ray not started"),
+                ExecResult(0, ""),
+                ExecResult(0, "Cluster is ready. OK"),
+            ]
         )
-        manager = RayManager(service)
+        services = RecordingServices(answers=lambda _argv: next(answers))
+        manager = RayManager(services)
 
-        status = manager.get_ray_status("test-container")
+        manager.ensure_ray_head("c-head", HEAD, port=6379)
+
+        start = next(
+            argv for _, _, argv in services.calls if argv[:2] == ["ray", "start"]
+        )
+        assert "--head" in start
+        assert "--port=6379" in start
+        assert start[start.index("--node-ip-address") + 1] == HEAD
+
+
+class TestRayStatus:
+    """Status and polling name their node like everything else."""
+
+    def test_get_ray_status_returns_the_output_of_that_node(self):
+        services = RecordingServices()
+        manager = RayManager(services)
+
+        status = manager.get_ray_status("c-head", HEAD)
+
         assert "ready" in status.lower()
+        assert services.nodes_touched() == [HEAD]
 
-    def test_get_ray_status_error(self):
-        """Test get_ray_status returns error message."""
-        service = MagicMock()
-        service.exec_container.return_value = MagicMock(
-            ok=False,
-            stdout="",
-            stderr="Ray not started",
+    def test_get_ray_status_surfaces_the_error(self):
+        services = RecordingServices(
+            answers=lambda _argv: ExecResult(1, "", "Ray not started")
         )
-        manager = RayManager(service)
+        manager = RayManager(services)
 
-        status = manager.get_ray_status("test-container")
-        assert "error" in status.lower() or "not started" in status.lower()
+        assert "not started" in manager.get_ray_status("c-head", HEAD)
+
+    def test_wait_for_cluster_ready_times_out_on_that_node(self):
+        services = RecordingServices(answers=_never_ready)
+        manager = RayManager(services)
+
+        assert (
+            manager.wait_for_cluster_ready("c-head", HEAD, timeout=1, poll_interval=0.1)
+            is False
+        )
+        assert services.nodes_touched() == [HEAD]
+
+    def test_a_start_failure_is_reported_rather_than_polled(self):
+        services = RecordingServices(
+            answers=lambda argv: (
+                ExecResult(1, "", "no such container")
+                if argv[:2] == ["ray", "status"]
+                else ExecResult(1, "", "ray start blew up")
+            )
+        )
+        manager = RayManager(services)
+
+        assert manager.ensure_ray_head("c-head", HEAD) is False
+
+    @pytest.mark.parametrize("method", ["get_ray_status", "wait_for_cluster_ready"])
+    def test_no_method_can_be_called_without_naming_a_node(self, method):
+        """There is no node-less overload to fall back onto."""
+        manager = RayManager(RecordingServices())
+        with pytest.raises(TypeError):
+            getattr(manager, method)("c-head")

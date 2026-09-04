@@ -397,7 +397,11 @@ class MockDockerService(DockerService):
         super().__init__(client or _get_mock_client())
 
     def copy_to_container(
-        self, container: str, local_path: str, remote_path: str
+        self,
+        container: str,
+        local_path: str,
+        remote_path: str,
+        timeout: int = 120,
     ) -> bool:
         """Pretend the file was copied into the container."""
         return True

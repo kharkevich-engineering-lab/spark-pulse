@@ -130,31 +130,56 @@ class MockClusterState:
         ]
 
 
-class MockRemoteDocker:
-    """Mock RemoteDockerService for testing."""
+class MockNodeServices:
+    """A node resolver handing out one recording service per node.
+
+    ``mods.py`` was the one consumer that already passed a real host on every
+    call, so the node it means has always been explicit. It now resolves that
+    node instead, and this fake records which node each call landed on.
+    """
 
     def __init__(self):
         self.calls: list[dict] = []
 
-    def exec_container(
-        self, host: str, container: str, command: list[str], timeout: int = 30
-    ) -> None:
-        self.calls.append(
-            {"type": "exec", "host": host, "container": container, "command": command}
+    def __call__(self, node) -> "_RecordingNodeService":
+        return _RecordingNodeService(self.calls, node.address or node.id)
+
+    def nodes_touched(self) -> list[str]:
+        seen: list[str] = []
+        for call in self.calls:
+            if call["host"] not in seen:
+                seen.append(call["host"])
+        return seen
+
+
+class _RecordingNodeService:
+    """The node-bound container service, recorded rather than executed."""
+
+    def __init__(self, calls: list[dict], host: str):
+        self._calls = calls
+        self._host = host
+
+    def exec_in_container(self, container, command, detach=False, timeout=None):
+        self._calls.append(
+            {
+                "type": "exec",
+                "host": self._host,
+                "container": container,
+                "command": command,
+            }
         )
 
-    def copy_to_container(
-        self, host: str, container: str, local_path: str, remote_path: str
-    ) -> None:
-        self.calls.append(
+    def copy_to_container(self, container, local_path, remote_path, timeout=120):
+        self._calls.append(
             {
                 "type": "copy",
-                "host": host,
+                "host": self._host,
                 "container": container,
                 "local": local_path,
                 "remote": remote_path,
             }
         )
+        return True
 
 
 class TestModOrchestrator:
@@ -190,8 +215,8 @@ class TestModOrchestrator:
             mod_path=mod_dir,
             target="head",
         )
-        mock_docker = MockRemoteDocker()
-        orchestrator = ModOrchestrator(remote_docker=mock_docker)
+        services = MockNodeServices()
+        orchestrator = ModOrchestrator(services=services)
         result = orchestrator.apply_mod_cluster(deployment, cluster)
 
         assert result.mod_name == "test-mod"
@@ -211,8 +236,8 @@ class TestModOrchestrator:
             mod_path=mod_dir,
             target="workers",
         )
-        mock_docker = MockRemoteDocker()
-        orchestrator = ModOrchestrator(remote_docker=mock_docker)
+        services = MockNodeServices()
+        orchestrator = ModOrchestrator(services=services)
         result = orchestrator.apply_mod_cluster(deployment, cluster)
 
         assert result.target == "workers"
@@ -232,8 +257,8 @@ class TestModOrchestrator:
             mod_path=mod_dir,
             target="all",
         )
-        mock_docker = MockRemoteDocker()
-        orchestrator = ModOrchestrator(remote_docker=mock_docker)
+        services = MockNodeServices()
+        orchestrator = ModOrchestrator(services=services)
         result = orchestrator.apply_mod_cluster(deployment, cluster)
 
         assert result.target == "all"
@@ -254,8 +279,8 @@ class TestModOrchestrator:
             target="all",
             completed_nodes=["10.0.0.1", "10.0.0.2"],
         )
-        mock_docker = MockRemoteDocker()
-        orchestrator = ModOrchestrator(remote_docker=mock_docker)
+        services = MockNodeServices()
+        orchestrator = ModOrchestrator(services=services)
         rolled_back = orchestrator.rollback_mod(deployment, cluster)
 
         assert "10.0.0.1" in rolled_back
@@ -274,7 +299,65 @@ class TestModOrchestrator:
             target="all",
             completed_nodes=[],
         )
-        mock_docker = MockRemoteDocker()
-        orchestrator = ModOrchestrator(remote_docker=mock_docker)
+        services = MockNodeServices()
+        orchestrator = ModOrchestrator(services=services)
         rolled_back = orchestrator.rollback_mod(deployment, cluster)
         assert rolled_back == []
+
+
+class TestModsLandOnTheNodeTheyTarget:
+    """A mod for the workers must not be installed on the head."""
+
+    def _mod(self, tmp_path):
+        mod_dir = tmp_path / "test-mod"
+        mod_dir.mkdir()
+        (mod_dir / "run.sh").write_text("#!/bin/bash\necho installing")
+        return mod_dir
+
+    def test_a_workers_mod_never_touches_the_head(self, tmp_path):
+        services = MockNodeServices()
+        orchestrator = ModOrchestrator(services=services)
+
+        orchestrator.apply_mod_cluster(
+            ModDeployment(
+                mod_name="test-mod", mod_path=self._mod(tmp_path), target="workers"
+            ),
+            MockClusterState(),
+        )
+
+        assert services.nodes_touched() == ["10.0.0.2", "10.0.0.3"]
+
+    def test_each_node_gets_its_own_container(self, tmp_path):
+        services = MockNodeServices()
+        orchestrator = ModOrchestrator(services=services)
+
+        orchestrator.apply_mod_cluster(
+            ModDeployment(
+                mod_name="test-mod", mod_path=self._mod(tmp_path), target="all"
+            ),
+            MockClusterState(),
+        )
+
+        pairs = {(call["host"], call["container"]) for call in services.calls}
+        assert pairs == {
+            ("10.0.0.1", "head-container"),
+            ("10.0.0.2", "worker0-container"),
+            ("10.0.0.3", "worker1-container"),
+        }
+
+    def test_rollback_removes_the_mod_on_each_completed_node(self, tmp_path):
+        services = MockNodeServices()
+        orchestrator = ModOrchestrator(services=services)
+
+        orchestrator.rollback_mod(
+            ModDeployment(
+                mod_name="test-mod",
+                mod_path=self._mod(tmp_path),
+                target="all",
+                completed_nodes=["10.0.0.2"],
+            ),
+            MockClusterState(),
+        )
+
+        assert services.nodes_touched() == ["10.0.0.2"]
+        assert services.calls[0]["command"][:2] == ["rm", "-rf"]

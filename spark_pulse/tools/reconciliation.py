@@ -82,14 +82,21 @@ def _default_docker() -> Any | None:
         return None
 
 
-def _default_remote_docker() -> Any | None:
-    """Build the default RemoteDockerService, or None when unavailable."""
-    try:
-        from spark_pulse.tools.remote_docker import RemoteDockerService
+def _default_cluster_service() -> Any | None:
+    """The control node's container service, or None when unavailable.
 
-        return RemoteDockerService()
+    Reconciliation rebuilds state from container labels, and without the node
+    registry the only daemon it can enumerate is this machine's. That used to
+    be expressed as an empty host on a service that claimed to reach any node;
+    it is now an explicit control-node resolution, so the limit is visible
+    rather than accidental. Reconciling a peer's containers is registry work.
+    """
+    try:
+        from spark_pulse.tools.node_service import control_node, service_for
+
+        return service_for(control_node())
     except Exception as e:  # pragma: no cover — import-time failure only
-        logger.warning("Remote docker service unavailable: %s", e)
+        logger.warning("Container service unavailable: %s", e)
         return None
 
 
@@ -151,7 +158,7 @@ def _reconstruct_deployment(labels: dict[str, str]) -> dict[str, Any] | None:
 
 
 def reconcile_clusters(
-    remote_docker: Any = None,
+    cluster_service: Any = None,
 ) -> list[dict[str, Any]]:
     """Reconstruct cluster state from Docker labels.
 
@@ -161,8 +168,8 @@ def reconcile_clusters(
     4. Return list of cluster state dicts
 
     Args:
-        remote_docker: RemoteDockerService instance (mock or real).
-                      If None, uses simulation mode.
+        cluster_service: Container service bound to the node whose containers
+            are being reconciled. Defaults to the control node's.
 
     Returns:
         List of reconstructed cluster state dicts.
@@ -170,7 +177,7 @@ def reconcile_clusters(
     if os.environ.get("SIMULATION_MODE", "0") == "1":
         return _reconcile_clusters_mock()
 
-    return _reconcile_clusters_real(remote_docker)
+    return _reconcile_clusters_real(cluster_service)
 
 
 def _reconcile_clusters_mock() -> list[dict[str, Any]]:
@@ -179,15 +186,15 @@ def _reconcile_clusters_mock() -> list[dict[str, Any]]:
     return []
 
 
-def _reconcile_clusters_real(remote_docker: Any = None) -> list[dict[str, Any]]:
+def _reconcile_clusters_real(cluster_service: Any = None) -> list[dict[str, Any]]:
     """Real reconciliation through the container service."""
     clusters: list[dict[str, Any]] = []
 
     try:
-        service = remote_docker or _default_remote_docker()
+        service = cluster_service or _default_cluster_service()
         if service is None:
             return []
-        containers = service.list_managed_containers("", {CLUSTER_LABEL: ""})
+        containers = service.list_managed_containers({CLUSTER_LABEL: ""})
     except Exception as e:
         logger.error("Failed to reconcile clusters: %s", e)
         return []
@@ -262,7 +269,7 @@ def _reconcile_deployments_real(docker: Any = None) -> list[dict[str, Any]]:
 
 def reconcile_all(
     docker: Any = None,
-    remote_docker: Any = None,
+    cluster_service: Any = None,
 ) -> ReconciliationResult:
     """Run full reconciliation pass.
 
@@ -270,7 +277,7 @@ def reconcile_all(
 
     Args:
         docker: DockerService for solo deployments.
-        remote_docker: RemoteDockerService for cluster deployments.
+        cluster_service: Container service for cluster deployments.
 
     Returns:
         ReconciliationResult with counts and errors.
@@ -279,7 +286,7 @@ def reconcile_all(
 
     # Reconcile clusters
     try:
-        clusters = reconcile_clusters(remote_docker)
+        clusters = reconcile_clusters(cluster_service)
         result.clusters_reconciled = len(clusters)
         logger.info(
             "Reconciled %d clusters",

@@ -21,7 +21,7 @@ class MockReconciler:
     def __init__(self, scenario: str = "default"):
         self.scenario = scenario
 
-    def reconcile_clusters(self, remote_docker: Any = None) -> list[dict]:
+    def reconcile_clusters(self, cluster_service: Any = None) -> list[dict]:
         """Mock cluster reconciliation."""
         if self.scenario == "partial":
             return []  # Simulate failure
@@ -34,7 +34,7 @@ class MockReconciler:
         return []  # No deployments in simulation mode
 
     def reconcile_all(
-        self, docker: Any = None, remote_docker: Any = None
+        self, docker: Any = None, cluster_service: Any = None
     ) -> ReconciliationResult:
         """Mock full reconciliation."""
         if self.scenario == "orphaned":
@@ -67,9 +67,9 @@ class MockReconciler:
 _reconciler = MockReconciler()
 
 
-def reconcile_clusters(remote_docker: Any = None) -> list[dict]:
+def reconcile_clusters(cluster_service: Any = None) -> list[dict]:
     """Mock cluster reconciliation."""
-    return _reconciler.reconcile_clusters(remote_docker)
+    return _reconciler.reconcile_clusters(cluster_service)
 
 
 def reconcile_deployments(docker: Any = None) -> list[dict]:
@@ -78,7 +78,7 @@ def reconcile_deployments(docker: Any = None) -> list[dict]:
 
 
 def reconcile_all(
-    docker: Any = None, remote_docker: Any = None
+    docker: Any = None, cluster_service: Any = None
 ) -> ReconciliationResult:
     """Mock full reconciliation."""
-    return _reconciler.reconcile_all(docker, remote_docker)
+    return _reconciler.reconcile_all(docker, cluster_service)

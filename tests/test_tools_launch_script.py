@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from unittest.mock import MagicMock
 
 from spark_pulse.tools.launch_script import (
     LaunchScriptManager,
@@ -248,14 +249,69 @@ class TestPatchedScriptBundle:
 class TestLaunchScriptDistributor:
     """Tests for LaunchScriptDistributor class."""
 
-    def test_requires_remote_docker(self):
+    class _Node:
+        def __init__(self, ip: str, role: str):
+            self.ip = ip
+            self.role = role
+            self.container_name = f"{role}-container"
+
+    class _Services:
+        """A node resolver recording which node each call reached."""
+
+        def __init__(self):
+            self.calls: list[tuple[str, str, list[str]]] = []
+            self.nodes: list = []
+
+        def __call__(self, node):
+            calls = self.calls
+            self.nodes.append(node)
+            address = node.address or node.id
+
+            class _Service:
+                def exec_in_container(
+                    self, container, command, detach=False, timeout=None
+                ):
+                    calls.append((address, container, list(command)))
+
+            return _Service()
+
+    def test_a_default_distributor_resolves_nodes_itself(self):
+        """No RemoteDockerService to forget to pass any more."""
         distributor = LaunchScriptDistributor()
-        with pytest.raises(RuntimeError, match="RemoteDockerService"):
-            distributor.deploy_to_node(
-                node=None,  # type: ignore
-                script=Path("/tmp/test.sh"),
-                container_name="test",
+        assert distributor._services is not None
+
+    def test_a_worker_script_is_copied_inside_the_worker(self):
+        services = self._Services()
+        ssh = MagicMock()
+        distributor = LaunchScriptDistributor(ssh_client=ssh, services=services)
+
+        distributor.deploy_to_node(
+            node=self._Node("10.0.0.2", "worker"),
+            script=Path("/tmp/patched.sh"),
+            container_name="worker-container",
+        )
+
+        assert services.calls == [
+            (
+                "10.0.0.2",
+                "worker-container",
+                ["cp", "/tmp/exec-script.sh", "/workspace/exec-script.sh"],
             )
+        ]
+        assert ssh.copy.call_args.kwargs["host"] == "10.0.0.2"
+
+    def test_a_local_head_needs_no_ssh(self):
+        services = self._Services()
+        distributor = LaunchScriptDistributor(services=services)
+
+        distributor.deploy_to_node(
+            node=self._Node("127.0.0.1", "head"),
+            script=Path("/tmp/patched.sh"),
+            container_name="head-container",
+        )
+
+        assert services.nodes[0].is_self is True
+        assert services.calls[0][1] == "head-container"
 
 
 class TestValidateModContent:

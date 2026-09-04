@@ -44,17 +44,29 @@ class ModOrchestrator:
     """Orchestrates mod deployment across cluster nodes.
 
     Depends on:
-    - SSHClient + RemoteDockerService from Phase 3
+    - SSHClient + a node resolver handing out node-bound container services
     - validate_mod_content() for security validation
+
+    This was already the one consumer passing a real host on every call, so
+    the node it means has always been explicit; it now says so by resolving
+    the node instead of passing its address to a shared service.
     """
 
     def __init__(
         self,
         ssh_client: Any = None,
-        remote_docker: Any = None,
+        services: Any = None,
     ):
+        from spark_pulse.tools.node_service import NodeServices
+
         self._ssh = ssh_client
-        self._docker = remote_docker
+        self._services = services or NodeServices()
+
+    def _service(self, address: str) -> Any:
+        """The container service for the node at ``address``."""
+        from spark_pulse.tools.node_service import node_for
+
+        return self._services(node_for(address))
 
     def apply_mod_cluster(
         self,
@@ -149,15 +161,12 @@ class ModOrchestrator:
         mod_name: str,
     ) -> None:
         """Apply a mod to a single node's container."""
-        if self._docker is None:
-            raise RuntimeError("ModOrchestrator requires a RemoteDockerService")
-
+        service = self._service(node.ip)
         container_name = node.container_name
         remote_path = f"/workspace/mods/{mod_name}"
 
         # Copy mod files to container
-        self._docker.exec_container(
-            host=node.ip,
+        service.exec_in_container(
             container=container_name,
             command=["mkdir", "-p", remote_path],
         )
@@ -165,8 +174,7 @@ class ModOrchestrator:
         # Copy run.sh
         run_sh = mod_path / "run.sh"
         if run_sh.exists():
-            self._docker.copy_to_container(
-                host=node.ip,
+            service.copy_to_container(
                 container=container_name,
                 local_path=str(run_sh),
                 remote_path=f"{remote_path}/run.sh",
@@ -175,16 +183,14 @@ class ModOrchestrator:
         # Copy other files
         for file_path in mod_path.iterdir():
             if file_path.is_file() and file_path.name != "run.sh":
-                self._docker.copy_to_container(
-                    host=node.ip,
+                service.copy_to_container(
                     container=container_name,
                     local_path=str(file_path),
                     remote_path=f"{remote_path}/{file_path.name}",
                 )
 
         # Execute run.sh
-        self._docker.exec_container(
-            host=node.ip,
+        service.exec_in_container(
             container=container_name,
             command=["bash", f"{remote_path}/run.sh"],
         )
@@ -195,11 +201,7 @@ class ModOrchestrator:
         node: Any,
     ) -> None:
         """Remove a mod from a single node's container."""
-        if self._docker is None:
-            raise RuntimeError("ModOrchestrator requires a RemoteDockerService")
-
-        self._docker.exec_container(
-            host=node.ip,
+        self._service(node.ip).exec_in_container(
             container=node.container_name,
             command=["rm", "-rf", f"/workspace/mods/{mod_name}"],
         )
