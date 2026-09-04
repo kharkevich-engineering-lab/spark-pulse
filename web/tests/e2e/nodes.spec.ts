@@ -85,7 +85,7 @@ test("lists the nodes the backend holds, with interfaces, role and state", async
 test("keeps the experimental banner", async ({ page }) => {
   await gotoPage(page, "/cluster");
   await expect(
-    page.getByRole("note").filter({ hasText: "Cluster orchestration is experimental" }),
+    page.getByRole("note").filter({ hasText: "Multi-node is implemented but unverified" }),
   ).toBeVisible();
   await expectNoCrash(page);
 });

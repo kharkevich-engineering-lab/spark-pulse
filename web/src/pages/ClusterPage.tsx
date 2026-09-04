@@ -21,13 +21,15 @@ import NodeRegistry from "@/components/NodeRegistry";
 import { Server, AlertCircle, Loader2 } from "lucide-react";
 import { setRefresh } from "@/lib/refresh";
 import type { Deployment } from "@/lib/types";
-import { ExperimentalBanner } from "@/components/Experimental";
+import { ExperimentalBadge, ExperimentalBanner } from "@/components/Experimental";
+import {
+  MULTI_NODE_BADGE_TITLE,
+  MULTI_NODE_REASON,
+  MULTI_NODE_TITLE,
+  MULTI_NODE_UNPROVEN,
+  nodeCount,
+} from "@/lib/experimental";
 import { useConfig } from "@/lib/config";
-
-/** How many machines a deployment occupies. Absent or 0 means this one. */
-function rankCount(deployment: Deployment): number {
-  return deployment.node_count || deployment.nodes?.length || 1;
-}
 
 /** Where a deployment's ranks run, named rather than counted. */
 function placement(deployment: Deployment): string {
@@ -50,8 +52,9 @@ export default function ClusterPage() {
     <div className="space-y-6">
       {experimental && (
         <ExperimentalBanner
-          title="Cluster orchestration is experimental"
-          reason="Multi-node bring-up has never been run on real hardware: no second DGX Spark was available to verify it. A deployment of size one is verified and runs through the same path a larger one will. Until the start loop covers every rank, asking for more than one node is refused by name rather than started half-way."
+          title={MULTI_NODE_TITLE}
+          reason={MULTI_NODE_REASON}
+          items={MULTI_NODE_UNPROVEN}
         />
       )}
 
@@ -111,7 +114,14 @@ export default function ClusterPage() {
                       <p className="font-medium">{deployment.name}</p>
                       <p className="text-xs text-text-muted">{deployment.recipe_id}</p>
                     </td>
-                    <td className="py-2 pr-4">{rankCount(deployment)}</td>
+                    <td className="py-2 pr-4">
+                      <span className="inline-flex items-center gap-1.5">
+                        {nodeCount(deployment)}
+                        {nodeCount(deployment) > 1 && (
+                          <ExperimentalBadge title={MULTI_NODE_BADGE_TITLE} />
+                        )}
+                      </span>
+                    </td>
                     <td className="py-2 pr-4 font-mono text-xs">{placement(deployment)}</td>
                     <td className="py-2 pr-4">
                       {deployment.engine ? `${deployment.engine}/${deployment.variant ?? "default"}` : "—"}

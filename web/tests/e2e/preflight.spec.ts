@@ -17,6 +17,11 @@ const RECIPE_NAME = "Qwen2.5-0.5B-Instruct";
 const CONTROL = "192.168.1.100";
 const PEER = "10.0.0.11";
 
+/** A two-node pre-flight needs a two-node plan, and one GPU per node means
+ *  the world size is the node count: a recipe left at tp=1 is refused before
+ *  there is anything to check. */
+const BOTH_NODES = { nodes: [CONTROL, PEER], params: { tensor_parallel: 2 } };
+
 interface PreflightCheck {
   id: string;
   title: string;
@@ -67,7 +72,7 @@ test("reports a verdict and a check for every node", async ({ request }) => {
 });
 
 test("every non-passing check names its node and a remedy", async ({ request }) => {
-  const report = await preflight(request, { nodes: [CONTROL, PEER] });
+  const report = await preflight(request, BOTH_NODES);
 
   const bad = report.checks.filter((c) => c.status !== "pass");
   expect(bad.length, "the simulated peer holds no engine image").toBeGreaterThan(0);
@@ -78,7 +83,7 @@ test("every non-passing check names its node and a remedy", async ({ request }) 
 });
 
 test("checks both nodes, not only the control plane", async ({ request }) => {
-  const report = await preflight(request, { nodes: [CONTROL, PEER] });
+  const report = await preflight(request, BOTH_NODES);
   expect(report.nodes.map((n) => n.label)).toEqual(["spark-01", "spark-02"]);
   expect(new Set(report.checks.map((c) => c.node))).toEqual(
     new Set(["spark-01", "spark-02"]),
@@ -86,7 +91,7 @@ test("checks both nodes, not only the control plane", async ({ request }) => {
 });
 
 test("a pull is a wait, not a failure", async ({ request }) => {
-  const report = await preflight(request, { nodes: [CONTROL, PEER] });
+  const report = await preflight(request, BOTH_NODES);
 
   const image = report.checks.find((c) => c.id === "image" && c.node === "spark-02");
   expect(image, "the peer should have been asked about the image").toBeTruthy();

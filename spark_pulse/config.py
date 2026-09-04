@@ -472,22 +472,6 @@ class _Config:
     def docker_keep_entrypoint(self) -> bool:
         return bool(self._data.get("docker", {}).get("keep_entrypoint", False))
 
-    @property
-    def nccl_debug(self) -> str | None:
-        return self._data.get("nccl", {}).get("debug")
-
-    @property
-    def nccl_socket_ifname(self) -> str | None:
-        return self._data.get("nccl", {}).get("socket_ifname")
-
-    @property
-    def nccl_ib_hca(self) -> str | None:
-        return self._data.get("nccl", {}).get("ib_hca")
-
-    @property
-    def nccl_ib_disable(self) -> bool:
-        return bool(self._data.get("nccl", {}).get("ib_disable", False))
-
     # ── Mod Settings ───────────────────────────────────────────────────────
 
     @property

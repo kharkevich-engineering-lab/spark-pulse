@@ -19,6 +19,15 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+#: The largest topology any engine may be asked for.
+#:
+#: NVIDIA publishes a two-node bring-up guide for DGX Spark and a three- and
+#: four-node direct-connect mesh, and nothing at all above four. A fifth node
+#: has no documented cabling, no documented NCCL configuration and no way for
+#: us to check either, so the plan refuses it by number rather than letting an
+#: operator discover it as a rendezvous that never forms.
+MAX_CLUSTER_NODES = 4
+
 # ── Spec model (mirrors engine.yaml) ─────────────────────────────────────────
 
 
@@ -71,6 +80,23 @@ class EngineRuntime(BaseModel):
 
 
 class EngineCapabilities(BaseModel):
+    """What an engine image claims it can do.
+
+    ``solo``, ``cluster`` and ``mesh`` are the three topology sizes, and
+    :meth:`Engine.supports_size` is the one place that reads them:
+
+    * ``solo`` — one node.
+    * ``cluster`` — two nodes, the size NVIDIA publishes guidance for.
+    * ``mesh`` — three or four nodes, directly connected. The ring
+      configuration differs at three and aggregate bandwidth roughly halves,
+      so an engine that has only ever been arranged as a pair must say so
+      rather than be assumed to generalise.
+
+    None of these is a claim that the size has been *run*; it is a claim that
+    the engine renders and is documented for it. See
+    :data:`MAX_CLUSTER_NODES` for the ceiling no engine may claim past.
+    """
+
     model_config = ConfigDict(extra="allow")
 
     mods: bool = False
@@ -361,6 +387,56 @@ class Engine:
                 f"the rendered launch flags (--nnodes/--node-rank/--master-addr"
                 f"/--master-port) need {self.name} >= {wanted}; pick a newer "
                 "engine image or variant"
+            )
+        return True, ""
+
+    def supports_size(self, node_count: int) -> tuple[bool, str]:
+        """Whether this engine claims the topology size; else why not.
+
+        The three ``capabilities`` flags are the engine's own claim, taken
+        from its ``engine.yaml``, and this is the only place that reads them.
+        A claim is about rendering and published guidance, never about
+        hardware verification — an engine that renders four ranks correctly
+        has still never been run on four machines here.
+
+        Sizes above :data:`MAX_CLUSTER_NODES` are refused for every engine,
+        whatever it claims, because there is no published configuration to
+        render against.
+        """
+        if node_count < 1:
+            return False, "a deployment needs at least one node"
+        caps = self.spec.capabilities
+        if node_count == 1:
+            if not caps.solo:
+                return False, (
+                    f"engine '{self.spec.key}' does not support a single-node "
+                    "deployment; it declares solo: false"
+                )
+            return True, ""
+        if node_count > MAX_CLUSTER_NODES:
+            return False, (
+                f"{node_count} nodes is more than the {MAX_CLUSTER_NODES} this "
+                "hardware has a published topology for: NVIDIA documents two "
+                "nodes over the direct link and a three- or four-node mesh, "
+                f"and nothing above four. Deploy on at most {MAX_CLUSTER_NODES} "
+                "nodes"
+            )
+        if not caps.cluster:
+            return False, (
+                f"engine '{self.spec.key}' does not support multi-node "
+                f"deployment; it declares cluster: false, so {node_count} "
+                "nodes cannot be rendered. Deploy it on one node, or pick an "
+                "engine variant that declares cluster support"
+            )
+        if node_count >= 3 and not caps.mesh:
+            return False, (
+                f"engine '{self.spec.key}' declares mesh: false, so it claims "
+                f"only the two-node arrangement, not the {node_count}-node "
+                "mesh. Three and four nodes are cabled as a direct-connect "
+                "mesh whose ring differs from a pair's and whose aggregate "
+                "bandwidth is roughly half, so it is a different "
+                "configuration rather than more of the same. Deploy on two "
+                "nodes, or pick an engine variant that declares mesh support"
             )
         return True, ""
 

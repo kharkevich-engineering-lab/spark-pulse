@@ -50,10 +50,6 @@ docker:
     - ~/.cache/flashinfer
     - ~/.triton
   keep_entrypoint: false
-nccl:
-  debug: null
-  socket_ifname: null
-  ib_hca: null
 
 # ── Image registry (control node) ────────────────────────────────────────────
 # Images are seeded into a registry on the control node and pulled from there

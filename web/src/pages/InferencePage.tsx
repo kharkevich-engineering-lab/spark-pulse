@@ -6,6 +6,13 @@ import StatusBadge from "@/components/StatusBadge";
 import HealthBadge from "@/components/HealthBadge";
 import EventStreamViewer from "@/components/EventStreamViewer";
 import RankList from "@/components/RankList";
+import { ExperimentalBadge, ExperimentalBanner } from "@/components/Experimental";
+import {
+  MULTI_NODE_BADGE_TITLE,
+  MULTI_NODE_REASON,
+  MULTI_NODE_TITLE,
+  MULTI_NODE_UNPROVEN,
+} from "@/lib/experimental";
 import { ConfirmModal, AlertModal } from "@/components/Modal";
 import { Square, X, Trash2, Loader2, AlertCircle, Terminal, Flame } from "lucide-react";
 import { setRefresh } from "@/lib/refresh";
@@ -143,11 +150,14 @@ export default function InferencePage() {
                   </span>
                 )}
                 {dep.node_count != null && dep.node_count > 1 && (
-                  <span
-                    className="hidden md:inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono bg-surface-hover text-text-muted border border-border shrink-0"
-                    title={`Spans ${dep.node_count} nodes, one container per rank`}
-                  >
-                    {dep.node_count} nodes
+                  <span className="hidden md:inline-flex items-center gap-1.5 shrink-0">
+                    <span
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono bg-surface-hover text-text-muted border border-border"
+                      title={`Spans ${dep.node_count} nodes, one container per rank`}
+                    >
+                      {dep.node_count} nodes
+                    </span>
+                    <ExperimentalBadge title={MULTI_NODE_BADGE_TITLE} />
                   </span>
                 )}
                 {dep.port && <span className="text-sm font-mono text-text-muted shrink-0">:{dep.port}</span>}
@@ -164,6 +174,14 @@ export default function InferencePage() {
               </div>
               {expandedId === dep.id && (
                 <div className="border-t border-border">
+                  {dep.node_count != null && dep.node_count > 1 && (
+                    <ExperimentalBanner
+                      className="m-4"
+                      title={MULTI_NODE_TITLE}
+                      reason={MULTI_NODE_REASON}
+                      items={MULTI_NODE_UNPROVEN}
+                    />
+                  )}
                   {dep.runtime === "native" && (
                     <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 px-4 py-3 bg-bg text-xs border-b border-border">
                       <dt className="text-text-muted">Engine</dt>

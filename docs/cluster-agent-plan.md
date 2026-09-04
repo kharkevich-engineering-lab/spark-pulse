@@ -77,7 +77,7 @@ makes the improvement general rather than confined to bursts.
 
 **Decision: defer phase D, and do not treat it as blocked on effort.** All three
 remaining justifications only bite at more than one node, and that is phase E,
-which is blocked on a second Spark. Building an agent for failure modes we
+whose *validation* is blocked on a second Spark. Building an agent for failure modes we
 cannot exercise would repeat the mistake section 2.2 documents — four things
 shipped and broken precisely because multi-node never ran. Two of the three also
 have cheaper mitigations worth trying first: a shorter `ConnectTimeout` on
@@ -391,10 +391,20 @@ are real, but they only bite above one node, which is phase E. Deferred until a
 second Spark makes the failure modes reproducible. Interface: three-state node
 health, agent version and skew, and the removal actions distinguished.
 
-**Phase E, multi-node bring-up.** Blocked on a second Spark. Everything before
-this is verifiable on one machine, including a size-one cluster driven through
-the general path. Interface: the experimental flag flips off, and the banner's
-list of unproven things shrinks to nothing.
+**Phase E, multi-node bring-up — implemented, unverified.** Everything that can
+be built and exercised without a second machine is built and exercised: the
+plan resolves each rank's node through the registry and pins that machine's own
+interfaces, the start loop runs workers first and rank zero last at two, three
+and four nodes, teardown is head-first with an unreachable rank recorded as an
+orphan rather than assumed gone, and every size the hardware has no published
+topology for is refused at plan time with a reason. All of it is covered in
+simulation only. **No part of it has run on two machines**, and the phase is
+not done until it has. Interface: multi-node is marked wherever an operator can
+reach it — the deploy form's node selector, a multi-node deployment's row and
+its expanded view, and the Cluster page — and the banner names the specific
+unproven things at the end of section 7 rather than the word "experimental".
+The flag flips off, and the badge and banner disappear, when that list is
+empty.
 
 ## 5. What this costs
 
@@ -562,15 +572,68 @@ all. I made that worse early in this session by adding a pass-with-no-tests flag
 to get the job green. The convergence work should fill that suite, starting with
 a size-one deployment through the general path.
 
-**What stays unproven until a second Spark exists.** Whether the rendezvous
-forms across machines for either engine. NCCL transport selection over the real
-fabric, and whether the twin-adapter configuration reaches NVIDIA's throughput
-threshold. Interface pinning against real per-role names, including NVIDIA's rule
-that the two devices of one port sit on different subnets. Whether workers-first
-ordering actually avoids the ten-minute collective timeout, and whether the
-startup gates are set right. Failure semantics with a genuinely unreachable peer.
-Anything at three nodes, where the ring configuration differs and bandwidth
-roughly halves, or above four, where NVIDIA publishes no guidance at all.
+**What phase E added on top of the convergence, and what it found.** Growing
+the working path from one container to N is done; phase E was the difference
+between "N is possible" and "N is complete", and closing it turned up three
+things worth recording.
+
+*Interface pinning had no source.* The engines rendered `NCCL_SOCKET_IFNAME`
+and friends above one node, and the pre-flight checked the names against the
+node — but `plan` built its topology from bare addresses, so the names were
+always empty and a multi-node launch would have pinned nothing at all. The
+registry record is now what the topology carries. Separately,
+`tools/network.py` was a second, unreferenced implementation of the same
+mapping, still emitting Ray variables; it and its mock twin and the settings
+fields that fed it are deleted, so there is one source of a per-node interface
+name and it is the registry.
+
+*Listing filtered on `mode=solo`.* `list_deployments` enumerated managed
+containers with a `spark-pulse.mode=solo` filter, which was invisible while
+every deployment was solo and wrong the moment one was not: a rank of a
+multi-node deployment carries `mode=cluster`, was never enumerated, and the
+running deployment was then marked stopped on the absence of a container the
+filter had excluded. It filters on the deployment label now.
+
+*The simulation was lying about unreachability.* An unreachable host in the
+simulated SSH transport returned a non-zero `SSHResult`, where the real
+`OpenSSHClient` raises `SSHError` on ssh's own exit 255. Because
+`RemoteNodeService` reads a failed `docker inspect` as "no such container", a
+rank on a dead node was **confirmed gone** — released on inference rather than
+on evidence, the exact bug 3.3 exists to prevent. The simulated transport now
+raises, and the orphan path is exercised because of it.
+
+Refusals added at plan time, each naming what is wrong and what to do: a size
+above four, for any engine; three or four nodes on an engine that declares
+`mesh: false`; an address not in the node registry; more nodes than the
+registry holds; the same machine listed twice; and a parallelism that does not
+occupy the topology exactly, in either direction — the old behaviour trimmed
+spare peers silently, and a rank with no shard to hold hangs at the rendezvous.
+
+**What stays unproven until a second Spark exists.** This is the list the UI
+banner renders, kept in `web/src/lib/experimental.ts`; the two must stay in
+step, and an item leaves only when it has been observed on hardware.
+
+* Whether the rendezvous forms across machines, for either engine.
+* Which transport NCCL selects over the real fabric, and whether the
+  twin-adapter configuration reaches NVIDIA's throughput threshold.
+* Interface pinning against real per-role names, including NVIDIA's rule that
+  the two devices of one port sit on different subnets. The names now come from
+  each node's registry record and are checked by the pre-flight against
+  `/sys/class/net` and `/sys/class/infiniband`, so a wrong name is caught before
+  a launch — but no real fabric name has ever been pinned.
+* Whether starting workers before rank zero really avoids the ten-minute
+  collective timeout, and whether the startup gates are set right.
+* How an unreachable peer behaves over a real SSH transport. The *bookkeeping*
+  is now covered: the simulated transport raises the same `SSHError` on an
+  unreachable host that `OpenSSHClient` raises on ssh's exit 255, so a gang
+  that loses a peer mid-start tears the reachable ranks down and records the
+  unreachable one as an outstanding orphan. What is unproven is the transport
+  itself — a half-open connection, a stale `ControlMaster`, a node answering
+  slowly rather than not at all, and the ten-second `ConnectTimeout` that
+  decides how long "unreachable" takes to establish.
+* Anything at three or four nodes, where the ring configuration differs and
+  aggregate bandwidth roughly halves. Above four, NVIDIA publishes no guidance
+  at all and the plan refuses outright.
 
 **One hardware fact that changes recipe tuning.** `nvidia-smi` reports no GPU
 memory on this hardware, verified: total, used and free all come back as not
@@ -631,10 +694,20 @@ link-local address, which silently disables peer sweeps; and whether GPU memory
 reporting is available at all, since on this hardware it is not.
 
 **Experimental marking is temporary and flag-driven.** The cluster badge and
-banner are already backed by a config flag rather than hardcoded. When a two-node
-bring-up is verified on hardware, the flag flips and both disappear without a
-code change. The banner should name what is unproven, not merely say
-experimental, and that text should shrink as items are verified.
+banner are backed by `cluster_experimental` rather than hardcoded. When a
+two-node bring-up is verified on hardware, the flag flips and both disappear
+without a code change. The banner names what is unproven rather than saying
+"experimental", and that text shrinks as items are verified.
+
+The marking has to reach every place an operator can *choose* multi-node, not
+only the page named after it: the deploy form's node selector carries the badge
+before a peer is picked and the full banner once one is, a multi-node
+deployment carries the badge in the Inference list and the banner when its row
+is expanded, and the Cluster page's own deployment table carries it per row. The
+prose lives in one module, `web/src/lib/experimental.ts`, so there is one list
+to shorten rather than five to keep in step; the plan itself also carries a
+one-line warning saying the same thing, so an operator reading the preview or
+the record sees it without the UI.
 
 **Credentials, in the interface.** The two distribution modes are presented with
 their real trade-off, not as a speed setting: fetch once keeps every credential
@@ -644,10 +717,23 @@ only in this document.
 
 ## 9. The one thing still blocked
 
-A second DGX Spark. Everything else in this plan has now been built and verified
-on the one that exists: phases A, B and C are merged, and phase D is deferred on
-the evidence in 2.1a rather than on effort. What a second machine unblocks is
-listed at the end of section 7 — rendezvous across machines, NCCL transport over
-the real fabric, interface pinning against per-role names, workers-first
-ordering against the collective timeout, and failure semantics with a genuinely
-unreachable peer.
+A second DGX Spark — and what it blocks is now **validation, not
+implementation**. That distinction is the whole of phase E's status and it is
+worth stating precisely.
+
+Phases A, B and C are merged and were verified on the one Spark that exists.
+Phase D is deferred on the evidence in 2.1a rather than on effort. Phase E is
+*written*: the plan resolves every rank against the node registry and pins that
+machine's own interfaces, refuses every topology the hardware has no published
+configuration for, starts workers before rank zero at two, three and four
+nodes, tears down head-first, and books a rank it could not reach as an
+outstanding orphan instead of assuming it is gone. There is no missing code
+waiting on hardware; there is no design decision waiting on a measurement.
+
+What is waiting is evidence. Everything in phase E is exercised in simulation
+and nothing in it has ever run on two machines, so every claim about it is a
+claim about what is rendered, ordered, refused and recorded — never about what
+serves. A second machine does not unblock building it. It unblocks *believing*
+it, one item at a time, against the list at the end of section 7. Until that
+list is empty, `cluster_experimental` stays true and the badge and banner stay
+up.

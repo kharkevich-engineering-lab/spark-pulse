@@ -11,6 +11,7 @@ import DeployOptions, {
   type DeployOptionsValue,
 } from "@/components/DeployOptions";
 import type { ClusterNode, EngineSummary, RecipeDetail } from "@/lib/types";
+import { MULTI_NODE_TITLE, MULTI_NODE_UNPROVEN } from "@/lib/experimental";
 
 vi.mock("@/lib/api", () => ({
   fetchEngines: vi.fn(),
@@ -526,6 +527,38 @@ describe("DeployOptions node selection", () => {
     await waitFor(() =>
       expect(screen.getByTestId("deploy-world-size")).toHaveTextContent("3 nodes, ranks 0-2"),
     );
+  });
+
+  it("marks the node selector experimental even before a peer is picked", async () => {
+    vi.mocked(fetchNodes).mockResolvedValue([CONTROL_NODE, PEER_NODE]);
+    render(<ControlledDeployOptions recipe={V1_RECIPE} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /deploy options/i }));
+
+    await waitFor(() => expect(screen.getByTestId("deploy-nodes")).toBeInTheDocument());
+    // The badge is on the label, so the warning reaches an operator who is
+    // only looking at the control rather than one who has already used it.
+    const selector = screen.getByTestId("deploy-node-selector");
+    expect(selector).toHaveTextContent("exp");
+    // The banner is not: solo is not experimental, and this is still solo.
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
+  });
+
+  it("names what is unproven once more than one node is selected", async () => {
+    vi.mocked(fetchNodes).mockResolvedValue([CONTROL_NODE, PEER_NODE]);
+    render(<ControlledDeployOptions recipe={V1_RECIPE} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /deploy options/i }));
+
+    await waitFor(() => expect(screen.getByTestId("deploy-nodes")).toBeInTheDocument());
+    await user.click(screen.getByLabelText(new RegExp(PEER_NODE.name)));
+
+    const note = await screen.findByRole("note");
+    expect(note).toHaveTextContent(MULTI_NODE_TITLE);
+    // Named risks, not the word "experimental" on its own.
+    expect(note).toHaveTextContent(/rendezvous forms across machines/i);
+    expect(note).toHaveTextContent(/NVIDIA publishes no guidance/i);
+    expect(note.querySelectorAll("li")).toHaveLength(MULTI_NODE_UNPROVEN.length);
   });
 
   it("keeps the control node checked and unclickable", async () => {

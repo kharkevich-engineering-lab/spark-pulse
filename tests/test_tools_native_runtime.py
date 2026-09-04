@@ -60,9 +60,21 @@ V1_TP2 = {
     "defaults": {"port": 8000, "tensor_parallel": 2},
 }
 
+#: The three-node fleet's recipe. One GPU per node means the world size *is*
+#: the node count, so a three-node deployment has to occupy three ranks.
+V1_TP3 = {
+    **V1_RECIPE,
+    "id": "qwen3-8b-tp3",
+    "defaults": {"port": 8000, "tensor_parallel": 3},
+}
+
 V1_SOLO_ONLY = {**V1_RECIPE, "id": "solo-only", "solo_only": True}
-V1_CLUSTER_ONLY = {**V1_RECIPE, "id": "cluster-only", "cluster_only": True}
-V1_MIN_NODES = {**V1_RECIPE, "id": "min-three", "min_nodes": 3}
+V1_CLUSTER_ONLY = {
+    **V1_TP2,
+    "id": "cluster-only",
+    "cluster_only": True,
+}
+V1_MIN_NODES = {**V1_TP3, "id": "min-three", "min_nodes": 3}
 
 V1_UNKNOWN_TAG = {
     **V1_RECIPE,
@@ -98,6 +110,7 @@ RECIPES = {
     for r in (
         V1_RECIPE,
         V1_TP2,
+        V1_TP3,
         V1_UNKNOWN_TAG,
         V1_NO_PORT,
         V1_WITH_MODS,
@@ -209,7 +222,7 @@ class TestTopologyConstraints:
         assert "cluster_only" in str(exc.value)
 
     def test_cluster_only_accepts_two_nodes(self, native):
-        assert native.plan("cluster-only", nodes=["a", "b"], solo=False).node_count == 2
+        assert native.plan("cluster-only", nodes=PAIR, solo=False).node_count == 2
 
     def test_min_nodes_is_enforced(self, native):
         with pytest.raises(native.NativeRuntimeError) as exc:
@@ -217,7 +230,7 @@ class TestTopologyConstraints:
         assert "at least 3 nodes" in str(exc.value)
 
     def test_min_nodes_is_satisfied(self, native):
-        plan = native.plan("min-three", nodes=["a", "b", "c"], solo=False)
+        plan = native.plan("min-three", nodes=NODES, solo=False)
         assert plan.node_count == 3
 
 
@@ -232,7 +245,7 @@ class TestCapacity:
         assert "need 2, have 1" in reason
 
     def test_two_way_parallelism_across_two_nodes_is_planned(self, native):
-        plan = native.plan("qwen3-8b-tp2", nodes=["a", "b"], solo=False)
+        plan = native.plan("qwen3-8b-tp2", nodes=PAIR, solo=False)
         assert plan.node_count == 2
         assert "--tensor-parallel-size 2" in plan.launch_command
 
@@ -476,7 +489,7 @@ class TestStart:
         refusal lives in exactly one place — ``tools.deploy_dispatch``, which
         ``test_router_deployments`` covers.
         """
-        plan = native.plan("qwen3-8b", nodes=["a", "b"], solo=False)
+        plan = native.plan("qwen3-8b-tp2", nodes=PAIR, solo=False)
         assert [r.rank for r in plan.rank_plans] == [0, 1]
         assert len(plan.ranks) == 2
 
@@ -1022,6 +1035,31 @@ class Fleet:
 NODES = ["10.0.0.1", "10.0.0.2", "10.0.0.3"]
 
 
+@pytest.fixture(autouse=True)
+def registered_nodes():
+    """Enroll every address these tests deploy to.
+
+    A plan above one node resolves its nodes through the registry, because
+    that is where the per-machine fabric interface names live and NCCL
+    pinning is find-or-fail. So a test that deploys to an address has to
+    enroll it first, exactly as an operator would. It is autouse rather than
+    opt-in on purpose: the size-one tests run with a populated registry too,
+    which is how they show that a solo deployment does not read it.
+    """
+    for index, address in enumerate(NODES):
+        tools.node_registry.add_node(
+            name=f"fleet-{index}",
+            address=address,
+            ethernet_interface="eth0",
+            infiniband_interfaces=("ib0", "ib1"),
+        )
+    yield
+
+
+#: A two-node pair out of the same registry, for the tests that want two.
+PAIR = NODES[:2]
+
+
 @pytest.fixture
 def fleet():
     return Fleet(NODES)
@@ -1081,7 +1119,9 @@ class TestSizeOneIsUnchanged:
 
 class TestRankNaming:
     def test_a_rank_container_carries_deployment_rank_and_generation(self, native):
-        plan = native.plan("qwen3-8b", nodes=NODES, solo=False, deployment_id="dep1")
+        plan = native.plan(
+            "qwen3-8b-tp3", nodes=NODES, solo=False, deployment_id="dep1"
+        )
 
         assert [r.container.name for r in plan.rank_plans] == [
             "spark-pulse-dep1-r0-g1",
@@ -1090,7 +1130,9 @@ class TestRankNaming:
         ]
 
     def test_identity_labels_are_applied_last(self, native):
-        plan = native.plan("qwen3-8b", nodes=NODES, solo=False, deployment_id="dep1")
+        plan = native.plan(
+            "qwen3-8b-tp3", nodes=NODES, solo=False, deployment_id="dep1"
+        )
 
         labels = plan.rank_plans[2].container.labels
         assert labels[DEPLOYMENT_LABEL] == "dep1"
@@ -1104,7 +1146,9 @@ class TestRankNaming:
 
     def test_the_started_container_really_carries_the_identity(self, native, fleet):
         """The labels have to survive the container service, not just the plan."""
-        plan = native.plan("qwen3-8b", nodes=NODES, solo=False, deployment_id="dep1")
+        plan = native.plan(
+            "qwen3-8b-tp3", nodes=NODES, solo=False, deployment_id="dep1"
+        )
         native.start(plan, services=fleet.services, wait=True)
 
         container = fleet.nodes["10.0.0.3"].client.containers.get(
@@ -1121,13 +1165,13 @@ class TestRankNaming:
             "docker_overrides",
             property(lambda self: {"network_host": False}),
         ):
-            plan = native.plan("qwen3-8b", nodes=NODES, solo=False)
+            plan = native.plan("qwen3-8b-tp3", nodes=NODES, solo=False)
         assert plan.rank_plans[0].container.port_mappings
         assert plan.rank_plans[1].container.port_mappings == []
         assert plan.rank_plans[2].container.port_mappings == []
 
     def test_each_rank_renders_its_own_script(self, native):
-        plan = native.plan("qwen3-8b", nodes=NODES, solo=False)
+        plan = native.plan("qwen3-8b-tp3", nodes=NODES, solo=False)
 
         assert plan.rank_plans[0].script != plan.rank_plans[1].script
         assert "--node-rank 1" in plan.rank_plans[1].command
@@ -1152,7 +1196,9 @@ class TestRankNaming:
 
 class TestStartOrder:
     def test_workers_are_created_first_and_rank_zero_last(self, native, fleet):
-        plan = native.plan("qwen3-8b", nodes=NODES, solo=False, deployment_id="dep1")
+        plan = native.plan(
+            "qwen3-8b-tp3", nodes=NODES, solo=False, deployment_id="dep1"
+        )
 
         record = native.start(plan, services=fleet.services, wait=True)
 
@@ -1164,7 +1210,9 @@ class TestStartOrder:
         ]
 
     def test_each_rank_lands_on_its_own_node(self, native, fleet):
-        plan = native.plan("qwen3-8b", nodes=NODES, solo=False, deployment_id="dep1")
+        plan = native.plan(
+            "qwen3-8b-tp3", nodes=NODES, solo=False, deployment_id="dep1"
+        )
         native.start(plan, services=fleet.services, wait=True)
 
         for rank, address in enumerate(NODES):
@@ -1172,7 +1220,9 @@ class TestStartOrder:
             assert names == [f"spark-pulse-dep1-r{rank}-g1"]
 
     def test_rank_zero_is_stopped_first(self, native, fleet):
-        plan = native.plan("qwen3-8b", nodes=NODES, solo=False, deployment_id="dep1")
+        plan = native.plan(
+            "qwen3-8b-tp3", nodes=NODES, solo=False, deployment_id="dep1"
+        )
         native.start(plan, services=fleet.services, wait=True)
         fleet.journal.clear()
 
@@ -1190,7 +1240,9 @@ class TestStartOrder:
 class TestGangFailure:
     def test_one_rank_failing_tears_the_rest_down(self, native, records):
         fleet = Fleet(NODES, fail_on="-r1-")
-        plan = native.plan("qwen3-8b", nodes=NODES, solo=False, deployment_id="dep1")
+        plan = native.plan(
+            "qwen3-8b-tp3", nodes=NODES, solo=False, deployment_id="dep1"
+        )
 
         record = native.start(plan, services=fleet.services, wait=True)
 
@@ -1204,7 +1256,9 @@ class TestGangFailure:
 
     def test_the_failed_rank_leaves_no_partial_state(self, native, records):
         fleet = Fleet(NODES, fail_on="-r1-")
-        plan = native.plan("qwen3-8b", nodes=NODES, solo=False, deployment_id="dep1")
+        plan = native.plan(
+            "qwen3-8b-tp3", nodes=NODES, solo=False, deployment_id="dep1"
+        )
 
         native.start(plan, services=fleet.services, wait=True)
 
@@ -1215,21 +1269,27 @@ class TestGangFailure:
 
 class TestGenerations:
     def _running(self, native, fleet, dep_id="dep1"):
-        plan = native.plan("qwen3-8b", nodes=NODES, solo=False, deployment_id=dep_id)
+        plan = native.plan(
+            "qwen3-8b-tp3", nodes=NODES, solo=False, deployment_id=dep_id
+        )
         native.start(plan, services=fleet.services, wait=True)
         return plan
 
     def test_a_second_attempt_gets_the_next_generation(self, native, fleet):
         self._running(native, fleet)
 
-        again = native.plan("qwen3-8b", nodes=NODES, solo=False, deployment_id="dep1")
+        again = native.plan(
+            "qwen3-8b-tp3", nodes=NODES, solo=False, deployment_id="dep1"
+        )
 
         assert again.generation == 2
         assert again.container.name == "spark-pulse-dep1-r0-g2"
 
     def test_a_name_from_an_old_generation_is_reaped(self, native, fleet):
         self._running(native, fleet)
-        again = native.plan("qwen3-8b", nodes=NODES, solo=False, deployment_id="dep1")
+        again = native.plan(
+            "qwen3-8b-tp3", nodes=NODES, solo=False, deployment_id="dep1"
+        )
         fleet.journal.clear()
 
         native.start(again, services=fleet.services, wait=True)
@@ -1243,7 +1303,9 @@ class TestGenerations:
         self, native, fleet
     ):
         self._running(native, fleet)
-        again = native.plan("qwen3-8b", nodes=NODES, solo=False, deployment_id="dep1")
+        again = native.plan(
+            "qwen3-8b-tp3", nodes=NODES, solo=False, deployment_id="dep1"
+        )
         fleet.journal.clear()
 
         native.start(again, services=fleet.services, wait=True)
@@ -1265,7 +1327,9 @@ class TestGenerations:
         self._running(native, fleet, dep_id="dep2")
         fleet.journal.clear()
 
-        again = native.plan("qwen3-8b", nodes=NODES, solo=False, deployment_id="dep1")
+        again = native.plan(
+            "qwen3-8b-tp3", nodes=NODES, solo=False, deployment_id="dep1"
+        )
         native.start(again, services=fleet.services, wait=True)
 
         assert all("dep2" not in name for name in fleet.verbs("stop_container"))
@@ -1274,7 +1338,9 @@ class TestGenerations:
 
     def test_a_leftover_that_will_not_go_away_fails_the_deploy(self, native, fleet):
         self._running(native, fleet)
-        again = native.plan("qwen3-8b", nodes=NODES, solo=False, deployment_id="dep1")
+        again = native.plan(
+            "qwen3-8b-tp3", nodes=NODES, solo=False, deployment_id="dep1"
+        )
 
         with patch.object(nr, "_confirm_gone", return_value=False):
             record = native.start(again, services=fleet.services, wait=True)
@@ -1289,7 +1355,9 @@ class TestGenerations:
 
 class TestOrphans:
     def _running(self, native, fleet):
-        plan = native.plan("qwen3-8b", nodes=NODES, solo=False, deployment_id="dep1")
+        plan = native.plan(
+            "qwen3-8b-tp3", nodes=NODES, solo=False, deployment_id="dep1"
+        )
         native.start(plan, services=fleet.services, wait=True)
         return plan
 
@@ -1367,7 +1435,9 @@ class TestOrphans:
 
 class TestPerRankReads:
     def _running(self, native, fleet):
-        plan = native.plan("qwen3-8b", nodes=NODES, solo=False, deployment_id="dep1")
+        plan = native.plan(
+            "qwen3-8b-tp3", nodes=NODES, solo=False, deployment_id="dep1"
+        )
         native.start(plan, services=fleet.services, wait=True)
         return plan
 

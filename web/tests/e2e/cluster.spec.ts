@@ -7,8 +7,11 @@
  * those endpoints hold, and nothing on it calls an endpoint that no longer
  * exists.
  *
- * Multi-node bring-up has never run on real hardware, so the page and its nav
- * entry still say so. `cluster_experimental` in /api/config drives both.
+ * Multi-node is implemented but has never run on real hardware, so the page and
+ * its nav entry still say so, and the banner names what is unproven rather
+ * than saying "experimental". `cluster_experimental` in /api/config drives
+ * both, so the marking disappears without a code change once a second Spark
+ * has verified the list.
  */
 
 import { expect, test } from "@playwright/test";
@@ -20,13 +23,17 @@ test("marks the cluster page and its nav entry experimental", async ({ page, req
 
   await expect(page.getByRole("heading", { name: "Cluster Orchestration" })).toBeVisible();
 
-  const banner = page.getByRole("note").filter({ hasText: "Cluster orchestration is experimental" });
-  const chip = page.getByRole("navigation").getByRole("link", { name: "Cluster" }).getByTitle(/experimental/i);
+  const banner = page.getByRole("note").filter({ hasText: "Multi-node is implemented but unverified" });
+  const chip = page.getByRole("navigation").getByRole("link", { name: "Cluster" }).getByTitle(/never been run on two machines/i);
 
   if (config.cluster_experimental) {
     await expect(banner).toBeVisible();
-    // The banner says what has and has not been exercised, not just the word.
-    await expect(banner).toContainText("never been run on real hardware");
+    // The banner names the risks rather than saying "experimental" and
+    // leaving the operator to guess which parts are the unproven ones.
+    await expect(banner).toContainText("Only one DGX Spark exists");
+    await expect(banner).toContainText("rendezvous forms across machines");
+    await expect(banner).toContainText("NVIDIA publishes no guidance");
+    expect(await banner.getByRole("listitem").count()).toBeGreaterThan(3);
     await expect(chip).toBeVisible();
     await expect(chip).toHaveText("exp");
   } else {

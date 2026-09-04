@@ -972,6 +972,10 @@ def test_the_disk_command_quotes_its_paths():
 
 RECIPE = "bundled/qwen2.5-0.5b-instruct"
 
+#: One GPU per node, so a two-node plan has to occupy two ranks; a recipe left
+#: at tp=1 is refused before the pre-flight has a plan to check.
+TWO_WAY = {"tensor_parallel": 2}
+
 
 def test_the_mock_twin_exports_everything_the_real_module_does():
     """Both ``__init__`` lists carry preflight, so both must satisfy callers."""
@@ -996,7 +1000,9 @@ def test_simulation_runs_the_real_checks_over_a_simulated_host():
 def test_simulation_reports_a_peer_that_has_to_pull_the_image():
     from spark_pulse import tools
 
-    report = tools.preflight.run(RECIPE, nodes=["192.168.1.100", "10.0.0.11"])
+    report = tools.preflight.run(
+        RECIPE, nodes=["192.168.1.100", "10.0.0.11"], params=TWO_WAY
+    )
     image = check_of(report, preflight.CHECK_IMAGE, "spark-02")
     assert image["status"] == STATUS_WARN
     assert image["detail"]["pull_required"] is True
@@ -1008,7 +1014,9 @@ def test_simulation_can_make_a_node_unreachable():
     from spark_pulse.mock import preflight as mock_preflight
 
     mock_preflight.UNREACHABLE.add("10.0.0.11")
-    report = tools.preflight.run(RECIPE, nodes=["192.168.1.100", "10.0.0.11"])
+    report = tools.preflight.run(
+        RECIPE, nodes=["192.168.1.100", "10.0.0.11"], params=TWO_WAY
+    )
     assert report["verdict"] == VERDICT_BLOCKED
     assert_named_failure(
         check_of(report, preflight.CHECK_REACHABILITY, "spark-02"), "spark-02"

@@ -338,3 +338,53 @@ class TestAvailability:
         assert registry.usable(spec) is True
         spec.available = False
         assert registry.usable(spec) is False
+
+
+# ── Topology size claims ─────────────────────────────────────────────────────
+
+
+class TestSupportsSize:
+    """``capabilities.solo/cluster/mesh`` are read here and nowhere else.
+
+    A claim is about what the engine renders and what its vendor documents,
+    never about what has been run: no size above one has been exercised on
+    hardware, whatever these flags say.
+    """
+
+    def test_vllm_claims_every_published_size(self, registry):
+        engine = registry.engine("vllm", "default")
+        for size in (1, 2, 3, 4):
+            assert engine.supports_size(size) == (True, "")
+
+    def test_no_engine_may_be_asked_for_a_fifth_node(self, registry):
+        for name in ("vllm", "sglang"):
+            ok, reason = registry.engine(name).supports_size(5)
+            assert ok is False
+            assert "nothing above four" in reason
+
+    def test_sglang_claims_a_pair_but_not_a_mesh(self, registry):
+        engine = registry.engine("sglang", "default")
+        assert engine.supports_size(2) == (True, "")
+        for size in (3, 4):
+            ok, reason = engine.supports_size(size)
+            assert ok is False
+            assert "mesh: false" in reason
+
+    def test_an_engine_that_declines_multi_node_says_so(self, registry):
+        engine = registry.engine("vllm", "default")
+        engine.spec.capabilities.cluster = False
+        ok, reason = engine.supports_size(2)
+        assert ok is False
+        assert "cluster: false" in reason
+
+    def test_an_engine_that_declines_solo_says_so(self, registry):
+        engine = registry.engine("vllm", "default")
+        engine.spec.capabilities.solo = False
+        ok, reason = engine.supports_size(1)
+        assert ok is False
+        assert "solo: false" in reason
+
+    def test_zero_nodes_is_not_a_deployment(self, registry):
+        ok, reason = registry.engine("vllm").supports_size(0)
+        assert ok is False
+        assert "at least one node" in reason

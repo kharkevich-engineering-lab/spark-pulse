@@ -64,7 +64,7 @@ class _Cluster:
 
     def fail(self, host: str) -> None:
         """Make every command on ``host`` fail, as an unreachable node would."""
-        self.ssh._fail_hosts.add(host)
+        self.ssh.fail_hosts.add(host)
 
     def commands(self, needle: str) -> list[str]:
         """Every command sent to a node containing ``needle``."""

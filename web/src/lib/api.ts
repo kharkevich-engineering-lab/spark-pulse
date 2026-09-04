@@ -403,15 +403,6 @@ export interface NcclDefaults {
   ib_disable: boolean;
 }
 
-export interface DiscoveredConfig {
-  nccl: {
-    debug: string | null;
-    socket_ifname: string | null;
-    ib_hca: string | null;
-  };
-  discovery_available: boolean;
-}
-
 export interface DiscoveryResult {
   local_ip: string | null;
   ethernet_if: string | null;
@@ -435,21 +426,6 @@ export interface DiscoveryResponse {
 
 export async function runDiscovery(): Promise<DiscoveryResponse> {
   return json<DiscoveryResponse>("/discovery", { method: "POST" });
-}
-
-export async function getDiscovered(): Promise<DiscoveredConfig> {
-  return json<DiscoveredConfig>("/discovery");
-}
-
-export async function applyNcclDefaults(body: {
-  socket_ifname: string;
-  ib_hca: string | null;
-  ib_disable: boolean;
-}): Promise<{ success: boolean; applied: NcclDefaults }> {
-  return json<{ success: boolean; applied: NcclDefaults }>("/discovery/apply-nccl", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
 }
 
 export async function getValidation(): Promise<ValidationResult> {

@@ -72,7 +72,6 @@ from spark_pulse.tools.events import DeploymentEvent, EventType
 from spark_pulse.tools.labels import (
     DEPLOYMENT_LABEL,
     GENERATION_LABEL,
-    MODE_LABEL,
     RANK_LABEL,
     WORLD_SIZE_LABEL,
 )
@@ -100,6 +99,22 @@ HF_CACHE_IN_CONTAINER = "/root/.cache/huggingface"
 #: never races a rank that is still holding the GPU.
 CONFIRM_GONE_TIMEOUT = 30.0
 CONFIRM_GONE_INTERVAL = 0.5
+
+#: Attached to every plan above one node, and to the record it becomes.
+#:
+#: Multi-node is implemented and exercised end to end in simulation — every
+#: rank rendered, started worker-first, torn down head-first and accounted for.
+#: It has never been run on two machines, because there is only one DGX Spark.
+#: The full list of what a second machine would prove is in
+#: ``docs/cluster-agent-plan.md`` section 7 and in the UI banner; this is the
+#: one line that travels with the plan itself.
+MULTI_NODE_UNPROVEN = (
+    "multi-node has never been run on hardware: only one DGX Spark exists, so "
+    "the rendering, ordering and bookkeeping below are exercised in simulation "
+    "and nothing about the rendezvous forming across machines, NCCL transport "
+    "over the real fabric or interface pinning against real per-role names has "
+    "been observed"
+)
 
 
 class NativeRuntimeError(RuntimeError):
@@ -700,18 +715,120 @@ def _check_capacity(recipe_id: str, command: str, nodes: int) -> None:
     quietly getting something else.
     """
     parallelism = parse_parallelism(command)
+    needed = parallelism["tp"] * parallelism["pp"] * parallelism["dp"]
+    shape = f"tp={parallelism['tp']} pp={parallelism['pp']} dp={parallelism['dp']}"
     ok, message = validate_cluster_capacity(
         parallelism, ClusterCapacity.for_nodes(nodes)
     )
-    if ok:
-        return
-    needed = parallelism["tp"] * parallelism["pp"] * parallelism["dp"]
-    raise NativeRuntimeError(
-        f"recipe '{recipe_id}' does not fit {nodes} node(s): {message} "
-        f"(tp={parallelism['tp']} pp={parallelism['pp']} dp={parallelism['dp']}). "
-        "This hardware has one GPU per node, so either lower the parallelism "
-        f"or deploy across {needed} nodes"
-    )
+    if not ok:
+        raise NativeRuntimeError(
+            f"recipe '{recipe_id}' does not fit {nodes} node(s): {message} "
+            f"({shape}). "
+            "This hardware has one GPU per node, so either lower the "
+            f"parallelism or deploy across {needed} nodes"
+        )
+    if needed < nodes:
+        # Upstream trimmed the extra peers silently. Refusing is the honest
+        # version: the rendered ``--nnodes`` is the node count, so every rank
+        # waits at the rendezvous for ranks that have no shard to hold, and
+        # the launch hangs until the 600 s rendezvous timeout rather than
+        # serving on a subset.
+        raise NativeRuntimeError(
+            f"recipe '{recipe_id}' asks for {nodes} nodes but its parallelism "
+            f"only occupies {needed} of them ({shape}). One GPU per node means "
+            f"the world size is the node count, so the extra "
+            f"{nodes - needed} node(s) would join the rendezvous with nothing "
+            f"to hold and the launch would hang. Deploy on {needed} node(s), "
+            f"or raise the parallelism until tp*pp*dp is {nodes}"
+        )
+
+
+def _registry_by_address() -> dict[str, Any]:
+    """Every registered node, keyed by the address a deploy would name.
+
+    Raising rather than degrading is deliberate: a multi-node plan reads the
+    registry for the interface names it pins, and pinning is find-or-fail. A
+    registry we cannot read is not "no interfaces", it is "we do not know".
+    """
+    try:
+        nodes = list(tools.node_registry.list_nodes())
+    except Exception as exc:
+        raise NativeRuntimeError(
+            f"the node registry could not be read, so a multi-node "
+            f"deployment cannot resolve its nodes: {exc}"
+        ) from exc
+    return {node.address: node for node in nodes if node.address}
+
+
+def _resolve_topology(node_list: list[str], warnings: list[str]) -> Topology:
+    """The requested addresses as a topology carrying real interface names.
+
+    An empty list is this machine — the size-one case, which never consults
+    the registry at all, so nothing about a solo deployment depends on what
+    the registry holds.
+
+    Above one node the registry is the authority, and it is the *only*
+    authority: it is where an operator records which interface on that
+    particular machine carries the fabric, and interface pinning is
+    find-or-fail. An address we have no record for would be launched with no
+    pinning at all, so it is refused rather than started blind.
+    """
+    if not node_list:
+        return Topology(nodes=[])
+
+    seen: set[str] = set()
+    for address in node_list:
+        if address in seen:
+            raise NativeRuntimeError(
+                f"node '{address}' is listed twice; each rank runs on its own "
+                "machine, and one GPU per node means a machine cannot hold two"
+            )
+        seen.add(address)
+
+    records = _registry_by_address()
+    if len(node_list) > len(records):
+        known = ", ".join(sorted(records)) or "none"
+        raise NativeRuntimeError(
+            f"{len(node_list)} nodes were requested but the registry holds "
+            f"{len(records)} ({known}). Enroll the missing machines on the "
+            "Cluster page (POST /api/nodes) before deploying across them"
+        )
+    unknown = [address for address in node_list if address not in records]
+    if unknown:
+        known = ", ".join(sorted(records)) or "none"
+        raise NativeRuntimeError(
+            f"node(s) {', '.join(unknown)} are not in the node registry "
+            f"(it holds {known}). A peer is deployed to by its registry "
+            "record, which is where its fabric interface names live; NCCL "
+            "pinning is find-or-fail, so an unregistered address would be "
+            "launched with no pinning at all"
+        )
+
+    nodes: list[NodeInfo] = []
+    unpinned: list[str] = []
+    for address in node_list:
+        record = records[address]
+        if not record.ethernet_interface and not record.infiniband_interfaces:
+            unpinned.append(record.label)
+        nodes.append(
+            NodeInfo(
+                host=address,
+                ip=address,
+                eth_if=record.ethernet_interface,
+                # NCCL_IB_HCA takes a comma-separated selector list, which is
+                # the order discovery reported the fabric ports in.
+                ib_if=",".join(record.infiniband_interfaces),
+            )
+        )
+    warnings.append(MULTI_NODE_UNPROVEN)
+    if unpinned:
+        warnings.append(
+            f"no interface names are recorded for {', '.join(unpinned)}, so "
+            "NCCL will choose a link itself — usually the management one, "
+            "which is a performance bug rather than a failure. Record them on "
+            "the node's registry entry (PATCH /api/nodes/{id})"
+        )
+    return Topology(nodes=nodes)
 
 
 def plan(
@@ -742,8 +859,11 @@ def plan(
     # An empty node list is not "no nodes": it is this machine. The topology
     # is total, so every size below takes the same code path.
     node_list = [] if solo else [str(n) for n in (nodes or [])]
-    topology = Topology(nodes=[NodeInfo(host=n, ip=n) for n in node_list])
-    _check_constraints(recipe_id, recipe, topology.size)
+    # The recipe's own constraints are checked against the requested count
+    # first, so "this recipe is solo_only" is reported before anything about
+    # the registry: it is the more specific answer.
+    _check_constraints(recipe_id, recipe, max(1, len(node_list)))
+    topology = _resolve_topology(node_list, warnings)
 
     engine_obj, engine_name, resolved_variant = _select_engine(
         registry, recipe, engine, variant
@@ -767,7 +887,15 @@ def plan(
     )
 
     # Checked after the image is resolved, because a legacy container tag can
-    # map to an older image than the engine's default variant would use.
+    # map to an older image than the engine's default variant would use — and
+    # the capabilities travel with the image, so the size claim does too.
+    size_ok, size_reason = engine_obj.supports_size(topology.size)
+    if not size_ok:
+        raise NativeRuntimeError(
+            f"recipe '{recipe_id}' cannot be planned on {topology.size} "
+            f"node(s): {size_reason}"
+        )
+
     version_ok, version_reason = engine_obj.version_supported()
     if not version_ok:
         raise NativeRuntimeError(
@@ -1851,13 +1979,19 @@ def list_deployments(docker: Any | None = None) -> list[dict[str, Any]]:
     record for (server reinstalled, records lost) is adopted, and a record
     whose container is gone is marked stopped. Only ranks on the machine whose
     containers were enumerated count as evidence.
+
+    The filter is the deployment label rather than ``mode=solo``. Filtering on
+    the mode was invisible while every deployment was solo and wrong the
+    moment one was not: a rank of a multi-node deployment carries
+    ``mode=cluster``, so it was never enumerated, and a running deployment was
+    marked stopped on the absence of a container the filter had excluded.
     """
     docker_arg = docker
     records = _load_records()
     native = [r for r in records if r.get("runtime") == RUNTIME_NAME]
     try:
         docker = docker or _docker_service()
-        containers = docker.list_managed_containers({MODE_LABEL: "solo"})
+        containers = docker.list_managed_containers({DEPLOYMENT_LABEL: ""})
     except Exception as exc:
         logger.debug("Native reconciliation skipped: %s", exc)
         return native

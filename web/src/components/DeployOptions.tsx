@@ -14,6 +14,13 @@ import type { ClusterNode, DeployPlan, EngineSummary, PreflightReport, RecipeDet
 import { AlertCircle, ChevronDown, Eye, Loader2 } from "lucide-react";
 import { formatSize } from "@/lib/utils";
 import PreflightPanel from "@/components/PreflightPanel";
+import { ExperimentalBadge, ExperimentalBanner } from "@/components/Experimental";
+import {
+  MULTI_NODE_BADGE_TITLE,
+  MULTI_NODE_REASON,
+  MULTI_NODE_TITLE,
+  MULTI_NODE_UNPROVEN,
+} from "@/lib/experimental";
 
 export interface DeployOptionsValue {
   engine?: string;
@@ -286,8 +293,11 @@ export default function DeployOptions({
           </div>
 
           {nodes.length >= 2 && (
-            <div>
-              <label className="block text-sm font-medium mb-1">Nodes</label>
+            <div data-testid="deploy-node-selector">
+              <label className="flex items-center gap-2 text-sm font-medium mb-1">
+                Nodes
+                <ExperimentalBadge title={MULTI_NODE_BADGE_TITLE} />
+              </label>
               <div
                 className="space-y-1.5 p-2 rounded-lg bg-surface border border-border"
                 data-testid="deploy-nodes"
@@ -319,6 +329,14 @@ export default function DeployOptions({
               <p className="text-xs text-text-muted mt-1" data-testid="deploy-world-size">
                 {worldSize} node{worldSize === 1 ? "" : "s"}, ranks 0-{worldSize - 1}
               </p>
+              {worldSize > 1 && (
+                <ExperimentalBanner
+                  className="mt-2"
+                  title={MULTI_NODE_TITLE}
+                  reason={MULTI_NODE_REASON}
+                  items={MULTI_NODE_UNPROVEN}
+                />
+              )}
             </div>
           )}
 

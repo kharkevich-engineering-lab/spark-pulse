@@ -10,7 +10,6 @@ from spark_pulse.mock import (
     mods as mods,
     docker as docker,
     registry as registry,
-    network as network,
     discovery as discovery,
     ssh as ssh,
     node_service as node_service,

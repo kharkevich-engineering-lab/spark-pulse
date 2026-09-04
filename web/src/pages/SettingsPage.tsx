@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { fetchSettings, updateSettings, fetchSecrets, saveSecrets, deleteSecret, runDiscovery, applyNcclDefaults, fetchEngines, refreshEngines, type DiscoveryResult, type ValidationResult } from "@/lib/api";
+import { fetchSettings, updateSettings, fetchSecrets, saveSecrets, deleteSecret, runDiscovery, fetchEngines, refreshEngines, type DiscoveryResult, type ValidationResult } from "@/lib/api";
 import { useQuery } from "@/hooks/useQuery";
 import { Settings as SettingsIcon, Loader2, AlertCircle, Check, KeyRound, Eye, EyeOff, Trash2, Lock, Server, Clock, Network, Radio, Wifi, WifiOff, Cpu, RefreshCw } from "lucide-react";
 import { EngineList } from "@/components/EngineBadge";
@@ -23,17 +23,12 @@ export default function SettingsPage() {
     </span>
   );
 
-  // ── Docker / NCCL helpers ──────────────────────────────────────────────
+  // ── Docker helpers ─────────────────────────────────────────────────────
   const dockerCfg = form.docker as Record<string, unknown> | undefined;
-  const ncclCfg = form.nccl as Record<string, unknown> | undefined;
   const getDocker = <K extends keyof NonNullable<typeof dockerCfg>>(key: K, def: NonNullable<typeof dockerCfg>[K]) =>
     (dockerCfg?.[key] ?? def) as NonNullable<typeof dockerCfg>[K];
-  const getNccl = <K extends keyof NonNullable<typeof ncclCfg>>(key: K, def: NonNullable<typeof ncclCfg>[K]) =>
-    (ncclCfg?.[key] ?? def) as NonNullable<typeof ncclCfg>[K];
   const setDocker = <K extends keyof NonNullable<typeof dockerCfg>>(key: K, val: NonNullable<typeof dockerCfg>[K]) =>
     setForm({ ...form, docker: { ...(dockerCfg ?? {}), [key]: val } });
-  const setNccl = <K extends keyof NonNullable<typeof ncclCfg>>(key: K, val: NonNullable<typeof ncclCfg>[K]) =>
-    setForm({ ...form, nccl: { ...(ncclCfg ?? {}), [key]: val } });
 
   // HF Token state
   const [hfToken, setHfToken] = useState("");
@@ -54,7 +49,6 @@ export default function SettingsPage() {
   // Health monitoring state
   const [isHealthMonitoring, setIsHealthMonitoring] = useState(false);
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
-  const [applyingNccl, setApplyingNccl] = useState(false);
 
   const isDirty = settings != null && Object.keys(form).some(
     (k) => JSON.stringify(form[k]) !== JSON.stringify((settings as unknown as Record<string, unknown>)[k])
@@ -113,25 +107,6 @@ export default function SettingsPage() {
       setDiscoveryError(e instanceof Error ? e.message : "Discovery failed");
     } finally {
       setDiscoveryLoading(false);
-    }
-  };
-
-  const handleApplyNccl = async () => {
-    if (!discoveryResult?.nccl_defaults) return;
-    setApplyingNccl(true);
-    try {
-      await applyNcclDefaults({
-        socket_ifname: discoveryResult.nccl_defaults.socket_ifname,
-        ib_hca: discoveryResult.nccl_defaults.ib_hca,
-        ib_disable: discoveryResult.nccl_defaults.ib_disable,
-      });
-      setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
-      refetch();
-    } catch (e) {
-      setAlertModal({ title: "Error", message: e instanceof Error ? e.message : "Failed to apply NCCL defaults" });
-    } finally {
-      setApplyingNccl(false);
     }
   };
 
@@ -238,18 +213,6 @@ export default function SettingsPage() {
           <div>
             <label className="block text-sm font-medium mb-1">PID limit</label>
             <input type="number" min="64" step="64" value={Number(getDocker("pids_limit", 4096))} onChange={(e) => setDocker("pids_limit", parseInt(e.target.value) || 4096)} className={inputCls} placeholder="4096" />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-1">NCCL socket interface</label>
-            <input type="text" value={String(getNccl("socket_ifname", "") || "")} onChange={(e) => setNccl("socket_ifname", e.target.value || null)} className={inputCls} placeholder="auto-detect" />
-            <p className="text-xs text-text-muted mt-1">Leave empty to auto-detect. E.g. eth0, enp3s0.</p>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-1">NCCL InfiniBand HCA</label>
-            <input type="text" value={String(getNccl("ib_hca", "") || "")} onChange={(e) => setNccl("ib_hca", e.target.value || null)} className={inputCls} placeholder="auto-detect" />
-            <p className="text-xs text-text-muted mt-1">InfiniBand HCA selector. E.g. GPU,mlx5_*. Leave empty for default.</p>
           </div>
 
           {/* ── Health Monitoring ── */}
@@ -363,16 +326,10 @@ export default function SettingsPage() {
                       </span>
                     </div>
 
-                    {/* Apply button */}
-                    <button
-                      type="button"
-                      onClick={handleApplyNccl}
-                      disabled={applyingNccl}
-                      className="w-full mt-2 px-3 py-2 rounded-lg border border-primary/50 hover:border-primary text-primary hover:bg-primary/5 disabled:opacity-50 text-xs font-medium transition-colors flex items-center justify-center gap-1.5"
-                    >
-                      {applyingNccl ? <Loader2 className="animate-spin" size={12} /> : <Check size={12} />}
-                      Apply detected NCCL settings
-                    </button>
+                    <p className="text-xs text-text-muted pt-1">
+                      Detected on this machine. Interface pinning is per node, not global: record these
+                      on the node's entry in the Cluster page's registry, which is what a deploy reads.
+                    </p>
                   </div>
                 )}
 

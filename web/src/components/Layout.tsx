@@ -3,6 +3,7 @@ import { doRefresh } from "@/lib/refresh";
 import { type ThemeMode, getTheme, setTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import { ExperimentalBadge } from "@/components/Experimental";
+import { MULTI_NODE_BADGE_TITLE } from "@/lib/experimental";
 import { useConfig } from "@/lib/config";
 import { Activity, Bot, Boxes, Copyright, Database, Flame, Layers, ListChecks, LogOut, Menu, Moon, MoonStar, Package, RotateCw, Settings, Sun, User, X, Zap, Server } from "lucide-react";
 import { SiGithub, SiPypi } from "@icons-pack/react-simple-icons";
@@ -190,7 +191,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 <Icon size={18} />
                 <span className="flex-1">{item.label}</span>
                 {item.experimental && clusterExperimental && (
-                  <ExperimentalBadge title="Cluster orchestration is experimental: multi-node has not been run on real hardware" />
+                  <ExperimentalBadge title={MULTI_NODE_BADGE_TITLE} />
                 )}
               </Link>
             );

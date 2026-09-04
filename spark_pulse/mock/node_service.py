@@ -42,7 +42,7 @@ from spark_pulse.tools.node_service import (
     reset_local_addresses as reset_local_addresses,
     run_kwargs_from_docker_config as run_kwargs_from_docker_config,
 )
-from spark_pulse.tools.ssh import SSHClient, SSHResult
+from spark_pulse.tools.ssh import SSHClient, SSHError, SSHErrorType, SSHResult
 
 DEFAULT_IMAGE_SIZE = 26_843_545_600
 
@@ -77,6 +77,16 @@ class SimulatedDockerSSHClient(SSHClient):
 
     Every command it is asked to run is recorded in :attr:`commands`, so a test
     can assert that an operation aimed at a peer actually left the machine.
+
+    :attr:`fail_hosts` is the unreachable set, and it is a plain mutable set on
+    purpose: a node can be made unreachable *during* an operation, which is the
+    failure the gang semantics exist for. A host in it raises
+    :class:`~spark_pulse.tools.ssh.SSHError`, exactly as ``OpenSSHClient`` does
+    on ssh's own exit 255 — never a non-zero :class:`SSHResult`. That
+    distinction is the whole contract: an ``SSHResult`` means the node answered
+    and the outcome is definite, so returning one for a dead node would let
+    ``docker inspect`` read as "no such container" and a rank that is still
+    holding a GPU be confirmed gone on inference rather than on evidence.
     """
 
     def __init__(
@@ -89,8 +99,8 @@ class SimulatedDockerSSHClient(SSHClient):
         Args:
             images: Image references every host starts with, mapped to size in
                 bytes.
-            fail_hosts: Hosts whose every command fails, as an unreachable
-                node would.
+            fail_hosts: Hosts that are unreachable. Mutate :attr:`fail_hosts`
+                to make a node go away mid-operation.
         """
         self.commands: list[dict[str, Any]] = []
         self.copies: list[dict[str, Any]] = []
@@ -100,7 +110,8 @@ class SimulatedDockerSSHClient(SSHClient):
         self._containers: dict[str, dict[str, dict[str, Any]]] = {}
         self._images: dict[str, dict[str, dict[str, Any]]] = {}
         self._seed_images = dict(images or {})
-        self._fail_hosts = set(fail_hosts or [])
+        #: Hosts that are unreachable right now. Mutable by design.
+        self.fail_hosts: set[str] = set(fail_hosts or [])
 
     # ── Store ────────────────────────────────────────────────────────────
 
@@ -139,6 +150,16 @@ class SimulatedDockerSSHClient(SSHClient):
 
     # ── SSHClient ────────────────────────────────────────────────────────
 
+    def _raise_if_unreachable(self, host: str) -> None:
+        """Fail the way the real transport does when the node is gone."""
+        if host in self.fail_hosts:
+            raise SSHError(
+                error_type=SSHErrorType.NETWORK,
+                host=host,
+                message=f"unreachable: {host}",
+                stderr=f"ssh: connect to host {host}: No route to host",
+            )
+
     def exec(
         self,
         host: str,
@@ -148,8 +169,7 @@ class SimulatedDockerSSHClient(SSHClient):
     ) -> SSHResult:
         """Answer a docker CLI invocation for ``host``."""
         self.commands.append({"host": host, "command": command, "timeout": timeout})
-        if host in self._fail_hosts:
-            return SSHResult(returncode=255, stdout="", stderr=f"unreachable: {host}")
+        self._raise_if_unreachable(host)
 
         parts = shlex.split(command.replace("&&", "\n").split("\n")[0])
         if len(parts) < 2 or parts[0] != "docker":
@@ -178,8 +198,7 @@ class SimulatedDockerSSHClient(SSHClient):
         timeout: int = 30,
     ) -> None:
         """Record a file transfer to ``host``."""
-        if host in self._fail_hosts:
-            raise OSError(f"unreachable: {host}")
+        self._raise_if_unreachable(host)
         self.copies.append({"host": host, "local": local_path, "remote": remote_path})
 
     def copy_dir(
