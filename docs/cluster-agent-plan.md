@@ -40,6 +40,53 @@ Those three are real and worth building for. Connection reuse is not one of
 them. We should turn multiplexing on first, measure, and let the measurement
 tell us how much of the agent's value is liveness rather than speed.
 
+### 2.1a The measurement, taken 2026-09-04
+
+Multiplexing shipped in phase A. These numbers come from
+`spark_pulse.tools.ssh.OpenSSHClient` itself with only its `multiplex` flag
+changed, against a real GB10 over the LAN, so the comparison is between two
+shipping configurations rather than between us and a hand-rolled `ssh`.
+
+| operation | no multiplexing | multiplexed |
+|---|---|---|
+| round-trip floor (`true`) | 517 ms | 17 ms |
+| container list | 527 ms | 36 ms |
+| image inspect | 539 ms | 34 ms |
+| daemon info | 559 ms | 82 ms |
+
+**Speed is settled, and it is not the agent's case.** The handshake was ~500 ms
+of every operation and multiplexing removes it — 12.7x on the sum of medians. A
+real peer pre-flight, instrumented, issues 8 SSH commands and now takes 817 ms
+end to end where it would have taken about 4.6 seconds; SSH is under one per
+cent of a 120-second deploy. Both polling intervals we use — 30 s health checks
+and sub-second readiness polls — sit inside the 60 s `ControlPersist` window, so
+they keep the master alive rather than paying a fresh handshake, which is what
+makes the improvement general rather than confined to bursts.
+
+**The other three did not move, exactly as predicted.**
+
+* *Liveness.* Detecting an unreachable node costs the full 10 s `ConnectTimeout`,
+  and multiplexing changes it by 10 ms — it cannot help, because there is no
+  master to reuse when the host is gone. It is also poll-only: nothing learns a
+  node died until the next command is issued against it.
+* *Structural errors.* `_classify_ssh_error` still matches English substrings —
+  "no route to host", "connection refused", "permission denied". That is
+  precisely the stderr parsing an agent replaces with a typed transport error.
+* *Streaming.* Logs and pull progress still have no backpressure or
+  cancellation.
+
+**Decision: defer phase D, and do not treat it as blocked on effort.** All three
+remaining justifications only bite at more than one node, and that is phase E,
+which is blocked on a second Spark. Building an agent for failure modes we
+cannot exercise would repeat the mistake section 2.2 documents — four things
+shipped and broken precisely because multi-node never ran. Two of the three also
+have cheaper mitigations worth trying first: a shorter `ConnectTimeout` on
+liveness probes specifically, and classifying transport failure by exit status
+rather than by message text, which `_raise_if_transport_failure` already does
+structurally for exit 255.
+
+Revisit when a second Spark exists and the failure modes can be reproduced.
+
 ### 2.2 Four things we already shipped are broken, and multi-node makes them dangerous
 
 None of these have been exercised, because multi-node has never run.
@@ -313,21 +360,21 @@ agent does the bulk transfer with the right tool.
 Each phase carries its own interface work, described in section 8. Shipping the
 machinery without the surface is how "unknown" ends up rendered as a spinner.
 
-**Phase A, fix what is broken.** Atomic writes with fsync for deployment state
+**Phase A, fix what is broken — shipped (#24).** Atomic writes with fsync for deployment state
 and settings, refuse to start on an unreadable state file, the inverted SSH flag
 and the test that locks it in, and the empty-host defaults so remote operations
 are actually remote. Turn on SSH connection multiplexing and measure. Fill the
 end-to-end suite, which currently contains no specs and reports success while
 asserting nothing. None of this needs a second machine.
 
-**Phase B, distribution without an agent.** Local registry or pull-through
+**Phase B, distribution without an agent — shipped (#25).** Local registry or pull-through
 cache, digest-preserving image seeding, verified model replication. This
 delivers the credential-isolation goal on its own, over SSH, with no agent.
 Interface: per-node replication progress, which nodes hold a verified copy, and
 the two distribution modes presented by their credential trade-off rather than
 by speed.
 
-**Phase C, node registry, pre-flight, and the size-one convergence.** Persisted
+**Phase C, node registry, pre-flight, and the size-one convergence — shipped (#26, #27, #28).** Persisted
 nodes with address, user, key path and interfaces. Non-interactive discovery
 reusing mDNS. Pre-flight that checks reachability, docker, GPU, toolkit, image
 parity, model presence and free ports, and says exactly what is missing. This is
@@ -336,10 +383,12 @@ orchestrator deleted. Interface: the Cluster page becomes a node registry with
 an enrollment wizard, the deploy form gains a node count defaulting to one, and
 deployments become rank-aware.
 
-**Phase D, the agent.** Enrollment, gRPC transport, mTLS and the ledger,
-packaging and upgrade, the state machine above. Gate this on the phase A
-measurement: if liveness and streaming are the remaining pain, build it; if the
-pain was latency, multiplexing already fixed it. Interface: three-state node
+**Phase D, the agent — deferred, see 2.1a.** Enrollment, gRPC transport, mTLS
+and the ledger, packaging and upgrade, the state machine above. The gate was the
+phase A measurement, and it has been taken: multiplexing removed the latency
+(12.7x), and liveness, structural errors and streaming did not move. Those three
+are real, but they only bite above one node, which is phase E. Deferred until a
+second Spark makes the failure modes reproducible. Interface: three-state node
 health, agent version and skew, and the removal actions distinguished.
 
 **Phase E, multi-node bring-up.** Blocked on a second Spark. Everything before
@@ -420,7 +469,12 @@ explicit goal that onboarding node two introduces no duplicate code.
 
 ## 7. Converging on a cluster of size one
 
-Researched 2026-09-04. The decision is taken; this is how.
+Researched 2026-09-04, and **done** — all six steps below are merged, ending
+with #28, which flipped the dispatcher and deleted the orchestrator. The
+dispatcher no longer refuses a node list, and `runtime: native` became the
+default in #30, so the native path is not merely available but the only one.
+What follows is the reasoning as it was written; it is kept because the
+sequencing argument is the reusable part.
 
 **We are closer than the code suggests.** A size-one cluster already runs end to
 end through the native path. `Topology.is_solo` is `size <= 1`, so a one-element
@@ -590,5 +644,10 @@ only in this document.
 
 ## 9. The one thing still blocked
 
-A second DGX Spark. Everything else in this plan can be built and verified on the
-one that exists.
+A second DGX Spark. Everything else in this plan has now been built and verified
+on the one that exists: phases A, B and C are merged, and phase D is deferred on
+the evidence in 2.1a rather than on effort. What a second machine unblocks is
+listed at the end of section 7 — rendezvous across machines, NCCL transport over
+the real fabric, interface pinning against per-role names, workers-first
+ordering against the collective timeout, and failure semantics with a genuinely
+unreachable peer.
