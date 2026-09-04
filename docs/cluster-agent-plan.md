@@ -358,7 +358,51 @@ over the direct link needs.
 
 ## 6. Open questions
 
-- Whether python-zeroconf coexists with the running avahi-daemon on port 5353, or whether we should shell out to `avahi-browse`. Our Spark has avahi bound to 5353 on both address families, so this needs testing rather than assuming.
-- Which SSH library to depend on. The recommendation is `asyncssh`, because it writes the password directly into the encrypted authentication packet with no argv, no environment variable and no pty, where `sshpass` puts it in the process table and says so in its own man page. But `asyncssh` is EPL-2.0 or GPL-2.0-or-later and we publish to PyPI, so the licence is a deliberate decision rather than an afterthought.
-- Whether to accept an SSH password in the web UI at all. The recommendation is yes, as a gated fallback behind the key and token paths, never persisted, over TLS or loopback only. The evidence is genuinely split: Uyuni ships exactly this, Portainer is deprecating theirs, Rancher has none.
-- Whether a single-node cluster through the cluster path is worth building as a proving ground before hardware exists. It exercises registry, pre-flight, per-rank scripts and health, leaving only worker SSH and cross-host rendezvous unproven.
+None of the four questions this plan opened are still open. All were settled
+on 2026-09-04, three of them by testing on the Spark rather than by argument.
+
+**python-zeroconf coexists with avahi.** Tested on the Spark with avahi-daemon
+running and bound to 5353 on both address families. Our process constructed,
+registered a `_spark-pulse._tcp` service, and browsed successfully, finding both
+its own record and avahi's `_ssh._tcp` advertisement for the host. Independently,
+`avahi-browse` saw the service our process had registered. avahi stayed active
+throughout and shutdown was clean. So in-process mDNS is viable and we do not
+need to shell out to `avahi-browse`, though keeping it as a cross-check for
+clusters configured by NVIDIA's script is still worthwhile.
+
+One caveat the test exposed: browsing with all interfaces announced the service
+on the docker bridge and on a veth pair as well as the real network. Restrict
+announcements and browsing to the interfaces `ibdev2netdev` reports up plus the
+management link, or every container on the host becomes mDNS noise.
+
+**asyncssh is the SSH library.** Spark Pulse is MIT. asyncssh offers EPL-2.0 or
+GPL-2.0-or-later, and we take the EPL-2.0 option. EPL-2.0's copyleft is
+file-scoped: it reaches modifications of asyncssh's own files, not code that
+merely imports it, and it permits commercial use and redistribution. Declaring
+it as a dependency in `pyproject.toml`, so that pip fetches it from PyPI, is not
+us distributing it at all. The one thing that would change this analysis is
+bundling: if we ever ship the control plane as a self-contained archive with its
+dependencies inside, asyncssh travels with it and EPL-2.0's source-availability
+obligation attaches to that copy. The agent bundle is unaffected, because the
+agent speaks gRPC and never needs SSH. This is an engineering reading, not legal
+advice; if the project ever ships a bundled commercial distribution, have it
+reviewed.
+
+**The web UI accepts an SSH password, in Proxmox's shape.** Proxmox asks for the
+peer's password in its cluster-join dialog and gets two structural details right
+that we copy. The shareable join blob carries only discovery and trust-pinning
+data and never the credential, and the credential field is never pre-filled,
+because as their UI says, for security reasons the password has to be entered
+manually. Layered on that: the token installer and key paths are offered first,
+the password is a disclosed fallback, it is confirmed against the host key
+fingerprint before it is sent, it is used once for one node, it is modelled as a
+`SecretStr`, it is never persisted or logged, and the endpoint refuses to serve
+over plaintext except on loopback.
+
+**A single-node deployment is a cluster of size one.** From now on there is one
+code path, and adding a second node is configuration rather than a second
+implementation. This is the largest change to the plan above and it reshapes
+phase D and E; the architecture for it is being researched separately, with the
+explicit goal that onboarding node two introduces no duplicate code.
+
+## 7. Still genuinely open
