@@ -61,7 +61,10 @@ export function useOperation() {
         started_at: new Date().toISOString(),
         actor,
       });
-      updateState(operationId, OperationState.RUNNING);
+      // PENDING -> RUNNING is a legal transition, so this is `true` in
+      // practice; it is returned rather than dropped so a caller that starts
+      // an operation twice finds out instead of assuming it is running.
+      return updateState(operationId, OperationState.RUNNING);
     },
     [addOperation, updateState]
   );

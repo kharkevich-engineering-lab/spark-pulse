@@ -383,9 +383,7 @@ describe("useOperationStore, the paths a failed call takes", () => {
   });
 
   // The panes subscribe to the store; a write nothing is notified about is a
-  // pane that silently stops updating. `updateState` and `cancelOperation`
-  // are deliberately not in this list — they write through the existing Map
-  // instead of replacing it, which is reported separately.
+  // pane that silently stops updating.
   it("notifies subscribers when an operation is added, advanced or cleared", () => {
     const seen = vi.fn();
     const unsubscribe = useOperationStore.subscribe(seen);
@@ -400,6 +398,130 @@ describe("useOperationStore, the paths a failed call takes", () => {
       unsubscribe();
     }
     expect(seen).toHaveBeenCalledTimes(4);
+  });
+
+  // `updateState` and `cancelOperation` used to write through the existing Map
+  // and return `true` regardless. Both halves mattered: zustand compares the
+  // reference, so a pane subscribed to the store never re-rendered, and a
+  // caller was told a transition succeeded that the state machine forbids.
+  it("notifies subscribers when an operation changes state or is cancelled", () => {
+    act(() => {
+      useOperationStore.getState().addOperation(running("op-1", "cluster-1"));
+    });
+
+    const seen = vi.fn();
+    const unsubscribe = useOperationStore.subscribe(seen);
+    try {
+      act(() => {
+        useOperationStore.getState().updateState("op-1", OperationState.CANCELLED);
+        useOperationStore.getState().addOperation(running("op-2"));
+        useOperationStore.getState().cancelOperation("op-2");
+      });
+    } finally {
+      unsubscribe();
+    }
+
+    expect(seen).toHaveBeenCalledTimes(3);
+  });
+
+  it("hands subscribers a new Map rather than the one they already hold", () => {
+    let before: Map<string, OperationStatus> | undefined;
+    act(() => {
+      useOperationStore.getState().addOperation({
+        ...running("op-1"),
+        state: OperationState.PENDING,
+      });
+    });
+    before = useOperationStore.getState().operations;
+
+    act(() => {
+      useOperationStore.getState().updateState("op-1", OperationState.RUNNING);
+    });
+
+    expect(useOperationStore.getState().operations).not.toBe(before);
+    expect(before!.get("op-1")!.state).toBe(OperationState.PENDING);
+  });
+
+  // VALID_TRANSITIONS says SUCCESS is terminal. A finished deployment that
+  // walks back into RUNNING makes the jobs list show a spinner forever.
+  it("refuses a transition the state machine forbids, loudly and without effect", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let allowed = true;
+    let warnings: unknown[][] = [];
+    try {
+      act(() => {
+        useOperationStore.getState().addOperation({
+          ...running("op-1"),
+          state: OperationState.SUCCESS,
+        });
+        allowed = useOperationStore.getState().updateState("op-1", OperationState.RUNNING);
+      });
+      warnings = warn.mock.calls.map((c) => [...c]);
+    } finally {
+      warn.mockRestore();
+    }
+
+    expect(allowed).toBe(false);
+    expect(useOperationStore.getState().getOperation("op-1")!.state).toBe(
+      OperationState.SUCCESS,
+    );
+    expect(warnings.flat().join(" ")).toContain("refused success -> running");
+  });
+
+  it("refuses a state change for an operation it has never heard of", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let allowed = true;
+    try {
+      act(() => {
+        allowed = useOperationStore.getState().updateState("ghost", OperationState.RUNNING);
+      });
+    } finally {
+      warn.mockRestore();
+    }
+
+    expect(allowed).toBe(false);
+    expect(useOperationStore.getState().operations.size).toBe(0);
+  });
+
+  it("allows the transitions the state machine does permit", () => {
+    let toRunning = false;
+    let toFailed = false;
+    let retried = false;
+    act(() => {
+      const store = useOperationStore.getState();
+      store.addOperation({ ...running("op-1"), state: OperationState.PENDING });
+      toRunning = store.updateState("op-1", OperationState.RUNNING);
+      toFailed = store.updateState("op-1", OperationState.FAILED);
+      retried = store.updateState("op-1", OperationState.PENDING);
+    });
+
+    expect([toRunning, toFailed, retried]).toEqual([true, true, true]);
+    expect(useOperationStore.getState().getOperation("op-1")!.state).toBe(
+      OperationState.PENDING,
+    );
+  });
+
+  // Only a terminal state means "finished", so only a terminal state stamps a
+  // completion time — and a non-terminal move must not wipe one that is there.
+  it("stamps a completion time only on the states an operation cannot leave", () => {
+    act(() => {
+      const store = useOperationStore.getState();
+      store.addOperation({ ...running("op-1"), state: OperationState.PENDING });
+      store.updateState("op-1", OperationState.RUNNING);
+    });
+    expect(useOperationStore.getState().getOperation("op-1")!.completed_at).toBeUndefined();
+
+    act(() => {
+      useOperationStore.getState().updateState("op-1", OperationState.FAILED);
+    });
+    const failedAt = useOperationStore.getState().getOperation("op-1")!.completed_at;
+    expect(Date.parse(failedAt!)).not.toBeNaN();
+
+    // FAILED -> PENDING is a retry; it must not erase when the failure landed.
+    act(() => {
+      useOperationStore.getState().updateState("op-1", OperationState.PENDING);
+    });
+    expect(useOperationStore.getState().getOperation("op-1")!.completed_at).toBe(failedAt);
   });
 
   it("stamps a completion time on a finished operation and an error on a failed one", () => {
@@ -551,6 +673,26 @@ describe("useLockStore", () => {
     expect(store.hasLock("abc123", LockType.DEPLOYMENT_STOP)).toBe(true);
     expect(store.hasLock("def456", LockType.DEPLOYMENT_START)).toBe(true);
     expect(store.hasLock("def456", LockType.DEPLOYMENT_STOP)).toBe(false);
+  });
+
+  // Same defect as the operation store had: writing through the Map left every
+  // subscriber holding the reference it already had, so the lock indicator
+  // never lit up.
+  it("notifies subscribers when a lock is taken", () => {
+    const seen = vi.fn();
+    const before = useLockStore.getState().locks;
+    const unsubscribe = useLockStore.subscribe(seen);
+    try {
+      act(() => {
+        useLockStore.getState().acquireLock(lock());
+      });
+    } finally {
+      unsubscribe();
+    }
+
+    expect(seen).toHaveBeenCalledTimes(1);
+    expect(useLockStore.getState().locks).not.toBe(before);
+    expect(before.size).toBe(0);
   });
 
   it("frees a lock so the next claimant can take it", () => {

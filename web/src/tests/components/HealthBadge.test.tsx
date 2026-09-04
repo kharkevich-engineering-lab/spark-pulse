@@ -1,6 +1,12 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import HealthBadge, { HealthAlert, HealthMonitorControls } from "@/components/HealthBadge";
+import HealthBadge, {
+  HealthAlert,
+  HealthHistoryChart,
+  HealthMonitorControls,
+  sparklinePath,
+  type HealthSample,
+} from "@/components/HealthBadge";
 import { HealthStatus } from "@/lib/operations";
 
 describe("HealthBadge", () => {
@@ -135,5 +141,133 @@ describe("HealthMonitorControls", () => {
     const button = screen.getByRole("button", { hidden: true });
     fireEvent.click(button);
     expect(onToggle).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── HealthHistoryChart ───────────────────────────────────────────────────────
+//
+// Nothing in this system stores a health series: `DeploymentHealth` is a
+// snapshot and the monitor broadcasts rather than records. The chart therefore
+// draws only samples a caller has accumulated from a live stream, and its most
+// important property is that it never manufactures one — an empty or one-point
+// series is a sentence, not a line.
+
+function samples(values: number[], stepMs = 5000): HealthSample[] {
+  return values.map((value, i) => ({ t: 1_700_000_000_000 + i * stepMs, value }));
+}
+
+const utilization = (values: number[]) => ({
+  label: "GPU utilization",
+  unit: "%",
+  color: "var(--color-primary)",
+  samples: samples(values),
+});
+
+describe("HealthHistoryChart", () => {
+  it("says it has nothing rather than drawing an empty axis", () => {
+    render(<HealthHistoryChart series={[utilization([])]} />);
+
+    expect(screen.getByText("Not enough history yet")).toBeInTheDocument();
+    expect(
+      screen.getByText("Nothing has arrived on the stream since this page was opened."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("img")).toBeNull();
+  });
+
+  it("refuses to draw a line through a single reading, and says how many it has", () => {
+    render(<HealthHistoryChart series={[utilization([42])]} />);
+
+    expect(screen.getByText("Not enough history yet")).toBeInTheDocument();
+    expect(screen.getByText("1 sample so far — two are needed to draw a line.")).toBeInTheDocument();
+  });
+
+  it("counts the samples it has when several series are still short", () => {
+    render(
+      <HealthHistoryChart
+        series={[utilization([42]), { ...utilization([]), label: "Temperature", unit: "°C" }]}
+      />,
+    );
+
+    expect(screen.getByText("1 sample so far — two are needed to draw a line.")).toBeInTheDocument();
+  });
+
+  it("draws a series once there are two readings, with its range", () => {
+    render(<HealthHistoryChart series={[utilization([10, 90, 40])]} />);
+
+    expect(screen.queryByText("Not enough history yet")).toBeNull();
+    expect(screen.getByText("GPU utilization")).toBeInTheDocument();
+    expect(screen.getByText(/now 40% . low 10% . peak 90%/)).toBeInTheDocument();
+    expect(screen.getByText("3 samples over the last 10 s")).toBeInTheDocument();
+    expect(
+      screen.getByRole("img", { name: /GPU utilization, 3 samples over the last 10 s, now 40%/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("draws only the series that have enough readings", () => {
+    render(
+      <HealthHistoryChart
+        series={[
+          utilization([10, 90]),
+          { label: "Temperature", unit: "°C", color: "red", samples: samples([70]) },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("GPU utilization")).toBeInTheDocument();
+    expect(screen.queryByText("Temperature")).toBeNull();
+    expect(screen.queryByText("Not enough history yet")).toBeNull();
+  });
+
+  it("carries a title and a caption saying where the numbers came from", () => {
+    render(
+      <HealthHistoryChart
+        series={[utilization([1, 2])]}
+        title="Live history"
+        caption="Sampled since this page was opened."
+        className="mt-4"
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "Live history" })).toBeInTheDocument();
+    expect(screen.getByText("Sampled since this page was opened.")).toBeInTheDocument();
+  });
+
+  it("rounds a fractional reading to one decimal rather than printing float noise", () => {
+    render(<HealthHistoryChart series={[{ ...utilization([33.333333, 66.666666]), unit: "%" }]} />);
+
+    expect(screen.getByText(/now 66.7% . low 33.3% . peak 66.7%/)).toBeInTheDocument();
+  });
+
+  it("reports the window it covers in minutes and in hours", () => {
+    const { unmount } = render(
+      <HealthHistoryChart series={[{ ...utilization([1, 2]), samples: samples([1, 2], 600_000) }]} />,
+    );
+    expect(screen.getByText("2 samples over the last 10 min")).toBeInTheDocument();
+    unmount();
+
+    render(
+      <HealthHistoryChart series={[{ ...utilization([1, 2]), samples: samples([1, 2], 7_200_000) }]} />,
+    );
+    expect(screen.getByText("2 samples over the last 2 h")).toBeInTheDocument();
+  });
+});
+
+describe("sparklinePath", () => {
+  it("draws nothing for a series too short to be a line", () => {
+    expect(sparklinePath([])).toBe("");
+    expect(sparklinePath(samples([5]))).toBe("");
+  });
+
+  it("spans the full width and puts the lowest reading at the bottom", () => {
+    const path = sparklinePath(samples([0, 100]));
+
+    expect(path).toBe("M0.00,37.00 L300.00,3.00");
+  });
+
+  // A GPU parked at one utilisation figure has no range to scale against;
+  // dividing by that zero span would put the whole series on the floor (or
+  // produce NaN), so a flat series is drawn flat, down the middle.
+  it("draws a series that never moved as a flat line down the middle", () => {
+    expect(sparklinePath(samples([50, 50, 50]))).toBe("M0.00,20.00 L150.00,20.00 L300.00,20.00");
   });
 });

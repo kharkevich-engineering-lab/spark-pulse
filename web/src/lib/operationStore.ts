@@ -17,6 +17,14 @@ import { canTransition } from "@/lib/operations";
 
 // ── Operation Store (AF-1) ───────────────────────────────────────────────────
 
+/** States an operation cannot leave; reaching one stamps `completed_at`. */
+const TERMINAL_STATES: ReadonlySet<OperationState> = new Set([
+  OperationState.SUCCESS,
+  OperationState.FAILED,
+  OperationState.CANCELLED,
+  OperationState.ROLLED_BACK,
+]);
+
 interface OperationStore {
   operations: Map<string, OperationStatus>;
   addOperation: (op: OperationStatus) => void;
@@ -41,10 +49,29 @@ export const useOperationStore = create<OperationStore>((set, get) => ({
     }),
 
   updateState: (operationId, newState) => {
-    get().operations.set(operationId, {
-      ...get().operations.get(operationId)!,
-      state: newState,
-      completed_at: newState === OperationState.SUCCESS || newState === OperationState.FAILED || newState === OperationState.CANCELLED || newState === OperationState.ROLLED_BACK ? new Date().toISOString() : undefined,
+    const op = get().operations.get(operationId);
+    if (!op) {
+      console.warn(`[operations] ignoring ${newState} for unknown operation ${operationId}`);
+      return false;
+    }
+    if (!canTransition(op.state, newState)) {
+      // Not silent: a rejected transition is a bug in the caller, and the one
+      // thing worse than the wrong state is a caller that believes it got it.
+      console.warn(
+        `[operations] refused ${op.state} -> ${newState} for ${operationId}`,
+      );
+      return false;
+    }
+    set((state) => {
+      const next = new Map(state.operations);
+      next.set(operationId, {
+        ...op,
+        state: newState,
+        completed_at: TERMINAL_STATES.has(newState)
+          ? new Date().toISOString()
+          : op.completed_at,
+      });
+      return { operations: next };
     });
     return true;
   },
@@ -77,16 +104,7 @@ export const useOperationStore = create<OperationStore>((set, get) => ({
       return { operations: next };
     }),
 
-  cancelOperation: (operationId) => {
-    const op = get().operations.get(operationId);
-    if (!op || !canTransition(op.state, OperationState.CANCELLED)) return false;
-    get().operations.set(operationId, {
-      ...op,
-      state: OperationState.CANCELLED,
-      completed_at: new Date().toISOString(),
-    });
-    return true;
-  },
+  cancelOperation: (operationId) => get().updateState(operationId, OperationState.CANCELLED),
 
   getOperation: (operationId) => get().operations.get(operationId),
 
@@ -210,7 +228,13 @@ export const useLockStore = create<LockStore>((set, get) => ({
   acquireLock: (lock) => {
     const key = `${lock.resource}:${lock.lock_type}`;
     if (get().locks.has(key)) return false; // Already locked
-    get().locks.set(key, lock);
+    // Replace the Map rather than writing through it: a lock nobody is
+    // notified about is an indicator that never turns on.
+    set((state) => {
+      const next = new Map(state.locks);
+      next.set(key, lock);
+      return { locks: next };
+    });
     return true;
   },
 

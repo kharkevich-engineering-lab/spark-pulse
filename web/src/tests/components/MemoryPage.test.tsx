@@ -111,7 +111,7 @@ describe("MemoryPage", () => {
     expect(screen.getByText("40960 MB free")).toBeInTheDocument();
   });
 
-  it("marks a process nothing here started, and kills it on request", async () => {
+  it("marks a process nothing here started, and kills it once confirmed", async () => {
     const user = userEvent.setup();
     render(<MemoryPage />);
 
@@ -121,10 +121,197 @@ describe("MemoryPage", () => {
 
     await user.click(within(row).getByRole("button", { name: /kill/i }));
 
+    // Nothing is signalled on the click alone — the operator is asked first.
+    expect(killGpuProcess).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Kill process" }));
+
     await waitFor(() => expect(killGpuProcess).toHaveBeenCalledWith(98251));
     // The polled figures are re-read, so the table cannot keep showing a
     // process that is gone.
     await waitFor(() => expect(fetchMemory).toHaveBeenCalledTimes(2));
+  });
+
+  // A misclick on this button ends somebody's inference run, so the dialog has
+  // to name what dies in the terms the row already showed: pid, process, and
+  // the memory it is holding.
+  it("names the process, its pid and its memory before killing anything", async () => {
+    const user = userEvent.setup();
+    render(<MemoryPage />);
+
+    const row = (await screen.findByText("98251")).closest("tr")!;
+    await user.click(within(row).getByRole("button", { name: /kill/i }));
+
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText(/PID 98251/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/VLLM::EngineCore/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/83421 MB/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Nothing on this page started it/)).toBeInTheDocument();
+  });
+
+  it("kills nothing when the confirmation is dismissed", async () => {
+    const user = userEvent.setup();
+    render(<MemoryPage />);
+
+    const row = (await screen.findByText("98251")).closest("tr")!;
+    await user.click(within(row).getByRole("button", { name: /kill/i }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(killGpuProcess).not.toHaveBeenCalled();
+  });
+
+  // `DELETE /api/memory/processes/{pid}` answers 200 with `{killed: false}`
+  // when the signal did not land — a refusal and a success are the same HTTP
+  // status, so a page that ignores the body reports a kill that never happened.
+  it("says so when the backend refuses the kill", async () => {
+    vi.mocked(killGpuProcess).mockResolvedValue({
+      killed: false,
+      pid: 98251,
+      error: "Operation not permitted",
+    });
+    const user = userEvent.setup();
+    render(<MemoryPage />);
+
+    const row = (await screen.findByText("98251")).closest("tr")!;
+    await user.click(within(row).getByRole("button", { name: /kill/i }));
+    await user.click(screen.getByRole("button", { name: "Kill process" }));
+
+    expect(await screen.findByText("PID 98251 was not killed")).toBeInTheDocument();
+    expect(screen.getByText("Operation not permitted")).toBeInTheDocument();
+  });
+
+  it("says so when the kill fails without a reason", async () => {
+    vi.mocked(killGpuProcess).mockResolvedValue({ killed: false, pid: 98251 });
+    const user = userEvent.setup();
+    render(<MemoryPage />);
+
+    const row = (await screen.findByText("98251")).closest("tr")!;
+    await user.click(within(row).getByRole("button", { name: /kill/i }));
+    await user.click(screen.getByRole("button", { name: "Kill process" }));
+
+    expect(await screen.findByText("PID 98251 was not killed")).toBeInTheDocument();
+    expect(screen.getByText(/gave no reason/)).toBeInTheDocument();
+  });
+
+  it("surfaces a kill request that never reached the backend", async () => {
+    vi.mocked(killGpuProcess).mockRejectedValue(new Error("API 500: nvidia-smi gone"));
+    const user = userEvent.setup();
+    render(<MemoryPage />);
+
+    const row = (await screen.findByText("98251")).closest("tr")!;
+    await user.click(within(row).getByRole("button", { name: /kill/i }));
+    await user.click(screen.getByRole("button", { name: "Kill process" }));
+
+    expect(await screen.findByText("Could not kill PID 98251")).toBeInTheDocument();
+    expect(screen.getByText("API 500: nvidia-smi gone")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "OK" }));
+    expect(screen.queryByText("Could not kill PID 98251")).toBeNull();
+  });
+
+  it("reports a tracked process as one of ours rather than a stranger's", async () => {
+    vi.mocked(fetchMemory).mockResolvedValue(
+      memory({
+        processes: [
+          { gpu_uuid: UUID, pid: 4242, process_name: "python", used_memory: 512, is_tracked: true },
+        ],
+      }),
+    );
+    const user = userEvent.setup();
+    render(<MemoryPage />);
+
+    const row = (await screen.findByText("4242")).closest("tr")!;
+    await user.click(within(row).getByRole("button", { name: /kill/i }));
+
+    expect(
+      within(screen.getByRole("dialog")).getByText(/belongs to a deployment this page is tracking/),
+    ).toBeInTheDocument();
+  });
+
+  // ── Live history ───────────────────────────────────────────────────────────
+  //
+  // Nothing in this system stores a health series, so the page draws only what
+  // it has watched go past on the metrics stream. One reading is not a line,
+  // and inventing the second one would be worse than saying so.
+
+  it("says it has no history yet rather than drawing a line through one point", async () => {
+    render(<MemoryPage />);
+
+    // The count lands a render after the card does, so wait on the count.
+    expect(await screen.findByText(/1 sample so far/)).toBeInTheDocument();
+    expect(screen.getByText("Not enough history yet")).toBeInTheDocument();
+  });
+
+  it("draws utilization and temperature once the stream has reported twice", async () => {
+    render(<MemoryPage />);
+    await screen.findByText("NVIDIA GB10");
+
+    const frame = (utilization: number, temperature: number) =>
+      memory({
+        gpu: [
+          {
+            index: 0,
+            gpu: "GPU 0",
+            uuid: UUID,
+            name: "NVIDIA GB10",
+            memory_total: 0,
+            memory_used: 0,
+            memory_free: 0,
+            memory_supported: false,
+            temperature,
+            utilization,
+            power_draw: null,
+            power_limit: null,
+          },
+        ],
+      });
+
+    act(() => emit("metrics", frame(30, 50)));
+    act(() => emit("metrics", frame(60, 55)));
+
+    // Three real readings: the polled one plus the two frames.
+    // One per series: utilization and temperature.
+    expect(await screen.findAllByText(/3 samples over the last/)).toHaveLength(2);
+    expect(screen.getByText("Live history")).toBeInTheDocument();
+    expect(screen.getByText(/now 60% . low 12% . peak 60%/)).toBeInTheDocument();
+    expect(screen.getByText(/now 55°C . low 47°C . peak 55°C/)).toBeInTheDocument();
+    // And it says the series is not kept.
+    expect(screen.getByText(/starts over on reload/)).toBeInTheDocument();
+    expect(screen.queryByText("Not enough history yet")).toBeNull();
+  });
+
+  it("keeps one GPU's history apart from another's", async () => {
+    const OTHER = "GPU-99999999-8888-7777-6666-555555555555";
+    const two = (utilization: number): MemoryResponse => ({
+      ...memory(),
+      gpu: [
+        ...memory().gpu,
+        {
+          index: 1,
+          gpu: "GPU 1",
+          uuid: OTHER,
+          name: "NVIDIA A100",
+          memory_total: 100,
+          memory_used: 50,
+          memory_free: 50,
+          memory_supported: true,
+          temperature: 70,
+          utilization,
+          power_draw: null,
+          power_limit: null,
+        },
+      ],
+    });
+    vi.mocked(fetchMemory).mockResolvedValue(two(90));
+    render(<MemoryPage />);
+    await screen.findByText("NVIDIA A100");
+
+    act(() => emit("metrics", two(80)));
+
+    // Each card carries its own series, scaled to its own readings.
+    expect(await screen.findByText(/now 80% . low 80% . peak 90%/)).toBeInTheDocument();
+    expect(screen.getByText(/now 12% . low 12% . peak 12%/)).toBeInTheDocument();
   });
 
   it("prefers a live metrics frame over the figures it first polled", async () => {

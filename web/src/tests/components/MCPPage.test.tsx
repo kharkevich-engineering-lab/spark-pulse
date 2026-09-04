@@ -8,6 +8,13 @@
  * settings rather than from the browser's, and says which situation it is in.
  * Both branches are asserted here, and so is the copy button, because a config
  * snippet that cannot be copied is a config snippet that gets mistyped.
+ *
+ * The other thing worth pinning is that MCP can be off. `app.py` mounts `/mcp`
+ * only when `config.mcp_enabled`, so a page that hardcoded "Active" handed the
+ * operator an endpoint that answers 404 and no way to find out why. The page
+ * reads the flag `/api/config` publishes; `useConfig` is stubbed here so each
+ * test can say which server it is looking at, and the unstubbed case falls
+ * through to the same cached default the rest of the SPA uses.
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,7 +27,27 @@ vi.mock("@/lib/api", () => ({
   fetchSettings: vi.fn(),
 }));
 
+/** What `/api/config` said, or `null` for "the page is outside a provider". */
+let appConfig: AppConfig | null = null;
+
+vi.mock("@/lib/config", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/config")>();
+  return { ...actual, useConfig: () => ({ config: appConfig, configLoaded: appConfig !== null }) };
+});
+
 import { fetchSettings } from "@/lib/api";
+import type { AppConfig } from "@/lib/config";
+
+const config = (over: Partial<AppConfig> = {}): AppConfig => ({
+  auth_enabled: false,
+  mcp_enabled: true,
+  cluster_enabled: false,
+  cluster_experimental: true,
+  benchmarking_enabled: false,
+  simulation_mode: true,
+  runtime: "native",
+  ...over,
+});
 
 /** jsdom serves this suite from http://localhost:3000. */
 const BROWSER_PORT = "3000";
@@ -43,10 +70,12 @@ function settings(webui_port: number): Settings {
 describe("MCPPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    appConfig = null;
     vi.mocked(fetchSettings).mockResolvedValue(settings(8100));
   });
 
   it("points at the backend's port, not the dev server's, and says why", async () => {
+    appConfig = config({ mcp_enabled: true });
     render(<MCPPage />);
 
     expect(await screen.findByText("http://localhost:8100/mcp")).toBeInTheDocument();
@@ -56,6 +85,7 @@ describe("MCPPage", () => {
   });
 
   it("says the origin is already the backend's when the backend is serving this page", async () => {
+    appConfig = config({ mcp_enabled: true });
     vi.mocked(fetchSettings).mockResolvedValue(settings(Number(BROWSER_PORT)));
     render(<MCPPage />);
 
@@ -65,13 +95,58 @@ describe("MCPPage", () => {
   });
 
   it("reports the server as active with its transport", async () => {
+    appConfig = config({ mcp_enabled: true });
     render(<MCPPage />);
 
     expect(await screen.findByText("Active")).toBeInTheDocument();
     expect(screen.getByText("HTTP (JSON-RPC 2.0)")).toBeInTheDocument();
   });
 
+  // With no config in context the page falls back to the SPA's cached default,
+  // which is the same one `/api/config` failing produces. It must still render
+  // rather than blanking the status.
+  it("assumes MCP is on when no config has been loaded", async () => {
+    render(<MCPPage />);
+
+    expect(await screen.findByText("Active")).toBeInTheDocument();
+  });
+
+  it("says MCP is off, and how to turn it on, instead of offering an endpoint", async () => {
+    appConfig = config({ mcp_enabled: false });
+    render(<MCPPage />);
+
+    expect(await screen.findByText("Disabled")).toBeInTheDocument();
+    expect(screen.getByText("The MCP endpoint is not mounted.")).toBeInTheDocument();
+    expect(screen.getByText(/a client pointed there would be refused/)).toBeInTheDocument();
+
+    // Both ways to enable it, and the restart that makes it take effect.
+    expect(
+      screen.getByText(/SPARK_PULSE_MCP_ENABLED=true spark-pulse start/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/"mcp_enabled": true/)).toBeInTheDocument();
+    expect(screen.getByText(/then restart Spark Pulse/)).toBeInTheDocument();
+
+    // And nothing that looks like something a client could connect to.
+    expect(screen.queryByText("http://localhost:8100/mcp")).toBeNull();
+    expect(screen.queryByText("HTTP (JSON-RPC 2.0)")).toBeNull();
+    expect(screen.queryByText("Endpoint")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Claude Desktop/ })).toBeNull();
+    expect(screen.queryByText(/same FastAPI process on port/)).toBeNull();
+  });
+
+  it("still documents the tools while saying none of them can be called", async () => {
+    appConfig = config({ mcp_enabled: false });
+    render(<MCPPage />);
+
+    expect(await screen.findByText("Disabled")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /Available Tools \(9\)/ })).toBeInTheDocument();
+    expect(
+      screen.getByText("These are what MCP would expose. None of them can be called while it is disabled."),
+    ).toBeInTheDocument();
+  });
+
   it("lists every tool an assistant can call, with what it does", async () => {
+    appConfig = config({ mcp_enabled: true });
     render(<MCPPage />);
 
     const heading = await screen.findByRole("heading", { name: /Available Tools \(9\)/ });
@@ -82,6 +157,7 @@ describe("MCPPage", () => {
   });
 
   it("keeps the setup guides collapsed until one is asked for", async () => {
+    appConfig = config({ mcp_enabled: true });
     const user = userEvent.setup();
     render(<MCPPage />);
 
@@ -105,6 +181,7 @@ describe("MCPPage", () => {
       value: { writeText },
     });
 
+    appConfig = config({ mcp_enabled: true });
     render(<MCPPage />);
     await screen.findByText("Active");
     await user.click(screen.getByRole("button", { name: /curl — quick test/ }));
@@ -117,6 +194,7 @@ describe("MCPPage", () => {
   });
 
   it("assumes the packaged port rather than rendering nothing before settings land", () => {
+    appConfig = config({ mcp_enabled: true });
     vi.mocked(fetchSettings).mockReturnValue(new Promise(() => {}));
     render(<MCPPage />);
 
