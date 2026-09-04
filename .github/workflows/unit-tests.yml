@@ -84,6 +84,14 @@ jobs:
       - name: Build frontend
         working-directory: web
         run: npm run build
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}
+      - name: Install Playwright browsers
+        working-directory: web
+        run: npx playwright install --with-deps chromium
       - name: Start mock backend for Playwright
         run: |
           SIMULATION_MODE=1 uvicorn spark_pulse.app:app --host 0.0.0.0 --port 8100 --workers 1 &
