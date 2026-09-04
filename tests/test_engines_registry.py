@@ -294,3 +294,47 @@ def _config():
     from spark_pulse.config import config
 
     return config
+
+
+class TestAvailability:
+    """An engine whose image was never published must not be offered.
+
+    The index carries `available: false` for an image the publish workflow
+    found no digest for. Pulling such a reference returns a 403 rather than an
+    image, which a deployment discovers minutes later at pull time.
+    """
+
+    def test_an_index_entry_can_mark_itself_unavailable(self):
+        from spark_pulse.engines.registry import parse_index
+
+        image = "ghcr.io/example/spark-pulse-engine/vllm-b12x"
+        entry = {
+            "id": "vllm-b12x",
+            "engine": "vllm",
+            "variant": "b12x",
+            "version": "0.1.0",
+            "image": image,
+            "digest": None,
+            "available": False,
+        }
+        (spec,) = parse_index({"engines": [entry]}, "test-index")
+        assert spec.available is False
+
+    def test_availability_defaults_true_for_older_indexes(self):
+        from spark_pulse.engines.registry import parse_index
+
+        entry = {
+            "id": "vllm",
+            "engine": "vllm",
+            "variant": "default",
+            "version": "0.1.0",
+            "image": "ghcr.io/example/vllm",
+        }
+        (spec,) = parse_index({"engines": [entry]}, "test-index")
+        assert spec.available is True
+
+    def test_usable_requires_both_available_and_enabled(self, registry):
+        spec = registry.get("vllm")
+        assert registry.usable(spec) is True
+        spec.available = False
+        assert registry.usable(spec) is False

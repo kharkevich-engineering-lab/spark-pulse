@@ -100,6 +100,8 @@ def parse_index(data: dict[str, Any], source: str) -> list[EngineSpec]:
         for field_name in ("image", "version", "tag", "digest", "description"):
             if entry.get(field_name) and not payload.get(field_name):
                 payload[field_name] = entry[field_name]
+        if "available" in entry:
+            payload["available"] = bool(entry["available"])
         # Index entries carry ``tag`` as the full ``image:version`` reference;
         # the spec wants the bare tag.
         tag = payload.get("tag")
@@ -377,6 +379,14 @@ class EngineRegistry:
 
     def enabled(self, engine: str) -> bool:
         return config.engine_enabled(engine)
+
+    def usable(self, spec: EngineSpec) -> bool:
+        """Whether this engine can actually run a deployment.
+
+        An engine the index marks unavailable has no image in the registry, so
+        offering it only produces a 403 at pull time.
+        """
+        return spec.available and self.enabled(spec.engine)
 
     def select(
         self,
