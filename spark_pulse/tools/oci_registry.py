@@ -24,6 +24,9 @@ logger = logging.getLogger(__name__)
 # ── Paths ────────────────────────────────────────────────────────────────────
 
 REGISTRIES_CONFIG = Path.home() / ".config" / "spark-pulse" / "registries.yaml"
+#: The default registry list shipped inside the package, one directory up from
+#: this module. Used verbatim when the user has never written their own config.
+BUNDLED_REGISTRIES_CONFIG = Path(__file__).resolve().parent.parent / "registries.yaml"
 OCI_CACHE_DIR = Path.home() / ".cache" / "spark-pulse" / "oci"
 OCI_META_CACHE_DIR = OCI_CACHE_DIR / "meta_cache"
 #: Where an installed OCI recipe lands. ``recipe_sources`` lists this directory
@@ -219,7 +222,7 @@ def _load_registries() -> list[dict]:
     Falls back to bundled spark_pulse/registries.yaml if user config doesn't exist.
     """
     user_config = REGISTRIES_CONFIG
-    bundled_config = Path(__file__).parent / "registries.yaml"
+    bundled_config = BUNDLED_REGISTRIES_CONFIG
 
     # Use user config if it exists, otherwise fall back to bundled default
     config_path = user_config if user_config.exists() else bundled_config

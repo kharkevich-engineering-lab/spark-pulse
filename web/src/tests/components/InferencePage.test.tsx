@@ -9,13 +9,21 @@ import { MULTI_NODE_BADGE_TITLE, MULTI_NODE_UNPROVEN } from "@/lib/experimental"
 import type { Deployment } from "@/lib/types";
 
 vi.mock("@/lib/api", () => ({
+  // Inert by default: only the tests that care about rank state stub it.
+  fetchDeployment: vi.fn(() => Promise.resolve(undefined)),
   fetchDeployments: vi.fn(),
   stopDeployment: vi.fn(),
   connectLogStream: vi.fn(() => () => {}),
   runBenchmark: vi.fn(),
 }));
 
-import { connectLogStream, fetchDeployments, runBenchmark, stopDeployment } from "@/lib/api";
+import {
+  connectLogStream,
+  fetchDeployment,
+  fetchDeployments,
+  runBenchmark,
+  stopDeployment,
+} from "@/lib/api";
 
 function deployment(over: Partial<Deployment> = {}): Deployment {
   return {
@@ -549,5 +557,171 @@ describe("InferencePage event stream", () => {
     await user.click(within(first).getByRole("button", { name: /clear/i }));
 
     expect(within(first).getByText("No events to display")).toBeInTheDocument();
+  });
+});
+
+/** Which machine in a cluster is sick.
+ *
+ * Per-rank container state is not in the deployment list and deliberately so:
+ * the list is one Docker enumerate on this machine, while a rank's live state
+ * is an inspect per rank — over SSH for every rank that is not local. It is
+ * read from the detail endpoint for the one row the operator has opened, which
+ * is the only place the ranks are rendered anyway. These tests pin both halves:
+ * the highlight reaches the screen, and nothing is spent on rows nobody opened.
+ */
+describe("InferencePage rank health", () => {
+  const RANKS = [
+    {
+      rank: 0,
+      node: "192.168.1.100",
+      host: "192.168.1.100",
+      container_name: "spark-pulse-c1-r0-g1",
+      is_head: true,
+    },
+    {
+      rank: 1,
+      node: "10.0.0.11",
+      host: "10.0.0.11",
+      container_name: "spark-pulse-c1-r1-g1",
+      is_head: false,
+    },
+  ];
+  const CLUSTER = deployment({
+    id: "c1",
+    name: "cluster job",
+    status: "running",
+    runtime: "native",
+    node_count: 2,
+    ranks: RANKS,
+    orphans: [],
+  });
+  /** What the detail endpoint adds that the list does not: each rank's container. */
+  const LIVE = {
+    ...CLUSTER,
+    ranks: [
+      {
+        ...RANKS[0],
+        container: { status: "running", running: true, id: "a", state: {}, error: null },
+      },
+      {
+        ...RANKS[1],
+        container: { status: "exited", running: false, id: "b", state: {}, error: null },
+      },
+    ],
+  } as Deployment;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(connectLogStream).mockReturnValue(() => {});
+    vi.mocked(fetchDeployments).mockResolvedValue([CLUSTER]);
+    vi.mocked(fetchDeployment).mockResolvedValue(LIVE);
+  });
+
+  it("names the rank whose container died, and leaves the healthy one plain", async () => {
+    render(<InferencePage />);
+    await expand("cluster job");
+
+    await waitFor(() => expect(fetchDeployment).toHaveBeenCalledWith("c1"));
+    const rows = within(screen.getByTestId("deployment-c1")).getByTestId("rank-rows");
+    const sick = await within(rows).findByTestId("rank-row-1");
+    expect(sick).toHaveTextContent("exited");
+    expect(sick).toHaveTextContent("10.0.0.11");
+    expect(sick.className).toContain("border-danger");
+
+    const well = within(rows).getByTestId("rank-row-0");
+    expect(well).toHaveTextContent("running");
+    expect(well.className).not.toContain("border-danger");
+  });
+
+  it("spends nothing on the ranks of rows nobody has opened", async () => {
+    render(<InferencePage />);
+
+    await screen.findByTestId("deployment-c1");
+    expect(fetchDeployment).not.toHaveBeenCalled();
+  });
+
+  it("does not inspect the ranks of a deployment that is not running", async () => {
+    // A stopped deployment has no containers by design and a pending one has
+    // none yet: asking would paint every rank red for saying what the row says.
+    vi.mocked(fetchDeployments).mockResolvedValue([
+      deployment({ id: "c1", name: "cluster job", status: "stopped", ranks: RANKS }),
+    ]);
+    render(<InferencePage />);
+    await expand("cluster job");
+
+    expect(
+      within(screen.getByTestId("deployment-c1")).getByTestId("rank-rows"),
+    ).toBeInTheDocument();
+    expect(fetchDeployment).not.toHaveBeenCalled();
+  });
+
+  it("keeps the ranks the list already gave when the live read fails", async () => {
+    vi.mocked(fetchDeployment).mockRejectedValue(new Error("API 502: node unreachable"));
+    render(<InferencePage />);
+    await expand("cluster job");
+
+    await waitFor(() => expect(fetchDeployment).toHaveBeenCalledWith("c1"));
+    const rows = within(screen.getByTestId("deployment-c1")).getByTestId("rank-rows");
+    expect(within(rows).getByTestId("rank-row-1")).toHaveTextContent("10.0.0.11");
+    // No container state, and no error banner shouted over the log pane.
+    expect(within(rows).getByTestId("rank-row-1")).not.toHaveTextContent("exited");
+    expect(screen.queryByText("API 502: node unreachable")).toBeNull();
+  });
+
+  it("re-reads the rank state when the stream reports a status change", async () => {
+    let push: ((event: string, data: unknown) => void) | undefined;
+    vi.mocked(connectLogStream).mockImplementation((_id, onMessage) => {
+      push = onMessage;
+      return () => {};
+    });
+    render(<InferencePage />);
+    await expand("cluster job");
+    await waitFor(() => expect(fetchDeployment).toHaveBeenCalledTimes(1));
+
+    act(() => push!("status", { status: "stopped" }));
+
+    await waitFor(() => expect(fetchDeployment).toHaveBeenCalledTimes(2));
+  });
+
+  it("does not chase a status frame for a row whose ranks it never asked about", async () => {
+    vi.mocked(fetchDeployments).mockResolvedValue([
+      deployment({ id: "c1", name: "cluster job", status: "stopped", ranks: RANKS }),
+    ]);
+    let push: ((event: string, data: unknown) => void) | undefined;
+    vi.mocked(connectLogStream).mockImplementation((_id, onMessage) => {
+      push = onMessage;
+      return () => {};
+    });
+    render(<InferencePage />);
+    await expand("cluster job");
+
+    act(() => push!("status", { status: "stopped" }));
+
+    await waitFor(() =>
+      expect(vi.mocked(fetchDeployments).mock.calls.length).toBeGreaterThan(1),
+    );
+    expect(fetchDeployment).not.toHaveBeenCalled();
+  });
+
+  it("forgets one row's rank state when another is opened", async () => {
+    const OTHER = deployment({
+      id: "c2",
+      name: "other job",
+      status: "running",
+      ranks: RANKS,
+    });
+    vi.mocked(fetchDeployments).mockResolvedValue([CLUSTER, OTHER]);
+    vi.mocked(fetchDeployment).mockImplementation(async (id: string) =>
+      id === "c1" ? LIVE : ({ ...OTHER, ranks: RANKS } as Deployment),
+    );
+    render(<InferencePage />);
+    await expand("cluster job");
+    await within(screen.getByTestId("deployment-c1")).findByText("exited");
+
+    await expand("other job");
+
+    await waitFor(() => expect(fetchDeployment).toHaveBeenCalledWith("c2"));
+    const rows = within(screen.getByTestId("deployment-c2")).getByTestId("rank-rows");
+    expect(rows).not.toHaveTextContent("exited");
   });
 });
