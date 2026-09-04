@@ -157,12 +157,42 @@ class TestDistribution:
         response = client.post("/api/models/nope/nope/sync", json={"nodes": ["n1"]})
         assert response.status_code == 400
 
+    def test_sync_reports_per_node_state_and_bytes(self, client):
+        body = client.post(
+            "/api/models/openai/gpt-oss-120b/sync", json={"nodes": ["n1"]}
+        ).json()
+        row = body["results"][0]
+        assert row["state"] == "verified"
+        assert row["published"] is True
+        assert row["token_sent"] is False
+        assert row["bytes_done"] == body["bytes_total"] > 0
+        assert row["verified_at"]
+
     def test_presence(self, client):
         response = client.get("/api/models/openai/gpt-oss-120b/presence?nodes=n1,n2")
         assert response.status_code == 200
         body = response.json()
         assert body["local"] is True
         assert [n["node"] for n in body["nodes"]] == ["n1", "n2"]
+
+    def test_presence_distinguishes_the_three_states(self, client):
+        body = client.get(
+            "/api/models/openai/gpt-oss-120b/presence?nodes=n1,n2,n3"
+        ).json()
+        states = [n["state"] for n in body["nodes"]]
+        assert states == ["verified", "partial", "absent"]
+        partial = body["nodes"][1]
+        assert partial["present"] is False
+        assert partial["missing"], "a partial node must say what it is missing"
+        assert 0 < partial["bytes_present"] < partial["bytes_expected"]
+
+    def test_presence_accepts_a_revision_and_a_deep_flag(self, client):
+        response = client.get(
+            "/api/models/openai/gpt-oss-120b/presence",
+            params={"nodes": "n1", "revision": "abc123", "deep": "true"},
+        )
+        assert response.status_code == 200
+        assert response.json()["revision"] == "abc123"
 
 
 class TestDelete:

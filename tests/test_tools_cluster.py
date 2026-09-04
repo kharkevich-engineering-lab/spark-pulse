@@ -336,6 +336,40 @@ class TestRealClusterOrchestrator:
         assert seen["shm_size_gb"] == 32
         assert seen["privileged"] is False
 
+    def test_a_worker_is_given_no_hub_token_and_is_pinned_offline(self, cluster):
+        """The token stays on the control node; the worker runs on replicas.
+
+        A worker whose weights were replicated needs no credential, and giving
+        it one is how a gated token ends up on every node. Being offline turns
+        a missing file into an immediate failure rather than a silent
+        re-download of hundreds of gigabytes over the uplink.
+        """
+        seen: dict[str, dict[str, str]] = {}
+
+        class _Capturing(FakeNode):
+            def run_container(self, image, name, env_vars, metadata, **kwargs):
+                seen[name] = dict(env_vars)
+                return super().run_container(image, name, env_vars, metadata, **kwargs)
+
+        cluster.nodes[HEAD_IP] = _Capturing(HEAD_IP, cluster.log)
+        cluster.nodes[WORKER_IP] = _Capturing(WORKER_IP, cluster.log)
+        orchestrator = ClusterOrchestrator(
+            services=cluster,
+            ssh_client=MagicMock(),
+            event_broadcaster=MagicMock(),
+        )
+
+        _start(
+            orchestrator,
+            env_vars={"HF_TOKEN": "hf_secret", "NCCL_SOCKET_IFNAME": "eth0"},
+        )
+
+        assert "HF_TOKEN" not in seen["c-worker-0"]
+        assert seen["c-worker-0"]["HF_HUB_OFFLINE"] == "1"
+        assert seen["c-worker-0"]["NCCL_SOCKET_IFNAME"] == "eth0"
+        # The head is where the download happened, so it keeps its token.
+        assert seen["c-head"]["HF_TOKEN"] == "hf_secret"
+
     def test_rollback_stops_each_container_on_its_own_node(self, orchestrator, cluster):
         _start(orchestrator)
         cluster.log.clear()
