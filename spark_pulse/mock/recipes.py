@@ -1,23 +1,30 @@
-"""Mock recipe tools — 6 realistic DGX Spark deployment recipes."""
+"""Mock recipe tools — the production recipe path, plus a canned catalogue.
+
+Discovery, parsing, flattening and command rendering are shared with the real
+tools through :mod:`spark_pulse.tools.recipe_sources` (no mock twin, so
+importing it never disturbs the ``SIMULATION_MODE`` module switch), and
+customizations are read from the very store the customization API writes to.
+Simulation therefore reports the same schema fields, the same sources and the
+same rendered command as production for the same recipe files.
+
+The canned list below is what a simulated server shows when there is no recipe
+source at all — it is demo data, not a second implementation.
+"""
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-import json
 from pathlib import Path
 from typing import Any
 
-import types
-import yaml
-from filelock import FileLock
-
 from spark_pulse.config import config
+from spark_pulse.tools import custom_recipes, recipe_sources
+from spark_pulse.tools.recipe_sources import (
+    DEFAULT_CONTAINER as DEFAULT_CONTAINER,
+    DEPRECATED_PLACEHOLDERS as DEPRECATED_PLACEHOLDERS,
+    SUMMARY_FIELDS as SUMMARY_FIELDS,
+)
 
-# Discovery/parsing is shared with the real tools via a module that has no mock
-# twin, so importing it never disturbs the SIMULATION_MODE module switch.
-from spark_pulse.tools import recipe_sources
-
-# Default mock recipes (used when no spark_path is provided)
+# Default mock recipes (used when no recipe source is available at all)
 _RECIPES = [
     {
         "name": "qwen3.5-397b-int4",
@@ -141,130 +148,6 @@ _RECIPES = [
     },
 ]
 
-_CUSTOM_RECIPES_DIR = Path.home() / ".config" / "spark-pulse" / "custom_recipes"
-_CUSTOM_MODS_DIR = Path.home() / ".config" / "spark-pulse" / "custom_mods"
-_CUSTOM_RECIPES_PATH = (
-    Path(__file__).resolve().parent.parent / "data" / "custom_recipes.json"
-)
-_CUSTOM_RECIPES_LOCK = FileLock(f"{_CUSTOM_RECIPES_PATH}.lock", timeout=30)
-
-
-def _iter_recipe_files(recipe_dir: Path):
-    """Iterate over recipe YAML files in the recipes directory."""
-    if not recipe_dir.is_dir():
-        return
-    for ext in ("yaml", "yml"):
-        for yaml_file in recipe_dir.rglob(f"*.{ext}"):
-            yield yaml_file
-        # Also yield extensionless files that are symlinks or directories
-        for item in recipe_dir.rglob("*"):
-            if item.is_symlink() and not item.suffix:
-                yield item
-
-
-def _recipe_id_from_path(recipe_dir: Path, recipe_file: Path) -> str:
-    """Derive recipe ID from file path."""
-    rel = recipe_file.relative_to(recipe_dir)
-    if recipe_file.suffix.lower() in {".yaml", ".yml"}:
-        return str(rel.with_suffix(""))
-    return str(rel)
-
-
-def _load_customizations() -> dict[str, Any]:
-    """Load custom recipe customizations."""
-    custom_path = getattr(custom_recipes, "_CUSTOM_PATH", None)
-    if custom_path is None:
-        # Fallback to the default path
-        custom_path = _CUSTOM_RECIPES_PATH
-    if not custom_path.exists():
-        return {}
-    try:
-        with open(custom_path) as f:
-            data = json.load(f)
-        if isinstance(data, dict):
-            return data
-        return {}
-    except (json.JSONDecodeError, OSError):
-        return {}
-
-
-def _save_customizations(data: dict[str, Any]) -> None:
-    """Save custom recipe customizations."""
-    custom_path = getattr(custom_recipes, "_CUSTOM_PATH", None)
-    if custom_path is None:
-        custom_path = _CUSTOM_RECIPES_PATH
-    custom_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = custom_path.with_suffix(".tmp")
-    with open(tmp, "w") as f:
-        json.dump(data, f, indent=2)
-    tmp.rename(custom_path)
-
-
-@contextmanager
-def _atomic_customizations():
-    """Context manager for atomic read-modify-write of custom recipes."""
-    with _CUSTOM_RECIPES_LOCK:
-        data = _load_customizations()
-        yield data
-        _save_customizations(data)
-
-
-def _load_customized_recipe(
-    recipe_id: str, spark_path: Path | None = None
-) -> dict | None:
-    """Load a recipe from spark_path if it exists."""
-    spark_path = spark_path or Path(__file__).resolve().parent.parent.parent
-    recipe_dir = Path(spark_path) / "recipes"
-
-    # Try direct path
-    candidates = [
-        recipe_dir / recipe_id,
-        recipe_dir / f"{recipe_id}.yaml",
-        recipe_dir / f"{recipe_id}.yml",
-    ]
-    candidates = [c for c in candidates if c.exists()]
-
-    if not candidates:
-        # Try to find by id in all recipe files
-        for yaml_file in _iter_recipe_files(recipe_dir):
-            try:
-                with open(yaml_file) as f:
-                    data = yaml.safe_load(f)
-                if data and _recipe_id_from_path(recipe_dir, yaml_file) == recipe_id:
-                    candidates.append(yaml_file)
-                    break
-            except (yaml.YAMLError, OSError):
-                continue
-
-    for candidate in candidates:
-        try:
-            with open(candidate) as f:
-                data = yaml.safe_load(f)
-            if not data:
-                continue
-            candidate_id = _recipe_id_from_path(recipe_dir, candidate)
-            if candidate_id != recipe_id and data.get("name") != recipe_id:
-                continue
-            recipe = {
-                "id": candidate_id,
-                "name": data.get("name", candidate.stem),
-                "model": data.get("model", "unknown"),
-                "container": data.get("container", "vllm-node"),
-                "command": data.get("command", ""),
-                "description": data.get("description", ""),
-                "mods": data.get("mods", []),
-                "defaults": data.get("defaults", {}),
-                "env": data.get("env", {}),
-                "build_args": data.get("build_args", []),
-                "solo_only": bool(data.get("solo_only", False)),
-                "cluster_only": bool(data.get("cluster_only", False)),
-                "recipe_version": data.get("recipe_version", "1"),
-            }
-            return recipe
-        except (yaml.YAMLError, OSError):
-            continue
-    return None
-
 
 def _canned(recipe: dict[str, Any]) -> dict[str, Any]:
     """Shape a canned recipe like a parsed one."""
@@ -280,19 +163,18 @@ def _canned(recipe: dict[str, Any]) -> dict[str, Any]:
 
 
 def list_recipes(spark_path: Path | None = None) -> list[dict[str, Any]]:
-    """Scan all YAML files in the recipes directory (when spark_path provided),
-    or return mock recipe list when no spark_path.
+    """List every recipe from every source, or the canned catalogue.
 
-    Parsing is delegated to the real module so simulation mode reports the
-    same schema fields (recipe_version, engine, engines, params) and the same
-    sources (including `imported/`) as production.
+    Parsing is delegated to the shared module so simulation reports the same
+    schema fields (recipe_version, engine, engines, params) and the same
+    sources (including ``imported/``) as production.
     """
     if spark_path is None:
         spark_path = config.spark_vllm_dir
     payloads = recipe_sources.iter_recipe_payloads(spark_path)
     if payloads or recipe_sources.checkout_recipes_dir(spark_path) is not None:
         return [
-            recipe_sources.summarize(p, bool(has_customization(p["id"])))
+            recipe_sources.summarize(p, custom_recipes.has_customization(p["id"]))
             for p in payloads
         ]
     return [_canned(r) for r in _RECIPES]
@@ -300,8 +182,10 @@ def list_recipes(spark_path: Path | None = None) -> list[dict[str, Any]]:
 
 def get_recipe(recipe_id: str, spark_path: Path | None = None) -> dict[str, Any] | None:
     """Load a specific recipe by relative path id or display name.
-    Uses spark_path if provided, otherwise falls back to config.spark_vllm_path
-    and finally returns mock data."""
+
+    Falls back to the canned catalogue so a simulated server can still answer
+    for a recipe that exists nowhere on disk.
+    """
     if spark_path is None:
         spark_path = config.spark_vllm_dir
     recipe = recipe_sources.resolve_recipe(recipe_id, spark_path)
@@ -312,255 +196,12 @@ def get_recipe(recipe_id: str, spark_path: Path | None = None) -> dict[str, Any]
                 break
     if recipe is None:
         return None
-    recipe_sources.apply_customization(recipe, get_customization(recipe["id"]))
+    recipe_sources.apply_customization(
+        recipe, custom_recipes.get_customization(recipe["id"])
+    )
     return recipe
 
 
 def build_launch_command(recipe: dict[str, Any], params: dict[str, Any]) -> str:
-    """Build a mock vLLM launch command."""
-    # Use the recipe command template if provided
-    if "command" in recipe:
-        cmd = recipe["command"]
-    else:
-        cmd = "vllm serve {model}"
-
-    # Replace tokens like {host}, {port}, {model} with --flag value
-    host = params.get("host", "0.0.0.0")
-    port = params.get("port", 8000)
-    model = recipe.get("model", "unknown")
-    tp = params.get("tensor_parallel", params.get("tp"))
-    gpu_mem = params.get("gpu_memory_utilization")
-    max_len = params.get("max_model_len")
-
-    cmd = cmd.replace("{host}", f"--host {host}")
-    cmd = cmd.replace("{port}", f"--port {port}")
-    cmd = cmd.replace("{model}", model)
-    cmd = cmd.replace("{}", model)
-
-    if tp:
-        cmd = cmd.replace("{-tp}", f"--tensor-parallel-size {tp}")
-    if gpu_mem:
-        cmd = cmd.replace(
-            "{--gpu-memory-utilization}", f"--gpu-memory-utilization {gpu_mem}"
-        )
-    if max_len:
-        cmd = cmd.replace("{--max-model-len}", f"--max-model-len {max_len}")
-
-    return cmd
-
-
-# ── Custom recipes (mirrors real module API) ─────────────────────────────────
-
-
-def has_customization(recipe_id: str) -> bool:
-    """Check if a recipe has customizations."""
-    data = _load_customizations()
-    return recipe_id in data
-
-
-def get_customization(recipe_id: str) -> dict[str, Any] | None:
-    """Get customization for a recipe."""
-    data = _load_customizations()
-    return data.get(recipe_id)
-
-
-def get_customizations() -> dict[str, Any]:
-    """Get all customizations."""
-    return _load_customizations()
-
-
-def save_customization(recipe_id: str, customization: dict[str, Any]) -> bool:
-    """Save a recipe customization."""
-    data = _load_customizations()
-    # Store all meaningful customizable fields
-    customizable = {
-        "port",
-        "tensor_parallel",
-        "gpu_memory_utilization",
-        "max_num_seqs",
-        "env",
-        "build_args",
-        "privileged",
-        "command",
-        "mods",
-    }
-    filtered = {k: v for k, v in customization.items() if k in customizable}
-    if filtered:
-        data[recipe_id] = filtered
-    else:
-        data.pop(recipe_id, None)
-    _save_customizations(data)
-    return True
-
-
-def delete_customization(recipe_id: str) -> bool:
-    """Delete a recipe customization."""
-    data = _load_customizations()
-    if recipe_id in data:
-        del data[recipe_id]
-        _save_customizations(data)
-        return True
-    return False
-
-
-def get_customized_recipe(
-    recipe_id: str, spark_path: Path | None = None
-) -> dict[str, Any] | None:
-    """Get a recipe with customizations applied."""
-    recipe = get_recipe(recipe_id, spark_path) or _load_customized_recipe(
-        recipe_id, spark_path
-    )
-    if recipe is None:
-        return None
-    customization = get_customization(recipe_id)
-    if customization:
-        custom_defaults = customization.get("defaults")
-        if isinstance(custom_defaults, dict):
-            recipe["defaults"] = {**recipe.get("defaults", {}), **custom_defaults}
-    return recipe
-
-
-def list_custom_recipes() -> list[dict[str, Any]]:
-    """List custom recipe files in the custom recipes directory."""
-    if not _CUSTOM_RECIPES_DIR.exists():
-        return []
-    custom_recipes = []
-    for yaml_file in _CUSTOM_RECIPES_DIR.rglob("*.yaml"):
-        try:
-            with open(yaml_file) as f:
-                data = yaml.safe_load(f)
-            if data:
-                custom_recipes.append(
-                    {
-                        "name": yaml_file.stem,
-                        "path": str(yaml_file),
-                        "content": yaml_file.read_text(),
-                    }
-                )
-        except (yaml.YAMLError, OSError):
-            custom_recipes.append(
-                {
-                    "name": yaml_file.stem,
-                    "path": str(yaml_file),
-                    "error": "Failed to parse YAML",
-                }
-            )
-    return custom_recipes
-
-
-def get_recipe_content(recipe_name: str) -> dict[str, Any] | None:
-    """Get the content of a custom recipe file."""
-    recipe_path = _CUSTOM_RECIPES_DIR / f"{recipe_name}.yaml"
-    if not recipe_path.exists():
-        return None
-    return {
-        "name": recipe_name,
-        "path": str(recipe_path),
-        "content": recipe_path.read_text(),
-    }
-
-
-def save_recipe_content(recipe_name: str, content: str) -> bool:
-    """Save content to a custom recipe file."""
-    # Check for path traversal
-    if ".." in recipe_name or "/" in recipe_name or "\\" in recipe_name:
-        raise ValueError("Recipe name contains invalid characters")
-    recipe_path = _CUSTOM_RECIPES_DIR / f"{recipe_name}.yaml"
-    recipe_path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        yaml.safe_load(content)
-    except yaml.YAMLError as e:
-        raise ValueError(f"Invalid YAML: {e}")
-    recipe_path.write_text(content)
-    return True
-
-
-def delete_recipe_content(recipe_name: str) -> bool:
-    """Delete a custom recipe file."""
-    recipe_path = _CUSTOM_RECIPES_DIR / f"{recipe_name}.yaml"
-    if recipe_path.exists():
-        recipe_path.unlink()
-        return True
-    return False
-
-
-def list_custom_mods() -> list[dict[str, Any]]:
-    """List custom mod directories in the custom mods directory."""
-    if not _CUSTOM_MODS_DIR.exists():
-        return []
-    mods = []
-    for item in sorted(_CUSTOM_MODS_DIR.iterdir()):
-        if item.is_dir() and (item / "run.sh").exists():
-            description = ""
-            run_sh = item / "run.sh"
-            for line in run_sh.read_text().split("\n"):
-                if line.startswith("#"):
-                    description = line.lstrip("# ").strip()
-                else:
-                    break
-            mods.append(
-                {
-                    "name": item.name,
-                    "path": str(item),
-                    "description": description,
-                }
-            )
-    return mods
-
-
-def get_mod_files(mod_name: str) -> dict[str, Any] | None:
-    """Get files and content for a custom mod."""
-    mod_dir = _CUSTOM_MODS_DIR / mod_name
-    if not mod_dir.exists():
-        return None
-    files = []
-    for f in sorted(mod_dir.rglob("*")):
-        if f.is_file():
-            rel = f.relative_to(mod_dir)
-            try:
-                content = f.read_text()
-            except (OSError, UnicodeDecodeError):
-                content = None
-            files.append(
-                {
-                    "path": str(rel),
-                    "content": content,
-                }
-            )
-    return {"name": mod_name, "path": str(mod_dir), "files": files}
-
-
-def save_mod_files(mod_name: str, files: list[dict[str, Any]]) -> bool:
-    """Save files for a custom mod."""
-    if ".." in mod_name or "/" in mod_name or "\\" in mod_name:
-        raise ValueError("Mod name contains invalid characters")
-    mod_dir = _CUSTOM_MODS_DIR / mod_name
-    mod_dir.mkdir(parents=True, exist_ok=True)
-    for file_info in files:
-        file_path = mod_dir / file_info["path"]
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.write_text(file_info["content"])
-    return True
-
-
-def delete_mod(mod_name: str) -> bool:
-    """Delete a custom mod directory."""
-    mod_dir = _CUSTOM_MODS_DIR / mod_name
-    if mod_dir.exists():
-        import shutil
-
-        shutil.rmtree(mod_dir)
-        return True
-    return False
-
-
-# ── Test compatibility: create custom_recipes submodule ──────────────────────
-
-_custom_recipes_mod = types.ModuleType("custom_recipes")
-_custom_recipes_mod.__file__ = __file__
-_custom_recipes_mod._CUSTOM_PATH = _CUSTOM_RECIPES_PATH
-_custom_recipes_mod.get_customization = get_customization
-_custom_recipes_mod.save_customization = save_customization
-_custom_recipes_mod.delete_customization = delete_customization
-_custom_recipes_mod.has_customization = has_customization
-custom_recipes = _custom_recipes_mod
+    """Build the serve command from a recipe and params."""
+    return recipe_sources.render_command(recipe, params)

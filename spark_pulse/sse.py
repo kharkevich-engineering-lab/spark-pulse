@@ -37,7 +37,11 @@ async def metrics_generator() -> AsyncGenerator[str, None]:
             data = await run_in_threadpool(_collect)
             yield f"event: metrics\ndata: {json.dumps(data)}\n\n"
         except Exception as e:
-            yield f'event: error\ndata: {{"message": "{e}"}}\n\n'
+            # Interpolating the message straight into the frame produced
+            # unparseable JSON the moment it held a quote, and split the frame
+            # in two the moment it held a newline — which docker and nvidia-smi
+            # messages routinely do.
+            yield f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n"
         await asyncio.sleep(5)
 
 
@@ -313,7 +317,9 @@ async def health_events_generator() -> AsyncGenerator[str, None]:
             deployments = monitor.get_all_health()
             yield f"event: health_update\ndata: {json.dumps(deployments)}\n\n"
         except Exception as e:
-            yield f'event: error\ndata: {{"message": "{e}"}}\n\n'
+            # See ``metrics_generator``: the message has to be encoded, not
+            # interpolated, or one quote costs the client the whole stream.
+            yield f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n"
         await asyncio.sleep(30)
 
 

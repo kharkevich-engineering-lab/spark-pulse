@@ -6,7 +6,6 @@ from spark_pulse.mock import (
     recipes as recipes,
     recipe_import as recipe_import,
     benchmarking as benchmarking,
-    custom_recipes as custom_recipes,
     mods as mods,
     docker as docker,
     registry as registry,

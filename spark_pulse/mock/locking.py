@@ -10,7 +10,7 @@ from spark_pulse.tools.locking import (
 )
 
 
-class MockLockManager:
+class LockManager:
     """Mock lock manager for simulation mode.
 
     Scenarios:

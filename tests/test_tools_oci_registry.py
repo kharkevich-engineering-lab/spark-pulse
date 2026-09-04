@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from spark_pulse.tools.oci_registry import (
+    _safe_layer_filename,
     add_registry,
     apply_updates,
     check_updates,
@@ -506,6 +507,53 @@ class TestOrasListTags:
 
         tags = _oras_list_tags("ghcr.io/test/repo")
         assert tags == []
+
+
+class TestLayerFilenameIsNotRegistryControlled:
+    """A layer's title comes from a remote registry, so it is not a filename.
+
+    ``org.opencontainers.image.title`` was joined onto the layout directory
+    verbatim. A registry that served ``../../../.ssh/authorized_keys`` as a
+    layer title therefore wrote that file, as whichever user runs the server,
+    on any ``oci install``. These are the payloads that must not survive.
+    """
+
+    @pytest.mark.parametrize(
+        "hostile",
+        [
+            "../../../.ssh/authorized_keys",
+            "../../etc/cron.d/pwn",
+            "/etc/passwd",
+            "..",
+            ".",
+            "",
+            "   ",
+            "sub/dir/recipe.yaml",
+            "..\\..\\windows\\system32\\drivers\\etc\\hosts",
+        ],
+    )
+    def test_a_hostile_title_never_escapes_the_layout_directory(
+        self, hostile, tmp_path
+    ):
+        name = _safe_layer_filename(hostile, "sha256:abcdef1234567890")
+
+        assert "/" not in name and "\\" not in name
+        assert name not in {"", ".", ".."}
+        # The real test: joining the result must stay inside the directory.
+        resolved = (tmp_path / name).resolve()
+        assert (
+            resolved.parent == tmp_path.resolve()
+        ), f"{hostile!r} escaped to {resolved}"
+
+    def test_an_ordinary_title_is_kept_as_it_is(self, tmp_path):
+        assert _safe_layer_filename("qwen3-8b.yaml", "sha256:abc") == "qwen3-8b.yaml"
+
+    def test_a_discarded_title_falls_back_to_the_digest(self):
+        # Deterministic, and distinct per layer, so two hostile layers in one
+        # artifact cannot collide onto a single file.
+        assert _safe_layer_filename("../..", "sha256:deadbeefcafe") == (
+            "recipe-sha256:deadb.yaml"
+        )
 
 
 class TestOrasPullToLayout:

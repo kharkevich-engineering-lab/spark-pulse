@@ -374,6 +374,21 @@ def _oras_list_tags(url: str, auth: dict | None = None) -> list[str]:
     return tags or []
 
 
+def _safe_layer_filename(raw: str, layer_digest: str) -> str:
+    """Reduce a registry-supplied layer title to a name safe to join to a dir.
+
+    Layer annotations come from a remote registry, so they can carry path
+    separators (``../../.ssh/authorized_keys``) or be absolute. Anything that is
+    not a plain file name is discarded in favour of a digest-derived name.
+    """
+    candidate = Path(raw.strip()).name if raw else ""
+    if candidate in {"", ".", ".."} or "/" in candidate or "\\" in candidate:
+        candidate = ""
+    if not candidate:
+        candidate = f"recipe-{(layer_digest or 'unknown')[:12]}.yaml"
+    return candidate
+
+
 def _oras_pull_to_layout(
     url: str, tag: str, layout_dir: Path, auth: dict | None = None
 ) -> None:
@@ -420,8 +435,8 @@ def _oras_pull_to_layout(
                 recipe_name = layer_annotations.get("name", "")
                 if recipe_name:
                     filename = f"{recipe_name}.yaml"
-                else:
-                    filename = f"recipe-{layer_digest[:12]}.yaml"
+            # Annotations are registry-controlled: never let one escape layout_dir
+            filename = _safe_layer_filename(filename, layer_digest)
 
             # Download the layer content
             layer_path = layout_dir / filename
@@ -1029,7 +1044,7 @@ def uninstall_oci_recipe(recipe_name: str) -> dict:
         if base.endswith((".yaml", ".yml"))
         else RECIPES_DIR / f"{base}.yaml"
     )
-    meta_file = recipe_file.with_suffix(recipe_file.suffix + ".meta")
+    meta_file = _meta_path(base)
 
     # Remove files
     removed = []
@@ -1200,9 +1215,11 @@ def _read_recipe_meta(recipe_filename: str) -> RecipeMeta | None:
         try:
             with open(recipe_file) as f:
                 content = f.read()
-            # Compare with digest — simplified check
+            # Compare with the recorded digest. Stored digests are written as
+            # "sha256:<hex>", so strip the algorithm prefix before comparing.
             content_hash = hashlib.sha256(content.encode()).hexdigest()
-            if content_hash[:12] != data.get("digest", "")[:12]:
+            recorded = (data.get("digest") or "").split(":")[-1]
+            if not recorded or content_hash != recorded:
                 local_changes = True
         except OSError:
             pass

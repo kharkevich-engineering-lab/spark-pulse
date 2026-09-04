@@ -1,7 +1,11 @@
-"""Unit tests for spark_pulse.tools.benchmarking.
+"""Unit tests for the simulation-mode benchmarking tool.
 
-Tests the real benchmarking tool module — creates records, executes benchmarks,
-manages list operations and comparison logic.
+pytest-env forces SIMULATION_MODE=1, so ``from spark_pulse.tools import
+benchmarking`` — and every ``"spark_pulse.tools.benchmarking..."`` patch target
+below — resolves to ``spark_pulse/mock/benchmarking.py``.  This file therefore
+exercises the *mock*: records, execution, list operations and comparison logic
+as simulation mode implements them.  The real module is covered by
+``tests/test_tools_benchmarking_real.py``.
 
 Usage:
     pytest tests/test_tools_benchmarking.py -v

@@ -23,10 +23,13 @@ def check_deployment_health(deployment_id: str) -> dict[str, Any]:
     """
     try:
         health.get_health_monitor()
-        # For API endpoint, do a direct check rather than using the monitor
+        # For API endpoint, do a direct check rather than using the monitor.
+        # The module-level helper is the one the simulation switch replaces;
+        # ``docker.DockerService`` is the real class in both packages (the mock
+        # subclasses it), so constructing it here reached a real daemon even in
+        # simulation.
         from spark_pulse.tools import docker
 
-        docker_service = docker.DockerService()
         # Look up deployment to get container name
         from spark_pulse import tools
 
@@ -41,7 +44,7 @@ def check_deployment_health(deployment_id: str) -> dict[str, Any]:
         container_name = dep.get("container_name", "")
         container_status = "unknown"
         if container_name:
-            status = docker_service.get_container_status(name=container_name)
+            status = docker.get_container_status(container_name)
             container_status = status.get("status", "unknown") if status else "unknown"
 
         return {

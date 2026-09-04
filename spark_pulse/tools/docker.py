@@ -436,6 +436,12 @@ class DockerService:
         import docker
 
         client = self.client
+        # Stamped *before* the labels are built: the label is the only place
+        # the creation time survives this process, and reconciliation rebuilds
+        # deployments from labels alone. A caller that already has a time —
+        # the deploy planner stamps one for the whole gang — keeps it.
+        if not metadata.created_at:
+            metadata.created_at = datetime.now(timezone.utc).isoformat()
         labels = metadata.to_labels()
         labels[NAME_LABEL] = name
 
@@ -522,8 +528,6 @@ class DockerService:
         except docker.errors.APIError as exc:
             raise RuntimeError(f"Docker API error: {exc}") from exc
 
-        metadata.created_at = datetime.now(timezone.utc).isoformat()
-        labels[CREATED_AT_LABEL] = metadata.created_at
         return ContainerInfo(
             id=container.id,
             name=container.name,
@@ -840,9 +844,16 @@ class DockerService:
         The native runtime redirects the serve script into PID 1's stdout, so
         this is the deployment log.
         """
+        import docker
+
         client = self.client
         try:
             container = client.containers.get(name)
+        except docker.errors.NotFound:
+            # The SDK's message is "404 ... No such container: x", which the
+            # text check below does not match — so it has to be caught by type
+            # or a missing container becomes a 500 with an HTTP dump in it.
+            return f"Container '{name}' not found"
         except Exception as exc:
             if "not found" in str(exc).lower():
                 return f"Container '{name}' not found"

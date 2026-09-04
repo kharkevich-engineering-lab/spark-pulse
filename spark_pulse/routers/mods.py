@@ -6,6 +6,7 @@ and applying mods to cluster nodes.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,57 @@ from fastapi import APIRouter, HTTPException
 from spark_pulse.tools import mods
 
 router = APIRouter(prefix="/api/mods", tags=["mods"])
+
+
+# ── The cluster a request names ──────────────────────────────────────────────
+#
+# The orchestrator walks `cluster_state.head` and `cluster_state.workers` and
+# reads `.ip`/`.container_name` off each node. A JSON body arrives as a dict,
+# which has none of those, so the payload is converted here rather than handed
+# straight through.
+
+
+@dataclass(frozen=True)
+class _Node:
+    ip: str
+    container_name: str
+
+
+@dataclass(frozen=True)
+class _ClusterState:
+    head: _Node
+    workers: list[_Node] = field(default_factory=list)
+
+
+def _node(raw: Any, where: str) -> _Node:
+    if not isinstance(raw, dict) or not raw.get("ip"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"cluster_state.{where} needs an 'ip'",
+        )
+    return _Node(
+        ip=str(raw["ip"]),
+        container_name=str(raw.get("container_name", "")),
+    )
+
+
+def _cluster_state(raw: Any) -> _ClusterState:
+    """The cluster named by the request body, or a 400 saying what is missing."""
+    if not isinstance(raw, dict) or "head" not in raw:
+        raise HTTPException(
+            status_code=400,
+            detail="cluster_state with a 'head' node is required",
+        )
+    workers = raw.get("workers") or []
+    if not isinstance(workers, list):
+        raise HTTPException(
+            status_code=400,
+            detail="cluster_state.workers must be a list",
+        )
+    return _ClusterState(
+        head=_node(raw["head"], "head"),
+        workers=[_node(w, f"workers[{i}]") for i, w in enumerate(workers)],
+    )
 
 
 @router.get("")
@@ -61,7 +113,6 @@ def apply_mod(req: dict[str, Any]) -> dict[str, Any]:
     mod_name = req.get("mod_name", "")
     mod_path = req.get("mod_path", "")
     target = req.get("target", "all")
-    cluster_state = req.get("cluster_state")
 
     if not mod_name or not mod_path:
         raise HTTPException(
@@ -73,11 +124,10 @@ def apply_mod(req: dict[str, Any]) -> dict[str, Any]:
             status_code=400,
             detail="target must be 'head', 'workers', or 'all'",
         )
+    cluster_state = _cluster_state(req.get("cluster_state"))
 
     try:
-        from spark_pulse.tools.mods import ModDeployment
-
-        deployment = ModDeployment(
+        deployment = mods.ModDeployment(
             mod_name=mod_name,
             mod_path=Path(mod_path),
             target=target,
@@ -106,18 +156,21 @@ def rollback_mod(req: dict[str, Any]) -> dict[str, Any]:
     mod_path = req.get("mod_path", "")
     target = req.get("target", "all")
     completed_nodes = req.get("completed_nodes", [])
-    cluster_state = req.get("cluster_state")
 
     if not mod_name or not mod_path:
         raise HTTPException(
             status_code=400,
             detail="mod_name and mod_path are required",
         )
+    if target not in ("head", "workers", "all"):
+        raise HTTPException(
+            status_code=400,
+            detail="target must be 'head', 'workers', or 'all'",
+        )
+    cluster_state = _cluster_state(req.get("cluster_state"))
 
     try:
-        from spark_pulse.tools.mods import ModDeployment
-
-        deployment = ModDeployment(
+        deployment = mods.ModDeployment(
             mod_name=mod_name,
             mod_path=Path(mod_path),
             target=target,

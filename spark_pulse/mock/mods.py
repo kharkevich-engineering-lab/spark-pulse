@@ -50,8 +50,12 @@ _MODS: list[dict[str, Any]] = [
 
 
 @dataclass
-class _MockModDeployment:
-    """Internal tracking for mock mod deployment."""
+class ModDeployment:
+    """A mod deployment, tracked the way the real one is.
+
+    Named for its real twin on purpose: ``routers/mods.py`` builds one through
+    ``tools.mods`` and the switch has to hand it whichever module is in force.
+    """
 
     mod_name: str
     mod_path: Path
@@ -110,7 +114,7 @@ def validate_mod_content(mod_path: Path) -> ValidationResult:
     return ValidationResult.ok(warnings=warnings if warnings else None)
 
 
-class MockModOrchestrator:
+class ModOrchestrator:
     """Mock mod orchestrator for cluster-wide deployment simulation.
 
     Scenario-driven simulation:
@@ -119,9 +123,17 @@ class MockModOrchestrator:
     - "head_only": only head node is targeted
     """
 
-    def __init__(self, scenario: str = "success"):
+    def __init__(
+        self,
+        ssh_client: Any = None,
+        services: Any = None,
+        scenario: str = "success",
+    ):
+        # ``ssh_client`` and ``services`` are the real orchestrator's arguments
+        # and are accepted so a caller can construct either module's class the
+        # same way; nothing is executed here, so they are ignored.
         self._scenario = scenario
-        self._deployments: list[_MockModDeployment] = []
+        self._deployments: list[ModDeployment] = []
 
     def apply_mod_cluster(
         self,
@@ -157,7 +169,7 @@ class MockModOrchestrator:
             else:
                 completed.append(node.ip)
 
-        deployment = _MockModDeployment(
+        deployment = ModDeployment(
             mod_name=mod_deployment.mod_name,
             mod_path=mod_deployment.mod_path,
             target=mod_deployment.target,
@@ -195,6 +207,6 @@ class MockModOrchestrator:
         return validate_mod_content(mod_path)
 
     @property
-    def deployments(self) -> list[_MockModDeployment]:
+    def deployments(self) -> list[ModDeployment]:
         """Return all recorded deployments."""
         return list(self._deployments)
