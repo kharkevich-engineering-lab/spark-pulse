@@ -196,10 +196,17 @@ def exec_in_deployment(
 
         # Real mode — use DockerService
         service = DockerService()
-        output = service.exec_in_container(name, command)
+        result = service.exec_in_container(name, command)
+        # exec_in_container returns an ExecResult; reading it as a string
+        # silently returned an empty body for every real-mode call.
+        output = getattr(result, "stdout", None)
+        if output is None:
+            output = result if isinstance(result, str) else ""
+        if getattr(result, "stderr", ""):
+            output = f"{output}{result.stderr}" if output else result.stderr
         return {
             "status": "success",
-            "output": output if isinstance(output, str) else "",
+            "output": output,
         }
     except HTTPException:
         raise
