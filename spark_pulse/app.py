@@ -33,7 +33,9 @@ from spark_pulse.routers import (
 )
 from spark_pulse.auth import AuthMiddleware, router as auth_router
 from spark_pulse.sse import router as sse_router
+from spark_pulse import tools
 from spark_pulse.tools import is_simulation
+from spark_pulse.tools.atomic_json import StateFileError
 from spark_pulse.tools.oci_registry import (
     start_background_updater,
     stop_background_updater,
@@ -109,6 +111,21 @@ async def lifespan(app: FastAPI):
             print(f"Symlinks created: {n_recipes} custom recipes, {n_mods} custom mods")
     except Exception as e:
         print(f"Warning: could not create symlinks for custom files: {e}")
+
+    # Refuse to start on an unreadable state file. An unreadable state file is
+    # not an empty cluster: coming up with an empty view while containers are
+    # still running is what lets a control plane tear down live work.
+    try:
+        tools.deployments.check_state_file()
+    except StateFileError as e:
+        print(f"FATAL: cannot read deployment state file {e.path}: {e.reason}")
+        if e.quarantine_path is not None:
+            print(
+                f"FATAL: the unreadable file was moved aside to {e.quarantine_path}. "
+                "Inspect or restore it, then restart Spark Pulse."
+            )
+        print("FATAL: refusing to start with an empty view of running deployments.")
+        raise
 
     # Start OCI background update checker
     start_background_updater()
