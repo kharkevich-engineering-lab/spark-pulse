@@ -1,10 +1,14 @@
 """Canonical Docker label namespace for Spark Pulse managed containers.
 
 Every managed container carries ``spark-pulse.*`` labels (dotted, hyphenated).
-Container labels are the source of truth for reconciliation, so producers
-(``tools.docker``, ``tools.cluster``) and consumers (``tools.reconciliation``,
-``routers.cluster``) must agree on the exact keys. Import them from here —
+Container labels are the source of truth for reconciliation, so the producer
+(``tools.docker``) and the consumers (``tools.native_runtime``,
+``tools.reconciliation``) must agree on the exact keys. Import them from here —
 never spell a label out inline.
+
+The cluster block below is legacy. The orchestrator that wrote those labels is
+gone, and nothing emits them any more; they stay so that reconciliation can
+still recognise — and sweep — containers a previous build left behind.
 """
 
 from __future__ import annotations
@@ -64,7 +68,11 @@ def identity_labels(
     }
 
 
-# ── Cluster ──────────────────────────────────────────────────────────────────
+# ── Cluster (legacy, read-only) ──────────────────────────────────────────
+#
+# Nothing writes these any more: the orchestrator that did is gone. The
+# orphan sweep still reads them, because a container an older build left on
+# a host carries no other identity we would recognise.
 
 CLUSTER_LABEL = label("cluster")
 ROLE_LABEL = label("role")

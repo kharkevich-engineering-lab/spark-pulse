@@ -1,6 +1,6 @@
 """Recipe discovery, parsing and flattening, shared by the real and mock tools.
 
-Real-only on purpose: like ``cluster_models`` this module has no mock twin, so
+Real-only on purpose: like ``labels`` this module has no mock twin, so
 both ``tools.recipes`` and ``mock.recipes`` can import it without disturbing the
 ``SIMULATION_MODE`` module switch in ``tools/__init__.py``. It knows nothing
 about customization storage — that differs between the two — and nothing about

@@ -13,8 +13,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 # Docker label constants — the single ``spark-pulse.*`` namespace that
-# DockerService and ClusterOrchestrator actually write. Re-exported so callers
-# and tests have one place to import them from.
+# DockerService actually writes. The cluster keys below are read-only now: the
+# orchestrator that wrote them is deleted, and what is left is finding the
+# containers an older build labelled. Re-exported so callers and tests have one
+# place to import them from.
 from spark_pulse.tools.labels import (
     CLUSTER_LABEL as CLUSTER_LABEL,
 )

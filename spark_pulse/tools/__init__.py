@@ -8,12 +8,11 @@ from __future__ import annotations
 
 import os
 
-# ``cluster_models``, ``labels``, ``atomic_json`` and ``hub_cache`` hold pure
-# data, constants and filesystem primitives with no behaviour to simulate, so
-# they are real-only and intentionally have no mock twin. ``hub_cache`` is also
-# the file that gets copied to a worker node and run by its own python, so it
-# must stay importable as itself in both modes. Everything else must exist in
-# both packages.
+# ``labels``, ``atomic_json`` and ``hub_cache`` hold pure data, constants and
+# filesystem primitives with no behaviour to simulate, so they are real-only and
+# intentionally have no mock twin. ``hub_cache`` is also the file that gets
+# copied to a worker node and run by its own python, so it must stay importable
+# as itself in both modes. Everything else must exist in both packages.
 from spark_pulse.tools import atomic_json as atomic_json
 from spark_pulse.tools import hub_cache as hub_cache
 from spark_pulse.tools import labels as labels
@@ -38,10 +37,7 @@ if _sim_mode:
         ssh as ssh,
         node_service as node_service,
         node_registry as node_registry,
-        cluster as cluster,
-        ray as ray,
         parallelism as parallelism,
-        cluster_health as cluster_health,
         launch_script as launch_script,
         health as health,
         reconciliation as reconciliation,
@@ -68,14 +64,10 @@ else:
         registry as registry,
         network as network,
         discovery as discovery,
-        cluster_models as cluster_models,
         ssh as ssh,
         node_service as node_service,
         node_registry as node_registry,
-        cluster as cluster,
-        ray as ray,
         parallelism as parallelism,
-        cluster_health as cluster_health,
         launch_script as launch_script,
         health as health,
         reconciliation as reconciliation,

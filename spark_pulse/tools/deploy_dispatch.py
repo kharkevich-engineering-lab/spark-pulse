@@ -7,9 +7,10 @@ Two deploy paths coexist during the native migration:
 
 Which one runs is decided in two different ways, on purpose:
 
-* *Creating* follows the ``runtime`` config flag. A multi-node request under
-  ``runtime: native`` is refused with an explanation rather than silently
-  falling back, so nobody thinks the cluster path went native.
+* *Creating* follows the ``runtime`` config flag, and nothing else. A cluster
+  is a deployment of size N: under ``runtime: native`` a create with a node
+  list takes the same path as a create without one, because there is only one
+  path left. The flag is the whole decision.
 * *Acting on an existing deployment* (stop, delete, logs, get) follows the
   record's own ``runtime`` field. Records outlive a flag flip, so a native
   deployment stays stoppable after the flag goes back to ``upstream`` — and the
@@ -24,7 +25,7 @@ from typing import Any
 
 from spark_pulse import tools
 from spark_pulse.config import config
-from spark_pulse.tools.native_runtime import RUNTIME_NAME, NativeRuntimeError
+from spark_pulse.tools.native_runtime import RUNTIME_NAME
 
 
 def active_runtime() -> str:
@@ -32,9 +33,13 @@ def active_runtime() -> str:
     return config.runtime
 
 
-def uses_native(nodes: list[str] | None = None) -> bool:
-    """Whether a *create* with ``nodes`` goes to the native runtime."""
-    return config.runtime == RUNTIME_NAME and not nodes
+def uses_native() -> bool:
+    """Whether a *create* goes to the native runtime.
+
+    Independent of how many nodes are asked for: node count is a property of
+    the deployment, not a choice of runtime.
+    """
+    return config.runtime == RUNTIME_NAME
 
 
 def _is_native_record(record: dict[str, Any] | None) -> bool:
@@ -91,17 +96,11 @@ def create_deployment(
             nodes=nodes,
             launch_command=launch_command,
         )
-    if nodes:
-        raise NativeRuntimeError(
-            "cluster deployments are not native yet: this build only runs solo "
-            "deployments under runtime: native. Drop the nodes list or switch "
-            "back to runtime: upstream."
-        )
     return tools.native_runtime.create_deployment(
         recipe_id=recipe_id,
         name=name,
         params=raw_params if raw_params is not None else params,
-        nodes=None,
+        nodes=nodes,
         engine=engine,
         variant=variant,
         model=model,

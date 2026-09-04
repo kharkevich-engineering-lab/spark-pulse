@@ -38,7 +38,7 @@ A second, Python-native stack was built on this branch and is not connected
 to the deployment path the UI uses:
 
 - `tools/docker.py` (Docker SDK, labels `spark-pulse.*`), `tools/remote_docker.py` (docker CLI over SSH)
-- `tools/cluster.py` (`ClusterOrchestrator` with rollback), `tools/ray.py`, `tools/ssh.py`
+- `tools/cluster.py` (`ClusterOrchestrator` with rollback), `tools/ray.py`, `tools/ssh.py` — the first two were deleted in `cluster-agent-plan.md` section 7 step 6 rather than wired in; defects 1 to 5 below went with them
 - `tools/launch_script.py` (patching replaces `launch-cluster.sh` sed), `tools/mods.py` (`ModOrchestrator`)
 - `tools/discovery.py` (network/IB), `tools/parallelism.py`, `tools/reconciliation.py`, `tools/health.py`, `tools/locking.py`, `tools/events.py`
 
@@ -468,4 +468,4 @@ Upstream supports a Ray executor for multi-node vLLM behind `--ray`. To add it l
 - workers: `ray start --block --object-store-memory 1073741824 --num-cpus 2 --disable-usage-stats --address=HEAD:29501 --node-ip-address <ip>`
 - poll `docker exec C ray status` up to 30 times at 2s, then 5s more
 - append `--distributed-executor-backend ray` to the serve command when missing; run the serve command on the head only
-- `tools/ray.py` on this branch already implements the start and status calls and can be reused
+- there is no code left to reuse: `tools/ray.py` implemented the start and status calls above but was deleted with the cluster orchestrator (section 7 step 6 of `cluster-agent-plan.md`), because it was never wired into a deploy. The commands in this appendix are the whole specification.

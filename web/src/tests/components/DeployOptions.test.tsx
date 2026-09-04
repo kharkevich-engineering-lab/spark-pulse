@@ -6,6 +6,7 @@ import DeployOptions, {
   describeImagePresence,
   eligibleEngines,
   engineChoices,
+  engineLabel,
   parseExtraArgs,
   type DeployOptionsValue,
 } from "@/components/DeployOptions";
@@ -307,8 +308,10 @@ describe("DeployOptions", () => {
     const user = await open();
 
     await waitFor(() => expect(screen.getByLabelText("Engine")).toBeInTheDocument());
-    await user.selectOptions(screen.getByLabelText("Engine"), "sglang");
-    expect(onChange).toHaveBeenCalledWith({ engine: "sglang" });
+    // engine/variant, not the bare engine name: the backend splits on "/",
+    // and two variants of one engine are two different images.
+    await user.selectOptions(screen.getByLabelText("Engine"), "sglang/default");
+    expect(onChange).toHaveBeenCalledWith({ engine: "sglang/default" });
 
     onChange.mockClear();
     await user.type(screen.getByLabelText("Model override"), "o");
@@ -555,5 +558,36 @@ describe("DeployOptions node selection", () => {
     expect(vi.mocked(runPreflight).mock.calls[0][0]).toMatchObject({
       nodes: [CONTROL_NODE.address, PEER_NODE.address],
     });
+  });
+});
+
+describe("engine picker with two variants of one engine", () => {
+  // Publishing vllm-b12x makes this real: two images with different kernels.
+  // The picker used to render `value={engine.engine}`, so both options said
+  // "vllm · 0.1.0" and both deployed the default variant.
+  const vllm = {
+    engine: "vllm",
+    variant: "default",
+    key: "vllm/default",
+    version: "0.1.0",
+  } as unknown as EngineSummary;
+  const b12x = {
+    engine: "vllm",
+    variant: "b12x",
+    key: "vllm/b12x",
+    version: "0.1.0",
+  } as unknown as EngineSummary;
+
+  it("names the variant, and says nothing where there is none", () => {
+    expect(engineLabel(vllm)).toBe("vllm · 0.1.0");
+    expect(engineLabel(b12x)).toBe("vllm/b12x · 0.1.0");
+  });
+
+  it("gives each variant its own option value", () => {
+    // registry.select() splits the value on "/", so engine/variant is the
+    // wire form. A bare "vllm" for the b12x option deploys the other image.
+    const options = [vllm, b12x].map((e) => ({ value: e.key, label: engineLabel(e) }));
+    expect(options.map((o) => o.value)).toEqual(["vllm/default", "vllm/b12x"]);
+    expect(new Set(options.map((o) => o.label)).size).toBe(2);
   });
 });

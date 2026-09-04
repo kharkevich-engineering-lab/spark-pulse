@@ -480,6 +480,28 @@ oracle for what fixed means. Steps one to six need no second Spark.
 5. Start becomes a loop over ranks, workers first and head last, with per-rank container names carrying a generation. At one node every loop has length one and behaviour is unchanged. Re-verify on the Spark.
 6. Flip the dispatcher, then delete the cluster orchestrator, its health module, the Ray module and their mocks. This is the first step that removes capability, so it comes last.
 
+**Where this stands, 2026-09-04.** Steps one, two and three are merged. Steps
+four and five are written and are waiting on the open pre-flight branch. Step
+six is done: the dispatcher no longer refuses a node list, `uses_native` no
+longer reads one, and `tools/cluster.py`, `tools/cluster_health.py`,
+`tools/ray.py`, `tools/cluster_models.py`, their mocks, their tests and the
+whole `/api/cluster/*` router are gone, along with the `/sse/cluster` stream and
+the cluster half of the health monitor.
+
+What an operator loses with them, and what replaces it: the cluster list is
+`/api/nodes`; cluster status is a deployment and its node count; start and stop
+are `POST` and `DELETE /api/deployments`. Two-phase validate-and-rollback of a
+cluster launch is gone outright — a native deploy has one phase, and a failed
+one is torn down rather than rolled back. Ray is gone outright, and was never
+implemented; `native-runtime-plan.md` appendix A keeps its specification. The
+lock endpoint is gone because nothing acquires a lock any more: idempotency is
+Docker's atomic name reservation, per section 3.3.
+
+Because step six landed before step five, `native_runtime.start` still refuses a
+topology larger than one — by name, saying how many ranks were asked for and how
+many this build starts. That refusal is the last thing the per-rank loop
+deletes.
+
 **A CI finding worth owning.** The end-to-end job has been reporting success
 while asserting nothing, because the Playwright suite contains no spec files at
 all. I made that worse early in this session by adding a pass-with-no-tests flag

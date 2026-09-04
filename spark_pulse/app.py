@@ -27,7 +27,6 @@ from spark_pulse.routers import (
     docker as docker_router,
     discovery as discovery_router,
     nodes as nodes_router,
-    cluster as cluster_router,
     launch_script as launch_script_router,
     health as health_router,
     engines as engines_router,
@@ -180,7 +179,10 @@ async def lifespan(app: FastAPI):
     # Start OCI background update checker
     start_background_updater()
 
-    # Run startup reconciliation to recover deployment/cluster state
+    # Run startup reconciliation to recover deployment state from container
+    # labels. It still counts clusters because a host upgraded from an older
+    # build can be running containers the deleted orchestrator labelled, and
+    # those are exactly what the orphan sweep has to find.
     try:
         result = reconcile_all()
         print(
@@ -200,14 +202,9 @@ async def lifespan(app: FastAPI):
         tracked = load_health_tracking()
         for dep in tracked.get("deployments", []):
             monitor.track_deployment(dep["id"], dep.get("info", {}))
-        for cl in tracked.get("clusters", []):
-            monitor.track_cluster(cl["name"], cl.get("info", {}))
         n_deps = len(tracked.get("deployments", []))
-        n_clus = len(tracked.get("clusters", []))
-        if n_deps or n_clus:
-            print(
-                f"Restored {n_deps} deployments, {n_clus} clusters from health tracking"
-            )
+        if n_deps:
+            print(f"Restored {n_deps} deployments from health tracking")
     except Exception as e:
         print(f"Warning: health tracking restore failed: {e}")
 
@@ -272,7 +269,6 @@ def create_app() -> FastAPI:
     app.include_router(docker_router.router)
     app.include_router(discovery_router.router)
     app.include_router(nodes_router.router)
-    app.include_router(cluster_router.router)
     app.include_router(launch_script_router.router)
     app.include_router(health_router.router)
     app.include_router(engines_router.router)

@@ -1,6 +1,6 @@
 // ── Operation State Machine (AF-1) ───────────────────────────────────────────
-// Canonical lifecycle for all long-running workflows: deployments, mod applications,
-// cluster start/stop, rollbacks, and reconciliation.
+// Canonical lifecycle for all long-running workflows: deployments of any node
+// count, mod applications, and reconciliation.
 
 export enum OperationState {
   IDLE = "idle",
@@ -133,30 +133,6 @@ export interface DeploymentEvent {
   actor?: string;
   correlation_id?: string;
   severity?: "info" | "warning" | "error";
-}
-
-// ── Capacity Planning (AF-5) ─────────────────────────────────────────────────
-
-export interface NodeCapacity {
-  node_ip: string;
-  role: "head" | "worker";
-  total_gpus: number;
-  allocated_gpus: number;
-  free_gpus: number;
-  total_ram_gb: number;
-  allocated_ram_gb: number;
-  total_cpu_cores: number;
-  allocated_cpu_cores: number;
-  active_deployments: string[];
-}
-
-export interface ClusterCapacity {
-  cluster_name: string;
-  nodes: NodeCapacity[];
-  total_gpus: number;
-  allocated_gpus: number;
-  free_gpus: number;
-  utilization_percent: number;
 }
 
 // ── Audit Trail (AF-7) ───────────────────────────────────────────────────────

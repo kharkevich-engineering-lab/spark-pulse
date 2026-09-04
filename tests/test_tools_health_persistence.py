@@ -25,10 +25,7 @@ class TestHealthTrackingPersistence:
             tracking_file,
         )
 
-        tracked = {
-            "deployments": [{"id": "dep-1", "type": "deployment"}],
-            "clusters": [{"name": "cluster-1", "type": "cluster"}],
-        }
+        tracked = {"deployments": [{"id": "dep-1", "type": "deployment"}]}
         save_health_tracking(tracked)
 
         assert tracking_file.exists()
@@ -43,7 +40,7 @@ class TestHealthTrackingPersistence:
         assert tracking_file.exists() is False
 
         loaded = load_health_tracking()
-        assert loaded == {"deployments": [], "clusters": []}
+        assert loaded == {"deployments": []}
 
     def test_load_corrupted_json(self, tracking_file, monkeypatch):
         monkeypatch.setattr(
@@ -53,7 +50,7 @@ class TestHealthTrackingPersistence:
         tracking_file.write_text("not valid json {{{")
 
         loaded = load_health_tracking()
-        assert loaded == {"deployments": [], "clusters": []}
+        assert loaded == {"deployments": []}
 
     def test_save_creates_directory(self, tmp_path, monkeypatch):
         nested = tmp_path / "nested" / "dir" / "tracking.json"
@@ -62,7 +59,7 @@ class TestHealthTrackingPersistence:
             nested,
         )
 
-        save_health_tracking({"deployments": [], "clusters": []})
+        save_health_tracking({"deployments": []})
         assert nested.exists()
 
 
@@ -85,20 +82,6 @@ class TestHealthMonitorPersistence:
         assert len(data["deployments"]) == 1
         assert data["deployments"][0]["id"] == "dep-1"
 
-    def test_track_cluster_persists(self, monitor, tmp_path, monkeypatch):
-        tracking_file = tmp_path / "health_tracking.json"
-        monkeypatch.setattr(
-            "spark_pulse.tools.health._HEALTH_TRACKING_FILE",
-            tracking_file,
-        )
-
-        monitor.track_cluster("cluster-1", {"head_ip": "10.0.0.1"})
-        assert tracking_file.exists()
-
-        data = json.loads(tracking_file.read_text())
-        assert len(data["clusters"]) == 1
-        assert data["clusters"][0]["name"] == "cluster-1"
-
     def test_untrack_removes_from_disk(self, monitor, tmp_path, monkeypatch):
         tracking_file = tmp_path / "health_tracking.json"
         monkeypatch.setattr(
@@ -119,11 +102,31 @@ class TestHealthMonitorPersistence:
             tracking_file,
         )
 
-        tracked = {
-            "deployments": [{"id": "dep-1", "type": "deployment", "info": {}}],
-            "clusters": [{"name": "cluster-1", "type": "cluster", "info": {}}],
-        }
+        tracked = {"deployments": [{"id": "dep-1", "type": "deployment", "info": {}}]}
         save_health_tracking(tracked)
 
         loaded = HealthMonitor.restore_from_persistence()
         assert loaded == tracked
+
+    def test_an_older_file_with_clusters_still_loads(self, tmp_path, monkeypatch):
+        """Cluster tracking is gone; a file that still lists clusters is not.
+
+        Nothing reads the key any more, so the only property that matters is
+        that its presence does not stop the deployments being restored.
+        """
+        tracking_file = tmp_path / "health_tracking.json"
+        monkeypatch.setattr(
+            "spark_pulse.tools.health._HEALTH_TRACKING_FILE",
+            tracking_file,
+        )
+        tracking_file.write_text(
+            json.dumps(
+                {
+                    "deployments": [{"id": "dep-1", "type": "deployment", "info": {}}],
+                    "clusters": [{"name": "old", "type": "cluster", "info": {}}],
+                }
+            )
+        )
+
+        loaded = HealthMonitor.restore_from_persistence()
+        assert [d["id"] for d in loaded["deployments"]] == ["dep-1"]

@@ -36,6 +36,20 @@ export function parseExtraArgs(raw: string): string[] {
   );
 }
 
+/** How an engine reads in the picker.
+ *
+ * The variant has to be here. Two variants of one engine — vllm and
+ * vllm-b12x — are two different images with different kernels, and labelling
+ * both "vllm · 0.1.0" gives the operator two identical options. "default" is
+ * the absence of a variant, so it is the one that stays unsaid.
+ */
+export function engineLabel(engine: EngineSummary): string {
+  const name = engine.variant && engine.variant !== "default"
+    ? `${engine.engine}/${engine.variant}`
+    : engine.engine;
+  return `${name} · ${engine.version}`;
+}
+
 export interface EngineChoice {
   engine: EngineSummary;
   supported: boolean;
@@ -209,8 +223,8 @@ export default function DeployOptions({
             >
               <option value="">Recipe default</option>
               {available.map(({ engine }) => (
-                <option key={engine.key} value={engine.engine}>
-                  {engine.engine} · {engine.version}
+                <option key={engine.key} value={engine.key}>
+                  {engineLabel(engine)}
                 </option>
               ))}
             </select>
@@ -224,7 +238,7 @@ export default function DeployOptions({
                   >
                     <AlertCircle size={13} className="shrink-0 mt-0.5" />
                     <span>
-                      <span className="font-mono">{engine.engine}</span> unavailable
+                      <span className="font-mono">{engine.key}</span> unavailable
                       {reason ? `: ${reason}` : ""}
                     </span>
                   </li>

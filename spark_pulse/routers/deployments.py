@@ -131,9 +131,7 @@ def create_deployment(req: dict):
     # makes an explicit request indistinguishable from a default, and the
     # checker would then check a port the deploy is not going to use.
     preflight = None
-    if not req.get("skip_preflight") and tools.deploy_dispatch.uses_native(
-        req.get("nodes")
-    ):
+    if not req.get("skip_preflight") and tools.deploy_dispatch.uses_native():
         # Only the native runtime is what the pre-flight describes: it checks
         # the image, ports and rendezvous of a plan the native path resolves.
         # An upstream create forks run-recipe.sh, which decides all of that
