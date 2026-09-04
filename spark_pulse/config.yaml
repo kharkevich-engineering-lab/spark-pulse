@@ -10,6 +10,11 @@ job_retention_days: 7
 # "native" drives Docker from Python via the engine registry (solo only).
 runtime: upstream
 deploy_ready_timeout_seconds: 900
+# Seconds of silence from a docker pull before it is failed rather than
+# left holding a worker thread. 0 disables the watchdog.
+docker_pull_stall_timeout_seconds: 300
+# Worker threads for sync request handlers (anyio's default limiter).
+thread_pool_size: 40
 default_gpu_mem_util: 0.8
 default_port_range_end: 9100
 default_port_range_start: 9000

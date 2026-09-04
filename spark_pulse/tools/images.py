@@ -31,7 +31,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from spark_pulse.engines import get_registry
-from spark_pulse.tools.docker import split_ref
+from spark_pulse.tools.docker import PullCancelled, split_ref
 from spark_pulse.tools.events import DeploymentEvent, EventType
 from spark_pulse.tools.ssh import OpenSSHClient, SSHClient, SSHError
 
@@ -318,10 +318,6 @@ _jobs_lock = threading.Lock()
 _cancelled: set[str] = set()
 
 
-class PullCancelled(RuntimeError):
-    """Raised inside the progress callback to abort a running pull."""
-
-
 def _publish_job(event: EventType, job: dict[str, Any]) -> None:
     publish_event(event, str(job.get("id", "")), dict(job))
 
@@ -404,9 +400,15 @@ def _run_pull(job_id: str) -> None:
     if started:
         _publish_job(EVENT_STARTED, started)
 
+    def _cancelled_now() -> bool:
+        """Consulted per chunk, so a cancel lands at the next byte.
+
+        Checking inside ``_progress`` instead delayed every cancel by up to
+        one throttle interval, since that callback is the throttled one.
+        """
+        return job_id in _cancelled
+
     def _progress(snapshot: dict[str, Any]) -> None:
-        if job_id in _cancelled:
-            raise PullCancelled(job_id)
         updated = _set_job(
             job_id,
             bytes_done=int(snapshot.get("bytes_done") or 0),
@@ -419,7 +421,7 @@ def _run_pull(job_id: str) -> None:
             _publish_job(EVENT_PROGRESS, updated)
 
     try:
-        result = _docker().pull_image(job["ref"], _progress)
+        result = _docker().pull_image(job["ref"], _progress, cancel=_cancelled_now)
     except PullCancelled:
         finished = _set_job(job_id, status="cancelled", finished_at=_now())
         if finished:

@@ -89,12 +89,37 @@ def _serve_spa(filename: str | None = None) -> FileResponse:
 # ── App factory ─────────────────────────────────────────────────────────────
 
 
+async def configure_thread_pool() -> int:
+    """Pin the worker-thread ceiling and return it.
+
+    Every sync endpoint and every ``run_in_threadpool`` call shares one AnyIO
+    limiter whose default is 40. Nothing anywhere says so, so exhaustion — a
+    handful of blocking Docker or SSH calls is enough — presents as the whole
+    API going quiet with no clue why. Setting it from config and logging the
+    number makes the ceiling a stated fact.
+
+    The limiter lives in a run-scoped variable, so this only takes effect when
+    called from inside the running event loop.
+    """
+    import anyio.to_thread
+
+    limiter = anyio.to_thread.current_default_thread_limiter()
+    limiter.total_tokens = config.thread_pool_size
+    return int(limiter.total_tokens)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: validate spark-vllm-docker path, log mode, create symlinks, start scheduler.
     Shutdown: remove symlinks, cleanup."""
     spark_path = Path(config.spark_vllm_path)
     app.state.spark_path_valid = spark_path.is_dir()
+
+    try:
+        threads = await configure_thread_pool()
+        print(f"Worker thread pool: {threads} threads")
+    except Exception as e:  # pragma: no cover - defensive
+        print(f"Warning: could not set the worker thread pool size: {e}")
 
     mode = "SIMULATION" if is_simulation() else "PRODUCTION"
     print(

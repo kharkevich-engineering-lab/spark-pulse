@@ -150,6 +150,27 @@ class _Config:
         return int(self._data.get("deploy_ready_timeout_seconds", 900))
 
     @property
+    def docker_pull_stall_timeout_seconds(self) -> int:
+        """Seconds of no pull progress before the pull is failed.
+
+        docker-py sets no timeout on a pull, so without this a registry that
+        goes quiet mid-transfer holds a worker thread until the process dies.
+        Sized for a slow uplink, not a fast one: a 26 GB image on a bad link
+        still emits progress far more often than this. Zero disables it.
+        """
+        return int(self._data.get("docker_pull_stall_timeout_seconds", 300))
+
+    @property
+    def thread_pool_size(self) -> int:
+        """Worker threads available to sync endpoints and ``run_in_threadpool``.
+
+        AnyIO's default of 40 is invisible until it is exhausted, at which
+        point every request queues behind a blocking call with no clue why.
+        Set explicitly at startup and logged.
+        """
+        return max(1, int(self._data.get("thread_pool_size", 40)))
+
+    @property
     def auth_enabled(self) -> bool:
         return (
             os.environ.get(
