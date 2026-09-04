@@ -5,6 +5,25 @@ NCCL defaults. Used by Phase 2A to replace manual network configuration in
 launch-cluster.sh.
 
 Approach: uses psutil first, falls back to subprocess + /sys scanning.
+
+**Peer discovery over mDNS.** ``docs/cluster-agent-plan.md`` section 3.1 and
+section 6: we publish our own ``_spark-pulse._tcp`` record carrying the node
+id, port and version rather than depending on ``_ssh._tcp`` and then guessing
+whether a responder is a Spark or an office printer — but we browse for both,
+because ``_ssh._tcp`` is what NVIDIA's own ``discover-sparks`` uses and DGX OS
+ships ``/etc/avahi/services/ssh.service``. python-zeroconf was tested on the
+Spark this session and coexists with a running avahi in both directions.
+
+Two rules the same test produced, and both are load-bearing:
+
+* **Announcing and browsing are restricted to real interfaces.** Browsing
+  everything announced the service on the docker bridge and on a veth pair, so
+  every container on the host would become mDNS noise. :func:`real_interfaces`
+  is the filter, and it takes ``ibdev2netdev``'s view of which fabric links are
+  up when that tool is present.
+* **Discovery degrades to an empty list, never to an exception.** No zeroconf
+  package, no multicast, a firewall on 5353 — all of them mean "no peers found
+  yet", and adding a node by typing its address always works.
 """
 
 from __future__ import annotations
@@ -12,11 +31,40 @@ from __future__ import annotations
 import logging
 import socket
 import subprocess
-from dataclasses import dataclass, field
+import threading
+import time
+from collections.abc import Iterable
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal
 
 logger = logging.getLogger(__name__)
+
+#: Our own service type. Carries the node id, port and version in its TXT
+#: record, so a responder identifies itself instead of being guessed at.
+SPARK_PULSE_SERVICE = "_spark-pulse._tcp.local."
+
+#: What NVIDIA's ``discover-sparks`` browses, and what DGX OS advertises.
+SSH_SERVICE = "_ssh._tcp.local."
+
+#: Interface name prefixes that are never a real network link: container
+#: bridges, veth pairs, virtual switches and tunnels. Announcing on these is
+#: the mistake the Spark test surfaced.
+_VIRTUAL_PREFIXES = (
+    "docker",
+    "br-",
+    "veth",
+    "virbr",
+    "vnet",
+    "tap",
+    "tun",
+    "cni",
+    "flannel",
+    "kube",
+    "cali",
+    "lxc",
+    "podman",
+)
 
 # ── Data Models ──────────────────────────────────────────────────────────────
 
@@ -71,6 +119,34 @@ class ValidationResult:
     healthy: bool
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class DiscoveredPeer:
+    """One responder found on the LAN over mDNS.
+
+    ``node_id`` and ``version`` are only ever populated for our own
+    ``_spark-pulse._tcp`` record, which is exactly why we publish one: an
+    ``_ssh._tcp`` answer tells us a host exists and nothing more.
+    """
+
+    address: str
+    port: int
+    service: str
+    hostname: str = ""
+    instance: str = ""
+    node_id: str = ""
+    version: str = ""
+    # Every address this machine answered on. One host advertises once per
+    # address family per interface, so without folding them together an
+    # operator scanning the LAN sees the same Spark six times.
+    addresses: tuple[str, ...] = ()
+    services: tuple[str, ...] = ()
+
+    @property
+    def is_spark_pulse(self) -> bool:
+        """Whether the responder identified itself as a Spark Pulse node."""
+        return self.service == SPARK_PULSE_SERVICE
 
 
 # ── Detection Functions ──────────────────────────────────────────────────────
@@ -546,19 +622,19 @@ def run_discovery() -> DiscoveryResult:
 
     infiniband_present = len(ib_devices) > 0
 
-    discovery = DiscoveryResult(
+    # ``DiscoveryResult`` is frozen, so the NCCL defaults are computed against
+    # a draft and the final result is built once. Assigning to the field after
+    # construction raised ``FrozenInstanceError``, which made every real-mode
+    # call to this function — the whole ``POST /api/discovery`` route — fail.
+    draft = DiscoveryResult(
         local_ip=local_ip,
         ethernet_if=ethernet_if,
         infiniband_present=infiniband_present,
         infiniband_devices=ib_devices,
         interfaces=interfaces,
-        nccl_defaults=None,  # computed below
+        nccl_defaults=None,
     )
-
-    # Build NCCL defaults
-    discovery.nccl_defaults = build_nccl_defaults(discovery)
-
-    return discovery
+    return replace(draft, nccl_defaults=build_nccl_defaults(draft))
 
 
 # ── Module-level convenience functions ───────────────────────────────────────
@@ -588,3 +664,389 @@ def get_nccl_defaults() -> NCCLConfig | None:
 def check_network_health() -> ValidationResult:
     """Run network health validation."""
     return validate_network()
+
+
+# ── Real interfaces ──────────────────────────────────────────────────────────
+#
+# Everything below this line is scoped by :func:`real_interfaces`. Section 6:
+# browsing with all interfaces announced the service on the docker bridge and
+# on a veth pair as well as the real network, "or every container on the host
+# becomes mDNS noise".
+
+
+def ibdev2netdev_up() -> list[str]:
+    """Fabric net devices ``ibdev2netdev`` reports as up.
+
+    The tool ships on DGX OS — confirmed present on the Spark — and prints one
+    line per port, ``mlx5_0 port 1 ==> ib0 (Up)``. Returns ``[]`` when it is
+    absent, which is every machine that is not a DGX; the caller then falls
+    back to ``/sys``-derived interface state.
+    """
+    try:
+        result = subprocess.run(
+            ["ibdev2netdev"], capture_output=True, text=True, timeout=10
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return []
+    if result.returncode != 0:
+        return []
+
+    names: list[str] = []
+    for line in result.stdout.splitlines():
+        if "==>" not in line or "(up)" not in line.lower():
+            continue
+        tail = line.split("==>", 1)[1].strip()
+        name = tail.split("(", 1)[0].strip()
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def is_real_interface(interface: NetworkInterface) -> bool:
+    """Whether an interface is a real network link we may announce on.
+
+    Loopback, container bridges, veth pairs and tunnels are excluded, and so is
+    anything that is down: announcing on a link with no peers is noise, and
+    browsing on one wastes the browse window.
+    """
+    if not interface.is_up:
+        return False
+    if interface.type in ("loopback", "docker"):
+        return False
+    return not interface.name.lower().startswith(_VIRTUAL_PREFIXES)
+
+
+def real_interfaces() -> list[NetworkInterface]:
+    """The interfaces mDNS may use: the management link plus the live fabric.
+
+    An InfiniBand link is included only when ``ibdev2netdev`` calls it up, if
+    that tool answered at all; otherwise the interface's own operstate decides.
+    """
+    fabric_up = ibdev2netdev_up()
+    chosen = []
+    for interface in detect_network_interfaces():
+        if not is_real_interface(interface):
+            continue
+        if interface.type == "infiniband" and fabric_up:
+            if interface.name not in fabric_up:
+                continue
+        chosen.append(interface)
+    return chosen
+
+
+def real_interface_names() -> list[str]:
+    """Just the names, in discovery order."""
+    return [interface.name for interface in real_interfaces()]
+
+
+def announce_addresses() -> list[str]:
+    """IPv4 addresses of the real interfaces, for zeroconf to bind to.
+
+    python-zeroconf takes addresses rather than interface names, so this is the
+    translation. An interface with no IPv4 address cannot carry a v4 mDNS
+    announcement and is dropped.
+    """
+    return [
+        interface.ip
+        for interface in real_interfaces()
+        if interface.ip and interface.ip != "127.0.0.1"
+    ]
+
+
+def detect_link_local_addresses() -> dict[str, str]:
+    """Interface name to its IPv6 link-local (``fe80::``) address.
+
+    An interface missing from this map has no link-local address, which
+    silently disables every ``ff02::1`` peer sweep on that link — the trap
+    section 3.1 names, produced by ``link-local: []`` in a netplan profile.
+    """
+    psutil = _try_import_psutil()
+    if psutil is None:
+        return _link_local_from_proc()
+
+    found: dict[str, str] = {}
+    try:
+        addrs_by_name = psutil.net_if_addrs()
+    except OSError:  # pragma: no cover — psutil failing is not our problem
+        return found
+    for name, addrs in addrs_by_name.items():
+        for addr in addrs:
+            if addr.family != socket.AF_INET6:
+                continue
+            address = str(addr.address).split("%", 1)[0].lower()
+            if address.startswith("fe80"):
+                found.setdefault(name, address)
+    return found
+
+
+def _link_local_from_proc() -> dict[str, str]:
+    """Parse ``/proc/net/if_inet6`` when psutil is unavailable."""
+    found: dict[str, str] = {}
+    try:
+        lines = Path("/proc/net/if_inet6").read_text().splitlines()
+    except OSError:
+        return found
+    for line in lines:
+        parts = line.split()
+        if len(parts) < 6:
+            continue
+        raw, name = parts[0], parts[5]
+        if not raw.lower().startswith("fe80"):
+            continue
+        groups = [raw[i : i + 4] for i in range(0, 32, 4)]
+        found.setdefault(name, ":".join(groups).lower())
+    return found
+
+
+# ── mDNS ─────────────────────────────────────────────────────────────────────
+
+#: Addresses that have answered mDNS, and the hostnames they answered under.
+#: Section 8 asks for hostname churn to be reported rather than left as a
+#: mystery, and churn is only visible across browses, so the observations are
+#: kept for the life of the process.
+_mdns_hostnames: dict[str, set[str]] = {}
+_mdns_lock = threading.Lock()
+
+#: The registration handle for our own record, so shutdown can withdraw it.
+_announcement: tuple[object, object] | None = None
+
+
+def _try_import_zeroconf():
+    """Return the ``zeroconf`` module, or ``None`` when it is not installed."""
+    try:
+        import zeroconf  # noqa: F811
+
+        return zeroconf
+    except ImportError:  # pragma: no cover — zeroconf is a declared dependency
+        return None
+
+
+def mdns_available() -> bool:
+    """Whether peer discovery can run at all.
+
+    False means :func:`browse_peers` returns an empty list and manual entry is
+    the only way to add a node — which is a fact worth telling an operator, not
+    an error.
+    """
+    return _try_import_zeroconf() is not None
+
+
+def mdns_hostname_history() -> dict[str, set[str]]:
+    """Every address seen over mDNS, mapped to the hostnames it used."""
+    with _mdns_lock:
+        return {address: set(names) for address, names in _mdns_hostnames.items()}
+
+
+def reset_mdns_history() -> None:
+    """Forget the observed hostnames (tests, and an operator's fresh start)."""
+    with _mdns_lock:
+        _mdns_hostnames.clear()
+
+
+def record_mdns_hostname(address: str, hostname: str) -> None:
+    """Note that ``address`` answered mDNS under ``hostname``."""
+    if not address or not hostname:
+        return
+    with _mdns_lock:
+        _mdns_hostnames.setdefault(address, set()).add(hostname.rstrip("."))
+
+
+def _decode_txt(properties: dict) -> dict[str, str]:
+    """Zeroconf hands TXT keys and values back as bytes. Make them strings."""
+    decoded: dict[str, str] = {}
+    for key, value in (properties or {}).items():
+        if isinstance(key, bytes):
+            key = key.decode("utf-8", "replace")
+        if isinstance(value, bytes):
+            value = value.decode("utf-8", "replace")
+        decoded[str(key)] = "" if value is None else str(value)
+    return decoded
+
+
+def announce_self(node_id: str, port: int, version: str) -> bool:
+    """Publish our ``_spark-pulse._tcp`` record on the real interfaces.
+
+    The TXT record carries the node id, the port and the version, so a peer
+    that finds us knows what we are instead of inferring it from an open SSH
+    port. Idempotent: a second call withdraws the previous registration first.
+
+    Returns whether the record was published. Never raises — a control plane
+    that cannot announce itself still runs, and its peers can still be added by
+    address.
+    """
+    global _announcement
+
+    zc_module = _try_import_zeroconf()
+    if zc_module is None:
+        logger.info("zeroconf is not installed; not announcing over mDNS")
+        return False
+
+    addresses = announce_addresses()
+    if not addresses:
+        logger.info("No real interface carries an IPv4 address; not announcing")
+        return False
+
+    stop_announcement()
+    hostname = socket.gethostname().split(".", 1)[0]
+    try:
+        zeroconf = zc_module.Zeroconf(
+            interfaces=addresses, ip_version=zc_module.IPVersion.V4Only
+        )
+        info = zc_module.ServiceInfo(
+            SPARK_PULSE_SERVICE,
+            f"{hostname}-{node_id[:8]}.{SPARK_PULSE_SERVICE}",
+            addresses=[socket.inet_aton(address) for address in addresses],
+            port=int(port),
+            properties={"node_id": node_id, "version": version, "port": str(port)},
+            server=f"{hostname}.local.",
+        )
+        zeroconf.register_service(info)
+    except Exception as exc:
+        logger.warning("Could not announce over mDNS: %s", exc)
+        return False
+
+    _announcement = (zeroconf, info)
+    logger.info("Announced %s on %s", SPARK_PULSE_SERVICE, ", ".join(addresses))
+    return True
+
+
+def stop_announcement() -> None:
+    """Withdraw our record. Safe to call when nothing was published."""
+    global _announcement
+
+    if _announcement is None:
+        return
+    zeroconf, info = _announcement
+    _announcement = None
+    try:
+        zeroconf.unregister_service(info)
+        zeroconf.close()
+    except Exception as exc:  # pragma: no cover — shutdown is best effort
+        logger.debug("Could not withdraw the mDNS record: %s", exc)
+
+
+def browse_peers(timeout: float = 3.0) -> list[DiscoveredPeer]:
+    """Browse the LAN for Spark Pulse nodes and for SSH responders.
+
+    Browsing is restricted to the real interfaces for the reason in this
+    module's docstring. Both service types are collected: our own record
+    identifies a node, and ``_ssh._tcp`` is what a Spark advertises before it
+    has ever run Spark Pulse.
+
+    Returns ``[]`` — never raises — when zeroconf is missing, when no real
+    interface carries an address, or when mDNS itself fails. Discovery not
+    working means "no peers found", and manual entry always works.
+    """
+    zc_module = _try_import_zeroconf()
+    if zc_module is None:
+        return []
+    addresses = announce_addresses()
+    if not addresses:
+        return []
+
+    peers: dict[tuple[str, str], DiscoveredPeer] = {}
+    try:
+        zeroconf = zc_module.Zeroconf(
+            interfaces=addresses, ip_version=zc_module.IPVersion.V4Only
+        )
+    except Exception as exc:
+        logger.warning("Could not open mDNS for browsing: %s", exc)
+        return []
+
+    def collect(service_type: str, name: str) -> None:
+        try:
+            info = zeroconf.get_service_info(service_type, name, timeout=1500)
+        except Exception as exc:  # pragma: no cover — one bad responder
+            logger.debug("Could not resolve %s: %s", name, exc)
+            return
+        if info is None:
+            return
+        properties = _decode_txt(getattr(info, "properties", {}) or {})
+        hostname = (getattr(info, "server", "") or "").rstrip(".")
+        for address in info.parsed_addresses():
+            record_mdns_hostname(address, hostname)
+            peers[(address, service_type)] = DiscoveredPeer(
+                address=address,
+                port=int(getattr(info, "port", 0) or 0),
+                service=service_type,
+                hostname=hostname,
+                instance=name.split(".", 1)[0],
+                node_id=properties.get("node_id", ""),
+                version=properties.get("version", ""),
+            )
+
+    class _Listener:
+        def add_service(self, _zc, service_type, name):
+            collect(service_type, name)
+
+        def update_service(self, _zc, service_type, name):
+            collect(service_type, name)
+
+        def remove_service(self, _zc, service_type, name):
+            return None
+
+    try:
+        browser = zc_module.ServiceBrowser(
+            zeroconf, [SPARK_PULSE_SERVICE, SSH_SERVICE], _Listener()
+        )
+        time.sleep(max(0.1, float(timeout)))
+        browser.cancel()
+    except Exception as exc:
+        logger.warning("mDNS browse failed: %s", exc)
+    finally:
+        try:
+            zeroconf.close()
+        except Exception:  # pragma: no cover — closing is best effort
+            pass
+
+    return _fold_by_machine(peers.values())
+
+
+def _machine_key(peer: DiscoveredPeer) -> str:
+    """What identifies the machine behind a record.
+
+    The mDNS hostname, because one machine advertises both our own record and
+    an ssh one and only the former carries a node id, so keying on the id
+    would split a single host in two. Never the address: one host answers on
+    several.
+    """
+    return peer.hostname or peer.node_id or peer.address
+
+
+def _fold_by_machine(found: Iterable[DiscoveredPeer]) -> list[DiscoveredPeer]:
+    """One entry per machine, carrying every address and service it answered on.
+
+    Prefers an IPv4 address as the primary, because that is what an operator
+    types and what ssh and docker take without a zone suffix, and prefers our
+    own record over an ssh one so a node that runs Spark Pulse is identified
+    as such.
+    """
+    grouped: dict[str, list[DiscoveredPeer]] = {}
+    for peer in found:
+        grouped.setdefault(_machine_key(peer), []).append(peer)
+
+    folded: list[DiscoveredPeer] = []
+    for records in grouped.values():
+        addresses = sorted({r.address for r in records}, key=_address_sort_key)
+        services = sorted({r.service for r in records})
+        # Prefer the record that carries an identity, so a node running Spark
+        # Pulse is reported as one rather than as a bare ssh responder.
+        best = next(
+            (r for r in records if r.service == SPARK_PULSE_SERVICE and r.node_id),
+            next((r for r in records if r.service == SPARK_PULSE_SERVICE), records[0]),
+        )
+        primary = next((a for a in addresses if ":" not in a), best.address)
+        folded.append(
+            replace(
+                best,
+                address=primary,
+                addresses=tuple(addresses),
+                services=tuple(services),
+            )
+        )
+    return sorted(folded, key=lambda p: (not p.node_id, p.hostname, p.address))
+
+
+def _address_sort_key(address: str) -> tuple[int, str]:
+    """IPv4 first, then IPv6, each alphabetically."""
+    return (1 if ":" in address else 0, address)

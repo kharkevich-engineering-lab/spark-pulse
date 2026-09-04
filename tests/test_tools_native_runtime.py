@@ -42,10 +42,20 @@ V1_RECIPE = {
         "--tensor-parallel-size {tensor_parallel} "
         "--distributed-executor-backend ray"
     ),
-    "defaults": {"port": 8000, "tensor_parallel": 2},
+    "defaults": {"port": 8000, "tensor_parallel": 1},
     "mods": [],
     "env": {},
 }
+
+V1_TP2 = {
+    **V1_RECIPE,
+    "id": "qwen3-8b-tp2",
+    "defaults": {"port": 8000, "tensor_parallel": 2},
+}
+
+V1_SOLO_ONLY = {**V1_RECIPE, "id": "solo-only", "solo_only": True}
+V1_CLUSTER_ONLY = {**V1_RECIPE, "id": "cluster-only", "cluster_only": True}
+V1_MIN_NODES = {**V1_RECIPE, "id": "min-three", "min_nodes": 3}
 
 V1_UNKNOWN_TAG = {
     **V1_RECIPE,
@@ -77,7 +87,18 @@ V2_RECIPE = {
 }
 
 RECIPES = {
-    r["id"]: r for r in (V1_RECIPE, V1_UNKNOWN_TAG, V1_NO_PORT, V1_WITH_MODS, V2_RECIPE)
+    r["id"]: r
+    for r in (
+        V1_RECIPE,
+        V1_TP2,
+        V1_UNKNOWN_TAG,
+        V1_NO_PORT,
+        V1_WITH_MODS,
+        V2_RECIPE,
+        V1_SOLO_ONLY,
+        V1_CLUSTER_ONLY,
+        V1_MIN_NODES,
+    )
 }
 
 CATALOGUE = [{"id": "Qwen/Qwen3-8B", "source": "hf", "path": "/models/qwen3-8b"}]
@@ -153,9 +174,86 @@ class TestPlan:
 
         assert plan.ranks[0]["script"] == expected.script
         assert plan.launch_command == expected.command
-        # Solo forces tp=1 and strips the Ray backend, as upstream does.
         assert "--tensor-parallel-size 1" in plan.launch_command
+        # The Ray backend never survives, and one node carries the rendezvous
+        # flags exactly as two do.
         assert "--distributed-executor-backend" not in plan.launch_command
+        assert plan.launch_command.endswith(
+            "--nnodes 1 --node-rank 0 --master-addr 127.0.0.1 --master-port 29501"
+        )
+        assert plan.solo is True
+        assert plan.node_count == 1
+
+
+class TestTopologyConstraints:
+    """The constraints the recipe parser has always produced, now enforced."""
+
+    def test_solo_only_refuses_more_than_one_node(self, native):
+        with pytest.raises(native.NativeRuntimeError) as exc:
+            native.plan("solo-only", nodes=["a", "b"], solo=False)
+        assert "solo_only" in str(exc.value)
+
+    def test_solo_only_deploys_on_one_node(self, native):
+        assert native.plan("solo-only").node_count == 1
+
+    def test_cluster_only_refuses_one_node(self, native):
+        with pytest.raises(native.NativeRuntimeError) as exc:
+            native.plan("cluster-only")
+        assert "cluster_only" in str(exc.value)
+
+    def test_cluster_only_accepts_two_nodes(self, native):
+        assert native.plan("cluster-only", nodes=["a", "b"], solo=False).node_count == 2
+
+    def test_min_nodes_is_enforced(self, native):
+        with pytest.raises(native.NativeRuntimeError) as exc:
+            native.plan("min-three", nodes=["a", "b"], solo=False)
+        assert "at least 3 nodes" in str(exc.value)
+
+    def test_min_nodes_is_satisfied(self, native):
+        plan = native.plan("min-three", nodes=["a", "b", "c"], solo=False)
+        assert plan.node_count == 3
+
+
+class TestCapacity:
+    """One GPU per node, so tensor parallelism has to span nodes."""
+
+    def test_two_way_parallelism_on_one_node_is_refused(self, native):
+        with pytest.raises(native.NativeRuntimeError) as exc:
+            native.plan("qwen3-8b-tp2")
+        reason = str(exc.value)
+        assert "one GPU per node" in reason
+        assert "need 2, have 1" in reason
+
+    def test_two_way_parallelism_across_two_nodes_is_planned(self, native):
+        plan = native.plan("qwen3-8b-tp2", nodes=["a", "b"], solo=False)
+        assert plan.node_count == 2
+        assert "--tensor-parallel-size 2" in plan.launch_command
+
+
+class TestVersionGuard:
+    """A legacy tag can map to an image too old for the rendered flags."""
+
+    def _with_version(self, registry, version):
+        spec = registry.get("vllm", "default")
+        spec.framework_version = version
+        return spec
+
+    def test_an_old_vllm_is_refused_with_a_reason(self, native, registry):
+        self._with_version(registry, "0.10.2")
+        with pytest.raises(native.NativeRuntimeError) as exc:
+            native.plan("qwen3-8b")
+        reason = str(exc.value)
+        assert "0.10.2" in reason
+        assert "0.11.1" in reason
+
+    def test_the_first_supported_release_plans(self, native, registry):
+        self._with_version(registry, "0.11.1")
+        assert native.plan("qwen3-8b").launch_command
+
+    def test_an_undeclared_version_warns_instead(self, native, registry):
+        self._with_version(registry, "")
+        plan = native.plan("qwen3-8b")
+        assert any("0.11.1" in w for w in plan.warnings)
 
     def test_maps_a_v1_container_tag_to_the_engine_image(self, native):
         """``container: vllm-node`` resolves through the engine's legacy tags."""
@@ -364,6 +462,7 @@ class TestStart:
         assert "did not become ready" in record["error_message"]
 
     def test_a_cluster_plan_is_refused(self, native, docker):
+        """start() is still one container; the loop over ranks comes later."""
         plan = native.plan("qwen3-8b", nodes=["a", "b"], solo=False)
         with pytest.raises(native.NativeRuntimeError) as exc:
             native.start(plan, docker=docker)

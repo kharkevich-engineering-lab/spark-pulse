@@ -8,11 +8,14 @@ reproduces upstream ``run-recipe.py`` semantics exactly:
   literal braces and a missing key is a hard, explained error;
 * trailing backslash line continuations are folded into a single line;
 * extra args are appended ``shlex``-quoted;
-* solo forces ``tensor_parallel=1`` unless explicitly overridden and strips
-  ``--distributed-executor-backend``;
-* multi-node (no Ray) strips it too and appends
-  ``--nnodes/--node-rank/--master-addr/--master-port``, plus ``--headless``
-  for every rank above zero.
+* ``--distributed-executor-backend`` never survives: there is no Ray at any
+  size, and vLLM picks ``uni`` at one node and ``mp`` above on its own;
+* every size gets ``--nnodes/--node-rank/--master-addr/--master-port``, plus
+  ``--headless`` for every rank above zero. These are stock upstream flags
+  since vLLM 0.11.1, and at one node they are provably never read: vLLM
+  derives a file-based store rather than a TCP one below two nodes. Rendering
+  them unconditionally is what removes the solo special case — there is no
+  rewrite left to get wrong.
 
 Recipes without a ``command`` (v2 style) render
 ``vllm serve <model> <mapped params> <engine args>``.
@@ -90,27 +93,37 @@ class VllmEngine(Engine):
 
     name = "vllm"
 
+    # ``--nnodes/--node-rank/--master-addr/--master-port`` and ``--headless``
+    # became stock ``vllm serve`` flags in 0.11.1. An older image would not
+    # understand them, and this renderer emits them at every size.
+    min_framework_version = (0, 11, 1)
+
     def base_env(
         self,
         node_ip: str = "",
         eth_if: str = "",
         ib_if: str = "",
+        node_count: int = 1,
     ) -> dict[str, str]:
         env: dict[str, str] = {}
         if node_ip:
             env["VLLM_HOST_IP"] = node_ip
+        env["NCCL_IB_DISABLE"] = "0"
+        env.update(self.pinning_env(eth_if, ib_if, node_count))
+        env.update(self.spec.runtime.env)
+        return env
+
+    def _fabric_env(self, eth_if: str, ib_if: str) -> dict[str, str]:
+        env: dict[str, str] = {}
         if eth_if:
             env["MN_IF_NAME"] = eth_if
             env["UCX_NET_DEVICES"] = eth_if
             env["NCCL_SOCKET_IFNAME"] = eth_if
-        if ib_if:
-            env["NCCL_IB_HCA"] = ib_if
-        env["NCCL_IB_DISABLE"] = "0"
-        if eth_if:
             env["OMPI_MCA_btl_tcp_if_include"] = eth_if
             env["GLOO_SOCKET_IFNAME"] = eth_if
             env["TP_SOCKET_IFNAME"] = eth_if
-        env.update(self.spec.runtime.env)
+        if ib_if:
+            env["NCCL_IB_HCA"] = ib_if
         return env
 
     # ``supports`` is the base implementation; a v1 ``command`` template is
@@ -140,38 +153,36 @@ class VllmEngine(Engine):
         overrides = {k: v for k, v in (params or {}).items() if v is not None}
         resolved = self._resolved_params(recipe, overrides)
 
-        # Solo forces tp=1 unless the caller explicitly asked for something.
-        if topology.is_solo and "tensor_parallel" not in overrides:
-            resolved["tensor_parallel"] = 1
-
         template = recipe.get("command") or ""
         if template.strip():
             command = format_command(fold_continuations(template), resolved)
         else:
             command = self._render_v2(recipe, model, resolved)
 
-        # No Ray in either topology: the backend flag never survives.
+        # No Ray at any size: the backend flag never survives, and vLLM
+        # resolves its own executor (``uni`` at one node, ``mp`` above).
         command = strip_distributed_executor_backend(command)
-
-        if topology.size > 1:
-            command = f"{command} {self._multi_node_args(topology, node_rank)}"
+        command = f"{command} {self._rendezvous_args(topology, node_rank)}"
 
         tail = self._quote_extra(extra_args)
         if tail:
             command = f"{command} {tail}"
         command = command.strip()
 
-        node = topology.node(node_rank)
+        # The topology is total and the rank is checked above, so there is
+        # always a node here.
+        node = topology.nodes[node_rank]
         env = self.base_env(
-            node_ip=node.ip if node else "",
-            eth_if=node.eth_if if node else "",
-            ib_if=node.ib_if if node else "",
+            node_ip=node.ip,
+            eth_if=node.eth_if,
+            ib_if=node.ib_if,
+            node_count=topology.size,
         )
         env.update(self._block_env(recipe))
 
         return LaunchScript(
             node_rank=node_rank,
-            host=node.host if node else "",
+            host=node.host,
             command=command,
             env=env,
             script=self._script(env, command),
@@ -192,9 +203,9 @@ class VllmEngine(Engine):
     def _engine_args(self, recipe: dict[str, Any]) -> str:
         return self._block_args(recipe)
 
-    def _multi_node_args(self, topology: Topology, node_rank: int) -> str:
-        head = topology.head
-        master_addr = head.address() if head else "127.0.0.1"
+    def _rendezvous_args(self, topology: Topology, node_rank: int) -> str:
+        """Rendezvous flags, rendered identically at every topology size."""
+        master_addr = topology.head.address()
         master_port = self.rendezvous_port() or 29501
         args = [
             "--nnodes",

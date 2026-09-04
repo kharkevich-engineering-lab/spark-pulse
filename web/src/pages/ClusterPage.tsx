@@ -4,6 +4,7 @@ import {
   stopCluster,
   getClusterStatus,
   listClusters,
+  fetchNodes,
   validateCluster,
   rollbackCluster,
   reconcileClusters,
@@ -20,6 +21,7 @@ import ClusterCapacityPanel from "@/components/ClusterCapacityPanel";
 import LockContentionAlert from "@/components/LockContentionAlert";
 import EventStreamViewer from "@/components/EventStreamViewer";
 import ReconciliationNotification from "@/components/ReconciliationNotification";
+import NodeRegistry from "@/components/NodeRegistry";
 import {
   Server,
   Play,
@@ -36,7 +38,7 @@ import {
   Network,
 } from "lucide-react";
 import { setRefresh } from "@/lib/refresh";
-import type { ClusterState, ClusterValidationResult } from "@/lib/types";
+import type { ClusterNode, ClusterState, ClusterValidationResult } from "@/lib/types";
 import type { DeploymentEvent } from "@/lib/operations";
 import { ExperimentalBanner } from "@/components/Experimental";
 import { useConfig } from "@/lib/config";
@@ -59,8 +61,16 @@ export default function ClusterPage() {
   const [showNewCluster, setShowNewCluster] = useState(false);
   const [newClusterName, setNewClusterName] = useState("");
   const [newClusterImage, setNewClusterImage] = useState("eugr/spark-vllm-docker:latest");
-  const [headIp, setHeadIp] = useState("");
-  const [workerIps, setWorkerIps] = useState("");
+  // Head and workers are chosen from the node registry rather than typed into
+  // two free-text boxes whose contents vanished on refresh. `headIp` and
+  // `workerIps` below are derived from the picked nodes, so the request body
+  // the cluster API takes is unchanged.
+  const [headNodeId, setHeadNodeId] = useState("");
+  const [workerNodeIds, setWorkerNodeIds] = useState<string[]>([]);
+  const { data: registryNodes, refetch: refetchNodes } = useQuery<ClusterNode[]>(fetchNodes);
+  const addressOf = (id: string) => registryNodes?.find((n) => n.id === id)?.address ?? "";
+  const headIp = addressOf(headNodeId);
+  const workerIps = workerNodeIds.map(addressOf).filter(Boolean);
   const [noRay, setNoRay] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
@@ -187,10 +197,7 @@ export default function ClusterPage() {
         name: newClusterName,
         image: newClusterImage,
         head_ip: headIp,
-        worker_ips: workerIps
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean),
+        worker_ips: workerIps,
         env: {},
         docker_config: {},
         no_ray: noRay,
@@ -201,8 +208,8 @@ export default function ClusterPage() {
 
       setShowNewCluster(false);
       setNewClusterName("");
-      setHeadIp("");
-      setWorkerIps("");
+      setHeadNodeId("");
+      setWorkerNodeIds([]);
       setNoRay(false);
       setLockContention(null);
       setReconciliationResult(null);
@@ -307,13 +314,16 @@ export default function ClusterPage() {
           <p className="text-text-muted mt-1">Multi-node vLLM cluster management</p>
         </div>
         <button
-          onClick={() => setShowNewCluster(true)}
+          onClick={() => { refetchNodes(); setShowNewCluster(true); }}
           className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
         >
           <Plus size={16} />
           New Cluster
         </button>
       </div>
+
+      {/* The node registry — what used to be two free-text IP boxes. */}
+      <NodeRegistry />
 
       {/* Loading / Error */}
       {loading && <div className="flex justify-center py-20"><Loader2 className="animate-spin text-primary" size={32} /></div>}
@@ -623,26 +633,61 @@ export default function ClusterPage() {
                     />
                   </div>
 
+                  {/* Nodes come from the registry, so a cluster is described by
+                      which machines it runs on rather than by two IP strings
+                      that had to be retyped every time. */}
                   <div>
-                    <label className="block text-sm font-medium text-text-muted mb-1">Head Node IP *</label>
-                    <input
-                      type="text"
-                      value={headIp}
-                      onChange={(e) => setHeadIp(e.target.value)}
-                      placeholder="10.0.0.1"
+                    <label htmlFor="head-node" className="block text-sm font-medium text-text-muted mb-1">Head node *</label>
+                    <select
+                      id="head-node"
+                      value={headNodeId}
+                      onChange={(e) => {
+                        setHeadNodeId(e.target.value);
+                        setWorkerNodeIds((ids) => ids.filter((id) => id !== e.target.value));
+                      }}
                       className="w-full px-3 py-2 rounded-lg border border-border bg-bg text-text focus:outline-none focus:ring-2 focus:ring-primary/50"
-                    />
+                    >
+                      <option value="">Select a node…</option>
+                      {(registryNodes ?? []).map((node) => (
+                        <option key={node.id} value={node.id}>
+                          {node.name} ({node.address})
+                          {node.is_control_plane ? " — control plane" : ""}
+                        </option>
+                      ))}
+                    </select>
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-text-muted mb-1">Worker Node IPs (comma-separated)</label>
-                    <input
-                      type="text"
-                      value={workerIps}
-                      onChange={(e) => setWorkerIps(e.target.value)}
-                      placeholder="10.0.0.2, 10.0.0.3"
-                      className="w-full px-3 py-2 rounded-lg border border-border bg-bg text-text focus:outline-none focus:ring-2 focus:ring-primary/50"
-                    />
+                    <span className="block text-sm font-medium text-text-muted mb-1">Worker nodes</span>
+                    {(registryNodes ?? []).filter((n) => n.id !== headNodeId).length === 0 ? (
+                      <p className="text-sm text-text-muted">
+                        No other nodes are registered. Add one under Nodes on this page.
+                      </p>
+                    ) : (
+                      <div className="space-y-1">
+                        {(registryNodes ?? [])
+                          .filter((node) => node.id !== headNodeId)
+                          .map((node) => (
+                            <label key={node.id} className="flex items-center gap-2 text-sm">
+                              <input
+                                type="checkbox"
+                                className="rounded border-border"
+                                checked={workerNodeIds.includes(node.id)}
+                                onChange={(e) =>
+                                  setWorkerNodeIds((ids) =>
+                                    e.target.checked
+                                      ? [...ids, node.id]
+                                      : ids.filter((id) => id !== node.id),
+                                  )
+                                }
+                              />
+                              <span>
+                                {node.name} <span className="text-text-muted">({node.address})</span>
+                              </span>
+                            </label>
+                          ))}
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-2">
@@ -669,7 +714,7 @@ export default function ClusterPage() {
               {!isRunning && (
                 <button
                   onClick={handleStartCluster}
-                  disabled={submitting || !newClusterName || !headIp}
+                  disabled={submitting || !newClusterName || !headNodeId}
                   className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50"
                 >
                   {submitting ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}

@@ -11,7 +11,9 @@ into :class:`EngineSpec`. The Python subclass only holds rendering logic.
 
 from __future__ import annotations
 
+import re
 import shlex
+import socket
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -100,6 +102,13 @@ class EngineSpec(BaseModel):
     description: str = ""
     image: str = ""
     version: str = "0.0.0"
+    framework_version: str = ""
+    """Version of the serving framework *inside* the image (``0.28.1``).
+
+    Distinct from :attr:`version`, which is the image build. A launch flag is
+    only safe to render when the framework in the image understands it, so
+    this is what :meth:`Engine.version_supported` checks.
+    """
     tag: str | None = None
     digest: str | None = None
     legacy_tags: list[str] = Field(default_factory=list)
@@ -170,24 +179,45 @@ class NodeInfo:
     def address(self) -> str:
         return self.ip or self.host
 
+    @classmethod
+    def local(cls) -> NodeInfo:
+        """This machine, as a node.
+
+        The address is loopback rather than the fabric IP: a one-node launch
+        talks to itself, and loopback stays valid when the fabric link is down
+        or unaddressed. No interface names, because pinning one is only ever
+        right above a single node (see :meth:`Engine.pinning_env`).
+        """
+        return cls(host=socket.gethostname() or "localhost", ip="127.0.0.1")
+
 
 @dataclass
 class Topology:
-    """How many nodes take part and which one is the head."""
+    """How many nodes take part and which one is the head.
+
+    Total: there is always at least one node, and it is always a real one. An
+    empty node list means "just this machine", so every size is rendered the
+    same way and no caller has to ask whether a node exists.
+    """
 
     nodes: list[NodeInfo] = field(default_factory=list)
 
+    def __post_init__(self) -> None:
+        if not self.nodes:
+            self.nodes = [NodeInfo.local()]
+
     @property
     def size(self) -> int:
-        return max(1, len(self.nodes))
+        return len(self.nodes)
 
     @property
     def is_solo(self) -> bool:
-        return self.size <= 1
+        """One node. For display and record keeping — never a code path."""
+        return self.size == 1
 
     @property
-    def head(self) -> NodeInfo | None:
-        return self.nodes[0] if self.nodes else None
+    def head(self) -> NodeInfo:
+        return self.nodes[0]
 
     def node(self, rank: int) -> NodeInfo | None:
         if 0 <= rank < len(self.nodes):
@@ -196,7 +226,8 @@ class Topology:
 
     @classmethod
     def solo(cls, node: NodeInfo | None = None) -> Topology:
-        return cls(nodes=[node] if node else [])
+        """A one-node topology: *node*, or this machine."""
+        return cls(nodes=[node or NodeInfo.local()])
 
 
 @dataclass
@@ -223,6 +254,21 @@ class EngineError(ValueError):
     """Raised when a launch cannot be rendered."""
 
 
+_VERSION_RE = re.compile(r"(\d+(?:\.\d+)*)")
+
+
+def parse_version(text: str) -> tuple[int, ...]:
+    """The leading dotted integers of a version string.
+
+    ``0.28.1rc1.dev345+g4cc0cb6f7`` is ``(0, 28, 1)``; anything with no
+    leading number at all is ``()``, meaning "unknown".
+    """
+    match = _VERSION_RE.match(str(text).strip().lstrip("vV"))
+    if not match:
+        return ()
+    return tuple(int(part) for part in match.group(1).split("."))
+
+
 # ── Base class ───────────────────────────────────────────────────────────────
 
 
@@ -230,6 +276,12 @@ class Engine:
     """Base class for engine plugins."""
 
     name: str = ""
+
+    min_framework_version: tuple[int, ...] = ()
+    """Oldest framework version that understands what this engine renders.
+
+    Empty means the renderer makes no version demand.
+    """
 
     def __init__(self, spec: EngineSpec):
         self.spec = spec
@@ -271,14 +323,93 @@ class Engine:
     def supports_mods(self) -> bool:
         return bool(self.spec.capabilities.mods)
 
+    def framework_version(self) -> str:
+        """The serving framework version in this engine's image, if declared.
+
+        Falls back to ``sources.<engine>.version`` so a spec that pins the
+        framework as a source need not repeat itself. Empty means unknown.
+        """
+        if self.spec.framework_version:
+            return str(self.spec.framework_version)
+        source = self.spec.sources.get(self.name)
+        if isinstance(source, dict) and source.get("version"):
+            return str(source["version"])
+        return ""
+
+    def version_supported(self) -> tuple[bool, str]:
+        """Whether the image can run what this engine renders.
+
+        ``(False, reason)`` refuses the launch. ``(True, reason)`` with a
+        non-empty reason is a warning: the spec declares no framework version,
+        so the demand can be stated but not checked.
+        """
+        required = self.min_framework_version
+        if not required:
+            return True, ""
+        wanted = ".".join(str(p) for p in required)
+        declared = self.framework_version()
+        found = parse_version(declared)
+        if not found:
+            return True, (
+                f"engine '{self.spec.key}' declares no {self.name} version, so "
+                f"it cannot be checked against the {self.name} >= {wanted} the "
+                "rendered launch flags need"
+            )
+        if found < required:
+            return False, (
+                f"engine '{self.spec.key}' carries {self.name} {declared}, but "
+                f"the rendered launch flags (--nnodes/--node-rank/--master-addr"
+                f"/--master-port) need {self.name} >= {wanted}; pick a newer "
+                "engine image or variant"
+            )
+        return True, ""
+
+    def pinning_env(self, eth_if: str, ib_if: str, node_count: int) -> dict[str, str]:
+        """Interface pinning — the one thing that differs at a single node.
+
+        Everything else about a launch is rendered identically at every size.
+        This is not, and the gate belongs here rather than spread across the
+        engines.
+
+        ``NCCL_SOCKET_IFNAME``, ``GLOO_SOCKET_IFNAME`` and their friends are
+        find-or-fail: a collective told to use ``enp1s0f0np0`` dies if that
+        interface is missing rather than falling back. Pinning the fabric is
+        right when ranks talk across machines and wrong when there is only one
+        machine, which never touches the fabric at all. A solo deployment used
+        to get none of these because its topology carried no nodes; now that a
+        size-one topology carries a real node, the gate is what keeps them off
+        that path.
+
+        One variable is still worth setting alone: ``GLOO_SOCKET_IFNAME=lo``.
+        Gloo otherwise resolves the machine's hostname to choose an interface,
+        which fails outright on a host whose hostname does not resolve, and
+        loopback is the correct choice for a single node in any case.
+        """
+        if node_count > 1:
+            return self._fabric_env(eth_if, ib_if)
+        return {"GLOO_SOCKET_IFNAME": "lo"}
+
+    def _fabric_env(self, eth_if: str, ib_if: str) -> dict[str, str]:
+        """Fabric pinning for this engine. Only called above one node."""
+        env: dict[str, str] = {}
+        if eth_if:
+            env["NCCL_SOCKET_IFNAME"] = eth_if
+            env["GLOO_SOCKET_IFNAME"] = eth_if
+        if ib_if:
+            env["NCCL_IB_HCA"] = ib_if
+        return env
+
     def base_env(
         self,
         node_ip: str = "",
         eth_if: str = "",
         ib_if: str = "",
+        node_count: int = 1,
     ) -> dict[str, str]:
         """Environment shared by every rank. Subclasses extend this."""
-        return dict(self.spec.runtime.env)
+        env = self.pinning_env(eth_if, ib_if, node_count)
+        env.update(self.spec.runtime.env)
+        return env
 
     # -- to implement ------------------------------------------------------
 

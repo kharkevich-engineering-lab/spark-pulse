@@ -25,6 +25,9 @@ dependencies = [
     "oras>=0.2.0",
     "docker>=7.0.0",
     "huggingface_hub>=0.26.0",
+    # Peer discovery over mDNS. Tested on the Spark against a running
+    # avahi-daemon in both directions; see docs/cluster-agent-plan.md §6.
+    "zeroconf>=0.132.0",
 ]
 
 [project.optional-dependencies]

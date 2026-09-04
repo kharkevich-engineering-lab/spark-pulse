@@ -49,6 +49,14 @@ from spark_pulse.tools.docker import ContainerMetadata, PullCancelled
 from spark_pulse.tools.events import DeploymentEvent, EventType
 from spark_pulse.tools.labels import DEPLOYMENT_LABEL, MODE_LABEL
 
+# Capacity validation is pure arithmetic with no side effect to simulate, so
+# it is imported directly, like ``spark_pulse.engines``.
+from spark_pulse.tools.parallelism import (
+    ClusterCapacity,
+    parse_parallelism,
+    validate_cluster_capacity,
+)
+
 logger = logging.getLogger(__name__)
 
 RUNTIME_NAME = "native"
@@ -266,13 +274,20 @@ def allocate_port(taken: set[int] | None = None) -> int:
 
 
 def _ports_in_use() -> set[int]:
+    """Ports live deployments hold — API *and* rendezvous.
+
+    A launch binds its rendezvous port exactly as surely as its API port, so
+    handing the same number out twice would break a deployment that never
+    mentioned it.
+    """
     ports: set[int] = set()
     for record in _load_records():
         if record.get("status") in ("stopped", "error"):
             continue
-        port = record.get("port")
-        if isinstance(port, int):
-            ports.add(port)
+        for key in ("port", "rendezvous_port"):
+            value = record.get(key)
+            if isinstance(value, int):
+                ports.add(value)
     return ports
 
 
@@ -438,13 +453,16 @@ def _container_profile(engine_obj: Engine) -> dict[str, Any]:
 def _build_env(
     engine_obj: Engine,
     recipe: dict[str, Any],
-    node: NodeInfo | None,
+    topology: Topology,
+    node_rank: int = 0,
 ) -> dict[str, str]:
+    node = topology.nodes[node_rank]
     env = dict(
         engine_obj.base_env(
-            node_ip=node.ip if node else "",
-            eth_if=node.eth_if if node else "",
-            ib_if=node.ib_if if node else "",
+            node_ip=node.ip,
+            eth_if=node.eth_if,
+            ib_if=node.ib_if,
+            node_count=topology.size,
         )
     )
     # Per-engine env, so deploying a v2 recipe on its non-default engine does
@@ -477,6 +495,55 @@ def _build_mounts(engine_obj: Engine) -> tuple[dict[str, str], list[str]]:
     return mounts, declared
 
 
+def _check_constraints(recipe_id: str, recipe: dict[str, Any], nodes: int) -> None:
+    """Enforce the recipe's topology constraints against the real node count.
+
+    The recipe parser has produced ``solo_only`` / ``cluster_only`` /
+    ``min_nodes`` all along and nothing read them; a topology that is total is
+    what makes them checkable in one place.
+    """
+    if recipe.get("solo_only") and nodes > 1:
+        raise NativeRuntimeError(
+            f"recipe '{recipe_id}' is marked solo_only, so it cannot be "
+            f"deployed across {nodes} nodes; deploy it on one node"
+        )
+    if recipe.get("cluster_only") and nodes < 2:
+        raise NativeRuntimeError(
+            f"recipe '{recipe_id}' is marked cluster_only, so it needs at "
+            f"least 2 nodes; {nodes} was requested"
+        )
+    minimum = recipe.get("min_nodes")
+    if isinstance(minimum, int) and nodes < minimum:
+        raise NativeRuntimeError(
+            f"recipe '{recipe_id}' needs at least {minimum} nodes; "
+            f"{nodes} was requested"
+        )
+
+
+def _check_capacity(recipe_id: str, command: str, nodes: int) -> None:
+    """Refuse a launch that asks for more GPUs than the nodes hold.
+
+    One GPU per node is the hardware, so tensor parallelism spans nodes and a
+    tp of 2 simply needs a second Spark. This replaces the old silent rewrite
+    of solo deployments to ``tensor_parallel=1``: an operator who asked for
+    two-way parallelism on one node now hears why it cannot happen instead of
+    quietly getting something else.
+    """
+    parallelism = parse_parallelism(command)
+    ok, message = validate_cluster_capacity(
+        parallelism, ClusterCapacity.for_nodes(nodes)
+    )
+    if ok:
+        return
+    needed = parallelism["tp"] * parallelism["pp"] * parallelism["dp"]
+    raise NativeRuntimeError(
+        f"recipe '{recipe_id}' does not fit {nodes} node(s): {message} "
+        f"(tp={parallelism['tp']} pp={parallelism['pp']} dp={parallelism['dp']}). "
+        "This hardware has one GPU per node, so either lower the parallelism "
+        f"or deploy across {needed} nodes"
+    )
+
+
 def plan(
     recipe_id: str,
     engine: str | None = None,
@@ -501,6 +568,13 @@ def plan(
         raise NativeRuntimeError(f"recipe '{recipe_id}' not found")
 
     warnings: list[str] = []
+
+    # An empty node list is not "no nodes": it is this machine. The topology
+    # is total, so every size below takes the same code path.
+    node_list = [] if solo else [str(n) for n in (nodes or [])]
+    topology = Topology(nodes=[NodeInfo(host=n, ip=n) for n in node_list])
+    _check_constraints(recipe_id, recipe, topology.size)
+
     engine_obj, engine_name, resolved_variant = _select_engine(
         registry, recipe, engine, variant
     )
@@ -522,6 +596,16 @@ def plan(
         warnings=warnings,
     )
 
+    # Checked after the image is resolved, because a legacy container tag can
+    # map to an older image than the engine's default variant would use.
+    version_ok, version_reason = engine_obj.version_supported()
+    if not version_ok:
+        raise NativeRuntimeError(
+            f"recipe '{recipe_id}' cannot be planned: {version_reason}"
+        )
+    if version_reason:
+        warnings.append(version_reason)
+
     resolved_model = _resolve_model(recipe, model, allow_missing_model, warnings)
 
     mods = engine_obj.block_mods(recipe)
@@ -531,20 +615,25 @@ def plan(
             f"'{engine_name}' does not support them"
         )
 
-    node_list = [] if solo else [str(n) for n in (nodes or [])]
-    topology = Topology(nodes=[NodeInfo(host=n, ip=n) for n in node_list])
-
-    # Only the caller's own overrides are handed to the engine: the engine
-    # merges the recipe's defaults itself, and it distinguishes "the user asked
-    # for this" from "the recipe defaults to this" (solo forces tensor_parallel
-    # to 1 unless explicitly overridden, exactly as upstream does).
+    # Only the caller's own overrides are handed to the engine: it merges the
+    # recipe's defaults itself.
     overrides = {k: v for k, v in (params or {}).items() if v is not None}
     defaults = recipe.get("defaults") or {}
+    rendezvous_port = engine_obj.rendezvous_port()
     port = overrides.get("port") or defaults.get("port")
     if port in (None, "", 0):
-        port = allocate_port(_ports_in_use())
+        taken = _ports_in_use()
+        if rendezvous_port:
+            taken.add(rendezvous_port)
+        port = allocate_port(taken)
         overrides["port"] = port
     port = int(port)
+    if rendezvous_port and port == rendezvous_port:
+        raise NativeRuntimeError(
+            f"port {port} is the rendezvous port of engine "
+            f"'{engine_name}/{resolved_variant}'; the launch binds it itself, "
+            "so pick another API port"
+        )
     if "port" in overrides:
         overrides["port"] = port
     merged = {**defaults, **overrides, "port": port}
@@ -565,9 +654,11 @@ def plan(
     except EngineError as exc:
         raise NativeRuntimeError(str(exc)) from exc
 
+    _check_capacity(recipe_id, ranks[0].command, topology.size)
+
     dep_id = deployment_id or uuid.uuid4().hex[:12]
     profile = _container_profile(engine_obj)
-    env = _build_env(engine_obj, recipe, topology.node(0))
+    env = _build_env(engine_obj, recipe, topology)
     mounts, cache_mounts = _build_mounts(engine_obj)
     network_host = bool(profile.get("network_host", False))
     # In solo the API port is published only when the container is not on the
@@ -622,7 +713,7 @@ def plan(
         nodes=node_list,
         node_count=topology.size,
         port=port,
-        rendezvous_port=engine_obj.rendezvous_port(),
+        rendezvous_port=rendezvous_port,
         readiness_path=readiness,
         readiness_url=f"http://127.0.0.1:{port}{readiness}",
         metrics_path=engine_obj.metrics_path(),
@@ -658,6 +749,7 @@ def _record_from_plan(plan_obj: DeployPlan, status: str) -> dict[str, Any]:
         "error_message": None,
         "pid": None,
         "port": plan_obj.port,
+        "rendezvous_port": plan_obj.rendezvous_port,
         "launch_command": plan_obj.launch_command,
         "log_path": None,
         # Native additions.
