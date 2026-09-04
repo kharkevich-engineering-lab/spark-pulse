@@ -314,12 +314,13 @@ class TestCreateEndpoint:
         assert response.status_code == 200
         assert "-tp 1" in response.json()["launch_command"]
 
-    def test_create_of_more_ranks_than_this_build_starts_is_a_400(self, client):
-        """Refused by the runtime, in the runtime's own words, not by routing.
+    def test_a_node_list_reaches_the_native_path_and_sizes_the_deployment(self, client):
+        """The point of the flip: N nodes is a deployment, not a second runtime.
 
-        The dispatcher hands the node list straight to the native path now.
-        Until the start loop covers every rank, that path says so out loud
-        rather than starting the head alone and calling it a cluster.
+        The dispatcher used to refuse any node list under the native runtime,
+        so a multi-node request could only be served by the legacy runner.
+        Now it is planned and started by the one path, and the record carries
+        the size it was asked for.
         """
         with _runtime("native"):
             response = client.post(
@@ -327,8 +328,10 @@ class TestCreateEndpoint:
                 json={"recipe_id": "qwen3-8b", "name": "x", "nodes": ["a", "b"]},
             )
 
-        assert response.status_code == 400
-        assert "one rank" in response.json()["detail"]
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["node_count"] == 2
+        assert [r["rank"] for r in body["ranks"]] == [0, 1]
 
     def test_create_of_an_unknown_recipe_is_404(self, client):
         response = client.post("/api/deployments", json={"recipe_id": "nope"})

@@ -90,6 +90,45 @@ export type RecipeImportStatus =
   | { imported: false }
   | ({ imported: true } & RecipeImportResult);
 
+/** One rank of a deployment: where it runs and which container it is.
+ *
+ * Not to be confused with DeployPlan.ranks, which is the *rendered launch*
+ * per rank. This is the running gang — the shape the Jobs page expands into
+ * one line per rank.
+ */
+export interface DeploymentRank {
+  rank: number;
+  /** Address of the node it runs on. Empty means the control node. */
+  node: string;
+  host: string;
+  container_name: string;
+  is_head: boolean;
+  /** Live container state; present on the single-deployment endpoint only. */
+  container?: ContainerStatus;
+}
+
+/** A rank we asked to stop and could not confirm gone.
+ *
+ * Its node's ports stay held until something confirms the container is
+ * removed: releasing on inference is where every orphan bug in this class
+ * comes from.
+ */
+export interface DeploymentOrphan {
+  rank: number;
+  node: string;
+  container_name: string;
+  reason: string;
+  since: string;
+}
+
+export interface ContainerStatus {
+  status: string;
+  running: boolean;
+  id: string | null;
+  state: Record<string, unknown>;
+  error?: string | null;
+}
+
 export interface Deployment {
   id: string;
   recipe_id: string;
@@ -115,6 +154,13 @@ export interface Deployment {
   node_count?: number;
   mods?: string[];
   ready?: boolean;
+  /** Monotonic attempt counter; carried in every container name and label. */
+  generation?: number;
+  /** One entry per rank. container_name above is rank zero's, as an alias. */
+  ranks?: DeploymentRank[];
+  /** Ranks that could not be confirmed gone. Empty on a clean teardown. */
+  orphans?: DeploymentOrphan[];
+  container?: ContainerStatus;
 }
 
 export interface GPUStats {
@@ -615,6 +661,68 @@ export interface DeployPlan {
   warnings: string[];
   runtime: string;
   created_at: string;
+}
+
+// ── Pre-flight ──────────────────────────────────────────────────────────────
+
+/** `pass` | `warn` | `fail`. Warn is a first-class answer, not a soft fail. */
+export type PreflightStatus = "pass" | "warn" | "fail";
+
+/** `blocked` cannot proceed; `slow` will work but has bytes to move first. */
+export type PreflightVerdict = "ready" | "slow" | "blocked";
+
+/** One check on one node: what it is, what was seen, and what to do. */
+export interface PreflightCheck {
+  id: string;
+  title: string;
+  /** The node it ran on, by the name the operator gave it. */
+  node: string;
+  node_id: string;
+  status: PreflightStatus;
+  observed: string;
+  /** What to do about it. Filled on every non-passing check. */
+  remedy: string;
+  /** Bytes that must transfer, when that is knowable. */
+  delay_bytes: number;
+  /** Whether this warning costs time even when the size is unknown. */
+  costs_time: boolean;
+  detail: Record<string, unknown>;
+}
+
+export interface PreflightNode {
+  id: string;
+  label: string;
+  address: string;
+  is_control_plane: boolean;
+  ranks: number[];
+}
+
+export interface PreflightReport {
+  verdict: PreflightVerdict;
+  summary: string;
+  can_proceed: boolean;
+  delays: boolean;
+  estimated_transfer_bytes: number;
+  counts: { pass: number; warn: number; fail: number };
+  nodes: PreflightNode[];
+  checks: PreflightCheck[];
+  /** Checks that failed: the deployment cannot start until they are fixed. */
+  blocking: PreflightCheck[];
+  /** Warnings that cost time — a pull, a replication. */
+  delaying: PreflightCheck[];
+  /** Warnings that cost nothing but are worth reading. */
+  advisories: PreflightCheck[];
+  plan: {
+    recipe_id: string;
+    engine: string;
+    variant: string;
+    image_ref: string;
+    model: string;
+    port: number | null;
+    rendezvous_port: number | null;
+    node_count: number;
+  };
+  checked_at: string;
 }
 
 export interface RenderResult {

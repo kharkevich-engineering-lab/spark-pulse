@@ -30,6 +30,9 @@ from spark_pulse.tools.labels import (
     DEPLOYMENT_LABEL as DEPLOYMENT_LABEL,
 )
 from spark_pulse.tools.labels import (
+    GENERATION_LABEL as GENERATION_LABEL,
+)
+from spark_pulse.tools.labels import (
     HEAD_IP_LABEL as HEAD_IP_LABEL,
 )
 from spark_pulse.tools.labels import (
@@ -39,6 +42,9 @@ from spark_pulse.tools.labels import (
     NAME_LABEL as NAME_LABEL,
 )
 from spark_pulse.tools.labels import (
+    RANK_LABEL as RANK_LABEL,
+)
+from spark_pulse.tools.labels import (
     RAY_ENABLED_LABEL as RAY_ENABLED_LABEL,
 )
 from spark_pulse.tools.labels import (
@@ -46,6 +52,9 @@ from spark_pulse.tools.labels import (
 )
 from spark_pulse.tools.labels import (
     WORKER_IPS_LABEL as WORKER_IPS_LABEL,
+)
+from spark_pulse.tools.labels import (
+    WORLD_SIZE_LABEL as WORLD_SIZE_LABEL,
 )
 
 logger = logging.getLogger(__name__)
@@ -134,10 +143,23 @@ def _reconstruct_cluster_state(labels: dict[str, str]) -> dict[str, Any] | None:
     }
 
 
+def _int_label(labels: dict[str, str], key: str, default: int) -> int:
+    """One integer label, defaulted rather than trusted."""
+    raw = str(labels.get(key, "")).strip()
+    return int(raw) if raw.isdigit() else default
+
+
 def _reconstruct_deployment(labels: dict[str, str]) -> dict[str, Any] | None:
-    """Reconstruct solo deployment state from Docker container labels.
+    """Reconstruct a deployment rank from Docker container labels.
 
     Returns None if required labels are missing or malformed.
+
+    A native container is one rank of one generation of a gang, and it says so
+    in its labels. Reconciliation reads them back rather than inferring
+    anything from the container name: the name is derived from the identity,
+    never the other way round. A container written before ranks existed has
+    none of them, and reads back as rank zero of a gang of one at generation
+    zero — which is exactly what it was.
     """
     deployment_name = labels.get(DEPLOYMENT_LABEL)
     if not deployment_name:
@@ -156,6 +178,9 @@ def _reconstruct_deployment(labels: dict[str, str]) -> dict[str, Any] | None:
         "created_at": created_at or now,
         "status": "running",  # Will be updated by caller based on container state
         "reconciled_at": now,
+        "generation": _int_label(labels, GENERATION_LABEL, 0),
+        "rank": _int_label(labels, RANK_LABEL, 0),
+        "world_size": _int_label(labels, WORLD_SIZE_LABEL, 1),
     }
 
 

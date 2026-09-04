@@ -47,6 +47,7 @@ if _sim_mode:
         deploy_dispatch as deploy_dispatch,
         models as models,
         images as images,
+        preflight as preflight,
     )
 else:
     from spark_pulse.tools import (
@@ -76,6 +77,7 @@ else:
         deploy_dispatch as deploy_dispatch,
         models as models,
         images as images,
+        preflight as preflight,
     )
 
 

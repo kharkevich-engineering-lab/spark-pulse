@@ -5,6 +5,7 @@ import { useSSEConnection } from "@/hooks/useSSEConnection";
 import StatusBadge from "@/components/StatusBadge";
 import HealthBadge from "@/components/HealthBadge";
 import EventStreamViewer from "@/components/EventStreamViewer";
+import RankList from "@/components/RankList";
 import { ConfirmModal, AlertModal } from "@/components/Modal";
 import { Square, X, Trash2, Loader2, AlertCircle, Terminal, Flame } from "lucide-react";
 import { setRefresh } from "@/lib/refresh";
@@ -141,6 +142,14 @@ export default function InferencePage() {
                     {dep.engine || "native"}
                   </span>
                 )}
+                {dep.node_count != null && dep.node_count > 1 && (
+                  <span
+                    className="hidden md:inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono bg-surface-hover text-text-muted border border-border shrink-0"
+                    title={`Spans ${dep.node_count} nodes, one container per rank`}
+                  >
+                    {dep.node_count} nodes
+                  </span>
+                )}
                 {dep.port && <span className="text-sm font-mono text-text-muted shrink-0">:{dep.port}</span>}
                 <HealthBadge status={dep.status === "running" ? "healthy" as any : dep.status === "error" ? "unhealthy" as any : "unknown" as any} size="sm" />
                 <StatusBadge status={dep.status} />
@@ -167,6 +176,11 @@ export default function InferencePage() {
                       <dd className="font-mono truncate">{dep.container_name}</dd>
                     </dl>
                   )}
+                  <RankList
+                    ranks={dep.ranks}
+                    orphans={dep.orphans}
+                    className="px-4 py-3 bg-bg border-b border-border"
+                  />
                   <div className="flex items-center gap-2 px-4 py-2 bg-bg text-xs text-text-muted">
                     {streaming[dep.id] ? <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />Streaming</span> : <span>Stream stopped</span>}
                     <button onClick={() => toggle(dep.id)} className="ml-auto text-primary hover:underline">Hide</button>

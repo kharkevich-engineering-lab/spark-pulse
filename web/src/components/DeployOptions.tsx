@@ -9,15 +9,20 @@ recipe carries a vLLM `command` template and therefore pins itself to vLLM.
 */
 
 import { useEffect, useMemo, useState } from "react";
-import { fetchEngines, fetchModels, planDeployment } from "@/lib/api";
-import type { DeployPlan, EngineSummary, RecipeDetail } from "@/lib/types";
+import { fetchEngines, fetchModels, fetchNodes, planDeployment, runPreflight } from "@/lib/api";
+import type { ClusterNode, DeployPlan, EngineSummary, PreflightReport, RecipeDetail } from "@/lib/types";
 import { AlertCircle, ChevronDown, Eye, Loader2 } from "lucide-react";
 import { formatSize } from "@/lib/utils";
+import PreflightPanel from "@/components/PreflightPanel";
 
 export interface DeployOptionsValue {
   engine?: string;
   model?: string;
   extra_args?: string[];
+  /** Addresses this deployment should span. Empty/omitted means solo on the
+   *  control node — see the node selector below for why the control node's
+   *  own address is always the first entry once there is more than one. */
+  nodes?: string[];
 }
 
 /** Split a free-text args field into argv, respecting simple quoting. */
@@ -29,6 +34,20 @@ export function parseExtraArgs(raw: string): string[] {
       ? token.slice(1, -1)
       : token,
   );
+}
+
+/** How an engine reads in the picker.
+ *
+ * The variant has to be here. Two variants of one engine — vllm and
+ * vllm-b12x — are two different images with different kernels, and labelling
+ * both "vllm · 0.1.0" gives the operator two identical options. "default" is
+ * the absence of a variant, so it is the one that stays unsaid.
+ */
+export function engineLabel(engine: EngineSummary): string {
+  const name = engine.variant && engine.variant !== "default"
+    ? `${engine.engine}/${engine.variant}`
+    : engine.engine;
+  return `${name} · ${engine.version}`;
 }
 
 export interface EngineChoice {
@@ -97,8 +116,10 @@ export default function DeployOptions({
 }) {
   const [engines, setEngines] = useState<EngineSummary[]>([]);
   const [models, setModels] = useState<string[]>([]);
+  const [nodes, setNodes] = useState<ClusterNode[]>([]);
   const [extraArgsText, setExtraArgsText] = useState("");
   const [plan, setPlan] = useState<DeployPlan | null>(null);
+  const [preflight, setPreflight] = useState<PreflightReport | null>(null);
   const [planning, setPlanning] = useState(false);
   const [planError, setPlanError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
@@ -110,26 +131,67 @@ export default function DeployOptions({
     fetchModels()
       .then((m) => setModels(m.map((entry) => entry.id)))
       .catch(() => setModels([]));
+    fetchNodes()
+      .then(setNodes)
+      .catch(() => setNodes([]));
   }, []);
 
   const choices = useMemo(() => engineChoices(engines, recipe), [engines, recipe]);
   const available = useMemo(() => choices.filter((c) => c.supported), [choices]);
   const unavailable = useMemo(() => choices.filter((c) => !c.supported), [choices]);
 
+  // A registry of one (or zero, before the control node has registered
+  // itself) has exactly one possible value for "which nodes take part" — the
+  // control node, solo — so there is nothing for a selector to select.
+  const controlNode = useMemo(() => nodes.find((n) => n.is_control_plane), [nodes]);
+  const otherNodes = useMemo(() => nodes.filter((n) => !n.is_control_plane), [nodes]);
+  const selectedAddresses = useMemo(() => new Set(value.nodes ?? []), [value.nodes]);
+  const worldSize = 1 + otherNodes.filter((n) => selectedAddresses.has(n.address)).length;
+
+  const toggleNode = (address: string) => {
+    const next = new Set(selectedAddresses);
+    if (next.has(address)) next.delete(address);
+    else next.add(address);
+    if (next.size === 0) {
+      onChange({ ...value, nodes: undefined });
+      return;
+    }
+    // The control node is never deselectable, so it always leads the list —
+    // and always at rank 0, since the plan assigns ranks by array order.
+    const ordered = [
+      ...(controlNode ? [controlNode.address] : []),
+      ...otherNodes.filter((n) => next.has(n.address)).map((n) => n.address),
+    ];
+    onChange({ ...value, nodes: ordered });
+  };
+
   const preview = async () => {
     setPlanning(true);
     setPlanError(null);
     setPlan(null);
+    setPreflight(null);
+    const body = {
+      recipe_id: recipe.id,
+      engine: value.engine || undefined,
+      model: value.model || undefined,
+      extra_args: value.extra_args ?? [],
+      nodes: value.nodes?.length ? value.nodes : undefined,
+    };
     try {
-      const result = await planDeployment({
-        recipe_id: recipe.id,
-        engine: value.engine || undefined,
-        model: value.model || undefined,
-        extra_args: value.extra_args ?? [],
-      });
+      const result = await planDeployment(body);
       setPlan(result);
     } catch (e) {
       setPlanError(e instanceof Error ? e.message : "Preview failed");
+      setPlanning(false);
+      return;
+    }
+    // The pre-flight is the same question against the real nodes, so it is
+    // asked here rather than after a deploy has already started downloading.
+    // It can fail on its own without costing the operator the preview.
+    try {
+      setPreflight(await runPreflight(body));
+    } catch {
+      setPreflight(null);
     } finally {
       setPlanning(false);
     }
@@ -161,8 +223,8 @@ export default function DeployOptions({
             >
               <option value="">Recipe default</option>
               {available.map(({ engine }) => (
-                <option key={engine.key} value={engine.engine}>
-                  {engine.engine} · {engine.version}
+                <option key={engine.key} value={engine.key}>
+                  {engineLabel(engine)}
                 </option>
               ))}
             </select>
@@ -176,7 +238,7 @@ export default function DeployOptions({
                   >
                     <AlertCircle size={13} className="shrink-0 mt-0.5" />
                     <span>
-                      <span className="font-mono">{engine.engine}</span> unavailable
+                      <span className="font-mono">{engine.key}</span> unavailable
                       {reason ? `: ${reason}` : ""}
                     </span>
                   </li>
@@ -222,6 +284,43 @@ export default function DeployOptions({
             />
             <p className="text-xs text-text-muted mt-1">Appended to the engine command, quoted.</p>
           </div>
+
+          {nodes.length >= 2 && (
+            <div>
+              <label className="block text-sm font-medium mb-1">Nodes</label>
+              <div
+                className="space-y-1.5 p-2 rounded-lg bg-surface border border-border"
+                data-testid="deploy-nodes"
+              >
+                {controlNode && (
+                  <label className="flex items-center gap-2 text-sm opacity-70">
+                    <input type="checkbox" checked disabled className="shrink-0" />
+                    <span>
+                      {controlNode.name}{" "}
+                      <span className="font-mono text-text-muted">{controlNode.address}</span>{" "}
+                      · control node
+                    </span>
+                  </label>
+                )}
+                {otherNodes.map((node) => (
+                  <label key={node.id} className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      className="shrink-0"
+                      checked={selectedAddresses.has(node.address)}
+                      onChange={() => toggleNode(node.address)}
+                    />
+                    <span>
+                      {node.name} <span className="font-mono text-text-muted">{node.address}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+              <p className="text-xs text-text-muted mt-1" data-testid="deploy-world-size">
+                {worldSize} node{worldSize === 1 ? "" : "s"}, ranks 0-{worldSize - 1}
+              </p>
+            </div>
+          )}
 
           <button
             type="button"
@@ -270,6 +369,8 @@ export default function DeployOptions({
                   {warning}
                 </p>
               ))}
+
+              {preflight && <PreflightPanel report={preflight} />}
 
               <div>
                 <p className="text-xs uppercase tracking-wide text-text-muted mb-1">Command</p>

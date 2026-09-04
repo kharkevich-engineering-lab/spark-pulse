@@ -3,8 +3,15 @@
 Every call goes through ``tools.deploy_dispatch``, which picks the upstream
 (``run-recipe.sh``) or native (Docker from Python) runtime — see that module
 for how the choice is made.
+
+A create runs the pre-flight first and refuses a *blocked* verdict, because
+every condition the pre-flight blocks on — no docker, no GPU, a port already
+taken — is one the deploy would hit anyway, minutes later, with a container
+already pulled and a worse error. ``skip_preflight`` bypasses it for an
+operator who has judged the report wrong.
 """
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -13,7 +20,47 @@ from pydantic import BaseModel, Field
 from spark_pulse import tools
 from spark_pulse.tools.native_runtime import NativeRuntimeError
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/deployments", tags=["deployments"])
+
+
+def _preflight_gate(req: dict, params: dict[str, Any]) -> dict[str, Any] | None:
+    """Run the pre-flight for a create, and refuse a blocked verdict.
+
+    Returns the report so it can be attached to the response; raises 409 when
+    the verdict blocks. A pre-flight that itself fails is logged and ignored:
+    a broken checker must not become a new way for a deploy to fail.
+    """
+    try:
+        report = tools.preflight.run(
+            recipe_id=req.get("recipe_id", ""),
+            engine=req.get("engine"),
+            variant=req.get("variant"),
+            model=req.get("model"),
+            params=params,
+            extra_args=req.get("extra_args") or [],
+            nodes=req.get("nodes") or None,
+            allow_missing_model=bool(req.get("allow_missing_model", False)),
+        )
+    except (NativeRuntimeError, ValueError):
+        # The plan is bad; let the create raise the real error rather than a
+        # second, vaguer one from the checker.
+        return None
+    except Exception:  # pragma: no cover - defensive
+        logger.exception("pre-flight failed; proceeding with the deploy")
+        return None
+
+    if not report.get("can_proceed", True):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": report.get("summary")
+                or "pre-flight found conditions that would stop this deployment",
+                "preflight": report,
+            },
+        )
+    return report
 
 
 class PlanRequest(BaseModel):
@@ -79,8 +126,21 @@ def create_deployment(req: dict):
     # Build the vLLM serve command for display/logging
     launch_cmd = tools.recipes.build_launch_command(recipe, params)
 
+    # The pre-flight is given ``raw_params``, not the merged ``params``, for
+    # the same reason the native path is: merging the recipe's defaults in
+    # makes an explicit request indistinguishable from a default, and the
+    # checker would then check a port the deploy is not going to use.
+    preflight = None
+    if not req.get("skip_preflight") and tools.deploy_dispatch.uses_native():
+        # Only the native runtime is what the pre-flight describes: it checks
+        # the image, ports and rendezvous of a plan the native path resolves.
+        # An upstream create forks run-recipe.sh, which decides all of that
+        # itself, so checking it here would be reporting on a deployment that
+        # is not the one about to start.
+        preflight = _preflight_gate(req, raw_params)
+
     try:
-        return tools.deploy_dispatch.create_deployment(
+        created = tools.deploy_dispatch.create_deployment(
             recipe_id=recipe_id,
             name=name,
             params=params,
@@ -95,6 +155,19 @@ def create_deployment(req: dict):
         )
     except NativeRuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # The advisories are worth showing even on a create that went ahead: "the
+    # image is not on rank 1 yet" explains the first four minutes of silence.
+    if isinstance(created, dict) and preflight is not None:
+        created["preflight"] = {
+            "verdict": preflight.get("verdict"),
+            "summary": preflight.get("summary"),
+            "delays": preflight.get("delays"),
+            "estimated_transfer_bytes": preflight.get("estimated_transfer_bytes"),
+            "delaying": preflight.get("delaying"),
+            "advisories": preflight.get("advisories"),
+        }
+    return created
 
 
 @router.delete("/{deployment_id}")

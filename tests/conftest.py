@@ -62,3 +62,18 @@ def reset_simulated_node_registry():
     yield
     mock_node_registry.reset()
     mock_discovery.reset_mock_discovery()
+
+
+@pytest.fixture(autouse=True)
+def reset_simulated_preflight():
+    """Keep simulated unreachability from leaking between tests.
+
+    ``spark_pulse.mock.preflight.UNREACHABLE`` is how a test says "this node is
+    off". Left set, the next test's pre-flight reports a blocked verdict for a
+    node it never touched.
+    """
+    from spark_pulse.mock import preflight as mock_preflight
+
+    mock_preflight.reset()
+    yield
+    mock_preflight.reset()

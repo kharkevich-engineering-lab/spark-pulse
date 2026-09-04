@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
+  ApiError,
   createDeployment,
   fetchDeployment,
   fetchDeployments,
@@ -97,6 +98,32 @@ describe("deployment api", () => {
     expect(body).toEqual({ recipe_id: "qwen3-8b", name: "run", params: {} });
   });
 
+  it("createDeployment forwards the nodes a multi-node deploy spans", async () => {
+    fetchMock().mockReturnValue(ok({ id: "abc123" }));
+    await createDeployment({
+      recipe_id: "qwen3-8b",
+      name: "run",
+      params: {},
+      nodes: ["192.168.1.100", "10.0.0.11"],
+    });
+
+    const body = JSON.parse(fetchMock().mock.calls[0][1]?.body as string);
+    expect(body.nodes).toEqual(["192.168.1.100", "10.0.0.11"]);
+  });
+
+  it("createDeployment carries skip_preflight, so 'Deploy anyway' can re-issue past a blocked gate", async () => {
+    fetchMock().mockReturnValue(ok({ id: "abc123" }));
+    await createDeployment({
+      recipe_id: "qwen3-8b",
+      name: "run",
+      params: {},
+      skip_preflight: true,
+    });
+
+    const body = JSON.parse(fetchMock().mock.calls[0][1]?.body as string);
+    expect(body.skip_preflight).toBe(true);
+  });
+
   it("fetchDeployment GETs one deployment", async () => {
     fetchMock().mockReturnValue(ok({ id: "abc123", ready: true }));
     const deployment = await fetchDeployment("abc123");
@@ -116,5 +143,57 @@ describe("deployment api", () => {
     await expect(planDeployment({ recipe_id: "qwen3-8b", engine: "sglang" })).rejects.toThrow(
       /cannot run this recipe/,
     );
+  });
+
+  /** A create's 409 is the pre-flight gate, not a generic failure: its body is
+   *  structured (`detail.message` plus the full report), and an operator
+   *  deciding whether to override it needs the report, not just a string. */
+  it("turns a 409's detail.message into the error message and keeps the pre-flight report reachable", async () => {
+    const preflight = {
+      verdict: "blocked",
+      summary: "blocked: 1 check failed on 10.0.0.11",
+      can_proceed: false,
+      checks: [],
+      blocking: [{ id: "docker", title: "Docker", node: "spark-02", status: "fail" }],
+    };
+    fetchMock().mockReturnValue(
+      Promise.resolve({
+        ok: false,
+        status: 409,
+        text: () =>
+          Promise.resolve(
+            JSON.stringify({
+              detail: { message: "no docker on spark-02", preflight },
+            }),
+          ),
+      } as Response),
+    );
+
+    let caught: unknown;
+    try {
+      await createDeployment({ recipe_id: "qwen3-8b", name: "run", params: {} });
+    } catch (e) {
+      caught = e;
+    }
+
+    expect(caught).toBeInstanceOf(ApiError);
+    const err = caught as ApiError;
+    expect(err.message).toBe("API 409: no docker on spark-02");
+    expect(err.status).toBe(409);
+    expect((err.payload as { detail: { preflight: unknown } }).detail.preflight).toEqual(preflight);
+  });
+
+  it("falls back to the raw body when a non-OK response isn't the detail shape", async () => {
+    fetchMock().mockReturnValue(
+      Promise.resolve({
+        ok: false,
+        status: 500,
+        text: () => Promise.resolve("internal server error"),
+      } as Response),
+    );
+
+    await expect(
+      createDeployment({ recipe_id: "qwen3-8b", name: "run", params: {} }),
+    ).rejects.toThrow("API 500: internal server error");
   });
 });
