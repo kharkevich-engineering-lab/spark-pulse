@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -6,17 +7,46 @@ import DeployOptions, {
   eligibleEngines,
   engineChoices,
   parseExtraArgs,
+  type DeployOptionsValue,
 } from "@/components/DeployOptions";
-import type { EngineSummary, RecipeDetail } from "@/lib/types";
+import type { ClusterNode, EngineSummary, RecipeDetail } from "@/lib/types";
 
 vi.mock("@/lib/api", () => ({
   fetchEngines: vi.fn(),
   fetchModels: vi.fn(),
+  fetchNodes: vi.fn(),
   planDeployment: vi.fn(),
   runPreflight: vi.fn(),
 }));
 
-import { fetchEngines, fetchModels, planDeployment, runPreflight } from "@/lib/api";
+import { fetchEngines, fetchModels, fetchNodes, planDeployment, runPreflight } from "@/lib/api";
+
+const node = (name: string, address: string, extra: Partial<ClusterNode> = {}): ClusterNode => ({
+  id: `node-${address}`,
+  name,
+  address,
+  is_control_plane: false,
+  ssh_user: "",
+  ssh_key_path: "",
+  ethernet_interface: "",
+  infiniband_interfaces: [],
+  state: "healthy",
+  last_seen: null,
+  machine_id: "",
+  ...extra,
+});
+
+const CONTROL_NODE = node("spark-01", "192.168.1.100", { id: "control-1", is_control_plane: true });
+const PEER_NODE = node("spark-02", "10.0.0.11", { id: "peer-1" });
+const PEER_NODE_2 = node("spark-03", "10.0.0.12", { id: "peer-2" });
+
+/** A `DeployOptions` wired to real state, the way `RecipeDrawer` wires it —
+ *  needed for anything that checks the value the control produces feeds back
+ *  into what the control itself renders (the world size, node checkboxes). */
+function ControlledDeployOptions({ recipe }: { recipe: RecipeDetail }) {
+  const [value, setValue] = useState<DeployOptionsValue>({});
+  return <DeployOptions recipe={recipe} value={value} onChange={setValue} />;
+}
 
 const engine = (name: string, extra: Partial<EngineSummary> = {}): EngineSummary =>
   ({
@@ -228,6 +258,7 @@ describe("DeployOptions", () => {
       { id: "Qwen/Qwen3-8B" },
       { id: "openai/gpt-oss-120b" },
     ] as never);
+    vi.mocked(fetchNodes).mockResolvedValue([CONTROL_NODE]);
     vi.mocked(planDeployment).mockResolvedValue(PLAN as never);
     vi.mocked(runPreflight).mockResolvedValue(REPORT as never);
   });
@@ -356,6 +387,7 @@ describe("DeployOptions image presence", () => {
     vi.clearAllMocks();
     vi.mocked(fetchEngines).mockResolvedValue({ engines: [engine("vllm")] } as never);
     vi.mocked(fetchModels).mockResolvedValue([] as never);
+    vi.mocked(fetchNodes).mockResolvedValue([CONTROL_NODE]);
   });
 
   it("warns in the preview when the deploy would have to pull first", async () => {
@@ -401,6 +433,7 @@ describe("DeployOptions pre-flight", () => {
     vi.clearAllMocks();
     vi.mocked(fetchEngines).mockResolvedValue({ engines: [engine("vllm")] } as never);
     vi.mocked(fetchModels).mockResolvedValue([] as never);
+    vi.mocked(fetchNodes).mockResolvedValue([CONTROL_NODE]);
     vi.mocked(planDeployment).mockResolvedValue(PLAN as never);
     vi.mocked(runPreflight).mockResolvedValue(REPORT as never);
   });
@@ -437,5 +470,90 @@ describe("DeployOptions pre-flight", () => {
 
     await waitFor(() => expect(screen.getByTestId("deploy-plan")).toBeInTheDocument());
     expect(screen.queryByTestId("preflight")).not.toBeInTheDocument();
+  });
+});
+
+/** A single-node registry has exactly one possible answer to "which nodes take
+ *  part" — the control node, alone — so there is nothing for a selector to
+ *  offer, and one should not appear just because the feature exists. */
+describe("DeployOptions node selection", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(fetchEngines).mockResolvedValue({ engines: [engine("vllm")] } as never);
+    vi.mocked(fetchModels).mockResolvedValue([] as never);
+    vi.mocked(planDeployment).mockResolvedValue(PLAN as never);
+    vi.mocked(runPreflight).mockResolvedValue(REPORT as never);
+  });
+
+  it("shows no node control when the registry has only the control node", async () => {
+    vi.mocked(fetchNodes).mockResolvedValue([CONTROL_NODE]);
+    render(<DeployOptions recipe={V1_RECIPE} value={{}} onChange={vi.fn()} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /deploy options/i }));
+
+    await waitFor(() => expect(screen.getByLabelText("Model override")).toBeInTheDocument());
+    expect(screen.queryByTestId("deploy-nodes")).not.toBeInTheDocument();
+  });
+
+  it("shows no node control when the registry is empty", async () => {
+    vi.mocked(fetchNodes).mockResolvedValue([]);
+    render(<DeployOptions recipe={V1_RECIPE} value={{}} onChange={vi.fn()} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /deploy options/i }));
+
+    await waitFor(() => expect(screen.getByLabelText("Model override")).toBeInTheDocument());
+    expect(screen.queryByTestId("deploy-nodes")).not.toBeInTheDocument();
+  });
+
+  it("lets the operator add nodes and reports the world size as ranks", async () => {
+    vi.mocked(fetchNodes).mockResolvedValue([CONTROL_NODE, PEER_NODE, PEER_NODE_2]);
+    render(<ControlledDeployOptions recipe={V1_RECIPE} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /deploy options/i }));
+
+    await waitFor(() => expect(screen.getByTestId("deploy-nodes")).toBeInTheDocument());
+    expect(screen.getByTestId("deploy-world-size")).toHaveTextContent("1 node, ranks 0-0");
+
+    await user.click(screen.getByLabelText(new RegExp(PEER_NODE.name)));
+    await waitFor(() =>
+      expect(screen.getByTestId("deploy-world-size")).toHaveTextContent("2 nodes, ranks 0-1"),
+    );
+
+    await user.click(screen.getByLabelText(new RegExp(PEER_NODE_2.name)));
+    await waitFor(() =>
+      expect(screen.getByTestId("deploy-world-size")).toHaveTextContent("3 nodes, ranks 0-2"),
+    );
+  });
+
+  it("keeps the control node checked and unclickable", async () => {
+    vi.mocked(fetchNodes).mockResolvedValue([CONTROL_NODE, PEER_NODE]);
+    render(<DeployOptions recipe={V1_RECIPE} value={{}} onChange={vi.fn()} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /deploy options/i }));
+
+    await waitFor(() => expect(screen.getByTestId("deploy-nodes")).toBeInTheDocument());
+    const controlCheckbox = screen.getByLabelText(new RegExp(CONTROL_NODE.name)) as HTMLInputElement;
+    expect(controlCheckbox.checked).toBe(true);
+    expect(controlCheckbox.disabled).toBe(true);
+  });
+
+  it("puts the control node first and sends only the selected addresses to the plan and pre-flight", async () => {
+    vi.mocked(fetchNodes).mockResolvedValue([CONTROL_NODE, PEER_NODE, PEER_NODE_2]);
+    render(<ControlledDeployOptions recipe={V1_RECIPE} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /deploy options/i }));
+
+    await waitFor(() => expect(screen.getByTestId("deploy-nodes")).toBeInTheDocument());
+    await user.click(screen.getByLabelText(new RegExp(PEER_NODE.name)));
+    await user.click(screen.getByRole("button", { name: /preview/i }));
+
+    await waitFor(() => expect(planDeployment).toHaveBeenCalled());
+    expect(vi.mocked(planDeployment).mock.calls[0][0]).toMatchObject({
+      nodes: [CONTROL_NODE.address, PEER_NODE.address],
+    });
+    await waitFor(() => expect(runPreflight).toHaveBeenCalled());
+    expect(vi.mocked(runPreflight).mock.calls[0][0]).toMatchObject({
+      nodes: [CONTROL_NODE.address, PEER_NODE.address],
+    });
   });
 });

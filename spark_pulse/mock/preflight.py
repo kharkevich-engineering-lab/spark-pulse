@@ -13,6 +13,10 @@ What is invented is chosen to be *this hardware*, not a convenient fiction:
   so the unified-memory path — read ``MemAvailable`` instead, never fail the
   node — is the one simulation exercises rather than a path that only runs on
   real silicon.
+* ``docker info`` lists no ``nvidia`` runtime, again exactly as a DGX Spark
+  does — the toolkit is installed but registered only as an OCI hook, which is
+  the path ``--gpus all`` takes. Simulating a registered runtime hid a check
+  that blocked every deploy on real hardware.
 * Peers hold no engine images (the simulated SSH transport seeds none), so the
   "a pull is needed, here is roughly how much" branch is what a two-node
   pre-flight actually shows.
@@ -60,6 +64,7 @@ from spark_pulse.tools.preflight import (  # noqa: F401 — re-exported shapes
     parse_listening_ports as parse_listening_ports,
     parse_meminfo as parse_meminfo,
     parse_runtimes as parse_runtimes,
+    parse_toolkit as parse_toolkit,
     targets_for as targets_for,
     verdict_for as verdict_for,
 )
@@ -73,7 +78,10 @@ UNREACHABLE: set[str] = set()
 #: unified 121 GB pool, two fabric ports and a management link.
 SIM_DOCKER_VERSION = "27.5.1"
 SIM_DOCKER_ROOT = "/var/lib/docker"
-SIM_RUNTIMES = '{"io.containerd.runc.v2":{"path":"runc"},"nvidia":{"path":"nvidia-container-runtime"},"runc":{"path":"runc"}}'  # noqa: E501
+#: What ``docker info`` reports on a stock DGX Spark: no ``nvidia`` entry.
+SIM_RUNTIMES = "io.containerd.runc.v2 runc "
+#: …and what the toolkit probe finds there instead: the hook binary, no CDI.
+SIM_TOOLKIT = "hook\nctk"
 SIM_GPU_ROW = "0, NVIDIA GB10, [N/A], [N/A]"
 SIM_MEM_TOTAL_KB = 126_950_000
 SIM_MEM_AVAILABLE_KB = 101_400_000
@@ -118,6 +126,8 @@ class SimulatedHostProbe:
             return _ok("spark-pulse-preflight")
         if command.startswith("docker info"):
             return _ok(f"{SIM_DOCKER_VERSION}|{SIM_DOCKER_ROOT}|{SIM_RUNTIMES}")
+        if command.startswith("command -v nvidia-container-runtime-hook"):
+            return _ok(SIM_TOOLKIT)
         if command.startswith("nvidia-smi"):
             return _ok(SIM_GPU_ROW)
         if command.startswith("cat /proc/meminfo"):
@@ -202,6 +212,7 @@ __all__ = [
     "SIM_IBDEVS",
     "SIM_LISTENING_PORTS",
     "SIM_NETDEVS",
+    "SIM_TOOLKIT",
     "STATUSES",
     "STATUS_FAIL",
     "STATUS_PASS",
@@ -223,6 +234,7 @@ __all__ = [
     "parse_listening_ports",
     "parse_meminfo",
     "parse_runtimes",
+    "parse_toolkit",
     "probe_for",
     "reset",
     "run",

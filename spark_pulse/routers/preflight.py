@@ -4,9 +4,10 @@ The request body is the deploy plan's, field for field, on purpose: an operator
 asks the pre-flight the same question they asked the preview, so the two
 answers are about the same deployment and the UI can send one form to both.
 
-This is a report and nothing else. It starts nothing, changes nothing and is
-deliberately *not* wired into the deploy path — the coordinator does that once
-the parallel start-path work lands.
+This endpoint is a report and nothing else: it starts nothing and changes
+nothing. The deploy path runs the same checks itself before a create and
+refuses a blocked verdict — see ``routers/deployments._preflight_gate`` — so
+what an operator sees here is what the gate will decide.
 """
 
 from __future__ import annotations

@@ -12,6 +12,42 @@ export function initCsrfToken(): void {
   csrfToken = el?.content ?? null;
 }
 
+/** An API error that keeps the parsed body around.
+ *
+ * FastAPI's `HTTPException(detail=...)` is sometimes a plain string and
+ * sometimes a structured object (e.g. `{message, preflight}` from the
+ * pre-flight gate); `payload` is that body, whichever shape it took, so a
+ * caller that needs more than the message — the pre-flight report, say — can
+ * reach it without re-parsing anything. It still extends `Error`, so every
+ * existing `e instanceof Error ? e.message : ...` call site keeps working.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly payload: unknown;
+
+  constructor(status: number, message: string, payload: unknown) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.payload = payload;
+  }
+}
+
+/** The human part of a FastAPI error body, when it has one. */
+function detailMessage(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const detail = (payload as { detail?: unknown }).detail;
+  if (typeof detail === "string") return detail;
+  if (
+    detail &&
+    typeof detail === "object" &&
+    typeof (detail as { message?: unknown }).message === "string"
+  ) {
+    return (detail as { message: string }).message;
+  }
+  return null;
+}
+
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json", ...((init?.headers as Record<string, string>) || {}) };
   // Attach CSRF token on state-changing requests
@@ -25,7 +61,16 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
     window.location.href = "/login";
     throw new Error("Unauthorized");
   }
-  if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
+  if (!res.ok) {
+    const text = await res.text();
+    let payload: unknown = text;
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      // Not JSON — the raw text is the whole story.
+    }
+    throw new ApiError(res.status, `API ${res.status}: ${detailMessage(payload) ?? text}`, payload);
+  }
   return res.json();
 }
 
@@ -46,7 +91,7 @@ export async function fetchRecipeImportStatus(): Promise<RecipeImportStatus> {
 // ── Deployments ─────────────────────────────────────────────────────────────
 
 export async function fetchDeployments(): Promise<Deployment[]> { return json<Deployment[]>("/deployments"); }
-export async function createDeployment(body: { recipe_id: string; name: string; params: Record<string, unknown>; nodes?: string[]; engine?: string; variant?: string; model?: string; extra_args?: string[]; allow_missing_model?: boolean }): Promise<Deployment> { return json<Deployment>("/deployments", { method: "POST", body: JSON.stringify(body) }); }
+export async function createDeployment(body: { recipe_id: string; name: string; params: Record<string, unknown>; nodes?: string[]; engine?: string; variant?: string; model?: string; extra_args?: string[]; allow_missing_model?: boolean; skip_preflight?: boolean }): Promise<Deployment> { return json<Deployment>("/deployments", { method: "POST", body: JSON.stringify(body) }); }
 /** Dry run: resolve engine, image, model and the rendered command without deploying. */
 export async function planDeployment(body: DeployPlanRequest): Promise<DeployPlan> { return json<DeployPlan>("/deployments/plan", { method: "POST", body: JSON.stringify(body) }); }
 export async function fetchDeployment(id: string): Promise<Deployment> { return json<Deployment>(`/deployments/${id}`); }

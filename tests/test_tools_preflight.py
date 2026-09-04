@@ -297,6 +297,26 @@ def test_a_failed_command_is_told_apart_from_an_unreachable_node():
 # ── Docker and the container toolkit ─────────────────────────────────────────
 
 
+def _stdout(text: str) -> ProbeResult:
+    return ProbeResult(reachable=True, returncode=0, stdout=text)
+
+
+#: The toolkit probe finding nothing on PATH and no CDI spec.
+NO_HOOK = {"command -v nvidia-container-runtime-hook": _stdout("")}
+
+#: The other way round: no hook, but a runtime registered the old way.
+RUNTIME_NO_HOOK = {
+    **NO_HOOK,
+    "docker info": _stdout("27.5.1|/var/lib/docker|nvidia runc "),
+}
+
+#: …and docker info reporting no nvidia runtime either.
+NO_HOOK_NO_RUNTIME = {
+    **NO_HOOK,
+    "docker info": _stdout("27.5.1|/var/lib/docker|runc "),
+}
+
+
 def test_docker_present_and_responding_passes():
     check = check_of(run(), preflight.CHECK_DOCKER)
     assert check["status"] == STATUS_PASS
@@ -332,29 +352,63 @@ def test_a_docker_daemon_that_does_not_answer_fails_differently():
     assert "not installed" not in check["observed"]
 
 
-def test_the_nvidia_runtime_registered_passes():
+def test_the_toolkit_hook_passes_without_a_registered_nvidia_runtime():
+    # This is the real DGX Spark's shape and the reason the check was rewritten:
+    # docker info lists only runc, the toolkit is installed as an OCI hook, and
+    # --gpus all works. Demanding a runtime named "nvidia" blocked every deploy
+    # on a correctly configured machine.
     check = check_of(run(), preflight.CHECK_TOOLKIT)
+    assert check["status"] == STATUS_PASS
+    assert "nvidia" not in " ".join(check["detail"]["runtimes"])
+    assert check["detail"]["hook"] is True
+    assert "--gpus all" in check["observed"]
+
+
+def test_a_registered_nvidia_runtime_passes_when_the_hook_is_not_on_path():
+    check = check_of(
+        run(probes={CONTROL.id: Probe(CONTROL.address, overrides=RUNTIME_NO_HOOK)}),
+        preflight.CHECK_TOOLKIT,
+    )
     assert check["status"] == STATUS_PASS
     assert "nvidia" in check["detail"]["runtimes"]
 
 
-def test_a_missing_nvidia_runtime_fails_because_the_deploy_asks_for_every_gpu():
-    no_toolkit = ProbeResult(
-        reachable=True,
-        returncode=0,
-        stdout='27.5.1|/var/lib/docker|{"runc":{"path":"runc"}}',
-    )
+def test_cdi_device_specs_alone_pass():
     check = check_of(
         run(
             probes={
                 CONTROL.id: Probe(
-                    CONTROL.address, overrides={"docker info": no_toolkit}
+                    CONTROL.address,
+                    overrides={
+                        **NO_HOOK_NO_RUNTIME,
+                        "command -v nvidia-container-runtime-hook": _stdout(
+                            "cdi /etc/cdi/nvidia.yaml"
+                        ),
+                    },
                 )
             }
         ),
         preflight.CHECK_TOOLKIT,
     )
+    assert check["status"] == STATUS_PASS
+    assert check["detail"]["cdi_specs"] == ["/etc/cdi/nvidia.yaml"]
+
+
+def test_no_gpu_path_at_all_fails_because_the_deploy_asks_for_every_gpu():
+    check = check_of(
+        run(probes={CONTROL.id: Probe(CONTROL.address, overrides=NO_HOOK_NO_RUNTIME)}),
+        preflight.CHECK_TOOLKIT,
+    )
     assert_named_failure(check, "spark-01", "nvidia-ctk runtime configure")
+
+
+def test_parse_toolkit_reads_the_probe_evidence():
+    assert preflight.parse_toolkit("hook\nctk\ncdi /etc/cdi/nvidia.yaml") == {
+        "hook": True,
+        "ctk": True,
+        "cdi": ["/etc/cdi/nvidia.yaml"],
+    }
+    assert preflight.parse_toolkit("") == {"hook": False, "ctk": False, "cdi": []}
 
 
 # ── GPU, and the unified-memory honesty ──────────────────────────────────────
