@@ -10,13 +10,16 @@ single source of truth — no external state database needed.
 from __future__ import annotations
 
 import logging
+import queue
 import subprocess
 import threading
 import time
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from spark_pulse.config import config
 from spark_pulse.tools.labels import (
     CLUSTER_LABEL,
     CREATED_AT_LABEL,
@@ -114,6 +117,71 @@ def _labels_match(labels: dict[str, str], wanted: dict[str, str] | None) -> bool
 
 # Pull progress is aggregated across layers and reported at most this often.
 PULL_PROGRESS_INTERVAL = 1.0
+
+
+class PullCancelled(RuntimeError):
+    """A pull was asked to stop and did."""
+
+
+class PullStalled(RuntimeError):
+    """A pull produced no progress for longer than the watchdog allows."""
+
+
+def _close_quietly(stream: Any) -> None:
+    """Close a pull stream, ignoring whatever it says about it."""
+    closer = getattr(stream, "close", None)
+    if closer is None:
+        return
+    try:
+        closer()
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("closing the pull stream failed: %s", exc)
+
+
+def _watched_chunks(stream: Any, stall_timeout: float) -> Iterator[Any]:
+    """Yield the stream's chunks, giving up when it goes quiet.
+
+    docker-py sets no timeout on a pull, so a registry that accepts the
+    connection and then stops sending holds the calling thread forever. The
+    stream is drained on a helper thread and handed over through a queue, which
+    turns "no bytes" into a bounded ``queue.Empty`` the caller can act on: the
+    stream is closed and :class:`PullStalled` raised, naming the stall.
+
+    A non-positive ``stall_timeout`` disables the watchdog and iterates
+    directly, which is what the fast in-memory fakes want.
+    """
+    if not stall_timeout or stall_timeout <= 0:
+        yield from stream
+        return
+
+    chunks: queue.Queue[tuple[str, Any]] = queue.Queue()
+
+    def _drain() -> None:
+        try:
+            for chunk in stream:
+                chunks.put(("chunk", chunk))
+            chunks.put(("done", None))
+        except BaseException as exc:  # noqa: BLE001 — replayed on the caller
+            chunks.put(("error", exc))
+
+    reader = threading.Thread(target=_drain, name="docker-pull-reader", daemon=True)
+    reader.start()
+    try:
+        while True:
+            try:
+                kind, payload = chunks.get(timeout=stall_timeout)
+            except queue.Empty:
+                raise PullStalled(f"no pull progress for {stall_timeout:g}s") from None
+            if kind == "chunk":
+                yield payload
+            elif kind == "done":
+                return
+            else:
+                raise payload
+    finally:
+        # Covers every exit — exhausted, stalled, cancelled or the caller
+        # breaking out — so the socket never outlives the iteration.
+        _close_quietly(stream)
 
 
 def split_ref(ref: str) -> tuple[str, str]:
@@ -473,6 +541,8 @@ class DockerService:
         ref: str,
         progress: Any | None = None,
         interval: float = PULL_PROGRESS_INTERVAL,
+        cancel: Callable[[], bool] | None = None,
+        stall_timeout: float | None = None,
     ) -> dict[str, Any]:
         """Pull ``ref``, reporting aggregated progress through ``progress``.
 
@@ -481,9 +551,19 @@ class DockerService:
         single ``{bytes_done, bytes_total, percent, layers}`` snapshot and the
         callback fires at most once per ``interval`` seconds, plus once at the
         end.
+
+        Args:
+            cancel: Consulted on **every** chunk, not on every snapshot, so a
+                cancel is honoured at the next byte instead of waiting out the
+                throttle interval. Returning True raises :class:`PullCancelled`.
+            stall_timeout: Seconds of silence that fail the pull with
+                :class:`PullStalled`. Defaults to
+                ``config.docker_pull_stall_timeout_seconds``; pass 0 to disable.
         """
         if not ref:
             raise RuntimeError("pull_image needs an image reference")
+        if stall_timeout is None:
+            stall_timeout = float(config.docker_pull_stall_timeout_seconds)
         repo, tag = split_ref(ref)
         layers: dict[str, dict[str, int]] = {}
         # Seeded with "now" so the first snapshot waits a full interval rather
@@ -513,7 +593,9 @@ class DockerService:
 
         try:
             stream = self.client.api.pull(repo, tag=tag, stream=True, decode=True)
-            for chunk in stream:
+            for chunk in _watched_chunks(stream, stall_timeout):
+                if cancel is not None and cancel():
+                    raise PullCancelled(f"pull of {ref} cancelled")
                 if not isinstance(chunk, dict):
                     continue
                 error = chunk.get("error") or chunk.get("errorDetail")
@@ -538,6 +620,8 @@ class DockerService:
                     entry = layers.setdefault(layer_id, {"current": 0, "total": 0})
                     entry["current"] = entry["total"]
                 _emit()
+        except PullStalled as exc:
+            raise PullStalled(f"pull of {ref} stalled: {exc}") from None
         except RuntimeError:
             raise
         except Exception as exc:
