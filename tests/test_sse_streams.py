@@ -7,6 +7,7 @@ production rather than in a unit test. These are the cheap guards.
 
 import asyncio
 import inspect
+import pathlib
 from unittest.mock import patch
 
 import pytest
@@ -60,3 +61,42 @@ class TestGeneratorsDoNotBlockTheLoop:
         assert (
             "run_in_threadpool" in source
         ), f"{name} calls blocking code directly on the event loop"
+
+
+class TestSimulationSwitchSurvives:
+    """Importing a tools submodule directly swaps the mock for the real one.
+
+    `from spark_pulse.tools.deployments import list_deployments` rebinds
+    `spark_pulse.tools.deployments` to the real module for the rest of the
+    process. One call to the memory endpoint used to switch the whole app off
+    the mock store, so deployments created in simulation silently vanished.
+    """
+
+    @pytest.mark.parametrize(
+        "module", ["spark_pulse/sse.py", "spark_pulse/routers/memory.py"]
+    )
+    def test_no_direct_submodule_import_of_deployments(self, module):
+        source = pathlib.Path(module).read_text()
+        assert "from spark_pulse.tools.deployments import" not in source, (
+            f"{module} imports the submodule directly, which rebinds it to the "
+            "real module and defeats SIMULATION_MODE"
+        )
+
+    def test_the_mock_store_survives_a_metrics_collection(self):
+        from spark_pulse import tools
+
+        before = tools.deployments.__name__
+        with patch.object(
+            tools.system, "get_all_memory", return_value={"processes": []}
+        ):
+            list(sse.metrics_generator().__class__.__mro__)  # generator is lazy
+            from spark_pulse.routers import memory
+
+            with patch.object(
+                tools.system, "get_all_memory", return_value={"processes": []}
+            ):
+                memory.get_all_memory()
+
+        assert (
+            tools.deployments.__name__ == before
+        ), "collecting metrics switched the deployment store"

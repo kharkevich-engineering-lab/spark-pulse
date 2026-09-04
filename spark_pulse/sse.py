@@ -19,14 +19,15 @@ router = APIRouter(prefix="/sse", tags=["sse"])
 
 async def metrics_generator() -> AsyncGenerator[str, None]:
     """Generate SSE events with memory metrics every 5 seconds."""
-    from spark_pulse.tools.deployments import list_deployments
 
     def _collect() -> dict:
         # nvidia-smi and the deployment store are both blocking; on the loop
         # they stall every other stream in the process for their duration.
         data = system.get_all_memory()
         running = [
-            d for d in list_deployments() if d.get("status") in ("running", "pending")
+            d
+            for d in tools.deployments.list_deployments()
+            if d.get("status") in ("running", "pending")
         ]
         system.enrich_gpu_process_tracking(data.get("processes", []), running)
         return data
