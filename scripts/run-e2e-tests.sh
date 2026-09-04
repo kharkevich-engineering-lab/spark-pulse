@@ -53,7 +53,18 @@ set -l base_url "http://127.0.0.1:$port"
 # ── Frontend ────────────────────────────────────────────────────────────────
 # The backend refuses to serve the SPA without a build, and the suite drives
 # the built SPA rather than the Vite dev server.
+# Rebuild when the bundle is missing OR older than any source file. Building
+# only when missing means a stale bundle silently fails specs that assert on
+# markup the sources already have.
+set -l needs_build false
 if not test -f spark_pulse/ui/index.html
+  set needs_build true
+else if test -n (find web/src web/index.html web/vite.config.ts -newer spark_pulse/ui/index.html -print -quit 2>/dev/null)
+  set needs_build true
+  echo "ℹ️  The built SPA is older than the sources; rebuilding."
+end
+
+if test "$needs_build" = true
   echo "🔨 Building the frontend..."
   pushd web
   if not test -d node_modules
