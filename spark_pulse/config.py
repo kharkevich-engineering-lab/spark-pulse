@@ -111,6 +111,16 @@ class _Config:
         return int(self._data.get("webui_port", 8100))
 
     @property
+    def image_registry(self) -> dict:
+        """Control-node image registry settings.
+
+        Read-only here; :mod:`spark_pulse.tools.registry` applies the defaults
+        and validates the mode.
+        """
+        value = self._data.get("image_registry")
+        return dict(value) if isinstance(value, dict) else {}
+
+    @property
     def cluster_enabled(self) -> bool:
         return bool(self._data.get("cluster_enabled", False))
 
