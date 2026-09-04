@@ -1,6 +1,7 @@
 """Health monitoring API endpoints.
 
-Provides endpoints for checking deployment and cluster health status.
+Provides endpoints for checking deployment health status. A cluster is a
+deployment of size N, so it is checked here like any other deployment.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ router = APIRouter(prefix="/api/health", tags=["health"])
 
 @router.get("/deployment/{deployment_id}")
 def check_deployment_health(deployment_id: str) -> dict[str, Any]:
-    """Check health of a solo deployment.
+    """Check health of a deployment.
 
     Returns DeploymentHealth as dict.
     """
@@ -46,7 +47,6 @@ def check_deployment_health(deployment_id: str) -> dict[str, Any]:
         return {
             "deployment_id": deployment_id,
             "container_status": container_status,
-            "ray_status": "n/a",
             "process_status": "alive" if container_status == "running" else "dead",
         }
     except Exception as e:
@@ -54,48 +54,6 @@ def check_deployment_health(deployment_id: str) -> dict[str, Any]:
             "deployment_id": deployment_id,
             "container_status": "error",
             "error": str(e),
-        }
-
-
-@router.get("/cluster/{cluster_name}")
-def check_cluster_health(cluster_name: str) -> dict[str, Any]:
-    """Check health of a cluster deployment.
-
-    Returns ClusterHealth as dict.
-    """
-    try:
-        from spark_pulse.tools import cluster as cluster_tool
-
-        state = cluster_tool.get_cluster_status(name=cluster_name)
-        if state is None:
-            return {
-                "cluster_name": cluster_name,
-                "healthy": False,
-                "errors": ["Cluster state not found"],
-            }
-
-        return {
-            "cluster_name": cluster_name,
-            "healthy": state.healthy,
-            "head_status": state.head.status,
-            "worker_statuses": [w.status for w in state.workers],
-            "ray_ready": state.ray_ready,
-            "warnings": [],
-            "errors": (
-                [
-                    f"Worker {w.ip} is {w.status}"
-                    for w in state.workers
-                    if w.status != "running"
-                ]
-                if not state.healthy
-                else []
-            ),
-        }
-    except Exception as e:
-        return {
-            "cluster_name": cluster_name,
-            "healthy": False,
-            "errors": [str(e)],
         }
 
 
@@ -132,22 +90,9 @@ def track_deployment(body: dict[str, Any]) -> dict[str, Any]:
         return {"tracked": False, "error": str(e)}
 
 
-@router.post("/monitor/track/cluster")
-def track_cluster(body: dict[str, Any]) -> dict[str, Any]:
-    """Track a cluster for health monitoring."""
-    try:
-        cluster_name = body.get("cluster_name", "")
-        cluster_info = body.get("info", {})
-        monitor = health.get_health_monitor()
-        monitor.track_cluster(cluster_name, cluster_info)
-        return {"tracked": True, "cluster_name": cluster_name}
-    except Exception as e:
-        return {"tracked": False, "error": str(e)}
-
-
 @router.post("/monitor/untrack")
 def untrack(body: dict[str, Any]) -> dict[str, Any]:
-    """Untrack a deployment or cluster."""
+    """Untrack a deployment."""
     try:
         identifier = body.get("identifier", "")
         monitor = health.get_health_monitor()

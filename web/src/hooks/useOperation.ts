@@ -23,11 +23,11 @@ import { useOperationStore } from "@/lib/operationStore";
  *   });
  *
  *   try {
- *     updateProgress(opId, 25, "Resolving launch script...");
- *     await resolveScript(...);
+ *     updateProgress(opId, 25, "Planning...");
+ *     await planDeployment(...);
  *
- *     updateProgress(opId, 50, "Validating cluster...");
- *     await validateCluster(...);
+ *     updateProgress(opId, 50, "Starting...");
+ *     await createDeployment(...);
  *
  *     completeOperation(opId, true);
  *   } catch (error) {
@@ -88,10 +88,10 @@ export function useOperation() {
  *
  * Usage:
  * ```ts
- * const { activeOperations, isRunning } = useOperationProgress("my-cluster", "cluster");
+ * const { activeOperations, isRunning } = useOperationProgress("dep-123", "deployment");
  *
  * if (isRunning) {
- *   return <DeploymentPipeline operations={activeOperations} />;
+ *   return <ProgressBar operations={activeOperations} />;
  * }
  * ```
  */

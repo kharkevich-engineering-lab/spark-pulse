@@ -332,6 +332,12 @@ export interface OciAutoUpdateSettings {
 }
 
 // ── Cluster Orchestration Types ──────────────────────────────────────────────
+//
+// What is left of the cluster orchestrator's vocabulary. The orchestrator, its
+// health checks and its REST surface are gone: a cluster is a deployment of
+// size N, so its machines come from `/api/nodes` and its state from
+// `/api/deployments`. These two shapes stay only because the mod endpoints
+// still take a `cluster_state` payload in this form.
 
 export interface ClusterNodeInfo {
   ip: string;
@@ -349,39 +355,6 @@ export interface ClusterState {
   ray_ready: boolean;
   total_nodes: number;
   healthy: boolean;
-}
-
-export interface ClusterValidationResult {
-  healthy: boolean;
-  warnings: string[];
-  errors: string[];
-}
-
-export interface StartClusterRequest {
-  name: string;
-  image: string;
-  head_ip: string;
-  worker_ips: string[];
-  env: Record<string, string>;
-  docker_config: Record<string, unknown>;
-  mod_deployments?: { path: string; target: string }[];
-  no_ray?: boolean;
-}
-
-export interface StopClusterRequest {
-  name: string;
-}
-
-export interface ClusterStatusRequest {
-  name: string;
-}
-
-export interface ClusterValidateRequest {
-  name: string;
-}
-
-export interface ClusterRollbackRequest {
-  name: string;
 }
 
 // ── Launch Script Types (Phase 4) ────────────────────────────────────────────

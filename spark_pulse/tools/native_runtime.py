@@ -13,10 +13,12 @@ reproduces the upstream lifecycle described in the native-runtime plan §1.4:
    to PID 1's stdout so ``docker logs`` carries the serve output, then waits
    for the engine's readiness endpoint.
 
-Only solo (single node) deployments are supported here; the cluster path stays
-on ``tools.cluster``. Everything switchable goes through ``spark_pulse.tools``
-so simulation mode swaps the container service; ``spark_pulse.engines`` is
-imported directly because rendering is pure.
+This is the only deploy path: a cluster is a deployment of size N, planned by
+the same :func:`plan`. Starting more than one rank is not wired up yet, so
+:func:`start` still refuses a topology bigger than one — deliberately and out
+loud, rather than by quietly running the head alone. Everything switchable goes
+through ``spark_pulse.tools`` so simulation mode swaps the container service;
+``spark_pulse.engines`` is imported directly because rendering is pure.
 """
 
 from __future__ import annotations
@@ -1035,8 +1037,9 @@ def start(
     """Run the plan: idle container -> mods -> exec script -> readiness."""
     if not plan_obj.solo:
         raise NativeRuntimeError(
-            "the native runtime cannot start a cluster deployment yet; "
-            "set runtime: upstream for multi-node recipes"
+            f"this build starts one rank; {plan_obj.node_count} nodes were "
+            "asked for. Deploy on one node, or set runtime: upstream to use "
+            "the legacy multi-node runner."
         )
 
     docker = docker or _docker_service()

@@ -1,7 +1,14 @@
-/** Cluster page: the experimental marking, which a config flag drives.
+/** Cluster page: the experimental marking, and what replaced the orchestrator.
+ *
+ * The cluster orchestrator and its REST surface (`/api/cluster/*`) are gone.
+ * A cluster is a deployment of size N, so the page is built on the two APIs
+ * that survived it: `/api/nodes` for the machines and `/api/deployments` for
+ * what runs on them. These specs assert exactly that — the page shows what
+ * those endpoints hold, and nothing on it calls an endpoint that no longer
+ * exists.
  *
  * Multi-node bring-up has never run on real hardware, so the page and its nav
- * entry say so. `cluster_experimental` in /api/config is what turns both on.
+ * entry still say so. `cluster_experimental` in /api/config drives both.
  */
 
 import { expect, test } from "@playwright/test";
@@ -29,21 +36,51 @@ test("marks the cluster page and its nav entry experimental", async ({ page, req
   await expectNoCrash(page);
 });
 
-test("lists the clusters the backend reports", async ({ page, request }) => {
-  const response = await request.get("/api/cluster/list");
-  expect(response.ok(), "GET /api/cluster/list should succeed").toBeTruthy();
-  const clusters = (await response.json()) as { name: string }[];
+test("shows the deployments the backend reports, with their placement", async ({
+  page,
+  request,
+}) => {
+  const response = await request.get("/api/deployments");
+  expect(response.ok(), "GET /api/deployments should succeed").toBeTruthy();
+  const deployments = (await response.json()) as {
+    name: string;
+    status: string;
+    nodes: string[] | null;
+    node_count?: number;
+  }[];
+  const live = deployments.filter((d) => d.status !== "stopped" && d.status !== "error");
 
   await gotoPage(page, "/cluster");
+  const panel = page.getByTestId("cluster-deployments");
+  await expect(panel.getByRole("heading", { name: "Deployments" })).toBeVisible();
 
-  if (clusters.length === 0) {
-    await expect(page.getByText("No clusters yet.")).toBeVisible();
+  if (live.length === 0) {
+    await expect(panel).toContainText("Nothing is running");
   } else {
-    await expect(page.getByRole("heading", { name: "Clusters" })).toBeVisible();
-    for (const cluster of clusters) {
-      await expect(page.getByText(cluster.name, { exact: true }).first()).toBeVisible();
+    for (const deployment of live) {
+      const row = panel.getByRole("row").filter({ hasText: deployment.name });
+      await expect(row.first()).toBeVisible();
+      // A deployment of size one says so as a size, not as a separate mode.
+      const ranks = deployment.node_count || deployment.nodes?.length || 1;
+      await expect(row.first()).toContainText(String(ranks));
     }
   }
-  await expect(page.getByRole("button", { name: "New Cluster" })).toBeVisible();
+  await expectNoCrash(page);
+});
+
+test("no longer calls the deleted cluster orchestrator endpoints", async ({ page }) => {
+  const attempted: string[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname.startsWith("/api/cluster") || url.pathname === "/sse/cluster") {
+      attempted.push(url.pathname);
+    }
+  });
+
+  await gotoPage(page, "/cluster");
+  // The page polls on an interval; give one cycle a chance to fire.
+  await page.waitForTimeout(1000);
+
+  expect(attempted, "the SPA still reaches for a deleted endpoint").toEqual([]);
   await expectNoCrash(page);
 });

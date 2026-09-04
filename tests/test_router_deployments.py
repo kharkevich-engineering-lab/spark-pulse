@@ -112,12 +112,20 @@ class TestDispatchRouting:
         assert record["engine"] == "vllm"
         assert record["container_name"].startswith("spark-pulse-")
 
-    def test_native_refuses_a_cluster_request(self, env):
+    def test_native_takes_a_cluster_request(self, env):
+        """A node list no longer changes which runtime handles the create.
+
+        The dispatcher used to refuse here. A cluster is a deployment of size
+        N, so it goes down the same path; what it meets there is the native
+        runtime's own limit, raised from the runtime rather than from routing.
+        """
         with _runtime("native"):
-            with pytest.raises(nr.NativeRuntimeError) as exc:
+            with patch.object(
+                tools.native_runtime, "create_deployment", return_value={"id": "n"}
+            ) as native:
                 dispatch.create_deployment("qwen3-8b", "n", {}, nodes=["a", "b"])
 
-        assert "cluster deployments are not native yet" in str(exc.value)
+        assert native.call_args.kwargs["nodes"] == ["a", "b"]
 
     def test_upstream_still_accepts_a_cluster_request(self, env):
         with _runtime("upstream"):
@@ -129,9 +137,9 @@ class TestDispatchRouting:
         assert upstream.call_args.kwargs["nodes"] == ["a", "b"]
 
     def test_uses_native_helper(self):
+        """The flag is the whole answer — node count does not enter into it."""
         with _runtime("native"):
             assert dispatch.uses_native() is True
-            assert dispatch.uses_native(["a"]) is False
         with _runtime("upstream"):
             assert dispatch.uses_native() is False
 
@@ -306,7 +314,13 @@ class TestCreateEndpoint:
         assert response.status_code == 200
         assert "-tp 1" in response.json()["launch_command"]
 
-    def test_create_under_native_refuses_a_cluster(self, client):
+    def test_create_of_more_ranks_than_this_build_starts_is_a_400(self, client):
+        """Refused by the runtime, in the runtime's own words, not by routing.
+
+        The dispatcher hands the node list straight to the native path now.
+        Until the start loop covers every rank, that path says so out loud
+        rather than starting the head alone and calling it a cluster.
+        """
         with _runtime("native"):
             response = client.post(
                 "/api/deployments",
@@ -314,7 +328,7 @@ class TestCreateEndpoint:
             )
 
         assert response.status_code == 400
-        assert "cluster" in response.json()["detail"]
+        assert "one rank" in response.json()["detail"]
 
     def test_create_of_an_unknown_recipe_is_404(self, client):
         response = client.post("/api/deployments", json={"recipe_id": "nope"})

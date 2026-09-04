@@ -4,7 +4,6 @@ from __future__ import annotations
 
 
 from spark_pulse.tools.health import (
-    ClusterHealth,
     DeploymentHealth,
     HealthMonitor,
     _retry_with_backoff,
@@ -21,7 +20,6 @@ class TestDeploymentHealth:
         health = DeploymentHealth(deployment_id="test-123")
         assert health.deployment_id == "test-123"
         assert health.container_status == "unknown"
-        assert health.ray_status == "unknown"
         assert health.process_status == "unknown"
         assert health.error is None
 
@@ -29,40 +27,11 @@ class TestDeploymentHealth:
         health = DeploymentHealth(
             deployment_id="test-123",
             container_status="running",
-            ray_status="ready",
             process_status="alive",
             error=None,
         )
         assert health.container_status == "running"
-        assert health.ray_status == "ready"
         assert health.process_status == "alive"
-
-
-class TestClusterHealth:
-    """Tests for ClusterHealth dataclass."""
-
-    def test_default_values(self):
-        health = ClusterHealth(cluster_name="test-cluster")
-        assert health.cluster_name == "test-cluster"
-        assert health.healthy is False
-        assert health.head_status == "unknown"
-        assert health.worker_statuses == []
-        assert health.ray_ready is False
-        assert health.warnings == []
-        assert health.errors == []
-
-    def test_with_values(self):
-        health = ClusterHealth(
-            cluster_name="test-cluster",
-            healthy=True,
-            head_status="running",
-            worker_statuses=["running", "running"],
-            ray_ready=True,
-        )
-        assert health.healthy is True
-        assert health.head_status == "running"
-        assert health.worker_statuses == ["running", "running"]
-        assert health.ray_ready is True
 
 
 class TestRetryWithBackoff:
@@ -131,12 +100,6 @@ class TestHealthMonitor:
         monitor.track_deployment("dep-123", {"container_name": "test"})
         assert "dep-123" in monitor._tracked
         assert monitor._tracked["dep-123"]["type"] == "deployment"
-
-    def test_track_cluster(self):
-        monitor = HealthMonitor()
-        monitor.track_cluster("cluster-123", {"name": "test"})
-        assert "cluster-123" in monitor._tracked
-        assert monitor._tracked["cluster-123"]["type"] == "cluster"
 
     def test_untrack(self):
         monitor = HealthMonitor()

@@ -286,8 +286,8 @@ async def deployment_events_generator() -> AsyncGenerator[str, None]:
 async def sse_deployment_events():
     """Stream deployment lifecycle events via SSE.
 
-    Events include cluster starting, container started, Ray ready,
-    health check results, and deployment completion.
+    Events include the plan, the image pull, each container starting, mods
+    applied, readiness and completion or failure.
     """
     return StreamingResponse(
         deployment_events_generator(),
@@ -322,63 +322,6 @@ async def sse_health():
     """Stream health check events via SSE."""
     return StreamingResponse(
         health_events_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
-
-# ── Cluster SSE ──────────────────────────────────────────────────────────────
-
-
-async def cluster_events_generator() -> AsyncGenerator[str, None]:
-    """Stream cluster lifecycle events via SSE."""
-    # The cluster listing lives in the router, which derives it from container
-    # labels; tools.cluster has no module-level equivalent.
-    from spark_pulse.routers.cluster import list_clusters
-
-    last_clusters = {}
-    while True:
-        try:
-            clusters = await run_in_threadpool(list_clusters)
-            current_clusters = {
-                c.name if hasattr(c, "name") else c.get("name", ""): c for c in clusters
-            }
-
-            # Emit events for changes
-            for name, cluster in current_clusters.items():
-                if name not in last_clusters:
-                    # New cluster
-                    yield f"event: cluster_started\ndata: {json.dumps({'name': name, 'status': 'started'})}\n\n"
-                else:
-                    # Check for status changes
-                    old_healthy = (
-                        last_clusters[name].get("healthy", False)
-                        if isinstance(last_clusters[name], dict)
-                        else getattr(last_clusters[name], "healthy", False)
-                    )
-                    new_healthy = (
-                        cluster.healthy
-                        if hasattr(cluster, "healthy")
-                        else cluster.get("healthy", False)
-                    )
-                    if old_healthy != new_healthy:
-                        yield f"event: cluster_health_changed\ndata: {json.dumps({'name': name, 'healthy': new_healthy})}\n\n"
-
-            last_clusters = current_clusters
-        except Exception as e:
-            yield f'event: error\ndata: {{"message": "{e}"}}\n\n'
-        await asyncio.sleep(15)
-
-
-@router.get("/cluster")
-async def sse_cluster():
-    """Stream cluster lifecycle events via SSE."""
-    return StreamingResponse(
-        cluster_events_generator(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

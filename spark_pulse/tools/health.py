@@ -1,7 +1,11 @@
-"""Health monitoring for deployments and clusters.
+"""Health monitoring for deployments.
 
 Provides deployment health checks, background monitoring, and status reporting.
 Includes structured logging, retry logic, and persistent tracking state.
+
+A deployment is the only thing tracked. What used to be a second, cluster-shaped
+kind of health went with the cluster orchestrator: a cluster is a deployment of
+size N, so its health is that deployment's health.
 """
 
 from __future__ import annotations
@@ -27,9 +31,9 @@ _HEALTH_TRACKING_FILE = Path.home() / ".config" / "spark-pulse" / "health_tracki
 
 
 def save_health_tracking(tracked: dict[str, dict]) -> None:
-    """Persist tracked clusters/deployments to disk.
+    """Persist tracked deployments to disk.
 
-    Format: {"deployments": [...], "clusters": [...]}
+    Format: {"deployments": [...]}
     """
     _HEALTH_TRACKING_FILE.parent.mkdir(parents=True, exist_ok=True)
     tmp = _HEALTH_TRACKING_FILE.with_suffix(".tmp")
@@ -42,15 +46,19 @@ def save_health_tracking(tracked: dict[str, dict]) -> None:
 
 
 def load_health_tracking() -> dict[str, list]:
-    """Load tracked clusters/deployments from disk."""
+    """Load tracked deployments from disk.
+
+    A file written by an older build also carries a ``clusters`` list. It is
+    returned as it is found and simply not read: nothing tracks clusters now.
+    """
     if not _HEALTH_TRACKING_FILE.exists():
-        return {"deployments": [], "clusters": []}
+        return {"deployments": []}
     try:
         with open(_HEALTH_TRACKING_FILE) as f:
             return json.load(f)
     except (json.JSONDecodeError, OSError) as e:
         logger.warning(f"Failed to load health tracking: {e}")
-        return {"deployments": [], "clusters": []}
+        return {"deployments": []}
 
 
 def _retry_with_backoff(
@@ -107,7 +115,6 @@ class DeploymentHealth:
 
     deployment_id: str
     container_status: str = "unknown"  # running, stopped, starting, error
-    ray_status: str = "unknown"  # ready, not_ready, error, n/a
     process_status: str = "unknown"  # alive, dead, unknown
     error: str | None = None
     checked_at: str = field(
@@ -115,27 +122,11 @@ class DeploymentHealth:
     )
 
 
-@dataclass(frozen=True)
-class ClusterHealth:
-    """Health status for a cluster deployment."""
-
-    cluster_name: str
-    healthy: bool = False
-    head_status: str = "unknown"
-    worker_statuses: list[str] = field(default_factory=list)
-    ray_ready: bool = False
-    warnings: list[str] = field(default_factory=list)
-    errors: list[str] = field(default_factory=list)
-    checked_at: str = field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
-
-
 class HealthMonitor:
-    """Background health monitor for deployments and clusters.
+    """Background health monitor for deployments.
 
-    Polls deployment/cluster health at configurable intervals and
-    broadcasts updates via SSE.
+    Polls deployment health at configurable intervals and broadcasts updates
+    via SSE.
     """
 
     def __init__(
@@ -180,17 +171,8 @@ class HealthMonitor:
             }
         self._persist_state()
 
-    def track_cluster(self, cluster_name: str, cluster_info: dict[str, Any]) -> None:
-        """Add a cluster to health monitoring."""
-        with self._lock:
-            self._tracked[cluster_name] = {
-                "type": "cluster",
-                "info": cluster_info,
-            }
-        self._persist_state()
-
     def untrack(self, identifier: str) -> None:
-        """Remove a deployment or cluster from monitoring."""
+        """Remove a deployment from monitoring."""
         with self._lock:
             self._tracked.pop(identifier, None)
         self._persist_state()
@@ -207,11 +189,6 @@ class HealthMonitor:
                 {"id": k, **v}
                 for k, v in self._tracked.items()
                 if v.get("type") == "deployment"
-            ],
-            "clusters": [
-                {"name": k, **v}
-                for k, v in self._tracked.items()
-                if v.get("type") == "cluster"
             ],
         }
 
@@ -230,16 +207,13 @@ class HealthMonitor:
             time.sleep(self._check_interval)
 
     def _check_all(self) -> None:
-        """Check health of all tracked deployments and clusters."""
+        """Check health of every tracked deployment."""
         with self._lock:
             tracked = dict(self._tracked)
 
         for identifier, data in tracked.items():
             try:
-                if data["type"] == "deployment":
-                    health = self._check_deployment(identifier, data["info"])
-                else:
-                    health = self._check_cluster(identifier, data["info"])
+                health = self._check_deployment(identifier, data["info"])
 
                 if self._sse_broadcast:
                     self._sse_broadcast(
@@ -262,7 +236,7 @@ class HealthMonitor:
         deployment_id: str,
         deployment_info: dict[str, Any],
     ) -> DeploymentHealth:
-        """Check health of a solo deployment."""
+        """Check health of a deployment."""
         from spark_pulse.tools import docker
 
         try:
@@ -279,15 +253,9 @@ class HealthMonitor:
             else:
                 container_status = "unknown"
 
-            # Check Ray status if applicable
-            ray_status = "n/a"
-            if deployment_info.get("ray_enabled"):
-                ray_status = "not_ready"  # Simplified for solo mode
-
             return DeploymentHealth(
                 deployment_id=deployment_id,
                 container_status=container_status,
-                ray_status=ray_status,
                 process_status="alive" if container_status == "running" else "dead",
             )
         except Exception as e:
@@ -296,54 +264,6 @@ class HealthMonitor:
                 deployment_id=deployment_id,
                 container_status="error",
                 error=str(e),
-            )
-
-    def _check_cluster(
-        self,
-        cluster_name: str,
-        cluster_info: dict[str, Any],
-    ) -> ClusterHealth:
-        """Check health of a cluster deployment."""
-        from spark_pulse import tools
-
-        try:
-            orchestrator = tools.cluster.ClusterOrchestrator()
-            state = orchestrator.get_cluster_status(cluster_name)
-            if state is None:
-                return ClusterHealth(
-                    cluster_name=cluster_name,
-                    healthy=False,
-                    errors=[f"Cluster state not found: {cluster_name}"],
-                )
-
-            head_status = state.head.status
-            worker_statuses = [w.status for w in state.workers]
-            ray_ready = state.ray_ready
-            healthy = state.healthy
-
-            warnings: list[str] = []
-            errors: list[str] = []
-
-            if not healthy:
-                for w in state.workers:
-                    if w.status != "running":
-                        errors.append(f"Worker {w.ip} is {w.status}")
-
-            return ClusterHealth(
-                cluster_name=cluster_name,
-                healthy=healthy,
-                head_status=head_status,
-                worker_statuses=worker_statuses,
-                ray_ready=ray_ready,
-                warnings=warnings,
-                errors=errors,
-            )
-        except Exception as e:
-            logger.error("Cluster health check failed for %s: %s", cluster_name, e)
-            return ClusterHealth(
-                cluster_name=cluster_name,
-                healthy=False,
-                errors=[str(e)],
             )
 
 

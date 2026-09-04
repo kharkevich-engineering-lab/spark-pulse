@@ -461,12 +461,17 @@ class TestStart:
         assert record["status"] == "error"
         assert "did not become ready" in record["error_message"]
 
-    def test_a_cluster_plan_is_refused(self, native, docker):
-        """start() is still one container; the loop over ranks comes later."""
+    def test_a_multi_rank_plan_is_refused(self, native, docker):
+        """start() is still one container; the loop over ranks comes later.
+
+        The refusal names the rank count, because the failure an operator has
+        to understand is "you asked for two and this build starts one".
+        """
         plan = native.plan("qwen3-8b", nodes=["a", "b"], solo=False)
         with pytest.raises(native.NativeRuntimeError) as exc:
             native.start(plan, docker=docker)
-        assert "cluster" in str(exc.value)
+        assert "one rank" in str(exc.value)
+        assert "2 nodes" in str(exc.value)
 
     def test_start_without_waiting_returns_immediately(self, native, docker):
         plan = native.plan("qwen3-8b")
