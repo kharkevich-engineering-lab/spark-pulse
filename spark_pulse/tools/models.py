@@ -11,16 +11,20 @@ import asyncio
 import json
 import logging
 import os
+import shlex
 import shutil
+import socket
+import subprocess
 import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from spark_pulse.config import config
+from spark_pulse.tools import hub_cache
 from spark_pulse.tools.events import DeploymentEvent, EventType
 from spark_pulse.tools.ssh import OpenSSHClient, SSHClient, SSHError
 
@@ -37,6 +41,11 @@ EVENT_COMPLETED = EventType.MODEL_DOWNLOAD_COMPLETED
 EVENT_FAILED = EventType.MODEL_DOWNLOAD_FAILED
 EVENT_CANCELLED = EventType.MODEL_DOWNLOAD_CANCELLED
 EVENT_DELETED = EventType.MODEL_DELETED
+
+EVENT_REPLICATION_STARTED = EventType.MODEL_REPLICATION_STARTED
+EVENT_REPLICATION_PROGRESS = EventType.MODEL_REPLICATION_PROGRESS
+EVENT_REPLICATION_VERIFIED = EventType.MODEL_REPLICATION_VERIFIED
+EVENT_REPLICATION_FAILED = EventType.MODEL_REPLICATION_FAILED
 
 _PROGRESS_INTERVAL = 1.0
 
@@ -174,9 +183,10 @@ def hub_dir() -> Path:
     return hf_home() / "hub"
 
 
-def repo_dir_name(model_id: str) -> str:
-    """``org/name`` -> ``models--org--name``."""
-    return "models--" + model_id.replace("/", "--")
+#: ``org/name`` -> ``models--org--name``.  Defined once, in the standalone
+#: layout module, because the node-side verifier needs it without importing
+#: spark_pulse.
+repo_dir_name = hub_cache.repo_dir_name
 
 
 def _model_id_from_dir(dirname: str) -> str:
@@ -624,6 +634,17 @@ def clear_finished_downloads() -> int:
 
 
 # ── Distribution ─────────────────────────────────────────────────────────────
+#
+# Replication copies a *cache entry*, not a snapshot.  ``blobs`` holds the
+# bytes, ``snapshots/<commit>`` holds relative symlinks into them, ``refs``
+# names the commit and ``trees/<commit>.json`` is the manifest that makes the
+# result checkable.  All four go together, in one rsync run, because every
+# subset is broken: snapshots without blobs dangles, blobs without snapshots is
+# unusable, and a copy made by a tool that does not preserve symlinks arrives
+# as an empty snapshot that HuggingFace then silently re-downloads in full.
+#
+# Nothing is published until it has been verified *on the node*, and nothing
+# treats a path existing as proof that it is ready.
 
 
 def _make_ssh_client(ssh_user: str | None) -> SSHClient:
@@ -631,45 +652,372 @@ def _make_ssh_client(ssh_user: str | None) -> SSHClient:
     return OpenSSHClient(user=ssh_user or None, host_key_policy="strict")
 
 
-def sync_to_nodes(
+#: Where a transfer lands before it has earned the right to be the real thing.
+#: Under the hub directory so it shares the hub's filesystem, which is what
+#: makes the publishing rename atomic rather than a copy.
+STAGING_DIRNAME = ".spark-pulse-staging"
+
+#: The verifier is copied to the node and run there by the node's own python.
+#: Verifying on the control node would only prove that the control node's copy
+#: is fine, which was never in doubt.
+REMOTE_HELPER_NAME = "hub_cache.py"
+REMOTE_PYTHON = "python3"
+
+#: How often the progress poll asks a node how many bytes have landed.
+REPLICATION_POLL_INTERVAL = 5.0
+
+#: Seconds allowed for the small remote commands (mkdir, verify, rename), as
+#: opposed to the transfer itself.
+CONTROL_COMMAND_TIMEOUT = 300
+
+
+def _helper_source() -> Path:
+    """The local path of the standalone verifier that gets shipped to nodes."""
+    return Path(hub_cache.__file__)
+
+
+def _staging_root() -> str:
+    return f"{hub_dir()}/{STAGING_DIRNAME}"
+
+
+def _remote_helper_path() -> str:
+    return f"{_staging_root()}/{REMOTE_HELPER_NAME}"
+
+
+def _q(value: str) -> str:
+    return shlex.quote(str(value))
+
+
+def local_repo_path(model_id: str) -> Path:
+    """The local cache entry for ``model_id``."""
+    return hub_dir() / repo_dir_name(model_id)
+
+
+#: ``hf cache verify`` asks the hub for the revision's file list and compares
+#: the local files against the hashes the hub publishes — SHA-256 for LFS/Xet
+#: files, git SHA-1 for the rest. It is the most authoritative check available,
+#: and it is only available *here*: it needs the network and, for a gated repo,
+#: the token. Both are things a worker node deliberately does not have, which
+#: is why the node-side check reads ``trees/<commit>.json`` — the same hashes,
+#: cached locally by the download that fetched them.
+HF_CLI = "hf"
+HF_CLI_TIMEOUT = 900
+
+
+def verify_local(
+    model_id: str,
+    revision: str | None = None,
+    deep: bool = False,
+    use_cli: bool = False,
+) -> dict[str, Any]:
+    """Verify the control node's own copy of a model.
+
+    Args:
+        model_id: The cached model to check.
+        revision: Commit or ref; ``None`` resolves ``refs/main``.
+        deep: Hash every file, not only compare sizes.
+        use_cli: Additionally cross-check against the hub with
+            ``hf cache verify``. Requires the network and the token, so it is
+            off by default and never runs on a node.
+    """
+    report = hub_cache.verify_snapshot(
+        str(local_repo_path(model_id)), revision, deep=deep
+    )
+    if use_cli:
+        report["hub_cli"] = _hf_cache_verify(model_id, report.get("revision"))
+        if report["hub_cli"].get("state") == hub_cache.STATE_PARTIAL:
+            report["state"] = hub_cache.STATE_PARTIAL
+            report["reason"] = report["hub_cli"].get("reason") or report["reason"]
+    return report
+
+
+def _hf_cache_verify(model_id: str, revision: str | None) -> dict[str, Any]:
+    """Cross-check a local entry against the hub with its own CLI.
+
+    Returns a small verdict dict. ``unavailable`` is not a failure: the CLI is
+    an optional extra check, and the manifest walk stands on its own.
+    """
+    if shutil.which(HF_CLI) is None:
+        return {"state": "unavailable", "reason": f"{HF_CLI} is not on PATH"}
+    argv = [
+        HF_CLI,
+        "cache",
+        "verify",
+        model_id,
+        "--cache-dir",
+        str(hub_dir()),
+        "--json",
+    ]
+    if revision:
+        argv += ["--revision", revision]
+    try:
+        result = subprocess.run(
+            argv, capture_output=True, text=True, timeout=HF_CLI_TIMEOUT
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"state": "unavailable", "reason": str(exc)[:500]}
+    if result.returncode != 0:
+        return {
+            "state": hub_cache.STATE_PARTIAL,
+            "reason": (
+                result.stderr or result.stdout or "hf cache verify failed"
+            ).strip()[:500],
+        }
+    return {"state": hub_cache.STATE_VERIFIED, "reason": (result.stdout or "").strip()}
+
+
+def _remote_verify_command(
+    repo: str,
+    commit: str,
+    *,
+    require_manifest: bool,
+    deep: bool,
+    marker: dict[str, Any] | None = None,
+) -> str:
+    """The verifier invocation to run on a node."""
+    args = [
+        REMOTE_PYTHON,
+        _remote_helper_path(),
+        "verify",
+        "--repo",
+        repo,
+        "--revision",
+        commit,
+    ]
+    if require_manifest:
+        args.append("--require-manifest")
+    if deep:
+        args.append("--deep")
+    if marker is not None:
+        args.extend(["--write-marker", json.dumps(marker, sort_keys=True)])
+    return " ".join(_q(a) for a in args)
+
+
+def _publish_command(staging: str, final: str) -> str:
+    """Swap a verified staging directory into place with one rename.
+
+    The old entry is moved aside first and deleted afterwards, so at no moment
+    is there a half-written entry at the published path: a reader sees either
+    the previous copy or the new one.
+    """
+    replaced = f"{final}.sp-replaced"
+    return (
+        f"set -e; rm -rf {_q(replaced)}; "
+        f"if [ -e {_q(final)} ]; then mv {_q(final)} {_q(replaced)}; fi; "
+        f"mv {_q(staging)} {_q(final)}; rm -rf {_q(replaced)}"
+    )
+
+
+def _parse_report(stdout: str) -> dict[str, Any] | None:
+    """Read the verifier's JSON report out of a remote command's stdout."""
+    for line in reversed((stdout or "").strip().splitlines()):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            parsed = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(parsed, dict) and "state" in parsed:
+            return parsed
+    return None
+
+
+def _remote_bytes(ssh: SSHClient, node: str, path: str) -> int:
+    """Apparent bytes currently under ``path`` on ``node``. 0 when unknown.
+
+    Asked of the shipped verifier rather than of ``du``, whose ``-b`` is
+    GNU-only and whose default answer is block usage rather than the byte count
+    a progress bar has to compare against the manifest.
+    """
+    command = " ".join(
+        _q(part)
+        for part in (REMOTE_PYTHON, _remote_helper_path(), "du", "--path", path)
+    )
+    try:
+        result = ssh.exec(node, command, timeout=60)
+    except (SSHError, OSError):
+        return 0
+    for line in reversed((result.stdout or "").strip().splitlines()):
+        try:
+            parsed = json.loads(line.strip())
+        except ValueError:
+            continue
+        if isinstance(parsed, dict) and "bytes" in parsed:
+            return int(parsed["bytes"])
+    return 0
+
+
+class _ProgressPoller:
+    """Reports real bytes on the node against the bytes the manifest expects.
+
+    A hundred-gigabyte transfer takes hours, and an operator watching it needs
+    to know it is moving and roughly when it ends — which a spinner cannot say.
+    The poll is a ``du`` over the multiplexed connection the transfer is
+    already using, so it costs nothing beside the transfer itself.
+    """
+
+    def __init__(
+        self,
+        ssh: SSHClient,
+        node: str,
+        path: str,
+        model_id: str,
+        bytes_total: int,
+        on_progress: Callable[[dict[str, Any]], None] | None = None,
+        interval: float | None = None,
+    ):
+        self._ssh = ssh
+        self._node = node
+        self._path = path
+        self._model = model_id
+        self._total = bytes_total
+        self._on_progress = on_progress
+        # Read at construction, not at import, so a test can shorten it.
+        self._interval = (
+            REPLICATION_POLL_INTERVAL if interval is None else max(0.01, interval)
+        )
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self.bytes_done = 0
+
+    def __enter__(self) -> _ProgressPoller:
+        self._thread = threading.Thread(
+            target=self._run, name=f"model-repl-{self._node}", daemon=True
+        )
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+
+    def _run(self) -> None:
+        while not self._stop.wait(self._interval):
+            done = _remote_bytes(self._ssh, self._node, self._path)
+            if done <= 0:
+                continue
+            self.bytes_done = done
+            update = {
+                "model": self._model,
+                "node": self._node,
+                "bytes_done": done,
+                "bytes_total": self._total,
+            }
+            if self._on_progress is not None:
+                self._on_progress(dict(update))
+            publish_event(EVENT_REPLICATION_PROGRESS, self._model, update)
+
+
+def replicate_to_nodes(
     model_id: str,
     nodes: list[str],
     ssh_user: str | None = None,
     timeout: int = 3600,
     client: SSHClient | None = None,
+    revision: str | None = None,
+    deep: bool = False,
+    force: bool = False,
+    on_progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
-    """Copy the cached model directory to each node's HF hub path, in parallel.
+    """Replicate a model's cache entry to each node, verified before publish.
 
-    Uses the shared SSH abstraction: the remote hub directory is created with a
-    remote ``mkdir -p`` (the equivalent of rsync's ``--mkpath``) and the
-    snapshot tree is then transferred with ``copy_dir``.
+    Per node: stage, transfer, verify on the node, then one rename to publish.
+    A node that already holds a verified copy of the same commit is skipped, so
+    calling this twice costs one SSH round trip rather than a re-transfer, and
+    a run interrupted halfway resumes from the staging directory it left.
+
+    The HuggingFace token never leaves the control node.  The control node
+    downloads with it once; nodes receive files and are handed no credential at
+    all, which is what lets a gated model resolve on a worker — the hub cache
+    is consulted before the network, and :func:`worker_env` then closes the
+    network off entirely.
+
+    Args:
+        model_id: Model whose cache entry is replicated.
+        nodes: Node addresses to replicate to.
+        ssh_user: SSH login, when the default is not right.
+        timeout: Seconds allowed for one node's transfer.
+        client: SSH transport (tests inject a double).
+        revision: Commit or ref; ``None`` resolves ``refs/main``.
+        deep: Hash every file on the node as well as checking sizes.
+        force: Re-transfer even to a node that already verifies.
+        on_progress: Called with a progress dict as bytes land on each node.
+
+    Returns:
+        A result dict with one entry per node carrying its state, byte counts
+        and, when it did not succeed, what is missing.
+
+    Raises:
+        ValueError: The model is not cached locally, no nodes were given, or
+            the local copy does not itself verify — replicating a broken source
+            only spreads it.
     """
-    repo_path = hub_dir() / repo_dir_name(model_id)
+    repo_path = local_repo_path(model_id)
     if not repo_path.is_dir():
         raise ValueError(f"Model not in local cache: {model_id}")
     if not nodes:
         raise ValueError("No nodes specified")
 
+    source = hub_cache.verify_snapshot(str(repo_path), revision, deep=deep)
+    if source["state"] != hub_cache.STATE_VERIFIED:
+        raise ValueError(
+            f"Local copy of {model_id} is {source['state']}: {source['reason']}"
+        )
+    commit = str(source["revision"])
+    # Demand of the replica exactly the proof we hold of the source: when the
+    # local entry carries a manifest the replica must match it, and when it
+    # does not, no copy of it could ever produce one.
+    require_manifest = source["evidence"] in (
+        hub_cache.EVIDENCE_MANIFEST,
+        hub_cache.EVIDENCE_HASHES,
+    )
+    # Two different numbers, and conflating them is how a progress bar ends up
+    # stuck at 103%. ``bytes_total`` is what will land on the node — the whole
+    # entry, manifest and refs included — and is the denominator progress is
+    # measured against. ``manifest_bytes`` is what the revision's files weigh,
+    # and is what verification counts.
+    bytes_total = int(hub_cache.tree_bytes(str(repo_path))["bytes"])
+    manifest_bytes = int(source["bytes_expected"])
+
     ssh = client or _make_ssh_client(ssh_user)
-    remote_dir = f"{hub_dir()}/{repo_dir_name(model_id)}"
+    final_dir = f"{hub_dir()}/{repo_dir_name(model_id)}"
+    staging_dir = f"{_staging_root()}/{repo_dir_name(model_id)}"
+    marker = hub_cache.marker_payload(
+        model_id, commit, source, source=_control_hostname()
+    )
 
     def _one(node: str) -> dict[str, Any]:
         started = time.monotonic()
-        error: str | None = None
-        try:
-            result = ssh.exec(node, f"mkdir -p {remote_dir}", timeout=60)
-            if not result.ok:
-                error = (result.stderr or result.stdout or "mkdir failed").strip()
-            else:
-                ssh.copy_dir(str(repo_path), node, remote_dir, timeout=timeout)
-        except (SSHError, RuntimeError, OSError) as exc:
-            error = str(exc)
-        return {
-            "node": node,
-            "ok": error is None,
-            "error": error[:500] if error else None,
-            "duration_s": round(time.monotonic() - started, 2),
-        }
+        publish_event(
+            EVENT_REPLICATION_STARTED,
+            model_id,
+            {"model": model_id, "node": node, "bytes_total": bytes_total},
+        )
+        entry = _replicate_one(
+            ssh=ssh,
+            node=node,
+            model_id=model_id,
+            local_repo=repo_path,
+            final_dir=final_dir,
+            staging_dir=staging_dir,
+            commit=commit,
+            marker=marker,
+            bytes_total=bytes_total,
+            require_manifest=require_manifest,
+            deep=deep,
+            force=force,
+            timeout=timeout,
+            on_progress=on_progress,
+        )
+        entry["duration_s"] = round(time.monotonic() - started, 2)
+        publish_event(
+            EVENT_REPLICATION_VERIFIED if entry["ok"] else EVENT_REPLICATION_FAILED,
+            model_id,
+            dict(entry),
+        )
+        return entry
 
     with ThreadPoolExecutor(max_workers=max(1, len(nodes))) as pool:
         results = list(pool.map(_one, nodes))
@@ -677,41 +1025,333 @@ def sync_to_nodes(
     return {
         "model": model_id,
         "path": str(repo_path),
+        "revision": commit,
+        "bytes_total": bytes_total,
+        "manifest_bytes": manifest_bytes,
+        "local": source,
         "results": results,
         "ok": all(r["ok"] for r in results),
     }
+
+
+def _control_hostname() -> str:
+    """Best-effort name of this control node, recorded in the marker."""
+    try:
+        return socket.gethostname()
+    except OSError:  # pragma: no cover — defensive
+        return ""
+
+
+def _node_result(node: str, **fields: Any) -> dict[str, Any]:
+    """A per-node result with every key present, whatever happened."""
+    base: dict[str, Any] = {
+        "node": node,
+        "ok": False,
+        "state": hub_cache.STATE_ABSENT,
+        "error": None,
+        "reason": "",
+        "revision": None,
+        # Bytes on the node's disk, against the bytes the whole entry weighs.
+        "bytes_done": 0,
+        "bytes_total": 0,
+        # Bytes the verification actually accounted for against the manifest.
+        "bytes_verified": 0,
+        "missing": [],
+        "missing_count": 0,
+        "verified_at": None,
+        "published": False,
+        "skipped": False,
+        # Stated rather than implied: a node is never handed a hub credential.
+        "token_sent": False,
+    }
+    base.update(fields)
+    return base
+
+
+def _replicate_one(
+    *,
+    ssh: SSHClient,
+    node: str,
+    model_id: str,
+    local_repo: Path,
+    final_dir: str,
+    staging_dir: str,
+    commit: str,
+    marker: dict[str, Any],
+    bytes_total: int,
+    require_manifest: bool,
+    deep: bool,
+    force: bool,
+    timeout: int,
+    on_progress: Callable[[dict[str, Any]], None] | None,
+) -> dict[str, Any]:
+    """Stage, transfer, verify and publish one node's replica."""
+    result = _node_result(node, revision=commit, bytes_total=bytes_total)
+    try:
+        prepared = ssh.exec(
+            node,
+            f"mkdir -p {_q(_staging_root())}",
+            timeout=CONTROL_COMMAND_TIMEOUT,
+        )
+        if not prepared.ok:
+            result["error"] = (
+                prepared.stderr or prepared.stdout or "mkdir failed"
+            ).strip()[:500]
+            result["reason"] = "could not create the staging directory"
+            return result
+        ssh.copy(
+            str(_helper_source()),
+            node,
+            _remote_helper_path(),
+            timeout=CONTROL_COMMAND_TIMEOUT,
+        )
+
+        if not force:
+            already = _remote_verify(
+                ssh,
+                node,
+                final_dir,
+                commit,
+                require_manifest=require_manifest,
+                deep=False,
+            )
+            if already is not None and already["state"] == hub_cache.STATE_VERIFIED:
+                return _node_result(
+                    node,
+                    ok=True,
+                    skipped=True,
+                    published=True,
+                    state=already["state"],
+                    reason="node already holds a verified copy of this revision",
+                    revision=commit,
+                    bytes_done=bytes_total,
+                    bytes_total=bytes_total,
+                    bytes_verified=int(already.get("bytes_present") or 0),
+                    verified_at=already.get("verified_at"),
+                )
+
+        with _ProgressPoller(
+            ssh, node, staging_dir, model_id, bytes_total, on_progress
+        ) as poller:
+            # One rsync run for the whole entry — blobs, snapshots, refs and
+            # trees — with symlinks intact, resumable and uncompressed. See
+            # OpenSSHClient.copy_dir for the flags and why each is there.
+            ssh.copy_dir(str(local_repo), node, staging_dir, timeout=timeout)
+        result["bytes_done"] = poller.bytes_done or _remote_bytes(
+            ssh, node, staging_dir
+        )
+
+        report = _remote_verify(
+            ssh,
+            node,
+            staging_dir,
+            commit,
+            require_manifest=require_manifest,
+            deep=deep,
+            marker=marker,
+        )
+        if report is None:
+            result["error"] = "the node did not return a verification report"
+            result["reason"] = "verification could not be run on the node"
+            return result
+        result.update(
+            {
+                "state": report["state"],
+                "reason": report.get("reason", ""),
+                "missing": report.get("missing") or [],
+                "missing_count": int(report.get("missing_count") or 0),
+                "bytes_verified": int(report.get("bytes_present") or 0),
+            }
+        )
+        if report["state"] != hub_cache.STATE_VERIFIED:
+            result["error"] = f"verification failed on {node}: {report.get('reason')}"
+            # The staging directory is deliberately left in place: the next run
+            # resumes from it instead of starting the transfer over.
+            return result
+
+        published = ssh.exec(
+            node,
+            _publish_command(staging_dir, final_dir),
+            timeout=CONTROL_COMMAND_TIMEOUT,
+        )
+        if not published.ok:
+            result["error"] = (
+                published.stderr or published.stdout or "publish failed"
+            ).strip()[:500]
+            result["reason"] = "verified, but the rename into place failed"
+            return result
+        result.update(
+            {
+                "ok": True,
+                "published": True,
+                "verified_at": report.get("verified_at")
+                or (report.get("marker") or {}).get("verified_at"),
+            }
+        )
+        return result
+    except (SSHError, RuntimeError, OSError) as exc:
+        result["error"] = str(exc)[:500]
+        result["reason"] = "transport failure"
+        return result
+
+
+def _remote_verify(
+    ssh: SSHClient,
+    node: str,
+    repo: str,
+    commit: str,
+    *,
+    require_manifest: bool,
+    deep: bool,
+    marker: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Run the shipped verifier on a node and return its report."""
+    command = _remote_verify_command(
+        repo,
+        commit,
+        require_manifest=require_manifest,
+        deep=deep,
+        marker=marker,
+    )
+    result = ssh.exec(node, command, timeout=CONTROL_COMMAND_TIMEOUT)
+    return _parse_report(result.stdout)
+
+
+#: The old name for the operation. Replication is what it always meant to do.
+sync_to_nodes = replicate_to_nodes
 
 
 def presence(
     model_id: str,
     nodes: list[str],
     ssh_user: str | None = None,
-    timeout: int = 30,
+    timeout: int = CONTROL_COMMAND_TIMEOUT,
     client: SSHClient | None = None,
+    revision: str | None = None,
+    deep: bool = False,
 ) -> dict[str, Any]:
-    """Check whether the model's snapshot directory exists on each node."""
-    remote_dir = f"{hub_dir()}/{repo_dir_name(model_id)}/snapshots"
-    local = (hub_dir() / repo_dir_name(model_id) / "snapshots").is_dir()
+    """Report, per node, whether the model is absent, partial or verified.
+
+    The old check ran ``test -d …/snapshots`` and called a hit "present". That
+    directory exists after a transfer that copied no symlinks, after one that
+    copied symlinks but no blobs, and after one that truncated every file, so
+    "present" meant nothing.  This asks the node to check its own copy against
+    the manifest and says which of the three it actually is, naming what is
+    missing when the answer is ``partial``.
+    """
+    repo_path = local_repo_path(model_id)
+    local_report = hub_cache.verify_snapshot(str(repo_path), revision, deep=deep)
+    commit = local_report.get("revision")
+    require_manifest = local_report["evidence"] in (
+        hub_cache.EVIDENCE_MANIFEST,
+        hub_cache.EVIDENCE_HASHES,
+    )
+    remote_dir = f"{hub_dir()}/{repo_dir_name(model_id)}"
     ssh = client or _make_ssh_client(ssh_user)
 
     def _one(node: str) -> dict[str, Any]:
         try:
-            result = ssh.exec(node, f"test -d {remote_dir}", timeout=timeout)
-        except (SSHError, OSError) as exc:
-            return {"node": node, "present": False, "error": str(exc)[:500]}
-        # A non-zero exit means "absent"; only transport failures are errors.
-        error = None if result.returncode in (0, 1) else (result.stderr or "").strip()
-        return {
-            "node": node,
-            "present": result.returncode == 0,
-            "error": error[:500] if error else None,
-        }
+            ssh.exec(node, f"mkdir -p {_q(_staging_root())}", timeout=timeout)
+            ssh.copy(
+                str(_helper_source()),
+                node,
+                _remote_helper_path(),
+                timeout=timeout,
+            )
+            report = _remote_verify(
+                ssh,
+                node,
+                remote_dir,
+                str(commit or ""),
+                require_manifest=require_manifest,
+                deep=deep,
+            )
+        except (SSHError, RuntimeError, OSError) as exc:
+            return _presence_entry(node, None, error=str(exc)[:500])
+        return _presence_entry(node, report)
 
     results: list[dict[str, Any]] = []
     if nodes:
         with ThreadPoolExecutor(max_workers=max(1, len(nodes))) as pool:
             results = list(pool.map(_one, nodes))
-    return {"model": model_id, "local": local, "nodes": results}
+    return {
+        "model": model_id,
+        "revision": commit,
+        # ``local`` stays a bool for callers that only ask "is it here", but it
+        # is now the verified verdict rather than a directory listing.
+        "local": local_report["state"] == hub_cache.STATE_VERIFIED,
+        "local_state": local_report["state"],
+        "local_report": local_report,
+        "nodes": results,
+    }
+
+
+def _presence_entry(
+    node: str, report: dict[str, Any] | None, error: str | None = None
+) -> dict[str, Any]:
+    """One node's presence row, in the three-state shape."""
+    if report is None:
+        return {
+            "node": node,
+            "state": hub_cache.STATE_ABSENT,
+            "present": False,
+            "reason": "no verification report" if error is None else "",
+            "revision": None,
+            "bytes_present": 0,
+            "bytes_expected": 0,
+            "files_present": 0,
+            "files_expected": 0,
+            "missing": [],
+            "missing_count": 0,
+            "verified_at": None,
+            "error": error,
+        }
+    state = report.get("state", hub_cache.STATE_ABSENT)
+    return {
+        "node": node,
+        "state": state,
+        # Retained for callers written against the old boolean; it now means
+        # "verified", never "a directory exists".
+        "present": state == hub_cache.STATE_VERIFIED,
+        "reason": report.get("reason", ""),
+        "revision": report.get("revision"),
+        "bytes_present": int(report.get("bytes_present") or 0),
+        "bytes_expected": int(report.get("bytes_expected") or 0),
+        "files_present": int(report.get("files_present") or 0),
+        "files_expected": int(report.get("files_expected") or 0),
+        "missing": list(report.get("missing") or []),
+        "missing_count": int(report.get("missing_count") or 0),
+        "verified_at": report.get("verified_at"),
+        "error": error,
+    }
+
+
+# ── Worker credentials ───────────────────────────────────────────────────────
+
+#: What a worker container is given once its weights are replicated. The token
+#: is absent by construction and the hub is switched off, so a worker that is
+#: somehow missing a file fails loudly instead of quietly downloading it again
+#: over the uplink — with no credential, from a gated repo, on every node.
+OFFLINE_ENV = {"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"}
+
+#: Credentials that must never reach a worker node.
+TOKEN_ENV_KEYS = ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HUGGINGFACEHUB_API_TOKEN")
+
+
+def worker_env(env: dict[str, str] | None = None) -> dict[str, str]:
+    """Strip the hub token from a worker's environment and pin it offline.
+
+    The control node holds the token and downloads once; a node holds files.
+    A gated model resolves out of a local cache with no credential at all,
+    which is the property that makes fetch-once distribution work end to end —
+    so the token has no reason to be on a worker, and being offline means it
+    can never be asked for one.
+    """
+    out = dict(env or {})
+    for key in TOKEN_ENV_KEYS:
+        out.pop(key, None)
+    out.update(OFFLINE_ENV)
+    return out
 
 
 # ── Deletion ─────────────────────────────────────────────────────────────────

@@ -53,6 +53,27 @@ nccl:
   socket_ifname: null
   ib_hca: null
 
+# ── Image registry (control node) ────────────────────────────────────────────
+# Images are seeded into a registry on the control node and pulled from there
+# by every other node. Workers pull anonymously — registry credentials never
+# leave this machine.
+image_registry:
+  # "local": a full registry, seeded deliberately. The default: a cache's blob
+  # expiry has a long-standing sharp edge and a fixed cluster wants determinism.
+  # "proxy": a pull-through cache holding the upstream credential.
+  mode: local
+  port: 5000
+  # Cluster-facing bind address. Empty means "detect"; the registry is never
+  # bound to every interface.
+  address: ""
+  upstream: https://ghcr.io
+  container_name: spark-pulse-registry
+  image: registry:3
+  # Blob TTL in proxy mode. "0" never expires.
+  ttl: "0"
+  # Storage on the control node. Empty means ~/.local/share/spark-pulse/registry.
+  data_dir: ""
+
 # ── Engines ──────────────────────────────────────────────────────────────────
 default_engine: vllm
 engine_indexes:

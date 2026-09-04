@@ -11,6 +11,7 @@ from spark_pulse.mock import (
     custom_recipes as custom_recipes,
     mods as mods,
     docker as docker,
+    registry as registry,
     network as network,
     discovery as discovery,
     ssh as ssh,

@@ -22,13 +22,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import shlex
-import subprocess
 import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 from spark_pulse.engines import get_registry
 from spark_pulse.tools.docker import PullCancelled, split_ref
@@ -122,7 +121,44 @@ def local_digest(info: dict[str, Any] | None, repository: str) -> str:
     return ""
 
 
-def _spec_entry(spec: Any, docker: Any) -> dict[str, Any]:
+def registry_base() -> str:
+    """The control node's registry base, or "" when it cannot be worked out."""
+    from spark_pulse import tools
+
+    try:
+        return str(tools.registry.load_settings().base)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("could not resolve the local registry base: %s", exc)
+        return ""
+
+
+def location_fields(ref: str, digest: str, base: str) -> dict[str, Any]:
+    """The three-field location of an image plus the composed pull reference.
+
+    ``registry_base``, ``repository`` and ``digest`` are kept apart because
+    only the first of them changes per node: a worker that pulled from the
+    control node holds ``<control>:5000/owner/repo@sha256:D`` while the index
+    calls it ``ghcr.io/owner/repo@sha256:D``, same digest either way. One
+    opaque string cannot express that, so the catalogue carries the parts and
+    composes the reference for whichever host is doing the pulling.
+    """
+    from spark_pulse import tools
+
+    upstream = tools.registry.location_for(ref, digest)
+    local = tools.registry.ImageLocation(
+        registry_base=base or upstream.registry_base,
+        repository=upstream.repository,
+        digest=upstream.digest,
+    )
+    return {
+        "location": local.to_dict(),
+        "upstream_location": upstream.to_dict(),
+        # What a node is told to pull. Anonymous: no credential travels with it.
+        "pull_ref": local.reference() if local.digest else ref,
+    }
+
+
+def _spec_entry(spec: Any, docker: Any, base: str = "") -> dict[str, Any]:
     """Build one catalogue entry from an engine spec plus local state."""
     ref = spec.image_ref
     repository, tag = split_ref(ref)
@@ -179,6 +215,7 @@ def _spec_entry(spec: Any, docker: Any) -> dict[str, Any]:
         "digest_drift": drift,
         "update_available": drift or not present,
         "tag_is_stale": bool(advertised and tag_digest and tag_digest != advertised),
+        **location_fields(ref, advertised or digest, base),
     }
 
 
@@ -187,7 +224,7 @@ def _known_repositories(specs: list[Any]) -> set[str]:
 
 
 def _untracked_entries(
-    docker: Any, specs: list[Any], claimed: set[str]
+    docker: Any, specs: list[Any], claimed: set[str], base: str = ""
 ) -> list[dict[str, Any]]:
     """Local images in an engine repository that no spec claims.
 
@@ -229,6 +266,7 @@ def _untracked_entries(
                     "index_digest": "",
                     "digest_drift": False,
                     "update_available": False,
+                    **location_fields(str(ref), local_digest(image, repository), base),
                 }
             )
     return out
@@ -250,9 +288,10 @@ def list_images() -> list[dict[str, Any]]:
         logger.warning("engine registry unavailable: %s", exc)
         specs = []
 
-    entries = [_spec_entry(spec, docker) for spec in specs]
+    base = registry_base()
+    entries = [_spec_entry(spec, docker, base) for spec in specs]
     claimed = {e["ref"] for e in entries} | {e["tagged_ref"] for e in entries}
-    entries.extend(_untracked_entries(docker, specs, claimed))
+    entries.extend(_untracked_entries(docker, specs, claimed, base))
     entries.sort(key=lambda e: (e["source"] == "local", e["ref"]))
     return entries
 
@@ -560,26 +599,38 @@ def _make_ssh_client(ssh_user: str | None) -> SSHClient:
     return OpenSSHClient(user=ssh_user or None, host_key_policy="strict")
 
 
-def _save_and_load(ref: str, node: str, ssh: SSHClient, timeout: int = 3600) -> None:
-    """Stream an image to a node: ``docker save <ref> | ssh <node> docker load``.
+def _node_services(
+    client: SSHClient | None, services: Any | None = None
+) -> Callable[[Any], Any]:
+    """The resolver distribution reaches nodes through.
 
-    The remote half of the pipeline is built by the SSH client, so the identity
-    file, host key policy and connection reuse are the same ones every other
-    remote operation uses.
-
-    Kept module level so tests can replace the transfer without a daemon.
+    Node-bound services, not raw ssh: the transport, the local/peer branch and
+    the command building are then the ones every other remote operation uses,
+    and simulation swaps them at the resolver.
     """
-    pipeline = (
-        f"docker save {shlex.quote(ref)} | "
-        f"{shlex.join(ssh.remote_shell_command(node, 'docker load'))}"
-    )
-    proc = subprocess.run(
-        ["sh", "-c", pipeline], capture_output=True, text=True, timeout=timeout
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(
-            (proc.stderr or proc.stdout or "docker save | docker load failed").strip()
-        )
+    if services is not None:
+        return services
+    from spark_pulse import tools
+
+    return tools.node_service.NodeServices(ssh_client=client)
+
+
+def _node_has(info: dict[str, Any] | None, digest: str, image_id: str) -> bool:
+    """Whether a node already carries this exact content.
+
+    The digest is the authority — that is the identity the deploy pins — and
+    the image ID is the fallback for a node whose daemon reports no repo
+    digest. A matching *tag* is never enough: same tag, different ID is the
+    digest-drift case, and refreshing it is the point.
+    """
+    if info is None:
+        return False
+    if digest:
+        for entry in info.get("repo_digests") or []:
+            if str(entry).partition("@")[2] == digest:
+                return True
+    remote_id = str(info.get("id") or "")
+    return bool(remote_id and image_id and remote_id == image_id)
 
 
 def sync_to_nodes(
@@ -588,11 +639,36 @@ def sync_to_nodes(
     ssh_user: str | None = None,
     timeout: int = 3600,
     client: SSHClient | None = None,
+    services: Any | None = None,
+    digest: str = "",
 ) -> dict[str, Any]:
-    """Copy a local image to each node, skipping nodes that already match.
+    """Seed ``ref`` into the control node's registry, then have nodes pull it.
 
-    Skipping is by image ID, not by tag: a node carrying the same tag but a
-    different ID is exactly the digest-drift case and must be refreshed.
+    ``docker save | ssh docker load`` used to do this, and it was silently
+    wrong: the round trip changed the digest and emptied ``RepoDigests``, so a
+    node could not resolve the digest-pinned reference it was later handed. It
+    is gone, with no fallback — a wrong answer is worse than no answer.
+
+    What happens instead:
+
+    1. The image is copied into the registry on this node, digest preserved
+       and *verified* against what the index advertises.
+    2. Each node pulls from that registry, **anonymously**. No registry
+       credential is sent anywhere; it stays in this node's secrets.
+    3. A node already holding that digest is skipped.
+
+    Args:
+        ref: The image reference as the control node knows it.
+        nodes: Node addresses to seed.
+        ssh_user: SSH login for the nodes.
+        timeout: Per-operation timeout, in seconds.
+        client: SSH transport override (tests, simulation).
+        services: Node-service resolver override (tests, simulation).
+        digest: The advertised digest, when the caller knows it.
+
+    Returns:
+        The seeded location, the per-node results, and each node's own
+        composed pull reference.
     """
     ref = (ref or "").strip()
     if not nodes:
@@ -602,43 +678,51 @@ def sync_to_nodes(
     if info is None:
         raise ValueError(f"Image not present locally: {ref}")
     local_id = str(info.get("id") or "")
+    repository, _ = split_ref(ref)
+    advertised = (digest or "").strip() or local_digest(info, repository)
 
-    ssh = client or _make_ssh_client(ssh_user)
-    inspect = f"docker image inspect {shlex.quote(ref)} --format '{{{{.Id}}}}'"
+    from spark_pulse import tools
 
-    def _one(node: str) -> dict[str, Any]:
+    # Fetch once, on the node that holds the credential.
+    seeded = tools.registry.seed(ref, advertised, timeout=timeout)
+    pull_ref = str(seeded["pull_ref"])
+    seed_digest = str(seeded["digest"])
+
+    resolve = _node_services(client, services)
+
+    def _one(address: str) -> dict[str, Any]:
         started = time.monotonic()
-        try:
-            probe = ssh.exec(node, inspect, timeout=60)
-            remote_id = (probe.stdout or "").strip()
-            if remote_id and remote_id == local_id:
-                return {
-                    "node": node,
-                    "ok": True,
-                    "skipped": True,
-                    "error": None,
-                    "duration_s": round(time.monotonic() - started, 2),
-                }
-        except (SSHError, OSError) as exc:
-            return {
-                "node": node,
-                "ok": False,
-                "skipped": False,
-                "error": str(exc)[:500],
+        node = tools.node_service.node_for(address, ssh_user=ssh_user or "")
+
+        def _result(ok: bool, skipped: bool, error: str | None) -> dict[str, Any]:
+            payload = {
+                "node": address,
+                "pull_ref": pull_ref,
+                "digest": seed_digest,
+                "ok": ok,
+                "skipped": skipped,
+                "error": error[:500] if error else None,
                 "duration_s": round(time.monotonic() - started, 2),
             }
-        error: str | None = None
+            publish_event(
+                EVENT_SYNCED,
+                ref,
+                {"phase": "node", **payload},
+            )
+            return payload
+
         try:
-            _save_and_load(ref, node, ssh, timeout)
-        except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
-            error = str(exc)
-        return {
-            "node": node,
-            "ok": error is None,
-            "skipped": False,
-            "error": error[:500] if error else None,
-            "duration_s": round(time.monotonic() - started, 2),
-        }
+            service = resolve(node)
+            if _node_has(service.image_info(pull_ref), seed_digest, local_id):
+                return _result(True, True, None)
+        except (SSHError, OSError, RuntimeError) as exc:
+            return _result(False, False, str(exc))
+
+        try:
+            service.pull_image(pull_ref)
+        except (SSHError, OSError, RuntimeError) as exc:
+            return _result(False, False, str(exc))
+        return _result(True, False, None)
 
     with ThreadPoolExecutor(max_workers=max(1, len(nodes))) as pool:
         results = list(pool.map(_one, nodes))
@@ -646,6 +730,13 @@ def sync_to_nodes(
     payload = {
         "ref": ref,
         "image_id": local_id,
+        "registry_base": seeded["registry_base"],
+        "repository": seeded["repository"],
+        "digest": seed_digest,
+        "pull_ref": pull_ref,
+        "seeded_with": seeded["tool"],
+        # Said out loud: a node pulls from this registry with no credential.
+        "nodes_need_credentials": False,
         "results": results,
         "ok": all(r["ok"] for r in results),
     }

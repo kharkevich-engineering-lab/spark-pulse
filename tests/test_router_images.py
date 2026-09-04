@@ -150,7 +150,52 @@ class TestDistribution:
         body = response.json()
         assert body["ok"] is True
         assert [r["node"] for r in body["results"]] == ["n1", "n2"]
-        assert any(r["skipped"] for r in body["results"])
+        assert not any(r["skipped"] for r in body["results"])
+        # Every node is told to pull the same digest from the control node.
+        assert {r["digest"] for r in body["results"]} == {body["digest"]}
+        assert body["nodes_need_credentials"] is False
+
+    def test_sync_skips_a_node_that_already_has_it(self, client):
+        client.post("/api/images/sync", json={"ref": VLLM_REF, "nodes": ["n1"]})
+
+        response = client.post(
+            "/api/images/sync", json={"ref": VLLM_REF, "nodes": ["n1"]}
+        )
+
+        assert response.status_code == 200
+        assert response.json()["results"][0]["skipped"] is True
+
+    def test_registry_status_says_nodes_need_no_credentials(self, client):
+        response = client.get("/api/images/registry")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["nodes_need_credentials"] is False
+        assert body["mode"] == body["default_mode"] == "local"
+        assert body["base"].endswith(":5000")
+
+    def test_registry_starts_and_stops(self, client):
+        started = client.post("/api/images/registry/start")
+        assert started.status_code == 200
+        assert started.json()["running"] is True
+
+        stopped = client.post("/api/images/registry/stop")
+        assert stopped.status_code == 200
+        assert stopped.json()["running"] is False
+
+    def test_registry_seed_returns_the_three_fields(self, client):
+        response = client.post("/api/images/registry/seed", json={"ref": VLLM_REF})
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["registry_base"].endswith(":5000")
+        assert body["repository"].endswith("/vllm")
+        assert body["pull_ref"] == (
+            f"{body['registry_base']}/{body['repository']}@{body['digest']}"
+        )
+
+    def test_registry_seed_requires_a_ref(self, client):
+        assert client.post("/api/images/registry/seed", json={}).status_code == 400
 
     def test_sync_requires_nodes(self, client):
         response = client.post("/api/images/sync", json={"ref": VLLM_REF, "nodes": []})

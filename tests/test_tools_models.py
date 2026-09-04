@@ -34,13 +34,16 @@ class _RecordingSSHClient(SSHClient):
         exec_stderr="",
         exec_error: Exception | None = None,
         copy_error: Exception | None = None,
+        stdout: str = "",
     ):
         self.execs: list[tuple[str, str]] = []
         self.copies: list[tuple[str, str, str]] = []
+        self.copy_dirs: list[tuple[str, str, str]] = []
         self._exec_returncode = exec_returncode
         self._exec_stderr = exec_stderr
         self._exec_error = exec_error
         self._copy_error = copy_error
+        self._stdout = stdout
 
     def exec(self, host, command, timeout=30, batch_mode=True):
         self.execs.append((host, command))
@@ -50,11 +53,16 @@ class _RecordingSSHClient(SSHClient):
         if callable(code):
             code = code(host)
         return SSHResult(
-            returncode=code, stdout="", stderr="" if code == 0 else self._exec_stderr
+            returncode=code,
+            stdout=self._stdout,
+            stderr="" if code == 0 else self._exec_stderr,
         )
 
+    def copy(self, local_path, host, remote_path, timeout=30):
+        self.copies.append((local_path, host, remote_path))
+
     def copy_dir(self, local_dir, host, remote_dir, timeout=60):
-        self.copies.append((local_dir, host, remote_dir))
+        self.copy_dirs.append((local_dir, host, remote_dir))
         if self._copy_error is not None:
             raise self._copy_error
 
@@ -438,23 +446,12 @@ class TestDistribution:
         with pytest.raises(ValueError, match="No nodes specified"):
             models_tool.sync_to_nodes("acme/plain-7b", [])
 
-    def test_sync_creates_remote_dir_then_copies(self, hf_home):
-        client = _RecordingSSHClient()
-        result = models_tool.sync_to_nodes(
-            "acme/plain-7b", ["n1", "n2"], ssh_user="ubuntu", client=client
-        )
-        assert result["ok"] is True
-        assert [r["node"] for r in result["results"]] == ["n1", "n2"]
-        assert sorted(c[0] for c in client.execs) == ["n1", "n2"]
-        assert all(cmd.startswith("mkdir -p ") for _, cmd in client.execs)
-        assert sorted(c[1] for c in client.copies) == ["n1", "n2"]
-        assert all("models--acme--plain-7b" in remote for _, _, remote in client.copies)
-
     def test_sync_reports_per_node_failure(self, hf_home):
         client = _RecordingSSHClient(copy_error=RuntimeError("rsync failed: no route"))
         result = models_tool.sync_to_nodes("acme/plain-7b", ["n1"], client=client)
         assert result["ok"] is False
         assert result["results"][0]["error"] == "rsync failed: no route"
+        assert result["results"][0]["published"] is False
 
     def test_sync_reports_mkdir_failure(self, hf_home):
         client = _RecordingSSHClient(exec_returncode=1, exec_stderr="permission denied")
@@ -473,28 +470,25 @@ class TestDistribution:
         assert result["ok"] is False
         assert "timed out" in result["results"][0]["error"]
 
-    def test_presence_checks_each_node(self, hf_home):
-        client = _RecordingSSHClient(
-            exec_returncode=lambda host: 0 if host == "n1" else 1
+    def test_sync_refuses_a_local_copy_that_does_not_verify(self, hf_home, tmp_path):
+        """Replicating a broken source only spreads it."""
+        snapshot = (
+            models_tool.hub_dir() / "models--acme--plain-7b" / "snapshots" / "aaaa1111"
         )
-        result = models_tool.presence("acme/plain-7b", ["n1", "n2"], client=client)
-        assert result["local"] is True
-        assert result["nodes"] == [
-            {"node": "n1", "present": True, "error": None},
-            {"node": "n2", "present": False, "error": None},
-        ]
-        assert all(cmd.startswith("test -d ") for _, cmd in client.execs)
+        for entry in snapshot.iterdir():
+            entry.unlink()
+        client = _RecordingSSHClient()
+        with pytest.raises(ValueError, match="is partial"):
+            models_tool.sync_to_nodes("acme/plain-7b", ["n1"], client=client)
+        assert client.copy_dirs == []
 
-    def test_presence_surfaces_transport_errors(self, hf_home):
-        client = _RecordingSSHClient(
-            exec_returncode=255, exec_stderr="connection refused"
-        )
-        result = models_tool.presence("acme/plain-7b", ["n1"], client=client)
-        assert result["nodes"][0] == {
-            "node": "n1",
-            "present": False,
-            "error": "connection refused",
-        }
+    def test_a_node_that_cannot_answer_is_never_published_to(self, hf_home):
+        """No report means no proof, and no proof means no publish."""
+        client = _RecordingSSHClient(stdout="python3: not found")
+        result = models_tool.sync_to_nodes("acme/plain-7b", ["n1"], client=client)
+        assert result["ok"] is False
+        assert result["results"][0]["published"] is False
+        assert "did not return a verification report" in result["results"][0]["error"]
 
     def test_default_client_is_openssh(self):
         assert isinstance(models_tool._make_ssh_client("ubuntu"), OpenSSHClient)

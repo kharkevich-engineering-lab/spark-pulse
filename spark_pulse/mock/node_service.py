@@ -301,12 +301,22 @@ class SimulatedDockerSSHClient(SSHClient):
 
     def _docker_pull(self, host: str, parts: list[str], _raw: str) -> SSHResult:
         ref = parts[2]
+        repository, _, digest = ref.partition("@")
+        # A digest-pinned pull is content-addressed, so every node that pulls
+        # it ends up with the *same* image ID and the digest it asked for.
+        # Inventing a per-node ID here would hide the very property the
+        # registry path exists to preserve.
+        image_id = (
+            f"sha256:{digest.partition(':')[2]}"
+            if digest
+            else f"sha256:{uuid.uuid5(uuid.NAMESPACE_URL, ref).hex}"
+        )
         self.images_on(host)[ref] = {
-            "Id": f"sha256:{uuid.uuid5(uuid.NAMESPACE_URL, ref).hex}",
+            "Id": image_id,
             "Size": DEFAULT_IMAGE_SIZE,
             "Created": "2026-01-01T00:00:00Z",
-            "RepoTags": [ref],
-            "RepoDigests": [],
+            "RepoTags": [] if digest else [ref],
+            "RepoDigests": [f"{repository}@{digest}"] if digest else [],
         }
         return SSHResult(returncode=0, stdout=f"Downloaded {ref}\n", stderr="")
 

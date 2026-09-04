@@ -24,6 +24,7 @@ import getpass
 import logging
 import os
 import shutil
+import contextlib
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -334,6 +335,64 @@ class OpenSSHClient(SSHClient):
         if self._identity_file:
             args.extend(["-i", self._identity_file])
         return args
+
+    @contextlib.contextmanager
+    def reverse_tunnel(self, host: str, remote_port: int, local_port: int):
+        """Expose a local port on ``host`` as ``127.0.0.1:remote_port``.
+
+        This exists because Docker refuses a plain-HTTP registry unless the
+        address is loopback: the daemon's insecure defaults are exactly
+        ``127.0.0.0/8`` and ``::1/128``, verified on a DGX Spark. Reaching the
+        control node's registry through a reverse tunnel therefore needs no
+        change to any node's ``daemon.json`` and no restart of a daemon that
+        may be running deployments, which writing that file would require.
+
+        Yields once the forward is listening, and closes it on exit.
+        """
+        # Own the connection rather than multiplexing: over a shared control
+        # master ssh hands the forward to the master and exits at once, so the
+        # tunnel would outlive this context manager and never be closed.
+        args = self._build_ssh_args(
+            [
+                "-N",
+                "-o",
+                "ControlMaster=no",
+                "-o",
+                "ControlPath=none",
+                "-R",
+                f"127.0.0.1:{remote_port}:127.0.0.1:{local_port}",
+            ]
+        )
+        args.append(self._user_host(host))
+        logger.debug("Opening reverse tunnel to %s: %s", host, args)
+        proc = subprocess.Popen(
+            args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True
+        )
+        try:
+            # ssh exits immediately on a bind clash or auth failure; give it a
+            # moment and surface that rather than letting the caller time out
+            # against a port nothing is listening on.
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                pass
+            else:
+                stderr = (proc.stderr.read() if proc.stderr else b"").decode(
+                    "utf-8", "replace"
+                )
+                raise SSHError(
+                    self._classify_ssh_error(proc.returncode, stderr),
+                    host,
+                    f"reverse tunnel failed: {stderr.strip() or 'ssh exited'}",
+                    stderr,
+                )
+            yield remote_port
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:  # pragma: no cover - defensive
+                proc.kill()
 
     def _build_ssh_args(self, extra: list[str] | None = None) -> list[str]:
         """Build base SSH command arguments."""

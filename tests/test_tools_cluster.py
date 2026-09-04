@@ -336,6 +336,40 @@ class TestRealClusterOrchestrator:
         assert seen["shm_size_gb"] == 32
         assert seen["privileged"] is False
 
+    def test_a_worker_is_given_no_hub_token_and_is_pinned_offline(self, cluster):
+        """The token stays on the control node; the worker runs on replicas.
+
+        A worker whose weights were replicated needs no credential, and giving
+        it one is how a gated token ends up on every node. Being offline turns
+        a missing file into an immediate failure rather than a silent
+        re-download of hundreds of gigabytes over the uplink.
+        """
+        seen: dict[str, dict[str, str]] = {}
+
+        class _Capturing(FakeNode):
+            def run_container(self, image, name, env_vars, metadata, **kwargs):
+                seen[name] = dict(env_vars)
+                return super().run_container(image, name, env_vars, metadata, **kwargs)
+
+        cluster.nodes[HEAD_IP] = _Capturing(HEAD_IP, cluster.log)
+        cluster.nodes[WORKER_IP] = _Capturing(WORKER_IP, cluster.log)
+        orchestrator = ClusterOrchestrator(
+            services=cluster,
+            ssh_client=MagicMock(),
+            event_broadcaster=MagicMock(),
+        )
+
+        _start(
+            orchestrator,
+            env_vars={"HF_TOKEN": "hf_secret", "NCCL_SOCKET_IFNAME": "eth0"},
+        )
+
+        assert "HF_TOKEN" not in seen["c-worker-0"]
+        assert seen["c-worker-0"]["HF_HUB_OFFLINE"] == "1"
+        assert seen["c-worker-0"]["NCCL_SOCKET_IFNAME"] == "eth0"
+        # The head is where the download happened, so it keeps its token.
+        assert seen["c-head"]["HF_TOKEN"] == "hf_secret"
+
     def test_rollback_stops_each_container_on_its_own_node(self, orchestrator, cluster):
         _start(orchestrator)
         cluster.log.clear()
@@ -437,3 +471,46 @@ class TestRealClusterOrchestrator:
             )
 
         assert "run" not in cluster.actions_on(HEAD_IP)
+
+
+class TestPerNodeImageReference:
+    """A node with no registry credential is pointed at the control node's copy.
+
+    The digest is the same either way; only the host changes, which is why the
+    registry base, the repository and the digest are stored as three fields
+    rather than one opaque reference.
+    """
+
+    REF = "ghcr.io/acme/engine:1"
+    DIGEST = "sha256:" + "a1" * 32
+
+    def _seed(self):
+        from spark_pulse.mock import registry as mock_registry
+
+        mock_registry.default_registry().seed_manually(self.REF, self.DIGEST)
+        return mock_registry.describe(self.REF, self.DIGEST)["pull_ref"]
+
+    def test_a_worker_is_given_the_seeded_reference(self, orchestrator, cluster):
+        expected = self._seed()
+
+        _start(orchestrator, image=self.REF)
+
+        worker = cluster.nodes[WORKER_IP].containers["c-worker-0"]
+        assert worker.image == expected
+        assert worker.image.endswith(f"@{self.DIGEST}")
+        assert worker.image != self.REF
+
+    def test_the_control_node_keeps_the_upstream_reference(self, orchestrator, cluster):
+        """It is the node holding the credential; it has no need of the copy."""
+        self._seed()
+
+        _start(orchestrator, head_ip="127.0.0.1", image=self.REF)
+
+        assert cluster.nodes["127.0.0.1"].containers["c-head"].image == self.REF
+
+    def test_an_image_the_registry_does_not_hold_is_passed_through(
+        self, orchestrator, cluster
+    ):
+        _start(orchestrator, image=self.REF)
+
+        assert cluster.nodes[WORKER_IP].containers["c-worker-0"].image == self.REF
