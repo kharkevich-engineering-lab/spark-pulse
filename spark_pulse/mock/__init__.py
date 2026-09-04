@@ -14,7 +14,7 @@ from spark_pulse.mock import (
     network as network,
     discovery as discovery,
     ssh as ssh,
-    remote_docker as remote_docker,
+    node_service as node_service,
     cluster as cluster,
     ray as ray,
     parallelism as parallelism,

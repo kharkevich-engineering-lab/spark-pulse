@@ -1,7 +1,9 @@
 """Mock cluster orchestrator for simulation mode.
 
 Mirrors the real cluster.py API exactly for testing without
-real Docker, SSH, or Ray access.
+real Docker, SSH, or Ray access. It fabricates cluster state rather than
+driving containers, so the real orchestrator's own paths are covered by
+``tests/test_tools_cluster.py`` against injected services instead.
 """
 
 from __future__ import annotations
@@ -10,8 +12,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal
 
+from spark_pulse.mock.node_service import NodeServices, control_node
 from spark_pulse.mock.ray import MockRayManager
-from spark_pulse.mock.remote_docker import MockRemoteDockerService
 from spark_pulse.tools.cluster_models import ClusterNode, ClusterState
 
 
@@ -44,8 +46,9 @@ class MockClusterOrchestrator:
         """
         self._scenario = scenario
         self._ray_ready = ray_ready
-        self._docker = MockRemoteDockerService(scenario=scenario)
+        self._services = NodeServices()
         self._ray = MockRayManager(
+            services=self._services,
             ready=ray_ready,
             fail_containers=fail_containers or [],
         )
@@ -126,7 +129,7 @@ class MockClusterOrchestrator:
             }
         )
 
-    def stop_cluster(self, name: str) -> None:
+    def stop_cluster(self, name: str, node_addresses: list[str] | None = None) -> None:
         """Stop cluster (mocked)."""
         self._executed_operations.append(
             {
@@ -166,7 +169,9 @@ class MockClusterOrchestrator:
                 created_at=state.created_at,
             )
 
-    def get_cluster_status(self, name: str) -> ClusterState:
+    def get_cluster_status(
+        self, name: str, node_addresses: list[str] | None = None
+    ) -> ClusterState:
         """Get cluster status (mocked)."""
         self._executed_operations.append(
             {
@@ -200,9 +205,14 @@ class MockClusterOrchestrator:
         return self._ray.ensure_ray_worker(container, worker_ip, head_ip, head_port)
 
     @property
-    def docker(self) -> MockRemoteDockerService:
-        """Return the mock Docker service."""
-        return self._docker
+    def services(self) -> NodeServices:
+        """The node resolver, matching the real orchestrator's."""
+        return self._services
+
+    @property
+    def docker(self) -> object:
+        """The control node's simulated container service."""
+        return self._services(control_node())
 
     @property
     def ray(self) -> MockRayManager:
@@ -223,7 +233,6 @@ class MockClusterOrchestrator:
         """Clear all state."""
         self._executed_operations.clear()
         self._clusters.clear()
-        self._docker.reset()
         self._ray.reset()
 
 

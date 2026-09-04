@@ -16,15 +16,19 @@ class MockRayManager:
 
     def __init__(
         self,
+        services: Any = None,
         ready: bool = True,
         fail_containers: list[str] | None = None,
     ):
         """Initialize mock Ray manager.
 
         Args:
+            services: Node resolver, accepted for signature parity with the
+                real manager and unused: nothing here reaches a node.
             ready: Whether Ray operations succeed.
             fail_containers: Containers that should fail Ray operations.
         """
+        self._services = services
         self._ready = ready
         self._fail_containers = fail_containers or []
         self._executed_operations: list[dict[str, Any]] = []
@@ -78,6 +82,7 @@ class MockRayManager:
     def wait_for_cluster_ready(
         self,
         container: str,
+        node_ip: str,
         timeout: int = 60,
         poll_interval: float = 2,
     ) -> bool:
@@ -86,17 +91,19 @@ class MockRayManager:
             {
                 "action": "wait_for_cluster_ready",
                 "container": container,
+                "node_ip": node_ip,
                 "timeout": timeout,
             }
         )
         return self._ready
 
-    def get_ray_status(self, container: str) -> str:
+    def get_ray_status(self, container: str, node_ip: str) -> str:
         """Return ray status output (mocked)."""
         self._executed_operations.append(
             {
                 "action": "get_ray_status",
                 "container": container,
+                "node_ip": node_ip,
             }
         )
         return "Cluster is ready" if self._ready else "Ray not started"

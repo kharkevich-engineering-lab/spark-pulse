@@ -75,13 +75,13 @@ class MockClusterHealthValidator:
     def validate_cluster(
         self,
         cluster_state: object,
-        remote_docker: object,
+        services: object = None,
     ) -> ValidationResult:
         """Validate cluster health (mocked).
 
         Args:
             cluster_state: ClusterState object (ignored in mock).
-            remote_docker: RemoteDockerService (ignored in mock).
+            services: Node resolver (ignored in mock).
 
         Returns:
             ValidationResult with configured health status.
@@ -107,16 +107,16 @@ class MockClusterHealthValidator:
 
 def validate_cluster(
     cluster_state: object,
-    remote_docker: object,
+    services: object = None,
 ) -> ValidationResult:
     """Validate cluster health using default mock validator.
 
     Args:
         cluster_state: ClusterState object.
-        remote_docker: RemoteDockerService.
+        services: Node resolver.
 
     Returns:
         ValidationResult.
     """
     validator = MockClusterHealthValidator()
-    return validator.validate_cluster(cluster_state, remote_docker)
+    return validator.validate_cluster(cluster_state, services)
