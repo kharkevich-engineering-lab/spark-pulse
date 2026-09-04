@@ -23,7 +23,14 @@ from spark_pulse.config import config
 from spark_pulse.engines import EngineRegistry, Topology, reset_registry
 from spark_pulse.mock.docker import MockDockerClient, MockDockerService
 from spark_pulse.tools.docker import PullCancelled
-from spark_pulse.tools.labels import DEPLOYMENT_LABEL, MANAGED_LABEL
+from spark_pulse.tools.labels import (
+    DEPLOYMENT_LABEL,
+    GENERATION_LABEL,
+    MANAGED_LABEL,
+    RANK_LABEL,
+    WORLD_SIZE_LABEL,
+)
+from spark_pulse.tools.ssh import SSHError, SSHErrorType
 
 # pytest-env forces SIMULATION_MODE=1, so ``from spark_pulse.tools import
 # native_runtime`` hands back the mock re-export. Patching module globals only
@@ -461,12 +468,17 @@ class TestStart:
         assert record["status"] == "error"
         assert "did not become ready" in record["error_message"]
 
-    def test_a_cluster_plan_is_refused(self, native, docker):
-        """start() is still one container; the loop over ranks comes later."""
+    def test_a_cluster_plan_is_no_longer_refused_by_the_runtime(self, native, docker):
+        """The runtime starts every rank; the *dispatcher* still refuses one.
+
+        Flipping the dispatcher is the step that removes the upstream cluster
+        path, and it comes last. Until then the runtime is capable and the
+        refusal lives in exactly one place — ``tools.deploy_dispatch``, which
+        ``test_router_deployments`` covers.
+        """
         plan = native.plan("qwen3-8b", nodes=["a", "b"], solo=False)
-        with pytest.raises(native.NativeRuntimeError) as exc:
-            native.start(plan, docker=docker)
-        assert "cluster" in str(exc.value)
+        assert [r.rank for r in plan.rank_plans] == [0, 1]
+        assert len(plan.ranks) == 2
 
     def test_start_without_waiting_returns_immediately(self, native, docker):
         plan = native.plan("qwen3-8b")
@@ -928,3 +940,463 @@ class TestContainerPaths:
 
     def test_absolute_paths_outside_home_are_kept(self):
         assert nr._container_path("/data/models") == "/data/models"
+
+
+# ── Ranks ───────────────────────────────────────────────────────────────────
+
+
+class JournalDocker(MockDockerService):
+    """A per-node container service that writes down what it was asked to do.
+
+    Each node gets its own client, so a container created on one node is not
+    visible on another — which is what makes the ordering and teardown
+    assertions below mean anything.
+    """
+
+    def __init__(self, journal: list, node: str = "", fail_on: str = ""):
+        super().__init__(MockDockerClient())
+        self.journal = journal
+        self.node = node
+        self.fail_on = fail_on
+        self.unreachable = False
+
+    def _note(self, verb: str, name: str) -> None:
+        self.journal.append((verb, self.node, name))
+
+    def _guard(self) -> None:
+        if self.unreachable:
+            raise SSHError(
+                error_type=SSHErrorType.NETWORK,
+                host=self.node,
+                message="no route to host",
+            )
+
+    def run_container(self, **kwargs):
+        self._note("run_container", kwargs["name"])
+        self._guard()
+        if self.fail_on and self.fail_on in kwargs["name"]:
+            raise RuntimeError("the daemon said no")
+        return super().run_container(**kwargs)
+
+    def stop_container(self, name: str, timeout: int = 30) -> bool:
+        self._note("stop_container", name)
+        self._guard()
+        return super().stop_container(name, timeout=timeout)
+
+    def get_container_status(self, name: str):
+        self._guard()
+        return super().get_container_status(name)
+
+    def list_managed_containers(self, labels=None):
+        self._guard()
+        return super().list_managed_containers(labels)
+
+    def exec_in_container(self, container, command, detach=False, timeout=None):
+        self._note("exec_in_container", str(container))
+        return super().exec_in_container(
+            container, command, detach=detach, timeout=timeout
+        )
+
+    def copy_to_container(self, container, local_path, remote_path, timeout=120):
+        self._note("copy_to_container", str(container))
+        return super().copy_to_container(container, local_path, remote_path, timeout)
+
+
+class Fleet:
+    """One :class:`JournalDocker` per node address, resolved like the real thing."""
+
+    def __init__(self, addresses: list[str], fail_on: str = ""):
+        self.journal: list = []
+        self.nodes = {
+            address: JournalDocker(self.journal, address, fail_on=fail_on)
+            for address in addresses
+        }
+
+    def services(self, address: str):
+        return self.nodes[address]
+
+    def verbs(self, verb: str) -> list[str]:
+        return [name for kind, _node, name in self.journal if kind == verb]
+
+
+NODES = ["10.0.0.1", "10.0.0.2", "10.0.0.3"]
+
+
+@pytest.fixture
+def fleet():
+    return Fleet(NODES)
+
+
+class TestSizeOneIsUnchanged:
+    """The safety property: at one node the loop has length one.
+
+    Every other test in this file is a size-one deployment driven through the
+    unchanged public API, so the whole file is the regression suite. These add
+    the two things that are specific to ranks existing at all.
+    """
+
+    def test_a_size_one_deploy_makes_exactly_the_calls_it_always_made(
+        self, native, records
+    ):
+        journal: list = []
+        docker = JournalDocker(journal)
+        plan = native.plan("qwen3-8b")
+
+        native.start(plan, docker=docker, wait=True)
+
+        name = plan.container.name
+        # Create the idle container, copy the script in, chmod it, exec it.
+        # That is the pre-rank sequence, unchanged.
+        assert journal == [
+            ("run_container", "", name),
+            ("copy_to_container", "", name),
+            ("exec_in_container", "", name),
+            ("exec_in_container", "", name),
+        ]
+
+    def test_one_node_is_one_rank_on_this_machine(self, native, docker):
+        plan = native.plan("qwen3-8b")
+
+        record = native.start(plan, docker=docker, wait=True)
+
+        assert len(plan.rank_plans) == 1
+        assert plan.rank_plans[0].node == ""
+        assert plan.rank_plans[0].is_head is True
+        assert record["node_count"] == 1
+        assert [r["rank"] for r in record["ranks"]] == [0]
+        assert len(docker.client.containers.list(all=True)) == 1
+
+    def test_the_scalar_container_name_is_rank_zeros(self, native, docker):
+        plan = native.plan("qwen3-8b")
+        record = native.start(plan, docker=docker, wait=True)
+
+        # The alias every existing reader uses — the health router, the UI,
+        # the upstream path — is rank zero's, by identity not by copy.
+        assert plan.container is plan.rank_plans[0].container
+        assert record["container_name"] == plan.rank_plans[0].container.name
+        assert native.status(plan.deployment_id, docker=docker)["container_name"] == (
+            plan.container.name
+        )
+
+
+class TestRankNaming:
+    def test_a_rank_container_carries_deployment_rank_and_generation(self, native):
+        plan = native.plan("qwen3-8b", nodes=NODES, solo=False, deployment_id="dep1")
+
+        assert [r.container.name for r in plan.rank_plans] == [
+            "spark-pulse-dep1-r0-g1",
+            "spark-pulse-dep1-r1-g1",
+            "spark-pulse-dep1-r2-g1",
+        ]
+
+    def test_identity_labels_are_applied_last(self, native):
+        plan = native.plan("qwen3-8b", nodes=NODES, solo=False, deployment_id="dep1")
+
+        labels = plan.rank_plans[2].container.labels
+        assert labels[DEPLOYMENT_LABEL] == "dep1"
+        assert labels[GENERATION_LABEL] == "1"
+        assert labels[RANK_LABEL] == "2"
+        assert labels[WORLD_SIZE_LABEL] == "3"
+        # Identity is merged after the metadata block, so nothing can shadow it.
+        keys = list(labels)
+        assert keys.index(DEPLOYMENT_LABEL) < keys.index(GENERATION_LABEL)
+        assert labels[MANAGED_LABEL] == "true"
+
+    def test_the_started_container_really_carries_the_identity(self, native, fleet):
+        """The labels have to survive the container service, not just the plan."""
+        plan = native.plan("qwen3-8b", nodes=NODES, solo=False, deployment_id="dep1")
+        native.start(plan, services=fleet.services, wait=True)
+
+        container = fleet.nodes["10.0.0.3"].client.containers.get(
+            "spark-pulse-dep1-r2-g1"
+        )
+        assert container.labels[DEPLOYMENT_LABEL] == "dep1"
+        assert container.labels[GENERATION_LABEL] == "1"
+        assert container.labels[RANK_LABEL] == "2"
+        assert container.labels[WORLD_SIZE_LABEL] == "3"
+
+    def test_only_rank_zero_publishes_the_api_port(self, native):
+        with patch.object(
+            type(config),
+            "docker_overrides",
+            property(lambda self: {"network_host": False}),
+        ):
+            plan = native.plan("qwen3-8b", nodes=NODES, solo=False)
+        assert plan.rank_plans[0].container.port_mappings
+        assert plan.rank_plans[1].container.port_mappings == []
+        assert plan.rank_plans[2].container.port_mappings == []
+
+    def test_each_rank_renders_its_own_script(self, native):
+        plan = native.plan("qwen3-8b", nodes=NODES, solo=False)
+
+        assert plan.rank_plans[0].script != plan.rank_plans[1].script
+        assert "--node-rank 1" in plan.rank_plans[1].command
+        assert plan.rank_plans[1].node == "10.0.0.2"
+
+    def test_a_legacy_record_still_resolves_its_container(self, native):
+        """Records written before ranks existed carry only the scalar name."""
+        legacy = {"id": "old", "container_name": "spark-pulse-old"}
+        assert native.rank_entries(legacy) == [
+            {
+                "rank": 0,
+                "node": "",
+                "host": "",
+                "container_name": "spark-pulse-old",
+                "is_head": True,
+            }
+        ]
+        assert native.rank_entries({"id": "old"})[0]["container_name"] == (
+            "spark-pulse-old"
+        )
+
+
+class TestStartOrder:
+    def test_workers_are_created_first_and_rank_zero_last(self, native, fleet):
+        plan = native.plan("qwen3-8b", nodes=NODES, solo=False, deployment_id="dep1")
+
+        record = native.start(plan, services=fleet.services, wait=True)
+
+        assert record["status"] == "running"
+        assert fleet.verbs("run_container") == [
+            "spark-pulse-dep1-r2-g1",
+            "spark-pulse-dep1-r1-g1",
+            "spark-pulse-dep1-r0-g1",
+        ]
+
+    def test_each_rank_lands_on_its_own_node(self, native, fleet):
+        plan = native.plan("qwen3-8b", nodes=NODES, solo=False, deployment_id="dep1")
+        native.start(plan, services=fleet.services, wait=True)
+
+        for rank, address in enumerate(NODES):
+            names = [c.name for c in fleet.nodes[address].client.containers.list(True)]
+            assert names == [f"spark-pulse-dep1-r{rank}-g1"]
+
+    def test_rank_zero_is_stopped_first(self, native, fleet):
+        plan = native.plan("qwen3-8b", nodes=NODES, solo=False, deployment_id="dep1")
+        native.start(plan, services=fleet.services, wait=True)
+        fleet.journal.clear()
+
+        native.stop_deployment("dep1", services=fleet.services)
+
+        # Head first, so the rendezvous collapses instead of leaving the
+        # workers in a ten-minute collective timeout.
+        assert fleet.verbs("stop_container") == [
+            "spark-pulse-dep1-r0-g1",
+            "spark-pulse-dep1-r1-g1",
+            "spark-pulse-dep1-r2-g1",
+        ]
+
+
+class TestGangFailure:
+    def test_one_rank_failing_tears_the_rest_down(self, native, records):
+        fleet = Fleet(NODES, fail_on="-r1-")
+        plan = native.plan("qwen3-8b", nodes=NODES, solo=False, deployment_id="dep1")
+
+        record = native.start(plan, services=fleet.services, wait=True)
+
+        assert record["status"] == "error"
+        assert "rank 1 of 3" in record["error_message"]
+        assert "torn down" in record["error_message"]
+        # Rank 2 was already up when rank 1 failed; it must not survive.
+        for address in NODES:
+            assert fleet.nodes[address].client.containers.list(all=True) == []
+        assert "spark-pulse-dep1-r2-g1" in fleet.verbs("stop_container")
+
+    def test_the_failed_rank_leaves_no_partial_state(self, native, records):
+        fleet = Fleet(NODES, fail_on="-r1-")
+        plan = native.plan("qwen3-8b", nodes=NODES, solo=False, deployment_id="dep1")
+
+        native.start(plan, services=fleet.services, wait=True)
+
+        # No per-rank restart: the model is sharded across exactly these
+        # ranks, so there is nothing to keep half of.
+        assert fleet.verbs("run_container").count("spark-pulse-dep1-r1-g1") == 1
+
+
+class TestGenerations:
+    def _running(self, native, fleet, dep_id="dep1"):
+        plan = native.plan("qwen3-8b", nodes=NODES, solo=False, deployment_id=dep_id)
+        native.start(plan, services=fleet.services, wait=True)
+        return plan
+
+    def test_a_second_attempt_gets_the_next_generation(self, native, fleet):
+        self._running(native, fleet)
+
+        again = native.plan("qwen3-8b", nodes=NODES, solo=False, deployment_id="dep1")
+
+        assert again.generation == 2
+        assert again.container.name == "spark-pulse-dep1-r0-g2"
+
+    def test_a_name_from_an_old_generation_is_reaped(self, native, fleet):
+        self._running(native, fleet)
+        again = native.plan("qwen3-8b", nodes=NODES, solo=False, deployment_id="dep1")
+        fleet.journal.clear()
+
+        native.start(again, services=fleet.services, wait=True)
+
+        assert "spark-pulse-dep1-r0-g1" in fleet.verbs("stop_container")
+        for address in NODES:
+            live = [c.name for c in fleet.nodes[address].client.containers.list(True)]
+            assert all("-g1" not in name for name in live)
+
+    def test_the_old_generation_is_gone_before_the_new_one_is_created(
+        self, native, fleet
+    ):
+        self._running(native, fleet)
+        again = native.plan("qwen3-8b", nodes=NODES, solo=False, deployment_id="dep1")
+        fleet.journal.clear()
+
+        native.start(again, services=fleet.services, wait=True)
+
+        stops = [
+            i for i, (v, _n, name) in enumerate(fleet.journal) if v == "stop_container"
+        ]
+        creates = [
+            i
+            for i, (v, _n, name) in enumerate(fleet.journal)
+            if v == "run_container" and "-g2" in name
+        ]
+        assert stops and creates
+        assert max(stops) < min(creates)
+
+    def test_another_deployments_containers_are_never_touched(self, native, fleet):
+        """Reaping is scoped by the deployment label, not by the name prefix."""
+        self._running(native, fleet, dep_id="dep1")
+        self._running(native, fleet, dep_id="dep2")
+        fleet.journal.clear()
+
+        again = native.plan("qwen3-8b", nodes=NODES, solo=False, deployment_id="dep1")
+        native.start(again, services=fleet.services, wait=True)
+
+        assert all("dep2" not in name for name in fleet.verbs("stop_container"))
+        live = [c.name for c in fleet.nodes[NODES[0]].client.containers.list(True)]
+        assert "spark-pulse-dep2-r0-g1" in live
+
+    def test_a_leftover_that_will_not_go_away_fails_the_deploy(self, native, fleet):
+        self._running(native, fleet)
+        again = native.plan("qwen3-8b", nodes=NODES, solo=False, deployment_id="dep1")
+
+        with patch.object(nr, "_confirm_gone", return_value=False):
+            record = native.start(again, services=fleet.services, wait=True)
+
+        assert record["status"] == "error"
+        assert "did not go away" in record["error_message"]
+        # Nothing of the new generation was created.
+        for address in NODES:
+            live = [c.name for c in fleet.nodes[address].client.containers.list(True)]
+            assert all("-g2" not in name for name in live)
+
+
+class TestOrphans:
+    def _running(self, native, fleet):
+        plan = native.plan("qwen3-8b", nodes=NODES, solo=False, deployment_id="dep1")
+        native.start(plan, services=fleet.services, wait=True)
+        return plan
+
+    def test_an_unreachable_node_leaves_an_outstanding_orphan(self, native, fleet):
+        plan = self._running(native, fleet)
+        fleet.nodes["10.0.0.3"].unreachable = True
+
+        record = native.stop_deployment("dep1", services=fleet.services)
+
+        assert record["status"] == "stopped"
+        assert [o["rank"] for o in record["orphans"]] == [2]
+        assert record["orphans"][0]["node"] == "10.0.0.3"
+        assert record["orphans"][0]["container_name"] == "spark-pulse-dep1-r2-g1"
+        assert plan.port
+
+    def test_an_orphans_ports_stay_held(self, native, fleet):
+        plan = self._running(native, fleet)
+        fleet.nodes["10.0.0.3"].unreachable = True
+        native.stop_deployment("dep1", services=fleet.services)
+
+        # Stopped, but not released: nothing has confirmed rank 2 is gone, and
+        # handing its port out again is the orphan bug this design refuses.
+        assert plan.port in nr._ports_in_use()
+
+    def test_ports_are_released_once_the_node_answers(self, native, fleet):
+        plan = self._running(native, fleet)
+        fleet.nodes["10.0.0.3"].unreachable = True
+        native.stop_deployment("dep1", services=fleet.services)
+
+        fleet.nodes["10.0.0.3"].unreachable = False
+        fleet.nodes["10.0.0.3"].client.containers.remove_container(
+            "spark-pulse-dep1-r2-g1"
+        )
+        cleared = native.sweep_orphans("dep1", services=fleet.services)
+
+        assert cleared == 1
+        assert native.get_deployment("dep1")["orphans"] == []
+        assert plan.port not in nr._ports_in_use()
+
+    def test_a_deployment_with_orphans_is_not_dropped(self, native, fleet, records):
+        self._running(native, fleet)
+        fleet.nodes["10.0.0.3"].unreachable = True
+
+        assert native.delete_deployment("dep1", services=fleet.services) is False
+        assert native.get_deployment("dep1") is not None
+
+    def test_a_container_still_present_after_a_stop_is_an_orphan(self, native, fleet):
+        self._running(native, fleet)
+
+        with patch.object(nr, "_confirm_gone", return_value=False):
+            record = native.stop_deployment("dep1", services=fleet.services)
+
+        assert [o["rank"] for o in record["orphans"]] == [0, 1, 2]
+        assert "still present" in record["orphans"][0]["reason"]
+
+
+class TestPerRankReads:
+    def _running(self, native, fleet):
+        plan = native.plan("qwen3-8b", nodes=NODES, solo=False, deployment_id="dep1")
+        native.start(plan, services=fleet.services, wait=True)
+        return plan
+
+    def test_logs_default_to_rank_zero(self, native, fleet):
+        self._running(native, fleet)
+        assert "spark-pulse-dep1-r0-g1" in native.get_logs(
+            "dep1", 50, services=fleet.services
+        )
+
+    def test_logs_can_name_a_rank(self, native, fleet):
+        self._running(native, fleet)
+        assert "spark-pulse-dep1-r2-g1" in native.get_logs(
+            "dep1", 50, rank=2, services=fleet.services
+        )
+
+    def test_logs_for_a_rank_that_does_not_exist(self, native, fleet):
+        self._running(native, fleet)
+        assert "no rank 9" in native.get_logs(
+            "dep1", 50, rank=9, services=fleet.services
+        )
+
+    def test_status_reports_every_rank(self, native, fleet):
+        self._running(native, fleet)
+
+        state = native.status("dep1", services=fleet.services)
+
+        assert [r["rank"] for r in state["ranks"]] == [0, 1, 2]
+        assert all(r["container"]["running"] for r in state["ranks"])
+        # The scalar stays rank zero's for readers that predate ranks.
+        assert state["container"] == state["ranks"][0]["container"]
+
+    def test_an_unreachable_rank_reads_as_unknown_not_dead(self, native, fleet):
+        self._running(native, fleet)
+        fleet.nodes["10.0.0.2"].unreachable = True
+
+        state = native.status("dep1", services=fleet.services)
+
+        assert state["ranks"][1]["container"]["status"] == "unknown"
+        assert state["status"] == "running"
+
+    def test_listing_does_not_stop_a_deployment_on_a_node_it_cannot_see(
+        self, native, fleet, docker
+    ):
+        self._running(native, fleet)
+
+        # ``docker`` here is this machine's service and holds none of the
+        # gang's containers. Marking the deployment stopped on that silence
+        # would be releasing on inference.
+        listed = native.list_deployments(docker=docker)
+
+        assert [d["status"] for d in listed if d["id"] == "dep1"] == ["running"]
