@@ -89,6 +89,22 @@ class ClusterOrchestrator:
         """The container service for whichever machine ``address`` names."""
         return self._services(node_for(address))
 
+    def _image_for(self, address: str, image: str) -> str:
+        """The image reference the machine at ``address`` should pull.
+
+        The control node keeps the upstream reference — it is the node holding
+        the registry credential. A worker has none, so it is pointed at the
+        seeded copy in the control node's registry: same repository, same
+        digest, different host, which is exactly why those three are stored
+        apart rather than as one string. When the registry does not hold it,
+        the reference is left alone rather than rewritten to a dead end.
+        """
+        from spark_pulse import tools
+
+        if node_for(address).is_self:
+            return image
+        return tools.registry.node_reference(image)
+
     @property
     def services(self) -> Callable[[Node], NodeService]:
         """The node resolver this orchestrator hands out services from."""
@@ -164,10 +180,13 @@ class ClusterOrchestrator:
 
             # 2. Start head node
             head_name = f"{name}-head"
-            head_metadata = self._build_metadata(name, image, "head", no_ray=no_ray)
+            head_image = self._image_for(head_ip, image)
+            head_metadata = self._build_metadata(
+                name, head_image, "head", no_ray=no_ray
+            )
             logger.info("Starting head node %s at %s", head_name, head_ip)
             self._service(head_ip).run_container(
-                image=image,
+                image=head_image,
                 name=head_name,
                 env_vars=env_vars,
                 metadata=head_metadata,
@@ -186,9 +205,10 @@ class ClusterOrchestrator:
             worker_nodes: list[ClusterNode] = []
             for i, worker_ip in enumerate(worker_ips):
                 worker_name = f"{name}-worker-{i}"
+                worker_image = self._image_for(worker_ip, image)
                 worker_metadata = self._build_metadata(
                     name,
-                    image,
+                    worker_image,
                     "worker",
                     head_ip=head_ip,
                     node_rank=i + 1,
@@ -196,7 +216,7 @@ class ClusterOrchestrator:
                 )
                 logger.info("Starting worker node %s at %s", worker_name, worker_ip)
                 self._service(worker_ip).run_container(
-                    image=image,
+                    image=worker_image,
                     name=worker_name,
                     env_vars=env_vars,
                     metadata=worker_metadata,
