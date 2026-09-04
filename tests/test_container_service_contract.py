@@ -17,16 +17,21 @@ production code paths, not stand-ins for them, are what run.
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock
+import sys
+import threading
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from spark_pulse.config import config
 from spark_pulse.mock.docker import MockDockerService, MockDockerClient
 from spark_pulse.tools.docker import (
     ContainerInfo,
     ContainerMetadata,
     DockerService,
     ExecResult,
+    PullCancelled,
+    PullStalled,
     split_ref,
 )
 from spark_pulse.tools.labels import (
@@ -565,3 +570,195 @@ class _PinnedHost:
 
     def list_managed_containers(self, host, labels=None):
         return self._service.list_managed_containers(host or self._host, labels)
+
+
+# ── Client hygiene ──────────────────────────────────────────────────────────
+
+
+class TestClientPerThread:
+    """docker-py's client is not thread-safe, so each thread needs its own.
+
+    Upstream says so plainly, and the reason is that a ``DockerClient`` is a
+    ``requests.Session`` with a connection pool behind it. One module-global
+    service is fine; one *client* shared by the health monitor, the pull
+    threads, the readiness watcher, the fan-outs and forty request threads is
+    not.
+    """
+
+    @staticmethod
+    def _client_module() -> MagicMock:
+        """A stand-in for the ``docker`` package handing out fresh clients."""
+        module = MagicMock(name="docker-module")
+        module.from_env.side_effect = lambda: MagicMock(name="DockerClient")
+        return module
+
+    @staticmethod
+    def _collect(service: DockerService, count: int) -> list:
+        """Read ``service.client`` on ``count`` separate threads."""
+        seen: list = [None] * count
+        errors: list = []
+
+        def _grab(index: int) -> None:
+            try:
+                seen[index] = service.client
+            except BaseException as exc:  # pragma: no cover - surfaced below
+                errors.append(exc)
+
+        threads = [
+            threading.Thread(target=_grab, args=(i,), name=f"grab-{i}")
+            for i in range(count)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=5)
+        assert not errors, errors
+        return seen
+
+    def test_two_threads_get_different_clients(self):
+        """Nothing is shared between threads when the client is ours to make."""
+        service = DockerService()
+
+        with patch.dict(sys.modules, {"docker": self._client_module()}):
+            first, second = self._collect(service, 2)
+
+        assert first is not None and second is not None
+        assert first is not second
+
+    def test_one_thread_keeps_its_own_client(self):
+        """Per-thread, not per-call: the connection pool must survive."""
+        service = DockerService()
+
+        with patch.dict(sys.modules, {"docker": self._client_module()}):
+            assert service.client is service.client
+
+    def test_an_injected_client_is_honoured_on_every_thread(self):
+        """A fake handed in is the whole object under test — never bypassed."""
+        injected = _fake_sdk_client()
+        service = DockerService(client=injected)
+
+        seen = self._collect(service, 4)
+
+        assert seen == [injected] * 4
+        assert service.client is injected
+
+    def test_an_injected_client_never_reaches_from_env(self):
+        """An injected client short-circuits creation entirely."""
+        module = self._client_module()
+        service = DockerService(client=_fake_sdk_client())
+
+        with patch.dict(sys.modules, {"docker": module}):
+            self._collect(service, 2)
+
+        module.from_env.assert_not_called()
+
+
+class TestPullWatchdog:
+    """A pull with no timeout is a thread held until the process dies."""
+
+    @staticmethod
+    def _stalling_client(release: threading.Event) -> MagicMock:
+        """A client whose pull emits one chunk and then goes quiet."""
+        client = _fake_sdk_client()
+
+        def _pull(repository, tag="latest", **_kwargs):
+            def _stream():
+                yield {
+                    "status": "Downloading",
+                    "id": "layer-a",
+                    "progressDetail": {"current": 1, "total": 1_000_000},
+                }
+                # Nothing more arrives until the test lets go, which is well
+                # past when the watchdog should have given up.
+                release.wait(20)
+
+            return _stream()
+
+        client.api.pull.side_effect = _pull
+        return client
+
+    def test_a_stalled_pull_trips_the_watchdog(self):
+        """Silence past the timeout fails the pull instead of hanging."""
+        release = threading.Event()
+        docker = DockerService(client=self._stalling_client(release))
+        try:
+            with pytest.raises(PullStalled) as caught:
+                docker.pull_image(MISSING_IMAGE, stall_timeout=0.2)
+        finally:
+            release.set()
+
+        message = str(caught.value)
+        assert MISSING_IMAGE in message
+        assert "stalled" in message
+        assert "no pull progress for 0.2s" in message
+
+    def test_the_watchdog_default_comes_from_config(self):
+        """Callers that pass nothing get the configured stall timeout."""
+        release = threading.Event()
+        docker = DockerService(client=self._stalling_client(release))
+        try:
+            with patch.object(
+                type(config),
+                "docker_pull_stall_timeout_seconds",
+                property(lambda self: 1),
+            ):
+                with pytest.raises(PullStalled) as caught:
+                    docker.pull_image(MISSING_IMAGE)
+        finally:
+            release.set()
+
+        assert "no pull progress for 1s" in str(caught.value)
+
+    def test_a_healthy_pull_is_untouched_by_the_watchdog(self):
+        """Chunks that keep arriving are never mistaken for a stall."""
+        docker = DockerService(client=_fake_sdk_client())
+
+        result = docker.pull_image(MISSING_IMAGE, stall_timeout=5)
+
+        assert result["percent"] == 100.0
+        assert docker.image_exists(MISSING_IMAGE)
+
+    def test_a_disabled_watchdog_still_pulls(self):
+        """Zero opts out, which is what the in-memory fakes want."""
+        docker = DockerService(client=_fake_sdk_client())
+
+        assert docker.pull_image(MISSING_IMAGE, stall_timeout=0)["percent"] == 100.0
+
+
+class TestPullCancellation:
+    """Cancel is a per-chunk question, not a per-snapshot one."""
+
+    def test_cancel_lands_on_the_next_chunk_not_the_next_snapshot(self):
+        """A throttle interval no snapshot ever reaches still cancels at once."""
+        docker = DockerService(client=_fake_sdk_client())
+        snapshots: list[dict] = []
+        asked = 0
+
+        def _cancel() -> bool:
+            nonlocal asked
+            asked += 1
+            return asked > 2
+
+        with pytest.raises(PullCancelled) as caught:
+            docker.pull_image(
+                MISSING_IMAGE,
+                snapshots.append,
+                # An hour: a flag read inside the progress callback would
+                # never get the chance to see it.
+                interval=3600,
+                cancel=_cancel,
+                stall_timeout=0,
+            )
+
+        assert MISSING_IMAGE in str(caught.value)
+        assert snapshots == [], "no progress snapshot fired, yet the cancel landed"
+        assert asked == 3, "the flag is read once per chunk"
+        assert docker.image_exists(MISSING_IMAGE) is False
+
+    def test_a_pull_nobody_cancels_completes(self):
+        """The cancel hook is consulted, not assumed."""
+        docker = DockerService(client=_fake_sdk_client())
+
+        result = docker.pull_image(MISSING_IMAGE, cancel=lambda: False)
+
+        assert result["percent"] == 100.0
