@@ -11,11 +11,20 @@ reproduces upstream ``run-recipe.py`` semantics exactly:
 * ``--distributed-executor-backend`` never survives: there is no Ray at any
   size, and vLLM picks ``uni`` at one node and ``mp`` above on its own;
 * every size gets ``--nnodes/--node-rank/--master-addr/--master-port``, plus
-  ``--headless`` for every rank above zero. These are stock upstream flags
-  since vLLM 0.11.1, and at one node they are provably never read: vLLM
-  derives a file-based store rather than a TCP one below two nodes. Rendering
-  them unconditionally is what removes the solo special case — there is no
-  rewrite left to get wrong.
+  ``--headless`` for every rank above zero. These are stock ``vllm serve``
+  flags since 0.11.1 (`PR #23691
+  <https://github.com/vllm-project/vllm/pull/23691>`_). Rendering them
+  unconditionally is what removes the solo special case — there is no rewrite
+  left to get wrong.
+
+  The precise claim about one node, because a looser one was wrong here
+  before: the executor chooses a ``file://`` store *unconditionally*, and
+  ``init_distributed_environment`` overrides it with
+  ``tcp://master_addr:master_port`` only when ``nnodes > 1`` **or**
+  ``data_parallel_size > 1``. So at ``nnodes=1`` with ``dp=1`` the two address
+  flags are not read, and at ``nnodes=1`` with ``dp>1`` ``--master-addr``
+  *is*: ``create_engine_config`` seeds the data-parallel address from it. We
+  render loopback there, which is the value that path would have used anyway.
 
 Recipes without a ``command`` (v2 style) render
 ``vllm serve <model> <mapped params> <engine args>``.
@@ -104,16 +113,38 @@ class VllmEngine(Engine):
         eth_if: str = "",
         ib_if: str = "",
         node_count: int = 1,
+        mesh: bool = False,
     ) -> dict[str, str]:
         env: dict[str, str] = {}
         if node_ip:
             env["VLLM_HOST_IP"] = node_ip
+        # A no-op: NCCL's own default is 0 (``NCCL_PARAM(IbDisable, …, 0)``,
+        # undocumented in the env guide) and the only use site is a ``!= 0``
+        # early return. Upstream sets it explicitly at launch-cluster.sh:967
+        # and so do we, because an operator reading the rendered environment
+        # should be able to see that RoCE is meant to be on.
         env["NCCL_IB_DISABLE"] = "0"
-        env.update(self.pinning_env(eth_if, ib_if, node_count))
+        env.update(self.pinning_env(eth_if, ib_if, node_count, mesh))
         env.update(self.spec.runtime.env)
         return env
 
     def _fabric_env(self, eth_if: str, ib_if: str) -> dict[str, str]:
+        """Upstream's per-node interface variables, verbatim.
+
+        ``launch-cluster.sh`` lines 957-974 set all of these. Three of them do
+        nothing in *our* launch and are kept for parity rather than effect:
+        ``UCX_NET_DEVICES`` is read by libucp when a UCX context is created,
+        ``OMPI_MCA_btl_tcp_if_include`` by Open MPI inside ``MPI_Init``, and
+        ``TP_SOCKET_IFNAME`` by PyTorch's TensorPipe RPC agent — none of which
+        a ``vllm serve`` over NCCL and Gloo ever constructs. Upstream needs
+        them because the same interface names drive its ``mpirun``-based
+        ``nccl-tests`` runs. They cost nothing, they are correct if anything
+        ever does load UCX (the ``ucc`` process-group backend would), and
+        dropping them would be a divergence with no benefit.
+
+        ``MN_IF_NAME`` is likewise not read by NCCL, Gloo or vLLM; it is
+        upstream's own convention and is kept for the same reason.
+        """
         env: dict[str, str] = {}
         if eth_if:
             env["MN_IF_NAME"] = eth_if
@@ -177,6 +208,7 @@ class VllmEngine(Engine):
             eth_if=node.eth_if,
             ib_if=node.ib_if,
             node_count=topology.size,
+            mesh=node.mesh,
         )
         env.update(self._block_env(recipe))
 

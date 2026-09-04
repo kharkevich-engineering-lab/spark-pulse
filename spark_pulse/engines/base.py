@@ -21,11 +21,16 @@ from pydantic import BaseModel, ConfigDict, Field
 
 #: The largest topology any engine may be asked for.
 #:
-#: NVIDIA publishes a two-node bring-up guide for DGX Spark and a three- and
-#: four-node direct-connect mesh, and nothing at all above four. A fifth node
-#: has no documented cabling, no documented NCCL configuration and no way for
-#: us to check either, so the plan refuses it by number rather than letting an
-#: operator discover it as a rendezvous that never forms.
+#: NVIDIA's Sync cluster assistant supports "two to a maximum of four DGX Spark
+#: devices" (https://docs.nvidia.com/sync/latest/cluster-assistant.html), and
+#: its own playbooks cover exactly three arrangements: two nodes on one cable,
+#: three in a switchless ring, and four behind a QSFP switch. A fifth node has
+#: no NVIDIA-documented configuration and no way for us to check one, so the
+#: plan refuses it by number rather than letting an operator discover it as a
+#: rendezvous that never forms. Larger clusters do exist in the community —
+#: an eight-node build behind two MikroTik CRS812-DDQ switches is described at
+#: https://forums.developer.nvidia.com/t/6x-spark-setup/354399 — but nothing
+#: authoritative describes how to configure one, so we do not pretend to.
 MAX_CLUSTER_NODES = 4
 
 # ── Spec model (mirrors engine.yaml) ─────────────────────────────────────────
@@ -87,10 +92,17 @@ class EngineCapabilities(BaseModel):
 
     * ``solo`` — one node.
     * ``cluster`` — two nodes, the size NVIDIA publishes guidance for.
-    * ``mesh`` — three or four nodes, directly connected. The ring
-      configuration differs at three and aggregate bandwidth roughly halves,
-      so an engine that has only ever been arranged as a pair must say so
-      rather than be assumed to generalise.
+    * ``mesh`` — three or four nodes. NVIDIA gives two ways to get there: a
+      QSFP switch, or — at three nodes only — a switchless ring cabling port 0
+      of one Spark into port 1 of the next
+      (https://build.nvidia.com/spark/nccl/three-sparks). Either way the
+      arrangement is not more of a pair: the ring needs NCCL settings a pair
+      does not, and daisy-chaining three Sparks is reported to sustain only
+      100G between each pair rather than 200G (``spark-vllm-docker``
+      ``docs/NETWORKING.md`` line 43 — NVIDIA publishes no ring bandwidth
+      figure either way). Tensor parallelism is also documented as wanting a
+      power-of-two node count (line 6). So an engine that has only ever been
+      arranged as a pair must claim this rather than be assumed to generalise.
 
     None of these is a claim that the size has been *run*; it is a claim that
     the engine renders and is documented for it. See
@@ -201,6 +213,11 @@ class NodeInfo:
     ip: str = ""
     eth_if: str = ""
     ib_if: str = ""
+    #: Whether this machine is cabled as the switchless mesh — all four CX7
+    #: ports up, port 0 of one Spark into port 1 of the next. It carries three
+    #: NCCL settings a single-cable fabric must not get; see
+    #: :data:`~spark_pulse.tools.discovery.MESH_NCCL_ENV`.
+    mesh: bool = False
 
     def address(self) -> str:
         return self.ip or self.host
@@ -431,39 +448,64 @@ class Engine:
         if node_count >= 3 and not caps.mesh:
             return False, (
                 f"engine '{self.spec.key}' declares mesh: false, so it claims "
-                f"only the two-node arrangement, not the {node_count}-node "
-                "mesh. Three and four nodes are cabled as a direct-connect "
-                "mesh whose ring differs from a pair's and whose aggregate "
-                "bandwidth is roughly half, so it is a different "
+                f"only the two-node arrangement, not {node_count} nodes. "
+                "Above two, NVIDIA's reference wants a QSFP switch or — at "
+                "three nodes — a switchless ring cabling port 0 of one Spark "
+                "into port 1 of the next; a daisy chain sustains 100G between "
+                "each pair rather than 200G, so it is a different "
                 "configuration rather than more of the same. Deploy on two "
                 "nodes, or pick an engine variant that declares mesh support"
             )
         return True, ""
 
-    def pinning_env(self, eth_if: str, ib_if: str, node_count: int) -> dict[str, str]:
+    def pinning_env(
+        self, eth_if: str, ib_if: str, node_count: int, mesh: bool = False
+    ) -> dict[str, str]:
         """Interface pinning — the one thing that differs at a single node.
 
         Everything else about a launch is rendered identically at every size.
         This is not, and the gate belongs here rather than spread across the
         engines.
 
-        ``NCCL_SOCKET_IFNAME``, ``GLOO_SOCKET_IFNAME`` and their friends are
-        find-or-fail: a collective told to use ``enp1s0f0np0`` dies if that
-        interface is missing rather than falling back. Pinning the fabric is
-        right when ranks talk across machines and wrong when there is only one
-        machine, which never touches the fabric at all. A solo deployment used
-        to get none of these because its topology carried no nodes; now that a
-        size-one topology carries a real node, the gate is what keeps them off
-        that path.
+        ``NCCL_SOCKET_IFNAME`` and ``GLOO_SOCKET_IFNAME`` are find-or-fail: a
+        collective told to use ``enp1s0f0np0`` dies if that interface is
+        missing rather than choosing another. NCCL's selection code says so in
+        as many words — ``// Specified by user : find or fail`` in
+        ``src/misc/socket.cc`` — and its callers turn an empty result into
+        ``WARN("Bootstrap : no socket interface found")``. ``NCCL_IB_HCA`` is
+        *not* find-or-fail: a name that matches no device leaves NCCL with
+        zero IB devices, which disables the IB plugin and silently falls back
+        to TCP sockets at INFO level. That is worse than an error, not better,
+        which is why the pre-flight checks the names.
+
+        Pinning the fabric is right when ranks talk across machines and wrong
+        when there is only one machine, which never touches the fabric at all.
+        A solo deployment used to get none of these because its topology
+        carried no nodes; now that a size-one topology carries a real node,
+        the gate is what keeps them off that path.
 
         One variable is still worth setting alone: ``GLOO_SOCKET_IFNAME=lo``.
-        Gloo otherwise resolves the machine's hostname to choose an interface,
-        which fails outright on a host whose hostname does not resolve, and
-        loopback is the correct choice for a single node in any case.
+        Gloo otherwise calls ``gethostname()`` and resolves it to pick an
+        interface (``ProcessGroupGloo.cpp``, ``createDefaultDevice``), warning
+        and falling back to loopback when that does not resolve. Loopback is
+        the right answer for a single node anyway — and only for a single
+        node, which is why this sits behind the same gate.
+
+        ``mesh`` adds the three NCCL settings upstream writes into ``.env``
+        when it finds four CX7 ports up (``autodiscover.sh`` lines 186-190).
+        They configure NCCL itself rather than the serving framework, so both
+        engines get them, and a single-cable fabric must not: subnet-aware
+        routing and a disabled NIC merge are corrections for a ring whose
+        links land on different subnets, which a pair does not have.
         """
-        if node_count > 1:
-            return self._fabric_env(eth_if, ib_if)
-        return {"GLOO_SOCKET_IFNAME": "lo"}
+        if node_count <= 1:
+            return {"GLOO_SOCKET_IFNAME": "lo"}
+        env = self._fabric_env(eth_if, ib_if)
+        if mesh:
+            from spark_pulse.tools.discovery import MESH_NCCL_ENV
+
+            env.update(MESH_NCCL_ENV)
+        return env
 
     def _fabric_env(self, eth_if: str, ib_if: str) -> dict[str, str]:
         """Fabric pinning for this engine. Only called above one node."""
@@ -481,9 +523,10 @@ class Engine:
         eth_if: str = "",
         ib_if: str = "",
         node_count: int = 1,
+        mesh: bool = False,
     ) -> dict[str, str]:
         """Environment shared by every rank. Subclasses extend this."""
-        env = self.pinning_env(eth_if, ib_if, node_count)
+        env = self.pinning_env(eth_if, ib_if, node_count, mesh)
         env.update(self.spec.runtime.env)
         return env
 

@@ -17,10 +17,14 @@ reproduces the upstream lifecycle described in the native-runtime plan §1.4:
 The gang semantics are the ones §3.3 of ``docs/cluster-agent-plan.md`` takes
 from every system surveyed:
 
-* **Ordered.** Workers are created first and rank zero last, which is
-  upstream's proven order and collapses the rendezvous cleanly. Teardown is
-  the reverse — rank zero first — so workers are not left in a ten-minute NCCL
-  collective timeout.
+* **Ordered.** Every container is created first and only then launched —
+  workers first, rank zero last, which is upstream's order. Teardown is the
+  reverse, rank zero first, so a worker is not left blocking on a store whose
+  server has gone. That block is bounded by PyTorch's ``init_process_group``
+  timeout, which defaults to ten minutes for NCCL and thirty for gloo and
+  which vLLM leaves alone unless ``--distributed-timeout-seconds`` is passed.
+  It is *PyTorch's* timeout: NCCL itself has no collective timeout and no
+  environment variable for one.
 * **All-or-nothing.** Any rank failing fails the deployment. There is no
   partial state and no per-rank restart, because the model is sharded across
   exactly those ranks. Docker's restart policy is ``no`` so a rebooting node
@@ -67,6 +71,7 @@ from spark_pulse.engines import (
     Topology,
     get_registry,
 )
+from spark_pulse.tools.discovery import FABRIC_MESH, MESH_RING_NODES
 from spark_pulse.tools.docker import ContainerMetadata, PullCancelled
 from spark_pulse.tools.events import DeploymentEvent, EventType
 from spark_pulse.tools.labels import (
@@ -282,7 +287,7 @@ class DeployPlan:
         return list(reversed(self.rank_plans))
 
     def teardown_order(self) -> list[RankPlan]:
-        """Rank zero first, so no worker sits in a collective timeout."""
+        """Rank zero first, so no worker sits blocked on a store that is gone."""
         return list(self.rank_plans)
 
 
@@ -648,6 +653,7 @@ def _build_env(
             eth_if=node.eth_if,
             ib_if=node.ib_if,
             node_count=topology.size,
+            mesh=node.mesh,
         )
     )
     # Per-engine env, so deploying a v2 recipe on its non-default engine does
@@ -728,18 +734,21 @@ def _check_capacity(recipe_id: str, command: str, nodes: int) -> None:
             f"parallelism or deploy across {needed} nodes"
         )
     if needed < nodes:
-        # Upstream trimmed the extra peers silently. Refusing is the honest
-        # version: the rendered ``--nnodes`` is the node count, so every rank
-        # waits at the rendezvous for ranks that have no shard to hold, and
-        # the launch hangs until the 600 s rendezvous timeout rather than
-        # serving on a subset.
+        # Upstream trimmed the extra peers silently (launch-cluster.sh line
+        # 1267). Refusing is the honest version, and vLLM agrees: above one
+        # node it requires --nnodes to divide the world size exactly and
+        # raises "must evenly divide the total world size" otherwise
+        # (vllm/engine/arg_utils.py, since 0.11.1). So a trimmed launch does
+        # not hang — it fails on every rank with an argument error, N
+        # containers after the point where we could have said this once.
         raise NativeRuntimeError(
             f"recipe '{recipe_id}' asks for {nodes} nodes but its parallelism "
             f"only occupies {needed} of them ({shape}). One GPU per node means "
-            f"the world size is the node count, so the extra "
-            f"{nodes - needed} node(s) would join the rendezvous with nothing "
-            f"to hold and the launch would hang. Deploy on {needed} node(s), "
-            f"or raise the parallelism until tp*pp*dp is {nodes}"
+            f"the world size is the node count, and vLLM refuses a --nnodes "
+            f"that does not divide the world size exactly, so this would fail "
+            f"on every rank rather than serve on a subset. Deploy on "
+            f"{needed} node(s), or raise the parallelism until tp*pp*dp is "
+            f"{nodes}"
         )
 
 
@@ -806,19 +815,54 @@ def _resolve_topology(node_list: list[str], warnings: list[str]) -> Topology:
 
     nodes: list[NodeInfo] = []
     unpinned: list[str] = []
+    by_fabric: dict[str, list[str]] = {}
     for address in node_list:
         record = records[address]
         if not record.ethernet_interface and not record.infiniband_interfaces:
             unpinned.append(record.label)
+        if record.fabric_mode:
+            by_fabric.setdefault(record.fabric_mode, []).append(record.label)
         nodes.append(
             NodeInfo(
                 host=address,
                 ip=address,
                 eth_if=record.ethernet_interface,
                 # NCCL_IB_HCA takes a comma-separated selector list, which is
-                # the order discovery reported the fabric ports in.
+                # the order discovery reported the fabric ports in. It holds
+                # both RoCE twins of every cabled port; naming one halves the
+                # bandwidth without failing.
                 ib_if=",".join(record.infiniband_interfaces),
+                mesh=record.fabric_mode == FABRIC_MESH,
             )
+        )
+    if len(by_fabric) > 1:
+        # A mesh is a ring every member takes part in — port 0 of one Spark
+        # into port 1 of the next, all four ports up. One node cabled that way
+        # and another on a single cable is not a fabric, and it decides three
+        # NCCL settings that either apply to the whole collective or to none
+        # of it.
+        described = "; ".join(
+            f"{mode}: {', '.join(sorted(labels))}"
+            for mode, labels in sorted(by_fabric.items())
+        )
+        raise NativeRuntimeError(
+            f"the nodes disagree about how the fabric is cabled ({described}). "
+            "A switchless mesh is a ring every node is part of, and it needs "
+            "NCCL settings a single-cable fabric must not get, so the "
+            "collective cannot be configured for both. Re-run discovery on "
+            "the nodes whose cabling changed, or correct fabric_mode on their "
+            "registry records (PATCH /api/nodes/{id})"
+        )
+    if FABRIC_MESH in by_fabric and len(node_list) != MESH_RING_NODES:
+        raise NativeRuntimeError(
+            f"{', '.join(sorted(by_fabric[FABRIC_MESH]))} report the switchless "
+            f"ring, which NVIDIA documents at exactly {MESH_RING_NODES} nodes "
+            f"and not at {len(node_list)}. Its own NCCL launcher refuses any "
+            "other count outright, and a four-node ring has no published "
+            "cabling, no published NCCL configuration and no reference "
+            "bandwidth. Deploy the ring on three nodes, or put the cluster "
+            "behind a QSFP switch and re-run discovery so the nodes report a "
+            "single cable"
         )
     warnings.append(MULTI_NODE_UNPROVEN)
     if unpinned:
@@ -1387,7 +1431,9 @@ def _teardown_entries(
     """Tear ranks down head-first, collecting the ones left outstanding.
 
     Rank zero dies first so the rendezvous collapses instead of leaving the
-    workers in a ten-minute NCCL collective timeout.
+    workers blocked on it for PyTorch's ``init_process_group`` timeout — ten
+    minutes for NCCL, thirty for gloo. It is PyTorch's, not NCCL's: NCCL has
+    no collective timeout of its own.
     """
     orphans: list[dict[str, Any]] = []
     for entry in sorted(entries, key=lambda e: int(e.get("rank", 0))):
@@ -1552,13 +1598,20 @@ def persist_planned_record(plan_obj: DeployPlan, status: str) -> dict[str, Any]:
     return record
 
 
-def _start_rank(
+def _create_rank(
     docker: Any,
     plan_obj: DeployPlan,
     rank_plan: RankPlan,
     warnings: list[str],
 ) -> None:
-    """Bring one rank up: idle container -> mods -> exec script.
+    """Create one rank's idle container and apply the mods to it.
+
+    Nothing is *launched* here — that is :func:`_launch_rank`, and the split
+    is upstream's. ``launch-cluster.sh`` runs every container first (line
+    1097 for the head, 1106 for each worker), applies mods to all of them
+    (1111-1121), and only then execs the serve command (1201-1242). Doing it
+    in one pass per rank instead would have rank one already rendezvousing
+    while rank zero's image turns out to be missing.
 
     Raises :class:`NativeRuntimeError` with an explained reason. The caller
     tears the whole gang down on any failure; nothing is retried per rank,
@@ -1567,6 +1620,20 @@ def _start_rank(
     dep_id = plan_obj.deployment_id
     spec = rank_plan.container
     where = rank_plan.node or "this machine"
+
+    # Bind sources have to exist before the container does, or docker creates
+    # them owned by root and every later write to the HF cache fails.
+    if spec.mounts:
+        try:
+            unmade = docker.ensure_directories(sorted(spec.mounts))
+        except Exception as exc:  # pragma: no cover — best effort
+            logger.debug("could not create mount sources on %s: %s", where, exc)
+            unmade = []
+        if unmade:
+            warnings.append(
+                f"could not create {', '.join(unmade)} on {where}; docker will "
+                "create them as root, which breaks later writes to the cache"
+            )
 
     try:
         docker.run_container(
@@ -1616,8 +1683,16 @@ def _start_rank(
             {"mods": applied, "warnings": warnings, "rank": rank_plan.rank},
         )
 
+
+def _launch_rank(docker: Any, plan_obj: DeployPlan, rank_plan: RankPlan) -> None:
+    """Exec one rank's rendered script in the container already created for it."""
     _deploy_script(docker, rank_plan)
-    logger.info("rank %s of %s is running on %s", rank_plan.rank, dep_id, where)
+    logger.info(
+        "rank %s of %s is running on %s",
+        rank_plan.rank,
+        plan_obj.deployment_id,
+        rank_plan.node or "this machine",
+    )
 
 
 def start(
@@ -1691,23 +1766,37 @@ def start(
     except NativeRuntimeError as exc:
         return _fail(str(exc))
 
-    started_ranks: list[RankPlan] = []
+    # Two phases, as upstream has them. Every container is created and
+    # modded before any of them is launched, so an image that is missing on
+    # rank zero surfaces before rank one has joined a rendezvous; then the
+    # workers are launched and rank zero last, so nobody is left in a
+    # store-connect timeout waiting for a head that never started.
+    touched: list[RankPlan] = []
+
+    def _abort(rank_plan: RankPlan, exc: Exception, phase: str) -> dict[str, Any]:
+        # The rank that failed may itself have a container: run_container can
+        # succeed and a mod or the script copy fail after it.
+        pending = [*touched] if rank_plan in touched else [*touched, rank_plan]
+        orphans = _teardown_entries(services, [_rank_record(r) for r in pending])
+        return _fail(
+            f"rank {rank_plan.rank} of {plan_obj.node_count} on "
+            f"{rank_plan.node or 'this machine'} failed to {phase}, so the "
+            f"whole deployment was torn down: {exc}",
+            orphans,
+        )
+
+    for rank_plan in plan_obj.teardown_order():
+        try:
+            _create_rank(services(rank_plan.node), plan_obj, rank_plan, warnings)
+        except NativeRuntimeError as exc:
+            return _abort(rank_plan, exc, "start")
+        touched.append(rank_plan)
+
     for rank_plan in plan_obj.start_order():
         try:
-            _start_rank(services(rank_plan.node), plan_obj, rank_plan, warnings)
+            _launch_rank(services(rank_plan.node), plan_obj, rank_plan)
         except NativeRuntimeError as exc:
-            # The rank that failed may itself have a container: run_container
-            # can succeed and a mod or the script copy fail after it.
-            orphans = _teardown_entries(
-                services, [_rank_record(r) for r in [*started_ranks, rank_plan]]
-            )
-            return _fail(
-                f"rank {rank_plan.rank} of {plan_obj.node_count} on "
-                f"{rank_plan.node or 'this machine'} failed, so the whole "
-                f"deployment was torn down: {exc}",
-                orphans,
-            )
-        started_ranks.append(rank_plan)
+            return _abort(rank_plan, exc, "launch")
 
     started = _now()
     _update_record(dep_id, status="starting", started_at=started, warnings=warnings)

@@ -33,12 +33,16 @@ def fake_discovery(**overrides):
     to replace is the attribute on the package — the same switch production
     uses to pick real or mock.
     """
+    from spark_pulse.tools.discovery import FabricConfig
+
     module = types.SimpleNamespace(
         mdns_hostname_history=dict,
         mdns_available=lambda: True,
         detect_network_interfaces=list,
         detect_link_local_addresses=dict,
         detect_local_ip=lambda: None,
+        # No ConnectX by default, which is every machine that is not a Spark.
+        detect_fabric=FabricConfig,
     )
     for name, value in overrides.items():
         setattr(module, name, value)
@@ -397,3 +401,123 @@ class TestMachineId:
             node_registry, "_MACHINE_ID_FILES", (tmp_path / "absent", second)
         )
         assert node_registry.read_machine_id() == "abc123"
+
+
+class TestFabricFromDiscovery:
+    """The CX7 fabric, which is not what the generic interface scan sees.
+
+    On a DGX Spark the RoCE devices ``NCCL_IB_HCA`` names live in
+    ``/sys/class/infiniband`` — ``rocep1s0f1`` — while the netdev each drives
+    is ``enp1s0f1np1``, which a name-prefix scan classifies as plain ethernet.
+    So the scan finds no fabric at all on a real Spark, and the record has to
+    come from ``ibdev2netdev``.
+    """
+
+    ONE_CABLE = (
+        "rocep1s0f0 port 1 ==> enp1s0f0np0 (Down)\n"
+        "rocep1s0f1 port 1 ==> enp1s0f1np1 (Up)\n"
+        "roceP2p1s0f0 port 1 ==> enP2p1s0f0np0 (Down)\n"
+        "roceP2p1s0f1 port 1 ==> enP2p1s0f1np1 (Up)\n"
+        "== addr\n"
+        "2: enp1s0f1np1    inet 192.168.177.11/24 scope global enp1s0f1np1\n"
+        "3: enP2p1s0f1np1    inet 192.168.178.11/24 scope global enP2p1s0f1np1"
+    )
+
+    @pytest.fixture
+    def spark(self, monkeypatch):
+        from spark_pulse.tools.discovery import fabric_from_output
+
+        monkeypatch.setattr(
+            tools_package,
+            "discovery",
+            fake_discovery(
+                detect_local_ip=lambda: "10.0.0.10",
+                detect_fabric=lambda: fabric_from_output(self.ONE_CABLE),
+                detect_network_interfaces=lambda: [
+                    # The netdevs a scan would see. None of them is the RoCE
+                    # device, which is exactly the point.
+                    NetworkInterface(
+                        name="enP7s7",
+                        ip="10.0.0.10",
+                        mtu=1500,
+                        is_up=True,
+                        type="ethernet",
+                    ),
+                    NetworkInterface(
+                        name="enp1s0f1np1",
+                        ip="192.168.177.11",
+                        mtu=9000,
+                        is_up=True,
+                        type="ethernet",
+                    ),
+                ],
+            ),
+        )
+        monkeypatch.setattr(node_registry, "read_machine_id", lambda: "mid-1")
+
+    def test_the_record_holds_both_roce_twins(self, spark):
+        node = node_registry.register_self(name="spark-01")
+        assert node.infiniband_interfaces == ("rocep1s0f1", "roceP2p1s0f1")
+
+    def test_the_management_link_is_the_addressed_twin_not_the_first_scanned(
+        self, spark
+    ):
+        """The scan would have taken ``enP7s7``; upstream takes the fabric's."""
+        node = node_registry.register_self(name="spark-01")
+        assert node.ethernet_interface == "enp1s0f1np1"
+
+    def test_the_cabling_is_recorded(self, spark):
+        node = node_registry.register_self(name="spark-01")
+        assert node.fabric_mode == "direct"
+
+    def test_a_machine_with_no_fabric_falls_back_to_the_interface_scan(
+        self, monkeypatch
+    ):
+        """IPoIB machines and developer laptops keep the old behaviour."""
+        monkeypatch.setattr(
+            tools_package,
+            "discovery",
+            fake_discovery(
+                detect_local_ip=lambda: "10.0.0.10",
+                detect_network_interfaces=lambda: [
+                    NetworkInterface(
+                        name="enp1s0",
+                        ip="10.0.0.10",
+                        mtu=1500,
+                        is_up=True,
+                        type="ethernet",
+                    ),
+                    NetworkInterface(
+                        name="ib0", ip=None, mtu=4096, is_up=True, type="infiniband"
+                    ),
+                ],
+            ),
+        )
+        monkeypatch.setattr(node_registry, "read_machine_id", lambda: "mid-1")
+
+        node = node_registry.register_self(name="spark-01")
+        assert node.ethernet_interface == "enp1s0"
+        assert node.infiniband_interfaces == ("ib0",)
+        assert node.fabric_mode == ""
+
+
+class TestFabricMode:
+    def test_it_survives_a_round_trip(self):
+        node = node_registry.add_node(address="10.0.0.9", fabric_mode="mesh")
+        assert node_registry.get_node(node.id).fabric_mode == "mesh"
+
+    def test_an_unknown_mode_is_refused_on_update(self):
+        node = node_registry.add_node(address="10.0.0.9")
+        with pytest.raises(ValueError, match="fabric_mode"):
+            node_registry.update_node(node.id, fabric_mode="daisy-chain")
+
+    def test_it_can_be_cleared(self):
+        node = node_registry.add_node(address="10.0.0.9", fabric_mode="mesh")
+        assert node_registry.update_node(node.id, fabric_mode="").fabric_mode == ""
+
+    def test_a_hand_edited_file_with_nonsense_reads_back_as_unknown(self):
+        """A registry we cannot parse is worse than a field we ignore."""
+        record = node_registry.NodeRecord.from_dict(
+            {"id": "x", "address": "10.0.0.9", "fabric_mode": "banana"}
+        )
+        assert record.fabric_mode == ""

@@ -395,6 +395,8 @@ class MockDockerService(DockerService):
 
     def __init__(self, client: Any | None = None):
         super().__init__(client or _get_mock_client())
+        #: Bind-mount sources a real run would have created here.
+        self.ensured: list[str] = []
 
     def copy_to_container(
         self,
@@ -405,6 +407,15 @@ class MockDockerService(DockerService):
     ) -> bool:
         """Pretend the file was copied into the container."""
         return True
+
+    def ensure_directories(self, paths: Any) -> list[str]:
+        """Record the directories a real run would create, and create none.
+
+        Simulation must not reach into a developer's home directory, so the
+        paths are remembered for tests to assert on instead.
+        """
+        self.ensured.extend(str(path) for path in (paths or []) if str(path).strip())
+        return []
 
     def pull_image(
         self,

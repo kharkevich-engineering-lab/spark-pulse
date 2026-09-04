@@ -32,7 +32,10 @@ test("marks the cluster page and its nav entry experimental", async ({ page, req
     // leaving the operator to guess which parts are the unproven ones.
     await expect(banner).toContainText("Only one DGX Spark exists");
     await expect(banner).toContainText("rendezvous forms across machines");
-    await expect(banner).toContainText("NVIDIA publishes no guidance");
+    // Two kinds of risk, labelled: a behaviour a published source specifies
+    // and we have not run reads very differently from one nobody documents.
+    await expect(banner).toContainText("Specified, unconfirmed —");
+    await expect(banner).toContainText("Documented nowhere —");
     expect(await banner.getByRole("listitem").count()).toBeGreaterThan(3);
     await expect(chip).toBeVisible();
     await expect(chip).toHaveText("exp");

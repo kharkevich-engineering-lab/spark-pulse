@@ -107,6 +107,8 @@ class SimulatedDockerSSHClient(SSHClient):
         #: Per-host container environment, so the NCCL consistency check has
         #: something that can genuinely differ between nodes.
         self.env: dict[str, dict[str, str]] = {}
+        #: Per-host directories a ``mkdir -p`` was asked for, in order.
+        self.directories: dict[str, list[str]] = {}
         self._containers: dict[str, dict[str, dict[str, Any]]] = {}
         self._images: dict[str, dict[str, dict[str, Any]]] = {}
         self._seed_images = dict(images or {})
@@ -172,6 +174,12 @@ class SimulatedDockerSSHClient(SSHClient):
         self._raise_if_unreachable(host)
 
         parts = shlex.split(command.replace("&&", "\n").split("\n")[0])
+        if parts[:2] == ["mkdir", "-p"]:
+            # Upstream creates the cache bind sources before ``docker run``
+            # (launch-cluster.sh line 1104). Simulation records the paths
+            # rather than making directories on a developer's machine.
+            self.directories.setdefault(host, []).extend(parts[2:])
+            return SSHResult(returncode=0, stdout="", stderr="")
         if len(parts) < 2 or parts[0] != "docker":
             return SSHResult(returncode=127, stdout="", stderr=f"not docker: {command}")
 

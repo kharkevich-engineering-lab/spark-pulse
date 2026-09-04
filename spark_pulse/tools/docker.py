@@ -10,6 +10,7 @@ single source of truth — no external state database needed.
 from __future__ import annotations
 
 import logging
+import os
 import queue
 import subprocess
 import threading
@@ -531,6 +532,26 @@ class DockerService:
             metadata=metadata,
             labels=labels,
         )
+
+    def ensure_directories(self, paths: Any) -> list[str]:
+        """``mkdir -p`` every path on this machine. Returns the ones that failed.
+
+        Bind-mount sources have to exist before ``docker run`` or the daemon
+        invents them **owned by root**, and every path passed here is one of
+        the login user's caches. ``launch-cluster.sh`` line 1094 does the same
+        thing for the same reason.
+        """
+        failed: list[str] = []
+        for raw in paths or []:
+            path = str(raw).strip()
+            if not path:
+                continue
+            try:
+                os.makedirs(path, exist_ok=True)
+            except OSError as exc:
+                logger.warning("could not create %s: %s", path, exc)
+                failed.append(path)
+        return failed
 
     # ── Images ─────────────────────────────────────────────────────────────
 

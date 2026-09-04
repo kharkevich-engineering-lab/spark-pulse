@@ -354,3 +354,59 @@ class TestDockerConfigMapping:
 
     def test_an_empty_config_still_yields_the_defaults(self):
         assert run_kwargs_from_docker_config(None)["privileged"] is True
+
+
+def _self_service() -> RemoteNodeService:
+    """A service bound to this machine, which must never shell out."""
+    return RemoteNodeService(
+        control_node(address="127.0.0.1"),
+        ssh_client=_forbidden_ssh(),
+        docker_service=MagicMock(),
+    )
+
+
+class TestEnsureDirectories:
+    """Bind sources are created before the container, on whichever node it is.
+
+    Docker invents a missing bind source **owned by root**, and every path we
+    mount is one of the login user's caches — so a directory that does not
+    exist yet is how ``~/.cache/huggingface`` becomes unwritable and the model
+    copy fails afterwards. ``launch-cluster.sh`` does the same ``mkdir -p``,
+    locally at line 1094 and over SSH at line 1104.
+    """
+
+    def test_a_peer_is_asked_over_ssh(self):
+        ssh = SimulatedDockerSSHClient(images={IMAGE: 10})
+        service = _peer_service(ssh=ssh)
+
+        assert service.ensure_directories(["/home/spark/.cache/vllm", "/x y"]) == []
+
+        assert [c["host"] for c in ssh.commands] == [PEER]
+        command = ssh.commands[0]["command"]
+        assert command.startswith("mkdir -p ")
+        # Quoted, because a path with a space is one path, not two.
+        assert "'/x y'" in command
+
+    def test_the_control_node_makes_them_here(self, tmp_path):
+        target = tmp_path / "cache" / "vllm"
+
+        assert _self_service().ensure_directories([str(target)]) == []
+
+        assert target.is_dir()
+
+    def test_an_empty_list_asks_nothing_of_anyone(self):
+        ssh = SimulatedDockerSSHClient(images={IMAGE: 10})
+        service = _peer_service(ssh=ssh)
+
+        assert service.ensure_directories([]) == []
+        assert service.ensure_directories(["", "  "]) == []
+
+        assert ssh.commands == []
+
+    def test_a_path_that_cannot_be_made_is_returned_not_raised(self, tmp_path):
+        """A failed mkdir is a warning: docker will still start the container."""
+        blocker = tmp_path / "file"
+        blocker.write_text("not a directory")
+        under = str(blocker / "under")
+
+        assert _self_service().ensure_directories([under]) == [under]

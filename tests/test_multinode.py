@@ -40,6 +40,7 @@ from spark_pulse.config import config
 from spark_pulse.engines import MAX_CLUSTER_NODES, EngineRegistry, reset_registry
 from spark_pulse.mock import docker as mock_docker
 from spark_pulse.mock import node_service as mock_node_service
+from spark_pulse.tools.discovery import MESH_NCCL_ENV
 from spark_pulse.tools.labels import RANK_LABEL, WORLD_SIZE_LABEL
 
 # See test_tools_native_runtime.py: under SIMULATION_MODE the package attribute
@@ -264,7 +265,17 @@ class TestLifecycle:
                 f"spark-pulse-dep{size}-r{rank}-g1"
             ]
 
-    def test_workers_are_created_first_and_rank_zero_last(self, fleet, size):
+    def test_workers_are_launched_first_and_rank_zero_last(self, fleet, size):
+        """Upstream's two phases, and its order within each.
+
+        ``launch-cluster.sh`` creates the head container first (line 1097) and
+        then each worker (1106), and only once every container exists does it
+        run the serve command — workers in the background (1207-1222) and rank
+        zero last (1234-1241). Rank zero is local here, so it never appears on
+        the wire; what the peers show is the relative order among themselves
+        and, more importantly, that no rank was launched while another was
+        still being created.
+        """
         plan = plan_for(size)
 
         nr.start(plan, wait=True)
@@ -274,9 +285,25 @@ class TestLifecycle:
             for entry in fleet.commands
             if entry["command"].startswith("docker run")
         ]
-        # Every peer is created before rank zero, which is local and so never
-        # appears on the wire at all. Highest rank first.
-        assert runs == list(reversed(FLEET[1:size]))
+        launches = [
+            entry["host"]
+            for entry in fleet.commands
+            if entry["command"].startswith("docker exec")
+            and "/proc/1/fd/1" in entry["command"]
+        ]
+        assert runs == FLEET[1:size]
+        assert launches == list(reversed(FLEET[1:size]))
+
+        kinds = [
+            "run" if entry["command"].startswith("docker run") else "launch"
+            for entry in fleet.commands
+            if entry["command"].startswith("docker run")
+            or (
+                entry["command"].startswith("docker exec")
+                and "/proc/1/fd/1" in entry["command"]
+            )
+        ]
+        assert kinds == ["run"] * (size - 1) + ["launch"] * (size - 1)
 
     def test_the_record_lists_every_rank_and_its_node(self, fleet, size):
         plan = plan_for(size)
@@ -346,7 +373,13 @@ class TestRefusals:
         assert "nothing above four" in reason
 
     def test_an_engine_that_claims_no_mesh_is_refused_above_two_nodes(self, fleet):
-        """SGLang declares ``mesh: false``, and three nodes is a mesh."""
+        """SGLang declares ``mesh: false``, and three nodes is not a pair.
+
+        Above two the reference wants a QSFP switch or, at three, the
+        switchless ring — and either way a daisy chain sustains 100G between
+        each pair rather than 200G (``docs/NETWORKING.md`` line 43). The
+        refusal has to say that, not just "no".
+        """
         assert (
             nr.plan(
                 "multinode-sglang",
@@ -366,7 +399,7 @@ class TestRefusals:
             )
         reason = str(exc.value)
         assert "mesh: false" in reason
-        assert "roughly half" in reason
+        assert "100G between each pair" in reason
 
     def test_a_node_the_registry_has_never_seen_is_refused(self, fleet):
         with pytest.raises(nr.NativeRuntimeError) as exc:
@@ -427,7 +460,9 @@ class TestRefusals:
             )
         reason = str(exc.value)
         assert "only occupies 2" in reason
-        assert "would hang" in reason
+        # Upstream trimmed the spare peer silently. vLLM would not have let it:
+        # above one node it requires --nnodes to divide the world size exactly.
+        assert "divide the world size exactly" in reason
 
     def test_pipeline_parallelism_that_needs_more_machines_is_refused(self, fleet):
         with pytest.raises(nr.NativeRuntimeError) as exc:
@@ -519,6 +554,203 @@ class TestUnreachablePeer:
             service.get_container_status("anything")
         with pytest.raises(SSHError):
             service.list_managed_containers()
+
+
+# ── The fabric, per node ─────────────────────────────────────────────────────
+#
+# Upstream reads the *head's* interfaces and hands the same ``ETH_IF`` and
+# ``IB_IF`` to every node (``launch-cluster.sh`` lines 957-974 build one
+# ``get_env_flags`` from globals). That is right only while every Spark is
+# cabled identically. Ours come from each node's own registry record, so these
+# tests check the per-node path and the two things upstream's ``.env`` carries
+# that a bare interface name does not: both RoCE twins, and the mesh settings.
+
+
+def enroll_fabric(address: str, **fields) -> None:
+    """Record a fabric shape on one already-enrolled node."""
+    node = next(n for n in tools.node_registry.list_nodes() if n.address == address)
+    tools.node_registry.update_node(node.id, **fields)
+
+
+#: One cable in the outermost QSFP port, both RoCE twins named — the value
+#: ``docs/NETWORKING.md`` line 38 prints verbatim.
+DIRECT_FIELDS = {
+    "ethernet_interface": "enp1s0f1np1",
+    "infiniband_interfaces": ("rocep1s0f1", "roceP2p1s0f1"),
+    "fabric_mode": "direct",
+}
+
+#: The switchless ring: all four ports up, coordination on the 10G link.
+MESH_FIELDS = {
+    "ethernet_interface": "enP7s7",
+    "infiniband_interfaces": (
+        "rocep1s0f0",
+        "rocep1s0f1",
+        "roceP2p1s0f0",
+        "roceP2p1s0f1",
+    ),
+    "fabric_mode": "mesh",
+}
+
+
+class TestFabricEnv:
+    def test_both_roce_twins_reach_nccl_ib_hca(self, fleet):
+        """The twin rule: one QSFP port, two RoCE devices, name both.
+
+        Each port gets a PCIe 5.0 x4 link, so one device carries about half
+        the port's bandwidth (``docs/NETWORKING.md`` lines 15-40). Upstream
+        discovers both and joins them; the registry holds both and the plan
+        joins them the same way.
+        """
+        for address in FLEET[:2]:
+            enroll_fabric(address, **DIRECT_FIELDS)
+
+        plan = plan_for(2)
+
+        for entry in plan.ranks:
+            assert entry["env"]["NCCL_IB_HCA"] == "rocep1s0f1,roceP2p1s0f1"
+
+    def test_a_single_cable_carries_none_of_the_mesh_settings(self, fleet):
+        for address in FLEET[:2]:
+            enroll_fabric(address, **DIRECT_FIELDS)
+
+        plan = plan_for(2)
+
+        for entry in plan.ranks:
+            for key in MESH_NCCL_ENV:
+                assert key not in entry["env"]
+
+    def test_a_mesh_carries_all_three_mesh_settings(self, fleet):
+        """``autodiscover.sh`` lines 186-190, and NETWORKING.md line 444.
+
+        Two of the three are NVIDIA's own: its ring playbook publishes
+        ``NCCL_IB_SUBNET_AWARE_ROUTING=1`` and ``NCCL_NET_PLUGIN=none``
+        (https://build.nvidia.com/spark/nccl/three-sparks).
+        ``NCCL_IB_MERGE_NICS=0`` is upstream's addition and NVIDIA sets it
+        nowhere. They configure NCCL rather than the engine, so every rank
+        gets them, and they only make sense where each link pair sits on its
+        own subnet.
+        """
+        size = 3
+        for address in FLEET[:size]:
+            enroll_fabric(address, **MESH_FIELDS)
+
+        plan = plan_for(size)
+
+        for entry in plan.ranks:
+            assert entry["env"]["NCCL_NET_PLUGIN"] == "none"
+            assert entry["env"]["NCCL_IB_SUBNET_AWARE_ROUTING"] == "1"
+            assert entry["env"]["NCCL_IB_MERGE_NICS"] == "0"
+            # Coordination moves off the fabric onto the 10G link, because
+            # all four CX7 ports are carrying the ring.
+            assert entry["env"]["NCCL_SOCKET_IFNAME"] == "enP7s7"
+            assert entry["env"]["NCCL_IB_HCA"] == ",".join(
+                MESH_FIELDS["infiniband_interfaces"]
+            )
+
+    def test_a_ring_of_four_is_refused_because_nobody_documents_one(self, fleet):
+        """NVIDIA's ring is exactly three, and its NCCL launcher says so.
+
+        ``dgx-spark-playbooks/nvidia/nccl/assets/launch.sh`` refuses any other
+        count outright, and the Sync cluster assistant routes four nodes to a
+        switch. A four-node ring exists only as one community repository that
+        needs a patched NCCL, so we do not pretend to configure one.
+        """
+        for address in FLEET[:4]:
+            enroll_fabric(address, **MESH_FIELDS)
+
+        with pytest.raises(nr.NativeRuntimeError) as exc:
+            plan_for(4)
+
+        reason = str(exc.value)
+        assert "exactly 3 nodes" in reason
+        assert "switch" in reason
+
+    def test_four_nodes_behind_a_switch_are_a_single_cable_each(self, fleet):
+        """Four nodes are NVIDIA-supported — through a switch, not a ring.
+
+        Each node then has one cable and two ports up, so it reports
+        ``direct`` and gets none of the ring's NCCL settings.
+        """
+        for address in FLEET[:4]:
+            enroll_fabric(address, **DIRECT_FIELDS)
+
+        plan = plan_for(4)
+
+        assert plan.node_count == 4
+        for entry in plan.ranks:
+            assert entry["env"]["NCCL_IB_HCA"] == "rocep1s0f1,roceP2p1s0f1"
+            for key in MESH_NCCL_ENV:
+                assert key not in entry["env"]
+
+    def test_nodes_that_disagree_about_the_cabling_are_refused(self, fleet):
+        """A ring is symmetric: one node in it and one not is not a fabric."""
+        enroll_fabric(FLEET[0], **MESH_FIELDS)
+        enroll_fabric(FLEET[1], **DIRECT_FIELDS)
+        enroll_fabric(FLEET[2], **MESH_FIELDS)
+
+        with pytest.raises(nr.NativeRuntimeError) as exc:
+            plan_for(3)
+
+        reason = str(exc.value)
+        assert "disagree about how the fabric is cabled" in reason
+        assert "direct" in reason and "mesh" in reason
+
+    def test_a_registry_that_records_no_cabling_still_plans(self, fleet):
+        """``fabric_mode`` is an observation, and an absent one is not a fault.
+
+        The fixture's peers carry interface names but no mode, which is what a
+        hand-entered node looks like. It gets the pinning it asked for and no
+        mesh settings, because nothing said it was a mesh.
+        """
+        plan = plan_for(2)
+
+        for entry in plan.ranks:
+            assert "NCCL_NET_PLUGIN" not in entry["env"]
+
+
+class TestCacheDirectories:
+    """Bind sources are created before the container, as upstream does.
+
+    ``launch-cluster.sh`` runs ``mkdir -p`` for every cache directory on the
+    head (line 1094) and over SSH on every worker (line 1104). Without it
+    docker invents the missing source **owned by root**, which is what the
+    runbook's "Troubleshoot model-copy permissions" section is about.
+    """
+
+    def test_every_peer_is_asked_to_create_its_mounts_first(self, fleet):
+        plan = plan_for(2)
+
+        nr.start(plan, wait=True)
+
+        made = fleet.directories.get(PEERS[0]) or []
+        assert made, "the peer was never asked to create its bind sources"
+        assert set(made) == set(plan.rank_plans[1].container.mounts)
+
+        indices = [
+            index
+            for index, entry in enumerate(fleet.commands)
+            if entry["host"] == PEERS[0]
+        ]
+        first_mkdir = next(
+            index
+            for index in indices
+            if fleet.commands[index]["command"].startswith("mkdir -p")
+        )
+        first_run = next(
+            index
+            for index in indices
+            if fleet.commands[index]["command"].startswith("docker run")
+        )
+        assert first_mkdir < first_run
+
+    def test_the_control_node_creates_its_own_too(self, fleet):
+        plan = plan_for(2)
+
+        nr.start(plan, wait=True)
+
+        ensured = mock_docker._get_service().ensured
+        assert set(plan.rank_plans[0].container.mounts) <= set(ensured)
 
 
 # ── The safety property ──────────────────────────────────────────────────────

@@ -557,7 +557,10 @@ describe("DeployOptions node selection", () => {
     expect(note).toHaveTextContent(MULTI_NODE_TITLE);
     // Named risks, not the word "experimental" on its own.
     expect(note).toHaveTextContent(/rendezvous forms across machines/i);
-    expect(note).toHaveTextContent(/NVIDIA publishes no guidance/i);
+    // And both kinds of risk, labelled: a behaviour a source specifies and we
+    // have not run reads very differently from one nobody documents.
+    expect(note).toHaveTextContent(/Specified, unconfirmed —/);
+    expect(note).toHaveTextContent(/Documented nowhere —/);
     expect(note.querySelectorAll("li")).toHaveLength(MULTI_NODE_UNPROVEN.length);
   });
 

@@ -285,9 +285,17 @@ lower epoch. The same counter doubles as the monotonic desired-state index that
 prevents acting on stale state. Leader election is not fencing; the check has to
 happen at the resource.
 
-Timings are set by the workload, not by taste. torchrun waits 600 seconds for
-rendezvous and NCCL waits 600 seconds on a collective, so anything shorter fires
-while the job is still legitimately trying.
+Timings are set by the workload, not by taste. **Corrected 2026-09-04, see
+`upstream-cluster-parity.md` §6.3:** the sentence here used to read "torchrun
+waits 600 seconds for rendezvous and NCCL waits 600 seconds on a collective".
+Neither half is accurate. vLLM's `--nnodes` path is the `mp` executor and
+involves no torchrun at all, and NCCL has no collective timeout — 600 seconds
+is PyTorch's default `init_process_group` timeout for NCCL (1800 for gloo),
+which vLLM leaves alone unless `--distributed-timeout-seconds` is passed, and
+vLLM separately waits `VLLM_ENGINE_READY_TIMEOUT_S`, also 600 seconds. The
+number the table below is built on is therefore right; the attribution was
+not. Anything shorter than it fires while the job is still legitimately
+trying.
 
 | Signal | Timing | Action |
 |---|---|---|
@@ -613,27 +621,44 @@ spare peers silently, and a rank with no shard to hold hangs at the rendezvous.
 banner renders, kept in `web/src/lib/experimental.ts`; the two must stay in
 step, and an item leaves only when it has been observed on hardware.
 
+Since 2026-09-04 the list is in **two groups**, because "unproven" and
+"unknown" are different states and running them together tells an operator
+neither. `upstream-cluster-parity.md` carries the evidence for every line.
+
+*Specified and implemented to spec — hardware would confirm, not discover:*
+
 * Whether the rendezvous forms across machines, for either engine.
-* Which transport NCCL selects over the real fabric, and whether the
-  twin-adapter configuration reaches NVIDIA's throughput threshold.
-* Interface pinning against real per-role names, including NVIDIA's rule that
-  the two devices of one port sit on different subnets. The names now come from
-  each node's registry record and are checked by the pre-flight against
-  `/sys/class/net` and `/sys/class/infiniband`, so a wrong name is caught before
-  a launch — but no real fabric name has ever been pinned.
-* Whether starting workers before rank zero really avoids the ten-minute
-  collective timeout, and whether the startup gates are set right.
+* Interface pinning against real per-role names. The names now come from each
+  node's registry record — read out of `ibdev2netdev`, which is where a
+  Spark's RoCE devices actually are — and are checked by the pre-flight
+  against `/sys/class/net` and `/sys/class/infiniband`, so a wrong name is
+  caught before a launch. But no real fabric name has ever been pinned.
+* Whether naming both RoCE twins of a QSFP port reaches full bandwidth.
+  NVIDIA's own perftest guide measures 92.57 + 97.28 Gbps across the pair, and
+  publishes no `NCCL_IB_HCA` value for Spark at all.
+* The switchless ring's two NVIDIA-published NCCL settings behaving as
+  documented: `NCCL_IB_SUBNET_AWARE_ROUTING=1` and `NCCL_NET_PLUGIN=none`.
 * How an unreachable peer behaves over a real SSH transport. The *bookkeeping*
-  is now covered: the simulated transport raises the same `SSHError` on an
+  is covered: the simulated transport raises the same `SSHError` on an
   unreachable host that `OpenSSHClient` raises on ssh's exit 255, so a gang
   that loses a peer mid-start tears the reachable ranks down and records the
   unreachable one as an outstanding orphan. What is unproven is the transport
   itself — a half-open connection, a stale `ControlMaster`, a node answering
   slowly rather than not at all, and the ten-second `ConnectTimeout` that
   decides how long "unreachable" takes to establish.
-* Anything at three or four nodes, where the ring configuration differs and
-  aggregate bandwidth roughly halves. Above four, NVIDIA publishes no guidance
-  at all and the plan refuses outright.
+* Anything at three or four nodes. Three is NVIDIA's switchless ring; four is
+  NVIDIA's maximum and needs a QSFP switch. Neither has been cabled here.
+
+*Documented nowhere — hardware is the only way to find out at all:*
+
+* Whether `NCCL_IB_MERGE_NICS=0` helps or costs on this fabric. Upstream sets
+  it for a mesh; NVIDIA sets it nowhere and uses subnet-aware routing, which
+  NCCL's source shows solving the same problem without losing aggregation.
+* Whether starting workers before rank zero matters, and whether the startup
+  gates are set right. Neither engine documents a required order.
+* Whether a three-node ring really sustains only half the bandwidth per pair.
+* Whether SGLang needs `--enable-dp-attention` across nodes.
+* Whether `NCCL_IGNORE_CPU_AFFINITY=1` is the right direction on GB10.
 
 **One hardware fact that changes recipe tuning.** `nvidia-smi` reports no GPU
 memory on this hardware, verified: total, used and free all come back as not

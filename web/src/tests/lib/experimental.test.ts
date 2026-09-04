@@ -2,19 +2,26 @@
  * been run, and the one function that decides what counts as multi-node.
  *
  * These assertions are deliberately about content. The module exists so an
- * operator reads six named risks instead of the word "experimental", and the
- * only thing that stops it decaying back into a disclaimer is a test that
- * fails when a risk is dropped or softened. Striking an item is allowed —
- * once it has been observed on hardware — and is meant to be a deliberate
- * edit here as well as there.
+ * operator reads named risks instead of the word "experimental", and the only
+ * thing that stops it decaying back into a disclaimer is a test that fails
+ * when a risk is dropped or softened. Striking an item is allowed — once it
+ * has been observed on hardware — and is meant to be a deliberate edit here as
+ * well as there.
+ *
+ * The split between the two lists is the point of the module now. "We know
+ * what this should do and have not run it" and "nobody knows what this should
+ * do" are different risks, and a list that runs them together tells an
+ * operator neither.
  */
 
 import { describe, expect, it } from "vitest";
 import {
   MULTI_NODE_BADGE_TITLE,
   MULTI_NODE_REASON,
+  MULTI_NODE_SPECIFIED,
   MULTI_NODE_TITLE,
   MULTI_NODE_UNPROVEN,
+  MULTI_NODE_UNSPECIFIED,
   nodeCount,
 } from "@/lib/experimental";
 
@@ -49,6 +56,48 @@ describe("the unproven list", () => {
   });
 });
 
+describe("unproven and unknown are shown as different things", () => {
+  it("keeps both kinds populated and disjoint", () => {
+    expect(MULTI_NODE_SPECIFIED.length).toBeGreaterThan(0);
+    expect(MULTI_NODE_UNSPECIFIED.length).toBeGreaterThan(0);
+    const overlap = MULTI_NODE_SPECIFIED.filter((item) =>
+      MULTI_NODE_UNSPECIFIED.includes(item),
+    );
+    expect(overlap).toEqual([]);
+  });
+
+  it("renders every item under exactly one of the two labels", () => {
+    expect(MULTI_NODE_UNPROVEN.length).toBe(
+      MULTI_NODE_SPECIFIED.length + MULTI_NODE_UNSPECIFIED.length,
+    );
+    for (const item of MULTI_NODE_UNPROVEN) {
+      expect(item).toMatch(/^(Specified, unconfirmed|Documented nowhere) — /);
+    }
+  });
+
+  it("labels the settled ones as settled and the unknown ones as unknown", () => {
+    const specified = MULTI_NODE_UNPROVEN.filter((i) =>
+      i.startsWith("Specified, unconfirmed"),
+    );
+    const unspecified = MULTI_NODE_UNPROVEN.filter((i) =>
+      i.startsWith("Documented nowhere"),
+    );
+    expect(specified.length).toBe(MULTI_NODE_SPECIFIED.length);
+    expect(unspecified.length).toBe(MULTI_NODE_UNSPECIFIED.length);
+  });
+
+  it("keeps the two questions an operator would actually ask apart", () => {
+    const settled = MULTI_NODE_SPECIFIED.join(" ").toLowerCase();
+    const unknown = MULTI_NODE_UNSPECIFIED.join(" ").toLowerCase();
+    // A published flag set we have implemented, versus a knob nobody
+    // documents. These must not drift into the same bucket.
+    expect(settled).toMatch(/rendezvous/);
+    expect(unknown).toMatch(/nccl_ib_merge_nics/);
+    expect(unknown).toMatch(/start order|starting workers/);
+    expect(settled).not.toMatch(/nccl_ib_merge_nics/);
+  });
+});
+
 describe("the reason", () => {
   it("says why nothing has been run: there is only one machine", () => {
     expect(MULTI_NODE_REASON).toMatch(/only one DGX Spark/i);
@@ -58,6 +107,11 @@ describe("the reason", () => {
   it("distinguishes what is exercised in simulation from what is observed", () => {
     expect(MULTI_NODE_REASON).toMatch(/simulation/i);
     expect(MULTI_NODE_REASON).toMatch(/observed/i);
+  });
+
+  it("explains the two groups before the list starts", () => {
+    expect(MULTI_NODE_REASON).toMatch(/published source/i);
+    expect(MULTI_NODE_REASON).toMatch(/documented nowhere/i);
   });
 
   it("hands off to the list rather than trailing away as a paragraph", () => {

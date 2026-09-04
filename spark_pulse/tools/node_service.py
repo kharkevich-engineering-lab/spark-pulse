@@ -35,7 +35,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shlex
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
@@ -220,6 +222,21 @@ class NodeService(Protocol):
         """Build and start a container carrying spark-pulse labels."""
         ...
 
+    def ensure_directories(self, paths: Iterable[str]) -> list[str]:
+        """Create bind-mount source directories on the node before a run.
+
+        Docker creates a missing bind source itself, **owned by root**, and
+        the caches mounted here are the login user's — so a directory that
+        does not exist yet is how ``~/.cache/huggingface`` ends up root-owned
+        and every later model copy fails with a permission error.
+        ``launch-cluster.sh`` does the same ``mkdir -p``, on the head at line
+        1094 and on every worker at line 1104.
+
+        Returns the paths it could not create; a caller treats them as a
+        warning rather than a failure, since docker will still start.
+        """
+        ...
+
     def stop_container(self, name: str, timeout: int = 30) -> bool:
         """Stop and remove a container by name."""
         ...
@@ -298,6 +315,7 @@ class NodeService(Protocol):
 #: The method names the three implementations must agree on.
 NODE_SERVICE_METHODS: tuple[str, ...] = (
     "run_container",
+    "ensure_directories",
     "stop_container",
     "get_container_status",
     "exec_in_container",
@@ -585,6 +603,38 @@ class RemoteNodeService(NodeService):
             metadata=metadata,
             labels=labels,
         )
+
+    def ensure_directories(self, paths: Iterable[str]) -> list[str]:
+        """``mkdir -p`` every path on the node. Returns the ones that failed.
+
+        Upstream does exactly this before ``docker run``, locally at
+        ``launch-cluster.sh`` line 1094 and over SSH at line 1104, and for the
+        same reason: a bind source docker has to invent is created as root,
+        and these are the login user's caches. The runbook's whole
+        "Troubleshoot model-copy permissions" section is the aftermath.
+        """
+        wanted = [str(path) for path in paths if str(path).strip()]
+        if not wanted:
+            return []
+
+        if self.node.is_self:
+            failed: list[str] = []
+            for path in wanted:
+                try:
+                    os.makedirs(path, exist_ok=True)
+                except OSError as exc:
+                    logger.warning("could not create %s: %s", path, exc)
+                    failed.append(path)
+            return failed
+
+        quoted = " ".join(shlex.quote(path) for path in wanted)
+        result = self._exec(f"mkdir -p {quoted}", timeout=30)
+        if result.ok:
+            return []
+        logger.warning(
+            "could not create %s on %s: %s", quoted, self.node.label, result.stderr
+        )
+        return wanted
 
     def stop_container(self, name: str, timeout: int = 30) -> bool:
         """Stop and remove a container on the node."""

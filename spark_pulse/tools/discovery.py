@@ -28,7 +28,9 @@ Two rules the same test produced, and both are load-bearing:
 
 from __future__ import annotations
 
+import ipaddress
 import logging
+import re
 import socket
 import subprocess
 import threading
@@ -36,7 +38,7 @@ import time
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +112,11 @@ class DiscoveryResult:
     interfaces: list[NetworkInterface]
     nccl_defaults: NCCLConfig | None
     validation_errors: list[str] = field(default_factory=list)
+    #: The CX7 fabric as ``ibdev2netdev`` describes it, when this machine has
+    #: one. It is the authority for both the management interface and the
+    #: ``NCCL_IB_HCA`` selector list; the generic interface scan above cannot
+    #: see RoCE devices at all, because on this hardware they are not netdevs.
+    fabric: FabricConfig | None = None
 
 
 @dataclass
@@ -485,7 +492,25 @@ def build_nccl_defaults(discovery: DiscoveryResult) -> NCCLConfig | None:
 
     Creates clean boundary:
         Discovery -> NCCL defaults -> Network env builder
+
+    When the discovery carries a :class:`FabricConfig` it wins outright: it
+    knows which management link upstream would pick and which RoCE devices are
+    really up, and the generic scan below knows neither.
+
+    **Every** active HCA goes into ``ib_hca``, not the first one. On this
+    hardware each QSFP port is two RoCE devices sharing a PCIe x4 pair, and
+    NCCL reaches full bandwidth only when told both (NETWORKING.md line 38).
+    Naming one twin is a silent halving, which is exactly the class of bug
+    that never shows up as a failure.
     """
+    fabric = discovery.fabric
+    if fabric is not None and fabric.ok:
+        return NCCLConfig(
+            socket_ifname=fabric.ethernet,
+            ib_hca=fabric.ib_hca_value or None,
+            ib_disable=not fabric.ib_hca,
+        )
+
     # Find ethernet interface
     ethernet_if = None
     for iface in discovery.interfaces:
@@ -497,12 +522,10 @@ def build_nccl_defaults(discovery: DiscoveryResult) -> NCCLConfig | None:
         return None
 
     if discovery.infiniband_present:
-        # Find first active IB HCA
-        ib_hca = None
-        for dev in discovery.infiniband_devices:
-            if dev.state == "ACTIVE":
-                ib_hca = dev.hca
-                break
+        active = [
+            dev.hca for dev in discovery.infiniband_devices if dev.state == "ACTIVE"
+        ]
+        ib_hca = ",".join(active) if active else None
         if not ib_hca:
             # IB present but none active — disable it
             return NCCLConfig(
@@ -612,15 +635,19 @@ def run_discovery() -> DiscoveryResult:
     interfaces = detect_network_interfaces()
     local_ip = detect_local_ip()
     ib_devices = detect_infiniband_devices()
+    fabric = detect_fabric()
 
-    # Classify interfaces
-    ethernet_if = None
-    for iface in interfaces:
-        if iface.type == "ethernet" and iface.is_up and iface.ip:
-            ethernet_if = iface.name
-            break
+    # Classify interfaces. The fabric wins when it resolved, because it
+    # applies upstream's rules — the addressed non-``P`` twin for a single
+    # cable, the 10G link for a mesh — and the name-prefix scan applies none.
+    ethernet_if = fabric.ethernet or None
+    if not ethernet_if:
+        for iface in interfaces:
+            if iface.type == "ethernet" and iface.is_up and iface.ip:
+                ethernet_if = iface.name
+                break
 
-    infiniband_present = len(ib_devices) > 0
+    infiniband_present = len(ib_devices) > 0 or bool(fabric.up_ports)
 
     # ``DiscoveryResult`` is frozen, so the NCCL defaults are computed against
     # a draft and the final result is built once. Assigning to the field after
@@ -633,6 +660,7 @@ def run_discovery() -> DiscoveryResult:
         infiniband_devices=ib_devices,
         interfaces=interfaces,
         nccl_defaults=None,
+        fabric=fabric,
     )
     return replace(draft, nccl_defaults=build_nccl_defaults(draft))
 
@@ -666,6 +694,412 @@ def check_network_health() -> ValidationResult:
     return validate_network()
 
 
+# ── The CX7 fabric, as ``autodiscover.sh`` reads it ──────────────────────────
+#
+# Everything in this section reproduces ``eugr/spark-vllm-docker``'s
+# ``autodiscover.sh`` ``detect_interfaces`` (lines 56-196), which is the only
+# sanctioned description of how a DGX Spark's ConnectX-7 ports are meant to be
+# read. Two facts from that repository's ``docs/NETWORKING.md`` drive all of it:
+#
+# * **The twin rule** (NETWORKING.md lines 15-40). One QSFP port cannot get
+#   more than a PCIe 5.0 x4 link out of the SOC, so each physical port is
+#   presented as *two* Ethernet and *two* RoCE interfaces sharing that pair.
+#   Only one of the Ethernet twins carries an IP, but NCCL has to be told
+#   **both** RoCE twins or half the bandwidth is left on the floor:
+#   ``NCCL_IB_HCA=rocep1s0f1,roceP2p1s0f1``.
+# * **Two shapes, told apart by how many ports are up** (autodiscover.sh lines
+#   121-195). Two up ports is one cable — the pair, or a QSFP switch. Four up
+#   ports is the switchless three-node mesh, which additionally needs the 10G
+#   management link for out-of-band traffic and three NCCL settings of its own.
+#   Any other count is refused by number.
+
+#: Upstream's mesh-mode NCCL settings, verbatim from ``autodiscover.sh`` lines
+#: 186-190 and confirmed by ``docs/NETWORKING.md`` line 444, which passes the
+#: same three to ``mpirun`` for its three-node ``all_gather`` run.
+#:
+#: **Two of the three are NVIDIA's own.** Its ring playbook exports
+#: ``NCCL_IB_SUBNET_AWARE_ROUTING=1`` and ``NCCL_NET_PLUGIN=none`` for the
+#: three-node topology and nothing extra for a pair or a switch
+#: (https://build.nvidia.com/spark/nccl/three-sparks, and
+#: ``dgx-spark-playbooks/nvidia/nccl/assets/launch.sh``).
+#:
+#: **The third is upstream's, and NVIDIA sets it nowhere.** NCCL's own
+#: documentation says ``NCCL_IB_MERGE_NICS`` defaults to 1 and combines
+#: dual-port NICs into one logical device to aggregate their bandwidth; its
+#: source shows subnet-aware routing solving the same problem more finely,
+#: keeping the fused device when every port of it can reach the peer and
+#: splitting only when they cannot. So ``=0`` is the blunter of two
+#: instruments for one problem, and it costs aggregation wherever both ports
+#: do reach the same peer. We follow the reference and set it, because
+#: ``spark-vllm-docker`` is the implementation we are matching and a mesh is
+#: precisely the case where no port reaches every peer — but the disagreement
+#: is real and ``docs/upstream-cluster-parity.md`` records it.
+MESH_NCCL_ENV: dict[str, str] = {
+    "NCCL_NET_PLUGIN": "none",
+    "NCCL_IB_SUBNET_AWARE_ROUTING": "1",
+    "NCCL_IB_MERGE_NICS": "0",
+}
+
+#: One cable per node: the two-node pair, or any number of nodes behind a QSFP
+#: switch. Two CX7 interfaces up.
+FABRIC_DIRECT = "direct"
+
+#: The switchless ring, port 0 of one Spark into port 1 of the next
+#: (NETWORKING.md line 50). All four CX7 interfaces up. NVIDIA publishes this
+#: as its own playbook — "Connect Three DGX Spark in a Ring Topology",
+#: https://build.nvidia.com/spark/nccl/three-sparks — at exactly three nodes.
+FABRIC_MESH = "mesh"
+
+#: How many nodes a switchless ring has. Three, and only three: NVIDIA's own
+#: NCCL launcher refuses any other count
+#: (``dgx-spark-playbooks/nvidia/nccl/assets/launch.sh``: *"ring requires
+#: exactly 3 nodes"*), and its Sync cluster assistant documents direct cabling
+#: for two nodes and the ring for three, with four requiring a switch
+#: (https://docs.nvidia.com/sync/latest/cluster-assistant.html).
+MESH_RING_NODES = 3
+
+#: Every fabric shape a record may carry, plus ``""`` for "not known yet".
+FABRIC_MODES = (FABRIC_DIRECT, FABRIC_MESH)
+
+#: The management links a mesh uses for coordination, in upstream's order of
+#: preference (autodiscover.sh lines 171-184). All four fabric links carry the
+#: ring, so out-of-band traffic goes over the 10G RJ-45 — "For 3-node mesh we
+#: have to use 10G interface for OOB communication!" (NETWORKING.md line 434).
+#: Wireless is accepted with a warning and nothing else is accepted at all.
+MESH_MANAGEMENT_INTERFACES = ("enP7s7", "wlP9s9")
+
+#: The one of those that is wireless, and so warned about.
+MESH_WIRELESS_INTERFACES = frozenset({"wlP9s9"})
+
+#: One shell command that gathers everything :func:`build_fabric_config` needs.
+#: It is a string rather than a function call so the same probe works locally
+#: and over SSH, which is what lets the pre-flight ask a *peer* what its fabric
+#: looks like instead of assuming it matches this machine's.
+FABRIC_COMMAND = (
+    "ibdev2netdev 2>/dev/null; echo '== addr'; ip -o -f inet addr show 2>/dev/null"
+)
+
+_IBDEV_RE = re.compile(
+    r"^(?P<hca>\S+)\s+port\s+(?P<port>\d+)\s+==>\s+(?P<netdev>\S+)\s+\((?P<state>\w+)\)"
+)
+
+
+@dataclass(frozen=True)
+class RoCEPort:
+    """One line of ``ibdev2netdev``: a RoCE device and the netdev it drives.
+
+    ``rocep1s0f1 port 1 ==> enp1s0f1np1 (Up)`` is ``hca="rocep1s0f1"``,
+    ``port=1``, ``netdev="enp1s0f1np1"``, ``is_up=True``.
+    """
+
+    hca: str
+    port: int
+    netdev: str
+    is_up: bool
+
+
+@dataclass(frozen=True)
+class FabricConfig:
+    """What the CX7 ports on one machine say about how it is cabled.
+
+    ``mode`` is :data:`FABRIC_DIRECT`, :data:`FABRIC_MESH`, or ``""`` when the
+    ports describe neither shape — in which case ``errors`` says why, in
+    upstream's own terms.
+
+    ``ib_hca`` is the whole selector list, **both twins of every up port**, and
+    :attr:`ib_hca_value` is the comma-joined form ``NCCL_IB_HCA`` takes.
+    """
+
+    mode: str = ""
+    ethernet: str = ""
+    ib_hca: tuple[str, ...] = ()
+    nccl_env: dict[str, str] = field(default_factory=dict)
+    ports: tuple[RoCEPort, ...] = ()
+    addresses: dict[str, str] = field(default_factory=dict)
+    warnings: tuple[str, ...] = ()
+    errors: tuple[str, ...] = ()
+
+    @property
+    def ib_hca_value(self) -> str:
+        """``NCCL_IB_HCA``'s value: every RoCE twin, comma separated."""
+        return ",".join(self.ib_hca)
+
+    @property
+    def up_ports(self) -> tuple[RoCEPort, ...]:
+        """The ports ``ibdev2netdev`` called up, in the order it printed them."""
+        return tuple(port for port in self.ports if port.is_up)
+
+    @property
+    def is_mesh(self) -> bool:
+        return self.mode == FABRIC_MESH
+
+    @property
+    def ok(self) -> bool:
+        """Whether this describes a fabric a launch can be pinned to."""
+        return bool(self.mode) and not self.errors
+
+    def twins_of(self, hca: str) -> tuple[str, ...]:
+        """Every up RoCE device sharing a physical port with ``hca``.
+
+        The twins of one port are the devices whose netdev names differ only
+        by the capital ``P`` of the second PCIe path — ``enp1s0f1np1`` and
+        ``enP2p1s0f1np1`` — so folding the case of that one letter is what
+        groups them. Returns ``()`` for a device this machine does not report.
+        """
+        keyed: dict[str, list[str]] = {}
+        for port in self.up_ports:
+            keyed.setdefault(_twin_key(port.netdev), []).append(port.hca)
+        for group in keyed.values():
+            if hca in group:
+                return tuple(group)
+        return ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "mode": self.mode,
+            "ethernet": self.ethernet,
+            "ib_hca": list(self.ib_hca),
+            "ib_hca_value": self.ib_hca_value,
+            "nccl_env": dict(self.nccl_env),
+            "ports": [
+                {
+                    "hca": port.hca,
+                    "port": port.port,
+                    "netdev": port.netdev,
+                    "is_up": port.is_up,
+                }
+                for port in self.ports
+            ],
+            "addresses": dict(self.addresses),
+            "warnings": list(self.warnings),
+            "errors": list(self.errors),
+        }
+
+
+def parse_ibdev2netdev(text: str) -> list[RoCEPort]:
+    """Parse ``ibdev2netdev`` output into ports, in the order it printed them.
+
+    Order matters: upstream builds ``IB_IF`` by joining the devices in exactly
+    this order (autodiscover.sh line 128), and so do we.
+    """
+    ports: list[RoCEPort] = []
+    for line in (text or "").splitlines():
+        match = _IBDEV_RE.match(line.strip())
+        if not match:
+            continue
+        ports.append(
+            RoCEPort(
+                hca=match.group("hca"),
+                port=int(match.group("port")),
+                netdev=match.group("netdev"),
+                is_up=match.group("state").lower() == "up",
+            )
+        )
+    return ports
+
+
+def parse_ip_addresses(text: str) -> dict[str, str]:
+    """Interface name to its first IPv4 CIDR, from ``ip -o -f inet addr show``."""
+    addresses: dict[str, str] = {}
+    for line in (text or "").splitlines():
+        fields = line.split()
+        if len(fields) < 4 or "inet" not in fields:
+            continue
+        name = fields[1]
+        cidr = fields[fields.index("inet") + 1]
+        addresses.setdefault(name, cidr)
+    return addresses
+
+
+def parse_fabric_output(text: str) -> tuple[list[RoCEPort], dict[str, str]]:
+    """Split :data:`FABRIC_COMMAND` output into its two halves."""
+    head, _, tail = (text or "").partition("== addr")
+    return parse_ibdev2netdev(head), parse_ip_addresses(tail)
+
+
+def _network_of(cidr: str) -> str | None:
+    """The network a CIDR belongs to, or ``None`` when it will not parse."""
+    try:
+        return str(ipaddress.ip_network(cidr, strict=False))
+    except ValueError:
+        return None
+
+
+def _has_capital_p(name: str) -> bool:
+    """Upstream's ``[[ "$net_dev" != *P* ]]`` test, as a predicate.
+
+    The two twins of one port differ by a capital ``P`` in the PCIe path —
+    ``enp1s0f1np1`` against ``enP2p1s0f1np1`` — and NETWORKING.md line 37 puts
+    the IP on the lowercase one. So "no capital P" is how upstream picks the
+    addressed twin without hardcoding a name.
+    """
+    return "P" in name
+
+
+def _twin_key(netdev: str) -> str:
+    """A key two twins of the same physical port share.
+
+    ``enp1s0f1np1`` and ``enP2p1s0f1np1`` name the same QSFP port over the two
+    PCIe paths. Lowercasing and dropping the second path's ``2p`` prefix folds
+    them together; anything unrecognised keys on itself, so an interface we do
+    not understand is never merged with another.
+    """
+    lowered = netdev.lower()
+    if lowered.startswith("enp2p"):
+        lowered = "enp" + lowered[len("enp2p") :]
+    return lowered
+
+
+def build_fabric_config(
+    ports: Iterable[RoCEPort], addresses: dict[str, str] | None = None
+) -> FabricConfig:
+    """Turn ``ibdev2netdev`` and ``ip addr`` into a fabric configuration.
+
+    This is ``detect_interfaces`` (autodiscover.sh lines 56-196) with the
+    interactive parts removed and the failures returned rather than printed.
+    In order:
+
+    1. Up ports only, in ``ibdev2netdev`` order.
+    2. Every up ``enp*`` twin — lowercase p, no capital P — must carry an IP
+       (lines 94-101). Upstream ``return 1``s here, so this is an error.
+    3. No two addressed CX7 netdevs may share a subnet (lines 103-117).
+       NETWORKING.md line 133 says the same in bold: *"DO NOT use the same
+       subnet on both twins"*.
+    4. Two up ports is :data:`FABRIC_DIRECT`, four is :data:`FABRIC_MESH`, and
+       any other count is refused by number (line 193).
+    5. ``ib_hca`` is every up RoCE device — both twins of every cabled port,
+       which is the whole point of the twin rule.
+    6. The management interface is the addressed non-``P`` twin for a direct
+       fabric, and ``enP7s7`` (else ``wlP9s9``, with a warning) for a mesh.
+    """
+    addresses = dict(addresses or {})
+    ports = tuple(ports)
+    up = tuple(port for port in ports if port.is_up)
+    warnings: list[str] = []
+    errors: list[str] = []
+
+    if not ports:
+        return FabricConfig(
+            ports=ports,
+            addresses=addresses,
+            warnings=(
+                "no RoCE ports were reported, so this machine has no ConnectX "
+                "fabric to pin. NCCL falls back to sockets over whatever link "
+                "it picks, which works and is far slower.",
+            ),
+        )
+
+    for port in up:
+        if _has_capital_p(port.netdev):
+            continue
+        if port.netdev not in addresses:
+            errors.append(
+                f"{port.netdev} is up but has no IP address assigned. It is "
+                "the addressed twin of its port, so the fabric has no usable "
+                "address; give it one in /etc/netplan/40-cx7.yaml and run "
+                "sudo netplan apply."
+            )
+
+    seen: dict[str, str] = {}
+    for port in up:
+        cidr = addresses.get(port.netdev)
+        if not cidr:
+            continue
+        network = _network_of(cidr)
+        if network is None:
+            continue
+        if network in seen and seen[network] != port.netdev:
+            errors.append(
+                f"{port.netdev} and {seen[network]} share the subnet "
+                f"{network}. The two twins of one port must sit on different "
+                "subnets or routing picks the wrong one; NETWORKING.md line "
+                "133 says so in bold."
+            )
+            continue
+        seen[network] = port.netdev
+
+    count = len(up)
+    if count == 2:
+        mode = FABRIC_DIRECT
+    elif count == 4:
+        mode = FABRIC_MESH
+    else:
+        errors.append(
+            f"unexpected number of active CX7 interfaces ({count}); expected "
+            "2 (one cable — a pair, or a QSFP switch) or 4 (the switchless "
+            "three-node mesh). Check the cabling and that every intended "
+            "interface is up."
+        )
+        mode = ""
+
+    ethernet = ""
+    if mode == FABRIC_DIRECT:
+        addressed = [port.netdev for port in up if port.netdev in addresses]
+        preferred = [name for name in addressed if not _has_capital_p(name)]
+        if preferred:
+            ethernet = preferred[0]
+        elif addressed:
+            ethernet = addressed[0]
+        else:
+            errors.append(
+                "no active CX7 interface has an IP address, so there is no "
+                "management link to pin NCCL's sockets to."
+            )
+    elif mode == FABRIC_MESH:
+        for candidate in MESH_MANAGEMENT_INTERFACES:
+            if candidate in addresses:
+                ethernet = candidate
+                break
+        if not ethernet:
+            errors.append(
+                "a mesh needs "
+                f"{' or '.join(MESH_MANAGEMENT_INTERFACES)} up with an IP "
+                "address for cluster coordination: all four CX7 ports carry "
+                "the ring, so out-of-band traffic has to go over the 10G link."
+            )
+        elif ethernet in MESH_WIRELESS_INTERFACES:
+            warnings.append(
+                f"using the wireless interface ({ethernet}) for cluster "
+                "coordination; performance may be limited."
+            )
+
+    return FabricConfig(
+        mode=mode,
+        ethernet=ethernet,
+        ib_hca=tuple(port.hca for port in up) if mode else (),
+        nccl_env=dict(MESH_NCCL_ENV) if mode == FABRIC_MESH else {},
+        ports=ports,
+        addresses=addresses,
+        warnings=tuple(warnings),
+        errors=tuple(errors),
+    )
+
+
+def fabric_from_output(text: str) -> FabricConfig:
+    """A fabric configuration from :data:`FABRIC_COMMAND` output."""
+    ports, addresses = parse_fabric_output(text)
+    return build_fabric_config(ports, addresses)
+
+
+def detect_fabric() -> FabricConfig:
+    """Read this machine's own fabric.
+
+    Degrades to an empty configuration rather than raising: a developer
+    machine with no ``ibdev2netdev`` is not an error, it just has no fabric.
+    """
+    try:
+        result = subprocess.run(
+            ["sh", "-c", FABRIC_COMMAND],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        logger.debug("fabric detection failed: %s", exc)
+        return FabricConfig()
+    return fabric_from_output(result.stdout)
+
+
 # ── Real interfaces ──────────────────────────────────────────────────────────
 #
 # Everything below this line is scoped by :func:`real_interfaces`. Section 6:
@@ -677,10 +1111,19 @@ def check_network_health() -> ValidationResult:
 def ibdev2netdev_up() -> list[str]:
     """Fabric net devices ``ibdev2netdev`` reports as up.
 
-    The tool ships on DGX OS — confirmed present on the Spark — and prints one
-    line per port, ``mlx5_0 port 1 ==> ib0 (Up)``. Returns ``[]`` when it is
+    The tool ships on DGX OS and prints one line per port,
+    ``rocep1s0f1 port 1 ==> enp1s0f1np1 (Up)``. Returns ``[]`` when it is
     absent, which is every machine that is not a DGX; the caller then falls
     back to ``/sys``-derived interface state.
+
+    **What has actually been observed here.** The binary is present on our
+    Spark at ``/usr/sbin/ibdev2netdev``. Its *output* has not been: that
+    machine has an empty ``/sys/class/infiniband``, no ``15b3`` device on the
+    PCI bus and no CX7 netdevs, so it has never printed a port line for us to
+    parse. Everything this function and :func:`build_fabric_config` do with
+    that output is written against ``spark-vllm-docker``'s
+    ``docs/NETWORKING.md`` lines 22-27 and NVIDIA's own playbooks, and is
+    exercised only against those samples.
     """
     try:
         result = subprocess.run(

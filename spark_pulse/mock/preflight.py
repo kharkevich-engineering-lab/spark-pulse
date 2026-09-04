@@ -35,6 +35,7 @@ from spark_pulse.tools.preflight import (  # noqa: F401 — re-exported shapes
     ASSUMED_IMAGE_BYTES as ASSUMED_IMAGE_BYTES,
     CHECK_DISK as CHECK_DISK,
     CHECK_DOCKER as CHECK_DOCKER,
+    CHECK_FABRIC as CHECK_FABRIC,
     CHECK_GPU as CHECK_GPU,
     CHECK_IMAGE as CHECK_IMAGE,
     CHECK_INTERFACES as CHECK_INTERFACES,
@@ -65,6 +66,7 @@ from spark_pulse.tools.preflight import (  # noqa: F401 — re-exported shapes
     parse_meminfo as parse_meminfo,
     parse_runtimes as parse_runtimes,
     parse_toolkit as parse_toolkit,
+    selector_names as selector_names,
     targets_for as targets_for,
     verdict_for as verdict_for,
 )
@@ -87,7 +89,37 @@ SIM_MEM_TOTAL_KB = 126_950_000
 SIM_MEM_AVAILABLE_KB = 101_400_000
 SIM_LISTENING_PORTS = (22, 5000, 8100)
 SIM_NETDEVS = ("lo", "eth0", "docker0", "enp1s0f0np0", "enp1s0f1np1")
-SIM_IBDEVS = ("ib0", "ib1", "rocep1s0f0", "rocep1s0f1")
+#: ``/sys/class/infiniband`` on a Spark lists every RoCE device, twins
+#: included, whether or not its link is up — which is what makes it the right
+#: place to check an ``NCCL_IB_HCA`` name against.
+SIM_IBDEVS = (
+    "ib0",
+    "ib1",
+    "rocep1s0f0",
+    "rocep1s0f1",
+    "roceP2p1s0f0",
+    "roceP2p1s0f1",
+)
+
+#: ``ibdev2netdev`` on a Spark with one cable in the outermost QSFP port —
+#: the exact four lines ``spark-vllm-docker`` ``docs/NETWORKING.md`` prints at
+#: lines 22-27. Two ports up, so this simulates the non-mesh shape.
+SIM_IBDEV2NETDEV = (
+    "rocep1s0f0 port 1 ==> enp1s0f0np0 (Down)\n"
+    "rocep1s0f1 port 1 ==> enp1s0f1np1 (Up)\n"
+    "roceP2p1s0f0 port 1 ==> enP2p1s0f0np0 (Down)\n"
+    "roceP2p1s0f1 port 1 ==> enP2p1s0f1np1 (Up)"
+)
+
+#: The addresses NETWORKING.md's netplan profile gives those twins (lines
+#: 95-112). The two twins are deliberately on different subnets, which is the
+#: rule the guide states in bold at line 133.
+SIM_IP_ADDRESSES = (
+    "1: lo    inet 127.0.0.1/8 scope host lo\n"
+    "2: eth0    inet 192.168.1.100/24 brd 192.168.1.255 scope global eth0\n"
+    "3: enp1s0f1np1    inet 192.168.177.11/24 scope global enp1s0f1np1\n"
+    "4: enP2p1s0f1np1    inet 192.168.178.11/24 scope global enP2p1s0f1np1"
+)
 SIM_DISK_TOTAL_KB = 3_800_000_000
 SIM_DISK_FREE_KB = 1_900_000_000
 
@@ -144,6 +176,8 @@ class SimulatedHostProbe:
             return _ok(body)
         if command.startswith("ls -1 /sys/class/net"):
             return _ok("\n".join(SIM_NETDEVS) + "\n== ib\n" + "\n".join(SIM_IBDEVS))
+        if command.startswith("ibdev2netdev"):
+            return _ok(SIM_IBDEV2NETDEV + "\n== addr\n" + SIM_IP_ADDRESSES)
         if command.startswith("for p in"):
             lines = []
             for path in _paths_in(command):
@@ -199,6 +233,7 @@ __all__ = [
     "ASSUMED_IMAGE_BYTES",
     "CHECK_DISK",
     "CHECK_DOCKER",
+    "CHECK_FABRIC",
     "CHECK_GPU",
     "CHECK_IMAGE",
     "CHECK_INTERFACES",
@@ -209,7 +244,9 @@ __all__ = [
     "CHECK_TOOLKIT",
     "DISK_HEADROOM",
     "PROBE_TIMEOUT",
+    "SIM_IBDEV2NETDEV",
     "SIM_IBDEVS",
+    "SIM_IP_ADDRESSES",
     "SIM_LISTENING_PORTS",
     "SIM_NETDEVS",
     "SIM_TOOLKIT",
@@ -235,6 +272,7 @@ __all__ = [
     "parse_meminfo",
     "parse_runtimes",
     "parse_toolkit",
+    "selector_names",
     "probe_for",
     "reset",
     "run",

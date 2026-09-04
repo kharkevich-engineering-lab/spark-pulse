@@ -1011,6 +1011,8 @@ class JournalDocker(MockDockerService):
         )
 
     def copy_to_container(self, container, local_path, remote_path, timeout=120):
+        # The first thing a *launch* does to a rank, which is what makes the
+        # launch order observable as distinct from the creation order.
         self._note("copy_to_container", str(container))
         return super().copy_to_container(container, local_path, remote_path, timeout)
 
@@ -1195,7 +1197,15 @@ class TestRankNaming:
 
 
 class TestStartOrder:
-    def test_workers_are_created_first_and_rank_zero_last(self, native, fleet):
+    def test_every_container_exists_before_any_rank_is_launched(self, native, fleet):
+        """Upstream's two phases: create them all, then run the command.
+
+        ``launch-cluster.sh`` starts the head container (line 1097) and each
+        worker container (1106), applies the mods to all of them (1111-1121),
+        and only then execs the serve command (1201-1242). Interleaving the
+        two would have rank one already at the rendezvous while rank zero's
+        image turns out to be missing.
+        """
         plan = native.plan(
             "qwen3-8b-tp3", nodes=NODES, solo=False, deployment_id="dep1"
         )
@@ -1203,7 +1213,28 @@ class TestStartOrder:
         record = native.start(plan, services=fleet.services, wait=True)
 
         assert record["status"] == "running"
+        kinds = [kind for kind, _node, _name in fleet.journal]
+        assert kinds.index("copy_to_container") > max(
+            index for index, kind in enumerate(kinds) if kind == "run_container"
+        )
+
+    def test_workers_are_launched_first_and_rank_zero_last(self, native, fleet):
+        plan = native.plan(
+            "qwen3-8b-tp3", nodes=NODES, solo=False, deployment_id="dep1"
+        )
+
+        record = native.start(plan, services=fleet.services, wait=True)
+
+        assert record["status"] == "running"
+        # Containers are created head-first, exactly as upstream runs them.
         assert fleet.verbs("run_container") == [
+            "spark-pulse-dep1-r0-g1",
+            "spark-pulse-dep1-r1-g1",
+            "spark-pulse-dep1-r2-g1",
+        ]
+        # The serve command is the other way round: the workers block on the
+        # rendezvous, so rank zero must be the last thing to join it.
+        assert fleet.verbs("copy_to_container") == [
             "spark-pulse-dep1-r2-g1",
             "spark-pulse-dep1-r1-g1",
             "spark-pulse-dep1-r0-g1",
@@ -1249,10 +1280,14 @@ class TestGangFailure:
         assert record["status"] == "error"
         assert "rank 1 of 3" in record["error_message"]
         assert "torn down" in record["error_message"]
-        # Rank 2 was already up when rank 1 failed; it must not survive.
+        # Rank 0 was already up when rank 1 failed; it must not survive.
         for address in NODES:
             assert fleet.nodes[address].client.containers.list(all=True) == []
-        assert "spark-pulse-dep1-r2-g1" in fleet.verbs("stop_container")
+        assert "spark-pulse-dep1-r0-g1" in fleet.verbs("stop_container")
+        # And nothing was ever launched: the failure happened while the
+        # containers were still idle, which is the whole point of creating
+        # them all before running the serve command in any of them.
+        assert fleet.verbs("copy_to_container") == []
 
     def test_the_failed_rank_leaves_no_partial_state(self, native, records):
         fleet = Fleet(NODES, fail_on="-r1-")

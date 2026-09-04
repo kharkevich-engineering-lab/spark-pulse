@@ -16,6 +16,11 @@ import { expectNoCrash, gotoPage } from "./helpers";
 // The simulated registry is one shared object in the backend process, so
 // these run one at a time: a spec that adds a node must not see another
 // spec's node appear or vanish mid-assertion.
+//
+// Serial mode only reaches inside this file. `multinode.spec.ts` enrols and
+// then forgets three nodes of its own in another worker against the same
+// backend, so the listing spec below cannot treat one API read as a snapshot
+// that will still be true when the page renders — see the note there.
 test.describe.configure({ mode: "serial" });
 
 interface Node {
@@ -47,12 +52,22 @@ test("lists the nodes the backend holds, with interfaces, role and state", async
   page,
   request,
 }) => {
-  const nodes = await listNodes(request);
-  expect(nodes.length, "the control node registers itself at startup").toBeGreaterThan(0);
+  const before = await listNodes(request);
+  expect(before.length, "the control node registers itself at startup").toBeGreaterThan(0);
 
   await gotoPage(page, "/cluster");
   const registry = page.getByTestId("node-registry");
   await expect(registry.getByRole("heading", { name: "Nodes" })).toBeVisible();
+
+  // Assert against the nodes the backend held both before and after the page
+  // rendered. Another file's spec enrols three nodes and forgets them again
+  // in a parallel worker, and a node that no longer exists is not one this
+  // page is wrong to omit — the property under test is that the page shows
+  // what the backend holds, not what it briefly held.
+  const after = await listNodes(request);
+  const stillThere = new Set(after.map((n) => n.id));
+  const nodes = before.filter((n) => stillThere.has(n.id));
+  expect(nodes.length, "the control node is never transient").toBeGreaterThan(0);
 
   for (const node of nodes) {
     const row = registry.getByRole("row").filter({ hasText: node.name });
