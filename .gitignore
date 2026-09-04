@@ -33,3 +33,8 @@ web/playwright-report/
 web/test-results/
 .ralph/
 .claude/
+
+# Coverage artefacts
+.coverage
+coverage.json
+htmlcov/
