@@ -31,7 +31,9 @@ from spark_pulse.tools.discovery import (  # noqa: F401 — re-exported shapes
     ValidationResult,
     build_fabric_config as build_fabric_config,
     fabric_from_output as fabric_from_output,
+    parse_fabric_output as parse_fabric_output,
     parse_ibdev2netdev as parse_ibdev2netdev,
+    parse_ip_addresses as parse_ip_addresses,
 )
 
 
