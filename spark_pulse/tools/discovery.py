@@ -33,6 +33,7 @@ import socket
 import subprocess
 import threading
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal
@@ -136,6 +137,11 @@ class DiscoveredPeer:
     instance: str = ""
     node_id: str = ""
     version: str = ""
+    # Every address this machine answered on. One host advertises once per
+    # address family per interface, so without folding them together an
+    # operator scanning the LAN sees the same Spark six times.
+    addresses: tuple[str, ...] = ()
+    services: tuple[str, ...] = ()
 
     @property
     def is_spark_pulse(self) -> bool:
@@ -993,4 +999,54 @@ def browse_peers(timeout: float = 3.0) -> list[DiscoveredPeer]:
         except Exception:  # pragma: no cover — closing is best effort
             pass
 
-    return sorted(peers.values(), key=lambda p: (p.address, p.service))
+    return _fold_by_machine(peers.values())
+
+
+def _machine_key(peer: DiscoveredPeer) -> str:
+    """What identifies the machine behind a record.
+
+    The mDNS hostname, because one machine advertises both our own record and
+    an ssh one and only the former carries a node id, so keying on the id
+    would split a single host in two. Never the address: one host answers on
+    several.
+    """
+    return peer.hostname or peer.node_id or peer.address
+
+
+def _fold_by_machine(found: Iterable[DiscoveredPeer]) -> list[DiscoveredPeer]:
+    """One entry per machine, carrying every address and service it answered on.
+
+    Prefers an IPv4 address as the primary, because that is what an operator
+    types and what ssh and docker take without a zone suffix, and prefers our
+    own record over an ssh one so a node that runs Spark Pulse is identified
+    as such.
+    """
+    grouped: dict[str, list[DiscoveredPeer]] = {}
+    for peer in found:
+        grouped.setdefault(_machine_key(peer), []).append(peer)
+
+    folded: list[DiscoveredPeer] = []
+    for records in grouped.values():
+        addresses = sorted({r.address for r in records}, key=_address_sort_key)
+        services = sorted({r.service for r in records})
+        # Prefer the record that carries an identity, so a node running Spark
+        # Pulse is reported as one rather than as a bare ssh responder.
+        best = next(
+            (r for r in records if r.service == SPARK_PULSE_SERVICE and r.node_id),
+            next((r for r in records if r.service == SPARK_PULSE_SERVICE), records[0]),
+        )
+        primary = next((a for a in addresses if ":" not in a), best.address)
+        folded.append(
+            replace(
+                best,
+                address=primary,
+                addresses=tuple(addresses),
+                services=tuple(services),
+            )
+        )
+    return sorted(folded, key=lambda p: (not p.node_id, p.hostname, p.address))
+
+
+def _address_sort_key(address: str) -> tuple[int, str]:
+    """IPv4 first, then IPv6, each alphabetically."""
+    return (1 if ":" in address else 0, address)

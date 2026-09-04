@@ -234,3 +234,71 @@ class TestRunDiscoveryIsNotFrozen:
         assert result.ethernet_if == "enp1s0"
         assert result.nccl_defaults is not None
         assert result.nccl_defaults.socket_ifname == "enp1s0"
+
+
+class TestOneEntryPerMachine:
+    """A host answers once per address family per interface.
+
+    Observed on a DGX Spark: one machine produced six records, two services
+    across one IPv4 and two IPv6 addresses. Listing those separately shows an
+    operator the same Spark six times in the scan dialog.
+    """
+
+    def _peer(self, address, service, node_id="", hostname="spark.local"):
+        return discovery.DiscoveredPeer(
+            address=address,
+            port=8100,
+            service=service,
+            hostname=hostname,
+            node_id=node_id,
+        )
+
+    def test_one_machine_on_several_addresses_folds_to_one_entry(self):
+        records = [
+            self._peer("192.168.1.10", discovery.SPARK_PULSE_SERVICE, "abc"),
+            self._peer("fe80::1", discovery.SPARK_PULSE_SERVICE, "abc"),
+            self._peer("192.168.1.10", discovery.SSH_SERVICE, "", "spark.local"),
+            self._peer("fe80::1", discovery.SSH_SERVICE, "", "spark.local"),
+        ]
+        folded = discovery._fold_by_machine(records)
+        assert len(folded) == 1
+        assert set(folded[0].addresses) == {"192.168.1.10", "fe80::1"}
+        assert set(folded[0].services) == {
+            discovery.SPARK_PULSE_SERVICE,
+            discovery.SSH_SERVICE,
+        }
+
+    def test_the_primary_address_is_ipv4(self):
+        """It is what an operator types, and what ssh and docker take without
+        a zone suffix."""
+        folded = discovery._fold_by_machine(
+            [
+                self._peer("fe80::1", discovery.SPARK_PULSE_SERVICE, "abc"),
+                self._peer("192.168.1.10", discovery.SPARK_PULSE_SERVICE, "abc"),
+            ]
+        )
+        assert folded[0].address == "192.168.1.10"
+
+    def test_our_own_record_wins_over_an_ssh_one(self):
+        folded = discovery._fold_by_machine(
+            [
+                self._peer("192.168.1.10", discovery.SSH_SERVICE, "", "spark.local"),
+                self._peer(
+                    "192.168.1.10", discovery.SPARK_PULSE_SERVICE, "abc", "spark.local"
+                ),
+            ]
+        )
+        assert folded[0].node_id == "abc"
+
+    def test_two_machines_stay_two_entries(self):
+        folded = discovery._fold_by_machine(
+            [
+                self._peer(
+                    "192.168.1.10", discovery.SPARK_PULSE_SERVICE, "abc", "a.local"
+                ),
+                self._peer(
+                    "192.168.1.11", discovery.SPARK_PULSE_SERVICE, "def", "b.local"
+                ),
+            ]
+        )
+        assert len(folded) == 2

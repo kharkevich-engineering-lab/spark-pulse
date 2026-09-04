@@ -39,6 +39,11 @@ def _peer_payload(peer: Any) -> dict[str, Any]:
         "node_id": peer.node_id,
         "version": peer.version,
         "is_spark_pulse": peer.is_spark_pulse,
+        # Every address and service this machine answered on. One host
+        # advertises once per address family per interface, so these are what
+        # let the UI show it once rather than six times.
+        "addresses": list(getattr(peer, "addresses", ()) or [peer.address]),
+        "services": list(getattr(peer, "services", ()) or [peer.service]),
     }
 
 
@@ -59,7 +64,14 @@ def discover(timeout: float = Query(3.0, ge=0.1, le=15.0)):
     return {
         "mdns_available": tools.discovery.mdns_available(),
         "peers": [
-            {**_peer_payload(peer), "registered": peer.address in known}
+            {
+                **_peer_payload(peer),
+                # Match on every address it answered on: a node registered by
+                # its IPv6 address is still the same machine.
+                "registered": bool(
+                    known & set(getattr(peer, "addresses", ()) or [peer.address])
+                ),
+            }
             for peer in peers
         ],
     }
