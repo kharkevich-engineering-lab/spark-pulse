@@ -45,9 +45,12 @@ from spark_pulse.tools.docker import (
 from spark_pulse.tools.labels import (
     CLUSTER_LABEL,
     DEPLOYMENT_LABEL,
+    GENERATION_LABEL,
     MANAGED_LABEL,
+    RANK_LABEL,
     RECIPE_LABEL,
     ROLE_LABEL,
+    WORLD_SIZE_LABEL,
 )
 from spark_pulse.tools.node_service import (
     NODE_SERVICE_METHODS,
@@ -397,6 +400,63 @@ class TestContainerServiceContract:
         ]
 
 
+class TestGangIdentityContract:
+    """Every implementation must agree about identity and about restarting."""
+
+    def test_a_rank_container_carries_its_identity(self, service):
+        info = service.run_container(
+            image=IMAGE,
+            name="contract-rank",
+            env_vars={},
+            metadata=_metadata("contract-gang", generation=2, rank=1, world_size=4),
+        )
+
+        assert info.labels[GENERATION_LABEL] == "2"
+        assert info.labels[RANK_LABEL] == "1"
+        assert info.labels[WORLD_SIZE_LABEL] == "4"
+
+    def test_a_container_without_a_generation_carries_no_identity_labels(self, service):
+        """The label set of everything that is not a rank is unchanged."""
+        info = service.run_container(
+            image=IMAGE,
+            name="contract-plain",
+            env_vars={},
+            metadata=_metadata("contract-plain"),
+        )
+
+        assert GENERATION_LABEL not in info.labels
+        assert RANK_LABEL not in info.labels
+        assert WORLD_SIZE_LABEL not in info.labels
+
+
+class TestRestartPolicy:
+    """A rebooting node must not resurrect a rank into a torn-down gang."""
+
+    def test_the_sdk_path_asks_for_no_restart(self):
+        client = _fake_sdk_client()
+        DockerService(client=client).run_container(
+            image=IMAGE,
+            name="contract-restart",
+            env_vars={},
+            metadata=_metadata("contract-restart"),
+        )
+
+        kwargs = client.containers.run.call_args.kwargs
+        assert kwargs["restart_policy"] == {"Name": "no"}
+
+    def test_the_ssh_path_asks_for_no_restart(self):
+        ssh = _simulated_ssh()
+        RemoteNodeService(NODES["peer"], ssh_client=ssh).run_container(
+            image=IMAGE,
+            name="contract-restart-remote",
+            env_vars={},
+            metadata=_metadata("contract-restart-remote"),
+        )
+
+        run = next(c["command"] for c in ssh.commands if " run " in c["command"])
+        assert "--restart no" in run
+
+
 class TestImageContract:
     """Every container service answers the same questions about images."""
 
@@ -535,6 +595,42 @@ class TestReconciliationContract:
         assert clusters[0]["head_ip"] == PEER_ADDRESS
         assert clusters[0]["ray_enabled"] is True
         assert clusters[0]["image"] == IMAGE
+
+    def test_reconcile_reads_a_ranks_identity_back(self):
+        """Rank, generation and world size survive the round trip to Docker.
+
+        Not a plan-level assertion: the identity has to reach the daemon
+        through whichever service wrote the container, or reaping a leftover
+        generation has nothing to go on.
+        """
+        docker = DockerService(client=_fake_sdk_client())
+        docker.run_container(
+            image=IMAGE,
+            name="spark-pulse-contract-r1-g3",
+            env_vars={},
+            metadata=_metadata("contract", generation=3, rank=1, world_size=2),
+        )
+
+        deployments = _reconcile_deployments_real(docker)
+
+        assert deployments[0]["generation"] == 3
+        assert deployments[0]["rank"] == 1
+        assert deployments[0]["world_size"] == 2
+
+    def test_a_container_without_a_generation_reads_as_a_lone_rank_zero(self):
+        """A container written before ranks existed is exactly what it was."""
+        docker = DockerService(client=_fake_sdk_client())
+        docker.run_container(
+            image=IMAGE,
+            name="spark-pulse-legacy",
+            env_vars={},
+            metadata=_metadata("legacy"),
+        )
+
+        deployment = _reconcile_deployments_real(docker)[0]
+
+        assert (deployment["generation"], deployment["rank"]) == (0, 0)
+        assert deployment["world_size"] == 1
 
     def test_reconcile_ignores_unlabelled_containers(self):
         """Containers without our labels are not adopted."""

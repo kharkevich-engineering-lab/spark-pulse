@@ -95,6 +95,40 @@ class TestReconstructDeployment:
         labels = {"spark-pulse.name": "test-container"}
         assert _reconstruct_deployment(labels) is None
 
+    def test_rank_identity_is_read_from_the_labels(self):
+        """Which rank of which attempt, read back rather than parsed out."""
+        labels = {
+            "spark-pulse.deployment": "dep1",
+            "spark-pulse.name": "spark-pulse-dep1-r2-g3",
+            "spark-pulse.generation": "3",
+            "spark-pulse.rank": "2",
+            "spark-pulse.world_size": "4",
+        }
+
+        result = _reconstruct_deployment(labels)
+
+        assert result["generation"] == 3
+        assert result["rank"] == 2
+        assert result["world_size"] == 4
+
+    def test_a_container_from_before_ranks_is_a_lone_rank_zero(self):
+        result = _reconstruct_deployment({"spark-pulse.deployment": "old"})
+
+        assert (result["generation"], result["rank"], result["world_size"]) == (0, 0, 1)
+
+    def test_a_malformed_identity_label_does_not_crash_reconciliation(self):
+        """An unreadable label must not turn a recovery pass into an exception."""
+        labels = {
+            "spark-pulse.deployment": "dep1",
+            "spark-pulse.generation": "not-a-number",
+            "spark-pulse.rank": "",
+            "spark-pulse.world_size": "-1",
+        }
+
+        result = _reconstruct_deployment(labels)
+
+        assert (result["generation"], result["rank"], result["world_size"]) == (0, 0, 1)
+
 
 class TestReconciliationResult:
     def test_default_values(self):
