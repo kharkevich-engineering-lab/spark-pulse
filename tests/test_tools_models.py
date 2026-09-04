@@ -536,9 +536,9 @@ class TestDelete:
         ]
 
         class _Tools:
-            class deployments:  # noqa: N801
+            class deployment_records:  # noqa: N801
                 @staticmethod
-                def list_deployments():
+                def load():
                     return deployments
 
             class recipes:  # noqa: N801

@@ -8,9 +8,9 @@ and 3.3:
 * an unreadable state file is not an empty cluster — only a genuinely missing
   file reads as ``[]``, and a corrupt one is quarantined and raised.
 
-``tools.deployments`` is exercised through the package (the mock under
-``SIMULATION_MODE=1``) and, separately, as the real module, because both write
-real state to disk and both must behave identically here.
+``tools.deployment_records`` owns the file in both modes — it is real-only,
+picking a different path under ``SIMULATION_MODE`` and running the same code —
+so there is one implementation to hold to these properties, not two.
 """
 
 from __future__ import annotations
@@ -33,13 +33,7 @@ from spark_pulse.tools.atomic_json import (
     write_json_atomic,
 )
 
-# The real module, resolved the way the other deployment tests resolve theirs.
-# Importing the submodule rebinds ``spark_pulse.tools.deployments`` away from the
-# mock for the rest of the process, so put the package attribute back at once —
-# every other test in the run still expects the simulation module there.
-_switched_deployments = tools.deployments
-real_deployments = importlib.import_module("spark_pulse.tools.deployments")
-tools.deployments = _switched_deployments
+records = tools.deployment_records
 
 SAMPLE = [{"id": "dep-1", "status": "running", "port": 8000}]
 
@@ -219,36 +213,27 @@ class TestReadStateFile:
 
 @pytest.fixture
 def state_file(tmp_path, monkeypatch):
-    """Point both the switched and the real deployments module at tmp_path."""
+    """Point the record store at tmp_path."""
     path = tmp_path / "deployments.json"
-    monkeypatch.setattr(tools.deployments, "_DEPLOYMENTS_FILE", path)
-    monkeypatch.setattr(real_deployments, "_DEPLOYMENTS_FILE", path)
+    monkeypatch.setattr(records, "RECORDS_FILE", path)
     return path
 
 
 class TestDeploymentStateFile:
     def test_missing_file_loads_as_empty_list(self, state_file):
         assert not state_file.exists()
-        assert tools.deployments._load() == []
-        assert real_deployments._load() == []
+        assert records.load() == []
 
     def test_round_trip_leaves_no_temp_file(self, state_file):
-        tools.deployments._save(SAMPLE)
-        assert tools.deployments._load() == SAMPLE
+        records.save(SAMPLE)
+        assert records.load() == SAMPLE
         assert _temp_leftovers(state_file.parent) == []
 
-    def test_real_module_round_trip_leaves_no_temp_file(self, state_file):
-        real_deployments._save(SAMPLE)
-        assert real_deployments._load() == SAMPLE
-        assert _temp_leftovers(state_file.parent) == []
-
-    @pytest.mark.parametrize("module", ["switched", "real"])
-    def test_corrupt_file_raises_instead_of_reading_as_empty(self, state_file, module):
-        mod = tools.deployments if module == "switched" else real_deployments
+    def test_corrupt_file_raises_instead_of_reading_as_empty(self, state_file):
         state_file.write_text("[{not json")
 
         with pytest.raises(StateFileError) as exc:
-            mod._load()
+            records.load()
 
         assert exc.value.path == state_file
         assert not state_file.exists()
@@ -256,24 +241,24 @@ class TestDeploymentStateFile:
         assert str(exc.value.quarantine_path) in str(exc.value)
 
     def test_crash_before_replace_keeps_the_previous_deployments(self, state_file):
-        tools.deployments._save(SAMPLE)
+        records.save(SAMPLE)
 
         with crashing_replace():
             with pytest.raises(OSError):
-                tools.deployments._save([])
+                records.save([])
 
-        assert tools.deployments._load() == SAMPLE
+        assert records.load() == SAMPLE
         assert _temp_leftovers(state_file.parent) == []
 
     def test_check_state_file_is_silent_when_readable(self, state_file):
-        tools.deployments.check_state_file()  # missing file
-        tools.deployments._save(SAMPLE)
-        tools.deployments.check_state_file()  # present and valid
+        records.check_state_file()  # missing file
+        records.save(SAMPLE)
+        records.check_state_file()  # present and valid
 
     def test_check_state_file_raises_on_corruption(self, state_file):
         state_file.write_text("}{")
         with pytest.raises(StateFileError):
-            tools.deployments.check_state_file()
+            records.check_state_file()
 
     def test_native_runtime_records_share_the_durable_path(self, state_file):
         nr = importlib.import_module("spark_pulse.tools.native_runtime")
@@ -313,7 +298,7 @@ class TestStartupRefusal:
     def test_startup_proceeds_on_a_readable_state_file(self, state_file):
         from spark_pulse.app import create_app
 
-        tools.deployments._save([])
+        records.save([])
         with TestClient(create_app()) as client:
             assert client.get("/health").status_code == 200
 

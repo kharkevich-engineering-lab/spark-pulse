@@ -1,22 +1,20 @@
-"""Deployment dispatcher — routes each call to the upstream or native runtime.
+"""Deployment dispatcher — one runtime, plus a tombstone for the old one.
 
-Two deploy paths coexist during the native migration:
+There is a single way to start a deployment: :mod:`tools.native_runtime`,
+which drives Docker from Python. The upstream runtime — fork ``run-recipe.sh``
+out of a spark-vllm-docker checkout, track a PID, SIGTERM the process group —
+is gone, and nothing can create such a deployment any more.
 
-* **upstream** (``tools.deployments``) forks ``run-recipe.sh`` and tracks a PID.
-* **native** (``tools.native_runtime``) drives Docker from Python.
+What can still exist is its *records*. An operator who upgrades while an
+upstream deployment is serving keeps a row in ``deployments.json`` and a
+process on the machine, and deleting the code without deleting that would
+leave a GPU held by something the control plane no longer admits exists. So
+acting on an existing deployment still routes by the record's own ``runtime``
+field: native records go to the native runtime, everything else goes to
+:mod:`tools.deployment_records`, which can list, log, stop and delete a legacy
+deployment and nothing else.
 
-Which one runs is decided in two different ways, on purpose:
-
-* *Creating* follows the ``runtime`` config flag, and nothing else. A cluster
-  is a deployment of size N: under ``runtime: native`` a create with a node
-  list takes the same path as a create without one, because there is only one
-  path left. The flag is the whole decision.
-* *Acting on an existing deployment* (stop, delete, logs, get) follows the
-  record's own ``runtime`` field. Records outlive a flag flip, so a native
-  deployment stays stoppable after the flag goes back to ``upstream`` — and the
-  other way round.
-
-Both runtimes persist to the same ``deployments.json``, so listing is a merge.
+Both live in the same ``deployments.json``, so listing is a merge.
 """
 
 from __future__ import annotations
@@ -24,22 +22,7 @@ from __future__ import annotations
 from typing import Any
 
 from spark_pulse import tools
-from spark_pulse.config import config
 from spark_pulse.tools.native_runtime import RUNTIME_NAME
-
-
-def active_runtime() -> str:
-    """The runtime new deployments will use."""
-    return config.runtime
-
-
-def uses_native() -> bool:
-    """Whether a *create* goes to the native runtime.
-
-    Independent of how many nodes are asked for: node count is a property of
-    the deployment, not a choice of runtime.
-    """
-    return config.runtime == RUNTIME_NAME
 
 
 def _is_native_record(record: dict[str, Any] | None) -> bool:
@@ -47,23 +30,17 @@ def _is_native_record(record: dict[str, Any] | None) -> bool:
 
 
 def _record(deployment_id: str) -> dict[str, Any] | None:
-    return next(
-        (d for d in tools.deployments._load() if d.get("id") == deployment_id), None
-    )
+    return tools.deployment_records.get(deployment_id)
 
 
 # ── Dispatch ─────────────────────────────────────────────────────────────────
 
 
 def list_deployments() -> list[dict[str, Any]]:
-    """Every deployment from both runtimes, native records reconciled."""
-    upstream = [
-        d
-        for d in tools.deployments.list_deployments()
-        if d.get("runtime") != RUNTIME_NAME
-    ]
+    """Every deployment: native ones reconciled, legacy ones checked by PID."""
+    legacy = tools.deployment_records.list_legacy()
     native = tools.native_runtime.list_deployments()
-    merged = upstream + native
+    merged = legacy + native
     merged.sort(key=lambda d: str(d.get("created_at") or ""))
     return merged
 
@@ -73,33 +50,22 @@ def create_deployment(
     name: str,
     params: dict[str, Any],
     nodes: list[str] | None = None,
-    launch_command: str = "",
     engine: str | None = None,
     variant: str | None = None,
     model: str | None = None,
     extra_args: list[str] | None = None,
     allow_missing_model: bool = False,
-    raw_params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Start a deployment on whichever runtime the config selects.
+    """Start a deployment. Always native — there is nothing else to start.
 
-    ``params`` carries the recipe defaults merged in, which is what the
-    upstream runner expects. ``raw_params`` is what the caller actually asked
-    for; the native path needs it to tell an explicit setting apart from a
-    recipe default.
+    ``params`` is what the caller actually asked for, not the recipe's defaults
+    merged in: the native path needs to tell an explicit setting apart from a
+    default when it decides what to refuse and how to explain it.
     """
-    if config.runtime != RUNTIME_NAME:
-        return tools.deployments.create_deployment(
-            recipe_id=recipe_id,
-            name=name,
-            params=params,
-            nodes=nodes,
-            launch_command=launch_command,
-        )
     return tools.native_runtime.create_deployment(
         recipe_id=recipe_id,
         name=name,
-        params=raw_params if raw_params is not None else params,
+        params=params,
         nodes=nodes,
         engine=engine,
         variant=variant,
@@ -119,7 +85,7 @@ def plan_deployment(
     nodes: list[str] | None = None,
     allow_missing_model: bool = True,
 ) -> dict[str, Any]:
-    """Dry run. Always native — it is a preview, not a deploy."""
+    """Dry run: resolve everything a create would, start nothing."""
     return tools.native_runtime.plan(
         recipe_id,
         engine=engine,
@@ -136,19 +102,23 @@ def plan_deployment(
 def stop_deployment(deployment_id: str) -> dict[str, Any] | None:
     if _is_native_record(_record(deployment_id)):
         return tools.native_runtime.stop_deployment(deployment_id)
-    return tools.deployments.stop_deployment(deployment_id)
+    return tools.deployment_records.stop_legacy(deployment_id)
 
 
 def delete_deployment(deployment_id: str) -> bool:
     if _is_native_record(_record(deployment_id)):
         return tools.native_runtime.delete_deployment(deployment_id)
-    return tools.deployments.delete_deployment(deployment_id)
+    # A legacy record is stopped before it is dropped, for the same reason a
+    # native one is: forgetting a deployment is not the same as ending it, and
+    # only one of those frees the GPU.
+    tools.deployment_records.stop_legacy(deployment_id)
+    return tools.deployment_records.delete(deployment_id)
 
 
 def get_logs(deployment_id: str, lines: int = 200) -> str:
     if _is_native_record(_record(deployment_id)):
         return tools.native_runtime.get_logs(deployment_id, lines)
-    return tools.deployments.get_logs(deployment_id, lines)
+    return tools.deployment_records.logs_legacy(deployment_id, lines)
 
 
 def get_deployment(deployment_id: str) -> dict[str, Any] | None:

@@ -2,18 +2,23 @@
 
 import os
 import shutil
-import subprocess
 from pathlib import Path
 from typing import Any
 
 from spark_pulse.config import config
 
+WHEELS_CACHE_NAME = "Wheels (spark-vllm)"
+
 
 def get_cache_dirs() -> list[dict[str, str]]:
-    """Return known cache directories."""
+    """Return known cache directories.
+
+    The wheels directory belongs to a spark-vllm-docker checkout, so it is
+    listed only when there is one; a path pointing nowhere would otherwise show
+    up as a permanently empty cache an operator cannot clean.
+    """
     home = os.path.expanduser("~")
-    spark_path = config.spark_vllm_path
-    return [
+    dirs = [
         {
             "name": "HF Model Cache",
             "path": f"{home}/.cache/huggingface/hub",
@@ -44,12 +49,17 @@ def get_cache_dirs() -> list[dict[str, str]]:
             "path": f"{home}/.cache/uv",
             "description": "Python package cache",
         },
-        {
-            "name": "Wheels (spark-vllm)",
-            "path": f"{spark_path}/wheels",
-            "description": "Built/installed wheels",
-        },
     ]
+    checkout = config.spark_vllm_dir
+    if checkout is not None:
+        dirs.append(
+            {
+                "name": WHEELS_CACHE_NAME,
+                "path": str(checkout / "wheels"),
+                "description": "Built/installed wheels",
+            }
+        )
+    return dirs
 
 
 def scan_dir(path: str) -> dict[str, Any]:
@@ -101,26 +111,7 @@ def clean_cache(targets: list[str]) -> dict[str, str]:
 
     results: dict[str, str] = {}
     for target in targets:
-        if target == "wheels (spark-vllm)":
-            try:
-                result = subprocess.run(
-                    [
-                        "bash",
-                        Path(config.spark_vllm_path) / "hf-download.sh",
-                        "--cleanup",
-                    ],
-                    capture_output=True,
-                    text=True,
-                    timeout=300,
-                )
-                results[target] = (
-                    "HF cache cleaned via script"
-                    if result.returncode == 0
-                    else f"Error: {result.stderr[:200]}"
-                )
-            except Exception as e:
-                results[target] = f"Error: {e}"
-        elif target in all_dirs:
+        if target in all_dirs:
             p = Path(all_dirs[target])
             if not p.exists():
                 results[target] = "Cache directory does not exist"

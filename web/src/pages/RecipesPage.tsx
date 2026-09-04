@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { fetchRecipes, fetchRecipe, fetchDeployments, createDeployment, fetchSettings, fetchRecipeCustomization, saveRecipeCustomization, deleteRecipeCustomization, fetchMods, fetchMod, listCustomRecipes, saveCustomRecipe, deleteCustomRecipe, listCustomMods, getCustomModFiles, saveCustomModFiles, deleteCustomMod, syncSymlinks, ApiError } from "@/lib/api";
+import { fetchRecipes, fetchRecipe, fetchDeployments, createDeployment, fetchSettings, fetchRecipeCustomization, saveRecipeCustomization, deleteRecipeCustomization, fetchMods, fetchMod, listCustomRecipes, saveCustomRecipe, deleteCustomRecipe, listCustomMods, getCustomModFiles, saveCustomModFiles, deleteCustomMod, ApiError } from "@/lib/api";
 import type { RecipeDetail, RecipeCustomization, RecipeSummary, ModSummary, ModDetail, CustomRecipeInfo, CustomModInfo, ModFileMap, PreflightReport } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
 import { AlertModal, ConfirmModal } from "@/components/Modal";
@@ -227,14 +227,9 @@ export default function RecipesPage() {
     setToggling(true);
     const next = !showCustom;
     try {
-      if (next) {
-        // Switching to custom: create symlinks
-        try { await syncSymlinks("create"); } catch { /* best-effort */ }
-        await loadCustomData();
-      } else {
-        // Switching to system: remove symlinks
-        try { await syncSymlinks("remove"); } catch { /* best-effort */ }
-      }
+      // Custom recipes and mods are read straight from ~/.config/spark-pulse,
+      // so showing them is a load — there is nothing to sync into a checkout.
+      if (next) await loadCustomData();
       setShowCustom(next);
     } finally {
       setToggling(false);

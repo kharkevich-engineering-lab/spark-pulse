@@ -465,23 +465,23 @@ def _ports_in_use() -> set[int]:
 
 
 def _load_records() -> list[dict[str, Any]]:
-    """Load the shared deployment records.
+    """Load the deployment records.
 
-    The native runtime shares ``deployments.json`` with the container runtime,
-    so it inherits that module's crash-safe write and its refusal to read an
+    ``deployment_records`` owns the file, including its refusal to read an
     unreadable state file as an empty one: ``StateFileError`` propagates to the
-    caller rather than degrading into ``[]``.
+    caller rather than degrading into ``[]``. Records made by the removed
+    upstream runner live in the same file and are simply not ours.
     """
-    return tools.deployments._load()
+    return tools.deployment_records.load()
 
 
 def _save_records(records: list[dict[str, Any]]) -> None:
-    """Persist the shared deployment records.
+    """Persist the deployment records.
 
-    Delegates to ``tools.deployments._save``, which writes through
+    Delegates to ``deployment_records.save``, which writes through
     ``atomic_json.write_json_atomic`` — temp file, fsync, replace, dir fsync.
     """
-    tools.deployments._save(records)
+    tools.deployment_records.save(records)
 
 
 def _update_record(deployment_id: str, **fields: Any) -> dict[str, Any] | None:
@@ -993,19 +993,29 @@ def _rank_record(rank_plan: RankPlan) -> dict[str, Any]:
 def _resolve_mod_dir(mod: str) -> Path:
     """Locate a recipe's mod on disk.
 
-    Recipes name mods the way upstream does, relative to the checkout root
-    (``mods/fix-x``), but a bare name is accepted too.
+    Two places, because mods come from two: a spark-vllm-docker checkout, where
+    recipes name them relative to the root (``mods/fix-x``) or bare, and the
+    operator's own ``custom-mods`` directory. The latter used to be reachable
+    only because a ``mods/custom-x`` symlink was planted in the checkout; it is
+    looked up directly now, so a custom mod works with no checkout at all.
     """
-    root = Path(config.spark_vllm_path)
-    candidates = [root / mod]
-    if not mod.startswith("mods/"):
-        candidates.append(root / "mods" / mod)
+    candidates: list[Path] = []
+    root = config.spark_vllm_dir
+    if root is not None:
+        candidates.append(root / mod)
+        if not mod.startswith("mods/"):
+            candidates.append(root / "mods" / mod)
+    name = mod.removeprefix("mods/")
+    custom_root = tools.custom_files.custom_mods_dir()
+    candidates.append(custom_root / name)
+    prefix = tools.custom_files.CUSTOM_PREFIX
+    if name.startswith(prefix):
+        candidates.append(custom_root / name.removeprefix(prefix))
     for candidate in candidates:
         if (candidate / "run.sh").is_file():
             return candidate
     raise NativeRuntimeError(
-        f"mod '{mod}' has no run.sh under {root}; looked in "
-        + ", ".join(str(c) for c in candidates)
+        f"mod '{mod}' has no run.sh; looked in " + ", ".join(str(c) for c in candidates)
     )
 
 

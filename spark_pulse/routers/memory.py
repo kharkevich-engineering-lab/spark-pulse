@@ -27,7 +27,7 @@ def get_all_memory():
     data = tools.system.get_all_memory()
     running = [
         d
-        for d in tools.deployments.list_deployments()
+        for d in tools.deployment_records.load()
         if d.get("status") in ("running", "pending")
     ]
     tools.system.enrich_gpu_process_tracking(data.get("processes", []), running)

@@ -111,11 +111,8 @@ async def configure_thread_pool() -> int:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup: validate spark-vllm-docker path, log mode, create symlinks, start scheduler.
-    Shutdown: remove symlinks, cleanup."""
-    spark_path = Path(config.spark_vllm_path)
-    app.state.spark_path_valid = spark_path.is_dir()
-
+    """Startup: log the mode, check state, register this node, reconcile.
+    Shutdown: stop the updater and withdraw the mDNS record."""
     try:
         threads = await configure_thread_pool()
         print(f"Worker thread pool: {threads} threads")
@@ -123,26 +120,20 @@ async def lifespan(app: FastAPI):
         print(f"Warning: could not set the worker thread pool size: {e}")
 
     mode = "SIMULATION" if is_simulation() else "PRODUCTION"
+    print(f"Spark Pulse starting in {mode} mode")
+    # The checkout is one optional recipe/mod source, not something we run.
+    checkout = config.spark_vllm_dir
     print(
-        f"Spark Pulse starting in {mode} mode "
-        f"(spark-vllm-docker: {config.spark_vllm_path})"
+        f"spark-vllm-docker recipes: {checkout}"
+        if checkout is not None
+        else "spark-vllm-docker: not configured (recipes come from the other sources)"
     )
-
-    # Create symlinks for custom recipes and mods
-    try:
-        created = custom_files_router.create_symlinks(config.spark_vllm_path)
-        n_recipes = len(created.get("recipes", []))
-        n_mods = len(created.get("mods", []))
-        if n_recipes or n_mods:
-            print(f"Symlinks created: {n_recipes} custom recipes, {n_mods} custom mods")
-    except Exception as e:
-        print(f"Warning: could not create symlinks for custom files: {e}")
 
     # Refuse to start on an unreadable state file. An unreadable state file is
     # not an empty cluster: coming up with an empty view while containers are
     # still running is what lets a control plane tear down live work.
     try:
-        tools.deployments.check_state_file()
+        tools.deployment_records.check_state_file()
     except StateFileError as e:
         print(f"FATAL: cannot read deployment state file {e.path}: {e.reason}")
         if e.quarantine_path is not None:
@@ -152,6 +143,22 @@ async def lifespan(app: FastAPI):
             )
         print("FATAL: refusing to start with an empty view of running deployments.")
         raise
+
+    # Say out loud what is still running on the removed upstream runtime. Such
+    # a deployment cannot be recreated, but its process is real and its GPU is
+    # held; an operator who is not told is an operator who cannot act.
+    try:
+        stranded = tools.deployment_records.live_legacy_ids()
+        if stranded:
+            print(
+                f"WARNING: {len(stranded)} deployment(s) started by the removed "
+                f"upstream runtime are still running: {', '.join(stranded)}. "
+                "They are still listed on the Inference page and can be read, "
+                "stopped and deleted there as usual, but not restarted — "
+                "redeploy them natively."
+            )
+    except Exception as e:  # pragma: no cover - defensive
+        print(f"Warning: could not check for legacy deployments: {e}")
 
     # Put this machine in the node registry, then say so on the LAN.
     #
@@ -219,16 +226,6 @@ async def lifespan(app: FastAPI):
         tools.discovery.stop_announcement()
     except Exception as e:  # pragma: no cover — shutdown is best effort
         print(f"Warning: could not withdraw the mDNS record: {e}")
-
-    # Remove symlinks for custom recipes and mods
-    try:
-        removed = custom_files_router.remove_symlinks(config.spark_vllm_path)
-        n_recipes = removed.get("recipes", 0)
-        n_mods = removed.get("mods", 0)
-        if n_recipes or n_mods:
-            print(f"Symlinks removed: {n_recipes} custom recipes, {n_mods} custom mods")
-    except Exception as e:
-        print(f"Warning: could not remove symlinks for custom files: {e}")
 
 
 def create_app() -> FastAPI:

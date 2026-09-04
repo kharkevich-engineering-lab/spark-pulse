@@ -288,10 +288,9 @@ def list_recipes(spark_path: Path | None = None) -> list[dict[str, Any]]:
     sources (including `imported/`) as production.
     """
     if spark_path is None:
-        spark_path = Path(config.spark_vllm_path)
-    spark_path = Path(spark_path)
+        spark_path = config.spark_vllm_dir
     payloads = recipe_sources.iter_recipe_payloads(spark_path)
-    if payloads or (spark_path / "recipes").is_dir():
+    if payloads or recipe_sources.checkout_recipes_dir(spark_path) is not None:
         return [
             recipe_sources.summarize(p, bool(has_customization(p["id"])))
             for p in payloads
@@ -304,8 +303,8 @@ def get_recipe(recipe_id: str, spark_path: Path | None = None) -> dict[str, Any]
     Uses spark_path if provided, otherwise falls back to config.spark_vllm_path
     and finally returns mock data."""
     if spark_path is None:
-        spark_path = Path(config.spark_vllm_path)
-    recipe = recipe_sources.resolve_recipe(recipe_id, Path(spark_path))
+        spark_path = config.spark_vllm_dir
+    recipe = recipe_sources.resolve_recipe(recipe_id, spark_path)
     if recipe is None:
         for canned in _RECIPES:
             if canned["name"] == recipe_id:

@@ -22,7 +22,7 @@ from spark_pulse.tools.recipe_sources import (
 
 def list_recipes(spark_path: Path | None = None) -> list[dict[str, Any]]:
     """List every recipe from every source."""
-    spark_path = spark_path or Path(config.spark_vllm_path)
+    spark_path = spark_path or config.spark_vllm_dir
     return [
         recipe_sources.summarize(
             payload, custom_recipes.has_customization(payload["id"])
@@ -33,7 +33,7 @@ def list_recipes(spark_path: Path | None = None) -> list[dict[str, Any]]:
 
 def get_recipe(recipe_id: str, spark_path: Path | None = None) -> dict[str, Any] | None:
     """Load a specific recipe by relative path id or display name."""
-    spark_path = spark_path or Path(config.spark_vllm_path)
+    spark_path = spark_path or config.spark_vllm_dir
     recipe = recipe_sources.resolve_recipe(recipe_id, spark_path)
     if recipe is None:
         return None

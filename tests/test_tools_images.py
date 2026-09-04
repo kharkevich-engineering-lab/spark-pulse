@@ -333,8 +333,8 @@ class TestDeletion:
         )
         with (
             patch.object(
-                tools.deployments,
-                "list_deployments",
+                tools.deployment_records,
+                "load",
                 return_value=[
                     {"id": "d1", "status": "pulling", "image_ref": VLLM_REF},
                     {"id": "d2", "status": "stopped", "image_ref": VLLM_REF},

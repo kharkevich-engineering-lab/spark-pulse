@@ -16,20 +16,20 @@ Decisions taken (2026-09-03):
 
 ## 1. Where we are
 
-### 1.1 What actually depends on the upstream checkout
+### 1.1 What depends on the upstream checkout
 
-Spark Pulse touches `spark_vllm_path` in four ways. Only the first is a real
-runtime dependency; the rest are data-directory conventions.
+**Resolved (phase 4).** Nothing is executed out of the checkout any more, and
+nothing is written into it. What remains is read-only and optional.
 
-| Kind | Where | What |
-|---|---|---|
-| Exec upstream bash | `tools/deployments.py:133-256` | The entire deploy path is `run-recipe.sh recipes/<id>.yaml --port ... --solo\|--nodes`. Health is PID liveness, stop is SIGTERM to the process group, logs are `tail` on our own log file. |
-| Exec upstream bash | `tools/cache.py:104-119` | `hf-download.sh --cleanup`, effectively dead (case mismatch on the target name). |
-| `git` in checkout | `tools/git_update.py` | fetch/pull/status, background timer, SSE, a UI page. To be removed. |
-| Read-only scan | `tools/recipes.py`, `tools/mods.py`, `tools/launch_script.py` | `recipes/**`, `mods/<id>/`, `examples/`. |
-| Symlinks into it | `tools/custom_files.py`, `tools/oci_registry.py:1016-1069` | `recipes/custom-*`, `recipes/oci-*`, `mods/custom-*` so upstream's runner can see our recipes. |
+| Kind | Where | What | Status |
+|---|---|---|---|
+| Exec upstream bash | `tools/deployments.py` | The whole deploy path was `run-recipe.sh recipes/<id>.yaml --port ... --solo\|--nodes`; health was PID liveness, stop was SIGTERM to the process group, logs were `tail` on our own log file. | **Deleted.** `tools/native_runtime.py` is the deploy path. `tools/deployment_records.py` keeps the record store and can still list, read, stop and delete a deployment the old runner started, so an upgrade never strands a running process. |
+| Exec upstream bash | `tools/cache.py` | `hf-download.sh --cleanup`, dead on a case mismatch. | **Deleted.** The wheels directory is cleaned like every other cache entry, and is listed only when a checkout exists. |
+| `git` in checkout | `tools/git_update.py` | fetch/pull/status, background timer, SSE, a UI page. | **Deleted** in phase 0. |
+| Symlinks into it | `tools/custom_files.py`, `tools/oci_registry.py` | `recipes/custom-*`, `recipes/oci-*`, `mods/custom-*` so upstream's runner could see our recipes. | **Deleted.** `recipe_sources.candidate_files` reads `~/.config/spark-pulse/custom-recipes` and `~/.config/spark-pulse/recipes` as first-class sources under the same `custom-`/`oci-` ids, and `tools/mods.py` plus `native_runtime._resolve_mod_dir` read `custom-mods` directly. Custom and OCI content now works with no checkout at all. |
+| Read-only scan | `tools/recipe_sources.py`, `tools/mods.py`, `tools/launch_script.py` | `recipes/**`, `mods/<id>/`, `examples/`. | **Kept, and optional.** `config.spark_vllm_dir` returns `None` when the path is unset or points nowhere, and every reader degrades to "no recipes/mods/examples from there". |
 
-`launch-cluster.sh`, `build-and-copy.sh` and upstream mod runners are never
+`launch-cluster.sh`, `build-and-copy.sh` and upstream mod runners were never
 executed by Spark Pulse.
 
 ### 1.2 The native stack already exists but is not wired in
@@ -380,7 +380,7 @@ because `engine.yaml` `runtime.site_packages` is set to the same path in our ima
 - One `Deployment` model: id, recipe ref, engine, model, rendered scripts, node set, container names, status, ports. Persist to `deployments.json` as a cache, rebuild from container labels at startup (fix the label namespace).
 - Create -> plan -> pre-flight -> runtime -> readiness -> ready. Every step emits an event; the UI already has the operation state machine.
 - Stop, restart, delete, logs, per-node status.
-- Migration flag `runtime: upstream | native`, default `upstream` until native passes the E2E suite, then flip and delete the upstream path.
+- ~~Migration flag `runtime: upstream | native`, default `upstream` until native passes the E2E suite, then flip and delete the upstream path.~~ Done: `native` is the default and the upstream path is deleted. Records made by it stay listable and stoppable (`tools/deployment_records.py`); nothing can create one.
 
 ### 3.9 Observability and benchmarking
 - Engine metrics probe into the SSE metrics stream.
@@ -394,7 +394,8 @@ because `engine.yaml` `runtime.site_packages` is set to the same path in our ima
 
 ## 4. Phases
 
-Each phase is shippable and keeps `runtime: upstream` working until phase 4.
+Each phase is shippable and kept `runtime: upstream` working until phase 4.
+Phases 0 to 4 are done; phase 5 is open.
 
 **Phase 0, stabilise the native stack (this branch).** Fix every item in 1.2. Contract test across `DockerService`, `RemoteDockerService` and the mock. Wire the missing cluster routes. Remove `git_update` and its UI page.
 
@@ -406,7 +407,7 @@ Each phase is shippable and keeps `runtime: upstream` working until phase 4.
 
 **Phase 3, recipe v2 and second engine.** Schema in `spark_pulse/schemas/`, v1 importer, v2 renderer, `engines/sglang.py` behind a flag, engine and model pickers in the deploy form. `spark-pulse-recipes` validates against the published schema, gains `recipe_version`, index/ref mismatch and stale docs fixed.
 
-**Phase 4, native cluster.** Node registry, non-interactive discovery including mesh, no-Ray topology with engine-specific rank args, per-node env. Flip the default to `native`, delete `run-recipe.sh` invocation and the symlink code.
+**Phase 4, native cluster. Done.** Node registry, non-interactive discovery including mesh, no-Ray topology with engine-specific rank args, per-node env. `runtime: native` is the default and the only value; the `run-recipe.sh` invocation and the symlink code are gone, along with `mock/deployments.py` and `mock/custom_files.py`. `config.runtime` now falls back to `native` rather than `upstream` — the fallback exists so a typo cannot pick a runtime that does not exist, and the one that does not exist is `upstream`. Multi-node remains behind `cluster_experimental` until a two-node bring-up is verified on hardware.
 
 **Phase 5, extras.** Metrics scraping, benchmark runner, OCI-distributed mods, `vllm-mxfp4` and further engine variants.
 
@@ -454,8 +455,8 @@ Still open before the native path becomes the default:
 
 ## 6. Things to fix regardless of the plan
 
-- `cache.py` wheels target name mismatch.
-- `routers/config.py` hardcoded simulation flag.
+- ~~`cache.py` wheels target name mismatch.~~ Done in phase 4: the `hf-download.sh` branch it guarded is deleted, and the wheels directory is cleaned like any other cache entry.
+- ~~`routers/config.py` hardcoded simulation flag.~~ Done: it reports `is_simulation()`.
 - `AGENTS.md` architecture tree and pages list are stale.
 - `spark-pulse-recipes` README and Qwen skill describe tooling that does not exist.
 

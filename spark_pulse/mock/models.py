@@ -162,6 +162,36 @@ _CATALOGUE: list[dict[str, Any]] = [
         architectures=["LlamaForCausalLM"],
         model_type="llama",
     ),
+    # The models the bundled recipes name. Without these the simulated Spark
+    # has no model for any recipe it ships with, and every native deploy in
+    # simulation is refused for a reason that has nothing to do with what is
+    # being tested.
+    _entry(
+        "Qwen/Qwen2.5-0.5B-Instruct",
+        revision="b1c2d3e4f5a60718293a4b5c6d7e8f9012345678",
+        size_bytes=int(1.0 * GB),
+        days_ago=2,
+        architectures=["Qwen2ForCausalLM"],
+        model_type="qwen2",
+    ),
+    _entry(
+        "Qwen/Qwen3.8-27B",
+        revision="c3d4e5f6a7b8091a2b3c4d5e6f708192a3b4c5d6",
+        size_bytes=int(54.2 * GB),
+        days_ago=4,
+        architectures=["Qwen3ForCausalLM"],
+        model_type="qwen3",
+    ),
+    _entry(
+        "Qwen/Qwen3.5-35B-A3B-FP8",
+        revision="d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708",
+        size_bytes=int(38.9 * GB),
+        days_ago=9,
+        architectures=["Qwen3MoeForCausalLM"],
+        model_type="qwen3_moe",
+        quantization=["activation_scheme", "fmt", "quant_method"],
+        quantization_method="fp8",
+    ),
     _entry(
         "local-team/internal-8b-sft",
         revision="local",
@@ -601,7 +631,7 @@ def models_in_use() -> dict[str, list[str]]:
     try:
         from spark_pulse import tools
 
-        deployments = tools.deployments.list_deployments()
+        deployments = tools.deployment_records.load()
         recipes = {
             str(r.get("id")): str(r.get("model") or "")
             for r in (tools.recipes.list_recipes() or [])

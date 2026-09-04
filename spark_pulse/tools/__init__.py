@@ -8,14 +8,23 @@ from __future__ import annotations
 
 import os
 
-# ``labels``, ``atomic_json`` and ``hub_cache`` hold pure data, constants and
-# filesystem primitives with no behaviour to simulate, so they are real-only and
-# intentionally have no mock twin. ``hub_cache`` is also the file that gets
-# copied to a worker node and run by its own python, so it must stay importable
-# as itself in both modes. Everything else must exist in both packages.
+# Real-only modules, imported here so ``tools.<name>`` resolves in both modes.
+# They hold pure data, parsing and filesystem primitives with nothing to
+# simulate: ``labels`` and ``atomic_json``; ``hub_cache``, which is also the
+# file copied to a worker node and run by its own python, so it must stay
+# importable as itself; ``deployment_records``, which picks a different *path*
+# under SIMULATION_MODE but runs the same code; ``custom_files``, which reads
+# and writes the operator's own config directory in either mode; and
+# ``recipe_schema``/``recipe_sources``, which both the real and the mock
+# ``recipes`` import (they are not listed below for exactly that reason — the
+# switch must not see them). Everything else must exist in both packages.
 from spark_pulse.tools import atomic_json as atomic_json
+from spark_pulse.tools import custom_files as custom_files
+from spark_pulse.tools import deployment_records as deployment_records
 from spark_pulse.tools import hub_cache as hub_cache
 from spark_pulse.tools import labels as labels
+from spark_pulse.tools import recipe_schema as recipe_schema
+from spark_pulse.tools import recipe_sources as recipe_sources
 
 _sim_mode = os.environ.get("SIMULATION_MODE", "0") == "1"
 
@@ -25,9 +34,7 @@ if _sim_mode:
         cache as cache,
         recipes as recipes,
         recipe_import as recipe_import,
-        deployments as deployments,
         benchmarking as benchmarking,
-        custom_files as custom_files,
         custom_recipes as custom_recipes,
         mods as mods,
         docker as docker,
@@ -55,9 +62,7 @@ else:
         cache as cache,
         recipes as recipes,
         recipe_import as recipe_import,
-        deployments as deployments,
         benchmarking as benchmarking,
-        custom_files as custom_files,
         custom_recipes as custom_recipes,
         mods as mods,
         docker as docker,

@@ -545,7 +545,7 @@ def images_in_use() -> dict[str, list[str]]:
             in_use[ref].append(holder)
 
     try:
-        deployments = tools.deployments.list_deployments() or []
+        deployments = tools.deployment_records.load() or []
     except Exception:  # pragma: no cover - defensive
         deployments = []
     for dep in deployments:

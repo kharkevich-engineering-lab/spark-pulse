@@ -26,7 +26,7 @@ async def metrics_generator() -> AsyncGenerator[str, None]:
         data = system.get_all_memory()
         running = [
             d
-            for d in tools.deployments.list_deployments()
+            for d in tools.deployment_records.load()
             if d.get("status") in ("running", "pending")
         ]
         system.enrich_gpu_process_tracking(data.get("processes", []), running)

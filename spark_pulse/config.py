@@ -12,6 +12,11 @@ _CONFIG_PATH = Path(__file__).resolve().parent / "config.yaml"
 _SECRETS_PATH = Path.home() / ".config" / "spark-pulse" / "secrets.json"
 _SETTINGS_PATH = Path.home() / ".config" / "spark-pulse" / "settings.json"
 
+#: The one deployment runtime. Kept as a named constant because deployment
+#: records carry the string, and because a second runtime would be added here.
+RUNTIME_NATIVE = "native"
+_KNOWN_RUNTIMES = (RUNTIME_NATIVE,)
+
 # Fields that can be overridden by environment variables.
 # key = settings field name, value = env var name
 _ENV_MAP: dict[str, str] = {
@@ -88,7 +93,27 @@ class _Config:
 
     @property
     def spark_vllm_path(self) -> str:
+        """Path to a spark-vllm-docker checkout. Entirely optional.
+
+        Nothing is executed out of it any more. It is one recipe source among
+        several, the place upstream-style mods live, and where the launch-script
+        examples are found. Unset, missing or wrong, every one of those degrades
+        to "no recipes/mods/examples from there" — never to an error.
+        """
         return str(self._data.get("spark_vllm_path", "/tmp/spark-vllm-docker"))
+
+    @property
+    def spark_vllm_dir(self) -> Path | None:
+        """The checkout as a directory, or ``None`` when there isn't one.
+
+        Callers that walk the checkout use this so an unset path can never be
+        read as ``Path("")``, which is the current working directory.
+        """
+        raw = self.spark_vllm_path.strip()
+        if not raw:
+            return None
+        path = Path(raw).expanduser()
+        return path if path.is_dir() else None
 
     @property
     def default_container(self) -> str:
@@ -135,25 +160,26 @@ class _Config:
 
     @property
     def runtime(self) -> str:
-        """Deployment runtime: ``upstream`` (run-recipe.sh) or ``native``.
+        """Deployment runtime. ``native`` is the only one there is.
 
-        Anything unrecognised falls back to ``upstream`` — a typo must never
-        silently switch the deploy path.
+        The ``upstream`` runtime — fork ``run-recipe.sh`` out of a
+        spark-vllm-docker checkout — was removed, so anything unrecognised
+        (a typo, or a stale ``runtime: upstream`` left in a user's
+        settings.json by an older install) resolves to ``native`` rather than
+        to a path that no longer exists. Deployment *records* still carry their
+        own ``runtime``; that is what keeps a pre-upgrade deployment stoppable,
+        and it is read from the record, never from here.
         """
         value = (
             str(
                 os.environ.get(
-                    "SPARK_PULSE_RUNTIME", self._data.get("runtime", "upstream")
+                    "SPARK_PULSE_RUNTIME", self._data.get("runtime", RUNTIME_NATIVE)
                 )
             )
             .strip()
             .lower()
         )
-        return value if value in ("upstream", "native") else "upstream"
-
-    @property
-    def native_runtime(self) -> bool:
-        return self.runtime == "native"
+        return value if value in _KNOWN_RUNTIMES else RUNTIME_NATIVE
 
     @property
     def deploy_ready_timeout_seconds(self) -> int:

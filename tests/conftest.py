@@ -30,6 +30,25 @@ def isolate_imported_recipes(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def isolate_managed_recipe_dirs(tmp_path, monkeypatch):
+    """Keep recipe listing away from the developer's real config directory.
+
+    ``recipe_sources`` lists the custom-recipes and OCI-recipes directories as
+    first-class sources — they used to reach it only through symlinks planted
+    in a checkout — so a developer with either of those populated would see
+    their own recipes in every listing assertion.
+    """
+    import spark_pulse.tools.custom_files  # noqa: F401
+    import spark_pulse.tools.oci_registry  # noqa: F401
+
+    custom = sys.modules["spark_pulse.tools.custom_files"]
+    oci = sys.modules["spark_pulse.tools.oci_registry"]
+    monkeypatch.setattr(custom, "_CUSTOM_RECIPES_DIR", tmp_path / "_custom-recipes")
+    monkeypatch.setattr(custom, "_CUSTOM_MODS_DIR", tmp_path / "_custom-mods")
+    monkeypatch.setattr(oci, "RECIPES_DIR", tmp_path / "_oci-recipes")
+
+
+@pytest.fixture(autouse=True)
 def reset_simulated_registry():
     """Keep the process-wide simulated control-node registry per-test.
 
