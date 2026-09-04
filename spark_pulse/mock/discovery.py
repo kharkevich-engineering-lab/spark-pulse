@@ -15,7 +15,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from spark_pulse.tools import discovery as _real
 from spark_pulse.tools.discovery import (
+    DiscoveredPeer,
     DiscoveryResult,
     InfinibandDevice,
     NCCLConfig,
@@ -288,3 +290,151 @@ def get_nccl_defaults() -> NCCLConfig | None:
 def check_network_health() -> ValidationResult:
     """Mock convenience: return validation results for current scenario."""
     return _get_default_provider().get_validation()
+
+
+# ── Peer discovery (mDNS) ────────────────────────────────────────────────────
+#
+# The real module speaks multicast DNS. Simulation cannot, and must not: a test
+# run that announced a service on the developer's LAN would be a surprise. So
+# the peers here are canned, the announcement is a no-op that reports success,
+# and the hostname history is writable so the churn diagnostic has something to
+# find. The *shape* is the real module's, down to the service constants.
+
+SPARK_PULSE_SERVICE = _real.SPARK_PULSE_SERVICE
+SSH_SERVICE = _real.SSH_SERVICE
+
+#: Two peers, deliberately unlike each other. ``spark-02`` runs Spark Pulse and
+#: says so in its TXT record; ``spark-03`` is a bare DGX that only advertises
+#: SSH, which is what a Spark looks like before it has ever been enrolled.
+_MOCK_PEERS = [
+    DiscoveredPeer(
+        address="10.0.0.11",
+        port=8100,
+        service=SPARK_PULSE_SERVICE,
+        hostname="spark-02.local",
+        instance="spark-02-9f3c1a2b",
+        node_id="9f3c1a2b4d5e6f708192a3b4c5d6e7f8",
+        version="1.2.3",
+    ),
+    DiscoveredPeer(
+        address="10.0.0.12",
+        port=22,
+        service=SSH_SERVICE,
+        hostname="spark-03.local",
+        instance="spark-03",
+    ),
+]
+
+_mock_peers: list[DiscoveredPeer] = list(_MOCK_PEERS)
+_mock_mdns_available = True
+_mock_hostnames: dict[str, set[str]] = {}
+
+
+def set_mock_peers(peers: list[DiscoveredPeer] | None) -> None:
+    """Replace the canned peer list. ``None`` restores the default two."""
+    global _mock_peers
+    _mock_peers = list(_MOCK_PEERS if peers is None else peers)
+
+
+def set_mdns_available(available: bool) -> None:
+    """Simulate mDNS being unavailable, so the degraded path can be exercised."""
+    global _mock_mdns_available
+    _mock_mdns_available = bool(available)
+
+
+def mdns_available() -> bool:
+    """Mock: whether peer discovery would work."""
+    return _mock_mdns_available
+
+
+def browse_peers(timeout: float = 3.0) -> list[DiscoveredPeer]:
+    """Mock: the canned peers, or none at all when mDNS is unavailable.
+
+    Browsing records each responder's hostname the way the real module does, so
+    the hostname-churn diagnostic sees the same input in both modes.
+    """
+    if not _mock_mdns_available:
+        return []
+    for peer in _mock_peers:
+        record_mdns_hostname(peer.address, peer.hostname)
+    return sorted(_mock_peers, key=lambda p: (p.address, p.service))
+
+
+def announce_self(node_id: str, port: int, version: str) -> bool:
+    """Mock: never touch the network. Reports whether it would have announced."""
+    return _mock_mdns_available
+
+
+def stop_announcement() -> None:
+    """Mock: nothing was announced, so nothing is withdrawn."""
+
+
+def record_mdns_hostname(address: str, hostname: str) -> None:
+    """Mock: note that ``address`` answered under ``hostname``."""
+    if not address or not hostname:
+        return
+    _mock_hostnames.setdefault(address, set()).add(hostname.rstrip("."))
+
+
+def mdns_hostname_history() -> dict[str, set[str]]:
+    """Mock: every address seen, mapped to the hostnames it used."""
+    return {address: set(names) for address, names in _mock_hostnames.items()}
+
+
+def reset_mdns_history() -> None:
+    """Mock: forget the observed hostnames."""
+    _mock_hostnames.clear()
+
+
+# ── Real interfaces ──────────────────────────────────────────────────────────
+
+
+def ibdev2netdev_up() -> list[str]:
+    """Mock: the fabric links the scenario has up."""
+    return [
+        interface.name
+        for interface in detect_network_interfaces()
+        if interface.type == "infiniband" and interface.is_up
+    ]
+
+
+def is_real_interface(interface: NetworkInterface) -> bool:
+    """Mock: delegates to the real predicate — it is pure name classification."""
+    return _real.is_real_interface(interface)
+
+
+def real_interfaces() -> list[NetworkInterface]:
+    """Mock: the scenario's interfaces, minus loopback and container bridges."""
+    return [i for i in detect_network_interfaces() if _real.is_real_interface(i)]
+
+
+def real_interface_names() -> list[str]:
+    """Mock: just the names."""
+    return [interface.name for interface in real_interfaces()]
+
+
+def announce_addresses() -> list[str]:
+    """Mock: IPv4 addresses of the scenario's real interfaces."""
+    return [i.ip for i in real_interfaces() if i.ip and i.ip != "127.0.0.1"]
+
+
+def detect_link_local_addresses() -> dict[str, str]:
+    """Mock: link-local addresses per interface.
+
+    The fabric links deliberately have none, which is exactly what
+    ``link-local: []`` in ``spark-vllm-docker``'s netplan profile produces — so
+    the diagnostic that catches it has something to catch in simulation.
+    """
+    return {
+        interface.name: "fe80::1"
+        for interface in real_interfaces()
+        if interface.type == "ethernet"
+    }
+
+
+def reset_mock_discovery() -> None:
+    """Reset every mock-only piece of discovery state."""
+    reset_mock_scenario()
+    reset_mdns_history()
+    set_mock_peers(None)
+    set_mdns_available(True)
