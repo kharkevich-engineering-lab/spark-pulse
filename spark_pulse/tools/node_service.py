@@ -555,6 +555,9 @@ class RemoteNodeService(NodeService):
             cmd_parts.extend(["--device", f"{device}:{device}:rwm"])
         if auto_remove:
             cmd_parts.append("--rm")
+        # Never restart — same reason as the SDK path: a rebooting node must
+        # not resurrect a rank into a torn-down deployment.
+        cmd_parts.extend(["--restart", "no"])
 
         for key, value in labels.items():
             cmd_parts.extend(["--label", shlex.quote(f"{key}={value}")])

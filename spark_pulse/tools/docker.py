@@ -468,6 +468,11 @@ class DockerService:
                     docker.types.DeviceRequest(count=-1, capabilities=[["gpu"]])
                 ],
                 "volumes": volumes,
+                # Never restart. A rank is one member of a sharded gang: a
+                # rebooting node must not resurrect it into a deployment that
+                # was torn down. The SDK default is already "no"; saying so
+                # keeps it from drifting.
+                "restart_policy": {"Name": "no"},
             }
             if memory_limit_gb:
                 kwargs["mem_limit"] = self._gb_to_bytes(memory_limit_gb)
