@@ -31,6 +31,7 @@ from spark_pulse.routers import (
     launch_script as launch_script_router,
     health as health_router,
     engines as engines_router,
+    preflight as preflight_router,
 )
 from spark_pulse.auth import AuthMiddleware, router as auth_router
 from spark_pulse.sse import router as sse_router
@@ -275,6 +276,7 @@ def create_app() -> FastAPI:
     app.include_router(launch_script_router.router)
     app.include_router(health_router.router)
     app.include_router(engines_router.router)
+    app.include_router(preflight_router.router)
     app.include_router(auth_router)
     app.include_router(sse_router)
 

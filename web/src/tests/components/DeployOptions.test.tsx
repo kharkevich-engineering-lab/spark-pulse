@@ -13,9 +13,10 @@ vi.mock("@/lib/api", () => ({
   fetchEngines: vi.fn(),
   fetchModels: vi.fn(),
   planDeployment: vi.fn(),
+  runPreflight: vi.fn(),
 }));
 
-import { fetchEngines, fetchModels, planDeployment } from "@/lib/api";
+import { fetchEngines, fetchModels, planDeployment, runPreflight } from "@/lib/api";
 
 const engine = (name: string, extra: Partial<EngineSummary> = {}): EngineSummary =>
   ({
@@ -116,6 +117,48 @@ const PLAN = {
   created_at: "2026-01-01T00:00:00+00:00",
 };
 
+/** A pre-flight that found one thing worth saying, on a named node. */
+const CHECK = {
+  id: "image",
+  title: "Engine image",
+  node: "spark-02",
+  node_id: "peer-1",
+  status: "warn",
+  observed: "ghcr.io/example/vllm:0.1.0 is not on spark-02",
+  remedy: "Pre-seed it with POST /api/images/sync.",
+  delay_bytes: 26_843_545_600,
+  costs_time: true,
+  detail: {},
+};
+
+const REPORT = {
+  verdict: "slow",
+  summary: "will run, but about 25.0 GB has to transfer first across spark-02",
+  can_proceed: true,
+  delays: true,
+  estimated_transfer_bytes: 26_843_545_600,
+  counts: { pass: 8, warn: 1, fail: 0 },
+  nodes: [
+    { id: "control-1", label: "spark-01", address: "", is_control_plane: true, ranks: [0] },
+    { id: "peer-1", label: "spark-02", address: "10.0.0.11", is_control_plane: false, ranks: [1] },
+  ],
+  checks: [CHECK],
+  blocking: [],
+  delaying: [CHECK],
+  advisories: [],
+  plan: {
+    recipe_id: "qwen3-8b",
+    engine: "vllm",
+    variant: "default",
+    image_ref: "ghcr.io/example/vllm:0.1.0",
+    model: "Qwen/Qwen3-8B",
+    port: 9000,
+    rendezvous_port: null,
+    node_count: 2,
+  },
+  checked_at: "2026-01-01T00:00:00+00:00",
+};
+
 describe("parseExtraArgs", () => {
   it("splits on whitespace", () => {
     expect(parseExtraArgs("--a 1 --b")).toEqual(["--a", "1", "--b"]);
@@ -186,6 +229,7 @@ describe("DeployOptions", () => {
       { id: "openai/gpt-oss-120b" },
     ] as never);
     vi.mocked(planDeployment).mockResolvedValue(PLAN as never);
+    vi.mocked(runPreflight).mockResolvedValue(REPORT as never);
   });
 
   const open = async () => {
@@ -347,5 +391,51 @@ describe("DeployOptions image presence", () => {
 
     await waitFor(() => expect(screen.getByText("pulled · 25.0 GB")).toBeInTheDocument());
     expect(screen.queryByText(/will download first/)).not.toBeInTheDocument();
+  });
+
+});
+
+/** The preview is where an operator decides, so it is where the pre-flight goes. */
+describe("DeployOptions pre-flight", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(fetchEngines).mockResolvedValue({ engines: [engine("vllm")] } as never);
+    vi.mocked(fetchModels).mockResolvedValue([] as never);
+    vi.mocked(planDeployment).mockResolvedValue(PLAN as never);
+    vi.mocked(runPreflight).mockResolvedValue(REPORT as never);
+  });
+
+  const previewed = async () => {
+    render(<DeployOptions recipe={V1_RECIPE} value={{ engine: "vllm" }} onChange={vi.fn()} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /deploy options/i }));
+    await user.click(screen.getByRole("button", { name: /preview/i }));
+    return user;
+  };
+
+  it("asks the pre-flight the same question it asked the plan", async () => {
+    await previewed();
+
+    await waitFor(() => expect(screen.getByTestId("preflight")).toBeInTheDocument());
+    expect(vi.mocked(runPreflight)).toHaveBeenCalledWith(
+      vi.mocked(planDeployment).mock.calls[0][0],
+    );
+  });
+
+  it("shows the verdict and names the node and the remedy", async () => {
+    await previewed();
+
+    await waitFor(() => expect(screen.getByTestId("preflight")).toBeInTheDocument());
+    expect(screen.getByTestId("preflight-verdict")).toHaveTextContent("Ready, but slow");
+    expect(screen.getByText(/is not on spark-02/)).toBeInTheDocument();
+    expect(screen.getByText(/Pre-seed it with/)).toBeInTheDocument();
+  });
+
+  it("still shows the plan when the pre-flight itself fails", async () => {
+    vi.mocked(runPreflight).mockRejectedValue(new Error("preflight exploded"));
+    await previewed();
+
+    await waitFor(() => expect(screen.getByTestId("deploy-plan")).toBeInTheDocument());
+    expect(screen.queryByTestId("preflight")).not.toBeInTheDocument();
   });
 });
