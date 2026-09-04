@@ -310,29 +310,42 @@ agent does the bulk transfer with the right tool.
 
 ## 4. Phasing
 
+Each phase carries its own interface work, described in section 8. Shipping the
+machinery without the surface is how "unknown" ends up rendered as a spinner.
+
 **Phase A, fix what is broken.** Atomic writes with fsync for deployment state
 and settings, refuse to start on an unreadable state file, the inverted SSH flag
 and the test that locks it in, and the empty-host defaults so remote operations
-are actually remote. Turn on SSH connection multiplexing and measure. None of
-this needs a second machine.
+are actually remote. Turn on SSH connection multiplexing and measure. Fill the
+end-to-end suite, which currently contains no specs and reports success while
+asserting nothing. None of this needs a second machine.
 
 **Phase B, distribution without an agent.** Local registry or pull-through
 cache, digest-preserving image seeding, verified model replication. This
 delivers the credential-isolation goal on its own, over SSH, with no agent.
+Interface: per-node replication progress, which nodes hold a verified copy, and
+the two distribution modes presented by their credential trade-off rather than
+by speed.
 
-**Phase C, node registry and pre-flight.** Persisted nodes with address, user,
-key path and interfaces. Non-interactive discovery reusing mDNS. Pre-flight that
-checks reachability, docker, GPU, toolkit, image parity, model presence and free
-ports, and says exactly what is missing.
+**Phase C, node registry, pre-flight, and the size-one convergence.** Persisted
+nodes with address, user, key path and interfaces. Non-interactive discovery
+reusing mDNS. Pre-flight that checks reachability, docker, GPU, toolkit, image
+parity, model presence and free ports, and says exactly what is missing. This is
+also where the six-step convergence in section 7 lands, ending with the cluster
+orchestrator deleted. Interface: the Cluster page becomes a node registry with
+an enrollment wizard, the deploy form gains a node count defaulting to one, and
+deployments become rank-aware.
 
 **Phase D, the agent.** Enrollment, gRPC transport, mTLS and the ledger,
 packaging and upgrade, the state machine above. Gate this on the phase A
 measurement: if liveness and streaming are the remaining pain, build it; if the
-pain was latency, multiplexing already fixed it.
+pain was latency, multiplexing already fixed it. Interface: three-state node
+health, agent version and skew, and the removal actions distinguished.
 
 **Phase E, multi-node bring-up.** Blocked on a second Spark. Everything before
-this is verifiable on one machine, including a single-node cluster driven
-through the cluster path.
+this is verifiable on one machine, including a size-one cluster driven through
+the general path. Interface: the experimental flag flips off, and the banner's
+list of unproven things shrinks to nothing.
 
 ## 5. What this costs
 
@@ -356,10 +369,10 @@ deliberately through one auditable choke point. Rootless docker does not help
 here: its host networking is namespaced rather than real, which multi-node NCCL
 over the direct link needs.
 
-## 6. Open questions
+## 6. Decisions taken
 
-None of the four questions this plan opened are still open. All were settled
-on 2026-09-04, three of them by testing on the Spark rather than by argument.
+Every question this plan opened has been settled, most of them by testing on the
+Spark rather than by argument.
 
 **python-zeroconf coexists with avahi.** Tested on the Spark with avahi-daemon
 running and bound to 5353 on both address families. Our process constructed,
@@ -405,7 +418,7 @@ implementation. This is the largest change to the plan above and it reshapes
 phase D and E; the architecture for it is being researched separately, with the
 explicit goal that onboarding node two introduces no duplicate code.
 
-## 6b. Converging on a cluster of size one
+## 7. Converging on a cluster of size one
 
 Researched 2026-09-04. The decision is taken; this is how.
 
@@ -491,17 +504,69 @@ reading those fields is reading nothing, and a `gpu_memory_utilization` value
 copied from an x86 recipe is untrustworthy. NVIDIA's own Spark recipes use 0.4
 single-node and 0.8 to 0.9 for two nodes.
 
-## 7. Still genuinely open
+## 8. What the operator sees
 
-- **A second DGX Spark.** Everything else can be built and verified on one.
+The plan above is all machinery. This is the surface, and it is where most of
+the design's honesty has to live, because an operator cannot read our state
+machine.
 
-Both questions this section previously held are now answered. The convergence
-sequencing is section 6b. The async question was researched and the answer is
-not yet: no synchronous Docker call reaches the event loop from a request
-handler, because every such handler is synchronous and runs in a thread pool.
-The genuine defects were three blocking calls inside SSE generators, an exec
-endpoint that always returned an empty body, and a cluster event stream that
-imported a function which does not exist. All three are fixed. The trigger that
-would change the answer is holding long-lived log or exec streams open, since a
-blocked read in a thread cannot be cancelled cooperatively; if that lands, the
-recommendation is an async client scoped to streaming operations only.
+**Nodes.** The Cluster page becomes a node registry rather than two free-text IP
+boxes whose contents vanish on refresh. Each node shows its name, address, the
+interfaces we derived rather than guessed, whether it is the control plane, its
+agent version once an agent exists, and its state. Adding a node is a wizard:
+pick a discovered peer or type an address, choose the installer one-liner or a
+key or a password, confirm the host key fingerprint against what the dialog
+shows before anything secret is sent, then watch enrollment progress. Removal is
+three distinct actions and never one ambiguous button: remove and wipe identity,
+uninstall but keep identity so a reinstall rejoins, and forget a node that is
+already gone.
+
+**Three states, shown as three states.** Healthy, unknown and dead must be
+visually distinct everywhere they appear. Unknown is the one that matters and the
+one every surveyed system had to retrofit. A node we cannot reach while its rank
+is still serving is amber and says so in words: status unverified, not failed.
+Never show a spinner where the honest answer is that we do not know.
+
+**Deployments become rank-aware.** The Jobs page shows one row per deployment
+and, expanded, one line per rank with its node, container, state and log tail.
+When a gang fails, the failure names the rank and the cause rather than
+reporting that the deployment stopped. During startup each rank shows where it
+is: pulling, starting, awaiting rendezvous. The two-minute gate exists precisely
+so an image that cannot be pulled surfaces in two minutes rather than twelve,
+and that is worth nothing if the UI shows a blank spinner throughout.
+
+**The deploy form gains a node count.** Default is one, which is now a cluster of
+size one rather than a separate mode. Choosing more nodes picks from the
+registry. The preview already shows the rendered command and image; it should
+also show the per-rank breakdown and, when the image is absent, say how many
+gigabytes will download first.
+
+**Progress that reflects reality.** Image pulls and model replication both report
+per-node progress with bytes and a rate, because these are hour-scale operations
+on this hardware. The images view already distinguishes not pulled from a newer
+digest published; model replication needs the same treatment, including which
+nodes hold a verified copy.
+
+**Diagnostics rather than mysteries.** A panel that checks and explains the
+things that otherwise cost an afternoon: duplicate machine identifiers across
+peers, which is a known defect on this hardware and produces confusing mDNS
+symptoms; hostname churn in the mDNS log; interfaces configured without a
+link-local address, which silently disables peer sweeps; and whether GPU memory
+reporting is available at all, since on this hardware it is not.
+
+**Experimental marking is temporary and flag-driven.** The cluster badge and
+banner are already backed by a config flag rather than hardcoded. When a two-node
+bring-up is verified on hardware, the flag flips and both disappear without a
+code change. The banner should name what is unproven, not merely say
+experimental, and that text should shrink as items are verified.
+
+**Credentials, in the interface.** The two distribution modes are presented with
+their real trade-off, not as a speed setting: fetch once keeps every credential
+on the control node, direct download is faster to set up and puts a broad
+registry token and the model-hub token on every machine. Say that in the UI, not
+only in this document.
+
+## 9. The one thing still blocked
+
+A second DGX Spark. Everything else in this plan can be built and verified on the
+one that exists.
