@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import RecipeForm from "./RecipeForm";
-import DeployOptions, { type DeployOptionsValue } from "./DeployOptions";
+import DeployOptions, { deployParams, type DeployOptionsValue } from "./DeployOptions";
 import { ConfirmModal } from "@/components/Modal";
 import { X } from "lucide-react";
 import SlideDrawer from "./SlideDrawer";
@@ -36,7 +36,10 @@ export default function RecipeDrawer({ recipe, customization, isRunning, cluster
     setDeploying(true);
     try {
       const name = formRef.current?.getDeployName() || recipe.name;
-      await onDeploy(name, {}, deployOptions);
+      // The parallelism the form is showing, not an empty dict: it is what
+      // the Preview was planned against, and a deploy that quietly dropped it
+      // would start something other than what the operator was shown.
+      await onDeploy(name, deployParams(recipe, deployOptions), deployOptions);
       onClose();
     } catch (e) { onError(e instanceof Error ? e.message : "Failed to deploy"); }
     finally { setDeploying(false); }

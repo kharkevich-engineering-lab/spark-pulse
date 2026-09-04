@@ -391,6 +391,39 @@ describe("RecipesPage", () => {
       );
     });
 
+    /** The create body used to carry `params: {}`, so a two-node deploy went
+     *  out at the recipe's `tensor_parallel: 1` and the server refused it —
+     *  with no control anywhere in the UI that could have raised it. */
+    it("carries the parallelism and the nodes the deploy form is showing", async () => {
+      vi.mocked(fetchNodes).mockResolvedValue([
+        {
+          id: "control-1",
+          name: "spark-01",
+          address: "192.168.1.100",
+          is_control_plane: true,
+        },
+        { id: "peer-1", name: "spark-02", address: "10.0.0.11", is_control_plane: false },
+      ] as never);
+      vi.mocked(fetchRecipe).mockResolvedValue(detail({ solo_only: false }));
+      render(<RecipesPage />);
+      await openDeployDrawer();
+
+      await userEvent.click(screen.getByRole("button", { name: /deploy options/i }));
+      await userEvent.click(await screen.findByLabelText(/spark-02/));
+      // Ticking the peer proposed the shape that fits, so this is a deploy the
+      // operator can actually make without editing a recipe file.
+      await waitFor(() => expect(screen.getByLabelText("Tensor parallel")).toHaveValue(2));
+
+      await userEvent.click(screen.getByRole("button", { name: "Deploy" }));
+
+      await waitFor(() => expect(createDeployment).toHaveBeenCalled());
+      expect(vi.mocked(createDeployment).mock.calls[0][0]).toMatchObject({
+        recipe_id: "bundled/qwen3-8b",
+        nodes: ["192.168.1.100", "10.0.0.11"],
+        params: { tensor_parallel: 2, pipeline_parallel: 1 },
+      });
+    });
+
     it("reduces an ordinary failure to one line the operator can read", async () => {
       vi.mocked(createDeployment).mockRejectedValue(
         new ApiError(400, "API 400: port 9000 is already bound", { detail: "port 9000" }),

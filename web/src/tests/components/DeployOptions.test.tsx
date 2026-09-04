@@ -3,11 +3,16 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import DeployOptions, {
+  deployParams,
   describeImagePresence,
+  describeOccupancy,
   eligibleEngines,
   engineChoices,
   engineLabel,
+  occupancy,
   parseExtraArgs,
+  proposeParallelism,
+  recipeParallelism,
   type DeployOptionsValue,
 } from "@/components/DeployOptions";
 import type { ClusterNode, EngineSummary, RecipeDetail } from "@/lib/types";
@@ -88,6 +93,14 @@ const V1_RECIPE = {
 } as unknown as RecipeDetail;
 
 const V2_RECIPE = { ...V1_RECIPE, id: "generic", command: "" } as RecipeDetail;
+
+/** A recipe that already declares a shape occupying two nodes. */
+const TP2_RECIPE = {
+  ...V2_RECIPE,
+  id: "tp2",
+  defaults: { tensor_parallel: 2, pipeline_parallel: 1 },
+  params: { tensor_parallel: 2, pipeline_parallel: 1 },
+} as unknown as RecipeDetail;
 
 /** A bundled v2 recipe: the API reports a verdict per engine. */
 const DUAL_ENGINE_RECIPE = {
@@ -347,6 +360,10 @@ describe("DeployOptions", () => {
       engine: "vllm",
       model: undefined,
       extra_args: [],
+      nodes: undefined,
+      // The plan is asked about the shape the form is showing, always — a
+      // preview of some other parallelism is a preview of another deployment.
+      params: { tensor_parallel: 1, pipeline_parallel: 1 },
     });
   });
 
@@ -480,6 +497,291 @@ describe("DeployOptions pre-flight", () => {
 /** A single-node registry has exactly one possible answer to "which nodes take
  *  part" — the control node, alone — so there is nothing for a selector to
  *  offer, and one should not appear just because the feature exists. */
+describe("the parallelism a recipe declares", () => {
+  it("is 1x1 when the recipe says nothing", () => {
+    expect(recipeParallelism(V1_RECIPE)).toEqual({ tensor_parallel: 1, pipeline_parallel: 1 });
+  });
+
+  it("is what the recipe declares", () => {
+    expect(recipeParallelism(TP2_RECIPE)).toEqual({ tensor_parallel: 2, pipeline_parallel: 1 });
+  });
+
+  it("reads `params`, which is the name the v2 schema uses", () => {
+    const recipe = {
+      ...V2_RECIPE,
+      defaults: {},
+      params: { tensor_parallel: 4, pipeline_parallel: 2 },
+    } as unknown as RecipeDetail;
+    expect(recipeParallelism(recipe)).toEqual({ tensor_parallel: 4, pipeline_parallel: 2 });
+  });
+
+  /** Recipes are YAML an operator can hand-edit, so the value can be a string
+   *  or nonsense. Neither should put NaN into a request body. */
+  it("takes a numeric string, and refuses anything that is not a count", () => {
+    const stringy = { ...V2_RECIPE, params: { tensor_parallel: "2" } } as unknown as RecipeDetail;
+    expect(recipeParallelism(stringy).tensor_parallel).toBe(2);
+    const junk = {
+      ...V2_RECIPE,
+      params: { tensor_parallel: "many", pipeline_parallel: 0 },
+    } as unknown as RecipeDetail;
+    expect(recipeParallelism(junk)).toEqual({ tensor_parallel: 1, pipeline_parallel: 1 });
+  });
+});
+
+describe("proposeParallelism", () => {
+  it("leaves a shape that already fits alone", () => {
+    const fits = { tensor_parallel: 2, pipeline_parallel: 1 };
+    expect(proposeParallelism(2, fits)).toBe(fits);
+  });
+
+  /** The whole point: ticking a second node must leave a form that deploys. */
+  it("widens tensor parallelism to the node count", () => {
+    expect(proposeParallelism(2, { tensor_parallel: 1, pipeline_parallel: 1 })).toEqual({
+      tensor_parallel: 2,
+      pipeline_parallel: 1,
+    });
+    expect(proposeParallelism(4, { tensor_parallel: 1, pipeline_parallel: 1 })).toEqual({
+      tensor_parallel: 4,
+      pipeline_parallel: 1,
+    });
+  });
+
+  it("comes back down when peers are unticked", () => {
+    expect(proposeParallelism(1, { tensor_parallel: 4, pipeline_parallel: 1 })).toEqual({
+      tensor_parallel: 1,
+      pipeline_parallel: 1,
+    });
+  });
+
+  /** A pipeline depth is a property of the model's layers, not of how many
+   *  machines happen to be ticked, so it survives when it still divides. */
+  it("keeps a pipeline depth the node count divides by", () => {
+    expect(proposeParallelism(4, { tensor_parallel: 1, pipeline_parallel: 2 })).toEqual({
+      tensor_parallel: 2,
+      pipeline_parallel: 2,
+    });
+  });
+
+  it("falls back to a flat shape when the depth does not divide", () => {
+    expect(proposeParallelism(3, { tensor_parallel: 1, pipeline_parallel: 2 })).toEqual({
+      tensor_parallel: 3,
+      pipeline_parallel: 1,
+    });
+  });
+
+  it("counts the product as the nodes occupied", () => {
+    expect(occupancy({ tensor_parallel: 2, pipeline_parallel: 3 })).toBe(6);
+  });
+});
+
+describe("describeOccupancy", () => {
+  it("says a matching shape occupies exactly the nodes selected", () => {
+    const fit = describeOccupancy({ tensor_parallel: 2, pipeline_parallel: 1 }, 2);
+    expect(fit.fits).toBe(true);
+    expect(fit.text).toContain("tp=2 pp=1");
+    expect(fit.text).toContain("occupies 2 nodes");
+  });
+
+  it("uses the singular for a solo deployment", () => {
+    expect(describeOccupancy({ tensor_parallel: 1, pipeline_parallel: 1 }, 1).text).toContain(
+      "occupies 1 node —",
+    );
+  });
+
+  /** The words are the server's on purpose: an operator who ignores this line
+   *  meets `_check_capacity` next, and two wordings read as two rules. */
+  it("says what the server would say when the shape is too small", () => {
+    const fit = describeOccupancy({ tensor_parallel: 1, pipeline_parallel: 1 }, 2);
+    expect(fit.fits).toBe(false);
+    expect(fit.text).toContain("only occupies 1 of the 2 nodes selected");
+    expect(fit.text).toContain("nothing to hold");
+    expect(fit.text).toContain("the launch would hang");
+    expect(fit.text).toContain("raise the parallelism until tp*pp is 2");
+  });
+
+  it("says what the server would say when the shape is too large", () => {
+    const fit = describeOccupancy({ tensor_parallel: 4, pipeline_parallel: 1 }, 2);
+    expect(fit.fits).toBe(false);
+    expect(fit.text).toContain("does not fit 2 nodes: it needs 4");
+    expect(fit.text).toContain("one GPU per node");
+    expect(fit.text).toContain("deploy across 4 nodes");
+  });
+});
+
+describe("deployParams", () => {
+  it("sends the recipe's own shape when the operator has changed nothing", () => {
+    expect(deployParams(TP2_RECIPE, {})).toEqual({ tensor_parallel: 2, pipeline_parallel: 1 });
+  });
+
+  it("sends what the operator set", () => {
+    expect(deployParams(V1_RECIPE, { tensor_parallel: 4, pipeline_parallel: 2 })).toEqual({
+      tensor_parallel: 4,
+      pipeline_parallel: 2,
+    });
+  });
+});
+
+describe("DeployOptions parallelism", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(fetchEngines).mockResolvedValue({ engines: [engine("vllm")] } as never);
+    vi.mocked(fetchModels).mockResolvedValue([] as never);
+    vi.mocked(fetchNodes).mockResolvedValue([CONTROL_NODE, PEER_NODE, PEER_NODE_2]);
+    vi.mocked(planDeployment).mockResolvedValue(PLAN as never);
+    vi.mocked(runPreflight).mockResolvedValue(REPORT as never);
+  });
+
+  const openOptions = async () => {
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /deploy options/i }));
+    await waitFor(() => expect(screen.getByTestId("deploy-parallelism")).toBeInTheDocument());
+    return user;
+  };
+
+  it("seeds both fields from the recipe, so the number shown is the number sent", async () => {
+    render(<ControlledDeployOptions recipe={TP2_RECIPE} />);
+    await openOptions();
+
+    expect(screen.getByLabelText("Tensor parallel")).toHaveValue(2);
+    expect(screen.getByLabelText("Pipeline parallel")).toHaveValue(1);
+  });
+
+  it("seeds a recipe that declares nothing at 1", async () => {
+    render(<ControlledDeployOptions recipe={V1_RECIPE} />);
+    await openOptions();
+
+    expect(screen.getByLabelText("Tensor parallel")).toHaveValue(1);
+  });
+
+  /** The bug this control exists for: the node selector offered a topology the
+   *  form could not express, so ticking a peer produced a request the server
+   *  refuses and nothing on the page could raise the parallelism. */
+  it("proposes the shape that fits when a peer is ticked", async () => {
+    render(<ControlledDeployOptions recipe={V1_RECIPE} />);
+    const user = await openOptions();
+
+    expect(screen.getByTestId("deploy-occupancy")).toHaveTextContent("occupies 1 node");
+    await user.click(screen.getByLabelText(new RegExp(PEER_NODE.name)));
+
+    await waitFor(() => expect(screen.getByLabelText("Tensor parallel")).toHaveValue(2));
+    expect(screen.getByTestId("deploy-world-size")).toHaveTextContent("2 nodes");
+    expect(screen.getByTestId("deploy-occupancy")).toHaveTextContent("tp=2 pp=1 occupies 2 nodes");
+  });
+
+  it("follows the node count back down when the peer is unticked", async () => {
+    render(<ControlledDeployOptions recipe={V1_RECIPE} />);
+    const user = await openOptions();
+
+    await user.click(screen.getByLabelText(new RegExp(PEER_NODE.name)));
+    await waitFor(() => expect(screen.getByLabelText("Tensor parallel")).toHaveValue(2));
+    await user.click(screen.getByLabelText(new RegExp(PEER_NODE.name)));
+
+    await waitFor(() => expect(screen.getByLabelText("Tensor parallel")).toHaveValue(1));
+    expect(screen.getByTestId("deploy-occupancy")).toHaveTextContent("occupies 1 node");
+  });
+
+  it("leaves a recipe that already fits two nodes alone", async () => {
+    render(<ControlledDeployOptions recipe={TP2_RECIPE} />);
+    const user = await openOptions();
+
+    await user.click(screen.getByLabelText(new RegExp(PEER_NODE.name)));
+    await waitFor(() => expect(screen.getByTestId("deploy-world-size")).toHaveTextContent("2 nodes"));
+    expect(screen.getByLabelText("Tensor parallel")).toHaveValue(2);
+  });
+
+  /** A proposal is for a form still showing the recipe's number. Once an
+   *  operator has said what they want, the node count must not overwrite it —
+   *  it must show them the mismatch instead. */
+  it("never overwrites a value the operator typed", async () => {
+    render(<ControlledDeployOptions recipe={V1_RECIPE} />);
+    const user = await openOptions();
+
+    const tp = screen.getByLabelText("Tensor parallel");
+    await user.clear(tp);
+    await user.type(tp, "4");
+    await waitFor(() => expect(tp).toHaveValue(4));
+
+    await user.click(screen.getByLabelText(new RegExp(PEER_NODE.name)));
+    await waitFor(() => expect(screen.getByTestId("deploy-world-size")).toHaveTextContent("2 nodes"));
+    expect(tp).toHaveValue(4);
+    // And the mismatch is on the page rather than waiting for a 400.
+    expect(screen.getByTestId("deploy-occupancy")).toHaveTextContent("does not fit 2 nodes");
+  });
+
+  it("shows the mismatch live while a shape is being typed", async () => {
+    render(<ControlledDeployOptions recipe={V1_RECIPE} />);
+    const user = await openOptions();
+
+    await user.click(screen.getByLabelText(new RegExp(PEER_NODE.name)));
+    await waitFor(() =>
+      expect(screen.getByTestId("deploy-occupancy")).toHaveTextContent("occupies 2 nodes"),
+    );
+
+    const tp = screen.getByLabelText("Tensor parallel");
+    await user.clear(tp);
+    await user.type(tp, "1");
+    await waitFor(() =>
+      expect(screen.getByTestId("deploy-occupancy")).toHaveTextContent("only occupies 1 of the 2"),
+    );
+    expect(screen.getByTestId("deploy-occupancy")).toHaveTextContent("the launch would hang");
+  });
+
+  /** Half-typed text is not an instruction. Clearing the field to retype must
+   *  not snap the value back to a digit — that is how "2" becomes "12". */
+  it("keeps the last whole number while the field is empty", async () => {
+    const onChange = vi.fn();
+    render(<DeployOptions recipe={TP2_RECIPE} value={{ tensor_parallel: 2 }} onChange={onChange} />);
+    const user = await openOptions();
+
+    onChange.mockClear();
+    await user.clear(screen.getByLabelText("Tensor parallel"));
+    expect(screen.getByLabelText("Tensor parallel")).toHaveValue(null);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("sends the shape to the plan and the pre-flight, and the same one to both", async () => {
+    render(<ControlledDeployOptions recipe={V1_RECIPE} />);
+    const user = await openOptions();
+
+    await user.click(screen.getByLabelText(new RegExp(PEER_NODE.name)));
+    await waitFor(() => expect(screen.getByLabelText("Tensor parallel")).toHaveValue(2));
+    await user.click(screen.getByRole("button", { name: /preview/i }));
+
+    await waitFor(() => expect(planDeployment).toHaveBeenCalled());
+    const planned = vi.mocked(planDeployment).mock.calls[0][0];
+    expect(planned.params).toEqual({ tensor_parallel: 2, pipeline_parallel: 1 });
+    await waitFor(() => expect(runPreflight).toHaveBeenCalled());
+    expect(vi.mocked(runPreflight).mock.calls[0][0].params).toEqual(planned.params);
+  });
+
+  it("sends a pipeline depth the operator set", async () => {
+    render(<ControlledDeployOptions recipe={V1_RECIPE} />);
+    const user = await openOptions();
+
+    const pp = screen.getByLabelText("Pipeline parallel");
+    await user.clear(pp);
+    await user.type(pp, "2");
+    await waitFor(() => expect(pp).toHaveValue(2));
+    await user.click(screen.getByRole("button", { name: /preview/i }));
+
+    await waitFor(() => expect(planDeployment).toHaveBeenCalled());
+    expect(vi.mocked(planDeployment).mock.calls[0][0].params).toMatchObject({
+      pipeline_parallel: 2,
+    });
+  });
+
+  /** The registry can hold one node, or none, and the shape still matters:
+   *  a tp of 2 on one node is refused just as loudly. */
+  it("offers the control with no node selector at all", async () => {
+    vi.mocked(fetchNodes).mockResolvedValue([CONTROL_NODE]);
+    render(<ControlledDeployOptions recipe={TP2_RECIPE} />);
+    await openOptions();
+
+    expect(screen.queryByTestId("deploy-nodes")).not.toBeInTheDocument();
+    expect(screen.getByTestId("deploy-occupancy")).toHaveTextContent("does not fit 1 node");
+  });
+});
+
 describe("DeployOptions node selection", () => {
   beforeEach(() => {
     vi.clearAllMocks();

@@ -89,6 +89,37 @@ describe("RecipeDrawer", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  /** The drawer used to send `params: {}` no matter what the deploy options
+   *  showed, so the parallelism an operator set in the form never reached the
+   *  create — and a two-node deploy was refused with no control that could
+   *  fix it. */
+  it("carries the parallelism the deploy options are showing", async () => {
+    const recipe = {
+      ...RECIPE,
+      defaults: { tensor_parallel: 2, pipeline_parallel: 1 },
+      params: { tensor_parallel: 2, pipeline_parallel: 1 },
+    } as unknown as RecipeDetail;
+    const { onDeploy } = renderDrawer({ recipe });
+
+    await userEvent.click(screen.getByRole("button", { name: "Deploy" }));
+
+    await waitFor(() => expect(onDeploy).toHaveBeenCalled());
+    expect(onDeploy.mock.calls[0][1]).toEqual({ tensor_parallel: 2, pipeline_parallel: 1 });
+  });
+
+  it("carries a parallelism the operator raised by hand", async () => {
+    const { onDeploy } = renderDrawer();
+
+    await userEvent.click(screen.getByRole("button", { name: /deploy options/i }));
+    const tp = await screen.findByLabelText("Tensor parallel");
+    await userEvent.clear(tp);
+    await userEvent.type(tp, "2");
+    await userEvent.click(screen.getByRole("button", { name: "Deploy" }));
+
+    await waitFor(() => expect(onDeploy).toHaveBeenCalled());
+    expect(onDeploy.mock.calls[0][1]).toMatchObject({ tensor_parallel: 2 });
+  });
+
   /** A failed deploy has to reach the page's alert; a drawer that swallowed
    *  it would close on a deployment that never started. */
   it("hands a failed deploy to the page rather than closing quietly", async () => {

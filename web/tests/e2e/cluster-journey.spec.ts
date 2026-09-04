@@ -3,20 +3,21 @@
  * `nodes.spec.ts` covers the registry on its own, `preflight.spec.ts` the
  * report on its own and `multinode.spec.ts` what the API refuses. What none of
  * them does is *walk the whole thing in a browser*: enrol a peer, pick it in
- * the deploy form, preview, deploy, look at the ranks, stop, and meet the
- * refusals on the way. That walk is what ships, so that walk is what this file
- * asserts — and only through what the page renders, never through the API,
- * except where a fact is deliberately not on the page and the comment says so.
+ * the deploy form, set the shape, preview, deploy, look at the ranks, stop,
+ * and meet the refusals on the way. That walk is what ships, so that walk is
+ * what this file asserts — and only through what the page renders, never
+ * through the API, except where a fact is deliberately not on the page and the
+ * comment says so.
  *
- * Two facts about the simulated world shape every test here:
- *
- * * One GPU per node means the world size is the node count, so a recipe left
- *   at `tensor_parallel: 1` is *refused* on two nodes. Every bundled recipe is
- *   left at 1; the one seeded recipe whose parallelism occupies two nodes is
- *   the custom Gemma one, so that is the recipe the successful journey uses.
- * * That recipe's model is not in the simulated catalogue, so the journey sets
- *   the deploy form's own **Model override** to a model that is — the same
- *   control an operator uses to point a recipe at weights they already hold.
+ * One fact about this hardware shapes every test here: one GPU per node means
+ * the world size *is* the node count, so `tp*pp*dp` has to equal it exactly.
+ * Every bundled recipe ships at `tensor_parallel: 1`, so a second node is only
+ * reachable if the form can raise the parallelism — it could not, which is why
+ * this file used to lean on the one seeded recipe that happened to declare
+ * `tp=2` and then override its model to something the catalogue held. It no
+ * longer does: the deploy form carries the parallelism controls, ticking a
+ * peer proposes the shape that fits, and the journey below is a stock bundled
+ * recipe taken to two machines without editing a recipe file.
  */
 
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
@@ -31,16 +32,16 @@ import {
 // One simulated node registry and one deployment store, both process-wide.
 test.describe.configure({ mode: "serial" });
 
-/** The seeded recipe whose parallelism actually occupies two nodes (tp=2). */
-const RECIPE_ID = "custom-aa12gemma4-26b-a4b";
-const RECIPE_NAME = "aa12Gemma4-26B-A4B";
+/** A stock bundled recipe, shipped at `tensor_parallel: 1` like all of them.
+ *  Nothing about it is special, which is the point: the journey has to work
+ *  for the recipe an operator actually finds on the page. */
+const RECIPE_ID = "bundled/qwen2.5-0.5b-instruct";
+const RECIPE_NAME = "Qwen2.5-0.5B-Instruct";
 
-/** A bundled recipe, left at tp=1 — the refusal an operator meets first. */
-const SOLO_RECIPE_ID = "bundled/qwen2.5-0.5b-instruct";
-const SOLO_RECIPE_NAME = "Qwen2.5-0.5B-Instruct";
-
-/** A model the simulated catalogue holds, for the Model override field. */
-const CATALOGUED_MODEL = "Qwen/Qwen2.5-0.5B-Instruct";
+/** A model the simulated catalogue holds, big enough that spreading it over
+ *  two Sparks is the reason to go multi-node at all. Doubles as the cover for
+ *  the Model override field, which nothing else in the e2e suite exercises. */
+const CATALOGUED_MODEL = "Intel/Qwen3.5-397B-INT4-AutoRound";
 
 /** The seeded registry: a control node and one peer. */
 const CONTROL = "192.168.1.100";
@@ -76,6 +77,11 @@ async function openDeployOptions(page: Page, recipeName: string): Promise<void> 
   await expect(page.getByRole("heading", { name: recipeName, exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Deploy options" }).click();
   await expect(page.getByTestId("deploy-node-selector")).toBeVisible();
+}
+
+/** Set the tensor width by hand, the way an operator overrides the proposal. */
+async function setTensorParallel(page: Page, value: string): Promise<void> {
+  await page.getByLabel("Tensor parallel").fill(value);
 }
 
 /** Tick a peer's box in the deploy form's node selector. */
@@ -138,8 +144,18 @@ test("enrol, select, preview, deploy, see the ranks, stop", async ({ page, reque
   await expect(controlBox).toBeChecked();
   await expect(controlBox).toBeDisabled();
 
+  // Solo, the recipe's own shape occupies the one node it has.
+  const occupancy = page.getByTestId("deploy-occupancy");
+  await expect(page.getByLabel("Tensor parallel")).toHaveValue("1");
+  await expect(occupancy).toContainText("tp=1 pp=1 occupies 1 node");
+
   await selectNode(page, PEER);
   await expect(worldSize).toHaveText("2 nodes, ranks 0-1");
+  // Ticking a peer proposes the shape that fits it. Without this the form
+  // offered a topology it could not express: two nodes at tp=1, refused by
+  // the server, with no control on the page able to raise it.
+  await expect(page.getByLabel("Tensor parallel")).toHaveValue("2");
+  await expect(occupancy).toContainText("tp=2 pp=1 occupies 2 nodes");
   // Two machines is the experimental case; one is not.
   await expect(page.getByTestId("deploy-node-selector").getByRole("note")).toBeVisible();
 
@@ -153,10 +169,15 @@ test("enrol, select, preview, deploy, see the ranks, stop", async ({ page, reque
     .uncheck();
   await expect(worldSize).toHaveText("1 node, ranks 0-0");
   await expect(page.getByTestId("deploy-node-selector").getByRole("note")).toHaveCount(0);
+  // Including the shape: a form left asking for two nodes' worth of tensor
+  // width on one node is a form that will be refused for the opposite reason.
+  await expect(page.getByLabel("Tensor parallel")).toHaveValue("1");
   await selectNode(page, PEER);
   await expect(worldSize).toHaveText("2 nodes, ranks 0-1");
+  await expect(page.getByLabel("Tensor parallel")).toHaveValue("2");
 
   // ── 3. Preview: the plan's node count, and a per-node pre-flight ─────────
+  // Point the recipe at weights that are the reason for the second machine.
   await page.getByLabel("Model override").fill(CATALOGUED_MODEL);
   await page.getByRole("button", { name: "Preview" }).click();
 
@@ -167,6 +188,10 @@ test("enrol, select, preview, deploy, see the ranks, stop", async ({ page, reque
   // rendezvouses through.
   const command = plan.locator("pre");
   await expect(command).toContainText("--nnodes 2");
+  // The shape the form was showing is the shape that was planned — a preview
+  // of some other parallelism is a preview of another deployment.
+  await expect(command).toContainText("--tensor-parallel-size 2");
+  await expect(command).toContainText(CATALOGUED_MODEL);
   await expect(command).toContainText("--node-rank 0");
   await expect(command).toContainText(`--master-addr ${CONTROL}`);
   await expect(plan).toContainText("never been run on hardware");
@@ -264,19 +289,37 @@ test("enrol, select, preview, deploy, see the ranks, stop", async ({ page, reque
   await purgeDeployments(request, RECIPE_ID);
 });
 
-test("says why a two-node run its parallelism cannot fill is refused — twice", async ({
+/** The refusal is still reachable — it just takes saying so now.
+ *
+ *  The proposal is only for a form still showing the recipe's own number; an
+ *  operator who types one is telling the form something, and the form must not
+ *  quietly replace it. So a shape that genuinely does not fit is exactly what
+ *  this test builds: two nodes ticked, tensor width put back to 1 by hand. */
+test("says why a two-node run its parallelism cannot fill is refused — three times", async ({
   page,
   request,
 }) => {
-  await purgeDeployments(request, SOLO_RECIPE_ID);
-  await openDeployOptions(page, SOLO_RECIPE_NAME);
+  await purgeDeployments(request, RECIPE_ID);
+  await openDeployOptions(page, RECIPE_NAME);
   await selectNode(page, PEER);
   await expect(page.getByTestId("deploy-world-size")).toHaveText("2 nodes, ranks 0-1");
+  await expect(page.getByLabel("Tensor parallel")).toHaveValue("2");
 
-  // The preview is where this should be met: before anything has started.
+  // Lower it by hand. The form keeps what was typed rather than proposing
+  // over the top of it, and says what that shape would do.
+  await setTensorParallel(page, "1");
+  const occupancy = page.getByTestId("deploy-occupancy");
+  await expect(occupancy).toContainText("only occupies 1 of the 2 nodes selected");
+  await expect(occupancy).toContainText("the launch would hang");
+  await expect(occupancy).toContainText("raise the parallelism until tp*pp is 2");
+
+  // The preview is the second place this is met, and the first that costs a
+  // round trip: the server is the authority, and the form does not pretend to
+  // be it by disabling the button.
   await page.getByRole("button", { name: "Preview" }).click();
-  const previewRefusal = page.getByText(/only occupies 1/);
+  const previewRefusal = page.getByTestId("deploy-plan-error");
   await expect(previewRefusal).toBeVisible();
+  await expect(previewRefusal).toContainText("only occupies 1 of them");
   await expect(previewRefusal).toContainText("raise the parallelism");
   await expect(page.getByTestId("deploy-plan")).toHaveCount(0);
 
@@ -291,8 +334,34 @@ test("says why a two-node run its parallelism cannot fill is refused — twice",
   await expect(alert).toContainText("raise the parallelism");
 
   expect(
-    (await listDeployments(request)).filter((d) => d.recipe_id === SOLO_RECIPE_ID),
+    (await listDeployments(request)).filter((d) => d.recipe_id === RECIPE_ID),
     "a refused deploy should not leave a record behind",
+  ).toHaveLength(0);
+  await expectNoCrash(page);
+});
+
+/** The mirror image: a shape too big for the machines ticked. Same rule, the
+ *  other side of it, and the wording an operator gets has to say which way to
+ *  move — this one is fixed by adding a machine, not by raising a number. */
+test("says why a shape larger than the nodes selected is refused", async ({ page, request }) => {
+  await purgeDeployments(request, RECIPE_ID);
+  await openDeployOptions(page, RECIPE_NAME);
+  await setTensorParallel(page, "4");
+
+  const occupancy = page.getByTestId("deploy-occupancy");
+  await expect(occupancy).toContainText("tp=4 pp=1 does not fit 1 node: it needs 4");
+  await expect(occupancy).toContainText("deploy across 4 nodes");
+
+  await page.getByRole("button", { name: "Preview" }).click();
+  const refusal = page.getByTestId("deploy-plan-error");
+  await expect(refusal).toBeVisible();
+  await expect(refusal).toContainText("does not fit 1 node");
+  await expect(refusal).toContainText("lower the parallelism");
+  await expect(page.getByTestId("deploy-plan")).toHaveCount(0);
+
+  expect(
+    (await listDeployments(request)).filter((d) => d.recipe_id === RECIPE_ID),
+    "a preview should never create a deployment",
   ).toHaveLength(0);
   await expectNoCrash(page);
 });
