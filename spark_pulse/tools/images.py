@@ -555,20 +555,21 @@ def delete_image(ref: str, force: bool = False) -> dict[str, Any]:
 
 def _make_ssh_client(ssh_user: str | None) -> SSHClient:
     """Build the SSH client used for distribution (overridable in tests)."""
-    return OpenSSHClient(user=ssh_user or "", strict_host_key_checking=True)
+    return OpenSSHClient(user=ssh_user or None, host_key_policy="strict")
 
 
-def _save_and_load(
-    ref: str, node: str, ssh_user: str | None, timeout: int = 3600
-) -> None:
+def _save_and_load(ref: str, node: str, ssh: SSHClient, timeout: int = 3600) -> None:
     """Stream an image to a node: ``docker save <ref> | ssh <node> docker load``.
+
+    The remote half of the pipeline is built by the SSH client, so the identity
+    file, host key policy and connection reuse are the same ones every other
+    remote operation uses.
 
     Kept module level so tests can replace the transfer without a daemon.
     """
-    target = f"{ssh_user}@{node}" if ssh_user else node
     pipeline = (
         f"docker save {shlex.quote(ref)} | "
-        f"ssh -o BatchMode=yes {shlex.quote(target)} docker load"
+        f"{shlex.join(ssh.remote_shell_command(node, 'docker load'))}"
     )
     proc = subprocess.run(
         ["sh", "-c", pipeline], capture_output=True, text=True, timeout=timeout
@@ -626,7 +627,7 @@ def sync_to_nodes(
             }
         error: str | None = None
         try:
-            _save_and_load(ref, node, ssh_user, timeout)
+            _save_and_load(ref, node, ssh, timeout)
         except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
             error = str(exc)
         return {
