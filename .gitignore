@@ -32,3 +32,4 @@ spark_pulse/ui/
 web/playwright-report/
 web/test-results/
 .ralph/
+.claude/

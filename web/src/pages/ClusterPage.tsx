@@ -38,6 +38,8 @@ import {
 import { setRefresh } from "@/lib/refresh";
 import type { ClusterState, ClusterValidationResult } from "@/lib/types";
 import type { DeploymentEvent } from "@/lib/operations";
+import { ExperimentalBanner } from "@/components/Experimental";
+import { useConfig } from "@/lib/config";
 
 export default function ClusterPage() {
   const { data: clusters, loading, error, refetch } = useQuery(listClusters);
@@ -273,8 +275,18 @@ export default function ClusterPage() {
 
   const selectedDetail = selectedCluster ? clusterDetail : null;
 
+  const { config } = useConfig();
+  const experimental = config?.cluster_experimental ?? true;
+
   return (
     <div className="space-y-6">
+      {experimental && (
+      <ExperimentalBanner
+        title="Cluster orchestration is experimental"
+        reason="Multi-node bring-up has never been run on real hardware: no second DGX Spark was available to verify it. Single-node deployment is verified and lives on the Inference page. Under runtime: native a cluster deploy is refused outright; the upstream runtime will attempt it, untested."
+      />
+      )}
+
       {/* Reconciliation Notification */}
       {!reconciliationLoading && reconciliationResult && (
         <ReconciliationNotification

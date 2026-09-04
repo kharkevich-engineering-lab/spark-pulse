@@ -231,6 +231,7 @@ export interface Settings {
   default_port_range_end: number;
   webui_port: number;
   cluster_enabled: boolean;
+  cluster_experimental: boolean;
   job_retention_days: number;
   benchmarking_enabled: boolean;
   runtime?: string;

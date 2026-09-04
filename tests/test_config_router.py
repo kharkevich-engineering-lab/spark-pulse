@@ -52,3 +52,27 @@ class TestApiConfigEndpoint:
         assert resp.status_code == 200
         data = resp.json()
         assert data["cluster_enabled"] is True
+
+    def test_config_reports_cluster_as_experimental_by_default(self):
+        """Multi-node has never run on hardware, so the UI must say so.
+
+        The flag ships true and is meant to be flipped once a two-node
+        bring-up has actually been verified.
+        """
+        app = create_app()
+        from fastapi.testclient import TestClient
+
+        client = TestClient(app)
+
+        data = client.get("/api/config").json()
+        assert data["cluster_experimental"] is True
+
+    def test_cluster_experimental_can_be_turned_off(self, monkeypatch):
+        monkeypatch.setitem(config._data, "cluster_experimental", False)
+
+        app = create_app()
+        from fastapi.testclient import TestClient
+
+        client = TestClient(app)
+
+        assert client.get("/api/config").json()["cluster_experimental"] is False
