@@ -29,6 +29,13 @@ Everything that touches the outside world goes through two injectable seams —
 a :class:`CommandRunner` for the docker and skopeo CLIs, and a head-request
 callable for the registry HTTP API — so ``spark_pulse.mock.registry`` runs
 *this* module's logic over simulated transports rather than reimplementing it.
+
+Not yet done, and it needs the second machine to test: the registry serves
+plain HTTP on the LAN, so a node's Docker daemon will refuse it until
+``<control>:5000`` is in that node's ``insecure-registries``. Nothing here
+writes a node's ``daemon.json``; that belongs with the node registry and
+pre-flight of the plan's phase C, which is where a node's configuration first
+becomes something we own.
 """
 
 from __future__ import annotations
