@@ -628,3 +628,34 @@ export async function fetchImagePresence(ref: string, nodes: string[]): Promise<
     `/images/presence?ref=${encodeURIComponent(ref)}&nodes=${encodeURIComponent(nodes.join(','))}`,
   );
 }
+
+// ── Node registry ────────────────────────────────────────────────────────────
+
+import type { AddNodeRequest, ClusterNode, DiscoverNodesResult, NodeFinding } from "@/lib/types";
+
+export async function fetchNodes(): Promise<ClusterNode[]> {
+  return json<ClusterNode[]>("/nodes");
+}
+
+/** Register a node. The id is minted by the server and is never sent. */
+export async function addNode(body: AddNodeRequest): Promise<ClusterNode> {
+  return json<ClusterNode>("/nodes", { method: "POST", body: JSON.stringify(body) });
+}
+
+export async function updateNode(id: string, changes: Partial<ClusterNode>): Promise<ClusterNode> {
+  return json<ClusterNode>(`/nodes/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(changes) });
+}
+
+/** Forget a node. Wiping its identity and uninstalling its agent are separate. */
+export async function removeNode(id: string): Promise<{ removed: boolean; node: ClusterNode }> {
+  return json(`/nodes/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+/** Browse the LAN for peers. Returns an empty list when mDNS is unavailable. */
+export async function discoverNodes(timeout = 3): Promise<DiscoverNodesResult> {
+  return json<DiscoverNodesResult>(`/nodes/discover?timeout=${timeout}`);
+}
+
+export async function fetchNodeDiagnostics(): Promise<{ findings: NodeFinding[] }> {
+  return json<{ findings: NodeFinding[] }>("/nodes/diagnostics");
+}

@@ -43,3 +43,22 @@ def reset_simulated_registry():
     mock_registry.reset()
     yield
     mock_registry.reset()
+
+
+@pytest.fixture(autouse=True)
+def reset_simulated_node_registry():
+    """Keep the process-wide simulated node registry per-test.
+
+    ``spark_pulse.mock.node_registry`` holds one registry for the process, the
+    way the real one holds one file per machine, and ``mock.discovery`` keeps
+    the mDNS observations that feed the hostname-churn diagnostic. Without this
+    a node one test added would still be there for the next.
+    """
+    from spark_pulse.mock import discovery as mock_discovery
+    from spark_pulse.mock import node_registry as mock_node_registry
+
+    mock_node_registry.reset()
+    mock_discovery.reset_mock_discovery()
+    yield
+    mock_node_registry.reset()
+    mock_discovery.reset_mock_discovery()

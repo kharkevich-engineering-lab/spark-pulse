@@ -26,6 +26,7 @@ from spark_pulse.routers import (
     oci as oci_router,
     docker as docker_router,
     discovery as discovery_router,
+    nodes as nodes_router,
     cluster as cluster_router,
     launch_script as launch_script_router,
     health as health_router,
@@ -152,6 +153,29 @@ async def lifespan(app: FastAPI):
         print("FATAL: refusing to start with an empty view of running deployments.")
         raise
 
+    # Put this machine in the node registry, then say so on the LAN.
+    #
+    # `register_self` is idempotent and fills blanks only, so a restart never
+    # overwrites an address or an interface name an operator corrected by hand.
+    # The mDNS announcement carries the *minted* node id — not the hostname and
+    # not the machine-id, which DGX Sparks duplicate — so a peer that finds us
+    # knows which control plane it found. Both steps are best effort: a control
+    # plane that cannot announce itself still runs, and its peers can still be
+    # added by address.
+    try:
+        this_node = tools.node_registry.register_self()
+        print(f"Control node registered: {this_node.label} ({this_node.id[:8]})")
+        announced = tools.discovery.announce_self(
+            this_node.id, config.webui_port, get_version()
+        )
+        if announced:
+            print(
+                "Announced _spark-pulse._tcp on "
+                f"{', '.join(tools.discovery.real_interface_names()) or 'no interface'}"
+            )
+    except Exception as e:
+        print(f"Warning: could not register this node: {e}")
+
     # Start OCI background update checker
     start_background_updater()
 
@@ -190,6 +214,13 @@ async def lifespan(app: FastAPI):
 
     # Cleanup on shutdown
     stop_background_updater()
+
+    # Withdraw the mDNS record rather than letting it time out, so a peer
+    # browsing right after a restart does not see a node that is not there.
+    try:
+        tools.discovery.stop_announcement()
+    except Exception as e:  # pragma: no cover — shutdown is best effort
+        print(f"Warning: could not withdraw the mDNS record: {e}")
 
     # Remove symlinks for custom recipes and mods
     try:
@@ -239,6 +270,7 @@ def create_app() -> FastAPI:
     app.include_router(oci_router.router)
     app.include_router(docker_router.router)
     app.include_router(discovery_router.router)
+    app.include_router(nodes_router.router)
     app.include_router(cluster_router.router)
     app.include_router(launch_script_router.router)
     app.include_router(health_router.router)

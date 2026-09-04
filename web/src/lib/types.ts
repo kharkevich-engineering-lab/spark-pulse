@@ -821,3 +821,70 @@ export interface ImageDeleteResult {
   image_id: string;
   freed_bytes: number;
 }
+
+// ── Node registry ────────────────────────────────────────────────────────────
+
+/** The three states the plan insists are shown as three states.
+ *
+ * `unknown` is the one that matters: a node we cannot reach while its rank is
+ * still serving is unverified, not failed.
+ */
+export type NodeState = "healthy" | "unknown" | "dead";
+
+/** One machine the control plane knows about.
+ *
+ * `id` is minted by the server and is not derived from the name, the address
+ * or `/etc/machine-id` — DGX Sparks ship with duplicate machine-ids. Renaming
+ * or re-addressing a node does not move its identity.
+ */
+export interface ClusterNode {
+  id: string;
+  name: string;
+  address: string;
+  is_control_plane: boolean;
+  ssh_user: string;
+  ssh_key_path: string;
+  ethernet_interface: string;
+  infiniband_interfaces: string[];
+  state: NodeState;
+  last_seen: string | null;
+  machine_id: string;
+}
+
+/** A responder found on the LAN over mDNS. */
+export interface DiscoveredPeer {
+  address: string;
+  port: number;
+  service: string;
+  hostname: string;
+  instance: string;
+  node_id: string;
+  version: string;
+  /** True when it answered `_spark-pulse._tcp` and so identified itself. */
+  is_spark_pulse: boolean;
+  /** True when this address is already in the registry. */
+  registered: boolean;
+}
+
+export interface DiscoverNodesResult {
+  mdns_available: boolean;
+  peers: DiscoveredPeer[];
+}
+
+/** One diagnostic: what was seen, and what to do about it — never an error. */
+export interface NodeFinding {
+  code: string;
+  severity: "info" | "warning";
+  summary: string;
+  remedy: string;
+  node_ids: string[];
+}
+
+export interface AddNodeRequest {
+  name?: string;
+  address: string;
+  ssh_user?: string;
+  ssh_key_path?: string;
+  ethernet_interface?: string;
+  infiniband_interfaces?: string[];
+}
