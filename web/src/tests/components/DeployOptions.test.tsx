@@ -595,7 +595,7 @@ describe("describeOccupancy", () => {
     expect(fit.fits).toBe(false);
     expect(fit.text).toContain("only occupies 1 of the 2 nodes selected");
     expect(fit.text).toContain("nothing to hold");
-    expect(fit.text).toContain("the launch would hang");
+    expect(fit.text).toContain("would fail on every rank");
     expect(fit.text).toContain("raise the parallelism until tp*pp is 2");
   });
 
@@ -723,7 +723,9 @@ describe("DeployOptions parallelism", () => {
     await waitFor(() =>
       expect(screen.getByTestId("deploy-occupancy")).toHaveTextContent("only occupies 1 of the 2"),
     );
-    expect(screen.getByTestId("deploy-occupancy")).toHaveTextContent("the launch would hang");
+    expect(screen.getByTestId("deploy-occupancy")).toHaveTextContent(
+      "would fail on every rank",
+    );
   });
 
   /** Half-typed text is not an instruction. Clearing the field to retype must

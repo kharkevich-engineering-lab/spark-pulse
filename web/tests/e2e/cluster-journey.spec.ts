@@ -310,7 +310,7 @@ test("says why a two-node run its parallelism cannot fill is refused — three t
   await setTensorParallel(page, "1");
   const occupancy = page.getByTestId("deploy-occupancy");
   await expect(occupancy).toContainText("only occupies 1 of the 2 nodes selected");
-  await expect(occupancy).toContainText("the launch would hang");
+  await expect(occupancy).toContainText("would fail on every rank");
   await expect(occupancy).toContainText("raise the parallelism until tp*pp is 2");
 
   // The preview is the second place this is met, and the first that costs a
@@ -330,7 +330,7 @@ test("says why a two-node run its parallelism cannot fill is refused — three t
   const alert = page.getByRole("dialog");
   await expect(alert).toBeVisible();
   await expect(alert).toContainText("only occupies 1");
-  await expect(alert).toContainText("the launch would hang");
+  await expect(alert).toContainText("would fail on every rank");
   await expect(alert).toContainText("raise the parallelism");
 
   expect(

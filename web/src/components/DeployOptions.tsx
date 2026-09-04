@@ -74,7 +74,7 @@ export function occupancy(shape: Parallelism): number {
  *
  * One GPU per node means the world size *is* the node count, so a shape that
  * occupies anything else is refused — too large as "does not fit", too small
- * as a launch that would hang at the rendezvous. Ticking a second node must
+ * as a launch vLLM refuses outright. Ticking a second node must
  * therefore leave the form in a state that works, and the only free variable
  * the operator has not spoken about is tensor width.
  *
@@ -123,7 +123,9 @@ export function describeOccupancy(
       `${flags} only occupies ${needed} of the ${nodeWord(nodeCount)} selected. ` +
       `One GPU per node means the world size is the node count, so the extra ` +
       `${nodeCount - needed} would join the rendezvous with nothing to hold and ` +
-      `the launch would hang. Deploy on ${nodeWord(needed)}, or raise the ` +
+      `and vLLM refuses a --nnodes that does not divide it exactly, so this ` +
+      `would fail on every rank rather than serve on a subset. ` +
+      `Deploy on ${nodeWord(needed)}, or raise the ` +
       `parallelism until tp*pp is ${nodeCount}.`,
   };
 }
