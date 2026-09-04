@@ -46,6 +46,24 @@ GENERATION_LABEL = label("generation")
 RANK_LABEL = label("rank")
 WORLD_SIZE_LABEL = label("world_size")
 
+
+def identity_labels(
+    deployment: str, generation: int, rank: int, world_size: int
+) -> dict[str, str]:
+    """The labels that say which rank of which attempt a container is.
+
+    Merged last by :meth:`ContainerMetadata.to_labels`, after everything the
+    engine profile and the user's ``docker:`` block contribute, so nothing can
+    shadow the identity reconciliation reads back.
+    """
+    return {
+        DEPLOYMENT_LABEL: deployment,
+        GENERATION_LABEL: str(generation),
+        RANK_LABEL: str(rank),
+        WORLD_SIZE_LABEL: str(world_size),
+    }
+
+
 # ── Cluster ──────────────────────────────────────────────────────────────────
 
 CLUSTER_LABEL = label("cluster")
@@ -88,5 +106,6 @@ __all__ = [
     "VERSION_LABEL",
     "WORKER_IPS_LABEL",
     "WORLD_SIZE_LABEL",
+    "identity_labels",
     "label",
 ]

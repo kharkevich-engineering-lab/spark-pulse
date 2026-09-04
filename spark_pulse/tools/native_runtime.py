@@ -76,6 +76,7 @@ from spark_pulse.tools.labels import (
     RANK_LABEL,
     WORLD_SIZE_LABEL,
 )
+from spark_pulse.tools.labels import identity_labels as identity_labels
 
 # Capacity validation is pure arithmetic with no side effect to simulate, so
 # it is imported directly, like ``spark_pulse.engines``.
@@ -301,22 +302,6 @@ def _next_generation(deployment_id: str) -> int:
         return 1
     current = record.get("generation")
     return (current if isinstance(current, int) and current > 0 else 0) + 1
-
-
-def identity_labels(
-    deployment_id: str, generation: int, rank: int, world_size: int
-) -> dict[str, str]:
-    """The labels that say which rank of which attempt this container is.
-
-    Applied last, after the engine profile and the user's ``docker:`` block,
-    so no configuration can shadow the identity reconciliation reads back.
-    """
-    return {
-        DEPLOYMENT_LABEL: deployment_id,
-        GENERATION_LABEL: str(generation),
-        RANK_LABEL: str(rank),
-        WORLD_SIZE_LABEL: str(world_size),
-    }
 
 
 def rank_entries(record: dict[str, Any]) -> list[dict[str, Any]]:
@@ -865,6 +850,12 @@ def plan(
             memory_limit_gb=config.docker_memory_limit_gb,
             shm_size_gb=shm_size,
             privileged=privileged,
+            # The identity travels on the metadata, so every container
+            # service writes the same labels — reconciliation reads them
+            # back rather than parsing the container name.
+            generation=generation,
+            rank=rank,
+            world_size=topology.size,
         )
         rank_plans.append(
             RankPlan(
@@ -881,12 +872,7 @@ def plan(
                     name=rank_container_name(dep_id, rank, generation),
                     command=str(profile.get("keepalive") or "sleep infinity"),
                     env=_build_env(engine_obj, recipe, topology, node_rank=rank),
-                    # Identity last: no engine profile and no user docker
-                    # block may shadow which rank of which attempt this is.
-                    labels={
-                        **metadata.to_labels(),
-                        **identity_labels(dep_id, generation, rank, topology.size),
-                    },
+                    labels=metadata.to_labels(),
                     mounts=mounts,
                     privileged=privileged,
                     ipc_host=bool(profile.get("ipc_host", False)),
@@ -1150,10 +1136,12 @@ def _wait_ready(
 def _confirm_gone(
     docker: Any,
     name: str,
-    timeout: float = CONFIRM_GONE_TIMEOUT,
-    interval: float = CONFIRM_GONE_INTERVAL,
+    timeout: float | None = None,
+    interval: float | None = None,
 ) -> bool:
     """Whether ``name`` is really gone, by looking rather than by assuming."""
+    timeout = CONFIRM_GONE_TIMEOUT if timeout is None else timeout
+    interval = CONFIRM_GONE_INTERVAL if interval is None else interval
     deadline = time.monotonic() + timeout
     while True:
         if docker.get_container_status(name).get("status") == "missing":
@@ -1170,7 +1158,7 @@ def _reap(docker: Any, name: str, where: str) -> None:
     if not _confirm_gone(docker, name):
         raise NativeRuntimeError(
             f"container {name} on {where or 'this machine'} did not go away "
-            f"within {CONFIRM_GONE_TIMEOUT:.0f}s; a rank of an earlier attempt "
+            f"within {CONFIRM_GONE_TIMEOUT:g}s; a rank of an earlier attempt "
             "is still holding the GPU, so this one will not be started"
         )
 
