@@ -1,8 +1,9 @@
 import { useState, useEffect, useMemo } from "react";
-import { fetchRecipes, fetchRecipe, fetchDeployments, createDeployment, fetchSettings, fetchRecipeCustomization, saveRecipeCustomization, deleteRecipeCustomization, fetchMods, fetchMod, listCustomRecipes, saveCustomRecipe, deleteCustomRecipe, listCustomMods, getCustomModFiles, saveCustomModFiles, deleteCustomMod, syncSymlinks } from "@/lib/api";
-import type { RecipeDetail, RecipeCustomization, RecipeSummary, ModSummary, ModDetail, CustomRecipeInfo, CustomModInfo, ModFileMap } from "@/lib/types";
+import { fetchRecipes, fetchRecipe, fetchDeployments, createDeployment, fetchSettings, fetchRecipeCustomization, saveRecipeCustomization, deleteRecipeCustomization, fetchMods, fetchMod, listCustomRecipes, saveCustomRecipe, deleteCustomRecipe, listCustomMods, getCustomModFiles, saveCustomModFiles, deleteCustomMod, syncSymlinks, ApiError } from "@/lib/api";
+import type { RecipeDetail, RecipeCustomization, RecipeSummary, ModSummary, ModDetail, CustomRecipeInfo, CustomModInfo, ModFileMap, PreflightReport } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
 import { AlertModal, ConfirmModal } from "@/components/Modal";
+import PreflightPanel from "@/components/PreflightPanel";
 import { Loader2, AlertCircle, ChevronDown, X, Copy, Check, Wrench, Zap, FileCode2, FileText, FileCode, Plus } from "lucide-react";
 import RecipeCard from "@/components/RecipeCard";
 import RecipeDrawer from "@/components/RecipeDrawer";
@@ -15,6 +16,26 @@ import NewModModal from "@/components/NewModModal";
 import RecipeImportPanel from "@/components/RecipeImportPanel";
 import type { DeployOptionsValue } from "@/components/DeployOptions";
 import { setRefresh } from "@/lib/refresh";
+
+/** What a blocked create is waiting on: the deploy the operator asked for,
+ *  and the pre-flight report that stopped it — kept together so "Deploy
+ *  anyway" can re-issue the exact same create with `skip_preflight`. */
+interface BlockedDeploy {
+  name: string;
+  params: Record<string, unknown>;
+  options?: DeployOptionsValue;
+  preflight: PreflightReport;
+}
+
+/** The pre-flight report from a 409's `detail.preflight`, or null when the
+ *  failure was something else entirely (not every create failure is a gate). */
+function blockingPreflight(payload: unknown): PreflightReport | null {
+  if (!payload || typeof payload !== "object") return null;
+  const detail = (payload as { detail?: unknown }).detail;
+  if (!detail || typeof detail !== "object") return null;
+  const preflight = (detail as { preflight?: unknown }).preflight;
+  return preflight && typeof preflight === "object" ? (preflight as PreflightReport) : null;
+}
 
 // ── File-kind badge colours ──────────────────────────────────────────────────
 
@@ -153,6 +174,7 @@ export default function RecipesPage() {
   const [customLoading, setCustomLoading] = useState(false);
   const [selected, setSelected] = useState<{ recipe: RecipeDetail; customization: RecipeCustomization } | null>(null);
   const [alertModal, setAlertModal] = useState<{ title: string; message: string } | null>(null);
+  const [blockedDeploy, setBlockedDeploy] = useState<BlockedDeploy | null>(null);
   const [showUnavailable, setShowUnavailable] = useState(false);
   const [activeModId, setActiveModId] = useState<string | null>(null);
 
@@ -274,12 +296,44 @@ export default function RecipesPage() {
         recipe_id: selected.recipe.id,
         name,
         params,
+        nodes: options?.nodes?.length ? options.nodes : undefined,
         engine: options?.engine,
         model: options?.model,
         extra_args: options?.extra_args?.length ? options.extra_args : undefined,
       });
       setSelected(null);
     } catch (e) {
+      // A 409 from the pre-flight gate is not "an error" in the usual sense:
+      // it is the same report the preview already showed, now with a stop
+      // sign. Show the operator the checks and let them override rather than
+      // reducing it to a one-line alert.
+      const preflight = e instanceof ApiError && e.status === 409 ? blockingPreflight(e.payload) : null;
+      if (preflight) {
+        setBlockedDeploy({ name, params, options, preflight });
+        return;
+      }
+      setAlertModal({ title: "Error", message: e instanceof Error ? e.message : "Failed to deploy" });
+    }
+  };
+
+  const handleDeployAnyway = async () => {
+    if (!blockedDeploy || !selected) return;
+    const { name, params, options } = blockedDeploy;
+    try {
+      await createDeployment({
+        recipe_id: selected.recipe.id,
+        name,
+        params,
+        nodes: options?.nodes?.length ? options.nodes : undefined,
+        engine: options?.engine,
+        model: options?.model,
+        extra_args: options?.extra_args?.length ? options.extra_args : undefined,
+        skip_preflight: true,
+      });
+      setBlockedDeploy(null);
+      setSelected(null);
+    } catch (e) {
+      setBlockedDeploy(null);
       setAlertModal({ title: "Error", message: e instanceof Error ? e.message : "Failed to deploy" });
     }
   };
@@ -632,6 +686,45 @@ export default function RecipesPage() {
 
       {alertModal && (
         <AlertModal open={!!alertModal} onClose={() => setAlertModal(null)} title={alertModal.title} message={alertModal.message} />
+      )}
+
+      {blockedDeploy && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" role="dialog" aria-modal="true">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setBlockedDeploy(null)} />
+          <div
+            className="relative w-full max-w-lg rounded-xl bg-surface border border-border shadow-2xl p-5 space-y-4"
+            data-testid="preflight-block-modal"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <h3 className="text-lg font-bold">Pre-flight blocked this deploy</h3>
+              <button
+                type="button"
+                onClick={() => setBlockedDeploy(null)}
+                className="p-1 rounded-lg hover:bg-surface-hover transition-colors"
+                title="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <PreflightPanel report={blockedDeploy.preflight} />
+            <div className="flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setBlockedDeploy(null)}
+                className="px-4 py-2 rounded-lg border border-border hover:border-border-hover transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDeployAnyway}
+                className="px-4 py-2 rounded-lg bg-danger hover:bg-danger/80 text-white font-medium transition-colors"
+              >
+                Deploy anyway
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {resetConfirm && (

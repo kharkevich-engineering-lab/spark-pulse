@@ -34,6 +34,36 @@ MEMORY_LIMIT_LABEL = label("memory_limit_gb")
 SHM_SIZE_LABEL = label("shm_size_gb")
 PRIVILEGED_LABEL = label("privileged")
 
+# ── Gang identity (native, per rank) ─────────────────────────────────────────
+#
+# A native deployment is a gang of ranks, so a container is identified by the
+# deployment it belongs to, which attempt (generation) created it, which rank
+# it is and how many ranks the gang has. Generation is what makes a container
+# from an abandoned attempt unambiguously reapable: the name and the label both
+# carry it, so "left over from the last try" is a fact rather than a guess.
+
+GENERATION_LABEL = label("generation")
+RANK_LABEL = label("rank")
+WORLD_SIZE_LABEL = label("world_size")
+
+
+def identity_labels(
+    deployment: str, generation: int, rank: int, world_size: int
+) -> dict[str, str]:
+    """The labels that say which rank of which attempt a container is.
+
+    Merged last by :meth:`ContainerMetadata.to_labels`, after everything the
+    engine profile and the user's ``docker:`` block contribute, so nothing can
+    shadow the identity reconciliation reads back.
+    """
+    return {
+        DEPLOYMENT_LABEL: deployment,
+        GENERATION_LABEL: str(generation),
+        RANK_LABEL: str(rank),
+        WORLD_SIZE_LABEL: str(world_size),
+    }
+
+
 # ── Cluster ──────────────────────────────────────────────────────────────────
 
 CLUSTER_LABEL = label("cluster")
@@ -55,6 +85,7 @@ __all__ = [
     "CONTAINER_NAME_LABEL",
     "CREATED_AT_LABEL",
     "DEPLOYMENT_LABEL",
+    "GENERATION_LABEL",
     "HEAD_IP_LABEL",
     "IMAGE_LABEL",
     "LABEL_PREFIX",
@@ -65,6 +96,7 @@ __all__ = [
     "NAME_LABEL",
     "NODE_RANK_LABEL",
     "PRIVILEGED_LABEL",
+    "RANK_LABEL",
     "RAY_ENABLED_LABEL",
     "RAY_LABEL",
     "RAY_READY_LABEL",
@@ -73,5 +105,7 @@ __all__ = [
     "SHM_SIZE_LABEL",
     "VERSION_LABEL",
     "WORKER_IPS_LABEL",
+    "WORLD_SIZE_LABEL",
+    "identity_labels",
     "label",
 ]

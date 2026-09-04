@@ -39,6 +39,7 @@ from spark_pulse.tools.labels import (
     ROLE_LABEL,
     SHM_SIZE_LABEL,
     VERSION_LABEL,
+    identity_labels,
 )
 
 logger = logging.getLogger(__name__)
@@ -228,6 +229,12 @@ class ContainerMetadata:
     memory_limit_gb: float | None = None
     shm_size_gb: float = 64
     privileged: bool = True
+    # Gang identity — a native deployment is a gang of ranks. ``generation``
+    # is zero for anything not started by the native runtime, which is what
+    # keeps the label set of every other container byte-identical.
+    generation: int = 0
+    rank: int = 0
+    world_size: int = 1
     # Cluster membership — empty for solo deployments.
     cluster: str = ""
     role: str = ""
@@ -251,6 +258,14 @@ class ContainerMetadata:
             SHM_SIZE_LABEL: str(self.shm_size_gb),
             PRIVILEGED_LABEL: "true" if self.privileged else "false",
         }
+        if self.generation:
+            # Last, so no profile or user config can shadow which rank of
+            # which attempt this container is.
+            labels.update(
+                identity_labels(
+                    self.deployment, self.generation, self.rank, self.world_size
+                )
+            )
         if self.cluster:
             labels[CLUSTER_LABEL] = self.cluster
             labels[ROLE_LABEL] = self.role
@@ -269,6 +284,9 @@ class ContainerMetadata:
         def _get(key: str, default: str = "") -> str:
             return labels.get(f"{LABEL_PREFIX}{key}", default)
 
+        def _int(raw: str, default: int) -> int:
+            return int(raw) if raw.strip().isdigit() else default
+
         mem = _get("memory_limit_gb")
         rank = _get("node_rank")
         return cls(
@@ -280,6 +298,9 @@ class ContainerMetadata:
             memory_limit_gb=float(mem) if mem else None,
             shm_size_gb=float(_get("shm_size_gb", "64")),
             privileged=_get("privileged", "true") == "true",
+            generation=_int(_get("generation"), 0),
+            rank=_int(_get("rank"), 0),
+            world_size=_int(_get("world_size"), 1),
             cluster=_get("cluster"),
             role=_get("role"),
             node_rank=int(rank) if rank.isdigit() else 0,
@@ -468,6 +489,11 @@ class DockerService:
                     docker.types.DeviceRequest(count=-1, capabilities=[["gpu"]])
                 ],
                 "volumes": volumes,
+                # Never restart. A rank is one member of a sharded gang: a
+                # rebooting node must not resurrect it into a deployment that
+                # was torn down. The SDK default is already "no"; saying so
+                # keeps it from drifting.
+                "restart_policy": {"Name": "no"},
             }
             if memory_limit_gb:
                 kwargs["mem_limit"] = self._gb_to_bytes(memory_limit_gb)
