@@ -69,7 +69,15 @@ class TestScanDir:
     def test_a_file_that_vanishes_mid_scan_does_not_abort_the_scan(
         self, caches, monkeypatch
     ):
-        """rglob yields a path; stat() on it can still fail. Keep counting."""
+        """rglob yields a path; stat() on it can still fail. Keep counting.
+
+        ``is_file()`` also calls ``stat()`` internally, and how often it does
+        so — and whether the answer is cached — differs between interpreter
+        versions. Patching ``stat`` alone therefore tested pathlib rather than
+        us: it passed on 3.14 and counted nothing on 3.13. Pinning ``is_file``
+        as well leaves exactly one thing under test, which is the inner
+        ``except OSError`` that must not abandon the rest of the scan.
+        """
         real_stat = cache.Path.stat
 
         def flaky_stat(self, *args, **kwargs):
@@ -77,6 +85,10 @@ class TestScanDir:
                 raise OSError("vanished")
             return real_stat(self, *args, **kwargs)
 
+        # The two real files in the fixture, named rather than derived, so the
+        # directories rglob also yields are not counted as files.
+        files = {"model.bin", "blob"}
+        monkeypatch.setattr(cache.Path, "is_file", lambda self: self.name in files)
         monkeypatch.setattr(cache.Path, "stat", flaky_stat)
 
         scanned = cache.scan_dir(str(caches["hf"]))
