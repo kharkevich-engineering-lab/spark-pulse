@@ -7,9 +7,12 @@ service the rest of the suite uses.
 
 from __future__ import annotations
 
+import ast
 import importlib
-import subprocess
 import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -25,11 +28,12 @@ from spark_pulse.mock.docker import (  # noqa: E402
     MockDockerClient,
     MockDockerService,
 )
-from spark_pulse.tools.ssh import (  # noqa: E402
-    OpenSSHClient,
-    SSHClient,
-    SSHResult,
+from spark_pulse.mock import registry as mock_registry  # noqa: E402
+from spark_pulse.mock.node_service import (  # noqa: E402
+    NodeServices,
+    SimulatedDockerSSHClient,
 )
+from spark_pulse.tools.ssh import SSHClient, SSHResult  # noqa: E402
 
 VLLM_REPO = "ghcr.io/kharkevich-engineering-lab/spark-pulse-engine/vllm"
 VLLM_REF = f"{VLLM_REPO}:0.1.0"
@@ -48,6 +52,30 @@ class _RecordingSSHClient(SSHClient):
         if not image_id:
             return SSHResult(returncode=1, stdout="", stderr="No such image")
         return SSHResult(returncode=0, stdout=f"{image_id}\n", stderr="")
+
+
+@dataclass
+class _Cluster:
+    """The simulated other machines, and this machine's own registry."""
+
+    ssh: SimulatedDockerSSHClient
+    services: Any
+    registry: Any
+
+    def fail(self, host: str) -> None:
+        """Make every command on ``host`` fail, as an unreachable node would."""
+        self.ssh._fail_hosts.add(host)
+
+    def commands(self, needle: str) -> list[str]:
+        """Every command sent to a node containing ``needle``."""
+        return [c["command"] for c in self.ssh.commands if needle in c["command"]]
+
+
+@pytest.fixture
+def nodes():
+    """Node services over a simulated SSH transport, plus the local registry."""
+    ssh = SimulatedDockerSSHClient()
+    return _Cluster(ssh, NodeServices(ssh_client=ssh), mock_registry.default_registry())
 
 
 @pytest.fixture
@@ -327,60 +355,117 @@ class TestDeletion:
 
 
 class TestSync:
-    def test_skips_nodes_whose_image_id_already_matches(self, catalogue):
-        local_id = catalogue.image_info(VLLM_REF)["id"]
-        ssh = _RecordingSSHClient({"n1": local_id, "n2": "sha256:something-else"})
-        transferred: list[str] = []
+    """Distribution seeds the control node's registry; nodes pull from it.
 
-        with patch.object(
-            images,
-            "_save_and_load",
-            side_effect=lambda *a, **kw: transferred.append(a[1]),
-        ):
-            result = images.sync_to_nodes(VLLM_REF, ["n1", "n2"], client=ssh)
+    The ``docker save | ssh docker load`` path these tests used to cover is
+    gone: measured, it changed the image digest and emptied ``RepoDigests``,
+    which breaks every digest-pinned deploy that follows. The first test here
+    fails outright on that old code.
+    """
+
+    def test_seeding_preserves_the_advertised_digest(self, catalogue, nodes):
+        advertised = images.local_digest(catalogue.image_info(VLLM_REF), VLLM_REPO)
+        assert advertised
+
+        result = images.sync_to_nodes(VLLM_REF, ["n1"], services=nodes.services)
+
+        assert result["digest"] == advertised
+        assert result["pull_ref"].endswith(f"@{advertised}")
+        assert result["results"][0]["digest"] == advertised
+
+    def test_a_copy_that_re_digests_the_image_fails_loudly(self, catalogue, nodes):
+        """What save/load did. Seeding must refuse it, not report success."""
+        nodes.registry.rewrite_digest = True
+
+        with pytest.raises(RuntimeError) as raised:
+            images.sync_to_nodes(VLLM_REF, ["n1"], services=nodes.services)
+
+        assert "changed its digest" in str(raised.value)
+
+    def test_the_reference_changes_host_while_the_digest_does_not(
+        self, catalogue, nodes
+    ):
+        """The host is what differs per node, which is why it is its own field."""
+        advertised = images.local_digest(catalogue.image_info(VLLM_REF), VLLM_REPO)
+
+        result = images.sync_to_nodes(VLLM_REF, ["n1", "n2"], services=nodes.services)
+
+        assert result["pull_ref"] != VLLM_REF
+        assert result["pull_ref"].startswith(f"{result['registry_base']}/")
+        assert not result["registry_base"].startswith("ghcr.io")
+        assert result["repository"] == VLLM_REPO.partition("/")[2]
+        # Two nodes, one set of three fields, one composed reference each.
+        assert {r["pull_ref"] for r in result["results"]} == {result["pull_ref"]}
+        assert {r["digest"] for r in result["results"]} == {advertised}
+
+    def test_every_node_pulls_and_none_is_skipped_the_first_time(
+        self, catalogue, nodes
+    ):
+        result = images.sync_to_nodes(VLLM_REF, ["n1", "n2"], services=nodes.services)
 
         assert result["ok"] is True
-        by_node = {r["node"]: r for r in result["results"]}
-        assert by_node["n1"]["skipped"] is True
-        assert by_node["n2"]["skipped"] is False
-        assert transferred == ["n2"]
+        assert [r["skipped"] for r in result["results"]] == [False, False]
+        pulls = nodes.commands("docker pull")
+        assert len(pulls) == 2
+        assert all(result["pull_ref"] in command for command in pulls)
 
-    def test_a_node_that_does_not_have_it_is_loaded(self, catalogue):
-        ssh = _RecordingSSHClient()
-        with patch.object(images, "_save_and_load") as transfer:
-            result = images.sync_to_nodes(VLLM_REF, ["n1"], client=ssh)
+    def test_a_node_that_already_has_it_is_skipped(self, catalogue, nodes):
+        images.sync_to_nodes(VLLM_REF, ["n1", "n2"], services=nodes.services)
+        before = len(nodes.commands("docker pull"))
 
-        transfer.assert_called_once()
-        assert result["results"][0]["ok"] is True
-        assert result["results"][0]["skipped"] is False
+        again = images.sync_to_nodes(VLLM_REF, ["n1", "n2"], services=nodes.services)
 
-    def test_a_transfer_failure_is_reported_per_node(self, catalogue):
-        ssh = _RecordingSSHClient()
-        with patch.object(
-            images, "_save_and_load", side_effect=RuntimeError("no space left")
-        ):
-            result = images.sync_to_nodes(VLLM_REF, ["n1"], client=ssh)
+        assert [r["skipped"] for r in again["results"]] == [True, True]
+        assert len(nodes.commands("docker pull")) == before
+
+    def test_nodes_receive_no_credentials(self, catalogue, nodes, monkeypatch):
+        """The credential authenticates the control node's fetch, nothing else."""
+        secrets = {"registry_username": "ci-bot", "registry_password": "s3cr3t"}
+        monkeypatch.setattr(
+            type(config), "get_secret", lambda self, key: secrets.get(key, "")
+        )
+
+        result = images.sync_to_nodes(VLLM_REF, ["n1"], services=nodes.services)
+
+        assert result["nodes_need_credentials"] is False
+        for entry in nodes.ssh.commands:
+            assert "s3cr3t" not in entry["command"]
+            assert "ci-bot" not in entry["command"]
+        # It is used, though — on this machine, for the copy from upstream.
+        copies = [c for c in nodes.registry.commands if c[:2] == ["skopeo", "copy"]]
+        assert any("ci-bot:s3cr3t" in " ".join(argv) for argv in copies)
+
+    def test_an_unreachable_node_is_reported_and_the_others_are_not(
+        self, catalogue, nodes
+    ):
+        nodes.fail("n2")
+
+        result = images.sync_to_nodes(VLLM_REF, ["n1", "n2"], services=nodes.services)
 
         assert result["ok"] is False
-        assert "no space left" in result["results"][0]["error"]
+        by_node = {r["node"]: r for r in result["results"]}
+        assert by_node["n1"]["ok"] is True
+        assert by_node["n2"]["ok"] is False
+        assert "unreachable" in by_node["n2"]["error"]
 
-    def test_transfer_is_built_by_the_ssh_client(self, catalogue, monkeypatch):
-        """No hand-rolled ssh: the pipeline carries the client's own options."""
-        client = OpenSSHClient(user="ubuntu", multiplex=False)
-        seen: dict[str, list[str]] = {}
+    def test_save_and_load_is_gone(self):
+        """No fallback: a silently wrong transfer is worse than no transfer."""
+        source = Path(images.__file__).read_text()
+        tree = ast.parse(source)
+        prose = {
+            ast.get_docstring(node, clean=False) or ""
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef))
+        }
+        code = source
+        for text in prose:
+            code = code.replace(text, "")
 
-        def _run(args, **kwargs):
-            seen["args"] = list(args)
-            return subprocess.CompletedProcess(args, 0, "", "")
-
-        monkeypatch.setattr(images.subprocess, "run", _run)
-        images._save_and_load(VLLM_REF, "n1", client)
-
-        pipeline = seen["args"][2]
-        assert pipeline.startswith(f"docker save {VLLM_REF} | ssh ")
-        assert "-o StrictHostKeyChecking=yes" in pipeline
-        assert "-o BatchMode=yes" in pipeline
-        assert pipeline.endswith("ubuntu@n1 'docker load'")
+        assert not hasattr(images, "_save_and_load")
+        # The only mention left anywhere is the docstring saying why it went.
+        assert any("docker save" in text for text in prose)
+        assert "docker save" not in code
+        assert "docker load" not in code
 
     def test_refuses_an_image_that_is_not_local(self, catalogue):
         with pytest.raises(ValueError):
