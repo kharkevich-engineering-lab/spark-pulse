@@ -1329,6 +1329,25 @@ class TestOrphans:
         assert native.get_deployment("dep1")["orphans"] == []
         assert plan.port not in nr._ports_in_use()
 
+    def test_listing_sweeps_orphans_with_the_real_resolver(self, native, fleet):
+        """The sweep runs off the node resolver, never off one passed service.
+
+        Asking this machine's daemon about a container on another node answers
+        "missing", which would free the ports on nothing but our own
+        ignorance.
+        """
+        self._running(native, fleet)
+        fleet.nodes["10.0.0.3"].unreachable = True
+        native.stop_deployment("dep1", services=fleet.services)
+
+        with patch.object(nr, "sweep_orphans") as swept:
+            native.list_deployments(docker=fleet.nodes[NODES[0]])
+        swept.assert_not_called()
+
+        with patch.object(nr, "sweep_orphans") as swept:
+            native.list_deployments()
+        swept.assert_called_once_with()
+
     def test_a_deployment_with_orphans_is_not_dropped(self, native, fleet, records):
         self._running(native, fleet)
         fleet.nodes["10.0.0.3"].unreachable = True

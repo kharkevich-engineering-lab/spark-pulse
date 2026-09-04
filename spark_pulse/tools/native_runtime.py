@@ -1839,8 +1839,10 @@ def list_deployments(docker: Any | None = None) -> list[dict[str, Any]]:
 
     Container labels are the source of truth: a container we do not have a
     record for (server reinstalled, records lost) is adopted, and a record
-    whose container is gone is marked stopped.
+    whose container is gone is marked stopped. Only ranks on the machine whose
+    containers were enumerated count as evidence.
     """
+    docker_arg = docker
     records = _load_records()
     native = [r for r in records if r.get("runtime") == RUNTIME_NAME]
     try:
@@ -1921,6 +1923,16 @@ def list_deployments(docker: Any | None = None) -> list[dict[str, Any]]:
 
     if changed:
         _save_records(records)
+
+    if docker_arg is None:
+        # Only with the real resolver: asking this machine's daemon about a
+        # container on another node would answer "missing" and free its ports
+        # on nothing but our own ignorance.
+        try:
+            sweep_orphans()
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.debug("orphan sweep skipped: %s", exc)
+
     return native
 
 
