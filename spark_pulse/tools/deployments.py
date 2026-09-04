@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import signal
@@ -14,6 +13,11 @@ from pathlib import Path
 from typing import Any
 
 from spark_pulse.config import config
+from spark_pulse.tools.atomic_json import (
+    StateFileError as StateFileError,
+    read_state_file,
+    write_json_atomic,
+)
 
 _DEPLOYMENTS_FILE = Path.home() / ".config" / "spark-pulse" / "deployments.json"
 _LOG_DIR = Path.home() / ".config" / "spark-pulse" / "logs"
@@ -31,29 +35,39 @@ def _redact_cmd(cmd_str: str) -> str:
 
 
 def _load() -> list[dict[str, Any]]:
-    if not _DEPLOYMENTS_FILE.exists():
+    """Return the persisted deployments.
+
+    A missing file means "nothing deployed yet" and yields ``[]``. A file that
+    exists but cannot be read or parsed raises ``StateFileError`` — an
+    unreadable state file is not an empty cluster, and swallowing the error
+    here is what lets a control plane tear down running work.
+    """
+    data = read_state_file(_DEPLOYMENTS_FILE, expect=list)
+    if data is None:
         return []
-    try:
-        with open(_DEPLOYMENTS_FILE) as f:
-            data = json.load(f)
-        # Sanitize any previously stored unredacted launch commands
-        changed = False
-        for dep in data:
-            lc = dep.get("launch_command")
-            if lc and _SENSITIVE_ENV_RE.search(lc):
-                dep["launch_command"] = _redact_cmd(lc)
-                changed = True
-        if changed:
-            _save(data)
-        return data
-    except (json.JSONDecodeError, OSError):
-        return []
+    # Sanitize any previously stored unredacted launch commands
+    changed = False
+    for dep in data:
+        lc = dep.get("launch_command") if isinstance(dep, dict) else None
+        if lc and _SENSITIVE_ENV_RE.search(lc):
+            dep["launch_command"] = _redact_cmd(lc)
+            changed = True
+    if changed:
+        _save(data)
+    return data
+
+
+def check_state_file() -> None:
+    """Raise ``StateFileError`` if the deployment state file is unreadable.
+
+    Startup calls this so the control plane refuses to come up with an empty
+    view of the world while containers are still running.
+    """
+    read_state_file(_DEPLOYMENTS_FILE, expect=list)
 
 
 def _save(data: list[dict[str, Any]]) -> None:
-    _DEPLOYMENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(_DEPLOYMENTS_FILE, "w") as f:
-        json.dump(data, f, indent=2, default=str)
+    write_json_atomic(_DEPLOYMENTS_FILE, data, indent=2, default=str)
 
 
 def _update_status(deployment_id: str, **fields: Any) -> None:

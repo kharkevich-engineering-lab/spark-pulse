@@ -2,29 +2,39 @@
 
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+# Crash-safety and the missing-versus-unreadable distinction are pure
+# filesystem behaviour with nothing to simulate, so the mock uses the real
+# helper — the failure semantics under SIMULATION_MODE are the production ones.
+from spark_pulse.tools.atomic_json import (
+    StateFileError as StateFileError,
+    read_state_file,
+    write_json_atomic,
+)
+
 _DEPLOYMENTS_FILE = Path(__file__).resolve().parent.parent / "data" / "deployments.json"
 
 
 def _load() -> list[dict[str, Any]]:
-    if not _DEPLOYMENTS_FILE.exists():
-        return []
-    try:
-        with open(_DEPLOYMENTS_FILE) as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return []
+    """Return persisted deployments; ``[]`` only when the file is absent.
+
+    A file that exists but cannot be read or parsed raises ``StateFileError``.
+    """
+    data = read_state_file(_DEPLOYMENTS_FILE, expect=list)
+    return [] if data is None else data
+
+
+def check_state_file() -> None:
+    """Raise ``StateFileError`` if the deployment state file is unreadable."""
+    read_state_file(_DEPLOYMENTS_FILE, expect=list)
 
 
 def _save(data: list[dict[str, Any]]) -> None:
-    _DEPLOYMENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(_DEPLOYMENTS_FILE, "w") as f:
-        json.dump(data, f, indent=2, default=str)
+    write_json_atomic(_DEPLOYMENTS_FILE, data, indent=2, default=str)
 
 
 def list_deployments() -> list[dict[str, Any]]:

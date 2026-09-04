@@ -31,12 +31,12 @@ def _load_secrets() -> dict:
 
 
 def _save_secrets(data: dict) -> None:
-    _SECRETS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = _SECRETS_PATH.with_suffix(".tmp")
-    with open(tmp, "w") as f:
-        json.dump(data, f)
-    tmp.chmod(0o600)
-    tmp.rename(_SECRETS_PATH)
+    # Deferred import: ``spark_pulse.tools`` imports this module, so pulling the
+    # helper in at module scope would be circular. Config writes still go
+    # through the same durable path as deployment state.
+    from spark_pulse.tools.atomic_json import write_json_atomic
+
+    write_json_atomic(_SECRETS_PATH, data, mode=0o600, indent=None)
 
 
 def _load_user_settings() -> dict:
@@ -50,11 +50,9 @@ def _load_user_settings() -> dict:
 
 
 def _save_user_settings(data: dict) -> None:
-    _SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = _SETTINGS_PATH.with_suffix(".tmp")
-    with open(tmp, "w") as f:
-        json.dump(data, f, indent=2)
-    tmp.rename(_SETTINGS_PATH)
+    from spark_pulse.tools.atomic_json import write_json_atomic  # see _save_secrets
+
+    write_json_atomic(_SETTINGS_PATH, data, indent=2)
 
 
 class _Config:

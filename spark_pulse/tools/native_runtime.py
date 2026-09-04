@@ -280,10 +280,22 @@ def _ports_in_use() -> set[int]:
 
 
 def _load_records() -> list[dict[str, Any]]:
+    """Load the shared deployment records.
+
+    The native runtime shares ``deployments.json`` with the container runtime,
+    so it inherits that module's crash-safe write and its refusal to read an
+    unreadable state file as an empty one: ``StateFileError`` propagates to the
+    caller rather than degrading into ``[]``.
+    """
     return tools.deployments._load()
 
 
 def _save_records(records: list[dict[str, Any]]) -> None:
+    """Persist the shared deployment records.
+
+    Delegates to ``tools.deployments._save``, which writes through
+    ``atomic_json.write_json_atomic`` — temp file, fsync, replace, dir fsync.
+    """
     tools.deployments._save(records)
 
 
