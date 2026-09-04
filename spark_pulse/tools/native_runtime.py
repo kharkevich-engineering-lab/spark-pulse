@@ -7,16 +7,38 @@ reproduces the upstream lifecycle described in the native-runtime plan §1.4:
    port, container profile and the rendered per-rank launch script — and
    returns a serialisable :class:`DeployPlan`. Nothing is started, so the same
    call backs the UI's "Preview" button and ``POST /api/deployments/plan``.
-2. :func:`start` runs an *idle* container (``sleep infinity``), applies the
-   recipe's mods with ``docker exec``, copies the rendered script to
-   ``/workspace/exec-script.sh`` and execs it detached with output redirected
-   to PID 1's stdout so ``docker logs`` carries the serve output, then waits
-   for the engine's readiness endpoint.
+2. :func:`start` loops over the plan's ranks. Each rank runs an *idle*
+   container (``sleep infinity``) on its own node, has the recipe's mods
+   applied with ``docker exec``, gets the rendered script copied to
+   ``/workspace/exec-script.sh`` and exec'd detached with output redirected to
+   PID 1's stdout so ``docker logs`` carries the serve output; then rank zero's
+   readiness endpoint is polled.
 
-Only solo (single node) deployments are supported here; the cluster path stays
-on ``tools.cluster``. Everything switchable goes through ``spark_pulse.tools``
-so simulation mode swaps the container service; ``spark_pulse.engines`` is
-imported directly because rendering is pure.
+The gang semantics are the ones §3.3 of ``docs/cluster-agent-plan.md`` takes
+from every system surveyed:
+
+* **Ordered.** Workers are created first and rank zero last, which is
+  upstream's proven order and collapses the rendezvous cleanly. Teardown is
+  the reverse — rank zero first — so workers are not left in a ten-minute NCCL
+  collective timeout.
+* **All-or-nothing.** Any rank failing fails the deployment. There is no
+  partial state and no per-rank restart, because the model is sharded across
+  exactly those ranks. Docker's restart policy is ``no`` so a rebooting node
+  cannot resurrect a rank into a torn-down deployment.
+* **Generational.** A container is named ``spark-pulse-<deployment>-r<rank>-
+  g<generation>``, so a container from an earlier attempt has a different name
+  and is unambiguously reapable. Every rank of a generation is confirmed gone
+  before any rank of the next is created.
+* **Released on evidence.** A rank on a node we cannot reach cannot be torn
+  down; it is recorded as an outstanding orphan and that node's ports stay
+  held until something confirms the container is gone.
+
+At one node every loop has length one, so the observable behaviour is the one
+that ran before ranks existed. That is the property that makes this safe.
+
+Everything switchable goes through ``spark_pulse.tools`` so simulation mode
+swaps the container service; ``spark_pulse.engines`` is imported directly
+because rendering is pure.
 """
 
 from __future__ import annotations
@@ -33,7 +55,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from spark_pulse import tools
 from spark_pulse.config import config
@@ -47,7 +69,13 @@ from spark_pulse.engines import (
 )
 from spark_pulse.tools.docker import ContainerMetadata, PullCancelled
 from spark_pulse.tools.events import DeploymentEvent, EventType
-from spark_pulse.tools.labels import DEPLOYMENT_LABEL, MODE_LABEL
+from spark_pulse.tools.labels import (
+    DEPLOYMENT_LABEL,
+    GENERATION_LABEL,
+    MODE_LABEL,
+    RANK_LABEL,
+    WORLD_SIZE_LABEL,
+)
 
 # Capacity validation is pure arithmetic with no side effect to simulate, so
 # it is imported directly, like ``spark_pulse.engines``.
@@ -65,6 +93,12 @@ MODS_DIR = "/workspace/mods"
 CONTAINER_PREFIX = "spark-pulse-"
 CONTAINER_HOME = "/root"
 HF_CACHE_IN_CONTAINER = "/root/.cache/huggingface"
+
+#: How long to wait for evidence that a container is really gone, and how
+#: often to look. Removal is fast; the wait exists so the next generation
+#: never races a rank that is still holding the GPU.
+CONFIRM_GONE_TIMEOUT = 30.0
+CONFIRM_GONE_INTERVAL = 0.5
 
 
 class NativeRuntimeError(RuntimeError):
@@ -153,6 +187,29 @@ class ContainerSpec:
 
 
 @dataclass
+class RankPlan:
+    """One rank of the gang: which node, which container, which script.
+
+    ``node`` is the address the rank runs on. Empty means this machine, which
+    is what a size-one deployment carries — the same sentinel the record has
+    always used, so nothing that reads it has to change.
+    """
+
+    rank: int
+    node: str
+    host: str
+    container: ContainerSpec
+    command: str
+    script: str
+    is_head: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        data["container"] = self.container.to_dict()
+        return data
+
+
+@dataclass
 class DeployPlan:
     """The resolved, serialisable result of planning a deployment."""
 
@@ -179,6 +236,13 @@ class DeployPlan:
     ranks: list[dict[str, Any]]
     container: ContainerSpec
     cache_mounts: list[str]
+    #: Every rank, in rank order. ``rank_plans[0]`` is the head, and its
+    #: container is the same object as :attr:`container` — the scalar is a
+    #: derived alias kept for readers that predate ranks.
+    rank_plans: list[RankPlan] = field(default_factory=list)
+    #: Monotonic attempt counter for this deployment id. Carried in every
+    #: container name and label so a leftover rank is reapable by name.
+    generation: int = 1
     image_present: bool = True
     image_size_bytes: int | None = None
     workdir: str = ""
@@ -189,19 +253,135 @@ class DeployPlan:
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data["container"] = self.container.to_dict()
+        data["rank_plans"] = [r.to_dict() for r in self.rank_plans]
         return data
+
+    @property
+    def head(self) -> RankPlan:
+        """Rank zero — the rank that serves the API."""
+        return self.rank_plans[0]
+
+    def start_order(self) -> list[RankPlan]:
+        """Workers first, rank zero last: upstream's proven order."""
+        return list(reversed(self.rank_plans))
+
+    def teardown_order(self) -> list[RankPlan]:
+        """Rank zero first, so no worker sits in a collective timeout."""
+        return list(self.rank_plans)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
 def container_name_for(deployment_id: str) -> str:
+    """The rank-less container name records used before ranks existed.
+
+    Still the fallback for a record that carries no name of its own, so a
+    deployment started by an earlier build stays stoppable, readable and
+    reportable. Nothing new is created under this name.
+    """
     return f"{CONTAINER_PREFIX}{deployment_id}"
+
+
+def rank_container_name(deployment_id: str, rank: int, generation: int) -> str:
+    """``spark-pulse-<deployment>-r<rank>-g<generation>``.
+
+    Deterministic, so Docker's atomic name reservation is the exactly-once
+    primitive. The generation is what makes a container from an abandoned
+    attempt a *different* name: leftovers are reaped by evidence rather than
+    adopted by accident.
+    """
+    return f"{CONTAINER_PREFIX}{deployment_id}-r{rank}-g{generation}"
+
+
+def _next_generation(deployment_id: str) -> int:
+    """One past whatever this deployment last ran at; 1 when it is new."""
+    record = get_deployment(deployment_id)
+    if record is None:
+        return 1
+    current = record.get("generation")
+    return (current if isinstance(current, int) and current > 0 else 0) + 1
+
+
+def identity_labels(
+    deployment_id: str, generation: int, rank: int, world_size: int
+) -> dict[str, str]:
+    """The labels that say which rank of which attempt this container is.
+
+    Applied last, after the engine profile and the user's ``docker:`` block,
+    so no configuration can shadow the identity reconciliation reads back.
+    """
+    return {
+        DEPLOYMENT_LABEL: deployment_id,
+        GENERATION_LABEL: str(generation),
+        RANK_LABEL: str(rank),
+        WORLD_SIZE_LABEL: str(world_size),
+    }
+
+
+def rank_entries(record: dict[str, Any]) -> list[dict[str, Any]]:
+    """The record's per-rank list, synthesised for records that predate it.
+
+    A pre-rank record carries only the scalar ``container_name``; it becomes a
+    one-element list naming rank zero on this machine, which is exactly what
+    it always was.
+    """
+    ranks = record.get("ranks")
+    if isinstance(ranks, list) and ranks:
+        return [dict(entry) for entry in ranks]
+    name = record.get("container_name") or container_name_for(
+        str(record.get("id") or "")
+    )
+    return [
+        {
+            "rank": 0,
+            "node": "",
+            "host": "",
+            "container_name": name,
+            "is_head": True,
+        }
+    ]
 
 
 def _docker_service() -> Any:
     """The container service for this process (real or mock)."""
     return tools.docker._get_service()
+
+
+def rank_services(docker: Any | None = None) -> Callable[[str], Any]:
+    """Resolve the container service bound to a rank's node address.
+
+    ``docker`` pins one service for every rank, which is what a caller that
+    already holds a service (and every test) wants. Otherwise the empty
+    address — the record's long-standing sentinel for this machine — goes
+    straight to the process's own container service, and a real address goes
+    through the node-bound resolver, which decides local versus SSH once.
+    """
+    if docker is not None:
+        return lambda _address: docker
+
+    resolver: Any = None
+
+    def _resolve(address: str) -> Any:
+        nonlocal resolver
+        if not address:
+            return _docker_service()
+        if resolver is None:
+            resolver = tools.node_service.NodeServices()
+        return resolver.for_address(address)
+
+    return _resolve
+
+
+def _rank_is_here(entry: dict[str, Any]) -> bool:
+    """Whether this rank's container lives on the machine we can enumerate."""
+    address = str(entry.get("node") or "")
+    if not address:
+        return True
+    try:
+        return bool(tools.node_service.is_local_address(address))
+    except Exception:  # pragma: no cover - discovery is best effort
+        return False
 
 
 def _inspect_image(image_ref: str, warnings: list[str]) -> tuple[bool, int | None]:
@@ -279,10 +459,15 @@ def _ports_in_use() -> set[int]:
     A launch binds its rendezvous port exactly as surely as its API port, so
     handing the same number out twice would break a deployment that never
     mentioned it.
+
+    A stopped deployment with outstanding orphans still holds its ports. Its
+    ranks on unreachable nodes were never confirmed gone, and every orphan bug
+    in this class comes from releasing a resource on inference — "we asked it
+    to stop" — rather than on evidence that it did.
     """
     ports: set[int] = set()
     for record in _load_records():
-        if record.get("status") in ("stopped", "error"):
+        if record.get("status") in ("stopped", "error") and not record.get("orphans"):
             continue
         for key in ("port", "rendezvous_port"):
             value = record.get(key)
@@ -657,45 +842,76 @@ def plan(
     _check_capacity(recipe_id, ranks[0].command, topology.size)
 
     dep_id = deployment_id or uuid.uuid4().hex[:12]
+    generation = _next_generation(dep_id)
     profile = _container_profile(engine_obj)
-    env = _build_env(engine_obj, recipe, topology)
     mounts, cache_mounts = _build_mounts(engine_obj)
     network_host = bool(profile.get("network_host", False))
     # In solo the API port is published only when the container is not on the
     # host network; on host networking the engine already binds it directly.
     port_mappings = [] if network_host else [f"{port}:{port}"]
+    created_at = _now()
+    mode = "solo" if topology.is_solo else "cluster"
+    shm_size = float(profile.get("shm_size_gb") or config.docker_shm_size_gb)
+    privileged = bool(profile.get("privileged", True))
 
-    metadata = ContainerMetadata(
-        deployment=dep_id,
-        recipe=str(recipe.get("id") or recipe_id),
-        image=image_ref,
-        mode="solo" if topology.is_solo else "cluster",
-        created_at=_now(),
-        memory_limit_gb=config.docker_memory_limit_gb,
-        shm_size_gb=float(profile.get("shm_size_gb") or config.docker_shm_size_gb),
-        privileged=bool(profile.get("privileged", True)),
-    )
+    rank_plans: list[RankPlan] = []
+    for rank, launch in enumerate(ranks):
+        metadata = ContainerMetadata(
+            deployment=dep_id,
+            recipe=str(recipe.get("id") or recipe_id),
+            image=image_ref,
+            mode=mode,
+            created_at=created_at,
+            memory_limit_gb=config.docker_memory_limit_gb,
+            shm_size_gb=shm_size,
+            privileged=privileged,
+        )
+        rank_plans.append(
+            RankPlan(
+                rank=rank,
+                # Empty means this machine, which is what a size-one
+                # deployment has always carried.
+                node=node_list[rank] if rank < len(node_list) else "",
+                host=topology.nodes[rank].host,
+                command=launch.command,
+                script=launch.script,
+                is_head=rank == 0,
+                container=ContainerSpec(
+                    image=image_ref,
+                    name=rank_container_name(dep_id, rank, generation),
+                    command=str(profile.get("keepalive") or "sleep infinity"),
+                    env=_build_env(engine_obj, recipe, topology, node_rank=rank),
+                    # Identity last: no engine profile and no user docker
+                    # block may shadow which rank of which attempt this is.
+                    labels={
+                        **metadata.to_labels(),
+                        **identity_labels(dep_id, generation, rank, topology.size),
+                    },
+                    mounts=mounts,
+                    privileged=privileged,
+                    ipc_host=bool(profile.get("ipc_host", False)),
+                    network_host=network_host,
+                    shm_size_gb=shm_size,
+                    devices=[str(d) for d in (profile.get("devices") or [])],
+                    cap_add=[str(c) for c in (profile.get("cap_add") or [])],
+                    ulimits={
+                        str(k): str(v)
+                        for k, v in (profile.get("ulimits") or {}).items()
+                    },
+                    memory_limit_gb=config.docker_memory_limit_gb,
+                    pids_limit=config.docker_pids_limit,
+                    nofile_limit=config.docker_nofile_limit,
+                    # Only rank zero serves the API; a worker publishes
+                    # nothing, and two ranks binding one host port collide.
+                    port_mappings=list(port_mappings) if rank == 0 else [],
+                    entrypoint_clear=not config.docker_keep_entrypoint,
+                ),
+            )
+        )
 
-    container = ContainerSpec(
-        image=image_ref,
-        name=container_name_for(dep_id),
-        command=str(profile.get("keepalive") or "sleep infinity"),
-        env=env,
-        labels=metadata.to_labels(),
-        mounts=mounts,
-        privileged=bool(profile.get("privileged", True)),
-        ipc_host=bool(profile.get("ipc_host", False)),
-        network_host=network_host,
-        shm_size_gb=float(profile.get("shm_size_gb") or config.docker_shm_size_gb),
-        devices=[str(d) for d in (profile.get("devices") or [])],
-        cap_add=[str(c) for c in (profile.get("cap_add") or [])],
-        ulimits={str(k): str(v) for k, v in (profile.get("ulimits") or {}).items()},
-        memory_limit_gb=config.docker_memory_limit_gb,
-        pids_limit=config.docker_pids_limit,
-        nofile_limit=config.docker_nofile_limit,
-        port_mappings=port_mappings,
-        entrypoint_clear=not config.docker_keep_entrypoint,
-    )
+    # The scalar container spec is rank zero's, by identity rather than by
+    # copy, so every existing reader keeps working.
+    container = rank_plans[0].container
 
     image_present, image_size = _inspect_image(image_ref, warnings)
 
@@ -725,6 +941,8 @@ def plan(
         ranks=[r.to_dict() for r in ranks],
         container=container,
         cache_mounts=cache_mounts,
+        rank_plans=rank_plans,
+        generation=generation,
         image_present=image_present,
         image_size_bytes=image_size,
         warnings=warnings,
@@ -758,11 +976,28 @@ def _record_from_plan(plan_obj: DeployPlan, status: str) -> dict[str, Any]:
         "variant": plan_obj.variant,
         "image_ref": plan_obj.image_ref,
         "model": plan_obj.model,
+        # Rank zero's name, kept as a scalar alias so every existing reader
+        # — the health router, the UI, the upstream path — still resolves.
         "container_name": plan_obj.container.name,
         "image_present": plan_obj.image_present,
         "node_count": plan_obj.node_count,
         "mods": plan_obj.mods,
         "readiness_url": plan_obj.readiness_url,
+        # Per-rank additions.
+        "generation": plan_obj.generation,
+        "ranks": [_rank_record(r) for r in plan_obj.rank_plans],
+        "orphans": [],
+    }
+
+
+def _rank_record(rank_plan: RankPlan) -> dict[str, Any]:
+    """The persisted shape of one rank."""
+    return {
+        "rank": rank_plan.rank,
+        "node": rank_plan.node,
+        "host": rank_plan.host,
+        "container_name": rank_plan.container.name,
+        "is_head": rank_plan.is_head,
     }
 
 
@@ -788,12 +1023,18 @@ def _resolve_mod_dir(mod: str) -> Path:
     )
 
 
-def _apply_mods(docker: Any, plan_obj: DeployPlan, warnings: list[str]) -> list[str]:
-    """Copy each mod into the container and run its ``run.sh``, upstream style.
+def _apply_mods(
+    docker: Any,
+    plan_obj: DeployPlan,
+    container_name: str,
+    warnings: list[str],
+) -> list[str]:
+    """Copy each mod into one rank's container and run its ``run.sh``.
 
     ``WORKSPACE_DIR`` is the image's working directory, as upstream sets it
     from ``$PWD``: mods drop files there and recipes reference them by bare
-    name (``--chat-template unsloth.jinja``).
+    name (``--chat-template unsloth.jinja``). Every rank runs the same mods —
+    they patch the image's contents, and each rank has its own copy of it.
     """
     applied: list[str] = []
     workdir = plan_obj.workdir or "/workspace"
@@ -801,14 +1042,12 @@ def _apply_mods(docker: Any, plan_obj: DeployPlan, warnings: list[str]) -> list[
         mod_dir = _resolve_mod_dir(mod)
         name = mod_dir.name
         remote = f"{MODS_DIR}/{name}"
-        docker.exec_in_container(plan_obj.container.name, ["mkdir", "-p", remote])
+        docker.exec_in_container(container_name, ["mkdir", "-p", remote])
         for path in sorted(mod_dir.iterdir()):
             # docker cp takes files and directories alike.
-            docker.copy_to_container(
-                plan_obj.container.name, str(path), f"{remote}/{path.name}"
-            )
+            docker.copy_to_container(container_name, str(path), f"{remote}/{path.name}")
         result = docker.exec_in_container(
-            plan_obj.container.name,
+            container_name,
             ["bash", "-lc", f"cd {remote} && WORKSPACE_DIR={workdir} bash run.sh"],
         )
         if not result.ok:
@@ -820,30 +1059,30 @@ def _apply_mods(docker: Any, plan_obj: DeployPlan, warnings: list[str]) -> list[
     return applied
 
 
-def _deploy_script(docker: Any, plan_obj: DeployPlan) -> None:
-    """Copy the rendered script in and exec it detached, logging to PID 1."""
-    script = plan_obj.ranks[0]["script"]
+def _deploy_script(docker: Any, rank_plan: RankPlan) -> None:
+    """Copy this rank's rendered script in and exec it detached.
+
+    Output is redirected to PID 1's stdout so ``docker logs`` on that rank's
+    container carries the serve output.
+    """
+    name = rank_plan.container.name
     with tempfile.NamedTemporaryFile(
         "w", suffix=".sh", prefix="spark-pulse-", delete=False
     ) as handle:
-        handle.write(script)
+        handle.write(rank_plan.script)
         local_path = handle.name
     try:
-        if not docker.copy_to_container(
-            plan_obj.container.name, local_path, SCRIPT_PATH
-        ):
-            raise NativeRuntimeError(
-                f"could not copy the launch script into {plan_obj.container.name}"
-            )
+        if not docker.copy_to_container(name, local_path, SCRIPT_PATH):
+            raise NativeRuntimeError(f"could not copy the launch script into {name}")
     finally:
         try:
             os.unlink(local_path)
         except OSError:  # pragma: no cover - defensive
             pass
 
-    docker.exec_in_container(plan_obj.container.name, ["chmod", "+x", SCRIPT_PATH])
+    docker.exec_in_container(name, ["chmod", "+x", SCRIPT_PATH])
     docker.exec_in_container(
-        plan_obj.container.name,
+        name,
         ["bash", "-lc", f"bash {shlex.quote(SCRIPT_PATH)} >> /proc/1/fd/1 2>&1"],
         detach=True,
     )
@@ -868,27 +1107,173 @@ def probe_ready(url: str, timeout: float = 3.0) -> bool:
 
 
 def _wait_ready(
-    docker: Any,
+    services: Callable[[str], Any],
     plan_obj: DeployPlan,
     timeout: int,
     interval: float = 2.0,
 ) -> None:
-    """Poll readiness, failing fast when the container exits first."""
+    """Poll rank zero's readiness, failing fast when any rank exits first.
+
+    A worker that dies takes the gang with it, so every rank is watched even
+    though only rank zero answers the readiness endpoint. A rank on a node we
+    cannot reach is *not* evidence of death — the exception is swallowed and
+    the deadline is what eventually decides.
+    """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        status = docker.get_container_status(plan_obj.container.name)
-        if not status.get("running"):
-            logs = logs_for_container(docker, plan_obj.container.name, 50)
-            raise NativeRuntimeError(
-                f"container {plan_obj.container.name} exited before the engine "
-                f"became ready ({status.get('status')}). Last log lines:\n{logs}"
-            )
+        for rank_plan in plan_obj.rank_plans:
+            docker = services(rank_plan.node)
+            name = rank_plan.container.name
+            try:
+                status = docker.get_container_status(name)
+            except Exception as exc:  # pragma: no cover - transport specific
+                logger.debug("could not check rank %s: %s", rank_plan.rank, exc)
+                continue
+            if not status.get("running"):
+                logs = logs_for_container(docker, name, 50)
+                raise NativeRuntimeError(
+                    f"container {name} exited before the engine "
+                    f"became ready ({status.get('status')}). "
+                    f"Last log lines:\n{logs}"
+                )
         if probe_ready(plan_obj.readiness_url):
             return
         time.sleep(interval)
     raise NativeRuntimeError(
         f"engine did not become ready within {timeout}s at " f"{plan_obj.readiness_url}"
     )
+
+
+# ── Reaping, confirmation and teardown ───────────────────────────────────────
+
+
+def _confirm_gone(
+    docker: Any,
+    name: str,
+    timeout: float = CONFIRM_GONE_TIMEOUT,
+    interval: float = CONFIRM_GONE_INTERVAL,
+) -> bool:
+    """Whether ``name`` is really gone, by looking rather than by assuming."""
+    deadline = time.monotonic() + timeout
+    while True:
+        if docker.get_container_status(name).get("status") == "missing":
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(interval)
+
+
+def _reap(docker: Any, name: str, where: str) -> None:
+    """Remove one leftover container and wait for the evidence it is gone."""
+    logger.info("Reaping leftover container %s", name)
+    docker.stop_container(name)
+    if not _confirm_gone(docker, name):
+        raise NativeRuntimeError(
+            f"container {name} on {where or 'this machine'} did not go away "
+            f"within {CONFIRM_GONE_TIMEOUT:.0f}s; a rank of an earlier attempt "
+            "is still holding the GPU, so this one will not be started"
+        )
+
+
+def _stale_names(docker: Any, plan_obj: DeployPlan, rank_plan: RankPlan) -> list[str]:
+    """Containers of this deployment on this node that must not survive.
+
+    Anything carrying the deployment label at a different generation is a
+    leftover from an abandoned attempt. The name we are about to claim counts
+    too: Docker's name reservation is the exactly-once primitive, and it only
+    works if the name is free.
+    """
+    names: list[str] = []
+    current = str(plan_obj.generation)
+    try:
+        containers = docker.list_managed_containers(
+            {DEPLOYMENT_LABEL: plan_obj.deployment_id}
+        )
+    except Exception as exc:
+        raise NativeRuntimeError(
+            f"could not list containers on {rank_plan.node or 'this machine'} "
+            f"to reap earlier attempts: {exc}"
+        ) from exc
+    for container in containers:
+        labels = getattr(container, "labels", {}) or {}
+        if labels.get(GENERATION_LABEL) == current:
+            continue
+        names.append(container.name)
+    target = rank_plan.container.name
+    if target not in names:
+        try:
+            present = docker.get_container_status(target).get("status") != "missing"
+        except Exception:  # pragma: no cover - defensive
+            present = False
+        if present:
+            names.append(target)
+    return names
+
+
+def _reap_earlier_generations(
+    services: Callable[[str], Any], plan_obj: DeployPlan
+) -> None:
+    """Confirm every container of an earlier generation is gone.
+
+    Nobody in the survey starts generation N+1 while a rank of generation N
+    might still be alive: the model is sharded across exactly those ranks and
+    the GPU is not shareable. Failing to get the evidence fails the deploy.
+    """
+    for rank_plan in plan_obj.rank_plans:
+        docker = services(rank_plan.node)
+        for name in _stale_names(docker, plan_obj, rank_plan):
+            _reap(docker, name, rank_plan.node)
+
+
+def _orphan(entry: dict[str, Any], reason: str) -> dict[str, Any]:
+    """An outstanding rank: asked to stop, never confirmed gone."""
+    return {
+        "rank": entry.get("rank", 0),
+        "node": entry.get("node", ""),
+        "container_name": entry.get("container_name", ""),
+        "reason": reason,
+        "since": _now(),
+    }
+
+
+def _teardown_entry(docker: Any, entry: dict[str, Any]) -> dict[str, Any] | None:
+    """Stop one rank. Returns an orphan record when it cannot be confirmed."""
+    name = str(entry.get("container_name") or "")
+    if not name:
+        return None
+    try:
+        docker.stop_container(name)
+    except Exception as exc:
+        logger.warning("Stopping %s failed: %s", name, exc)
+        return _orphan(entry, f"the node could not be reached: {exc}")
+    try:
+        if _confirm_gone(docker, name):
+            return None
+    except Exception as exc:
+        logger.warning("Could not confirm %s is gone: %s", name, exc)
+        return _orphan(entry, f"removal could not be confirmed: {exc}")
+    return _orphan(entry, "the container was still present after being stopped")
+
+
+def _teardown_entries(
+    services: Callable[[str], Any], entries: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Tear ranks down head-first, collecting the ones left outstanding.
+
+    Rank zero dies first so the rendezvous collapses instead of leaving the
+    workers in a ten-minute NCCL collective timeout.
+    """
+    orphans: list[dict[str, Any]] = []
+    for entry in sorted(entries, key=lambda e: int(e.get("rank", 0))):
+        try:
+            docker = services(str(entry.get("node") or ""))
+        except Exception as exc:
+            orphans.append(_orphan(entry, f"the node could not be reached: {exc}"))
+            continue
+        orphan = _teardown_entry(docker, entry)
+        if orphan is not None:
+            orphans.append(orphan)
+    return orphans
 
 
 # ── Image pull ───────────────────────────────────────────────────────────────
@@ -932,18 +1317,34 @@ def _pull_cancel_requested(deployment_id: str) -> bool:
         return _active_pulls.get(deployment_id, False)
 
 
-def _image_missing(docker: Any, plan_obj: DeployPlan) -> bool:
+def _pull_targets(plan_obj: DeployPlan) -> list[str]:
+    """Each distinct node the gang runs on, in start order.
+
+    Workers pull first for the same reason they start first: rank zero should
+    be the last thing that has to wait.
+    """
+    seen: list[str] = []
+    for rank_plan in plan_obj.start_order():
+        if rank_plan.node not in seen:
+            seen.append(rank_plan.node)
+    return seen
+
+
+def _image_missing(services: Callable[[str], Any], plan_obj: DeployPlan) -> bool:
     """Whether this deploy has to pull before it can start anything.
 
-    A daemon that will not answer is not evidence the image is absent, so an
-    unreachable check keeps the deploy on the inline path where the failure is
-    reported straight back to the caller.
+    True when *any* node the gang runs on lacks the image. A daemon that will
+    not answer is not evidence the image is absent, so an unreachable check
+    keeps the deploy on the inline path where the failure is reported straight
+    back to the caller.
     """
-    try:
-        return not docker.image_exists(plan_obj.container.image)
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.debug("image presence check failed: %s", exc)
-        return False
+    for address in _pull_targets(plan_obj):
+        try:
+            if not services(address).image_exists(plan_obj.container.image):
+                return True
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("image presence check failed on %s: %s", address, exc)
+    return False
 
 
 def _pull_image_if_missing(docker: Any, plan_obj: DeployPlan) -> bool:
@@ -1025,67 +1426,28 @@ def persist_planned_record(plan_obj: DeployPlan, status: str) -> dict[str, Any]:
     return record
 
 
-def start(
+def _start_rank(
+    docker: Any,
     plan_obj: DeployPlan,
-    docker: Any | None = None,
-    wait: bool = True,
-    ready_timeout: int | None = None,
-    initial_status: str = "starting",
-) -> dict[str, Any]:
-    """Run the plan: idle container -> mods -> exec script -> readiness."""
-    if not plan_obj.solo:
-        raise NativeRuntimeError(
-            "the native runtime cannot start a cluster deployment yet; "
-            "set runtime: upstream for multi-node recipes"
-        )
+    rank_plan: RankPlan,
+    warnings: list[str],
+) -> None:
+    """Bring one rank up: idle container -> mods -> exec script.
 
-    docker = docker or _docker_service()
+    Raises :class:`NativeRuntimeError` with an explained reason. The caller
+    tears the whole gang down on any failure; nothing is retried per rank,
+    because the model is sharded across exactly these ranks.
+    """
     dep_id = plan_obj.deployment_id
-    spec = plan_obj.container
-    warnings = list(plan_obj.warnings)
+    spec = rank_plan.container
+    where = rank_plan.node or "this machine"
 
-    record = persist_planned_record(plan_obj, initial_status)
-
-    publish_event(
-        EventType.DEPLOYMENT_PLANNED,
-        dep_id,
-        f"planned {plan_obj.recipe_id} on {plan_obj.engine}/{plan_obj.variant}",
-        {
-            "image_ref": plan_obj.image_ref,
-            "model": plan_obj.model,
-            "port": plan_obj.port,
-        },
-    )
-
-    def _fail(message: str) -> dict[str, Any]:
-        publish_event(EventType.DEPLOYMENT_ERROR, dep_id, message)
-        updated = _update_record(
-            dep_id, status="error", error_message=message, stopped_at=_now()
-        )
-        return updated or {**record, "status": "error", "error_message": message}
-
-    try:
-        _pull_image_if_missing(docker, plan_obj)
-    except PullCancelled:
-        # A stop or delete reached into the pull. That is not a failure to
-        # report: the record is already being torn down, and marking it
-        # "error" would leave a deliberate teardown looking like a crash.
-        message = f"pull of {spec.image} cancelled by teardown"
-        publish_event(EventType.DEPLOYMENT_STOPPED, dep_id, message)
-        return _update_record(dep_id, status="stopped", stopped_at=_now()) or {
-            **record,
-            "status": "stopped",
-        }
-    except NativeRuntimeError as exc:
-        return _fail(str(exc))
-
-    metadata = ContainerMetadata.from_labels(spec.labels)
     try:
         docker.run_container(
             image=spec.image,
             name=spec.name,
             env_vars=spec.env,
-            metadata=metadata,
+            metadata=ContainerMetadata.from_labels(spec.labels),
             privileged=spec.privileged,
             memory_limit_gb=spec.memory_limit_gb,
             shm_size_gb=spec.shm_size_gb,
@@ -1103,33 +1465,123 @@ def start(
             auto_remove=False,
         )
     except Exception as exc:
-        return _fail(f"could not start container {spec.name}: {exc}")
+        raise NativeRuntimeError(
+            f"could not start container {spec.name}: {exc}"
+        ) from exc
 
     publish_event(
         EventType.DEPLOYMENT_CONTAINER_STARTED,
         dep_id,
         f"container {spec.name} started from {spec.image}",
-        {"container_name": spec.name, "image_ref": spec.image},
+        {
+            "container_name": spec.name,
+            "image_ref": spec.image,
+            "rank": rank_plan.rank,
+            "node": rank_plan.node,
+        },
     )
 
-    try:
-        applied = _apply_mods(docker, plan_obj, warnings)
-    except NativeRuntimeError as exc:
-        docker.stop_container(spec.name)
-        return _fail(str(exc))
+    applied = _apply_mods(docker, plan_obj, spec.name, warnings)
     if plan_obj.mods:
         publish_event(
             EventType.DEPLOYMENT_MODS_APPLIED,
             dep_id,
             f"applied {len(applied)}/{len(plan_obj.mods)} mod(s)",
-            {"mods": applied, "warnings": warnings},
+            {"mods": applied, "warnings": warnings, "rank": rank_plan.rank},
         )
 
+    _deploy_script(docker, rank_plan)
+    logger.info("rank %s of %s is running on %s", rank_plan.rank, dep_id, where)
+
+
+def start(
+    plan_obj: DeployPlan,
+    docker: Any | None = None,
+    wait: bool = True,
+    ready_timeout: int | None = None,
+    initial_status: str = "starting",
+    services: Callable[[str], Any] | None = None,
+) -> dict[str, Any]:
+    """Run the plan, one rank at a time: workers first, rank zero last.
+
+    Failure is all-or-nothing. Any rank that will not come up tears down the
+    ranks already started — head first — and fails the deployment, naming the
+    rank and the cause. There is no partial state and no per-rank restart.
+
+    At one node every loop here has length one, so this is the single-container
+    lifecycle that ran before ranks existed.
+    """
+    services = services or rank_services(docker)
+    dep_id = plan_obj.deployment_id
+    spec = plan_obj.container
+    warnings = list(plan_obj.warnings)
+
+    record = persist_planned_record(plan_obj, initial_status)
+
+    publish_event(
+        EventType.DEPLOYMENT_PLANNED,
+        dep_id,
+        f"planned {plan_obj.recipe_id} on {plan_obj.engine}/{plan_obj.variant}",
+        {
+            "image_ref": plan_obj.image_ref,
+            "model": plan_obj.model,
+            "port": plan_obj.port,
+            "node_count": plan_obj.node_count,
+            "generation": plan_obj.generation,
+        },
+    )
+
+    def _fail(message: str, orphans: list[dict[str, Any]] | None = None) -> dict:
+        publish_event(EventType.DEPLOYMENT_ERROR, dep_id, message)
+        updated = _update_record(
+            dep_id,
+            status="error",
+            error_message=message,
+            stopped_at=_now(),
+            orphans=orphans or [],
+        )
+        return updated or {**record, "status": "error", "error_message": message}
+
+    # Nothing of an earlier attempt may still be alive when this one claims
+    # the names and the GPUs.
     try:
-        _deploy_script(docker, plan_obj)
+        _reap_earlier_generations(services, plan_obj)
     except NativeRuntimeError as exc:
-        docker.stop_container(spec.name)
         return _fail(str(exc))
+
+    try:
+        for address in _pull_targets(plan_obj):
+            _pull_image_if_missing(services(address), plan_obj)
+    except PullCancelled:
+        # A stop or delete reached into the pull. That is not a failure to
+        # report: the record is already being torn down, and marking it
+        # "error" would leave a deliberate teardown looking like a crash.
+        message = f"pull of {spec.image} cancelled by teardown"
+        publish_event(EventType.DEPLOYMENT_STOPPED, dep_id, message)
+        return _update_record(dep_id, status="stopped", stopped_at=_now()) or {
+            **record,
+            "status": "stopped",
+        }
+    except NativeRuntimeError as exc:
+        return _fail(str(exc))
+
+    started_ranks: list[RankPlan] = []
+    for rank_plan in plan_obj.start_order():
+        try:
+            _start_rank(services(rank_plan.node), plan_obj, rank_plan, warnings)
+        except NativeRuntimeError as exc:
+            # The rank that failed may itself have a container: run_container
+            # can succeed and a mod or the script copy fail after it.
+            orphans = _teardown_entries(
+                services, [_rank_record(r) for r in [*started_ranks, rank_plan]]
+            )
+            return _fail(
+                f"rank {rank_plan.rank} of {plan_obj.node_count} on "
+                f"{rank_plan.node or 'this machine'} failed, so the whole "
+                f"deployment was torn down: {exc}",
+                orphans,
+            )
+        started_ranks.append(rank_plan)
 
     started = _now()
     _update_record(dep_id, status="starting", started_at=started, warnings=warnings)
@@ -1145,7 +1597,7 @@ def start(
 
     timeout = ready_timeout or config.deploy_ready_timeout_seconds
     try:
-        _wait_ready(docker, plan_obj, timeout)
+        _wait_ready(services, plan_obj, timeout)
     except NativeRuntimeError as exc:
         return _fail(str(exc))
 
@@ -1195,11 +1647,11 @@ def create_deployment(
     if wait:
         return start(plan_obj, wait=True)
 
-    docker = _docker_service()
+    services = rank_services()
 
     def _watch() -> None:
         try:
-            _wait_ready(docker, plan_obj, config.deploy_ready_timeout_seconds)
+            _wait_ready(services, plan_obj, config.deploy_ready_timeout_seconds)
         except NativeRuntimeError as exc:
             publish_event(EventType.DEPLOYMENT_ERROR, plan_obj.deployment_id, str(exc))
             _update_record(
@@ -1216,12 +1668,12 @@ def create_deployment(
             {"port": plan_obj.port},
         )
 
-    if _image_missing(docker, plan_obj):
+    if _image_missing(services, plan_obj):
         record = persist_planned_record(plan_obj, "pulling")
 
         def _pull_then_start() -> None:
             started = start(
-                plan_obj, docker=docker, wait=False, initial_status="pulling"
+                plan_obj, services=services, wait=False, initial_status="pulling"
             )
             if started.get("status") in ("error", "stopped"):
                 return
@@ -1234,7 +1686,7 @@ def create_deployment(
         ).start()
         return record
 
-    record = start(plan_obj, docker=docker, wait=False)
+    record = start(plan_obj, services=services, wait=False)
     if record.get("status") == "error":
         return record
 
@@ -1248,9 +1700,16 @@ def create_deployment(
 
 
 def stop_deployment(
-    deployment_id: str, docker: Any | None = None
+    deployment_id: str,
+    docker: Any | None = None,
+    services: Callable[[str], Any] | None = None,
 ) -> dict[str, Any] | None:
-    """Stop the container and mark the record stopped."""
+    """Stop every rank, head first, and mark the record stopped.
+
+    Ranks whose removal could not be confirmed — a node that would not answer
+    — are written back as outstanding orphans, and the deployment keeps its
+    ports until something confirms those containers are gone.
+    """
     record = get_deployment(deployment_id)
     if record is None:
         return None
@@ -1258,24 +1717,35 @@ def stop_deployment(
     # the download. Ask first, then fall through — the pull thread settles the
     # record itself once it notices.
     cancel_pull(deployment_id)
-    docker = docker or _docker_service()
-    name = record.get("container_name") or container_name_for(deployment_id)
-    try:
-        docker.stop_container(name)
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.warning("Stopping %s failed: %s", name, exc)
-    publish_event(EventType.DEPLOYMENT_STOPPED, deployment_id, f"stopped {name}")
-    return _update_record(deployment_id, status="stopped", stopped_at=_now())
+    services = services or rank_services(docker)
+    entries = rank_entries(record)
+    orphans = _teardown_entries(services, entries)
+    names = ", ".join(str(e.get("container_name") or "") for e in entries)
+    publish_event(EventType.DEPLOYMENT_STOPPED, deployment_id, f"stopped {names}")
+    return _update_record(
+        deployment_id, status="stopped", stopped_at=_now(), orphans=orphans
+    )
 
 
-def delete_deployment(deployment_id: str, docker: Any | None = None) -> bool:
-    """Stop (if needed) and drop the record."""
+def delete_deployment(
+    deployment_id: str,
+    docker: Any | None = None,
+    services: Callable[[str], Any] | None = None,
+) -> bool:
+    """Stop (if needed) and drop the record.
+
+    A rank we could not confirm gone keeps the record: dropping it would free
+    that node's ports on inference, which is exactly the orphan bug §3.3 warns
+    about. The record stays, stopped, with its orphans listed.
+    """
     record = get_deployment(deployment_id)
     if record is None:
         return False
-    # Always tear the container down, whatever the record says: a deployment
+    # Always tear the containers down, whatever the record says: a deployment
     # that errored during readiness still has a container running.
-    stop_deployment(deployment_id, docker=docker)
+    stopped = stop_deployment(deployment_id, docker=docker, services=services)
+    if stopped is not None and stopped.get("orphans"):
+        return False
     records = _load_records()
     remaining = [r for r in records if r.get("id") != deployment_id]
     if len(remaining) == len(records):
@@ -1291,30 +1761,76 @@ def logs_for_container(docker: Any, name: str, lines: int) -> str:
         return f"Failed to read container logs: {exc}"
 
 
-def get_logs(deployment_id: str, lines: int = 200, docker: Any | None = None) -> str:
-    """``docker logs`` for the deployment's container."""
+def get_logs(
+    deployment_id: str,
+    lines: int = 200,
+    docker: Any | None = None,
+    rank: int = 0,
+    services: Callable[[str], Any] | None = None,
+) -> str:
+    """``docker logs`` for one rank's container. Rank zero by default."""
     record = get_deployment(deployment_id)
     if record is None:
         return "Deployment not found"
-    docker = docker or _docker_service()
-    name = record.get("container_name") or container_name_for(deployment_id)
-    return logs_for_container(docker, name, lines) or "(empty log)"
+    services = services or rank_services(docker)
+    entry = next(
+        (e for e in rank_entries(record) if int(e.get("rank", 0)) == rank), None
+    )
+    if entry is None:
+        return f"Deployment has no rank {rank}"
+    name = str(entry.get("container_name") or container_name_for(deployment_id))
+    try:
+        service = services(str(entry.get("node") or ""))
+    except Exception as exc:
+        return f"Failed to reach {entry.get('node') or 'this machine'}: {exc}"
+    return logs_for_container(service, name, lines) or "(empty log)"
 
 
-def status(deployment_id: str, docker: Any | None = None) -> dict[str, Any] | None:
-    """Live status: container state plus a readiness probe."""
+def _rank_status(
+    services: Callable[[str], Any], entry: dict[str, Any]
+) -> dict[str, Any]:
+    """One rank's container state, with unreachable reported as unknown.
+
+    "We could not ask" is not "it is dead": the third state exists precisely
+    so a node we cannot reach does not read as a failure.
+    """
+    name = str(entry.get("container_name") or "")
+    try:
+        container = services(str(entry.get("node") or "")).get_container_status(name)
+    except Exception as exc:
+        container = {
+            "status": "unknown",
+            "running": False,
+            "id": None,
+            "state": {},
+            "error": str(exc),
+        }
+    return {**entry, "container": container}
+
+
+def status(
+    deployment_id: str,
+    docker: Any | None = None,
+    services: Callable[[str], Any] | None = None,
+) -> dict[str, Any] | None:
+    """Live status: per-rank container state plus a readiness probe.
+
+    ``container`` stays rank zero's, so every existing reader is unchanged;
+    ``ranks`` carries the same thing for each rank.
+    """
     record = get_deployment(deployment_id)
     if record is None:
         return None
-    docker = docker or _docker_service()
-    name = record.get("container_name") or container_name_for(deployment_id)
-    container = docker.get_container_status(name)
+    services = services or rank_services(docker)
+    ranks = [_rank_status(services, entry) for entry in rank_entries(record)]
+    container = ranks[0]["container"]
     port = record.get("port")
     url = record.get("readiness_url") or (f"http://127.0.0.1:{port}/v1/models")
     ready = bool(container.get("running")) and probe_ready(url)
     return {
         **record,
         "container": container,
+        "ranks": ranks,
         "ready": ready,
         "status": _derive_status(record, container, ready),
     }
@@ -1351,14 +1867,21 @@ def list_deployments(docker: Any | None = None) -> list[dict[str, Any]]:
     changed = False
 
     for record in native:
-        name = record.get("container_name") or container_name_for(str(record.get("id")))
-        container = by_name.get(name)
         if record.get("status") in ("stopped", "error"):
             continue
-        if container is None or container.status not in ("running", "created"):
-            record["status"] = "stopped"
-            record.setdefault("stopped_at", _now())
-            changed = True
+        # Only ranks on the machine we just enumerated produce evidence. A
+        # rank on a node we did not ask about says nothing either way, and
+        # marking the deployment stopped on that silence is the inference this
+        # design refuses to make.
+        for entry in rank_entries(record):
+            if not _rank_is_here(entry):
+                continue
+            container = by_name.get(str(entry.get("container_name") or ""))
+            if container is None or container.status not in ("running", "created"):
+                record["status"] = "stopped"
+                record.setdefault("stopped_at", _now())
+                changed = True
+                break
 
     for container in containers:
         if not container.name.startswith(CONTAINER_PREFIX):
@@ -1389,9 +1912,20 @@ def list_deployments(docker: Any | None = None) -> list[dict[str, Any]]:
             "image_ref": container.metadata.image or container.image,
             "model": "",
             "container_name": container.name,
-            "node_count": 1,
+            "node_count": int(container.labels.get(WORLD_SIZE_LABEL) or 1),
             "mods": [],
             "reconciled": True,
+            "generation": int(container.labels.get(GENERATION_LABEL) or 0),
+            "ranks": [
+                {
+                    "rank": int(container.labels.get(RANK_LABEL) or 0),
+                    "node": "",
+                    "host": "",
+                    "container_name": container.name,
+                    "is_head": (container.labels.get(RANK_LABEL) or "0") == "0",
+                }
+            ],
+            "orphans": [],
         }
         native.append(adopted)
         records.append(adopted)
@@ -1400,3 +1934,46 @@ def list_deployments(docker: Any | None = None) -> list[dict[str, Any]]:
     if changed:
         _save_records(records)
     return native
+
+
+def sweep_orphans(
+    deployment_id: str | None = None,
+    docker: Any | None = None,
+    services: Callable[[str], Any] | None = None,
+) -> int:
+    """Drop orphans whose containers can now be confirmed gone.
+
+    This is the other half of releasing on evidence: a node that was
+    unreachable at teardown may answer later, and only its answer frees the
+    ports the record has been holding. Returns how many orphans were cleared.
+    """
+    services = services or rank_services(docker)
+    records = _load_records()
+    cleared = 0
+    changed = False
+    for record in records:
+        if deployment_id and record.get("id") != deployment_id:
+            continue
+        orphans = record.get("orphans") or []
+        if not orphans:
+            continue
+        remaining: list[dict[str, Any]] = []
+        for orphan in orphans:
+            name = str(orphan.get("container_name") or "")
+            try:
+                gone = (
+                    services(str(orphan.get("node") or "")).get_container_status(name)
+                ).get("status") == "missing"
+            except Exception as exc:
+                logger.debug("orphan %s still unverifiable: %s", name, exc)
+                gone = False
+            if gone:
+                cleared += 1
+            else:
+                remaining.append(orphan)
+        if len(remaining) != len(orphans):
+            record["orphans"] = remaining
+            changed = True
+    if changed:
+        _save_records(records)
+    return cleared
