@@ -2,6 +2,7 @@ import { useAuth } from "@/lib/auth";
 import { doRefresh } from "@/lib/refresh";
 import { type ThemeMode, getTheme, setTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
+import { ExperimentalBadge } from "@/components/Experimental";
 import { useConfig } from "@/lib/config";
 import { Activity, Bot, Boxes, Copyright, Database, Flame, Layers, ListChecks, LogOut, Menu, Moon, MoonStar, Package, RotateCw, Settings, Sun, User, X, Zap, Server } from "lucide-react";
 import { SiGithub, SiPypi } from "@icons-pack/react-simple-icons";
@@ -39,10 +40,10 @@ function SSEConnectionIndicator() {
   );
 }
 
-const NAV = [
+const NAV: { href: string; label: string; icon: typeof Zap; experimental?: boolean }[] = [
   { href: "/", label: "Recipes & Mods", icon: Zap },
   { href: "/jobs", label: "Inference", icon: ListChecks },
-  { href: "/cluster", label: "Cluster", icon: Server },
+  { href: "/cluster", label: "Cluster", icon: Server, experimental: true },
   { href: "/benchmarking", label: "Benchmarking", icon: Flame },
   { href: "/monitoring", label: "Monitoring", icon: Activity },
   { href: "/models", label: "Models", icon: Boxes },
@@ -121,6 +122,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [version, setVersion] = useState("");
   const { config } = useConfig();
   const benchmarkingEnabled = config?.benchmarking_enabled ?? false;
+  const clusterExperimental = config?.cluster_experimental ?? true;
 
   useEffect(() => {
     fetch("/version")
@@ -186,7 +188,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 )}
               >
                 <Icon size={18} />
-                {item.label}
+                <span className="flex-1">{item.label}</span>
+                {item.experimental && clusterExperimental && (
+                  <ExperimentalBadge title="Cluster orchestration is experimental: multi-node has not been run on real hardware" />
+                )}
               </Link>
             );
           })}

@@ -10,6 +10,7 @@ export interface AppConfig {
   auth_enabled: boolean;
   mcp_enabled: boolean;
   cluster_enabled: boolean;
+  cluster_experimental: boolean;
   benchmarking_enabled: boolean;
   simulation_mode: boolean;
   /** "upstream" (run-recipe.sh) or "native" (containers we drive ourselves). */
@@ -20,6 +21,7 @@ const DEFAULT_CONFIG: AppConfig = {
   auth_enabled: false,
   mcp_enabled: true,
   cluster_enabled: false,
+  cluster_experimental: true,
   benchmarking_enabled: false,
   simulation_mode: true,
   runtime: "upstream",

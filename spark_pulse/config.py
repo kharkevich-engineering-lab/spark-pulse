@@ -117,6 +117,11 @@ class _Config:
         return bool(self._data.get("cluster_enabled", False))
 
     @property
+    def cluster_experimental(self) -> bool:
+        """Whether the UI should mark cluster orchestration as unproven."""
+        return bool(self._data.get("cluster_experimental", True))
+
+    @property
     def job_retention_days(self) -> int:
         return int(self._data.get("job_retention_days", 7))
 

@@ -449,7 +449,7 @@ proven through the same path:
 
 Still open before the native path becomes the default:
 
-- **Native cluster (phase 4).** Multi-node is still refused under `runtime: native`. This is the last thing standing between us and deleting the `run-recipe.sh` fork.
+- **Native cluster (phase 4), blocked on hardware.** Multi-node is refused under `runtime: native`, and the upstream cluster path has never been run on two machines because only one DGX Spark is available. Rather than ship orchestration on faith, cluster orchestration is now labelled experimental in the UI, driven by the `cluster_experimental` config flag so it can be flipped the day a two-node bring-up is actually verified. Every defect found so far surfaced within minutes of touching real hardware and none were caught by simulation, which is the whole argument for not writing multi-node blind.
 - **Recipe v2 coverage.** Only three bundled recipes are engine-neutral; everything imported from upstream is a v1 vLLM command and therefore vLLM-only by construction.
 
 ## 6. Things to fix regardless of the plan

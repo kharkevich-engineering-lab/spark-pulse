@@ -1,6 +1,9 @@
 auth_enabled: false
 benchmarking_enabled: false
 cluster_enabled: false
+# Multi-node orchestration has never been exercised on real hardware, so the UI
+# labels it experimental. Flip this once a two-node bring-up has been verified.
+cluster_experimental: true
 default_container: vllm-node
 job_retention_days: 7
 # Deployment runtime: "upstream" forks spark-vllm-docker's run-recipe.sh,
