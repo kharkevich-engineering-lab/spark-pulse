@@ -13,6 +13,9 @@ export default defineConfig({
     globals: true,
     environment: "jsdom",
     setupFiles: "./src/tests/setupTests.ts",
+    // The Playwright suite matches vitest's default spec glob but is not a
+    // vitest suite: it needs a browser and a running backend.
+    include: ["src/**/*.{test,spec}.{ts,tsx}"],
     coverage: {
       provider: "v8",
       reporter: ["text", "json", "html"],

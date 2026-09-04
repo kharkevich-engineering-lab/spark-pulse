@@ -123,7 +123,7 @@ export default function InferencePage() {
       {deployments && deployments.length > 0 && (
         <div className="space-y-2">
           {deployments.map((dep) => (
-            <div key={dep.id} className="rounded-xl bg-surface border border-border overflow-hidden">
+            <div key={dep.id} data-testid={`deployment-${dep.id}`} className="rounded-xl bg-surface border border-border overflow-hidden">
               <div className="flex items-center gap-4 p-4 cursor-pointer hover:bg-surface-hover" onClick={() => toggle(dep.id)}>
                 <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: dep.status === "running" ? "var(--color-success)" : dep.status === "error" ? "var(--color-danger)" : dep.status === "pending" ? "var(--color-warning)" : "var(--color-text-muted)" }} />
                 <div className="flex-1 min-w-0">
