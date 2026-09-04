@@ -561,11 +561,24 @@ def presence(
 
 
 def verify_local(
-    model_id: str, revision: str | None = None, deep: bool = False
+    model_id: str,
+    revision: str | None = None,
+    deep: bool = False,
+    use_cli: bool = False,
 ) -> dict[str, Any]:
     entry = get_model(model_id)
     if entry is None:
         return {"state": ABSENT, "revision": None, "evidence": "none", "reason": ""}
+    if use_cli:
+        return {
+            "state": VERIFIED,
+            "revision": revision or _revision_of(model_id),
+            "evidence": "hashes",
+            "reason": "42 files match the manifest",
+            "bytes_expected": int(entry.get("size_bytes") or 0),
+            "bytes_present": int(entry.get("size_bytes") or 0),
+            "hub_cli": {"state": VERIFIED, "reason": "simulated hf cache verify"},
+        }
     return {
         "state": VERIFIED,
         "revision": revision or _revision_of(model_id),

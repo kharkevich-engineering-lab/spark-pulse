@@ -186,6 +186,21 @@ class TestDistribution:
         assert partial["missing"], "a partial node must say what it is missing"
         assert 0 < partial["bytes_present"] < partial["bytes_expected"]
 
+    def test_verify_reports_the_local_verdict(self, client):
+        body = client.get("/api/models/openai/gpt-oss-120b/verify").json()
+        assert body["state"] == "verified"
+        assert body["revision"]
+
+    def test_verify_can_cross_check_against_the_hub(self, client):
+        body = client.get(
+            "/api/models/openai/gpt-oss-120b/verify", params={"use_cli": "true"}
+        ).json()
+        assert body["hub_cli"]["state"] == "verified"
+
+    def test_verify_of_an_unknown_model_is_absent(self, client):
+        body = client.get("/api/models/nope/nope/verify").json()
+        assert body["state"] == "absent"
+
     def test_presence_accepts_a_revision_and_a_deep_flag(self, client):
         response = client.get(
             "/api/models/openai/gpt-oss-120b/presence",

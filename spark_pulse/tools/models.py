@@ -14,6 +14,7 @@ import os
 import shlex
 import shutil
 import socket
+import subprocess
 import threading
 import time
 import uuid
@@ -692,13 +693,77 @@ def local_repo_path(model_id: str) -> Path:
     return hub_dir() / repo_dir_name(model_id)
 
 
+#: ``hf cache verify`` asks the hub for the revision's file list and compares
+#: the local files against the hashes the hub publishes — SHA-256 for LFS/Xet
+#: files, git SHA-1 for the rest. It is the most authoritative check available,
+#: and it is only available *here*: it needs the network and, for a gated repo,
+#: the token. Both are things a worker node deliberately does not have, which
+#: is why the node-side check reads ``trees/<commit>.json`` — the same hashes,
+#: cached locally by the download that fetched them.
+HF_CLI = "hf"
+HF_CLI_TIMEOUT = 900
+
+
 def verify_local(
-    model_id: str, revision: str | None = None, deep: bool = False
+    model_id: str,
+    revision: str | None = None,
+    deep: bool = False,
+    use_cli: bool = False,
 ) -> dict[str, Any]:
-    """Verify the control node's own copy of a model."""
-    return hub_cache.verify_snapshot(
+    """Verify the control node's own copy of a model.
+
+    Args:
+        model_id: The cached model to check.
+        revision: Commit or ref; ``None`` resolves ``refs/main``.
+        deep: Hash every file, not only compare sizes.
+        use_cli: Additionally cross-check against the hub with
+            ``hf cache verify``. Requires the network and the token, so it is
+            off by default and never runs on a node.
+    """
+    report = hub_cache.verify_snapshot(
         str(local_repo_path(model_id)), revision, deep=deep
     )
+    if use_cli:
+        report["hub_cli"] = _hf_cache_verify(model_id, report.get("revision"))
+        if report["hub_cli"].get("state") == hub_cache.STATE_PARTIAL:
+            report["state"] = hub_cache.STATE_PARTIAL
+            report["reason"] = report["hub_cli"].get("reason") or report["reason"]
+    return report
+
+
+def _hf_cache_verify(model_id: str, revision: str | None) -> dict[str, Any]:
+    """Cross-check a local entry against the hub with its own CLI.
+
+    Returns a small verdict dict. ``unavailable`` is not a failure: the CLI is
+    an optional extra check, and the manifest walk stands on its own.
+    """
+    if shutil.which(HF_CLI) is None:
+        return {"state": "unavailable", "reason": f"{HF_CLI} is not on PATH"}
+    argv = [
+        HF_CLI,
+        "cache",
+        "verify",
+        model_id,
+        "--cache-dir",
+        str(hub_dir()),
+        "--json",
+    ]
+    if revision:
+        argv += ["--revision", revision]
+    try:
+        result = subprocess.run(
+            argv, capture_output=True, text=True, timeout=HF_CLI_TIMEOUT
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"state": "unavailable", "reason": str(exc)[:500]}
+    if result.returncode != 0:
+        return {
+            "state": hub_cache.STATE_PARTIAL,
+            "reason": (
+                result.stderr or result.stdout or "hf cache verify failed"
+            ).strip()[:500],
+        }
+    return {"state": hub_cache.STATE_VERIFIED, "reason": (result.stdout or "").strip()}
 
 
 def _remote_verify_command(

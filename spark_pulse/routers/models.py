@@ -100,6 +100,19 @@ def sync_model(model_id: str, req: dict):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.get("/{model_id:path}/verify")
+def verify_model(
+    model_id: str,
+    revision: str | None = Query(None, description="Commit hash or ref name"),
+    deep: bool = Query(False, description="Hash every file, not just sizes"),
+    use_cli: bool = Query(
+        False, description="Also cross-check against the hub with `hf cache verify`"
+    ),
+):
+    """Verify the control node's own copy: absent, partial or verified."""
+    return tools.models.verify_local(model_id, revision, deep=deep, use_cli=use_cli)
+
+
 @router.get("/{model_id:path}/presence")
 def model_presence(
     model_id: str,

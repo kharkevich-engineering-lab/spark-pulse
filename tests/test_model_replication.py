@@ -629,6 +629,53 @@ class TestTokenStaysOnTheControlNode:
         assert original == {"HF_TOKEN": self.TOKEN}
 
 
+# ── The hub's own tooling ────────────────────────────────────────────────────
+
+
+class TestHubCliCrossCheck:
+    """``hf cache verify`` runs on the control node, and only there.
+
+    It fetches the revision's file list from the hub, so it needs the network
+    and — for a gated repo — the token. A worker node has neither by design,
+    which is why the node-side check reads the manifest the download already
+    cached instead.
+    """
+
+    def test_a_clean_cli_run_leaves_the_verdict_verified(self, hub):
+        completed = subprocess.CompletedProcess([], 0, '{"mismatches": []}', "")
+        with patch("shutil.which", return_value="/usr/bin/hf"):
+            with patch("subprocess.run", return_value=completed) as run:
+                report = models_tool.verify_local(SAMPLE_MODEL, use_cli=True)
+
+        argv = run.call_args[0][0]
+        assert argv[:3] == ["hf", "cache", "verify"]
+        assert "--cache-dir" in argv and str(hub) in argv
+        assert argv[argv.index("--revision") + 1] == SAMPLE_COMMIT
+        assert report["state"] == hub_cache.STATE_VERIFIED
+        assert report["hub_cli"]["state"] == hub_cache.STATE_VERIFIED
+
+    def test_a_cli_mismatch_downgrades_the_verdict(self, hub):
+        completed = subprocess.CompletedProcess([], 1, "", "checksum mismatch: x.bin")
+        with patch("shutil.which", return_value="/usr/bin/hf"):
+            with patch("subprocess.run", return_value=completed):
+                report = models_tool.verify_local(SAMPLE_MODEL, use_cli=True)
+
+        assert report["state"] == hub_cache.STATE_PARTIAL
+        assert "checksum mismatch" in report["reason"]
+
+    def test_a_missing_cli_is_not_a_failure(self, hub):
+        with patch("shutil.which", return_value=None):
+            report = models_tool.verify_local(SAMPLE_MODEL, use_cli=True)
+        assert report["state"] == hub_cache.STATE_VERIFIED
+        assert report["hub_cli"]["state"] == "unavailable"
+
+    def test_the_cli_is_never_asked_by_default(self, hub):
+        with patch("subprocess.run") as run:
+            report = models_tool.verify_local(SAMPLE_MODEL)
+        assert run.call_count == 0
+        assert "hub_cli" not in report
+
+
 # ── The transport contract ───────────────────────────────────────────────────
 
 
