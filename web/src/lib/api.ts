@@ -1,4 +1,4 @@
-import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntry, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, GitUpdateStatus, GitUpdateAction, GitUpdateCheckResult, CustomRecipeInfo, CustomModInfo, ModFileMap, BenchmarkResult, OciRegistry, OciCollection, OciCollectionRecipe, OciRecipeMeta, OciUpdateCheck, OciUpdateApply, OciUpdateResult, OciAutoUpdateSettings } from "@/lib/types";
+import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntry, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, CustomRecipeInfo, CustomModInfo, ModFileMap, BenchmarkResult, OciRegistry, OciCollection, OciCollectionRecipe, OciRecipeMeta, OciUpdateCheck, OciUpdateApply, OciUpdateResult, OciAutoUpdateSettings, EngineListResponse, EngineDetail, EngineIndexRefreshResult, RenderRequest, RenderResult, ModelEntry, ModelSource, ModelDownloadJob, ModelSyncResult, ModelPresence, ModelDeleteResult, ImageEntry, ImagePullJob, ImageSyncResult, ImagePresence, ImageDeleteResult, RecipeImportResult, RecipeImportStatus, DeployPlan, DeployPlanRequest } from "@/lib/types";
 
 const API = "/api";
 
@@ -34,10 +34,22 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
 export async function fetchRecipes(): Promise<RecipeSummary[]> { return json<RecipeSummary[]>("/recipes"); }
 export async function fetchRecipe(id: string): Promise<RecipeDetail> { return json<RecipeDetail>(`/recipes/${id}`); }
 
+/** Import recipes and mods from a local spark-vllm-docker checkout or a git URL. */
+export async function importRecipes(body: { path?: string; url?: string; ref?: string }): Promise<RecipeImportResult> {
+  return json<RecipeImportResult>("/recipes/import", { method: "POST", body: JSON.stringify(body) });
+}
+
+export async function fetchRecipeImportStatus(): Promise<RecipeImportStatus> {
+  return json<RecipeImportStatus>("/recipes/import/status");
+}
+
 // ── Deployments ─────────────────────────────────────────────────────────────
 
 export async function fetchDeployments(): Promise<Deployment[]> { return json<Deployment[]>("/deployments"); }
-export async function createDeployment(body: { recipe_id: string; name: string; params: Record<string, unknown>; nodes?: string[] }): Promise<Deployment> { return json<Deployment>("/deployments", { method: "POST", body: JSON.stringify(body) }); }
+export async function createDeployment(body: { recipe_id: string; name: string; params: Record<string, unknown>; nodes?: string[]; engine?: string; variant?: string; model?: string; extra_args?: string[]; allow_missing_model?: boolean }): Promise<Deployment> { return json<Deployment>("/deployments", { method: "POST", body: JSON.stringify(body) }); }
+/** Dry run: resolve engine, image, model and the rendered command without deploying. */
+export async function planDeployment(body: DeployPlanRequest): Promise<DeployPlan> { return json<DeployPlan>("/deployments/plan", { method: "POST", body: JSON.stringify(body) }); }
+export async function fetchDeployment(id: string): Promise<Deployment> { return json<Deployment>(`/deployments/${id}`); }
 export async function stopDeployment(id: string): Promise<void> { await json(`/deployments/${id}`, { method: "DELETE" }); }
 export async function fetchLogs(id: string, n = 200): Promise<{ logs: string }> { return json(`/deployments/${id}/logs?lines=${n}`); }
 
@@ -69,13 +81,6 @@ export async function fetchMod(id: string): Promise<ModDetail> { return json<Mod
 export async function fetchRecipeCustomization(recipeId: string): Promise<RecipeCustomization> { return json<RecipeCustomization>(`/recipes/customize/${encodeURIComponent(recipeId)}`); }
 export async function saveRecipeCustomization(recipeId: string, customization: RecipeCustomization): Promise<RecipeCustomization> { return json<RecipeCustomization>(`/recipes/customize/${encodeURIComponent(recipeId)}`, { method: "PUT", body: JSON.stringify(customization) }); }
 export async function deleteRecipeCustomization(recipeId: string): Promise<{ deleted: boolean }> { return json<{ deleted: boolean }>(`/recipes/customize/${encodeURIComponent(recipeId)}`, { method: "DELETE" }); }
-
-// ── Git Update ───────────────────────────────────────────────────────────────
-
-export async function fetchGitUpdateStatus(): Promise<GitUpdateStatus> { return json<GitUpdateStatus>("/git-update/status"); }
-export async function triggerGitUpdateCheck(): Promise<GitUpdateCheckResult> { return json<GitUpdateCheckResult>("/git-update/check", { method: "POST" }); }
-export async function triggerGitFetch(): Promise<GitUpdateAction> { return json<GitUpdateAction>("/git-update/fetch", { method: "POST" }); }
-export async function triggerGitPull(): Promise<GitUpdateAction> { return json<GitUpdateAction>("/git-update/pull", { method: "POST" }); }
 
 // ── SSE ─────────────────────────────────────────────────────────────────────
 
@@ -332,4 +337,294 @@ export async function runBenchmark(body: {
     method: "POST",
     body: JSON.stringify(body),
   });
+}
+
+// ── Network Discovery ────────────────────────────────────────────────────────
+
+export interface DiscoveryInterface {
+  name: string;
+  ip: string | null;
+  mtu: number;
+  is_up: boolean;
+  type: "ethernet" | "infiniband" | "loopback" | "docker" | "other";
+}
+
+export interface InfinibandDevice {
+  hca: string;
+  ports: number[];
+  net_devices: string[];
+  state: string;
+}
+
+export interface NcclDefaults {
+  socket_ifname: string;
+  ib_hca: string | null;
+  ib_disable: boolean;
+}
+
+export interface DiscoveredConfig {
+  nccl: {
+    debug: string | null;
+    socket_ifname: string | null;
+    ib_hca: string | null;
+  };
+  discovery_available: boolean;
+}
+
+export interface DiscoveryResult {
+  local_ip: string | null;
+  ethernet_if: string | null;
+  infiniband_present: boolean;
+  infiniband_devices: InfinibandDevice[];
+  interfaces: DiscoveryInterface[];
+  nccl_defaults: NcclDefaults | null;
+  validation_errors: string[];
+}
+
+export interface ValidationResult {
+  healthy: boolean;
+  warnings: string[];
+  errors: string[];
+}
+
+export interface DiscoveryResponse {
+  detected: DiscoveryResult;
+  validation: ValidationResult;
+}
+
+export async function runDiscovery(): Promise<DiscoveryResponse> {
+  return json<DiscoveryResponse>("/discovery", { method: "POST" });
+}
+
+export async function getDiscovered(): Promise<DiscoveredConfig> {
+  return json<DiscoveredConfig>("/discovery");
+}
+
+export async function applyNcclDefaults(body: {
+  socket_ifname: string;
+  ib_hca: string | null;
+  ib_disable: boolean;
+}): Promise<{ success: boolean; applied: NcclDefaults }> {
+  return json<{ success: boolean; applied: NcclDefaults }>("/discovery/apply-nccl", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function getValidation(): Promise<ValidationResult> {
+  return json<ValidationResult>("/discovery/validation");
+}
+
+// ── Cluster Orchestration ────────────────────────────────────────────────────
+
+import type { ClusterState, ClusterValidationResult, StartClusterRequest, StopClusterRequest, ClusterValidateRequest, ClusterRollbackRequest } from "@/lib/types";
+
+export async function startCluster(body: StartClusterRequest): Promise<ClusterState> {
+  return json<ClusterState>("/cluster/start", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function stopCluster(body: StopClusterRequest): Promise<{ name: string; status: string }> {
+  return json<{ name: string; status: string }>("/cluster/stop", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function getClusterStatus(name: string): Promise<ClusterState> {
+  return json<ClusterState>(`/cluster/status?name=${encodeURIComponent(name)}`);
+}
+
+export async function listClusters(): Promise<ClusterState[]> {
+  return json<ClusterState[]>("/cluster/list");
+}
+
+export async function validateCluster(body: ClusterValidateRequest): Promise<ClusterValidationResult> {
+  return json<ClusterValidationResult>("/cluster/validate", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function rollbackCluster(body: ClusterRollbackRequest): Promise<ClusterState> {
+  return json<ClusterState>("/cluster/rollback", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+// ── Launch Script (Phase 4) ──────────────────────────────────────────────────
+
+import type {
+  LaunchScriptInfo,
+  LaunchScriptResolveResult,
+  LaunchScriptResolveRequest,
+  LaunchScriptAnalyzeRequest,
+  LaunchScriptValidateRequest,
+  LaunchScriptPatchRequest,
+  PatchedScriptBundle,
+} from "@/lib/types";
+
+export async function resolveLaunchScript(body: LaunchScriptResolveRequest): Promise<LaunchScriptResolveResult> {
+  return json<LaunchScriptResolveResult>("/launch-script/resolve", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function analyzeLaunchScript(body: LaunchScriptAnalyzeRequest): Promise<LaunchScriptInfo> {
+  return json<LaunchScriptInfo>("/launch-script/analyze", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function validateLaunchScript(body: LaunchScriptValidateRequest): Promise<{ healthy: boolean; warnings: string[]; errors: string[] }> {
+  return json<{ healthy: boolean; warnings: string[]; errors: string[] }>("/launch-script/validate", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function patchLaunchScript(body: LaunchScriptPatchRequest): Promise<PatchedScriptBundle> {
+  return json<PatchedScriptBundle>("/launch-script/patch", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+// ── Mod Deployment (Phase 4) ─────────────────────────────────────────────────
+
+import type {
+  ModValidationResult,
+  ModDeploymentResult,
+  ModRollbackResult,
+  ModValidateRequest,
+  ModApplyRequest,
+  ModRollbackRequest,
+} from "@/lib/types";
+
+export async function validateMod(body: ModValidateRequest): Promise<ModValidationResult> {
+  return json<ModValidationResult>("/mods/validate", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function applyMod(body: ModApplyRequest): Promise<ModDeploymentResult> {
+  return json<ModDeploymentResult>("/mods/apply", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function rollbackMod(body: ModRollbackRequest): Promise<ModRollbackResult> {
+  return json<ModRollbackResult>("/mods/rollback", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+// ── Cluster ──────────────────────────────────────────────────────────────────
+
+export async function reconcileClusters(): Promise<any> {
+  return json("/cluster/reconcile", { method: "POST" });
+}
+
+export async function getLockStatus(resource: string): Promise<any> {
+  return json(`/cluster/lock/${encodeURIComponent(resource)}`);
+}
+
+// ── Engines ─────────────────────────────────────────────────────────────────
+
+export async function fetchEngines(): Promise<EngineListResponse> { return json<EngineListResponse>("/engines"); }
+export async function fetchEngine(engine: string, variant = "default"): Promise<EngineDetail> { return json<EngineDetail>(`/engines/${engine}/${variant}`); }
+export async function refreshEngines(): Promise<EngineIndexRefreshResult> { return json<EngineIndexRefreshResult>("/engines/refresh", { method: "POST" }); }
+export async function renderLaunch(body: RenderRequest): Promise<RenderResult> { return json<RenderResult>("/engines/render", { method: "POST", body: JSON.stringify(body) }); }
+
+// ── Models ───────────────────────────────────────────────────────────────────
+
+export async function fetchModels(): Promise<ModelEntry[]> {
+  return (await json<{ models: ModelEntry[] }>("/models")).models;
+}
+
+export async function fetchModel(id: string): Promise<ModelEntry> {
+  return json<ModelEntry>(`/models/${id}`);
+}
+
+export async function fetchModelSources(): Promise<ModelSource[]> {
+  return (await json<{ sources: ModelSource[] }>("/models/sources")).sources;
+}
+
+export async function saveModelSources(sources: ModelSource[]): Promise<ModelSource[]> {
+  return (await json<{ sources: ModelSource[] }>("/models/sources", { method: "PUT", body: JSON.stringify({ sources }) })).sources;
+}
+
+export async function startModelDownload(body: { model: string; source?: string; revision?: string; allow_patterns?: string[] }): Promise<ModelDownloadJob> {
+  return json<ModelDownloadJob>("/models/download", { method: "POST", body: JSON.stringify(body) });
+}
+
+export async function fetchModelDownloads(): Promise<ModelDownloadJob[]> {
+  return (await json<{ jobs: ModelDownloadJob[] }>("/models/downloads")).jobs;
+}
+
+export async function fetchModelDownload(jobId: string): Promise<ModelDownloadJob> {
+  return json<ModelDownloadJob>(`/models/downloads/${jobId}`);
+}
+
+export async function cancelModelDownload(jobId: string): Promise<ModelDownloadJob> {
+  return json<ModelDownloadJob>(`/models/downloads/${jobId}/cancel`, { method: "POST" });
+}
+
+export async function syncModelToNodes(id: string, nodes: string[], sshUser?: string): Promise<ModelSyncResult> {
+  return json<ModelSyncResult>(`/models/${id}/sync`, { method: "POST", body: JSON.stringify({ nodes, ssh_user: sshUser }) });
+}
+
+export async function fetchModelPresence(id: string, nodes: string[]): Promise<ModelPresence> {
+  return json<ModelPresence>(`/models/${id}/presence?nodes=${encodeURIComponent(nodes.join(","))}`);
+}
+
+export async function deleteModel(id: string): Promise<ModelDeleteResult> {
+  return json<ModelDeleteResult>(`/models/${id}`, { method: "DELETE" });
+}
+
+// ── Engine images ──────────────────────────────────────────────────
+//
+// An image ref carries slashes and colons, so it never goes in the path: the
+// catalogue is flat and every ref-taking call passes it in the body or query.
+
+export async function fetchImages(): Promise<ImageEntry[]> {
+  return (await json<{ images: ImageEntry[] }>("/images")).images;
+}
+
+export async function startImagePull(ref: string): Promise<ImagePullJob> {
+  return json<ImagePullJob>("/images/pull", { method: "POST", body: JSON.stringify({ ref }) });
+}
+
+export async function fetchImagePulls(): Promise<ImagePullJob[]> {
+  return (await json<{ jobs: ImagePullJob[] }>("/images/pulls")).jobs;
+}
+
+export async function fetchImagePull(jobId: string): Promise<ImagePullJob> {
+  return json<ImagePullJob>(`/images/pulls/${jobId}`);
+}
+
+export async function cancelImagePull(jobId: string): Promise<ImagePullJob> {
+  return json<ImagePullJob>(`/images/pulls/${jobId}/cancel`, { method: "POST" });
+}
+
+export async function deleteImage(ref: string): Promise<ImageDeleteResult> {
+  return json<ImageDeleteResult>(`/images?ref=${encodeURIComponent(ref)}`, { method: "DELETE" });
+}
+
+export async function syncImageToNodes(ref: string, nodes: string[], sshUser?: string): Promise<ImageSyncResult> {
+  return json<ImageSyncResult>("/images/sync", { method: "POST", body: JSON.stringify({ ref, nodes, ssh_user: sshUser }) });
+}
+
+export async function fetchImagePresence(ref: string, nodes: string[]): Promise<ImagePresence> {
+  return json<ImagePresence>(
+    `/images/presence?ref=${encodeURIComponent(ref)}&nodes=${encodeURIComponent(nodes.join(','))}`,
+  );
 }

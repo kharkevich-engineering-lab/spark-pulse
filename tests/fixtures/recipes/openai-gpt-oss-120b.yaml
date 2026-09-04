@@ -1,0 +1,41 @@
+# Recipe: OpenAI GPT-OSS 120B
+# OpenAI's open source 120B MoE model with MXFP4 quantization and FlashInfer
+
+name: OpenAI-GPT-OSS-120B
+container: vllm-node-mxfp4
+
+model: openai/gpt-oss-120b
+
+solo_only: true
+cluster_only: false
+
+mods: []
+build_args:
+  - --exp-mxfp4
+
+defaults:
+  port: 8000
+  host: 0.0.0.0
+  tensor_parallel: 1
+  gpu_memory_utilization: 0.8
+  max_num_batched_tokens: 8192
+
+env:
+  VLLM_USE_FLASHINFER_MOE_MXFP4_MXFP8: "1"
+
+command: |
+  vllm serve openai/gpt-oss-120b \
+      --tool-call-parser openai \
+      --reasoning-parser openai_gptoss \
+      --enable-auto-tool-choice \
+      --gpu-memory-utilization {gpu_memory_utilization} \
+      --enable-prefix-caching \
+      --load-format fastsafetensors \
+      --quantization mxfp4 \
+      --mxfp4-backend CUTLASS \
+      --mxfp4-layers moe,qkv,o,lm_head \
+      --attention-backend FLASHINFER \
+      --kv-cache-dtype fp8 \
+      --max-num-batched-tokens {max_num_batched_tokens} \
+      --host {host} \
+      --port {port}

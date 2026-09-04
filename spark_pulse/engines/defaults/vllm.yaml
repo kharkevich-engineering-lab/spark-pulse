@@ -1,0 +1,68 @@
+schema_version: "1"
+engine: vllm
+variant: default
+description: vLLM built from source for DGX Spark (GB10, sm_121, CUDA 13) with the Spark patch queue.
+image: ghcr.io/kharkevich-engineering-lab/spark-pulse-engine/vllm
+version: 0.1.0
+legacy_tags: [vllm-node]
+arch: [linux/arm64]
+gpu_arch: ["12.1a"]
+
+sources:
+  base: {image: nvidia/cuda:13.0.2-devel-ubuntu24.04}
+  vllm: {repo: https://github.com/vllm-project/vllm.git, ref: 21a22110404d98dcab5f51cd90e9acb0acc15e47}
+  flashinfer: {repo: https://github.com/flashinfer-ai/flashinfer.git, ref: 03d8b2cd33459b5dc66c6187a2b47e02f83a2fe3}
+  nccl: {repo: https://github.com/NVIDIA/nccl.git, ref: fd168324a3dc0c9080fd4881b6c7f4bb252a95a2}
+  deepgemm: {repo: https://github.com/deepseek-ai/DeepGEMM.git, ref: a6b593d2826719dcf4892609af7b84ee23aaf32a}
+  torch: {version: "2.13.0", index: https://download.pytorch.org/whl/cu130}
+  torchvision: {version: "0.28.0"}
+  torchaudio: {version: "2.11.0"}
+  cutlass_dsl: {version: "4.7.0"}
+
+wheels:
+  # Upstream publishes daily wheels built from vllm main with the same patch
+  # queue and torch pin we carry. Prebuilt keeps CI under an hour; switch to
+  # `source` (or run scripts/build.sh --wheels) to build from the pinned refs.
+  mode: prebuilt
+  flashinfer: {release: eugr/spark-vllm-docker@prebuilt-flashinfer-current}
+  vllm: {release: eugr/spark-vllm-docker@prebuilt-vllm-current}
+
+build_args:
+  TORCH_CUDA_ARCH_LIST: 12.1a
+  VLLM_PRESERVE_SM12X_TARGET: 0
+
+runtime:
+  python: "3.12"
+  workdir: /workspace/vllm
+  site_packages: /usr/local/lib/python3.12/dist-packages
+  serve: vllm serve
+  model_arg: positional
+  readiness: /v1/models
+  models_endpoint: /v1/models
+  metrics: /metrics
+  ports: {api: 8000, rendezvous: 29501}
+  cache_mounts: [~/.cache/huggingface, ~/.cache/vllm, ~/.cache/flashinfer, ~/.triton, ~/.tilelang]
+  env:
+    PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+    NCCL_IGNORE_CPU_AFFINITY: "1"
+  container:
+    privileged: true
+    ipc_host: true
+    network_host: true
+    ulimits: {nofile: "1048576:1048576"}
+    keepalive: sleep infinity
+  multi_node:
+    style: torchrun
+  param_flags:
+    port: --port
+    host: --host
+    tensor_parallel: --tensor-parallel-size
+    pipeline_parallel: --pipeline-parallel-size
+    gpu_memory_utilization: --gpu-memory-utilization
+    max_model_len: --max-model-len
+    max_num_batched_tokens: --max-num-batched-tokens
+    max_num_seqs: --max-num-seqs
+
+capabilities: {mods: true, pr_mods: true, solo: true, cluster: true, mesh: true}
+verified:
+  - {nodes: 1, tp: 1, model: Qwen/Qwen2.5-0.5B-Instruct, date: "2026-09-03", notes: "scripts/smoke-test.sh on GB10 (driver 580.159.03), image 0.1.0 digest 569f436f, vllm 0.28.1rc1.dev345+g4cc0cb6f7 prebuilt wheel; ready in 170s, chat completion ok"}

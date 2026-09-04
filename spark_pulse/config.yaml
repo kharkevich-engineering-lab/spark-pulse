@@ -2,13 +2,19 @@ auth_enabled: false
 benchmarking_enabled: false
 cluster_enabled: false
 default_container: vllm-node
-git_update_auto_pull: false
-git_update_check_interval_seconds: 3600
-git_update_enabled: true
 job_retention_days: 7
+# Deployment runtime: "upstream" forks spark-vllm-docker's run-recipe.sh,
+# "native" drives Docker from Python via the engine registry (solo only).
+runtime: upstream
+deploy_ready_timeout_seconds: 900
 default_gpu_mem_util: 0.8
 default_port_range_end: 9100
 default_port_range_start: 9000
+model_sources:
+  - name: hf
+    type: hf_hub
+    endpoint: https://huggingface.co
+    token_secret: hf_token
 mcp_enabled: true
 mcp_path: /mcp
 mcp_api_token: ""
@@ -22,3 +28,30 @@ oci_auto_update_schedule: "0 2 * * *"
 oci_auto_update_overwrite_local: false
 oci_cache_ttl_seconds: 300
 oci_background_check_interval_seconds: 900
+docker:
+  privileged: true
+  memory_limit_gb: 110
+  memory_swap_limit_gb: null
+  pids_limit: 4096
+  shm_size_gb: 64
+  nofile_limit: 1048576
+  cache_dirs:
+    - ~/.cache/vllm
+    - ~/.cache/flashinfer
+    - ~/.triton
+  keep_entrypoint: false
+nccl:
+  debug: null
+  socket_ifname: null
+  ib_hca: null
+
+# ── Engines ──────────────────────────────────────────────────────────────────
+default_engine: vllm
+engine_indexes:
+  - ghcr.io/kharkevich-engineering-lab/spark-pulse-engine/index:latest
+engine_index_cache_ttl_seconds: 3600
+engines:
+  vllm:
+    enabled: true
+  sglang:
+    enabled: true

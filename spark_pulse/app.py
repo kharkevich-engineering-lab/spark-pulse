@@ -1,7 +1,6 @@
 """FastAPI application factory for Spark Pulse."""
 
 import os
-import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -12,88 +11,49 @@ from fastapi.responses import FileResponse, JSONResponse
 from spark_pulse.config import config
 from spark_pulse.routers import (
     recipes,
+    recipe_import as recipe_import_router,
     deployments,
     memory,
     cache,
+    models as models_router,
+    images as images_router,
     settings,
     mods,
     benchmarking,
     config as config_router,
-    git_update as git_update_router,
     custom_recipes as custom_recipes_router,
     custom_files as custom_files_router,
     oci as oci_router,
+    docker as docker_router,
+    discovery as discovery_router,
+    cluster as cluster_router,
+    launch_script as launch_script_router,
+    health as health_router,
+    engines as engines_router,
 )
 from spark_pulse.auth import AuthMiddleware, router as auth_router
 from spark_pulse.sse import router as sse_router
 from spark_pulse.tools import is_simulation
-from spark_pulse.tools.git_update import check_updates
 from spark_pulse.tools.oci_registry import (
     start_background_updater,
     stop_background_updater,
 )
+from spark_pulse.tools.reconciliation import reconcile_all
+from spark_pulse.tools.health import load_health_tracking, HealthMonitor
 from spark_pulse.version import get_version
 from spark_pulse.mcp_http import handle_mcp, MCP_PATH
 
-# ── Background git update scheduler ──────────────────────────────────────────
+# ── Health monitor singleton ─────────────────────────────────────────────────
 
-_git_update_task: threading.Timer | None = None
-_git_update_running = False
-
-
-def _git_update_loop():
-    """Periodic loop that checks for git updates and emits events via SSE."""
-    global _git_update_task, _git_update_running
-
-    # Timer callbacks should do one check, then schedule the next callback.
-    # A while-loop here can enqueue unbounded timers.
-    if not _git_update_running:
-        return
-
-    try:
-        result = check_updates(config.spark_vllm_path)
-        if result.get("available"):
-            print(
-                f"Git update available: {result.get('local_version')} -> {result.get('remote_version')}"
-            )
-            # SSE broadcast happens through the SSE endpoint which clients poll
-            # at their configured interval
-    except Exception as e:
-        print(f"Git update check failed: {e}")
-
-    if not _git_update_running:
-        return
-
-    interval = config.git_update_check_interval_seconds
-    _git_update_task = threading.Timer(interval, _git_update_loop)
-    _git_update_task.daemon = True
-    _git_update_task.start()
+_health_monitor: HealthMonitor | None = None
 
 
-def _start_git_update_scheduler():
-    """Start the periodic git update check if enabled."""
-    global _git_update_task, _git_update_running
-
-    if not config.git_update_enabled:
-        return
-
-    _git_update_running = True
-    # Start the first check
-    _git_update_task = threading.Timer(60, _git_update_loop)  # First check after 1 min
-    _git_update_task.daemon = True
-    _git_update_task.start()
-    print("Git update scheduler started")
-
-
-def _stop_git_update_scheduler():
-    """Stop the periodic git update check."""
-    global _git_update_task, _git_update_running
-
-    _git_update_running = False
-    if _git_update_task is not None:
-        _git_update_task.cancel()
-        _git_update_task = None
-    print("Git update scheduler stopped")
+def _get_health_monitor() -> HealthMonitor:
+    """Get or create the default health monitor."""
+    global _health_monitor
+    if _health_monitor is None:
+        _health_monitor = HealthMonitor(check_interval=30.0)
+    return _health_monitor
 
 
 # ── SPA serving ──────────────────────────────────────────────────────────────
@@ -150,16 +110,43 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"Warning: could not create symlinks for custom files: {e}")
 
-    # Start background git update scheduler
-    _start_git_update_scheduler()
-
     # Start OCI background update checker
     start_background_updater()
+
+    # Run startup reconciliation to recover deployment/cluster state
+    try:
+        result = reconcile_all()
+        print(
+            f"Reconciliation complete: {result.clusters_reconciled} clusters, "
+            f"{result.deployments_reconciled} deployments, "
+            f"{result.orphaned_containers_cleaned} orphans cleaned"
+        )
+        if result.errors:
+            for err in result.errors:
+                print(f"Reconciliation warning: {err}")
+    except Exception as e:
+        print(f"Warning: reconciliation failed: {e}")
+
+    # Restore health monitoring tracking from disk
+    try:
+        monitor = _get_health_monitor()
+        tracked = load_health_tracking()
+        for dep in tracked.get("deployments", []):
+            monitor.track_deployment(dep["id"], dep.get("info", {}))
+        for cl in tracked.get("clusters", []):
+            monitor.track_cluster(cl["name"], cl.get("info", {}))
+        n_deps = len(tracked.get("deployments", []))
+        n_clus = len(tracked.get("clusters", []))
+        if n_deps or n_clus:
+            print(
+                f"Restored {n_deps} deployments, {n_clus} clusters from health tracking"
+            )
+    except Exception as e:
+        print(f"Warning: health tracking restore failed: {e}")
 
     yield
 
     # Cleanup on shutdown
-    _stop_git_update_scheduler()
     stop_background_updater()
 
     # Remove symlinks for custom recipes and mods
@@ -196,16 +183,24 @@ def create_app() -> FastAPI:
     # API routes
     app.include_router(custom_files_router.router)
     app.include_router(custom_recipes_router.router)
+    app.include_router(recipe_import_router.router)
     app.include_router(recipes.router)
     app.include_router(deployments.router)
     app.include_router(memory.router)
     app.include_router(cache.router)
+    app.include_router(models_router.router)
+    app.include_router(images_router.router)
     app.include_router(settings.router)
     app.include_router(mods.router)
     app.include_router(config_router.router)
-    app.include_router(git_update_router.router)
     app.include_router(benchmarking.router)
     app.include_router(oci_router.router)
+    app.include_router(docker_router.router)
+    app.include_router(discovery_router.router)
+    app.include_router(cluster_router.router)
+    app.include_router(launch_script_router.router)
+    app.include_router(health_router.router)
+    app.include_router(engines_router.router)
     app.include_router(auth_router)
     app.include_router(sse_router)
 

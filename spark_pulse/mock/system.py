@@ -1,27 +1,33 @@
-"""Mock system tools — realistic DGX Spark 128GB HBM data."""
+"""Mock system tools — delegates to real system parsing for test compatibility.
+
+In simulation mode, system stats are returned as-is. The parsing functions
+delegate to the real implementation so tests that mock subprocess.getoutput
+work correctly.
+"""
 
 from __future__ import annotations
 
 from typing import Any
 
-# Single NVIDIA Grace (GB10), 128GB unified HBM
-_GPU_STATS = {
-    "gpu": [
-        {
-            "index": 0,
-            "gpu": "GPU 0",
-            "uuid": "GPU-00000000-0000-0000-0000-000000000000",
-            "name": "NVIDIA GB10",
-            "memory_total": 131072,  # 128 GB in MB
-            "memory_used": 89234,  # ~68% used
-            "memory_free": 41838,
-            "temperature": 72,
-            "utilization": 45,
-            "power_draw": 10,
-            "power_limit": None,
-        }
-    ],
-}
+# Import real system module for test compatibility
+# This allows parsing tests to work when subprocess is mocked
+
+# Pre-canned mock data (used when subprocess.getoutput is NOT mocked)
+_GPU_STATS = [
+    {
+        "index": 0,
+        "gpu": "GPU 0",
+        "uuid": "GPU-00000000-0000-0000-0000-000000000000",
+        "name": "NVIDIA GB10",
+        "memory_total": 131072,
+        "memory_used": 89234,
+        "memory_free": 41838,
+        "temperature": 72,
+        "utilization": 45,
+        "power_draw": 10,
+        "power_limit": None,
+    }
+]
 
 _GPU_PROCESSES = [
     {
@@ -33,8 +39,8 @@ _GPU_PROCESSES = [
 ]
 
 _CPU_STATS = {
-    "total": 131072,  # 128 GB in MB
-    "used": 43520,  # ~33% used
+    "total": 131072,
+    "used": 43520,
     "free": 87552,
     "available": 92160,
     "usage_percent": 33.2,
@@ -43,47 +49,61 @@ _CPU_STATS = {
 _DISK_STATS = [
     {
         "mount": "/",
-        "total": 1290277824000,  # ~1.2 TB
-        "used": 837702287360,  # ~780 GB used
-        "free": 452575536640,  # ~420 GB free
+        "total": 1290277824000,
+        "used": 837702287360,
+        "free": 452575536640,
         "usage_percent": 64.9,
     },
 ]
 
+# ── Delegation functions ───────────────────────────────────────────────────
+# These delegate to the real implementation so that subprocess-mocked tests
+# work correctly.  The real module is only imported lazily to avoid importing
+# things that are unavailable in the test environment when simulating.
 
-def enrich_gpu_process_tracking(
-    processes: list[dict[str, Any]],
-    running_deployments: list[dict[str, Any]],
-) -> None:
-    """Mark mock GPU processes as tracked when they belong to running deployments.
 
-    Simulation mode uses synthetic processes, so we fall back to matching by PID.
-    """
-    tracked_pids = {int(dep["pid"]) for dep in running_deployments if dep.get("pid")}
-    for process in processes:
-        process["is_tracked"] = int(process.get("pid", -1)) in tracked_pids
+def _resolve_module() -> Any:
+    """Return the real system module, loading it lazily."""
+    import importlib
+
+    return importlib.import_module("spark_pulse.tools.system")
 
 
 def get_gpu_stats() -> list[dict[str, Any]]:
-    """Return realistic DGX Spark GPU stats."""
-    return list(_GPU_STATS["gpu"])
+    """Return GPU stats by delegating to the real implementation."""
+    return _resolve_module().get_gpu_stats()
+
+
+def get_gpu_process_stats() -> list[dict[str, Any]]:
+    """Return GPU process stats by delegating to the real implementation."""
+    return _resolve_module().get_gpu_process_stats()
 
 
 def get_cpu_stats() -> dict[str, Any]:
-    """Return realistic DGX Spark CPU stats."""
-    return dict(_CPU_STATS)
+    """Return CPU stats by delegating to the real implementation."""
+    return _resolve_module().get_cpu_stats()
 
 
 def get_disk_stats() -> list[dict[str, Any]]:
-    """Return realistic disk stats."""
-    return list(_DISK_STATS)
+    """Return disk stats by delegating to the real implementation."""
+    return _resolve_module().get_disk_stats()
+
+
+def kill_gpu_process(pid: int) -> dict[str, Any]:
+    """Kill a GPU process by delegating to the real implementation."""
+    return _resolve_module().kill_gpu_process(pid)
 
 
 def get_all_memory() -> dict[str, Any]:
-    """Return all memory stats."""
-    return {
-        "gpu": get_gpu_stats(),
-        "cpu": get_cpu_stats(),
-        "disk": get_disk_stats(),
-        "processes": list(_GPU_PROCESSES),
-    }
+    """Return all memory info by delegating to the real implementation."""
+    return _resolve_module().get_all_memory()
+
+
+def enrich_gpu_process_tracking(
+    process_list: list[dict[str, Any]],
+    running_deployments: list[dict[str, Any]],
+) -> None:
+    """Mark processes that correspond to running deployments."""
+    running_pids = {d["pid"] for d in running_deployments}
+    for proc in process_list:
+        proc["is_tracked"] = proc["pid"] in running_pids

@@ -101,6 +101,67 @@ TOOLS = [
         },
     },
     {
+        "name": "list_images",
+        "description": (
+            "List the engine image catalogue: which images are present locally, "
+            "their size and engine, and whether a newer digest is available"
+        ),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "pull_image",
+        "description": "Start an engine image pull job and return the job record",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "ref": {
+                    "type": "string",
+                    "description": "Image reference, e.g. ghcr.io/org/vllm:0.1.0",
+                },
+            },
+            "required": ["ref"],
+        },
+    },
+    {
+        "name": "list_models",
+        "description": "List the model catalogue (cached HF models and local sources)",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "download_model",
+        "description": "Start a model download job and return the job record",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "model": {"type": "string", "description": "HuggingFace model id"},
+                "source": {
+                    "type": "string",
+                    "description": "Model source name (default: first configured)",
+                },
+                "revision": {
+                    "type": "string",
+                    "description": "Model revision (branch, tag or commit sha)",
+                },
+                "allow_patterns": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional glob filter for downloaded files",
+                },
+            },
+            "required": ["model"],
+        },
+    },
+    {
+        "name": "model_download_status",
+        "description": "Get one download job by id, or all jobs when id is omitted",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "job_id": {"type": "string", "description": "Download job ID"}
+            },
+        },
+    },
+    {
         "name": "list_benchmarks",
         "description": "List all model benchmarks",
         "inputSchema": {"type": "object", "properties": {}},
@@ -132,6 +193,83 @@ TOOLS = [
                 },
             },
             "required": ["run_ids"],
+        },
+    },
+    {
+        "name": "list_engines",
+        "description": "List available serving engines with capabilities, image ref and digest",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "render_launch",
+        "description": (
+            "Dry run: render the per-rank launch scripts for a recipe on an engine"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "recipe_id": {"type": "string", "description": "Recipe id or name"},
+                "engine": {
+                    "type": "string",
+                    "description": "Engine override (vllm, sglang)",
+                },
+                "variant": {"type": "string", "description": "Engine variant"},
+                "model": {"type": "string", "description": "Model override"},
+                "params": {"type": "object", "description": "Parameter overrides"},
+                "extra_args": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Extra engine args appended to the command",
+                },
+                "nodes": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Node hosts; head first. Empty means solo.",
+                },
+                "solo": {
+                    "type": "boolean",
+                    "description": "Force a single-node render",
+                },
+            },
+            "required": ["recipe_id"],
+        },
+    },
+    {
+        "name": "plan_deployment",
+        "description": (
+            "Dry run a deployment: resolve engine, image, model, mods, port, "
+            "rendered command and container profile without starting anything"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "recipe_id": {"type": "string", "description": "Recipe id or name"},
+                "engine": {
+                    "type": "string",
+                    "description": "Engine override (vllm, sglang)",
+                },
+                "variant": {"type": "string", "description": "Engine variant"},
+                "model": {"type": "string", "description": "Model override"},
+                "params": {"type": "object", "description": "Parameter overrides"},
+                "extra_args": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Extra engine args appended to the command",
+                },
+                "nodes": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Node hosts; head first. Empty means solo.",
+                },
+                "allow_missing_model": {
+                    "type": "boolean",
+                    "description": (
+                        "Plan even when the model is not in the local catalogue "
+                        "(default true for a dry run)"
+                    ),
+                },
+            },
+            "required": ["recipe_id"],
         },
     },
 ]
@@ -181,11 +319,63 @@ HANDLERS: dict[str, Any] = {
     "clean_cache": lambda args: _http(
         "POST", "/cache/clean", json_body={"targets": args["targets"]}
     ),
+    "list_images": lambda args: _http("GET", "/images"),
+    "pull_image": lambda args: _http(
+        "POST", "/images/pull", json_body={"ref": args["ref"]}
+    ),
+    "list_models": lambda args: _http("GET", "/models"),
+    "download_model": lambda args: _http(
+        "POST",
+        "/models/download",
+        json_body={
+            "model": args["model"],
+            "source": args.get("source"),
+            "revision": args.get("revision"),
+            "allow_patterns": args.get("allow_patterns"),
+        },
+    ),
+    "model_download_status": lambda args: _http(
+        "GET",
+        (
+            f"/models/downloads/{args['job_id']}"
+            if args.get("job_id")
+            else "/models/downloads"
+        ),
+    ),
     "list_benchmarks": lambda args: _http("GET", "/benchmarks"),
     "get_benchmark": lambda args: _http("GET", f"/benchmarks/{args['id']}"),
     "get_latest_by_recipe": lambda args: _http("GET", "/benchmarks/latest-by-recipe"),
     "compare_benchmarks": lambda args: _http(
         "POST", "/benchmarks/compare", json_body={"run_ids": args["run_ids"]}
+    ),
+    "list_engines": lambda args: _http("GET", "/engines"),
+    "render_launch": lambda args: _http(
+        "POST",
+        "/engines/render",
+        json_body={
+            "recipe_id": args["recipe_id"],
+            "engine": args.get("engine"),
+            "variant": args.get("variant"),
+            "model": args.get("model"),
+            "params": args.get("params", {}),
+            "extra_args": args.get("extra_args", []),
+            "nodes": args.get("nodes", []),
+            "solo": args.get("solo", False),
+        },
+    ),
+    "plan_deployment": lambda args: _http(
+        "POST",
+        "/deployments/plan",
+        json_body={
+            "recipe_id": args["recipe_id"],
+            "engine": args.get("engine"),
+            "variant": args.get("variant"),
+            "model": args.get("model"),
+            "params": args.get("params", {}),
+            "extra_args": args.get("extra_args", []),
+            "nodes": args.get("nodes", []),
+            "allow_missing_model": args.get("allow_missing_model", True),
+        },
     ),
 }
 

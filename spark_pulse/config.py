@@ -17,7 +17,6 @@ _SETTINGS_PATH = Path.home() / ".config" / "spark-pulse" / "settings.json"
 _ENV_MAP: dict[str, str] = {
     "spark_vllm_path": "SPARK_VLLM_PATH",
     "webui_port": "WEBUI_PORT",
-    "git_update_check_interval_seconds": "GIT_UPDATE_CHECK_INTERVAL_SECONDS",
 }
 
 
@@ -122,30 +121,30 @@ class _Config:
         return int(self._data.get("job_retention_days", 7))
 
     @property
-    def git_update_enabled(self) -> bool:
-        raw = os.environ.get(
-            "GIT_UPDATE_ENABLED", str(self._data.get("git_update_enabled", True))
-        )
-        return raw.lower() == "true"
+    def runtime(self) -> str:
+        """Deployment runtime: ``upstream`` (run-recipe.sh) or ``native``.
 
-    @property
-    def git_update_check_interval_seconds(self) -> int:
-        return int(
-            os.environ.get(
-                "GIT_UPDATE_CHECK_INTERVAL_SECONDS",
-                str(self._data.get("git_update_check_interval_seconds", 3600)),
+        Anything unrecognised falls back to ``upstream`` — a typo must never
+        silently switch the deploy path.
+        """
+        value = (
+            str(
+                os.environ.get(
+                    "SPARK_PULSE_RUNTIME", self._data.get("runtime", "upstream")
+                )
             )
+            .strip()
+            .lower()
         )
+        return value if value in ("upstream", "native") else "upstream"
 
     @property
-    def git_update_auto_pull(self) -> bool:
-        return (
-            os.environ.get(
-                "GIT_UPDATE_AUTO_PULL",
-                str(self._data.get("git_update_auto_pull", False)),
-            ).lower()
-            == "true"
-        )
+    def native_runtime(self) -> bool:
+        return self.runtime == "native"
+
+    @property
+    def deploy_ready_timeout_seconds(self) -> int:
+        return int(self._data.get("deploy_ready_timeout_seconds", 900))
 
     @property
     def auth_enabled(self) -> bool:
@@ -181,6 +180,16 @@ class _Config:
             return str(self._data["oidc_client_secret"])
         secrets = _load_secrets()
         return str(secrets.get("oidc_client_secret", ""))
+
+    @property
+    def model_sources(self) -> list:
+        """Configured model sources (HF hub / mirrors / local paths)."""
+        raw = self._data.get("model_sources") or []
+        return [dict(s) for s in raw if isinstance(s, dict)]
+
+    @model_sources.setter
+    def model_sources(self, value: list) -> None:
+        self._data["model_sources"] = value
 
     @property
     def mcp_enabled(self) -> bool:
@@ -259,6 +268,50 @@ class _Config:
             )
         )
 
+    # ── Engines ────────────────────────────────────────────────────────────
+
+    @property
+    def default_engine(self) -> str:
+        return str(
+            os.environ.get(
+                "SPARK_PULSE_DEFAULT_ENGINE", self._data.get("default_engine", "vllm")
+            )
+        )
+
+    @property
+    def engine_indexes(self) -> list[str]:
+        """OCI references of engine index artifacts, in priority order."""
+        raw = os.environ.get("SPARK_PULSE_ENGINE_INDEXES")
+        if raw is not None:
+            return [r.strip() for r in raw.split(",") if r.strip()]
+        value = self._data.get("engine_indexes") or []
+        if isinstance(value, str):
+            return [v.strip() for v in value.split(",") if v.strip()]
+        return [str(v) for v in value]
+
+    @property
+    def engine_index_cache_ttl_seconds(self) -> int:
+        return int(
+            os.environ.get(
+                "SPARK_PULSE_ENGINE_INDEX_CACHE_TTL_SECONDS",
+                str(self._data.get("engine_index_cache_ttl_seconds", 3600)),
+            )
+        )
+
+    @property
+    def engines(self) -> dict:
+        value = self._data.get("engines")
+        return value if isinstance(value, dict) else {}
+
+    def engine_enabled(self, engine: str) -> bool:
+        """Whether *engine* may be selected. Unknown engines default to on."""
+        entry = self.engines.get(engine)
+        if isinstance(entry, dict):
+            return bool(entry.get("enabled", True))
+        if isinstance(entry, bool):
+            return entry
+        return True
+
     def save(self):
         # Legacy — keep for compat but user settings now go to settings.json
         user = _load_user_settings()
@@ -293,12 +346,94 @@ class _Config:
         secrets.pop(key, None)
         _save_secrets(secrets)
 
+    def get_secret(self, key: str) -> str:
+        """Return an arbitrary stored secret (env var takes priority)."""
+        env_name = key.upper()
+        return os.environ.get(env_name, "") or str(_load_secrets().get(key, ""))
+
     def hf_token_masked(self) -> str:
         """Return a masked representation safe to send to the UI."""
         token = self.hf_token
         if not token:
             return ""
         return "\u2022" * 8 + token[-4:]
+
+    # ── Docker / NCCL ────────────────────────────────────────────────────────
+
+    @property
+    def docker_privileged(self) -> bool:
+        return bool(self._data.get("docker", {}).get("privileged", True))
+
+    @property
+    def docker_memory_limit_gb(self) -> float | None:
+        val = self._data.get("docker", {}).get("memory_limit_gb")
+        return float(val) if val else None
+
+    @property
+    def docker_memory_swap_limit_gb(self) -> float | None:
+        val = self._data.get("docker", {}).get("memory_swap_limit_gb")
+        return float(val) if val else None
+
+    @property
+    def docker_pids_limit(self) -> int:
+        return int(self._data.get("docker", {}).get("pids_limit", 4096))
+
+    @property
+    def docker_shm_size_gb(self) -> int:
+        return int(self._data.get("docker", {}).get("shm_size_gb", 64))
+
+    @property
+    def docker_nofile_limit(self) -> int:
+        return int(self._data.get("docker", {}).get("nofile_limit", 1048576))
+
+    @property
+    def docker_cache_dirs(self) -> list[str]:
+        return self._data.get("docker", {}).get(
+            "cache_dirs",
+            [
+                "~/.cache/vllm",
+                "~/.cache/flashinfer",
+                "~/.triton",
+            ],
+        )
+
+    @property
+    def docker_overrides(self) -> dict:
+        """Raw ``docker:`` block — only keys the user actually set.
+
+        The ``docker_*`` accessors always answer with a default, so they cannot
+        say whether a value was configured. The native container spec needs
+        that distinction to merge config on top of the engine's own profile.
+        """
+        value = self._data.get("docker")
+        return dict(value) if isinstance(value, dict) else {}
+
+    @property
+    def docker_keep_entrypoint(self) -> bool:
+        return bool(self._data.get("docker", {}).get("keep_entrypoint", False))
+
+    @property
+    def nccl_debug(self) -> str | None:
+        return self._data.get("nccl", {}).get("debug")
+
+    @property
+    def nccl_socket_ifname(self) -> str | None:
+        return self._data.get("nccl", {}).get("socket_ifname")
+
+    @property
+    def nccl_ib_hca(self) -> str | None:
+        return self._data.get("nccl", {}).get("ib_hca")
+
+    @property
+    def nccl_ib_disable(self) -> bool:
+        return bool(self._data.get("nccl", {}).get("ib_disable", False))
+
+    # ── Mod Settings ───────────────────────────────────────────────────────
+
+    @property
+    def mod_network_policy(self) -> str:
+        """Get mod network access policy: allow, warn, or deny."""
+        return str(self._data.get("mod", {}).get("network_policy", "warn"))
 
 
 config = _Config()

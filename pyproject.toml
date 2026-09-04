@@ -23,14 +23,19 @@ dependencies = [
     "httpx>=0.28.0",
     "filelock>=3.12.0",
     "oras>=0.2.0",
+    "docker>=7.0.0",
+    "huggingface_hub>=0.26.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "black>=24.8.0",
     "pytest>=8.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-env>=1.6.0",
     "httpx>=0.28",
     "oidc-provider-mock>=0.4.0",
+    "jsonschema>=4.20",
 ]
 mcp = [
     "mcp>=1.0.0",
@@ -56,6 +61,8 @@ spark-pulse = "spark_pulse.cli:main"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "--tb=short -v"
+env = ["SIMULATION_MODE=1"]
+asyncio_mode = "auto"
 
 # ── Packaging ───────────────────────────────────────────────────────────────
 
@@ -68,4 +75,7 @@ spark_pulse = [
     "ui/**/*",
     "service/templates/**/*",
     "registries.yaml",
+    "engines/defaults/*.yaml",
+    "recipes/*.yaml",
+    "schemas/*.json",
 ]

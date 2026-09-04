@@ -40,6 +40,7 @@ All scripts live in `scripts/` and are executable (`chmod +x`).
 | [run-production.sh](#run-productionsh) | Production | ❌ | Built UI bundled | Configurable | Real environment (production mode) |
 | [build-ui.sh](#build-uish) | N/A | N/A | N/A | N/A | Build frontend bundle only |
 | [release.sh](#releasesh) | N/A | N/A | N/A | N/A | Bump version and build distributable |
+| [native-deploy-check.sh](#native-deploy-checksh) | Production | N/A | — | N/A | Verify the native deploy path on a real Spark |
 
 ---
 
@@ -156,6 +157,58 @@ SPARK_PULSE_AUTH_ENABLED=true spark-pulse start
 
 ---
 
+## Deployment runtimes
+
+`runtime` selects how a deployment is launched:
+
+| Value | What happens |
+|---|---|
+| `upstream` *(default)* | Forks `spark-vllm-docker/run-recipe.sh` and tracks the PID. |
+| `native` | Spark Pulse drives Docker itself: it starts an idle container from the engine's image, applies the recipe's mods over `docker exec`, execs the rendered launch script with its output redirected to PID 1's stdout (so `docker logs` carries it), and waits on the engine's readiness endpoint. |
+
+`native` currently handles **solo deployments only**; a multi-node request is
+refused with an explanation rather than silently falling back. Everything else
+— stop, delete, logs, status — follows each deployment record's own `runtime`,
+so records stay usable across a flag flip.
+
+```bash
+# Per-run
+SPARK_PULSE_RUNTIME=native ./scripts/run-production.sh
+
+# Or persist it in ~/.config/spark-pulse/settings.json
+{"runtime": "native"}
+```
+
+`POST /api/deployments/plan` is the dry run for either mode: it resolves the
+engine, image ref, model, mods, port, rendered command and container profile
+without starting anything. The Deploy drawer's **Preview** button and the
+`plan_deployment` MCP tool both call it.
+
+### `./scripts/native-deploy-check.sh`
+
+**Best for:** verifying the native path on real hardware — the one thing the
+simulation-mode test suite cannot cover, since it needs a Docker daemon, a GPU
+and the engine image pulled.
+
+Deploys a recipe through the REST API, waits for readiness, hits `/v1/models`
+on the served port, and tears the deployment down again. Any failure exits
+non-zero after printing the deployment's log tail.
+
+```bash
+./scripts/native-deploy-check.sh qwen3-8b
+./scripts/native-deploy-check.sh qwen3-8b --engine sglang --timeout 1200
+./scripts/native-deploy-check.sh qwen3-8b --keep      # leave it running
+./scripts/native-deploy-check.sh --help
+```
+
+**Prerequisites on the Spark:**
+
+- spark-pulse running with `runtime: native` (the script refuses otherwise)
+- the engine image pulled and the recipe's model already in the local catalogue
+- `curl` and `jq` on `PATH`
+
+---
+
 ## Build & Release
 
 ### `./scripts/build-ui.sh`
@@ -208,4 +261,6 @@ Environment variables > ~/.config/spark-pulse/settings.json > config.yaml
 | `oidc_provider_url` | string | *(empty)* | OIDC provider URL |
 | `oidc_client_id` | string | *(empty)* | OIDC client ID |
 | `mcp_enabled` | bool | `true` | Enable MCP server |
+| `runtime` | string | `upstream` | `upstream` (run-recipe.sh) or `native` (Docker driven from Python, solo only). Env: `SPARK_PULSE_RUNTIME` |
+| `deploy_ready_timeout_seconds` | int | `900` | How long a native deploy waits for the engine's readiness endpoint |
 | `simulation_mode` | bool | *(env only)* | Set `SIMULATION_MODE=1` to mock tools |

@@ -82,6 +82,10 @@ def _reconcile(deployments: list[dict[str, Any]]) -> list[dict[str, Any]]:
     changed = False
     now = datetime.now(timezone.utc).isoformat()
     for dep in deployments:
+        # Native deployments are containers, not forked processes: they carry
+        # no PID and are reconciled from Docker labels by native_runtime.
+        if dep.get("runtime") == "native":
+            continue
         status = dep.get("status")
         if status == "running":
             pid = dep.get("pid")
@@ -204,6 +208,7 @@ def _purge_expired(deployments: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def list_deployments() -> list[dict[str, Any]]:
+    """Every persisted deployment record, upstream ones reconciled by PID."""
     return _purge_expired(_reconcile(_load()))
 
 

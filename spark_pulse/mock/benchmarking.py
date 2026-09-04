@@ -13,7 +13,12 @@ from filelock import FileLock
 
 logger = logging.getLogger(__name__)
 
-_BENCHMARKS_PATH = Path(__file__).resolve().parent.parent / "data" / "benchmarks.json"
+# ── Constants (must match real module for monkeypatching to work) ────────────
+
+_RETENTION_DAYS = 90
+_BENCHMARKS_PATH: Path = (
+    Path(__file__).resolve().parent.parent / "data" / "benchmarks.json"
+)
 _BENCHMARKS_LOCK = FileLock(f"{_BENCHMARKS_PATH}.lock", timeout=30)
 
 # Realistic pre-canned benchmark results keyed by model family
@@ -142,19 +147,78 @@ def create_benchmark(
     recipe_id: str = "",
     recipe_name: str = "",
 ) -> dict:
-    """Mock: creates and immediately completes a benchmark record."""
+    """Mock: creates a benchmark record with status='running'."""
     logger.info("Mock create_benchmark called for deployment %s", deployment_id)
-    return run_benchmark(deployment_id, baseline_id, params, recipe_id, recipe_name)
+    now = datetime.now(timezone.utc).isoformat()
+    benchmark_id = str(uuid.uuid4())
+    record: dict = {
+        "benchmark_id": benchmark_id,
+        "deployment_id": deployment_id,
+        "recipe_id": recipe_id,
+        "recipe_name": recipe_name,
+        "baseline_id": baseline_id,
+        "status": "running",
+        "started_at": now,
+        "completed_at": None,
+        "params": params or {},
+    }
+    with _atomic_benchmarks() as benchmarks:
+        benchmarks.append(record)
+    return record
 
 
 def execute_benchmark(benchmark_id: str) -> None:
-    """Mock: no-op — benchmark is already completed during create_benchmark."""
+    """Mock: completes a running benchmark, mimicking llama_benchy behavior."""
+    with _atomic_benchmarks() as benchmarks:
+        for b in benchmarks:
+            if b["benchmark_id"] == benchmark_id and b.get("status") == "running":
+                params = b.get("params", {})
+                try:
+                    try:
+                        # Try to use llama_benchy if available (mimics real behavior)
+                        import llama_benchy  # noqa: F401
+                    except ImportError:
+                        raise RuntimeError(
+                            "llama-benchy is not installed. Install it with: "
+                            "pip install spark-pulse[benchmarking]"
+                        )
+
+                    bench_results = llama_benchy.run(
+                        target=f"http://localhost:{params.get('port', 8000)}",
+                        model_name=params.get("model", "unknown"),
+                        benchmarks=params.get("benchmarks", ["throughput", "latency"]),
+                        context_length=params.get("context_length", 4096),
+                    )
+                    now = datetime.now(timezone.utc).isoformat()
+                    b["status"] = "completed"
+                    b["completed_at"] = now
+                    b["results"] = bench_results
+                except (KeyboardInterrupt, SystemExit):
+                    raise
+                except Exception as e:
+                    now = datetime.now(timezone.utc).isoformat()
+                    b["status"] = "error"
+                    b["completed_at"] = now
+                    b["results"] = {"error": str(e)}
+                return
 
 
 def list_benchmarks() -> list[dict]:
     """Return all mock benchmarks sorted by started_at descending."""
     data = _load()
+    data = _purge_expired(data)
     data.sort(key=lambda b: b["started_at"], reverse=True)
+    return data
+
+
+def _purge_expired(data: list[dict]) -> list[dict]:
+    """Remove benchmarks older than _RETENTION_DAYS."""
+    if not data:
+        return []
+    cutoff = datetime.now(timezone.utc).timestamp() - _RETENTION_DAYS * 86400
+    data = [
+        b for b in data if datetime.fromisoformat(b["started_at"]).timestamp() > cutoff
+    ]
     return data
 
 
@@ -279,3 +343,12 @@ def get_baseline_comparison(benchmark_id: str) -> dict | None:
             }
 
     return comparison
+
+
+# ── Test helpers ──────────────────────────────────────────────────────────────
+
+
+def _reset_cache() -> None:
+    """Reset the benchmark cache (used by tests to clear state)."""
+    if _BENCHMARKS_PATH.exists():
+        _BENCHMARKS_PATH.unlink()

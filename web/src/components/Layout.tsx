@@ -3,17 +3,50 @@ import { doRefresh } from "@/lib/refresh";
 import { type ThemeMode, getTheme, setTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import { useConfig } from "@/lib/config";
-import { Activity, Bot, Copyright, Database, Flame, ListChecks, LogOut, Menu, Moon, MoonStar, Package, RotateCw, Settings, Sun, User, X, Zap } from "lucide-react";
+import { Activity, Bot, Boxes, Copyright, Database, Flame, Layers, ListChecks, LogOut, Menu, Moon, MoonStar, Package, RotateCw, Settings, Sun, User, X, Zap, Server } from "lucide-react";
 import { SiGithub, SiPypi } from "@icons-pack/react-simple-icons";
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import { Link, useLocation } from "react-router-dom";
-import GitUpdateNotification from "@/components/Notifications";
+import { useSSEConnection } from "@/hooks/useSSEConnection";
+import { SSEConnectionState } from "@/lib/operations";
+import { useSSEStore } from "@/lib/operationStore";
+
+// ── SSE Connection Indicator ─────────────────────────────────────────────────
+
+function SSEConnectionIndicator() {
+  // Call hook at top level — manages the EventSource connection
+  const emptyCallback = useCallback(() => {}, []);
+  useSSEConnection("/sse/health", emptyCallback, {
+    maxRetries: 3,
+    retryDelayMs: 5000,
+  });
+
+  // Subscribe to store for real-time status updates — read directly, no local state
+  const connection = useSSEStore((s) => s.connections.get("/sse/health"));
+  const isConnected = connection?.state === SSEConnectionState.CONNECTED;
+
+  return (
+    <div
+      className="p-2 rounded-lg transition-colors"
+      title={isConnected ? "SSE Connected" : "SSE Disconnected"}
+    >
+      <div
+        className={`w-2 h-2 rounded-full ${
+          isConnected ? "bg-success" : "bg-danger"
+        }`}
+      />
+    </div>
+  );
+}
 
 const NAV = [
   { href: "/", label: "Recipes & Mods", icon: Zap },
   { href: "/jobs", label: "Inference", icon: ListChecks },
+  { href: "/cluster", label: "Cluster", icon: Server },
   { href: "/benchmarking", label: "Benchmarking", icon: Flame },
   { href: "/monitoring", label: "Monitoring", icon: Activity },
+  { href: "/models", label: "Models", icon: Boxes },
+  { href: "/images", label: "Images", icon: Layers },
   { href: "/cache", label: "Cache", icon: Database },
   { href: "/mcp", label: "MCP", icon: Bot },
   { href: "/oci", label: "OCI Registry", icon: Package },
@@ -31,13 +64,12 @@ function HeaderInner() {
   }, []);
 
   const authEnabled = config?.auth_enabled ?? false;
-  const gitUpdateEnabled = config?.git_update_enabled ?? false;
   // themeKey is used to force re-render on storage event
   void themeKey;
 
   return (
     <div className="hidden lg:flex fixed top-4 right-4 z-50 items-center gap-1.5">
-      {gitUpdateEnabled && <GitUpdateNotification />}
+      <SSEConnectionIndicator />
       <button
         onClick={doRefresh}
         className="p-2 rounded-lg hover:bg-surface-hover transition-colors"
@@ -89,7 +121,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [version, setVersion] = useState("");
   const { config } = useConfig();
   const benchmarkingEnabled = config?.benchmarking_enabled ?? false;
-  const gitUpdateEnabled = config?.git_update_enabled ?? false;
 
   useEffect(() => {
     fetch("/version")
@@ -100,9 +131,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   const navItems = useMemo(() => NAV.filter((item) => {
     if (item.href === "/benchmarking") return benchmarkingEnabled;
-    if (item.href === "/git-update") return gitUpdateEnabled;
     return true;
-  }), [benchmarkingEnabled, gitUpdateEnabled]);
+  }), [benchmarkingEnabled]);
 
   return (
     <div className="flex h-screen bg-bg text-text">

@@ -12,6 +12,8 @@ import CustomRecipeDrawer from "@/components/CustomRecipeDrawer";
 import CustomModDrawer from "@/components/CustomModDrawer";
 import NewRecipeModal from "@/components/NewRecipeModal";
 import NewModModal from "@/components/NewModModal";
+import RecipeImportPanel from "@/components/RecipeImportPanel";
+import type { DeployOptionsValue } from "@/components/DeployOptions";
 import { setRefresh } from "@/lib/refresh";
 
 // ── File-kind badge colours ──────────────────────────────────────────────────
@@ -265,10 +267,17 @@ export default function RecipesPage() {
     }
   };
 
-  const handleDeploy = async (name: string, params: Record<string, unknown>) => {
+  const handleDeploy = async (name: string, params: Record<string, unknown>, options?: DeployOptionsValue) => {
     if (!selected) return;
     try {
-      await createDeployment({ recipe_id: selected.recipe.id, name, params });
+      await createDeployment({
+        recipe_id: selected.recipe.id,
+        name,
+        params,
+        engine: options?.engine,
+        model: options?.model,
+        extra_args: options?.extra_args?.length ? options.extra_args : undefined,
+      });
       setSelected(null);
     } catch (e) {
       setAlertModal({ title: "Error", message: e instanceof Error ? e.message : "Failed to deploy" });
@@ -421,6 +430,8 @@ export default function RecipesPage() {
             </>
           ) : (
             <>
+              <RecipeImportPanel onImported={refetch} />
+
               {recipes && recipes.length > 0 && (
                 <>
                   <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">

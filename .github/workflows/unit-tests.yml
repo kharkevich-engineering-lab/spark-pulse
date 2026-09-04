@@ -3,8 +3,31 @@ on:
   pull_request:
     types: [opened, edited, reopened, synchronize]
 jobs:
-  unit-tests:
-    name: Run Unit testing
+  python-unit-tests:
+    name: Run Python unit tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Run Python tests
+        run: |
+          pytest --tb=short -v tests/
+
+  ui-unit-tests:
+    name: Run UI unit tests
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -18,12 +41,35 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 24
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
       - name: Install dependencies
         working-directory: web
         run: npm ci
       - name: Run frontend build
         working-directory: web
         run: npm run build
+      - name: Run UI unit tests
+        working-directory: web
+        run: npm run test:run
+
+  e2e-tests:
+    name: Run E2E tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
@@ -32,9 +78,19 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
-      - name: Run Python tests
+      - name: Install frontend dependencies
+        working-directory: web
+        run: npm ci
+      - name: Build frontend
+        working-directory: web
+        run: npm run build
+      - name: Start mock backend for Playwright
         run: |
-          pytest --tb=short -v tests/
+          SIMULATION_MODE=1 uvicorn spark_pulse.app:app --host 0.0.0.0 --port 8100 --workers 1 &
+          for i in $(seq 1 30); do curl -sf http://localhost:8100/health && break; sleep 1; done || exit 1
+      - name: Run Playwright e2e tests
+        working-directory: web
+        run: npm run test:e2e
   pre-commit:
     name: Run pre-commit
     runs-on: ubuntu-latest
@@ -60,7 +116,9 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]" ruff
+          # Pin the linters to the versions in .pre-commit-config.yaml so CI
+          # and the pre-commit hook agree on what "clean" means.
+          pip install -e ".[dev]" "ruff==0.12.0" "black==25.1.0"
           cd web && npm ci && cd ..
 
       - name: Run Python linters

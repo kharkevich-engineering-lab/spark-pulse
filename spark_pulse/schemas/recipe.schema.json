@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://kharkevich-engineering-lab.github.io/spark-pulse/schemas/recipe.schema.json",
+  "title": "Spark Pulse Recipe",
+  "description": "Any Spark Pulse recipe. The `recipe_version` field selects the format: absent or \"1\" is v1 (the spark-vllm-docker format), \"2\" is the structured multi-engine format.",
+  "type": "object",
+  "oneOf": [
+    {
+      "$ref": "https://kharkevich-engineering-lab.github.io/spark-pulse/schemas/recipe-v1.schema.json"
+    },
+    {
+      "$ref": "https://kharkevich-engineering-lab.github.io/spark-pulse/schemas/recipe-v2.schema.json"
+    }
+  ]
+}

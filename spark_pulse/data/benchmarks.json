@@ -1,0 +1,274 @@
+[
+  {
+    "benchmark_id": "62a0afa8-ea17-47d0-810f-d147825325f0",
+    "deployment_id": "test-deployment",
+    "recipe_id": "",
+    "recipe_name": "",
+    "baseline_id": null,
+    "status": "completed",
+    "started_at": "2026-06-20T19:41:12.266116+00:00",
+    "completed_at": "2026-06-20T19:41:12.266116+00:00",
+    "params": {
+      "benchmarks": [
+        "throughput"
+      ]
+    },
+    "results": {
+      "throughput": 43.64,
+      "latency_ms": 11.87,
+      "decode_latency_ms": 6.85,
+      "gpu_memory_gb": 65.1,
+      "gpu_utilization": 90.9,
+      "prefill_speed": 309.4
+    }
+  },
+  {
+    "benchmark_id": "b3ffa26f-9610-4703-ac37-3b2a5207ee13",
+    "deployment_id": "test-deployment",
+    "recipe_id": "",
+    "recipe_name": "",
+    "baseline_id": null,
+    "status": "completed",
+    "started_at": "2026-06-20T19:41:22.842684+00:00",
+    "completed_at": "2026-06-20T19:41:22.842684+00:00",
+    "params": {
+      "benchmarks": [
+        "throughput"
+      ]
+    },
+    "results": {
+      "throughput": 45.36,
+      "latency_ms": 12.34,
+      "decode_latency_ms": 7.13,
+      "gpu_memory_gb": 67.6,
+      "gpu_utilization": 94.5,
+      "prefill_speed": 321.7
+    }
+  },
+  {
+    "benchmark_id": "45117930-f28b-4af2-ae4d-06d995c23957",
+    "deployment_id": "test-deployment",
+    "recipe_id": "",
+    "recipe_name": "",
+    "baseline_id": null,
+    "status": "completed",
+    "started_at": "2026-06-22T02:34:36.957296+00:00",
+    "completed_at": "2026-06-22T02:34:36.957296+00:00",
+    "params": {
+      "benchmarks": [
+        "throughput"
+      ]
+    },
+    "results": {
+      "throughput": 44.35,
+      "latency_ms": 12.07,
+      "decode_latency_ms": 6.97,
+      "gpu_memory_gb": 66.1,
+      "gpu_utilization": 92.4,
+      "prefill_speed": 314.5
+    }
+  },
+  {
+    "benchmark_id": "3ce16183-c727-4b26-b3bc-80d7d5d1f4ef",
+    "deployment_id": "test-deployment",
+    "recipe_id": "",
+    "recipe_name": "",
+    "baseline_id": null,
+    "status": "completed",
+    "started_at": "2026-06-22T02:37:38.584237+00:00",
+    "completed_at": "2026-06-22T02:37:38.584237+00:00",
+    "params": {
+      "benchmarks": [
+        "throughput"
+      ]
+    },
+    "results": {
+      "throughput": 45.11,
+      "latency_ms": 12.28,
+      "decode_latency_ms": 7.09,
+      "gpu_memory_gb": 67.3,
+      "gpu_utilization": 94.0,
+      "prefill_speed": 319.9
+    }
+  },
+  {
+    "benchmark_id": "8d30ec71-51d5-487a-aaa8-bf6c875c7f2f",
+    "deployment_id": "test-deployment",
+    "recipe_id": "",
+    "recipe_name": "",
+    "baseline_id": null,
+    "status": "error",
+    "started_at": "2026-06-22T02:44:52.896578+00:00",
+    "completed_at": "2026-06-22T02:44:52.898176+00:00",
+    "params": {
+      "benchmarks": [
+        "throughput"
+      ]
+    },
+    "results": {
+      "error": "llama-benchy is not installed. Install it with: pip install spark-pulse[benchmarking]"
+    }
+  },
+  {
+    "benchmark_id": "bf26dd75-8549-4079-bec9-48f48a768fdc",
+    "deployment_id": "test-deployment",
+    "recipe_id": "",
+    "recipe_name": "",
+    "baseline_id": null,
+    "status": "error",
+    "started_at": "2026-06-22T02:52:06.232942+00:00",
+    "completed_at": "2026-06-22T02:52:06.234762+00:00",
+    "params": {
+      "benchmarks": [
+        "throughput"
+      ]
+    },
+    "results": {
+      "error": "llama-benchy is not installed. Install it with: pip install spark-pulse[benchmarking]"
+    }
+  },
+  {
+    "benchmark_id": "f8cfdba2-53fe-4eee-8553-d003ebe5ec11",
+    "deployment_id": "test-deployment",
+    "recipe_id": "",
+    "recipe_name": "",
+    "baseline_id": null,
+    "status": "error",
+    "started_at": "2026-06-22T02:55:01.281300+00:00",
+    "completed_at": "2026-06-22T02:55:01.282989+00:00",
+    "params": {
+      "benchmarks": [
+        "throughput"
+      ]
+    },
+    "results": {
+      "error": "llama-benchy is not installed. Install it with: pip install spark-pulse[benchmarking]"
+    }
+  },
+  {
+    "benchmark_id": "df0e8c25-68f6-4a84-b0b1-08cbbd01cc28",
+    "deployment_id": "test-deployment",
+    "recipe_id": "",
+    "recipe_name": "",
+    "baseline_id": null,
+    "status": "error",
+    "started_at": "2026-06-22T02:57:32.894178+00:00",
+    "completed_at": "2026-06-22T02:57:32.896015+00:00",
+    "params": {
+      "benchmarks": [
+        "throughput"
+      ]
+    },
+    "results": {
+      "error": "llama-benchy is not installed. Install it with: pip install spark-pulse[benchmarking]"
+    }
+  },
+  {
+    "benchmark_id": "2ac1b006-a079-49af-be9e-4363138c5c26",
+    "deployment_id": "test-deployment",
+    "recipe_id": "",
+    "recipe_name": "",
+    "baseline_id": null,
+    "status": "error",
+    "started_at": "2026-06-22T03:02:19.070053+00:00",
+    "completed_at": "2026-06-22T03:02:19.072028+00:00",
+    "params": {
+      "benchmarks": [
+        "throughput"
+      ]
+    },
+    "results": {
+      "error": "llama-benchy is not installed. Install it with: pip install spark-pulse[benchmarking]"
+    }
+  },
+  {
+    "benchmark_id": "329631c0-0c00-4437-bb02-9b5a0838d55e",
+    "deployment_id": "test-deployment",
+    "recipe_id": "",
+    "recipe_name": "",
+    "baseline_id": null,
+    "status": "error",
+    "started_at": "2026-06-22T03:06:07.626286+00:00",
+    "completed_at": "2026-06-22T03:06:07.628098+00:00",
+    "params": {
+      "benchmarks": [
+        "throughput"
+      ]
+    },
+    "results": {
+      "error": "llama-benchy is not installed. Install it with: pip install spark-pulse[benchmarking]"
+    }
+  },
+  {
+    "benchmark_id": "c5d48342-9afe-4ebd-bec9-94fb38292d3c",
+    "deployment_id": "test-deployment",
+    "recipe_id": "",
+    "recipe_name": "",
+    "baseline_id": null,
+    "status": "error",
+    "started_at": "2026-06-22T03:10:31.928043+00:00",
+    "completed_at": "2026-06-22T03:10:31.929982+00:00",
+    "params": {
+      "benchmarks": [
+        "throughput"
+      ]
+    },
+    "results": {
+      "error": "llama-benchy is not installed. Install it with: pip install spark-pulse[benchmarking]"
+    }
+  },
+  {
+    "benchmark_id": "65ae46f2-21dc-4cea-b653-1b144c8c264e",
+    "deployment_id": "test-deployment",
+    "recipe_id": "",
+    "recipe_name": "",
+    "baseline_id": null,
+    "status": "error",
+    "started_at": "2026-06-22T03:33:43.378352+00:00",
+    "completed_at": "2026-06-22T03:33:43.380131+00:00",
+    "params": {
+      "benchmarks": [
+        "throughput"
+      ]
+    },
+    "results": {
+      "error": "llama-benchy is not installed. Install it with: pip install spark-pulse[benchmarking]"
+    }
+  },
+  {
+    "benchmark_id": "f89c2743-0204-4733-bfa8-bc9235352384",
+    "deployment_id": "test-deployment",
+    "recipe_id": "",
+    "recipe_name": "",
+    "baseline_id": null,
+    "status": "error",
+    "started_at": "2026-06-22T05:13:29.964158+00:00",
+    "completed_at": "2026-06-22T05:13:29.965917+00:00",
+    "params": {
+      "benchmarks": [
+        "throughput"
+      ]
+    },
+    "results": {
+      "error": "llama-benchy is not installed. Install it with: pip install spark-pulse[benchmarking]"
+    }
+  },
+  {
+    "benchmark_id": "45570016-600a-4f41-af68-7c4426c366bd",
+    "deployment_id": "test-deployment",
+    "recipe_id": "",
+    "recipe_name": "",
+    "baseline_id": null,
+    "status": "error",
+    "started_at": "2026-06-22T05:17:15.503728+00:00",
+    "completed_at": "2026-06-22T05:17:15.505510+00:00",
+    "params": {
+      "benchmarks": [
+        "throughput"
+      ]
+    },
+    "results": {
+      "error": "llama-benchy is not installed. Install it with: pip install spark-pulse[benchmarking]"
+    }
+  }
+]

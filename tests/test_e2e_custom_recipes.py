@@ -3,7 +3,7 @@
 These tests verify the customization CRUD flow against a running server.
 
 Prerequisites:
-    1. Run: pytest tests/test_e2e_git_update.py (uses similar fixture pattern)
+    1. Run: pytest tests/test_e2e_custom_recipes.py
     2. Or start the backend server separately
 
 Usage:
@@ -66,12 +66,16 @@ def e2e_config(spark_vllm_dir, custom_recipe_file):
 
     os.environ["SPARK_PULSE_AUTH_ENABLED"] = "false"
     config._data["spark_vllm_path"] = spark_vllm_dir
-    config._data["git_update_enabled"] = False  # disable git update for clean tests
 
-    # Patch custom recipes path
+    # Patch custom recipes path (both standalone and inline synthetic module)
     import spark_pulse.tools.custom_recipes as cr
 
     cr._CUSTOM_PATH = custom_recipe_file
+
+    # Also patch the synthetic custom_recipes submodule inside mock/recipes.py
+    import spark_pulse.mock.recipes as mock_recipes
+
+    mock_recipes.custom_recipes._CUSTOM_PATH = custom_recipe_file
 
     return config
 

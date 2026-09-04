@@ -1,8 +1,10 @@
 import { useState, useEffect } from "react";
-import { fetchSettings, updateSettings, fetchSecrets, saveSecrets, deleteSecret, fetchGitUpdateStatus, triggerGitFetch, triggerGitPull } from "@/lib/api";
+import { fetchSettings, updateSettings, fetchSecrets, saveSecrets, deleteSecret, runDiscovery, applyNcclDefaults, fetchEngines, refreshEngines, type DiscoveryResult, type ValidationResult } from "@/lib/api";
 import { useQuery } from "@/hooks/useQuery";
-import { Settings as SettingsIcon, Loader2, AlertCircle, Check, KeyRound, Eye, EyeOff, Trash2, Lock, Server, Clock, GitBranch, GitCommit, ArrowDownUp } from "lucide-react";
+import { Settings as SettingsIcon, Loader2, AlertCircle, Check, KeyRound, Eye, EyeOff, Trash2, Lock, Server, Clock, Network, Radio, Wifi, WifiOff, Cpu, RefreshCw } from "lucide-react";
+import { EngineList } from "@/components/EngineBadge";
 import { AlertModal } from "@/components/Modal";
+import { HealthMonitorControls } from "@/components/HealthBadge";
 import { setRefresh } from "@/lib/refresh";
 
 export default function SettingsPage() {
@@ -21,16 +23,38 @@ export default function SettingsPage() {
     </span>
   );
 
+  // ── Docker / NCCL helpers ──────────────────────────────────────────────
+  const dockerCfg = form.docker as Record<string, unknown> | undefined;
+  const ncclCfg = form.nccl as Record<string, unknown> | undefined;
+  const getDocker = <K extends keyof NonNullable<typeof dockerCfg>>(key: K, def: NonNullable<typeof dockerCfg>[K]) =>
+    (dockerCfg?.[key] ?? def) as NonNullable<typeof dockerCfg>[K];
+  const getNccl = <K extends keyof NonNullable<typeof ncclCfg>>(key: K, def: NonNullable<typeof ncclCfg>[K]) =>
+    (ncclCfg?.[key] ?? def) as NonNullable<typeof ncclCfg>[K];
+  const setDocker = <K extends keyof NonNullable<typeof dockerCfg>>(key: K, val: NonNullable<typeof dockerCfg>[K]) =>
+    setForm({ ...form, docker: { ...(dockerCfg ?? {}), [key]: val } });
+  const setNccl = <K extends keyof NonNullable<typeof ncclCfg>>(key: K, val: NonNullable<typeof ncclCfg>[K]) =>
+    setForm({ ...form, nccl: { ...(ncclCfg ?? {}), [key]: val } });
+
   // HF Token state
   const [hfToken, setHfToken] = useState("");
   const [showToken, setShowToken] = useState(false);
   const [savingToken, setSavingToken] = useState(false);
   const [savedToken, setSavedToken] = useState(false);
 
-  // Git update state
-  const { data: gitStatus, refetch: refetchGitStatus, loading: gitLoading } = useQuery(fetchGitUpdateStatus);
-  const [gitActionLoading, setGitActionLoading] = useState<string | null>(null);
-  const [gitError, setGitError] = useState<string | null>(null);
+  // Engine registry state
+  const { data: engineData, refetch: refetchEngines, loading: enginesLoading } = useQuery(fetchEngines);
+  const [refreshingEngines, setRefreshingEngines] = useState(false);
+
+
+  // Network discovery state
+  const [discoveryResult, setDiscoveryResult] = useState<DiscoveryResult | null>(null);
+  const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
+  const [discoveryLoading, setDiscoveryLoading] = useState(false);
+
+  // Health monitoring state
+  const [isHealthMonitoring, setIsHealthMonitoring] = useState(false);
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
+  const [applyingNccl, setApplyingNccl] = useState(false);
 
   const isDirty = settings != null && Object.keys(form).some(
     (k) => JSON.stringify(form[k]) !== JSON.stringify((settings as unknown as Record<string, unknown>)[k])
@@ -78,29 +102,48 @@ export default function SettingsPage() {
     }
   };
 
-  const handleGitFetch = async () => {
-    setGitError(null);
-    setGitActionLoading("fetch");
+  const handleDiscover = async () => {
+    setDiscoveryError(null);
+    setDiscoveryLoading(true);
     try {
-      await triggerGitFetch();
-      await refetchGitStatus();
+      const response = await runDiscovery();
+      setDiscoveryResult(response.detected);
+      setValidationResult(response.validation);
     } catch (e) {
-      setGitError(e instanceof Error ? e.message : "Fetch failed");
+      setDiscoveryError(e instanceof Error ? e.message : "Discovery failed");
     } finally {
-      setGitActionLoading(null);
+      setDiscoveryLoading(false);
     }
   };
 
-  const handleGitPull = async () => {
-    setGitError(null);
-    setGitActionLoading("pull");
+  const handleApplyNccl = async () => {
+    if (!discoveryResult?.nccl_defaults) return;
+    setApplyingNccl(true);
     try {
-      await triggerGitPull();
-      await refetchGitStatus();
+      await applyNcclDefaults({
+        socket_ifname: discoveryResult.nccl_defaults.socket_ifname,
+        ib_hca: discoveryResult.nccl_defaults.ib_hca,
+        ib_disable: discoveryResult.nccl_defaults.ib_disable,
+      });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+      refetch();
     } catch (e) {
-      setGitError(e instanceof Error ? e.message : "Pull failed");
+      setAlertModal({ title: "Error", message: e instanceof Error ? e.message : "Failed to apply NCCL defaults" });
     } finally {
-      setGitActionLoading(null);
+      setApplyingNccl(false);
+    }
+  };
+
+  const handleRefreshEngines = async () => {
+    setRefreshingEngines(true);
+    try {
+      await refreshEngines();
+      await refetchEngines();
+    } catch (e) {
+      setAlertModal({ title: "Error", message: e instanceof Error ? e.message : "Engine refresh failed" });
+    } finally {
+      setRefreshingEngines(false);
     }
   };
 
@@ -163,6 +206,208 @@ export default function SettingsPage() {
           </div>
         </div>
 
+        {/* ── Docker Config ── */}
+        <div className="rounded-xl bg-surface border border-border p-5 space-y-4">
+          <div className="flex items-center gap-2 pb-3 border-b border-border">
+            <Server size={16} className="text-primary" />
+            <h3 className="font-semibold">Docker</h3>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">Privileged mode</p>
+              <p className="text-xs text-text-muted mt-0.5">Grant full host access (needed for GPU devices). Less secure but simpler.</p>
+            </div>
+            <button type="button" onClick={() => setDocker("privileged", !getDocker("privileged", true) as boolean)} className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${getDocker("privileged", true) ? "bg-primary" : "bg-border"}`}>
+              <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${getDocker("privileged", true) ? "translate-x-5" : "translate-x-0"}`} />
+            </button>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Memory limit (GB)</label>
+            <input type="number" min="1" step="1" value={Number(getDocker("memory_limit_gb", 110))} onChange={(e) => setDocker("memory_limit_gb", parseInt(e.target.value) || 110)} className={inputCls} placeholder="110" />
+            <p className="text-xs text-text-muted mt-1">Container memory limit. Set to 0 to disable.</p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">SHM size (GB)</label>
+            <input type="number" min="1" step="1" value={Number(getDocker("shm_size_gb", 64))} onChange={(e) => setDocker("shm_size_gb", parseInt(e.target.value) || 64)} className={inputCls} placeholder="64" />
+            <p className="text-xs text-text-muted mt-1">/dev/shm size for shared memory.</p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">PID limit</label>
+            <input type="number" min="64" step="64" value={Number(getDocker("pids_limit", 4096))} onChange={(e) => setDocker("pids_limit", parseInt(e.target.value) || 4096)} className={inputCls} placeholder="4096" />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">NCCL socket interface</label>
+            <input type="text" value={String(getNccl("socket_ifname", "") || "")} onChange={(e) => setNccl("socket_ifname", e.target.value || null)} className={inputCls} placeholder="auto-detect" />
+            <p className="text-xs text-text-muted mt-1">Leave empty to auto-detect. E.g. eth0, enp3s0.</p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">NCCL InfiniBand HCA</label>
+            <input type="text" value={String(getNccl("ib_hca", "") || "")} onChange={(e) => setNccl("ib_hca", e.target.value || null)} className={inputCls} placeholder="auto-detect" />
+            <p className="text-xs text-text-muted mt-1">InfiniBand HCA selector. E.g. GPU,mlx5_*. Leave empty for default.</p>
+          </div>
+
+          {/* ── Health Monitoring ── */}
+          <div className="pt-4 border-t border-border space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <AlertCircle size={16} className="text-primary" />
+                <h4 className="font-semibold text-sm">Health Monitoring</h4>
+              </div>
+            </div>
+            <p className="text-xs text-text-muted">Enable continuous health monitoring for deployments and clusters.</p>
+            <HealthMonitorControls
+              isMonitoring={isHealthMonitoring}
+              onToggle={() => setIsHealthMonitoring(!isHealthMonitoring)}
+            />
+          </div>
+
+          {/* ── Network Discovery ── */}
+          <div className="pt-4 border-t border-border space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Network size={16} className="text-primary" />
+                <h4 className="font-semibold text-sm">Network Discovery</h4>
+              </div>
+              <button
+                type="button"
+                onClick={handleDiscover}
+                disabled={discoveryLoading}
+                className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover disabled:opacity-50 text-white font-medium text-xs transition-colors flex items-center gap-1.5"
+              >
+                {discoveryLoading ? <Loader2 className="animate-spin" size={12} /> : <Radio size={12} />}
+                Discover
+              </button>
+            </div>
+
+            {discoveryError && (
+              <div className="text-xs text-danger flex items-center gap-1.5">
+                <AlertCircle size={12} />
+                <span>{discoveryError}</span>
+              </div>
+            )}
+
+            {discoveryResult && (
+              <div className="space-y-3">
+                {/* Local IP */}
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-text-muted">Local IP</span>
+                  <code className="px-2 py-0.5 rounded bg-bg font-mono text-xs">
+                    {discoveryResult.local_ip || <span className="text-text-muted">not detected</span>}
+                  </code>
+                </div>
+
+                {/* Ethernet interface */}
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-text-muted">Ethernet</span>
+                  <code className="px-2 py-0.5 rounded bg-bg font-mono text-xs">
+                    {discoveryResult.ethernet_if || <span className="text-text-muted">not detected</span>}
+                  </code>
+                </div>
+
+                {/* InfiniBand */}
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-text-muted">InfiniBand</span>
+                  <span className="flex items-center gap-1 text-xs">
+                    {discoveryResult.infiniband_present ? (
+                      <>
+                        <Wifi size={12} className="text-success" />
+                        <span className="text-success">{discoveryResult.infiniband_devices.length} HCA{discoveryResult.infiniband_devices.length > 1 ? "s" : ""}</span>
+                      </>
+                    ) : (
+                      <>
+                        <WifiOff size={12} className="text-text-muted" />
+                        <span className="text-text-muted">not present</span>
+                      </>
+                    )}
+                  </span>
+                </div>
+
+                {/* IB devices detail */}
+                {discoveryResult.infiniband_present && discoveryResult.infiniband_devices.length > 0 && (
+                  <div className="text-xs text-text-muted space-y-0.5 pl-1">
+                    {discoveryResult.infiniband_devices.map((dev) => (
+                      <div key={dev.hca} className="flex items-center gap-1.5">
+                        <span className="font-mono">{dev.hca}</span>
+                        <span className={`px-1.5 py-0.5 rounded ${dev.state === "ACTIVE" ? "bg-success/15 text-success" : "bg-warning/15 text-warning"}`}>
+                          {dev.state}
+                        </span>
+                        {dev.ports.length > 0 && <span>ports: {dev.ports.join(",")}</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* NCCL defaults */}
+                {discoveryResult.nccl_defaults && (
+                  <div className="pt-2 border-t border-border space-y-1.5">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-text-muted">NCCL socket</span>
+                      <code className="px-2 py-0.5 rounded bg-bg font-mono text-xs">{discoveryResult.nccl_defaults.socket_ifname}</code>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-text-muted">NCCL IB HCA</span>
+                      <code className="px-2 py-0.5 rounded bg-bg font-mono text-xs">
+                        {discoveryResult.nccl_defaults.ib_hca || "none"}
+                      </code>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-text-muted">NCCL IB disabled</span>
+                      <span className={`text-xs font-medium ${discoveryResult.nccl_defaults.ib_disable ? "text-warning" : "text-success"}`}>
+                        {discoveryResult.nccl_defaults.ib_disable ? "yes" : "no"}
+                      </span>
+                    </div>
+
+                    {/* Apply button */}
+                    <button
+                      type="button"
+                      onClick={handleApplyNccl}
+                      disabled={applyingNccl}
+                      className="w-full mt-2 px-3 py-2 rounded-lg border border-primary/50 hover:border-primary text-primary hover:bg-primary/5 disabled:opacity-50 text-xs font-medium transition-colors flex items-center justify-center gap-1.5"
+                    >
+                      {applyingNccl ? <Loader2 className="animate-spin" size={12} /> : <Check size={12} />}
+                      Apply detected NCCL settings
+                    </button>
+                  </div>
+                )}
+
+                {/* Validation */}
+                {validationResult && (
+                  <div className={`pt-2 border-t border-border text-xs space-y-1 ${!validationResult.healthy ? "text-danger" : validationResult.warnings.length > 0 ? "text-warning" : "text-success"}`}>
+                    <div className="flex items-center gap-1.5 font-medium">
+                      {validationResult.healthy ? <Check size={12} /> : <AlertCircle size={12} />}
+                      Network: {validationResult.healthy ? "Healthy" : "Issues found"}
+                    </div>
+                    {validationResult.warnings.length > 0 && (
+                      <div className="pl-3.5 space-y-0.5">
+                        {validationResult.warnings.map((w, i) => (
+                          <div key={i}>⚠ {w}</div>
+                        ))}
+                      </div>
+                    )}
+                    {validationResult.errors.length > 0 && (
+                      <div className="pl-3.5 space-y-0.5">
+                        {validationResult.errors.map((e, i) => (
+                          <div key={i}>✕ {e}</div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {!discoveryResult && !discoveryLoading && (
+              <p className="text-xs text-text-muted">Click "Discover" to detect network interfaces and generate NCCL defaults.</p>
+            )}
+          </div>
+        </div>
+
         {/* ── Right column ── */}
         <div className="space-y-4">
 
@@ -193,120 +438,68 @@ export default function SettingsPage() {
             </div>
           </div>
 
-          {/* Git Auto-Update */}
+          {/* Cluster Config */}
           <div className="rounded-xl bg-surface border border-border p-5 space-y-4">
             <div className="flex items-center gap-2 pb-3 border-b border-border">
-              <GitBranch size={16} className="text-primary" />
-              <h3 className="font-semibold">Git Auto-Update</h3>
+              <Server size={16} className="text-primary" />
+              <h3 className="font-semibold">Cluster Orchestration</h3>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Default cluster image</label>
+              <input type="text" value={String(getDocker("cluster_image", "eugr/spark-vllm-docker:latest"))} onChange={(e) => setDocker("cluster_image", e.target.value)} className={inputCls} placeholder="eugr/spark-vllm-docker:latest" />
+              <p className="text-xs text-text-muted mt-1">Docker image used for cluster nodes.</p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Ray head port</label>
+              <input type="number" min="1024" max="65535" value={Number(getDocker("ray_port", 29501))} onChange={(e) => setDocker("ray_port", parseInt(e.target.value) || 29501)} className={inputCls} placeholder="29501" />
+              <p className="text-xs text-text-muted mt-1">Port for Ray head communication.</p>
             </div>
 
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium">Enable auto-update checks</p>
-                <p className="text-xs text-text-muted mt-0.5">Periodically check for new commits in spark-vllm-docker.</p>
+                <p className="text-sm font-medium">Default GPU count per node</p>
+                <p className="text-xs text-text-muted mt-0.5">Used for cluster capacity validation.</p>
               </div>
-              <button type="button" onClick={() => setForm({ ...form, git_update_enabled: !form.git_update_enabled })} className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${form.git_update_enabled ? "bg-primary" : "bg-border"}`}>
-                <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${form.git_update_enabled ? "translate-x-5" : "translate-x-0"}`} />
-              </button>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <label className="text-sm font-medium whitespace-nowrap">Check interval</label>
-              <input
-                type="number"
-                min="60"
-                max="86400"
-                step="60"
-                value={Number(form.git_update_check_interval_seconds ?? 3600)}
-                onChange={(e) => setForm({ ...form, git_update_check_interval_seconds: parseInt(e.target.value) || 3600 })}
-                className="w-24 px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm"
-              />
-              <span className="text-sm text-text-muted">seconds</span>
+              <input type="number" min="1" max="8" value={Number(getDocker("gpu_count", 8))} onChange={(e) => setDocker("gpu_count", parseInt(e.target.value) || 8)} className="w-20 px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm text-center" />
             </div>
 
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium">Auto-pull</p>
-                <p className="text-xs text-text-muted mt-0.5">Automatically pull updates when available (instead of fetch only).</p>
+                <p className="text-sm font-medium">Enable cluster mode</p>
+                <p className="text-xs text-text-muted mt-0.5">Allow multi-node cluster deployments.</p>
               </div>
-              <button type="button" onClick={() => setForm({ ...form, git_update_auto_pull: !form.git_update_auto_pull })} className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${form.git_update_auto_pull ? "bg-primary" : "bg-border"}`}>
-                <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${form.git_update_auto_pull ? "translate-x-5" : "translate-x-0"}`} />
+              <button type="button" onClick={() => setDocker("cluster_enabled", !getDocker("cluster_enabled", false) as boolean)} className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${getDocker("cluster_enabled", false) ? "bg-primary" : "bg-border"}`}>
+                <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${getDocker("cluster_enabled", false) ? "translate-x-5" : "translate-x-0"}`} />
+              </button>
+            </div>
+          </div>
+
+          {/* Engines */}
+          <div className="rounded-xl bg-surface border border-border p-5 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-border">
+              <div className="flex items-center gap-2">
+                <Cpu size={16} className="text-primary" />
+                <h3 className="font-semibold">Engines</h3>
+              </div>
+              <button onClick={handleRefreshEngines} disabled={refreshingEngines} className="px-2.5 py-1 rounded-lg border border-border hover:border-primary/50 text-text-muted hover:text-text text-xs transition-colors flex items-center gap-1.5 disabled:opacity-50" title="Re-fetch the configured engine indexes">
+                <RefreshCw size={13} className={refreshingEngines ? "animate-spin" : ""} />
+                Refresh
               </button>
             </div>
 
-            {/* Git status display */}
-            {gitStatus && !gitLoading && (
-              <div className="pt-3 border-t border-border space-y-2">
-                <div className="flex items-center gap-2 text-xs">
-                  {gitStatus.git_available ? (
-                    gitStatus.is_repo ? (
-                      <>
-                        <GitCommit size={12} className={gitStatus.version_available ? "text-primary" : "text-text-muted"} />
-                        <span className="text-text-muted">
-                          Local: <code className="px-1 rounded bg-bg font-mono">{gitStatus.local_version}</code>
-                          {gitStatus.version_available && (
-                            <>
-                              <ArrowDownUp size={10} className="mx-0.5" />
-                              Remote: <code className="px-1 rounded bg-bg font-mono">{gitStatus.remote_version}</code>
-                              <span className="text-primary ml-1 font-medium">update available</span>
-                            </>
-                          )}
-                          {!gitStatus.version_available && (
-                            <span className="text-success ml-1 font-medium">up to date</span>
-                          )}
-                        </span>
-                      </>
-                    ) : (
-                      <>
-                        <GitCommit size={12} className="text-text-muted" />
-                        <span className="text-text-muted">Not a git repository</span>
-                      </>
-                    )
-                  ) : (
-                    <>
-                      <AlertCircle size={12} className="text-warning" />
-                      <span className="text-warning">Git not installed</span>
-                    </>
-                  )}
-                </div>
-
-                {gitError && (
-                  <div className="text-xs text-danger flex items-center gap-1.5">
-                    <AlertCircle size={12} />
-                    <span>{gitError}</span>
-                  </div>
-                )}
-
-                <div className="flex gap-2">
-                  <button
-                    onClick={handleGitFetch}
-                    disabled={gitActionLoading === "fetch"}
-                    className="px-3 py-1.5 rounded-lg border border-border hover:border-primary/50 text-xs font-medium transition-colors disabled:opacity-50 flex items-center gap-1"
-                  >
-                    {gitActionLoading === "fetch" ? (
-                      <Loader2 size={12} className="animate-spin" />
-                    ) : (
-                      <GitCommit size={12} />
-                    )}
-                    Fetch
-                  </button>
-                  {gitStatus.version_available && (
-                    <button
-                      onClick={handleGitPull}
-                      disabled={gitActionLoading === "pull"}
-                      className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-white text-xs font-medium transition-colors disabled:opacity-50 flex items-center gap-1"
-                    >
-                      {gitActionLoading === "pull" ? (
-                        <Loader2 size={12} className="animate-spin" />
-                      ) : (
-                        <ArrowDownUp size={12} />
-                      )}
-                      Pull
-                    </button>
-                  )}
-                </div>
-              </div>
+            {enginesLoading && !engineData ? (
+              <div className="flex justify-center py-4"><Loader2 className="animate-spin text-primary" size={20} /></div>
+            ) : (
+              <EngineList engines={engineData?.engines ?? []} defaultEngine={engineData?.default_engine ?? ""} />
             )}
+
+            <div className="pt-3 border-t border-border">
+              <label className="block text-sm font-medium mb-1">Default engine</label>
+              <input type="text" value={String(form.default_engine ?? "vllm")} onChange={(e) => setForm({ ...form, default_engine: e.target.value })} className={inputCls} placeholder="vllm" />
+              <p className="text-xs text-text-muted mt-1">Used when neither the deploy request nor the recipe names an engine.</p>
+            </div>
           </div>
 
           {/* Secrets */}

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import RecipeForm from "./RecipeForm";
+import DeployOptions, { type DeployOptionsValue } from "./DeployOptions";
 import { ConfirmModal } from "@/components/Modal";
 import { X } from "lucide-react";
 import SlideDrawer from "./SlideDrawer";
@@ -14,11 +15,12 @@ export default function RecipeDrawer({ recipe, customization, isRunning, cluster
   clusterEnabled: boolean;
   onClose: () => void;
   onError: (msg: string) => void;
-  onDeploy?: (name: string, params: Record<string, unknown>) => Promise<void>;
+  onDeploy?: (name: string, params: Record<string, unknown>, options?: DeployOptionsValue) => Promise<void>;
   onSaveCustomization?: (fields: Partial<RecipeCustomization>) => void;
   onReset?: () => void | Promise<void>;
 }) {
   const formRef = useRef<RecipeFormRef>(null);
+  const [deployOptions, setDeployOptions] = useState<DeployOptionsValue>({});
   const clusterBlocked = recipe.cluster_only && !clusterEnabled;
   const hasCustomization = customization && Object.keys(customization).length > 0;
   const [isEditing, setIsEditing] = useState(false);
@@ -34,7 +36,7 @@ export default function RecipeDrawer({ recipe, customization, isRunning, cluster
     setDeploying(true);
     try {
       const name = formRef.current?.getDeployName() || recipe.name;
-      await onDeploy(name, {});
+      await onDeploy(name, {}, deployOptions);
       onClose();
     } catch (e) { onError(e instanceof Error ? e.message : "Failed to deploy"); }
     finally { setDeploying(false); }
@@ -136,6 +138,9 @@ export default function RecipeDrawer({ recipe, customization, isRunning, cluster
             <p className="text-sm text-warning">This recipe requires cluster mode.</p>
           </div>
         </div>
+      )}
+      {onDeploy && !isEditing && (
+        <DeployOptions recipe={recipe} value={deployOptions} onChange={setDeployOptions} />
       )}
       <RecipeForm
         ref={formRef}
