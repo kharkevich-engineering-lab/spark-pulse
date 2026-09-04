@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -239,32 +240,52 @@ class ContainerInfo:
 
 
 class DockerService:
-    """Docker SDK wrapper for container lifecycle management."""
+    """Docker SDK wrapper for container lifecycle management.
+
+    One service instance is shared process-wide, but a ``docker.DockerClient``
+    is **not** thread-safe: upstream documents that each thread needs its own,
+    the same rule ``requests.Session`` carries, because the client is a session
+    with a connection pool behind it. The health monitor, the image-pull
+    threads, the readiness watcher, the distribution fan-outs and every request
+    thread all reach this service, so the client is held in thread-local
+    storage and created lazily per thread.
+
+    An explicitly injected client is the exception: tests and
+    :class:`~spark_pulse.mock.docker.MockDockerService` hand in a fake that is
+    the whole point of the object, so it is returned to every thread unchanged.
+    """
 
     def __init__(self, client: Any | None = None):
         """Initialize with an optional Docker client (for testing).
 
         Args:
-            client: A docker.DockerClient instance. If None, creates one
-                    from the default environment.
+            client: A docker.DockerClient instance. If given it is used by
+                    every thread as-is. If None, each thread lazily creates
+                    its own from the default environment.
         """
-        self._client = client
+        self._injected_client = client
+        self._local = threading.local()
         self._import_error: Exception | None = None
 
     @property
     def client(self) -> Any:
-        """Lazy-initialize Docker client."""
-        if self._client is None:
-            try:
-                import docker
+        """The Docker client for the calling thread."""
+        if self._injected_client is not None:
+            return self._injected_client
+        existing = getattr(self._local, "client", None)
+        if existing is not None:
+            return existing
+        try:
+            import docker
 
-                self._client = docker.from_env()
-            except Exception as exc:
-                self._import_error = exc
-                raise RuntimeError(
-                    f"Docker daemon not available. Is Docker running? Error: {exc}"
-                ) from exc
-        return self._client
+            created = docker.from_env()
+        except Exception as exc:
+            self._import_error = exc
+            raise RuntimeError(
+                f"Docker daemon not available. Is Docker running? Error: {exc}"
+            ) from exc
+        self._local.client = created
+        return created
 
     def run_container(
         self,
