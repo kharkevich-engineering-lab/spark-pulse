@@ -15,16 +15,26 @@ from spark_pulse.config import config
 from spark_pulse.tools import is_simulation
 from spark_pulse.tools.docker import (
     ContainerMetadata,
-    DockerService,
     get_container_status,
     list_managed_containers,
     run_container,
     stop_container,
 )
+from spark_pulse.tools.docker import _get_service as _docker_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/docker", tags=["docker"])
+
+
+def _service():
+    """The process-wide container service.
+
+    Constructing a ``DockerService()`` per request built a fresh connection
+    pool on every call and threw it away; the shared service keeps one, and
+    hands each request thread its own client out of thread-local storage.
+    """
+    return _docker_service()
 
 
 # ── Deployment endpoints ─────────────────────────────────────────────────────
@@ -194,8 +204,8 @@ def exec_in_deployment(
                 "output": f"Simulated exec of: {command}",
             }
 
-        # Real mode — use DockerService
-        service = DockerService()
+        # Real mode — use the shared DockerService
+        service = _service()
         result = service.exec_in_container(name, command)
         # exec_in_container returns an ExecResult; reading it as a string
         # silently returned an empty body for every real-mode call.
@@ -241,7 +251,7 @@ def get_container_logs(name: str, tail: int = 100):
                 ],
             }
 
-        service = DockerService()
+        service = _service()
         status = service.get_container_status(name)
         if status["status"] != "running":
             raise HTTPException(

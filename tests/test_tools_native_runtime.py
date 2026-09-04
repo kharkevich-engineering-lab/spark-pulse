@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import importlib
 import json
+import threading
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,6 +22,7 @@ from spark_pulse import tools
 from spark_pulse.config import config
 from spark_pulse.engines import EngineRegistry, Topology, reset_registry
 from spark_pulse.mock.docker import MockDockerClient, MockDockerService
+from spark_pulse.tools.docker import PullCancelled
 from spark_pulse.tools.labels import DEPLOYMENT_LABEL, MANAGED_LABEL
 
 # pytest-env forces SIMULATION_MODE=1, so ``from spark_pulse.tools import
@@ -661,6 +664,147 @@ class TestDeleteTearsDown:
         # record without stopping it leaks the GPU.
         names = [c.name for c in docker.client.containers.list(all=True)]
         assert plan.container.name not in names
+
+
+class TestDeployDoesNotBlockOnAPull:
+    """A 26 GB download must not hold one of the forty request threads.
+
+    ``create_deployment`` is what ``POST /api/deployments`` calls on the
+    request thread, so anything slow it does inline is a thread taken out of
+    circulation for the duration.
+    """
+
+    @staticmethod
+    def _wait_until(predicate, timeout: float = 5.0) -> bool:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if predicate():
+                return True
+            time.sleep(0.02)
+        return predicate()
+
+    @staticmethod
+    def _endless_pull_stream(*_args, **_kwargs):
+        """A pull that keeps producing chunks and never finishes."""
+
+        def _stream():
+            while True:
+                time.sleep(0.01)
+                yield {
+                    "status": "Downloading",
+                    "id": "layer-a",
+                    "progressDetail": {"current": 1, "total": 1_000_000_000},
+                }
+
+        return _stream()
+
+    @classmethod
+    def _create_off_thread(cls, native, recipe_id: str) -> tuple[dict, float]:
+        """Call create_deployment where a blocking one fails instead of hanging.
+
+        The defect under test is precisely that the call does not return, so
+        driving it from the test's own thread would wedge the suite rather
+        than report anything.
+        """
+        out: dict = {}
+        began = time.monotonic()
+
+        def _call() -> None:
+            out["record"] = native.create_deployment(recipe_id)
+
+        caller = threading.Thread(target=_call, name="create-deployment", daemon=True)
+        caller.start()
+        caller.join(timeout=10)
+        elapsed = time.monotonic() - began
+        assert not caller.is_alive(), (
+            "create_deployment never returned — it is still blocked on the "
+            "image pull, holding a request thread"
+        )
+        return out["record"], elapsed
+
+    def test_the_post_returns_while_the_image_is_still_pulling(
+        self, native, docker, records
+    ):
+        """The call comes back in milliseconds, with the record in "pulling"."""
+        image_ref = native.plan("qwen3-8b").container.image
+        _forget_image(docker, image_ref)
+
+        with patch.object(nr, "_docker_service", return_value=docker):
+            with patch.object(
+                docker.client.api, "pull", side_effect=self._endless_pull_stream
+            ):
+                record, elapsed = self._create_off_thread(native, "qwen3-8b")
+                dep_id = record["id"]
+                try:
+                    assert elapsed < 1.0, (
+                        f"create_deployment held the caller for {elapsed:.1f}s "
+                        "while the image downloaded"
+                    )
+                    assert record["status"] == "pulling"
+                    # And that is what a GET of the deployment reports too.
+                    assert nr.get_deployment(dep_id)["status"] == "pulling"
+                    assert self._wait_until(lambda: nr.pull_is_active(dep_id))
+                finally:
+                    nr.cancel_pull(dep_id)
+                    self._wait_until(lambda: not nr.pull_is_active(dep_id))
+
+    def test_a_present_image_still_starts_inline(self, native, docker, records):
+        """Nothing is deferred when there is nothing slow to defer."""
+        image_ref = native.plan("qwen3-8b").container.image
+        docker.client.images.add(image_ref)
+
+        with patch.object(nr, "_docker_service", return_value=docker):
+            record = native.create_deployment("qwen3-8b")
+
+        assert record["status"] == "running"
+        names = [c.name for c in docker.client.containers.list(all=True)]
+        assert record["container_name"] in names
+
+    def test_a_teardown_during_the_pull_stops_it(self, native, docker, records):
+        """Deleting mid-pull ends the download instead of orphaning it."""
+        image_ref = native.plan("qwen3-8b").container.image
+        _forget_image(docker, image_ref)
+
+        with patch.object(nr, "_docker_service", return_value=docker):
+            with patch.object(
+                docker.client.api, "pull", side_effect=self._endless_pull_stream
+            ):
+                record, _ = self._create_off_thread(native, "qwen3-8b")
+                dep_id = record["id"]
+                assert self._wait_until(lambda: nr.pull_is_active(dep_id))
+
+                assert native.delete_deployment(dep_id, docker=docker) is True
+
+                assert self._wait_until(
+                    lambda: not nr.pull_is_active(dep_id)
+                ), "the pull kept running for a deployment that no longer exists"
+
+        assert nr.get_deployment(dep_id) is None
+        # The pull never completed, so nothing was written to the image store.
+        assert docker.image_exists(image_ref) is False
+
+    def test_a_cancelled_pull_leaves_the_record_stopped_not_errored(
+        self, native, docker, records
+    ):
+        """A deliberate teardown is not a crash, and must not read as one."""
+        plan_obj = native.plan("qwen3-8b")
+        _forget_image(docker, plan_obj.container.image)
+        dep_id = plan_obj.deployment_id
+
+        def _cancel_once_running(ref, progress=None, **kwargs):
+            nr.cancel_pull(dep_id)
+            raise PullCancelled(f"pull of {ref} cancelled")
+
+        with patch.object(docker, "pull_image", side_effect=_cancel_once_running):
+            record = native.start(plan_obj, docker=docker, wait=True)
+
+        assert record["status"] == "stopped"
+        assert record.get("error_message") is None
+
+    def test_cancel_pull_reports_whether_there_was_one(self, native, docker):
+        """Nothing in flight is not an error, just a False."""
+        assert nr.cancel_pull("no-such-deployment") is False
+        assert nr.pull_is_active("no-such-deployment") is False
 
 
 class TestAllocatePort:

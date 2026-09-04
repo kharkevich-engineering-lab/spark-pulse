@@ -52,7 +52,12 @@ def list_engines():
     return {
         "default_engine": config.default_engine,
         "engines": [
-            {**spec.summary(), "enabled": registry.enabled(spec.engine)}
+            {
+                **spec.summary(),
+                "enabled": registry.enabled(spec.engine),
+                "available": spec.available,
+                "usable": registry.usable(spec),
+            }
             for spec in registry.list()
         ],
     }
@@ -145,6 +150,8 @@ def get_engine(engine: str, variant: str = "default"):
     return {
         **spec.summary(),
         "enabled": registry.enabled(spec.engine),
+        "available": spec.available,
+        "usable": registry.usable(spec),
         "runtime": spec.runtime.model_dump(),
         "sources": spec.sources,
         "arch": spec.arch,

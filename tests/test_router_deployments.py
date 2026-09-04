@@ -20,6 +20,7 @@ from spark_pulse.app import create_app
 from spark_pulse.config import config
 from spark_pulse.engines import EngineRegistry, reset_registry
 from spark_pulse.mock.docker import MockDockerClient, MockDockerService
+from spark_pulse.tools.atomic_json import StateFileError
 
 # See the note in test_tools_native_runtime.py — the real modules are what run.
 dispatch = importlib.import_module("spark_pulse.tools.deploy_dispatch")
@@ -396,3 +397,45 @@ class TestRuntimeFlagValidation:
         with patch.dict("os.environ", {"SPARK_PULSE_RUNTIME": "native"}):
             assert config.runtime == "native"
             assert config.native_runtime is True
+
+
+class TestUnreadableRecordFile:
+    """Both runtimes share deployments.json, so both must refuse to read a
+    damaged one as "nothing is deployed". See tests/test_state_durability.py."""
+
+    def test_a_missing_record_file_is_an_empty_list(self, env):
+        assert not env["records"].exists()
+        assert dispatch.list_deployments() == []
+
+    def test_listing_raises_instead_of_reporting_an_empty_cluster(self, env):
+        env["records"].write_text('[{"id": "dep-1", "runtime": "nati')
+
+        with pytest.raises(StateFileError) as exc:
+            dispatch.list_deployments()
+
+        assert exc.value.path == env["records"]
+
+    def test_the_corrupt_record_file_is_moved_aside(self, env):
+        env["records"].write_text("not json at all")
+
+        with pytest.raises(StateFileError):
+            dispatch.list_deployments()
+
+        moved = list(env["records"].parent.glob("deployments.json.corrupt.*"))
+        assert len(moved) == 1
+        assert moved[0].read_text() == "not json at all"
+        assert not env["records"].exists()
+
+    def test_creating_a_deployment_leaves_no_temp_file_behind(self, client, env):
+        with _runtime("native"):
+            response = client.post(
+                "/api/deployments",
+                json={"recipe_id": "qwen3-8b", "name": "x", "engine": "vllm"},
+            )
+
+        assert response.status_code == 200
+        assert json.loads(env["records"].read_text())[0]["id"] == response.json()["id"]
+        leftovers = [
+            p for p in env["records"].parent.iterdir() if p.name.endswith(".tmp")
+        ]
+        assert leftovers == []

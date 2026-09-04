@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import os
 
-# ``cluster_models`` and ``labels`` hold pure data and constants with no
-# behaviour to simulate, so they are real-only and intentionally have no mock
-# twin. Everything else must exist in both packages.
+# ``cluster_models``, ``labels`` and ``atomic_json`` hold pure data, constants
+# and filesystem primitives with no behaviour to simulate, so they are real-only
+# and intentionally have no mock twin. Everything else must exist in both
+# packages.
+from spark_pulse.tools import atomic_json as atomic_json
 from spark_pulse.tools import labels as labels
 
 _sim_mode = os.environ.get("SIMULATION_MODE", "0") == "1"
@@ -30,7 +32,7 @@ if _sim_mode:
         network as network,
         discovery as discovery,
         ssh as ssh,
-        remote_docker as remote_docker,
+        node_service as node_service,
         cluster as cluster,
         ray as ray,
         parallelism as parallelism,
@@ -61,7 +63,7 @@ else:
         discovery as discovery,
         cluster_models as cluster_models,
         ssh as ssh,
-        remote_docker as remote_docker,
+        node_service as node_service,
         cluster as cluster,
         ray as ray,
         parallelism as parallelism,

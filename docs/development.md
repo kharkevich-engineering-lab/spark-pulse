@@ -41,6 +41,7 @@ All scripts live in `scripts/` and are executable (`chmod +x`).
 | [build-ui.sh](#build-uish) | N/A | N/A | N/A | N/A | Build frontend bundle only |
 | [release.sh](#releasesh) | N/A | N/A | N/A | N/A | Bump version and build distributable |
 | [native-deploy-check.sh](#native-deploy-checksh) | Production | N/A | — | N/A | Verify the native deploy path on a real Spark |
+| [run-e2e-tests.sh](#run-e2e-testssh) | Simulation | ❌ | Built UI, served by the backend | Forced off | Run the Playwright end-to-end suite |
 
 ---
 
@@ -206,6 +207,59 @@ non-zero after printing the deployment's log tail.
 - spark-pulse running with `runtime: native` (the script refuses otherwise)
 - the engine image pulled and the recipe's model already in the local catalogue
 - `curl` and `jq` on `PATH`
+
+---
+
+## End-to-end tests
+
+### `./scripts/run-e2e-tests.sh`
+
+**Best for:** checking the primary journeys through the real built SPA before
+opening a PR — the same thing CI's `Run E2E tests` job does.
+
+The specs live in `web/tests/e2e/` and drive a `SIMULATION_MODE=1` backend that
+serves the built UI, so they exercise the routers and the mock tools together
+rather than a mocked `fetch`. The script builds `spark_pulse/ui/` if it is
+missing, starts the backend on port 8100, runs Playwright against it and stops
+the backend again. A backend already listening on that port is reused and left
+running.
+
+```bash
+./scripts/run-e2e-tests.sh                                # the whole suite
+./scripts/run-e2e-tests.sh --file tests/e2e/jobs.spec.ts  # one spec
+./scripts/run-e2e-tests.sh --headed                       # watch it happen
+./scripts/run-e2e-tests.sh --ui                           # Playwright UI mode
+./scripts/run-e2e-tests.sh --debug                        # step through it
+./scripts/run-e2e-tests.sh --port 8111                    # a different port
+./scripts/run-e2e-tests.sh --help
+```
+
+First run only, to fetch the browser:
+
+```bash
+cd web && npx playwright install chromium
+```
+
+The backend log goes to `/tmp/spark-pulse-e2e-backend.log`; a failed run leaves
+a report behind, viewable with `cd web; and npx playwright show-report`.
+
+**Notes:**
+
+- The script starts the backend with `SPARK_PULSE_AUTH_ENABLED=false`, so a
+  `~/.config/spark-pulse/settings.json` left over from `run-dev-oidc-full.sh`
+  cannot bounce the suite to the login page. CI has auth off already.
+- `npm run test:e2e` from `web/` runs the suite against an
+  already-running backend (`E2E_BASE_URL`, default `http://127.0.0.1:8100`).
+  It has no `--pass-with-no-tests`: an empty suite is a failure.
+- Specs are independent and run in any order. Anything that mutates backend
+  state — the deploy journey, a model download — arranges and cleans up after
+  itself over the REST API.
+- `web/tests/e2e` is type-checked by `npm run build` via `tsconfig.e2e.json`.
+- The Monitoring page's data is stubbed with `page.route`. Simulation mode
+  delegates GPU stats to the real `nvidia-smi` parsing, so no CI runner or
+  laptop produces a GPU card to assert on; and `GET /api/memory` rebinds
+  `tools.deployments` to the real module for the life of the process, which
+  would break simulated deploys for every spec that ran after it.
 
 ---
 

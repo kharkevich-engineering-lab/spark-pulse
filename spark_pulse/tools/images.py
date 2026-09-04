@@ -31,7 +31,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from spark_pulse.engines import get_registry
-from spark_pulse.tools.docker import split_ref
+from spark_pulse.tools.docker import PullCancelled, split_ref
 from spark_pulse.tools.events import DeploymentEvent, EventType
 from spark_pulse.tools.ssh import OpenSSHClient, SSHClient, SSHError
 
@@ -318,10 +318,6 @@ _jobs_lock = threading.Lock()
 _cancelled: set[str] = set()
 
 
-class PullCancelled(RuntimeError):
-    """Raised inside the progress callback to abort a running pull."""
-
-
 def _publish_job(event: EventType, job: dict[str, Any]) -> None:
     publish_event(event, str(job.get("id", "")), dict(job))
 
@@ -404,9 +400,15 @@ def _run_pull(job_id: str) -> None:
     if started:
         _publish_job(EVENT_STARTED, started)
 
+    def _cancelled_now() -> bool:
+        """Consulted per chunk, so a cancel lands at the next byte.
+
+        Checking inside ``_progress`` instead delayed every cancel by up to
+        one throttle interval, since that callback is the throttled one.
+        """
+        return job_id in _cancelled
+
     def _progress(snapshot: dict[str, Any]) -> None:
-        if job_id in _cancelled:
-            raise PullCancelled(job_id)
         updated = _set_job(
             job_id,
             bytes_done=int(snapshot.get("bytes_done") or 0),
@@ -419,7 +421,7 @@ def _run_pull(job_id: str) -> None:
             _publish_job(EVENT_PROGRESS, updated)
 
     try:
-        result = _docker().pull_image(job["ref"], _progress)
+        result = _docker().pull_image(job["ref"], _progress, cancel=_cancelled_now)
     except PullCancelled:
         finished = _set_job(job_id, status="cancelled", finished_at=_now())
         if finished:
@@ -555,20 +557,21 @@ def delete_image(ref: str, force: bool = False) -> dict[str, Any]:
 
 def _make_ssh_client(ssh_user: str | None) -> SSHClient:
     """Build the SSH client used for distribution (overridable in tests)."""
-    return OpenSSHClient(user=ssh_user or "", strict_host_key_checking=True)
+    return OpenSSHClient(user=ssh_user or None, host_key_policy="strict")
 
 
-def _save_and_load(
-    ref: str, node: str, ssh_user: str | None, timeout: int = 3600
-) -> None:
+def _save_and_load(ref: str, node: str, ssh: SSHClient, timeout: int = 3600) -> None:
     """Stream an image to a node: ``docker save <ref> | ssh <node> docker load``.
+
+    The remote half of the pipeline is built by the SSH client, so the identity
+    file, host key policy and connection reuse are the same ones every other
+    remote operation uses.
 
     Kept module level so tests can replace the transfer without a daemon.
     """
-    target = f"{ssh_user}@{node}" if ssh_user else node
     pipeline = (
         f"docker save {shlex.quote(ref)} | "
-        f"ssh -o BatchMode=yes {shlex.quote(target)} docker load"
+        f"{shlex.join(ssh.remote_shell_command(node, 'docker load'))}"
     )
     proc = subprocess.run(
         ["sh", "-c", pipeline], capture_output=True, text=True, timeout=timeout
@@ -626,7 +629,7 @@ def sync_to_nodes(
             }
         error: str | None = None
         try:
-            _save_and_load(ref, node, ssh_user, timeout)
+            _save_and_load(ref, node, ssh, timeout)
         except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
             error = str(exc)
         return {

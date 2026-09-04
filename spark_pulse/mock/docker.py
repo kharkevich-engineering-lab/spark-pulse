@@ -397,7 +397,11 @@ class MockDockerService(DockerService):
         super().__init__(client or _get_mock_client())
 
     def copy_to_container(
-        self, container: str, local_path: str, remote_path: str
+        self,
+        container: str,
+        local_path: str,
+        remote_path: str,
+        timeout: int = 120,
     ) -> bool:
         """Pretend the file was copied into the container."""
         return True
@@ -407,13 +411,23 @@ class MockDockerService(DockerService):
         ref: str,
         progress: Any | None = None,
         interval: float = 0.0,
+        cancel: Any | None = None,
+        stall_timeout: float | None = None,
     ) -> dict[str, Any]:
         """Pull through the real aggregation code over the simulated stream.
 
         The interval defaults to 0 so the handful of simulated ticks all reach
-        the caller instead of being throttled into a single event.
+        the caller instead of being throttled into a single event. The stall
+        watchdog is kept on, driven by the same config value as production, so
+        simulation exercises the watched path rather than a shortcut around it.
         """
-        return super().pull_image(ref, progress, interval=interval)
+        return super().pull_image(
+            ref,
+            progress,
+            interval=interval,
+            cancel=cancel,
+            stall_timeout=stall_timeout,
+        )
 
 
 # ── Module-level convenience functions (mirrors spark_pulse.tools.docker) ────

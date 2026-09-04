@@ -24,11 +24,11 @@ def get_disk_stats():
 
 @router.get("")
 def get_all_memory():
-    from spark_pulse.tools.deployments import list_deployments
-
     data = tools.system.get_all_memory()
     running = [
-        d for d in list_deployments() if d.get("status") in ("running", "pending")
+        d
+        for d in tools.deployments.list_deployments()
+        if d.get("status") in ("running", "pending")
     ]
     tools.system.enrich_gpu_process_tracking(data.get("processes", []), running)
     return data

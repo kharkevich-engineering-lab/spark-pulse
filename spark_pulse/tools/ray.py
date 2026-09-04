@@ -2,14 +2,21 @@
 
 Provides idempotent Ray head/worker startup and status checking.
 Deployment retries must not break existing Ray clusters.
+
+Every operation names the node it runs on, and the container service is
+resolved from that node. Before, ``ensure_ray_worker`` was handed a worker IP
+and then ran ``ray start`` against the control node's own Docker daemon,
+because the host argument defaulted to the empty string. A worker's Ray
+process was never started on the worker.
 """
 
 from __future__ import annotations
 
 import logging
 import time
+from typing import Callable
 
-from spark_pulse.tools.remote_docker import RemoteDockerService
+from spark_pulse.tools.node_service import Node, NodeService, NodeServices
 
 logger = logging.getLogger(__name__)
 
@@ -17,17 +24,25 @@ logger = logging.getLogger(__name__)
 class RayManager:
     """Manages Ray cluster lifecycle on vLLM containers.
 
-    Depends on RemoteDockerService for container operations.
-    All operations are idempotent — retries are safe.
+    Holds a node resolver rather than a container service, because it acts on
+    several nodes: the head's Ray process runs on the head, and each worker's
+    on that worker. All operations are idempotent — retries are safe.
     """
 
-    def __init__(self, remote_docker: RemoteDockerService):
+    def __init__(self, services: Callable[[Node], NodeService] | None = None):
         """Initialize Ray manager.
 
         Args:
-            remote_docker: RemoteDockerService for container operations.
+            services: Resolver from node to the container service bound to it.
+                Defaults to :class:`~spark_pulse.tools.node_service.NodeServices`.
         """
-        self._docker = remote_docker
+        self._services = services or NodeServices()
+
+    def _service(self, node_ip: str) -> NodeService:
+        """The container service for whichever machine ``node_ip`` names."""
+        from spark_pulse.tools.node_service import node_for
+
+        return self._services(node_for(node_ip))
 
     def ensure_ray_head(
         self,
@@ -37,16 +52,16 @@ class RayManager:
         timeout: int = 120,
         poll_interval: float = 2,
     ) -> bool:
-        """Ensure Ray head is running (idempotent).
+        """Ensure Ray head is running on ``node_ip`` (idempotent).
 
-        1. Check ray status in container
+        1. Check ray status in the container, on that node
         2. If Ray already running and healthy → return True
-        3. Otherwise → start Ray head
+        3. Otherwise → start Ray head there
         4. Wait for ready, return result
 
         Args:
             container: Container name or ID.
-            node_ip: IP address of this node.
+            node_ip: IP address of the head node.
             port: Ray head port (default 29501).
             timeout: Seconds to wait for Ray to become ready.
             poll_interval: Seconds between status checks.
@@ -54,15 +69,12 @@ class RayManager:
         Returns:
             True if Ray is ready (was already running or just started).
         """
-        # Check if Ray is already running
-        if self._is_ray_ready(container, timeout=poll_interval):
-            logger.info("Ray head already ready in %s", container)
+        if self._is_ray_ready(container, node_ip, timeout=poll_interval):
+            logger.info("Ray head already ready in %s on %s", container, node_ip)
             return True
 
-        # Start Ray head
         logger.info("Starting Ray head in %s at %s:%d", container, node_ip, port)
-        result = self._docker.exec_container(
-            "",
+        result = self._service(node_ip).exec_in_container(
             container,
             [
                 "ray",
@@ -80,9 +92,8 @@ class RayManager:
             logger.error("Failed to start Ray head: %s", result.stderr)
             return False
 
-        # Wait for Ray to become ready
         return self.wait_for_cluster_ready(
-            container, timeout=timeout, poll_interval=poll_interval
+            container, node_ip, timeout=timeout, poll_interval=poll_interval
         )
 
     def ensure_ray_worker(
@@ -94,17 +105,14 @@ class RayManager:
         timeout: int = 120,
         poll_interval: float = 2,
     ) -> bool:
-        """Ensure Ray worker is connected (idempotent).
-
-        1. Check ray status in container
-        2. If already connected to head → return True
-        3. Otherwise → start Ray worker connecting to head
-        4. Wait for connected, return result
+        """Ensure the Ray worker on ``worker_ip`` is connected (idempotent).
 
         Args:
             container: Container name or ID.
-            worker_ip: IP address of this worker node.
-            head_ip: IP address of the Ray head node.
+            worker_ip: IP address of this worker node. This is also the node
+                the command runs on.
+            head_ip: IP address of the Ray head node, used only to build the
+                rendezvous address.
             head_port: Ray head port (default 29501).
             timeout: Seconds to wait for Ray to become connected.
             poll_interval: Seconds between status checks.
@@ -112,20 +120,18 @@ class RayManager:
         Returns:
             True if Ray worker is connected.
         """
-        # Check if Ray is already connected
-        if self._is_ray_connected(container, timeout=poll_interval):
+        if self._is_ray_connected(container, worker_ip, timeout=poll_interval):
             logger.info("Ray worker already connected in %s", container)
             return True
 
-        # Start Ray worker
         address = f"{head_ip}:{head_port}"
         logger.info(
-            "Starting Ray worker in %s connecting to %s",
+            "Starting Ray worker in %s on %s connecting to %s",
             container,
+            worker_ip,
             address,
         )
-        result = self._docker.exec_container(
-            "",
+        result = self._service(worker_ip).exec_in_container(
             container,
             [
                 "ray",
@@ -143,21 +149,22 @@ class RayManager:
             logger.error("Failed to start Ray worker: %s", result.stderr)
             return False
 
-        # Wait for worker to connect
         return self.wait_for_cluster_ready(
-            container, timeout=timeout, poll_interval=poll_interval
+            container, worker_ip, timeout=timeout, poll_interval=poll_interval
         )
 
     def wait_for_cluster_ready(
         self,
         container: str,
+        node_ip: str,
         timeout: int = 60,
         poll_interval: float = 2,
     ) -> bool:
-        """Poll ray status until responsive.
+        """Poll ray status on ``node_ip`` until responsive.
 
         Args:
             container: Container name or ID.
+            node_ip: The node the container runs on.
             timeout: Maximum seconds to wait.
             poll_interval: Seconds between checks.
 
@@ -166,7 +173,7 @@ class RayManager:
         """
         start = time.time()
         while time.time() - start < timeout:
-            status = self.get_ray_status(container)
+            status = self.get_ray_status(container, node_ip)
             if "OK" in status or "cluster is ready" in status.lower():
                 return True
             time.sleep(poll_interval)
@@ -174,17 +181,17 @@ class RayManager:
         logger.warning("Ray cluster not ready after %ds", timeout)
         return False
 
-    def get_ray_status(self, container: str) -> str:
-        """Return ray status output.
+    def get_ray_status(self, container: str, node_ip: str) -> str:
+        """Return ``ray status`` output from the container on ``node_ip``.
 
         Args:
             container: Container name or ID.
+            node_ip: The node the container runs on.
 
         Returns:
             Ray status output string.
         """
-        result = self._docker.exec_container(
-            "",
+        result = self._service(node_ip).exec_in_container(
             container,
             ["ray", "status"],
             timeout=10,
@@ -194,48 +201,31 @@ class RayManager:
     def _is_ray_ready(
         self,
         container: str,
+        node_ip: str,
         timeout: int = 5,
     ) -> bool:
-        """Check if Ray head is ready.
-
-        Args:
-            container: Container name or ID.
-            timeout: Seconds to wait for status check.
-
-        Returns:
-            True if Ray head reports ready.
-        """
-        try:
-            result = self._docker.exec_container(
-                "",
-                container,
-                ["ray", "status"],
-                timeout=timeout,
-            )
-            if not result.ok:
-                return False
-            output = result.stdout.lower()
-            return "ok" in output or "ready" in output or "cluster" in output
-        except Exception:
-            return False
+        """Whether the Ray head in ``container`` on ``node_ip`` reports ready."""
+        return self._ray_reports(container, node_ip, timeout, "ready")
 
     def _is_ray_connected(
         self,
         container: str,
+        node_ip: str,
         timeout: int = 5,
     ) -> bool:
-        """Check if Ray worker is connected to head.
+        """Whether the Ray worker in ``container`` on ``node_ip`` is connected."""
+        return self._ray_reports(container, node_ip, timeout, "connected")
 
-        Args:
-            container: Container name or ID.
-            timeout: Seconds to wait for status check.
-
-        Returns:
-            True if Ray worker reports connected.
-        """
+    def _ray_reports(
+        self,
+        container: str,
+        node_ip: str,
+        timeout: int,
+        wanted: str,
+    ) -> bool:
+        """Run ``ray status`` on the node and look for a healthy answer."""
         try:
-            result = self._docker.exec_container(
-                "",
+            result = self._service(node_ip).exec_in_container(
                 container,
                 ["ray", "status"],
                 timeout=timeout,
@@ -243,6 +233,6 @@ class RayManager:
             if not result.ok:
                 return False
             output = result.stdout.lower()
-            return "ok" in output or "connected" in output or "cluster" in output
+            return "ok" in output or wanted in output or "cluster" in output
         except Exception:
             return False

@@ -33,7 +33,9 @@ from spark_pulse.routers import (
 )
 from spark_pulse.auth import AuthMiddleware, router as auth_router
 from spark_pulse.sse import router as sse_router
+from spark_pulse import tools
 from spark_pulse.tools import is_simulation
+from spark_pulse.tools.atomic_json import StateFileError
 from spark_pulse.tools.oci_registry import (
     start_background_updater,
     stop_background_updater,
@@ -87,12 +89,37 @@ def _serve_spa(filename: str | None = None) -> FileResponse:
 # ── App factory ─────────────────────────────────────────────────────────────
 
 
+async def configure_thread_pool() -> int:
+    """Pin the worker-thread ceiling and return it.
+
+    Every sync endpoint and every ``run_in_threadpool`` call shares one AnyIO
+    limiter whose default is 40. Nothing anywhere says so, so exhaustion — a
+    handful of blocking Docker or SSH calls is enough — presents as the whole
+    API going quiet with no clue why. Setting it from config and logging the
+    number makes the ceiling a stated fact.
+
+    The limiter lives in a run-scoped variable, so this only takes effect when
+    called from inside the running event loop.
+    """
+    import anyio.to_thread
+
+    limiter = anyio.to_thread.current_default_thread_limiter()
+    limiter.total_tokens = config.thread_pool_size
+    return int(limiter.total_tokens)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: validate spark-vllm-docker path, log mode, create symlinks, start scheduler.
     Shutdown: remove symlinks, cleanup."""
     spark_path = Path(config.spark_vllm_path)
     app.state.spark_path_valid = spark_path.is_dir()
+
+    try:
+        threads = await configure_thread_pool()
+        print(f"Worker thread pool: {threads} threads")
+    except Exception as e:  # pragma: no cover - defensive
+        print(f"Warning: could not set the worker thread pool size: {e}")
 
     mode = "SIMULATION" if is_simulation() else "PRODUCTION"
     print(
@@ -109,6 +136,21 @@ async def lifespan(app: FastAPI):
             print(f"Symlinks created: {n_recipes} custom recipes, {n_mods} custom mods")
     except Exception as e:
         print(f"Warning: could not create symlinks for custom files: {e}")
+
+    # Refuse to start on an unreadable state file. An unreadable state file is
+    # not an empty cluster: coming up with an empty view while containers are
+    # still running is what lets a control plane tear down live work.
+    try:
+        tools.deployments.check_state_file()
+    except StateFileError as e:
+        print(f"FATAL: cannot read deployment state file {e.path}: {e.reason}")
+        if e.quarantine_path is not None:
+            print(
+                f"FATAL: the unreadable file was moved aside to {e.quarantine_path}. "
+                "Inspect or restore it, then restart Spark Pulse."
+            )
+        print("FATAL: refusing to start with an empty view of running deployments.")
+        raise
 
     # Start OCI background update checker
     start_background_updater()

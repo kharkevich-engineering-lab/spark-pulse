@@ -103,6 +103,9 @@ class EngineSpec(BaseModel):
     tag: str | None = None
     digest: str | None = None
     legacy_tags: list[str] = Field(default_factory=list)
+    # False when the index says this image was never published. Pulling such a
+    # reference returns a 403 rather than an image, so it must not be offered.
+    available: bool = True
     arch: list[str] = Field(default_factory=lambda: ["linux/arm64"])
     gpu_arch: list[str] = Field(default_factory=list)
     sources: dict[str, Any] = Field(default_factory=dict)

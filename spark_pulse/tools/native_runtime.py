@@ -45,7 +45,7 @@ from spark_pulse.engines import (
     Topology,
     get_registry,
 )
-from spark_pulse.tools.docker import ContainerMetadata
+from spark_pulse.tools.docker import ContainerMetadata, PullCancelled
 from spark_pulse.tools.events import DeploymentEvent, EventType
 from spark_pulse.tools.labels import DEPLOYMENT_LABEL, MODE_LABEL
 
@@ -280,10 +280,22 @@ def _ports_in_use() -> set[int]:
 
 
 def _load_records() -> list[dict[str, Any]]:
+    """Load the shared deployment records.
+
+    The native runtime shares ``deployments.json`` with the container runtime,
+    so it inherits that module's crash-safe write and its refusal to read an
+    unreadable state file as an empty one: ``StateFileError`` propagates to the
+    caller rather than degrading into ``[]``.
+    """
     return tools.deployments._load()
 
 
 def _save_records(records: list[dict[str, Any]]) -> None:
+    """Persist the shared deployment records.
+
+    Delegates to ``tools.deployments._save``, which writes through
+    ``atomic_json.write_json_atomic`` — temp file, fsync, replace, dir fsync.
+    """
     tools.deployments._save(records)
 
 
@@ -789,6 +801,58 @@ def _wait_ready(
 
 # ── Image pull ───────────────────────────────────────────────────────────────
 
+# Deployments with a pull in flight, mapped to whether a teardown has asked it
+# to stop. A pull is the one part of a deploy that runs for tens of minutes, so
+# stop/delete has to be able to reach into it: without this the container
+# service kept downloading a 26 GB image for a deployment that no longer
+# existed, and the record only settled when the download finally finished.
+_active_pulls: dict[str, bool] = {}
+_pull_lock = threading.Lock()
+
+
+def _register_pull(deployment_id: str) -> None:
+    with _pull_lock:
+        _active_pulls[deployment_id] = False
+
+
+def _unregister_pull(deployment_id: str) -> None:
+    with _pull_lock:
+        _active_pulls.pop(deployment_id, None)
+
+
+def pull_is_active(deployment_id: str) -> bool:
+    """Whether an image pull for this deployment is running right now."""
+    with _pull_lock:
+        return deployment_id in _active_pulls
+
+
+def cancel_pull(deployment_id: str) -> bool:
+    """Ask an in-flight pull for this deployment to stop. False if none."""
+    with _pull_lock:
+        if deployment_id not in _active_pulls:
+            return False
+        _active_pulls[deployment_id] = True
+        return True
+
+
+def _pull_cancel_requested(deployment_id: str) -> bool:
+    with _pull_lock:
+        return _active_pulls.get(deployment_id, False)
+
+
+def _image_missing(docker: Any, plan_obj: DeployPlan) -> bool:
+    """Whether this deploy has to pull before it can start anything.
+
+    A daemon that will not answer is not evidence the image is absent, so an
+    unreachable check keeps the deploy on the inline path where the failure is
+    reported straight back to the caller.
+    """
+    try:
+        return not docker.image_exists(plan_obj.container.image)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("image presence check failed: %s", exc)
+        return False
+
 
 def _pull_image_if_missing(docker: Any, plan_obj: DeployPlan) -> bool:
     """Pull the plan's image before the container is created, with progress.
@@ -799,7 +863,7 @@ def _pull_image_if_missing(docker: Any, plan_obj: DeployPlan) -> bool:
     goes to ``pulling`` and aggregated progress events flow over SSE.
 
     Returns True when a pull actually ran. Raises :class:`NativeRuntimeError`
-    when the pull fails.
+    when the pull fails, or :class:`PullCancelled` when a teardown stopped it.
     """
     dep_id = plan_obj.deployment_id
     ref = plan_obj.container.image
@@ -825,12 +889,25 @@ def _pull_image_if_missing(docker: Any, plan_obj: DeployPlan) -> bool:
             {"image_ref": ref, **snapshot},
         )
 
+    _register_pull(dep_id)
     try:
-        result = docker.pull_image(ref, _progress)
+        result = docker.pull_image(
+            ref, _progress, cancel=lambda: _pull_cancel_requested(dep_id)
+        )
+    except PullCancelled:
+        publish_event(
+            EventType.IMAGE_PULL_CANCELLED,
+            dep_id,
+            f"pull of {ref} cancelled",
+            {"image_ref": ref},
+        )
+        raise
     except Exception as exc:
         message = f"could not pull image {ref}: {exc}"
         publish_event(EventType.IMAGE_PULL_FAILED, dep_id, message, {"image_ref": ref})
         raise NativeRuntimeError(message) from exc
+    finally:
+        _unregister_pull(dep_id)
 
     publish_event(
         EventType.IMAGE_PULL_COMPLETED,
@@ -842,11 +919,26 @@ def _pull_image_if_missing(docker: Any, plan_obj: DeployPlan) -> bool:
     return True
 
 
+def persist_planned_record(plan_obj: DeployPlan, status: str) -> dict[str, Any]:
+    """Write the plan's record at ``status``, replacing any earlier one.
+
+    Split out of :func:`start` so a deploy that has to pull first can put the
+    record on disk in ``pulling`` *before* the POST returns, rather than the
+    caller seeing nothing until a 26 GB download finishes.
+    """
+    record = _record_from_plan(plan_obj, status)
+    records = [r for r in _load_records() if r.get("id") != plan_obj.deployment_id]
+    records.append(record)
+    _save_records(records)
+    return record
+
+
 def start(
     plan_obj: DeployPlan,
     docker: Any | None = None,
     wait: bool = True,
     ready_timeout: int | None = None,
+    initial_status: str = "starting",
 ) -> dict[str, Any]:
     """Run the plan: idle container -> mods -> exec script -> readiness."""
     if not plan_obj.solo:
@@ -860,10 +952,7 @@ def start(
     spec = plan_obj.container
     warnings = list(plan_obj.warnings)
 
-    record = _record_from_plan(plan_obj, "starting")
-    records = [r for r in _load_records() if r.get("id") != dep_id]
-    records.append(record)
-    _save_records(records)
+    record = persist_planned_record(plan_obj, initial_status)
 
     publish_event(
         EventType.DEPLOYMENT_PLANNED,
@@ -885,6 +974,16 @@ def start(
 
     try:
         _pull_image_if_missing(docker, plan_obj)
+    except PullCancelled:
+        # A stop or delete reached into the pull. That is not a failure to
+        # report: the record is already being torn down, and marking it
+        # "error" would leave a deliberate teardown looking like a crash.
+        message = f"pull of {spec.image} cancelled by teardown"
+        publish_event(EventType.DEPLOYMENT_STOPPED, dep_id, message)
+        return _update_record(dep_id, status="stopped", stopped_at=_now()) or {
+            **record,
+            "status": "stopped",
+        }
     except NativeRuntimeError as exc:
         return _fail(str(exc))
 
@@ -981,8 +1080,13 @@ def create_deployment(
 ) -> dict[str, Any]:
     """Plan and start in one call — the shape the deployments router wants.
 
-    Readiness is awaited on a background thread so the POST returns as soon as
-    the container is serving; the UI follows the rest over SSE.
+    Nothing slow runs on the caller's thread. When the image is already here,
+    the container is started inline (milliseconds) and only readiness is
+    awaited in the background. When it is not, the whole start — pull included
+    — moves to a background thread and the record is written as ``pulling``
+    first, so the POST returns immediately instead of holding one of the
+    process's forty worker threads for the tens of minutes a 26 GB engine
+    image takes. Either way the UI follows the rest over SSE.
     """
     plan_obj = plan(
         recipe_id,
@@ -998,10 +1102,6 @@ def create_deployment(
     )
     if wait:
         return start(plan_obj, wait=True)
-
-    record = start(plan_obj, wait=False)
-    if record.get("status") == "error":
-        return record
 
     docker = _docker_service()
 
@@ -1024,7 +1124,31 @@ def create_deployment(
             {"port": plan_obj.port},
         )
 
-    threading.Thread(target=_watch, daemon=True).start()
+    if _image_missing(docker, plan_obj):
+        record = persist_planned_record(plan_obj, "pulling")
+
+        def _pull_then_start() -> None:
+            started = start(
+                plan_obj, docker=docker, wait=False, initial_status="pulling"
+            )
+            if started.get("status") in ("error", "stopped"):
+                return
+            _watch()
+
+        threading.Thread(
+            target=_pull_then_start,
+            name=f"native-deploy-{plan_obj.deployment_id}",
+            daemon=True,
+        ).start()
+        return record
+
+    record = start(plan_obj, docker=docker, wait=False)
+    if record.get("status") == "error":
+        return record
+
+    threading.Thread(
+        target=_watch, name=f"native-ready-{plan_obj.deployment_id}", daemon=True
+    ).start()
     return record
 
 
@@ -1038,6 +1162,10 @@ def stop_deployment(
     record = get_deployment(deployment_id)
     if record is None:
         return None
+    # A deployment still pulling has no container to stop; what has to stop is
+    # the download. Ask first, then fall through — the pull thread settles the
+    # record itself once it notices.
+    cancel_pull(deployment_id)
     docker = docker or _docker_service()
     name = record.get("container_name") or container_name_for(deployment_id)
     try:

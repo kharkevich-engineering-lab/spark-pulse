@@ -10,12 +10,16 @@ single source of truth — no external state database needed.
 from __future__ import annotations
 
 import logging
+import queue
 import subprocess
+import threading
 import time
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from spark_pulse.config import config
 from spark_pulse.tools.labels import (
     CLUSTER_LABEL,
     CREATED_AT_LABEL,
@@ -113,6 +117,71 @@ def _labels_match(labels: dict[str, str], wanted: dict[str, str] | None) -> bool
 
 # Pull progress is aggregated across layers and reported at most this often.
 PULL_PROGRESS_INTERVAL = 1.0
+
+
+class PullCancelled(RuntimeError):
+    """A pull was asked to stop and did."""
+
+
+class PullStalled(RuntimeError):
+    """A pull produced no progress for longer than the watchdog allows."""
+
+
+def _close_quietly(stream: Any) -> None:
+    """Close a pull stream, ignoring whatever it says about it."""
+    closer = getattr(stream, "close", None)
+    if closer is None:
+        return
+    try:
+        closer()
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("closing the pull stream failed: %s", exc)
+
+
+def _watched_chunks(stream: Any, stall_timeout: float) -> Iterator[Any]:
+    """Yield the stream's chunks, giving up when it goes quiet.
+
+    docker-py sets no timeout on a pull, so a registry that accepts the
+    connection and then stops sending holds the calling thread forever. The
+    stream is drained on a helper thread and handed over through a queue, which
+    turns "no bytes" into a bounded ``queue.Empty`` the caller can act on: the
+    stream is closed and :class:`PullStalled` raised, naming the stall.
+
+    A non-positive ``stall_timeout`` disables the watchdog and iterates
+    directly, which is what the fast in-memory fakes want.
+    """
+    if not stall_timeout or stall_timeout <= 0:
+        yield from stream
+        return
+
+    chunks: queue.Queue[tuple[str, Any]] = queue.Queue()
+
+    def _drain() -> None:
+        try:
+            for chunk in stream:
+                chunks.put(("chunk", chunk))
+            chunks.put(("done", None))
+        except BaseException as exc:  # noqa: BLE001 — replayed on the caller
+            chunks.put(("error", exc))
+
+    reader = threading.Thread(target=_drain, name="docker-pull-reader", daemon=True)
+    reader.start()
+    try:
+        while True:
+            try:
+                kind, payload = chunks.get(timeout=stall_timeout)
+            except queue.Empty:
+                raise PullStalled(f"no pull progress for {stall_timeout:g}s") from None
+            if kind == "chunk":
+                yield payload
+            elif kind == "done":
+                return
+            else:
+                raise payload
+    finally:
+        # Covers every exit — exhausted, stalled, cancelled or the caller
+        # breaking out — so the socket never outlives the iteration.
+        _close_quietly(stream)
 
 
 def split_ref(ref: str) -> tuple[str, str]:
@@ -239,32 +308,52 @@ class ContainerInfo:
 
 
 class DockerService:
-    """Docker SDK wrapper for container lifecycle management."""
+    """Docker SDK wrapper for container lifecycle management.
+
+    One service instance is shared process-wide, but a ``docker.DockerClient``
+    is **not** thread-safe: upstream documents that each thread needs its own,
+    the same rule ``requests.Session`` carries, because the client is a session
+    with a connection pool behind it. The health monitor, the image-pull
+    threads, the readiness watcher, the distribution fan-outs and every request
+    thread all reach this service, so the client is held in thread-local
+    storage and created lazily per thread.
+
+    An explicitly injected client is the exception: tests and
+    :class:`~spark_pulse.mock.docker.MockDockerService` hand in a fake that is
+    the whole point of the object, so it is returned to every thread unchanged.
+    """
 
     def __init__(self, client: Any | None = None):
         """Initialize with an optional Docker client (for testing).
 
         Args:
-            client: A docker.DockerClient instance. If None, creates one
-                    from the default environment.
+            client: A docker.DockerClient instance. If given it is used by
+                    every thread as-is. If None, each thread lazily creates
+                    its own from the default environment.
         """
-        self._client = client
+        self._injected_client = client
+        self._local = threading.local()
         self._import_error: Exception | None = None
 
     @property
     def client(self) -> Any:
-        """Lazy-initialize Docker client."""
-        if self._client is None:
-            try:
-                import docker
+        """The Docker client for the calling thread."""
+        if self._injected_client is not None:
+            return self._injected_client
+        existing = getattr(self._local, "client", None)
+        if existing is not None:
+            return existing
+        try:
+            import docker
 
-                self._client = docker.from_env()
-            except Exception as exc:
-                self._import_error = exc
-                raise RuntimeError(
-                    f"Docker daemon not available. Is Docker running? Error: {exc}"
-                ) from exc
-        return self._client
+            created = docker.from_env()
+        except Exception as exc:
+            self._import_error = exc
+            raise RuntimeError(
+                f"Docker daemon not available. Is Docker running? Error: {exc}"
+            ) from exc
+        self._local.client = created
+        return created
 
     def run_container(
         self,
@@ -452,6 +541,8 @@ class DockerService:
         ref: str,
         progress: Any | None = None,
         interval: float = PULL_PROGRESS_INTERVAL,
+        cancel: Callable[[], bool] | None = None,
+        stall_timeout: float | None = None,
     ) -> dict[str, Any]:
         """Pull ``ref``, reporting aggregated progress through ``progress``.
 
@@ -460,9 +551,19 @@ class DockerService:
         single ``{bytes_done, bytes_total, percent, layers}`` snapshot and the
         callback fires at most once per ``interval`` seconds, plus once at the
         end.
+
+        Args:
+            cancel: Consulted on **every** chunk, not on every snapshot, so a
+                cancel is honoured at the next byte instead of waiting out the
+                throttle interval. Returning True raises :class:`PullCancelled`.
+            stall_timeout: Seconds of silence that fail the pull with
+                :class:`PullStalled`. Defaults to
+                ``config.docker_pull_stall_timeout_seconds``; pass 0 to disable.
         """
         if not ref:
             raise RuntimeError("pull_image needs an image reference")
+        if stall_timeout is None:
+            stall_timeout = float(config.docker_pull_stall_timeout_seconds)
         repo, tag = split_ref(ref)
         layers: dict[str, dict[str, int]] = {}
         # Seeded with "now" so the first snapshot waits a full interval rather
@@ -492,7 +593,9 @@ class DockerService:
 
         try:
             stream = self.client.api.pull(repo, tag=tag, stream=True, decode=True)
-            for chunk in stream:
+            for chunk in _watched_chunks(stream, stall_timeout):
+                if cancel is not None and cancel():
+                    raise PullCancelled(f"pull of {ref} cancelled")
                 if not isinstance(chunk, dict):
                     continue
                 error = chunk.get("error") or chunk.get("errorDetail")
@@ -517,6 +620,8 @@ class DockerService:
                     entry = layers.setdefault(layer_id, {"current": 0, "total": 0})
                     entry["current"] = entry["total"]
                 _emit()
+        except PullStalled as exc:
+            raise PullStalled(f"pull of {ref} stalled: {exc}") from None
         except RuntimeError:
             raise
         except Exception as exc:
@@ -639,6 +744,7 @@ class DockerService:
         container: str | Any,
         command: str | list[str],
         detach: bool = False,
+        timeout: int | None = None,
     ) -> ExecResult:
         """Execute a command inside a running container.
 
@@ -646,11 +752,17 @@ class DockerService:
             container: Container name or Container object.
             command: Command to execute, as a string or argv list.
             detach: If True, run in the background and return immediately.
+            timeout: Seconds to allow the command. Part of the node-service
+                interface, where it bounds the ``ssh`` invocation on a peer.
+                The Docker SDK's exec has no per-call deadline — the client's
+                own socket timeout is all there is — so it is advisory here
+                and accepted only so the signatures match.
 
         Returns:
             ExecResult with returncode, stdout and stderr. A detached exec
             returns an empty successful result.
         """
+        _ = timeout
 
         client = self.client
         if isinstance(container, str):
@@ -696,6 +808,7 @@ class DockerService:
         container: str,
         local_path: str,
         remote_path: str,
+        timeout: int = 120,
     ) -> bool:
         """Copy a local file into a container via ``docker cp``.
 
@@ -703,15 +816,27 @@ class DockerService:
             container: Container name or ID.
             local_path: Path on the host.
             remote_path: Destination path inside the container.
+            timeout: Seconds before the copy is abandoned.
 
         Returns:
             True when the copy succeeded.
         """
-        proc = subprocess.run(
-            ["docker", "cp", local_path, f"{container}:{remote_path}"],
-            capture_output=True,
-            text=True,
-        )
+        try:
+            proc = subprocess.run(
+                ["docker", "cp", local_path, f"{container}:{remote_path}"],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            logger.error(
+                "docker cp %s -> %s:%s timed out after %ss",
+                local_path,
+                container,
+                remote_path,
+                timeout,
+            )
+            return False
         if proc.returncode != 0:
             logger.error(
                 "docker cp %s -> %s:%s failed: %s",
