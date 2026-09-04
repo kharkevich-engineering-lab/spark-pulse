@@ -644,6 +644,68 @@ export interface DeployPlan {
   created_at: string;
 }
 
+// ── Pre-flight ──────────────────────────────────────────────────────────────
+
+/** `pass` | `warn` | `fail`. Warn is a first-class answer, not a soft fail. */
+export type PreflightStatus = "pass" | "warn" | "fail";
+
+/** `blocked` cannot proceed; `slow` will work but has bytes to move first. */
+export type PreflightVerdict = "ready" | "slow" | "blocked";
+
+/** One check on one node: what it is, what was seen, and what to do. */
+export interface PreflightCheck {
+  id: string;
+  title: string;
+  /** The node it ran on, by the name the operator gave it. */
+  node: string;
+  node_id: string;
+  status: PreflightStatus;
+  observed: string;
+  /** What to do about it. Filled on every non-passing check. */
+  remedy: string;
+  /** Bytes that must transfer, when that is knowable. */
+  delay_bytes: number;
+  /** Whether this warning costs time even when the size is unknown. */
+  costs_time: boolean;
+  detail: Record<string, unknown>;
+}
+
+export interface PreflightNode {
+  id: string;
+  label: string;
+  address: string;
+  is_control_plane: boolean;
+  ranks: number[];
+}
+
+export interface PreflightReport {
+  verdict: PreflightVerdict;
+  summary: string;
+  can_proceed: boolean;
+  delays: boolean;
+  estimated_transfer_bytes: number;
+  counts: { pass: number; warn: number; fail: number };
+  nodes: PreflightNode[];
+  checks: PreflightCheck[];
+  /** Checks that failed: the deployment cannot start until they are fixed. */
+  blocking: PreflightCheck[];
+  /** Warnings that cost time — a pull, a replication. */
+  delaying: PreflightCheck[];
+  /** Warnings that cost nothing but are worth reading. */
+  advisories: PreflightCheck[];
+  plan: {
+    recipe_id: string;
+    engine: string;
+    variant: string;
+    image_ref: string;
+    model: string;
+    port: number | null;
+    rendezvous_port: number | null;
+    node_count: number;
+  };
+  checked_at: string;
+}
+
 export interface RenderResult {
   recipe_id: string;
   engine: string;

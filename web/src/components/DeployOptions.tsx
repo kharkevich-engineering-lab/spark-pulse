@@ -9,10 +9,11 @@ recipe carries a vLLM `command` template and therefore pins itself to vLLM.
 */
 
 import { useEffect, useMemo, useState } from "react";
-import { fetchEngines, fetchModels, planDeployment } from "@/lib/api";
-import type { DeployPlan, EngineSummary, RecipeDetail } from "@/lib/types";
+import { fetchEngines, fetchModels, planDeployment, runPreflight } from "@/lib/api";
+import type { DeployPlan, EngineSummary, PreflightReport, RecipeDetail } from "@/lib/types";
 import { AlertCircle, ChevronDown, Eye, Loader2 } from "lucide-react";
 import { formatSize } from "@/lib/utils";
+import PreflightPanel from "@/components/PreflightPanel";
 
 export interface DeployOptionsValue {
   engine?: string;
@@ -99,6 +100,7 @@ export default function DeployOptions({
   const [models, setModels] = useState<string[]>([]);
   const [extraArgsText, setExtraArgsText] = useState("");
   const [plan, setPlan] = useState<DeployPlan | null>(null);
+  const [preflight, setPreflight] = useState<PreflightReport | null>(null);
   const [planning, setPlanning] = useState(false);
   const [planError, setPlanError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
@@ -120,16 +122,28 @@ export default function DeployOptions({
     setPlanning(true);
     setPlanError(null);
     setPlan(null);
+    setPreflight(null);
+    const body = {
+      recipe_id: recipe.id,
+      engine: value.engine || undefined,
+      model: value.model || undefined,
+      extra_args: value.extra_args ?? [],
+    };
     try {
-      const result = await planDeployment({
-        recipe_id: recipe.id,
-        engine: value.engine || undefined,
-        model: value.model || undefined,
-        extra_args: value.extra_args ?? [],
-      });
+      const result = await planDeployment(body);
       setPlan(result);
     } catch (e) {
       setPlanError(e instanceof Error ? e.message : "Preview failed");
+      setPlanning(false);
+      return;
+    }
+    // The pre-flight is the same question against the real nodes, so it is
+    // asked here rather than after a deploy has already started downloading.
+    // It can fail on its own without costing the operator the preview.
+    try {
+      setPreflight(await runPreflight(body));
+    } catch {
+      setPreflight(null);
     } finally {
       setPlanning(false);
     }
@@ -270,6 +284,8 @@ export default function DeployOptions({
                   {warning}
                 </p>
               ))}
+
+              {preflight && <PreflightPanel report={preflight} />}
 
               <div>
                 <p className="text-xs uppercase tracking-wide text-text-muted mb-1">Command</p>

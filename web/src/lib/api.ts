@@ -1,4 +1,4 @@
-import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntry, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, CustomRecipeInfo, CustomModInfo, ModFileMap, BenchmarkResult, OciRegistry, OciCollection, OciCollectionRecipe, OciRecipeMeta, OciUpdateCheck, OciUpdateApply, OciUpdateResult, OciAutoUpdateSettings, EngineListResponse, EngineDetail, EngineIndexRefreshResult, RenderRequest, RenderResult, ModelEntry, ModelSource, ModelDownloadJob, ModelSyncResult, ModelPresence, ModelDeleteResult, ImageEntry, ImagePullJob, ImageSyncResult, ImagePresence, ImageDeleteResult, RecipeImportResult, RecipeImportStatus, DeployPlan, DeployPlanRequest } from "@/lib/types";
+import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntry, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, CustomRecipeInfo, CustomModInfo, ModFileMap, BenchmarkResult, OciRegistry, OciCollection, OciCollectionRecipe, OciRecipeMeta, OciUpdateCheck, OciUpdateApply, OciUpdateResult, OciAutoUpdateSettings, EngineListResponse, EngineDetail, EngineIndexRefreshResult, RenderRequest, RenderResult, ModelEntry, ModelSource, ModelDownloadJob, ModelSyncResult, ModelPresence, ModelDeleteResult, ImageEntry, ImagePullJob, ImageSyncResult, ImagePresence, ImageDeleteResult, RecipeImportResult, RecipeImportStatus, DeployPlan, DeployPlanRequest, PreflightReport } from "@/lib/types";
 
 const API = "/api";
 
@@ -50,6 +50,12 @@ export async function createDeployment(body: { recipe_id: string; name: string; 
 /** Dry run: resolve engine, image, model and the rendered command without deploying. */
 export async function planDeployment(body: DeployPlanRequest): Promise<DeployPlan> { return json<DeployPlan>("/deployments/plan", { method: "POST", body: JSON.stringify(body) }); }
 export async function fetchDeployment(id: string): Promise<Deployment> { return json<Deployment>(`/deployments/${id}`); }
+
+// ── Pre-flight ──────────────────────────────────────────────────────────────
+
+/** Check every node the deployment would touch. Takes the plan's own body. */
+export async function runPreflight(body: DeployPlanRequest): Promise<PreflightReport> { return json<PreflightReport>("/preflight/run", { method: "POST", body: JSON.stringify(body) }); }
+
 export async function stopDeployment(id: string): Promise<void> { await json(`/deployments/${id}`, { method: "DELETE" }); }
 export async function fetchLogs(id: string, n = 200): Promise<{ logs: string }> { return json(`/deployments/${id}/logs?lines=${n}`); }
 
