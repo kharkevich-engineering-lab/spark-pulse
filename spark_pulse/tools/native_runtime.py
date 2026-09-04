@@ -56,6 +56,7 @@ import tempfile
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -104,6 +105,27 @@ HF_CACHE_IN_CONTAINER = "/root/.cache/huggingface"
 #: never races a rank that is still holding the GPU.
 CONFIRM_GONE_TIMEOUT = 30.0
 CONFIRM_GONE_INTERVAL = 0.5
+
+#: How many ranks :func:`status` probes at once, and why the number is four.
+#:
+#: OpenSSH's ``MaxSessions`` defaults to 10 and ``sshd_config(5)`` defines it
+#: as "the maximum number of open shell, login or subsystem sessions permitted
+#: **per network connection**". We hold one multiplexed connection per node,
+#: so the ceiling is per node, and it is a cliff rather than a slope: the
+#: eleventh concurrent session on a connection is refused, ssh falls back to a
+#: full handshake and logs ``ControlSocket … already exists, disabling
+#: multiplexing``, after which *that connection* stops multiplexing for as
+#: long as it stays saturated. Measured on a GB10: 59 ms at ten concurrent
+#: inspects, 575 ms at twelve (``docs/rank-state-transport.md`` §1.2).
+#:
+#: Four is the bound that cannot cross it. It is charged against a single
+#: node, not against the fleet, so it holds even in the case this code does
+#: not otherwise defend against — every rank of a deployment landing on one
+#: machine — and it still leaves six of that node's ten slots for the log
+#: follows, event tails and an operator's own ssh that share the connection.
+#: It is also :data:`~spark_pulse.engines.MAX_CLUSTER_NODES`, so the largest
+#: cluster this hardware has a published topology for is probed in one wave.
+RANK_STATUS_MAX_WORKERS = 4
 
 #: Attached to every plan above one node, and to the record it becomes.
 #:
@@ -1320,6 +1342,22 @@ def _wait_ready(
 # ── Reaping, confirmation and teardown ───────────────────────────────────────
 
 
+def _is_confirmed_gone(container: dict[str, Any]) -> bool:
+    """Whether a container status is *evidence* the container is not there.
+
+    Only ``missing`` is, and ``missing`` now means what it says: a daemon
+    answered and told us the object does not exist
+    (:meth:`~spark_pulse.tools.node_service.RemoteNodeService.get_container_status`).
+    ``unknown`` — a daemon that did not answer, a node we could not reach, a
+    reply we could not parse — is not evidence of anything, and the two
+    callers of this predicate both release a resource on a True: one starts a
+    new generation on the GPU, the other frees the ports an orphan record was
+    holding. Releasing on inference rather than on evidence is the failure the
+    orphan machinery exists to prevent, so the predicate names itself.
+    """
+    return container.get("status") == "missing"
+
+
 def _confirm_gone(
     docker: Any,
     name: str,
@@ -1331,7 +1369,7 @@ def _confirm_gone(
     interval = CONFIRM_GONE_INTERVAL if interval is None else interval
     deadline = time.monotonic() + timeout
     while True:
-        if docker.get_container_status(name).get("status") == "missing":
+        if _is_confirmed_gone(docker.get_container_status(name)):
             return True
         if time.monotonic() >= deadline:
             return False
@@ -1377,7 +1415,11 @@ def _stale_names(docker: Any, plan_obj: DeployPlan, rank_plan: RankPlan) -> list
     target = rank_plan.container.name
     if target not in names:
         try:
-            present = docker.get_container_status(target).get("status") != "missing"
+            # Anything short of confirmed-gone counts as present, so an
+            # `unknown` sends us down the reap path and the deploy fails
+            # loudly rather than racing a container that may still hold the
+            # GPU. The asymmetry with `_is_confirmed_gone` is the point.
+            present = not _is_confirmed_gone(docker.get_container_status(target))
         except Exception:  # pragma: no cover - defensive
             present = False
         if present:
@@ -2028,6 +2070,37 @@ def _rank_status(
     return {**entry, "container": container}
 
 
+def _gather_rank_statuses(
+    services: Callable[[str], Any], entries: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Every rank's container state, asked for at the same time.
+
+    Serially, a rank on a silent node cost the whole request its own timeout,
+    and the ranks behind it waited their turn: four ranks with one silent node
+    took 10.14 s where four healthy ones took 0.13 s, measured
+    (``docs/rank-state-transport.md`` §2.2). ``GET /api/deployments/{id}`` is
+    a sync route, so that was an AnyIO threadpool worker held for ten seconds,
+    on every poll, for as long as the node stayed down.
+
+    Concurrently, the cost is the slowest rank rather than the sum, and with
+    :data:`~spark_pulse.tools.node_service.STATUS_PROBE_TIMEOUT` bounding each
+    probe the slowest rank is bounded too. Nothing here raises:
+    :func:`_rank_status` turns a failure into ``unknown``, so a dead node
+    marks its own rank and the endpoint still answers.
+
+    Order is the rank order the record gives, because ``Executor.map`` yields
+    in submission order and rank zero is what ``status`` reports as *the*
+    container.
+    """
+    if len(entries) < 2:
+        return [_rank_status(services, entry) for entry in entries]
+    workers = min(len(entries), RANK_STATUS_MAX_WORKERS)
+    with ThreadPoolExecutor(
+        max_workers=workers, thread_name_prefix="rank-status"
+    ) as pool:
+        return list(pool.map(lambda entry: _rank_status(services, entry), entries))
+
+
 def status(
     deployment_id: str,
     docker: Any | None = None,
@@ -2042,7 +2115,7 @@ def status(
     if record is None:
         return None
     services = services or rank_services(docker)
-    ranks = [_rank_status(services, entry) for entry in rank_entries(record)]
+    ranks = _gather_rank_statuses(services, rank_entries(record))
     container = ranks[0]["container"]
     port = record.get("port")
     url = record.get("readiness_url") or (f"http://127.0.0.1:{port}/v1/models")
@@ -2199,9 +2272,9 @@ def sweep_orphans(
         for orphan in orphans:
             name = str(orphan.get("container_name") or "")
             try:
-                gone = (
+                gone = _is_confirmed_gone(
                     services(str(orphan.get("node") or "")).get_container_status(name)
-                ).get("status") == "missing"
+                )
             except Exception as exc:
                 logger.debug("orphan %s still unverifiable: %s", name, exc)
                 gone = False

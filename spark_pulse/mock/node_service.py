@@ -28,8 +28,10 @@ from typing import Any, Callable
 from spark_pulse.tools.docker import DockerService
 from spark_pulse.tools.node_service import (
     CONTROL_NODE_ID as CONTROL_NODE_ID,
+    DAEMON_PROBE_COMMAND as DAEMON_PROBE_COMMAND,
     LOOPBACK_ADDRESSES as LOOPBACK_ADDRESSES,
     NODE_SERVICE_METHODS as NODE_SERVICE_METHODS,
+    STATUS_PROBE_TIMEOUT as STATUS_PROBE_TIMEOUT,
     Node as Node,
     NodeService as NodeService,
     NodeServices as _NodeServices,
@@ -87,12 +89,20 @@ class SimulatedDockerSSHClient(SSHClient):
     and the outcome is definite, so returning one for a dead node would let
     ``docker inspect`` read as "no such container" and a rank that is still
     holding a GPU be confirmed gone on inference rather than on evidence.
+
+    :attr:`daemon_down_hosts` is the other half of that contract, and it is a
+    different failure entirely: the node answers SSH perfectly well and its
+    Docker daemon does not answer *it*. Real docker exits 1 with ``Cannot
+    connect to the Docker daemon`` — the same exit code a container that does
+    not exist produces — so a host in this set is how a test reaches the one
+    case where the exit status alone cannot tell "gone" from "unknown".
     """
 
     def __init__(
         self,
         images: dict[str, int] | None = None,
         fail_hosts: list[str] | None = None,
+        daemon_down_hosts: list[str] | None = None,
     ):
         """Simulate docker over SSH.
 
@@ -101,6 +111,9 @@ class SimulatedDockerSSHClient(SSHClient):
                 bytes.
             fail_hosts: Hosts that are unreachable. Mutate :attr:`fail_hosts`
                 to make a node go away mid-operation.
+            daemon_down_hosts: Hosts that are reachable but whose Docker
+                daemon is not. Mutate :attr:`daemon_down_hosts` to kill a
+                daemon mid-operation.
         """
         self.commands: list[dict[str, Any]] = []
         self.copies: list[dict[str, Any]] = []
@@ -114,6 +127,8 @@ class SimulatedDockerSSHClient(SSHClient):
         self._seed_images = dict(images or {})
         #: Hosts that are unreachable right now. Mutable by design.
         self.fail_hosts: set[str] = set(fail_hosts or [])
+        #: Hosts reachable over SSH whose Docker daemon is down. Mutable too.
+        self.daemon_down_hosts: set[str] = set(daemon_down_hosts or [])
 
     # ── Store ────────────────────────────────────────────────────────────
 
@@ -182,6 +197,21 @@ class SimulatedDockerSSHClient(SSHClient):
             return SSHResult(returncode=0, stdout="", stderr="")
         if len(parts) < 2 or parts[0] != "docker":
             return SSHResult(returncode=127, stdout="", stderr=f"not docker: {command}")
+
+        if host in self.daemon_down_hosts:
+            # Exactly what the CLI does when the socket is not answering, exit
+            # code included: 1, the same code `no such object` uses. Measured
+            # on a GB10 running Docker 29.2.1, docs/rank-state-transport.md
+            # §2.4. Every docker verb fails this way, `version` included —
+            # which is what makes the daemon probe a real probe.
+            return SSHResult(
+                returncode=1,
+                stdout="",
+                stderr=(
+                    "Cannot connect to the Docker daemon at "
+                    "unix:///var/run/docker.sock. Is the docker daemon running?"
+                ),
+            )
 
         verb = parts[1]
         handler = getattr(self, f"_docker_{verb.replace('-', '_')}", None)
@@ -288,11 +318,25 @@ class SimulatedDockerSSHClient(SSHClient):
             return SSHResult(returncode=1, stdout="", stderr="No such container")
         return SSHResult(returncode=0, stdout=f"[simulated logs for {name}]", stderr="")
 
+    def _docker_version(self, host: str, _parts: list[str], _raw: str) -> SSHResult:
+        """The daemon-liveness probe. Reached only when the daemon is up.
+
+        A host in :attr:`daemon_down_hosts` never gets here — ``exec`` fails
+        every verb for it — which is the whole point: this answers only when
+        there is a daemon to answer.
+        """
+        _ = host
+        return SSHResult(returncode=0, stdout="29.2.1\n", stderr="")
+
     def _docker_inspect(self, host: str, parts: list[str], _raw: str) -> SSHResult:
         name = parts[-1]
         record = self.containers_on(host).get(name)
         if record is None:
-            return SSHResult(returncode=1, stdout="", stderr="No such object")
+            # The real message, so a test that asserts on the error text is
+            # asserting against what the CLI actually says.
+            return SSHResult(
+                returncode=1, stdout="", stderr=f"Error: No such object: {name}"
+            )
         state = {"Running": record["State"] == "running", "Status": record["State"]}
         return SSHResult(returncode=0, stdout=json.dumps(state), stderr="")
 

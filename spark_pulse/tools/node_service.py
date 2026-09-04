@@ -64,6 +64,33 @@ LOOPBACK_ADDRESSES = frozenset(
     {"", "local", "localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"}
 )
 
+#: Seconds a container-state probe waits for a node before giving up on it.
+#:
+#: This is a *liveness* timeout, not a work timeout, and the two want very
+#: different numbers. A node that is up answers ``docker inspect`` in 28.7 ms
+#: over a warm multiplexed connection, and pays about 500 ms when the control
+#: master has to be established first — both measured on a GB10
+#: (``docs/rank-state-transport.md`` §1.1-1.2). A node that is gone answers
+#: never, and the only thing a long wait buys is the wait: with ssh's own
+#: ``ConnectTimeout`` of 10 s, one silent node cost a full ten seconds on
+#: every probe, nine consecutive times over ninety seconds, and the poller
+#: learned nothing in between (§2.1). Three seconds is six times the cold
+#: handshake and a hundred times the warm answer, so it is only ever spent on
+#: a node that was not going to answer at all.
+#:
+#: Exceeding it raises :class:`~spark_pulse.tools.ssh.SSHError` from the
+#: transport, which is the honest outcome: unreachable, not missing.
+STATUS_PROBE_TIMEOUT = 3
+
+#: A daemon-liveness probe, run only once an inspect has already failed.
+#:
+#: ``docker inspect`` exits 1 both for a container that is not there and for a
+#: daemon that is not there, so the exit code we already hold carries no
+#: signal. Asking the daemon for its *server* version does: it cannot fail on
+#: account of the container, and it exits zero only if a daemon answered. See
+#: :meth:`RemoteNodeService.get_container_status`.
+DAEMON_PROBE_COMMAND = "docker version --format '{{.Server.Version}}'"
+
 
 # ── The node record ──────────────────────────────────────────────────────────
 
@@ -651,15 +678,38 @@ class RemoteNodeService(NodeService):
             )
         return bool(result.ok)
 
-    def get_container_status(self, name: str) -> dict[str, Any]:
-        """Return the container's state on the node."""
-        if self.node.is_self:
-            return self._local.get_container_status(name)
+    def _daemon_answered(self) -> bool:
+        """Whether this node's Docker daemon is there at all.
 
-        result = self._exec(
-            f"docker inspect --format '{{{{json .State}}}}' {name}", timeout=10
-        )
-        if not result.ok:
+        Raises :class:`~spark_pulse.tools.ssh.SSHError` if the node itself
+        cannot be reached — the caller must not turn that into an answer.
+        """
+        return bool(self._exec(DAEMON_PROBE_COMMAND, timeout=STATUS_PROBE_TIMEOUT).ok)
+
+    def _inspect_failed_status(self, name: str, stderr: str) -> dict[str, Any]:
+        """Tell "no such container" apart from "no daemon answered".
+
+        Both exit 1. Measured on a GB10 running Docker 29.2.1
+        (``docs/rank-state-transport.md`` §2.4): ``docker inspect`` against a
+        container that does not exist exits 1 with ``no such object``, and
+        ``docker inspect`` against an unreachable daemon exits 1 with ``Cannot
+        connect to the Docker daemon``. So the exit code carries no signal and
+        the only difference sitting in front of us is English prose.
+
+        Rather than read that prose and call it a fact, this asks the daemon a
+        question that cannot fail on account of the container: ``docker
+        version`` reports the *server* version, so it exits zero only when a
+        daemon answered. That exit status is structural, it costs one extra
+        round trip on a path that has already failed, and it is what this
+        branches on. The stderr text is carried into ``error`` for a human and
+        is never a decision input.
+
+        Getting this wrong in the "missing" direction is the expensive one:
+        :func:`native_runtime.sweep_orphans` clears an orphan — and with it
+        the ports the record was holding — on ``status == "missing"`` alone.
+        A rank we could not ask about must never produce it.
+        """
+        if self._daemon_answered():
             return {
                 "status": "missing",
                 "running": False,
@@ -667,6 +717,39 @@ class RemoteNodeService(NodeService):
                 "state": {},
                 "error": f"Container '{name}' not found on {self.node.label}",
             }
+        detail = stderr.strip() or "docker did not answer"
+        return {
+            # The same third state the local path reports as "error"
+            # (``DockerService.get_container_status``) and that ``_rank_status``
+            # names for a node it could not reach: we did not learn anything,
+            # which is not the same as learning the container is gone.
+            "status": "unknown",
+            "running": False,
+            "id": None,
+            "state": {},
+            "error": (
+                f"Docker on {self.node.label} did not answer, so the state of "
+                f"'{name}' is unknown: {detail}"
+            ),
+        }
+
+    def get_container_status(self, name: str) -> dict[str, Any]:
+        """Return the container's state on the node.
+
+        Three outcomes, never two: running/stopped when the daemon told us,
+        ``missing`` when the daemon told us the container is not there, and
+        ``unknown`` when nobody told us anything. An unreachable node raises
+        instead, which is the fourth way of saying the third thing.
+        """
+        if self.node.is_self:
+            return self._local.get_container_status(name)
+
+        result = self._exec(
+            f"docker inspect --format '{{{{json .State}}}}' {name}",
+            timeout=STATUS_PROBE_TIMEOUT,
+        )
+        if not result.ok:
+            return self._inspect_failed_status(name, result.stderr or "")
 
         try:
             state = json.loads(result.stdout.strip())
@@ -1036,8 +1119,10 @@ class NodeServices:
 
 __all__ = [
     "CONTROL_NODE_ID",
+    "DAEMON_PROBE_COMMAND",
     "LOOPBACK_ADDRESSES",
     "NODE_SERVICE_METHODS",
+    "STATUS_PROBE_TIMEOUT",
     "Node",
     "NodeService",
     "NodeServices",

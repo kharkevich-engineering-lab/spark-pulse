@@ -30,6 +30,8 @@ rests on: at one node nothing about this changed.
 from __future__ import annotations
 
 import importlib
+import threading
+import time
 from typing import Any
 from unittest.mock import patch
 
@@ -42,6 +44,7 @@ from spark_pulse.mock import docker as mock_docker
 from spark_pulse.mock import node_service as mock_node_service
 from spark_pulse.tools.discovery import MESH_NCCL_ENV
 from spark_pulse.tools.labels import RANK_LABEL, WORLD_SIZE_LABEL
+from spark_pulse.tools.ssh import SSHError, SSHErrorType
 
 # See test_tools_native_runtime.py: under SIMULATION_MODE the package attribute
 # is the mock re-export, so hold the real module to patch its globals.
@@ -806,3 +809,277 @@ class TestSizeOneIsUntouched:
         assert record["status"] == "running"
         assert local_containers() == ["spark-pulse-solo-r0-g1"]
         assert fleet.hosts_seen() == []
+
+
+# ── Rank state: three answers, not two, and none of them serial ──────────────
+#
+# `docs/rank-state-transport.md` measured all of this on a real GB10 and found
+# two defects at the peer boundary that do not exist on the control node.
+# §2.4: `docker inspect` exits 1 both for a container that is not there and
+# for a daemon that is not there, so a peer whose Docker had died reported its
+# rank as *stopped* — a claim about a container nobody had been able to ask
+# about. §2.2: the per-rank probes ran serially, so one silent node cost
+# 10.14 s for four ranks where four healthy ones cost 0.13 s, on every poll,
+# for as long as the node stayed down.
+
+
+class TestRankStateIsThreeStates:
+    """A daemon that did not answer is not a container that is not there."""
+
+    def test_a_dead_daemon_reports_unknown_rather_than_missing(self, fleet):
+        """The distinction the local path has always had, at the peer.
+
+        ``DockerService.get_container_status`` separates ``NotFound`` from
+        ``APIError``, so the control node's own rank is told the truth. The
+        peer gets one exit code for both, and inventing "not found" out of it
+        is a claim we have no evidence for.
+        """
+        service = tools.node_service.NodeServices().for_address(PEERS[0])
+        fleet.daemon_down_hosts.add(PEERS[0])
+
+        state = service.get_container_status("spark-pulse-anything-r1-g1")
+
+        assert state["status"] == "unknown"
+        assert state["running"] is False
+        assert PEERS[0] in state["error"]
+        assert "unknown" in state["error"]
+        # And it must not claim the container is absent, which is the sentence
+        # the old code wrote for exactly this case.
+        assert "not found" not in state["error"]
+
+    def test_a_live_daemon_still_reports_a_container_that_is_not_there(self, fleet):
+        """The other half: ``missing`` has to keep meaning missing."""
+        service = tools.node_service.NodeServices().for_address(PEERS[0])
+
+        state = service.get_container_status("spark-pulse-never-existed-r1-g1")
+
+        assert state["status"] == "missing"
+        assert state["running"] is False
+
+    def test_the_signal_is_the_daemon_probe_and_not_the_stderr_text(self, fleet):
+        """What the branch actually reads.
+
+        Both cases arrive as exit 1 with different English. The decision is
+        taken on a second command — ``docker version``, which reports the
+        *server* version and so exits zero only when a daemon answered — and
+        this asserts that command is the one that gets asked.
+        """
+        service = tools.node_service.NodeServices().for_address(PEERS[0])
+        fleet.commands.clear()
+
+        service.get_container_status("spark-pulse-never-existed-r1-g1")
+
+        asked = [c["command"] for c in fleet.commands if c["host"] == PEERS[0]]
+        assert asked[0].startswith("docker inspect")
+        assert asked[1] == tools.node_service.DAEMON_PROBE_COMMAND
+
+    def test_a_healthy_rank_costs_no_extra_round_trip(self, fleet):
+        """The daemon probe runs on the failure path and nowhere else."""
+        nr.start(plan_for(2), wait=True)
+        fleet.commands.clear()
+
+        nr.status("dep2")
+
+        asked = [c["command"] for c in fleet.commands if c["host"] == PEERS[0]]
+        assert asked == [
+            "docker inspect --format '{{json .State}}' spark-pulse-dep2-r1-g1"
+        ]
+
+    def test_a_rank_whose_daemon_died_reads_unknown_not_stopped(self, fleet):
+        """End to end, through the endpoint's own code path."""
+        nr.start(plan_for(3), wait=True)
+        fleet.daemon_down_hosts.add(PEERS[0])
+
+        live = nr.status("dep3")
+
+        by_rank = {r["rank"]: r for r in live["ranks"]}
+        assert by_rank[1]["node"] == PEERS[0]
+        assert by_rank[1]["container"]["status"] == "unknown"
+        # The ranks we could ask about are unaffected.
+        assert by_rank[0]["container"]["status"] == "running"
+        assert by_rank[2]["container"]["status"] == "running"
+
+    def test_a_dead_daemon_does_not_release_the_ports_an_orphan_holds(self, fleet):
+        """The expensive direction, and the reason this is not cosmetic.
+
+        ``sweep_orphans`` frees an orphan's ports on ``status == "missing"``
+        alone. Reporting a node we could not ask as "missing" hands those
+        ports out again while a rank may still be running on them — the exact
+        failure the orphan record exists to prevent.
+        """
+        record = nr.start(plan_for(3), wait=True)
+        held = {record["port"], record["rendezvous_port"]}
+
+        # Rank 1's node goes away mid-teardown, so its rank is outstanding.
+        fleet.fail_hosts.add(PEERS[0])
+        nr.stop_deployment("dep3")
+        assert [o["node"] for o in nr.get_deployment("dep3")["orphans"]] == [PEERS[0]]
+        assert held <= nr._ports_in_use()
+
+        # The node comes back and its container really is gone — but its
+        # Docker daemon is not answering, so we cannot know that, and the
+        # whole point is that we do not guess.
+        fleet.fail_hosts.discard(PEERS[0])
+        fleet.containers_on(PEERS[0]).clear()
+        fleet.daemon_down_hosts.add(PEERS[0])
+
+        assert nr.sweep_orphans("dep3") == 0
+        assert [o["node"] for o in nr.get_deployment("dep3")["orphans"]] == [PEERS[0]]
+        assert held <= nr._ports_in_use()
+
+        # Once a daemon answers, the same absence becomes evidence and the
+        # ports are released — on evidence, which is the only way they ever
+        # should be.
+        fleet.daemon_down_hosts.discard(PEERS[0])
+
+        assert nr.sweep_orphans("dep3") == 1
+        assert nr.get_deployment("dep3")["orphans"] == []
+        assert not (held & nr._ports_in_use())
+
+    def test_a_teardown_against_a_dead_daemon_leaves_an_orphan(self, fleet):
+        """Stopping a rank we cannot confirm gone must not read as success."""
+        nr.start(plan_for(3), wait=True)
+        fleet.daemon_down_hosts.add(PEERS[0])
+
+        # The confirmation window is shortened only so the test does not sit
+        # through it: the point is that it expires without evidence, not how
+        # long it waits for some.
+        with patch.object(nr, "CONFIRM_GONE_TIMEOUT", 0.05):
+            nr.stop_deployment("dep3")
+
+        orphans = nr.get_deployment("dep3")["orphans"]
+        assert [o["node"] for o in orphans] == [PEERS[0]]
+        assert [o["rank"] for o in orphans] == [1]
+
+
+class TestOneSilentRankDoesNotStallTheRest:
+    """§2.2: the serial comprehension charged the request for every timeout."""
+
+    def test_the_silent_ranks_cost_one_timeout_between_them(self, fleet):
+        """Three silent peers cost one stall, not three.
+
+        The simulated transport answers instantly, so the stall is injected
+        here: every peer sleeps and then raises the same ``SSHError`` the real
+        client raises on ssh's exit 255. Serially that is three sleeps; the
+        assertion is that it is nearer one.
+        """
+        nr.start(plan_for(4), wait=True)
+        stall = 0.4
+        original_exec = fleet.exec
+
+        def _silent_peer(host, command, *args, **kwargs):
+            if host in PEERS:
+                time.sleep(stall)
+                raise SSHError(
+                    error_type=SSHErrorType.TIMEOUT,
+                    host=host,
+                    message=f"Command timed out after {stall}s",
+                )
+            return original_exec(host, command, *args, **kwargs)
+
+        with patch.object(fleet, "exec", _silent_peer):
+            began = time.monotonic()
+            live = nr.status("dep4")
+            elapsed = time.monotonic() - began
+
+        assert live is not None
+        assert elapsed < stall * 2, (
+            f"three silent ranks took {elapsed:.2f}s; serially they would take "
+            f"{stall * 3:.2f}s, which is the defect"
+        )
+
+    def test_a_silent_rank_comes_back_unknown_and_the_endpoint_still_answers(
+        self, fleet
+    ):
+        """A dead node marks its own rank; it does not fail the request."""
+        nr.start(plan_for(4), wait=True)
+        fleet.fail_hosts.add(PEERS[1])
+
+        live = nr.status("dep4")
+
+        assert live is not None
+        by_rank = {r["rank"]: r for r in live["ranks"]}
+        assert by_rank[2]["node"] == PEERS[1]
+        assert by_rank[2]["container"]["status"] == "unknown"
+        assert by_rank[2]["container"]["running"] is False
+        assert by_rank[0]["container"]["status"] == "running"
+        assert by_rank[1]["container"]["status"] == "running"
+        assert by_rank[3]["container"]["status"] == "running"
+
+    def test_the_probe_timeout_is_a_liveness_timeout_not_a_work_one(self):
+        """A node that is up answers in tens of milliseconds (28.7 ms measured).
+
+        Ten seconds of ssh's ``ConnectTimeout`` is therefore only ever spent
+        on a node that was never going to answer — and it was spent on every
+        poll, indefinitely.
+        """
+        assert 1 <= tools.node_service.STATUS_PROBE_TIMEOUT < 10
+
+    def test_ranks_come_back_in_rank_order(self, fleet):
+        """``status`` reports rank zero as *the* container, so order matters."""
+        nr.start(plan_for(4), wait=True)
+
+        live = nr.status("dep4")
+
+        assert [r["rank"] for r in live["ranks"]] == [0, 1, 2, 3]
+        assert live["container"] is live["ranks"][0]["container"]
+
+
+class TestConcurrencyStaysUnderTheSessionCeiling:
+    """§1.2: OpenSSH refuses the eleventh session *per connection*."""
+
+    def test_the_bound_is_below_the_maxsessions_cliff(self):
+        """Ten is the default, and crossing it is a cliff rather than a slope.
+
+        The eleventh concurrent session on one connection is refused, ssh
+        falls back to a full handshake and logs ``ControlSocket ... already
+        exists, disabling multiplexing``, after which that connection stops
+        multiplexing for as long as it stays saturated: 59 ms at ten
+        concurrent inspects, 575 ms at twelve, measured on a GB10.
+        """
+        assert nr.RANK_STATUS_MAX_WORKERS < 10
+        # And large enough that the biggest topology this hardware has a
+        # published arrangement for is still probed in a single wave.
+        assert nr.RANK_STATUS_MAX_WORKERS >= MAX_CLUSTER_NODES
+
+    def test_no_more_probes_are_in_flight_than_the_bound_allows(self):
+        """Charged as a total, because the SSH limit is per connection.
+
+        The entries here name different nodes, but the bound is asserted
+        globally: it has to hold in the case this code does not otherwise
+        prevent — every rank of a deployment landing on one machine — because
+        that is when all of these become sessions on a single connection.
+        """
+        entries = [
+            {"rank": index, "node": f"10.9.0.{index}", "container_name": f"c{index}"}
+            for index in range(nr.RANK_STATUS_MAX_WORKERS * 3)
+        ]
+        lock = threading.Lock()
+        state = {"in_flight": 0, "peak": 0}
+
+        class _CountingService:
+            def get_container_status(self, name):
+                with lock:
+                    state["in_flight"] += 1
+                    state["peak"] = max(state["peak"], state["in_flight"])
+                time.sleep(0.02)
+                with lock:
+                    state["in_flight"] -= 1
+                return {"status": "running", "running": True, "state": {}}
+
+        ranks = nr._gather_rank_statuses(lambda node: _CountingService(), entries)
+
+        assert state["peak"] <= nr.RANK_STATUS_MAX_WORKERS
+        assert state["peak"] > 1, "nothing overlapped, so the bound proves nothing"
+        assert [r["rank"] for r in ranks] == [e["rank"] for e in entries]
+
+    def test_a_single_rank_is_not_handed_to_a_thread_pool(self, fleet):
+        """The solo case stays exactly as cheap as it was."""
+        nr.start(nr.plan("multinode", deployment_id="solo"), wait=True)
+
+        with patch.object(
+            nr, "ThreadPoolExecutor", side_effect=AssertionError("pooled")
+        ):
+            live = nr.status("solo")
+
+        assert [r["rank"] for r in live["ranks"]] == [0]
