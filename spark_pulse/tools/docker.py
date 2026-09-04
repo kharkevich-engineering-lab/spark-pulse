@@ -744,6 +744,7 @@ class DockerService:
         container: str | Any,
         command: str | list[str],
         detach: bool = False,
+        timeout: int | None = None,
     ) -> ExecResult:
         """Execute a command inside a running container.
 
@@ -751,11 +752,17 @@ class DockerService:
             container: Container name or Container object.
             command: Command to execute, as a string or argv list.
             detach: If True, run in the background and return immediately.
+            timeout: Seconds to allow the command. Part of the node-service
+                interface, where it bounds the ``ssh`` invocation on a peer.
+                The Docker SDK's exec has no per-call deadline — the client's
+                own socket timeout is all there is — so it is advisory here
+                and accepted only so the signatures match.
 
         Returns:
             ExecResult with returncode, stdout and stderr. A detached exec
             returns an empty successful result.
         """
+        _ = timeout
 
         client = self.client
         if isinstance(container, str):
@@ -801,6 +808,7 @@ class DockerService:
         container: str,
         local_path: str,
         remote_path: str,
+        timeout: int = 120,
     ) -> bool:
         """Copy a local file into a container via ``docker cp``.
 
@@ -808,15 +816,27 @@ class DockerService:
             container: Container name or ID.
             local_path: Path on the host.
             remote_path: Destination path inside the container.
+            timeout: Seconds before the copy is abandoned.
 
         Returns:
             True when the copy succeeded.
         """
-        proc = subprocess.run(
-            ["docker", "cp", local_path, f"{container}:{remote_path}"],
-            capture_output=True,
-            text=True,
-        )
+        try:
+            proc = subprocess.run(
+                ["docker", "cp", local_path, f"{container}:{remote_path}"],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            logger.error(
+                "docker cp %s -> %s:%s timed out after %ss",
+                local_path,
+                container,
+                remote_path,
+                timeout,
+            )
+            return False
         if proc.returncode != 0:
             logger.error(
                 "docker cp %s -> %s:%s failed: %s",
