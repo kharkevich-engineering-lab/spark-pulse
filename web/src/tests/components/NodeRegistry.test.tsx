@@ -279,4 +279,24 @@ describe("NodeRegistry", () => {
     render(<NodeRegistry />);
     expect(await screen.findByRole("alert")).toHaveTextContent("unreadable state file");
   });
+
+  /** A forget that failed silently is the worst outcome: the row disappears
+   *  from nothing, the operator believes the node is gone, and the next
+   *  deploy still tries to reach it. The row has to stay and say why. */
+  it("keeps the node and says why when forgetting it fails", async () => {
+    mockApi();
+    vi.mocked(removeNode).mockRejectedValue(
+      new Error("API 400: the control plane cannot be removed from the registry"),
+    );
+    render(<NodeRegistry />);
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: "Forget spark-02" }));
+    await user.click(screen.getByRole("button", { name: "Forget" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "cannot be removed from the registry",
+    );
+    expect(screen.getByRole("row", { name: /spark-02/ })).toBeInTheDocument();
+  });
 });

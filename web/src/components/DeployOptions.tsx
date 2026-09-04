@@ -159,16 +159,20 @@ export default function DeployOptions({
     const next = new Set(selectedAddresses);
     if (next.has(address)) next.delete(address);
     else next.add(address);
-    if (next.size === 0) {
+    // Solo is "no peers picked", not "nothing in the set". The set always
+    // holds the control node's own address once anything has been picked, so
+    // testing the set for emptiness never fired: unticking the last peer left
+    // `nodes: [<control address>]` behind, which is a *cluster of one* — it
+    // plans with the machine's LAN address instead of 127.0.0.1 and carries
+    // the multi-node warning, for a deployment the operator asked to be solo.
+    const peers = otherNodes.filter((n) => next.has(n.address)).map((n) => n.address);
+    if (peers.length === 0) {
       onChange({ ...value, nodes: undefined });
       return;
     }
     // The control node is never deselectable, so it always leads the list —
     // and always at rank 0, since the plan assigns ranks by array order.
-    const ordered = [
-      ...(controlNode ? [controlNode.address] : []),
-      ...otherNodes.filter((n) => next.has(n.address)).map((n) => n.address),
-    ];
+    const ordered = [...(controlNode ? [controlNode.address] : []), ...peers];
     onChange({ ...value, nodes: ordered });
   };
 

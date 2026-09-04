@@ -8,6 +8,39 @@ afterEach(() => {
   cleanup();
 });
 
+// Web Storage. This jsdom build ships none at all — `window.localStorage` is
+// `undefined`, so `lib/theme.ts`'s `getTheme()` throws on the first render of
+// anything that reads the theme (Layout, SettingsPage, LazyCodeEditor). An
+// in-memory Storage is the same kind of missing-browser-API stand-in as the
+// ResizeObserver above, and it is cleared between tests so nothing leaks a
+// theme (or a dismissed banner) into the next one.
+function memoryStorage(): Storage {
+  const store = new Map<string, string>();
+  return {
+    get length() {
+      return store.size;
+    },
+    key: (i: number) => [...store.keys()][i] ?? null,
+    getItem: (k: string) => store.get(k) ?? null,
+    setItem: (k: string, v: string) => void store.set(k, String(v)),
+    removeItem: (k: string) => void store.delete(k),
+    clear: () => store.clear(),
+  } as Storage;
+}
+
+for (const key of ["localStorage", "sessionStorage"] as const) {
+  Object.defineProperty(window, key, {
+    configurable: true,
+    writable: true,
+    value: memoryStorage(),
+  });
+}
+
+afterEach(() => {
+  window.localStorage.clear();
+  window.sessionStorage.clear();
+});
+
 // Mock ResizeObserver
 global.ResizeObserver = class ResizeObserver {
   observe() {}

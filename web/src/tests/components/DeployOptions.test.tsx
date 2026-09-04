@@ -627,3 +627,71 @@ describe("engine picker with two variants of one engine", () => {
     expect(new Set(options.map((o) => o.label)).size).toBe(2);
   });
 });
+
+describe("DeployOptions when the form's own lookups fail", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(planDeployment).mockResolvedValue(PLAN as never);
+    vi.mocked(runPreflight).mockResolvedValue(REPORT as never);
+  });
+
+  /** Three independent lookups fill this form. None of them is the form: a
+   *  node registry that cannot be reached must not cost the operator the
+   *  engine picker, the args field or the preview. */
+  it("still deploys when the engine, model and node lookups all fail", async () => {
+    vi.mocked(fetchEngines).mockRejectedValue(new Error("engines are down"));
+    vi.mocked(fetchModels).mockRejectedValue(new Error("no catalogue"));
+    vi.mocked(fetchNodes).mockRejectedValue(new Error("no registry"));
+
+    render(<ControlledDeployOptions recipe={V1_RECIPE} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /deploy options/i }));
+
+    await waitFor(() => expect(screen.getByLabelText("Model override")).toBeInTheDocument());
+    // The engine picker keeps its one always-valid option rather than emptying.
+    expect(screen.getByLabelText("Engine")).toHaveValue("");
+    expect(screen.getByRole("option", { name: "Recipe default" })).toBeInTheDocument();
+    // No registry means no topology to choose, which is what solo already is.
+    expect(screen.queryByTestId("deploy-nodes")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /preview/i }));
+    await waitFor(() => expect(screen.getByTestId("deploy-plan")).toBeInTheDocument());
+  });
+
+  /** Unticking the last peer has to clear `nodes` entirely, not leave `[]`
+   *  or a one-element list behind: a solo deploy is the one that sends no
+   *  nodes at all, and anything else is planned as a cluster of one. */
+  it("returns to a solo deployment when the last peer is unticked", async () => {
+    vi.mocked(fetchEngines).mockResolvedValue({ engines: [engine("vllm")] } as never);
+    vi.mocked(fetchModels).mockResolvedValue([] as never);
+    vi.mocked(fetchNodes).mockResolvedValue([CONTROL_NODE, PEER_NODE]);
+
+    const onChange = vi.fn();
+    render(<DeployOptions recipe={V1_RECIPE} value={{ nodes: [] }} onChange={onChange} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /deploy options/i }));
+    await waitFor(() => expect(screen.getByTestId("deploy-nodes")).toBeInTheDocument());
+
+    // Tick the peer, then untick it: the second call is the one that matters.
+    await user.click(screen.getByLabelText(new RegExp(PEER_NODE.name)));
+    expect(onChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ nodes: [CONTROL_NODE.address, PEER_NODE.address] }),
+    );
+
+    onChange.mockClear();
+    render(
+      <DeployOptions
+        recipe={V1_RECIPE}
+        value={{ nodes: [CONTROL_NODE.address, PEER_NODE.address] }}
+        onChange={onChange}
+      />,
+    );
+    const [, second] = screen.getAllByRole("button", { name: /deploy options/i });
+    await user.click(second);
+    await waitFor(() => expect(screen.getAllByTestId("deploy-nodes")).toHaveLength(2));
+    const ticked = screen.getAllByLabelText(new RegExp(PEER_NODE.name))[1];
+    await user.click(ticked);
+
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ nodes: undefined }));
+  });
+});

@@ -145,4 +145,87 @@ describe("LaunchScriptAnalyzer", () => {
       expect(screen.getByText("Network error")).toBeInTheDocument();
     });
   });
+
+  /** A path that resolves to nothing is the ordinary mistake — a typo, or a
+   *  checkout that is not where it was last time — so it has to name the
+   *  path it looked for rather than reporting a generic failure. */
+  it("names the path when the script is not there", async () => {
+    mockResolve.mockResolvedValue({
+      path: "/opt/test/missing.sh",
+      exists: false,
+      is_file: false,
+    });
+
+    render(<LaunchScriptAnalyzer />);
+    fireEvent.change(screen.getByPlaceholderText(/path to launch script/i), {
+      target: { value: "/opt/test/missing.sh" },
+    });
+    fireEvent.click(screen.getByText("Resolve"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Script not found: /opt/test/missing.sh")).toBeInTheDocument();
+    });
+  });
+
+  /** Validation is the point of the panel, and its three outcomes are three
+   *  different answers: passed, warnings worth reading, and errors that stop
+   *  the script. Each one has to be legible as itself. */
+  it("separates a failed validation's errors from its warnings", async () => {
+    mockResolve.mockResolvedValue({ path: "/opt/test/launch.sh", exists: true, is_file: true });
+    mockAnalyze.mockResolvedValue({
+      path: "/opt/test/launch.sh",
+      command_line: "vllm serve --tensor-parallel-size 4",
+      parallelism: { tp: 4, pp: 1, dp: 1 },
+      backend: "vllm",
+      has_model_flag: false,
+      validation: null,
+    } as never);
+    mockValidate.mockResolvedValue({
+      valid: false,
+      errors: ["--model is required"],
+      warnings: ["tp=4 exceeds the GPUs on this node"],
+    } as never);
+
+    render(<LaunchScriptAnalyzer />);
+    fireEvent.change(screen.getByPlaceholderText(/path to launch script/i), {
+      target: { value: "/opt/test/launch.sh" },
+    });
+    fireEvent.click(screen.getByText("Resolve"));
+    await waitFor(() => screen.getByText("Analyze Script"));
+    fireEvent.click(screen.getByText("Analyze Script"));
+
+    await waitFor(() => expect(screen.getByText("Validation Failed")).toBeInTheDocument());
+    expect(screen.getByText("• --model is required")).toBeInTheDocument();
+    expect(screen.getByText("• tp=4 exceeds the GPUs on this node")).toBeInTheDocument();
+    // The analysis above it stays readable: a missing flag is called out.
+    expect(screen.getByText("Missing --model flag")).toBeInTheDocument();
+  });
+
+  it("calls warnings warnings, not failures", async () => {
+    mockResolve.mockResolvedValue({ path: "/opt/test/launch.sh", exists: true, is_file: true });
+    mockAnalyze.mockResolvedValue({
+      path: "/opt/test/launch.sh",
+      command_line: "",
+      parallelism: { tp: 1, pp: 1, dp: 1 },
+      backend: "",
+      has_model_flag: true,
+      validation: null,
+    } as never);
+    mockValidate.mockResolvedValue({
+      valid: false,
+      errors: [],
+      warnings: ["no --port given; the engine default will be used"],
+    } as never);
+
+    render(<LaunchScriptAnalyzer />);
+    fireEvent.change(screen.getByPlaceholderText(/path to launch script/i), {
+      target: { value: "/opt/test/launch.sh" },
+    });
+    fireEvent.click(screen.getByText("Resolve"));
+    await waitFor(() => screen.getByText("Analyze Script"));
+    fireEvent.click(screen.getByText("Analyze Script"));
+
+    await waitFor(() => expect(screen.getByText("Validation Warnings")).toBeInTheDocument());
+    expect(screen.queryByText("Errors:")).toBeNull();
+  });
 });

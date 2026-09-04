@@ -1,0 +1,934 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for src/pages/InferencePage.tsx</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../prettify.css" />
+    <link rel="stylesheet" href="../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../index.html">All files</a> / <a href="index.html">src/pages</a> InferencePage.tsx</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">98.98% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>98/99</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">85.49% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>112/131</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">100% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>40/40</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">100% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>74/74</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line high'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a>
+<a name='L154'></a><a href='#L154'>154</a>
+<a name='L155'></a><a href='#L155'>155</a>
+<a name='L156'></a><a href='#L156'>156</a>
+<a name='L157'></a><a href='#L157'>157</a>
+<a name='L158'></a><a href='#L158'>158</a>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a>
+<a name='L161'></a><a href='#L161'>161</a>
+<a name='L162'></a><a href='#L162'>162</a>
+<a name='L163'></a><a href='#L163'>163</a>
+<a name='L164'></a><a href='#L164'>164</a>
+<a name='L165'></a><a href='#L165'>165</a>
+<a name='L166'></a><a href='#L166'>166</a>
+<a name='L167'></a><a href='#L167'>167</a>
+<a name='L168'></a><a href='#L168'>168</a>
+<a name='L169'></a><a href='#L169'>169</a>
+<a name='L170'></a><a href='#L170'>170</a>
+<a name='L171'></a><a href='#L171'>171</a>
+<a name='L172'></a><a href='#L172'>172</a>
+<a name='L173'></a><a href='#L173'>173</a>
+<a name='L174'></a><a href='#L174'>174</a>
+<a name='L175'></a><a href='#L175'>175</a>
+<a name='L176'></a><a href='#L176'>176</a>
+<a name='L177'></a><a href='#L177'>177</a>
+<a name='L178'></a><a href='#L178'>178</a>
+<a name='L179'></a><a href='#L179'>179</a>
+<a name='L180'></a><a href='#L180'>180</a>
+<a name='L181'></a><a href='#L181'>181</a>
+<a name='L182'></a><a href='#L182'>182</a>
+<a name='L183'></a><a href='#L183'>183</a>
+<a name='L184'></a><a href='#L184'>184</a>
+<a name='L185'></a><a href='#L185'>185</a>
+<a name='L186'></a><a href='#L186'>186</a>
+<a name='L187'></a><a href='#L187'>187</a>
+<a name='L188'></a><a href='#L188'>188</a>
+<a name='L189'></a><a href='#L189'>189</a>
+<a name='L190'></a><a href='#L190'>190</a>
+<a name='L191'></a><a href='#L191'>191</a>
+<a name='L192'></a><a href='#L192'>192</a>
+<a name='L193'></a><a href='#L193'>193</a>
+<a name='L194'></a><a href='#L194'>194</a>
+<a name='L195'></a><a href='#L195'>195</a>
+<a name='L196'></a><a href='#L196'>196</a>
+<a name='L197'></a><a href='#L197'>197</a>
+<a name='L198'></a><a href='#L198'>198</a>
+<a name='L199'></a><a href='#L199'>199</a>
+<a name='L200'></a><a href='#L200'>200</a>
+<a name='L201'></a><a href='#L201'>201</a>
+<a name='L202'></a><a href='#L202'>202</a>
+<a name='L203'></a><a href='#L203'>203</a>
+<a name='L204'></a><a href='#L204'>204</a>
+<a name='L205'></a><a href='#L205'>205</a>
+<a name='L206'></a><a href='#L206'>206</a>
+<a name='L207'></a><a href='#L207'>207</a>
+<a name='L208'></a><a href='#L208'>208</a>
+<a name='L209'></a><a href='#L209'>209</a>
+<a name='L210'></a><a href='#L210'>210</a>
+<a name='L211'></a><a href='#L211'>211</a>
+<a name='L212'></a><a href='#L212'>212</a>
+<a name='L213'></a><a href='#L213'>213</a>
+<a name='L214'></a><a href='#L214'>214</a>
+<a name='L215'></a><a href='#L215'>215</a>
+<a name='L216'></a><a href='#L216'>216</a>
+<a name='L217'></a><a href='#L217'>217</a>
+<a name='L218'></a><a href='#L218'>218</a>
+<a name='L219'></a><a href='#L219'>219</a>
+<a name='L220'></a><a href='#L220'>220</a>
+<a name='L221'></a><a href='#L221'>221</a>
+<a name='L222'></a><a href='#L222'>222</a>
+<a name='L223'></a><a href='#L223'>223</a>
+<a name='L224'></a><a href='#L224'>224</a>
+<a name='L225'></a><a href='#L225'>225</a>
+<a name='L226'></a><a href='#L226'>226</a>
+<a name='L227'></a><a href='#L227'>227</a>
+<a name='L228'></a><a href='#L228'>228</a>
+<a name='L229'></a><a href='#L229'>229</a>
+<a name='L230'></a><a href='#L230'>230</a>
+<a name='L231'></a><a href='#L231'>231</a>
+<a name='L232'></a><a href='#L232'>232</a>
+<a name='L233'></a><a href='#L233'>233</a>
+<a name='L234'></a><a href='#L234'>234</a>
+<a name='L235'></a><a href='#L235'>235</a>
+<a name='L236'></a><a href='#L236'>236</a>
+<a name='L237'></a><a href='#L237'>237</a>
+<a name='L238'></a><a href='#L238'>238</a>
+<a name='L239'></a><a href='#L239'>239</a>
+<a name='L240'></a><a href='#L240'>240</a>
+<a name='L241'></a><a href='#L241'>241</a>
+<a name='L242'></a><a href='#L242'>242</a>
+<a name='L243'></a><a href='#L243'>243</a>
+<a name='L244'></a><a href='#L244'>244</a>
+<a name='L245'></a><a href='#L245'>245</a>
+<a name='L246'></a><a href='#L246'>246</a>
+<a name='L247'></a><a href='#L247'>247</a>
+<a name='L248'></a><a href='#L248'>248</a>
+<a name='L249'></a><a href='#L249'>249</a>
+<a name='L250'></a><a href='#L250'>250</a>
+<a name='L251'></a><a href='#L251'>251</a>
+<a name='L252'></a><a href='#L252'>252</a>
+<a name='L253'></a><a href='#L253'>253</a>
+<a name='L254'></a><a href='#L254'>254</a>
+<a name='L255'></a><a href='#L255'>255</a>
+<a name='L256'></a><a href='#L256'>256</a>
+<a name='L257'></a><a href='#L257'>257</a>
+<a name='L258'></a><a href='#L258'>258</a>
+<a name='L259'></a><a href='#L259'>259</a>
+<a name='L260'></a><a href='#L260'>260</a>
+<a name='L261'></a><a href='#L261'>261</a>
+<a name='L262'></a><a href='#L262'>262</a>
+<a name='L263'></a><a href='#L263'>263</a>
+<a name='L264'></a><a href='#L264'>264</a>
+<a name='L265'></a><a href='#L265'>265</a>
+<a name='L266'></a><a href='#L266'>266</a>
+<a name='L267'></a><a href='#L267'>267</a>
+<a name='L268'></a><a href='#L268'>268</a>
+<a name='L269'></a><a href='#L269'>269</a>
+<a name='L270'></a><a href='#L270'>270</a>
+<a name='L271'></a><a href='#L271'>271</a>
+<a name='L272'></a><a href='#L272'>272</a>
+<a name='L273'></a><a href='#L273'>273</a>
+<a name='L274'></a><a href='#L274'>274</a>
+<a name='L275'></a><a href='#L275'>275</a>
+<a name='L276'></a><a href='#L276'>276</a>
+<a name='L277'></a><a href='#L277'>277</a>
+<a name='L278'></a><a href='#L278'>278</a>
+<a name='L279'></a><a href='#L279'>279</a>
+<a name='L280'></a><a href='#L280'>280</a>
+<a name='L281'></a><a href='#L281'>281</a>
+<a name='L282'></a><a href='#L282'>282</a>
+<a name='L283'></a><a href='#L283'>283</a>
+<a name='L284'></a><a href='#L284'>284</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">152x</span>
+<span class="cline-any cline-yes">152x</span>
+<span class="cline-any cline-yes">152x</span>
+<span class="cline-any cline-yes">152x</span>
+<span class="cline-any cline-yes">152x</span>
+<span class="cline-any cline-yes">152x</span>
+<span class="cline-any cline-yes">152x</span>
+<span class="cline-any cline-yes">152x</span>
+<span class="cline-any cline-yes">152x</span>
+<span class="cline-any cline-yes">152x</span>
+<span class="cline-any cline-yes">152x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">152x</span>
+<span class="cline-any cline-yes">152x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">152x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">152x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">152x</span>
+<span class="cline-any cline-yes">152x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">152x</span>
+<span class="cline-any cline-yes">29x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">152x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">152x</span>
+<span class="cline-any cline-yes">15x</span>
+<span class="cline-any cline-yes">13x</span>
+<span class="cline-any cline-yes">13x</span>
+<span class="cline-any cline-yes">13x</span>
+<span class="cline-any cline-yes">13x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">152x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">152x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">161x</span>
+<span class="cline-any cline-yes">14x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">36x</span>
+<span class="cline-any cline-yes">19x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">8x</span>
+<span class="cline-any cline-yes">8x</span>
+<span class="cline-any cline-yes">8x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">import { useEffect, useState, useRef, useCallback } from "react";
+import { fetchDeployments, stopDeployment, connectLogStream, runBenchmark } from "@/lib/api";
+import { useQuery } from "@/hooks/useQuery";
+import { useSSEConnection } from "@/hooks/useSSEConnection";
+import StatusBadge from "@/components/StatusBadge";
+import HealthBadge from "@/components/HealthBadge";
+import EventStreamViewer from "@/components/EventStreamViewer";
+import RankList from "@/components/RankList";
+import { ExperimentalBadge, ExperimentalBanner } from "@/components/Experimental";
+import {
+  MULTI_NODE_BADGE_TITLE,
+  MULTI_NODE_REASON,
+  MULTI_NODE_TITLE,
+  MULTI_NODE_UNPROVEN,
+} from "@/lib/experimental";
+import { ConfirmModal, AlertModal } from "@/components/Modal";
+import { Square, X, Trash2, Loader2, AlertCircle, Terminal, Flame } from "lucide-react";
+import { setRefresh } from "@/lib/refresh";
+import type { DeploymentEvent } from "@/lib/operations";
+&nbsp;
+export default function InferencePage() {
+  const { data: deployments, loading, error, refetch } = useQuery(fetchDeployments);
+  const [expandedId, setExpandedId] = useState&lt;string | null&gt;(null);
+  const [logs, setLogs] = useState&lt;Record&lt;string, string[]&gt;&gt;({});
+  const [streaming, setStreaming] = useState&lt;Record&lt;string, boolean&gt;&gt;({});
+  const logRef = useRef&lt;Record&lt;string, HTMLDivElement | null&gt;&gt;({});
+  const stopRef = useRef&lt;Record&lt;string, () =&gt; void&gt;&gt;({});
+  const atBottomRef = useRef&lt;Record&lt;string, boolean&gt;&gt;({});
+  const [stopTarget, setStopTarget] = useState&lt;{ id: string; name: string } | null&gt;(null);
+  const [alertModal, setAlertModal] = useState&lt;{ title: string; message: string } | null&gt;(null);
+  const [benchmarkModal, setBenchmarkModal] = useState&lt;{ id: string; name: string; recipeId: string; recipeName: string } | null&gt;(null);
+  const [isBenchmarking, setIsBenchmarking] = useState(false);
+&nbsp;
+  // SSE connection for deployment events
+  const [deploymentEvents, setDeploymentEvents] = useState&lt;DeploymentEvent[]&gt;([]);
+  const handleDeploymentEvent = useCallback((_event: string, data: unknown) =&gt; {
+    if (data &amp;&amp; typeof data === "object" &amp;&amp; "type" in data) {
+      const evt = data as Record&lt;string, unknown&gt;;
+      setDeploymentEvents((prev) =&gt; [
+        {
+          event_id: (evt.event_id as string) || crypto.randomUUID(),
+          timestamp: (evt.timestamp as string) || new Date().toISOString(),
+          event_type: (evt.type as any) || <span class="branch-1 cbranch-no" title="branch not covered" >"unknown",</span>
+          message: (evt.message as string) || "",
+          resource: (evt.resource as string) || <span class="branch-1 cbranch-no" title="branch not covered" >"",</span>
+          resource_type: (evt.resource_type as any) || "deployment",
+          node: evt.node as string | undefined,
+        },
+        ...prev,
+      ].slice(0, 100));
+    }
+  }, []);
+  useSSEConnection("/sse/deployments", handleDeploymentEvent);
+&nbsp;
+  const handleBenchmark = async () =&gt; {
+    <span class="missing-if-branch" title="if path not taken" >I</span>if (!benchmarkModal) <span class="cstat-no" title="statement not covered" >return;</span>
+    setIsBenchmarking(true);
+    try {
+      await runBenchmark({
+        deployment_id: benchmarkModal.id,
+        recipe_id: benchmarkModal.recipeId,
+        recipe_name: benchmarkModal.recipeName,
+        params: { benchmarks: ["throughput", "latency"] },
+      });
+      setBenchmarkModal(null);
+      refetch();
+    } catch (e) {
+      setAlertModal({
+        title: "Error",
+        message: e instanceof Error ? e.message : <span class="branch-1 cbranch-no" title="branch not covered" >"Failed to run benchmark",</span>
+      });
+    } finally {
+      setIsBenchmarking(false);
+    }
+  };
+&nbsp;
+  useEffect(() =&gt; { setRefresh(refetch); }, [refetch]);
+  useEffect(() =&gt; { const i = setInterval(refetch, 10000); return () =&gt; clearInterval(i); }, [refetch]);
+&nbsp;
+  // Auto-scroll only if already pinned to the bottom
+  useEffect(() =&gt; {
+    if (!expandedId) return;
+    const el = logRef.current[expandedId];
+    <span class="missing-if-branch" title="else path not taken" >E</span>if (el &amp;&amp; atBottomRef.current[expandedId] !== false) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [logs[expandedId || ""]]);
+&nbsp;
+  const handleLogScroll = (id: string) =&gt; {
+    const el = logRef.current[id];
+    <span class="missing-if-branch" title="else path not taken" >E</span>if (el) atBottomRef.current[id] = el.scrollHeight - el.scrollTop - el.clientHeight &lt; 80;
+  };
+&nbsp;
+  const toggle = async (id: string) =&gt; {
+    if (expandedId === id) { stopRef.current[id]?.(); setStreaming((s) =&gt; ({ ...s, [id]: false })); setExpandedId(null); return; }
+    setExpandedId(id);
+    atBottomRef.current[id] = true; // start pinned to bottom
+    setStreaming((s) =&gt; ({ ...s, [id]: true }));
+    stopRef.current[id] = connectLogStream(id, (event, data) =&gt; {
+      if (event === "log") {
+        setLogs((l) =&gt; {
+          const prev = l[id] || [];
+          return { ...l, [id]: [...prev.slice(-499), (data as { text: string }).text] };
+        });
+      <span class="missing-if-branch" title="else path not taken" >E</span>}
+      else if (event === "status") refetch();
+    });
+  };
+&nbsp;
+  const doStop = async (id: string, _name: string) =&gt; {
+    try {
+      await stopDeployment(id);
+      stopRef.current[id]?.();
+      setStreaming((s) =&gt; ({ ...s, [id]: false }));
+      refetch();
+    } catch (e) {
+      setAlertModal({ title: "Error", message: e instanceof Error ? e.message : <span class="branch-1 cbranch-no" title="branch not covered" >"Failed to stop deployment" }</span>);
+    }
+  };
+&nbsp;
+  return (
+    &lt;div className="space-y-6"&gt;
+      &lt;div&gt;
+        &lt;h2 className="text-2xl font-bold"&gt;Inference&lt;/h2&gt;
+        &lt;p className="text-text-muted mt-1"&gt;Live model inference workloads and their logs&lt;/p&gt;
+      &lt;/div&gt;
+&nbsp;
+      {loading &amp;&amp; &lt;div className="flex justify-center py-20"&gt;&lt;Loader2 className="animate-spin text-primary" size={32} /&gt;&lt;/div&gt;}
+      {error &amp;&amp; &lt;div className="p-4 rounded-lg bg-danger/10 border border-danger/30 text-danger flex items-center gap-3"&gt;&lt;AlertCircle size={20} /&gt;&lt;span&gt;{error}&lt;/span&gt;&lt;/div&gt;}
+&nbsp;
+      {deployments &amp;&amp; deployments.length &gt; 0 &amp;&amp; (
+        &lt;div className="space-y-2"&gt;
+          {deployments.map((dep) =&gt; (
+            &lt;div key={dep.id} data-testid={`deployment-${dep.id}`} className="rounded-xl bg-surface border border-border overflow-hidden"&gt;
+              &lt;div className="flex items-center gap-4 p-4 cursor-pointer hover:bg-surface-hover" onClick={() =&gt; toggle(dep.id)}&gt;
+                &lt;div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: dep.status === "running" ? "var(--color-success)" : dep.status === "error" ? <span class="branch-0 cbranch-no" title="branch not covered" >"var(--color-danger)" : d</span>ep.status === "pending" ? "var(--color-warning)" : "var(--color-text-muted)" }} /&gt;
+                &lt;div className="flex-1 min-w-0"&gt;
+                  &lt;p className="font-medium truncate"&gt;{dep.name}&lt;/p&gt;
+                  &lt;p className="text-xs text-text-muted truncate"&gt;
+                    {dep.recipe_id}
+                    {dep.model ? ` · ${dep.model}` : ""}
+                  &lt;/p&gt;
+                &lt;/div&gt;
+                {dep.runtime === "native" &amp;&amp; (
+                  &lt;span
+                    className="hidden md:inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono bg-primary/15 text-primary border border-primary/30 shrink-0"
+                    title={dep.image_ref || <span class="branch-1 cbranch-no" title="branch not covered" >undefined}</span>
+                  &gt;
+                    {dep.engine || <span class="branch-1 cbranch-no" title="branch not covered" >"native"}</span>
+                  &lt;/span&gt;
+                )}
+                {dep.node_count != null &amp;&amp; dep.node_count &gt; 1 &amp;&amp; (
+                  &lt;span className="hidden md:inline-flex items-center gap-1.5 shrink-0"&gt;
+                    &lt;span
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono bg-surface-hover text-text-muted border border-border"
+                      title={`Spans ${dep.node_count} nodes, one container per rank`}
+                    &gt;
+                      {dep.node_count} nodes
+                    &lt;/span&gt;
+                    &lt;ExperimentalBadge title={MULTI_NODE_BADGE_TITLE} /&gt;
+                  &lt;/span&gt;
+                )}
+                {dep.port &amp;&amp; &lt;span className="text-sm font-mono text-text-muted shrink-0"&gt;:{dep.port}&lt;/span&gt;}
+                &lt;HealthBadge status={dep.status === "running" ? "healthy" as any : dep.status === "error" ? <span class="branch-0 cbranch-no" title="branch not covered" >"unhealthy" as any : "</span>unknown" as any} size="sm" /&gt;
+                &lt;StatusBadge status={dep.status} /&gt;
+                {dep.pid &amp;&amp; <span class="branch-1 cbranch-no" title="branch not covered" >&lt;span className="text-xs font-mono text-text-muted shrink-0"&gt;PID: {dep.pid}&lt;/span&gt;}</span>
+                &lt;span className="text-xs text-text-muted shrink-0"&gt;{new Date(dep.created_at).toLocaleString()}&lt;/span&gt;
+                {["stopped", "error"].includes(dep.status)
+                  ? &lt;button onClick={(e) =&gt; { e.stopPropagation(); setStopTarget({ id: dep.id, name: dep.name }); }} className="p-2 rounded-lg hover:bg-danger/10 text-text-muted hover:text-danger transition-colors shrink-0" title="Remove from history"&gt;&lt;Trash2 size={14} /&gt;&lt;/button&gt;
+                  : &lt;button onClick={(e) =&gt; { e.stopPropagation(); setStopTarget({ id: dep.id, name: dep.name }); }} disabled={dep.status !== "running" &amp;&amp; dep.status !== "pending"} className="p-2 rounded-lg hover:bg-danger/10 text-text-muted hover:text-danger transition-colors disabled:opacity-30 shrink-0" title={dep.status === "pending" ? "Cancel" : "Stop"}&gt;{dep.status === "pending" ? &lt;X size={14} /&gt; : &lt;Square size={14} /&gt;}&lt;/button&gt;}
+                {dep.status === "running" &amp;&amp; (
+                  &lt;button onClick={(e) =&gt; { e.stopPropagation(); setBenchmarkModal({ id: dep.id, name: dep.name, recipeId: dep.recipe_id, recipeName: dep.recipe_id }); }} className="p-2 rounded-lg hover:bg-primary/10 text-text-muted hover:text-primary transition-colors shrink-0" title="Run Benchmark"&gt;&lt;Flame size={14} /&gt;&lt;/button&gt;
+                )}
+              &lt;/div&gt;
+              {expandedId === dep.id &amp;&amp; (
+                &lt;div className="border-t border-border"&gt;
+                  {dep.node_count != null &amp;&amp; dep.node_count &gt; 1 &amp;&amp; (
+                    &lt;ExperimentalBanner
+                      className="m-4"
+                      title={MULTI_NODE_TITLE}
+                      reason={MULTI_NODE_REASON}
+                      items={MULTI_NODE_UNPROVEN}
+                    /&gt;
+                  )}
+                  {dep.runtime === "native" &amp;&amp; (
+                    &lt;dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 px-4 py-3 bg-bg text-xs border-b border-border"&gt;
+                      &lt;dt className="text-text-muted"&gt;Engine&lt;/dt&gt;
+                      &lt;dd className="font-mono truncate"&gt;{dep.engine}{dep.variant ? `/${dep.variant}` : <span class="branch-1 cbranch-no" title="branch not covered" >""}&lt;</span>/dd&gt;
+                      &lt;dt className="text-text-muted"&gt;Image&lt;/dt&gt;
+                      &lt;dd className="font-mono truncate"&gt;{dep.image_ref}&lt;/dd&gt;
+                      &lt;dt className="text-text-muted"&gt;Model&lt;/dt&gt;
+                      &lt;dd className="font-mono truncate"&gt;{dep.model || <span class="branch-1 cbranch-no" title="branch not covered" >"(from the command)"}&lt;</span>/dd&gt;
+                      &lt;dt className="text-text-muted"&gt;Container&lt;/dt&gt;
+                      &lt;dd className="font-mono truncate"&gt;{dep.container_name}&lt;/dd&gt;
+                    &lt;/dl&gt;
+                  )}
+                  &lt;RankList
+                    ranks={dep.ranks}
+                    orphans={dep.orphans}
+                    className="px-4 py-3 bg-bg border-b border-border"
+                  /&gt;
+                  &lt;div className="flex items-center gap-2 px-4 py-2 bg-bg text-xs text-text-muted"&gt;
+                    {streaming[dep.id] ? &lt;span className="flex items-center gap-1"&gt;&lt;span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" /&gt;Streaming&lt;/span&gt; : <span class="branch-1 cbranch-no" title="branch not covered" >&lt;span&gt;Stream stopped&lt;/span&gt;}</span>
+                    &lt;button onClick={() =&gt; toggle(dep.id)} className="ml-auto text-primary hover:underline"&gt;Hide&lt;/button&gt;
+                  &lt;/div&gt;
+                  &lt;div ref={(el) =&gt; { logRef.current[dep.id] = el; }} onScroll={() =&gt; handleLogScroll(dep.id)} className="p-4 bg-bg font-mono text-sm text-text h-[calc(100vh-20rem)] overflow-auto whitespace-pre-wrap"&gt;
+                    {(logs[dep.id] || ["No logs yet..."]).map((line, i) =&gt; &lt;div key={i} className="leading-relaxed text-text-muted last:text-text"&gt;{line}&lt;/div&gt;)}
+                  &lt;/div&gt;
+                  {/* Event Stream Viewer */}
+                  &lt;div className="border-t border-border p-4"&gt;
+                    &lt;EventStreamViewer
+                      events={deploymentEvents.filter(e =&gt; e.resource === dep.id)}
+                      resource={dep.id}
+                      onClear={() =&gt; setDeploymentEvents(prev =&gt; prev.filter(e =&gt; e.resource !== dep.id))}
+                    /&gt;
+                  &lt;/div&gt;
+                &lt;/div&gt;
+              )}
+            &lt;/div&gt;
+          ))}
+        &lt;/div&gt;
+      )}
+&nbsp;
+      {deployments &amp;&amp; deployments.length === 0 &amp;&amp; !loading &amp;&amp; !error &amp;&amp; (
+        &lt;div className="text-center py-20 text-text-muted"&gt;&lt;Terminal size={40} className="mx-auto mb-4 opacity-50" /&gt;&lt;p&gt;No deployments yet.&lt;/p&gt;&lt;p className="text-sm mt-1"&gt;Launch a recipe from the Recipes page.&lt;/p&gt;&lt;/div&gt;
+      )}
+&nbsp;
+      {/* Stop confirmation */}
+      {stopTarget &amp;&amp; (
+        &lt;ConfirmModal
+          open={!!stopTarget}
+          onClose={() =&gt; setStopTarget(null)}
+          onConfirm={() =&gt; { doStop(stopTarget.id, stopTarget.name); setStopTarget(null); }}
+          title={["stopped", "error"].includes(deployments?.find(d =&gt; d.id === stopTarget.id)?.status ?? <span class="branch-1 cbranch-no" title="branch not covered" >"")</span> ? "Remove" : deployments?.find(d =&gt; d.id === stopTarget.id)?.status === "pending" ? "Cancel" : "Stop Deployment"}
+          message={["stopped", "error"].includes(deployments?.find(d =&gt; d.id === stopTarget.id)?.status ?? <span class="branch-1 cbranch-no" title="branch not covered" >"")</span> ? `Remove "${stopTarget.name}" from history?` : deployments?.find(d =&gt; d.id === stopTarget.id)?.status === "pending" ? `Cancel "${stopTarget.name}" before it starts?` : `Stop "${stopTarget.name}"? This will terminate the running process.`}
+          confirmLabel={["stopped", "error"].includes(deployments?.find(d =&gt; d.id === stopTarget.id)?.status ?? <span class="branch-1 cbranch-no" title="branch not covered" >"")</span> ? "Remove" : deployments?.find(d =&gt; d.id === stopTarget.id)?.status === "pending" ? "Cancel" : "Stop"}
+          confirmVariant="danger"
+        /&gt;
+      )}
+&nbsp;
+      {/* Alert modal */}
+      {alertModal &amp;&amp; (
+        &lt;AlertModal open={!!alertModal} onClose={() =&gt; setAlertModal(null)} title={alertModal.title} message={alertModal.message} /&gt;
+      )}
+&nbsp;
+      {/* Benchmark confirmation */}
+      {benchmarkModal &amp;&amp; (
+        &lt;div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"&gt;
+          &lt;div className="rounded-xl bg-surface border border-border w-full max-w-sm p-6 space-y-4"&gt;
+            &lt;div className="flex items-center justify-between"&gt;
+              &lt;h3 className="text-lg font-bold flex items-center gap-2"&gt;
+                &lt;Flame size={20} className="text-primary" /&gt;
+                Run Benchmark
+              &lt;/h3&gt;
+              &lt;button onClick={() =&gt; setBenchmarkModal(null)} className="p-1 rounded hover:bg-surface-hover"&gt;
+                &lt;X size={18} /&gt;
+              &lt;/button&gt;
+            &lt;/div&gt;
+            &lt;p className="text-sm text-text-muted"&gt;
+              Run a benchmark on &lt;strong&gt;{benchmarkModal.name}&lt;/strong&gt;? This will measure throughput, latency, and memory usage.
+            &lt;/p&gt;
+            &lt;div className="flex justify-end gap-2 pt-2"&gt;
+              &lt;button
+                onClick={() =&gt; setBenchmarkModal(null)}
+                className="px-4 py-2 rounded-lg border border-border text-sm hover:bg-surface-hover transition-colors"
+              &gt;
+                Cancel
+              &lt;/button&gt;
+              &lt;button
+                onClick={handleBenchmark}
+                disabled={isBenchmarking}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-colors disabled:opacity-50"
+              &gt;
+                {isBenchmarking &amp;&amp; &lt;Loader2 size={16} className="animate-spin" /&gt;}
+                {isBenchmarking ? "Running..." : "Run"}
+              &lt;/button&gt;
+            &lt;/div&gt;
+          &lt;/div&gt;
+        &lt;/div&gt;
+      )}
+    &lt;/div&gt;
+  );
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-09-04T20:15:31.968Z
+            </div>
+        <script src="../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../sorter.js"></script>
+        <script src="../../block-navigation.js"></script>
+    </body>
+</html>
+    

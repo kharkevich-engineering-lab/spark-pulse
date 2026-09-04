@@ -150,4 +150,98 @@ describe("ModValidationDisplay", () => {
       });
     });
   });
+
+  /** A mod that validates with warnings is still appliable — the warnings are
+   *  what the operator reads before deciding, so they have to be shown next
+   *  to the button rather than instead of it. */
+  it("shows non-blocking warnings alongside the apply button", async () => {
+    mockValidate.mockResolvedValue({
+      healthy: true,
+      errors: [],
+      warnings: ["writes outside /opt", "installs a pip package at start-up"],
+    });
+
+    render(<ModValidationDisplay modId="test-mod" />);
+    fireEvent.click(screen.getByText("Validate"));
+
+    await waitFor(() =>
+      expect(screen.getByText("Warnings (non-blocking):")).toBeInTheDocument(),
+    );
+    // Once, under one heading. A mod that passed used to have every warning
+    // printed twice, under "Security Warnings" and again as non-blocking.
+    expect(screen.getAllByText("• writes outside /opt")).toHaveLength(1);
+    expect(screen.queryByText("Security Warnings:")).toBeNull();
+    expect(screen.getByText(/Apply Mod to/)).toBeInTheDocument();
+  });
+
+  it("calls a failed mod's warnings security warnings", async () => {
+    mockValidate.mockResolvedValue({
+      healthy: false,
+      errors: ["curl | sh at install time"],
+      warnings: ["writes outside /opt"],
+    });
+
+    render(<ModValidationDisplay modId="test-mod" />);
+    fireEvent.click(screen.getByText("Validate"));
+
+    await waitFor(() => expect(screen.getByText("Validation Failed")).toBeInTheDocument());
+    expect(screen.getByText("Security Warnings:")).toBeInTheDocument();
+    expect(screen.getAllByText("• writes outside /opt")).toHaveLength(1);
+    // Nothing gets applied off a failed validation.
+    expect(screen.queryByText(/Apply Mod to/)).toBeNull();
+  });
+
+  /** Which machines a mod lands on is a choice with consequences, so the
+   *  button says what it is about to do rather than just "Apply". */
+  it("applies to the target the operator picked, and says which", async () => {
+    mockValidate.mockResolvedValue({ healthy: true, errors: [], warnings: [] });
+    mockApply.mockResolvedValue({ applied: true } as never);
+
+    render(<ModValidationDisplay modId="test-mod" />);
+    fireEvent.click(screen.getByText("Validate"));
+    await waitFor(() => expect(screen.getByText("Apply Mod to all nodes")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText("Head"));
+    expect(screen.getByText("Apply Mod to head")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Workers"));
+    expect(screen.getByText("Apply Mod to workers")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Apply Mod to workers"));
+    await waitFor(() =>
+      expect(mockApply).toHaveBeenCalledWith({
+        mod_name: "test-mod",
+        mod_path: "test-mod",
+        target: "workers",
+      }),
+    );
+    // A successful apply clears the report: the mod is on the nodes now, and
+    // leaving a stale "valid" verdict up invites applying it twice.
+    await waitFor(() => expect(screen.queryByText(/Apply Mod to/)).toBeNull());
+  });
+
+  it("keeps the report and says why when the apply is refused", async () => {
+    mockValidate.mockResolvedValue({ healthy: true, errors: [], warnings: [] });
+    mockApply.mockRejectedValue(new Error("API 500: no such container on spark-02"));
+
+    render(<ModValidationDisplay modId="test-mod" />);
+    fireEvent.click(screen.getByText("Validate"));
+    await waitFor(() => expect(screen.getByText("Apply Mod to all nodes")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText("Apply Mod to all nodes"));
+    await waitFor(() =>
+      expect(screen.getByText(/no such container on spark-02/)).toBeInTheDocument(),
+    );
+    expect(screen.getByText("Apply Mod to all nodes")).toBeInTheDocument();
+  });
+
+  it("hides the apply button where applying is not on offer", async () => {
+    mockValidate.mockResolvedValue({ healthy: true, errors: [], warnings: [] });
+
+    render(<ModValidationDisplay modId="test-mod" showApplyButton={false} />);
+    fireEvent.click(screen.getByText("Validate"));
+
+    await waitFor(() => expect(mockValidate).toHaveBeenCalled());
+    expect(screen.queryByText(/Apply Mod to/)).toBeNull();
+  });
 });

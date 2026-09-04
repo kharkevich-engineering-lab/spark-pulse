@@ -21,6 +21,11 @@ import { setRefresh } from "@/lib/refresh";
  *  and the pre-flight report that stopped it — kept together so "Deploy
  *  anyway" can re-issue the exact same create with `skip_preflight`. */
 interface BlockedDeploy {
+  /** The recipe the create was for. Held here rather than read back off
+   *  `selected`, because the drawer closes itself the moment `onDeploy`
+   *  resolves — and a gated create resolves, it does not throw. Reading
+   *  `selected` left "Deploy anyway" with nothing to deploy. */
+  recipeId: string;
   name: string;
   params: Record<string, unknown>;
   options?: DeployOptionsValue;
@@ -304,7 +309,7 @@ export default function RecipesPage() {
       // reducing it to a one-line alert.
       const preflight = e instanceof ApiError && e.status === 409 ? blockingPreflight(e.payload) : null;
       if (preflight) {
-        setBlockedDeploy({ name, params, options, preflight });
+        setBlockedDeploy({ recipeId: selected.recipe.id, name, params, options, preflight });
         return;
       }
       setAlertModal({ title: "Error", message: e instanceof Error ? e.message : "Failed to deploy" });
@@ -312,11 +317,11 @@ export default function RecipesPage() {
   };
 
   const handleDeployAnyway = async () => {
-    if (!blockedDeploy || !selected) return;
-    const { name, params, options } = blockedDeploy;
+    if (!blockedDeploy) return;
+    const { recipeId, name, params, options } = blockedDeploy;
     try {
       await createDeployment({
-        recipe_id: selected.recipe.id,
+        recipe_id: recipeId,
         name,
         params,
         nodes: options?.nodes?.length ? options.nodes : undefined,

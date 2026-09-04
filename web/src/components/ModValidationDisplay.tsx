@@ -129,8 +129,10 @@ export default function ModValidationDisplay({
               </div>
             )}
 
-            {/* Warnings */}
-            {hasWarnings && (
+            {/* Warnings. Only where the mod did not pass — a mod that passed
+                gets the "non-blocking" wording below instead, and rendering
+                both printed every warning twice. */}
+            {hasWarnings && !isValid && (
               <div className="space-y-1 mt-3">
                 <p className="text-sm font-semibold text-warning">Security Warnings:</p>
                 {result.warnings?.map((warn, i) => (

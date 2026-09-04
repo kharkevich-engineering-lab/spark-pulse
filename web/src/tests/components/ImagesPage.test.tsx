@@ -237,4 +237,106 @@ describe("ImagesPage", () => {
     await user.click(screen.getByRole("button", { name: "Delete" }));
     await waitFor(() => expect(deleteImage).toHaveBeenCalledWith(PRESENT));
   });
+
+  /** Re-pulling an engine image is tens of minutes on this hardware, so the
+   *  confirmation says so — and a delete that then fails must not leave the
+   *  operator believing the image is gone. */
+  it("warns what a delete costs to undo, and says when one failed", async () => {
+    const user = userEvent.setup();
+    vi.mocked(deleteImage).mockRejectedValue(new Error("image is in use by a container"));
+    renderPage();
+
+    await user.click(await screen.findByLabelText(`Delete ${PRESENT}`));
+    expect(screen.getByText(/Re-pulling it can take tens of minutes/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+
+    expect(await screen.findByRole("heading", { name: "Delete failed" })).toBeInTheDocument();
+    expect(screen.getByText("image is in use by a container")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "OK" }));
+    await waitFor(() => expect(screen.queryByText("image is in use by a container")).toBeNull());
+  });
+
+  it("pulls an arbitrary reference typed into the form", async () => {
+    const user = userEvent.setup();
+    vi.mocked(startImagePull).mockResolvedValue({
+      id: "job2",
+      ref: "ghcr.io/org/engine:9.9.9",
+      status: "queued",
+    } as never);
+    renderPage();
+    await screen.findByLabelText("Image reference");
+
+    const field = screen.getByLabelText("Image reference");
+    // The button is dead until there is something to pull.
+    expect(screen.getByRole("button", { name: /^Pull$/ })).toBeDisabled();
+
+    await user.type(field, "ghcr.io/org/engine:9.9.9");
+    await user.click(screen.getByRole("button", { name: /^Pull$/ }));
+
+    await waitFor(() =>
+      expect(startImagePull).toHaveBeenCalledWith("ghcr.io/org/engine:9.9.9"),
+    );
+    // The field is cleared, so a second click cannot re-queue the same pull.
+    await waitFor(() => expect(field).toHaveValue(""));
+  });
+
+  it("says why a pull was refused", async () => {
+    const user = userEvent.setup();
+    vi.mocked(startImagePull).mockRejectedValue(new Error("manifest unknown"));
+    renderPage();
+    await screen.findByLabelText("Image reference");
+
+    await user.type(screen.getByLabelText("Image reference"), "ghcr.io/org/nope:1");
+    await user.click(screen.getByRole("button", { name: /^Pull$/ }));
+
+    expect(await screen.findByRole("heading", { name: "Pull failed" })).toBeInTheDocument();
+    expect(screen.getByText("manifest unknown")).toBeInTheDocument();
+  });
+
+  it("says why a cancel failed rather than leaving the pull looking stopped", async () => {
+    const user = userEvent.setup();
+    vi.mocked(fetchImagePulls).mockResolvedValue([
+      {
+        id: "job9",
+        ref: ABSENT,
+        status: "running",
+        percent: 10,
+        bytes_done: 1,
+        bytes_total: 10,
+        layers: 2,
+      } as never,
+    ]);
+    vi.mocked(cancelImagePull).mockRejectedValue(new Error("pull already finished"));
+    renderPage();
+
+    await user.click(await screen.findByLabelText(`Cancel pull of ${ABSENT}`));
+
+    expect(await screen.findByRole("heading", { name: "Cancel failed" })).toBeInTheDocument();
+  });
+
+  it("re-reads the catalogue when a pull reports itself finished", async () => {
+    renderPage();
+    await waitFor(() => expect(CapturingEventSource.instances.length).toBe(1));
+    const before = vi.mocked(fetchImages).mock.calls.length;
+
+    act(() => {
+      CapturingEventSource.instances[0].emit({
+        type: "image.pull.completed",
+        resource_type: "image",
+        metadata: { id: "job9", ref: ABSENT, status: "completed", percent: 100 },
+      });
+    });
+
+    await waitFor(() =>
+      expect(vi.mocked(fetchImages).mock.calls.length).toBeGreaterThan(before),
+    );
+  });
+
+  it("surfaces a failed catalogue read instead of an empty page", async () => {
+    vi.mocked(fetchImages).mockRejectedValue(new Error("API 500: docker daemon is down"));
+    renderPage();
+
+    expect(await screen.findByText("API 500: docker daemon is down")).toBeInTheDocument();
+  });
 });
