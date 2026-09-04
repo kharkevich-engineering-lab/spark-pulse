@@ -38,3 +38,6 @@ web/test-results/
 .coverage
 coverage.json
 htmlcov/
+
+# Local virtualenv (agents symlink this into worktrees)
+.venv
