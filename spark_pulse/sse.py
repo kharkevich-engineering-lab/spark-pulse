@@ -302,36 +302,3 @@ async def sse_deployment_events():
             "X-Accel-Buffering": "no",
         },
     )
-
-
-# ── Health SSE ───────────────────────────────────────────────────────────────
-
-
-async def health_events_generator() -> AsyncGenerator[str, None]:
-    """Stream health check events via SSE."""
-    from spark_pulse.tools.health import get_health_monitor
-
-    while True:
-        try:
-            monitor = get_health_monitor()
-            deployments = monitor.get_all_health()
-            yield f"event: health_update\ndata: {json.dumps(deployments)}\n\n"
-        except Exception as e:
-            # See ``metrics_generator``: the message has to be encoded, not
-            # interpolated, or one quote costs the client the whole stream.
-            yield f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n"
-        await asyncio.sleep(30)
-
-
-@router.get("/health")
-async def sse_health():
-    """Stream health check events via SSE."""
-    return StreamingResponse(
-        health_events_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )

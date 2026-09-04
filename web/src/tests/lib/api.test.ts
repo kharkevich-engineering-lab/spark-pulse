@@ -107,6 +107,12 @@ const CASES: Case[] = [
     path: "/api/deployments/abc123/logs?lines=20",
     method: "GET",
   },
+  {
+    name: "fetchEngineMetrics",
+    call: () => api.fetchEngineMetrics("abc123"),
+    path: "/api/deployments/abc123/metrics",
+    method: "GET",
+  },
 
   // ── Memory and cache ──────────────────────────────────────────────────────
   { name: "fetchMemory", call: () => api.fetchMemory(), path: "/api/memory", method: "GET" },

@@ -1,10 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  useEventStream,
-  useHealthStream,
-  useSSEConnection,
-} from "@/hooks/useSSEConnection";
+import { useEventStream, useSSEConnection } from "@/hooks/useSSEConnection";
 import { useSSEStore } from "@/lib/operationStore";
 import { SSEConnectionState } from "@/lib/operations";
 
@@ -365,15 +361,6 @@ describe("the named stream hooks", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
-  });
-
-  it("useHealthStream subscribes to /sse/health and passes the payload on", () => {
-    const onHealth = vi.fn();
-    renderHook(() => useHealthStream(onHealth));
-
-    expect(latest().url).toBe("/sse/health");
-    act(() => latest().emit("health", JSON.stringify({ status: "degraded" })));
-    expect(onHealth).toHaveBeenCalledWith({ status: "degraded" });
   });
 
   it("useEventStream subscribes per resource, so two deployments do not share a stream", () => {

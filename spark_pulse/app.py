@@ -28,7 +28,6 @@ from spark_pulse.routers import (
     discovery as discovery_router,
     nodes as nodes_router,
     launch_script as launch_script_router,
-    health as health_router,
     engines as engines_router,
     preflight as preflight_router,
 )
@@ -42,22 +41,8 @@ from spark_pulse.tools.oci_registry import (
     stop_background_updater,
 )
 from spark_pulse.tools.reconciliation import reconcile_all
-from spark_pulse.tools.health import load_health_tracking, HealthMonitor
 from spark_pulse.version import get_version
 from spark_pulse.mcp_http import handle_mcp, MCP_PATH
-
-# ── Health monitor singleton ─────────────────────────────────────────────────
-
-_health_monitor: HealthMonitor | None = None
-
-
-def _get_health_monitor() -> HealthMonitor:
-    """Get or create the default health monitor."""
-    global _health_monitor
-    if _health_monitor is None:
-        _health_monitor = HealthMonitor(check_interval=30.0)
-    return _health_monitor
-
 
 # ── SPA serving ──────────────────────────────────────────────────────────────
 
@@ -203,22 +188,30 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"Warning: reconciliation failed: {e}")
 
-    # Restore health monitoring tracking from disk
+    # Start the engine-metrics sampler. It discovers its own subjects on every
+    # sweep — every running deployment — so nothing has to remember to register
+    # a deployment when it is created or forget it when it is deleted. That is
+    # the failure mode of the health monitor this replaced: it was constructed,
+    # restored into, and never started, and nothing ever tracked anything.
     try:
-        monitor = _get_health_monitor()
-        tracked = load_health_tracking()
-        for dep in tracked.get("deployments", []):
-            monitor.track_deployment(dep["id"], dep.get("info", {}))
-        n_deps = len(tracked.get("deployments", []))
-        if n_deps:
-            print(f"Restored {n_deps} deployments from health tracking")
+        tools.engine_metrics.start_sampler()
+        print(
+            "Engine metrics sampler started "
+            f"(every {tools.engine_metrics.SAMPLE_INTERVAL_SECONDS:.0f}s, "
+            f"{tools.engine_metrics.RING_SIZE} samples in memory per deployment)"
+        )
     except Exception as e:
-        print(f"Warning: health tracking restore failed: {e}")
+        print(f"Warning: could not start the engine metrics sampler: {e}")
 
     yield
 
     # Cleanup on shutdown
     stop_background_updater()
+
+    try:
+        tools.engine_metrics.stop_sampler()
+    except Exception as e:  # pragma: no cover — shutdown is best effort
+        print(f"Warning: could not stop the engine metrics sampler: {e}")
 
     # Withdraw the mDNS record rather than letting it time out, so a peer
     # browsing right after a restart does not see a node that is not there.
@@ -267,7 +260,6 @@ def create_app() -> FastAPI:
     app.include_router(discovery_router.router)
     app.include_router(nodes_router.router)
     app.include_router(launch_script_router.router)
-    app.include_router(health_router.router)
     app.include_router(engines_router.router)
     app.include_router(preflight_router.router)
     app.include_router(auth_router)

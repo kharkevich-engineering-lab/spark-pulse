@@ -4,7 +4,6 @@ import {
   useAuditStore,
   useDryRunStore,
   useEventStore,
-  useHealthStore,
   useLockStore,
   useOperationStore,
   useSSEStore,
@@ -12,7 +11,6 @@ import {
 } from "@/lib/operationStore";
 import {
   EventType,
-  HealthStatus,
   LockType,
   OperationState,
   SSEConnectionState,
@@ -828,82 +826,5 @@ describe("useSSHErrorStore", () => {
       useSSHErrorStore.getState().clearErrors();
     });
     expect(useSSHErrorStore.getState().getErrors()).toEqual([]);
-  });
-});
-
-describe("useHealthStore", () => {
-  beforeEach(() => {
-    act(() => {
-      useHealthStore.setState({ deploymentHealth: new Map(), clusterHealth: new Map() });
-    });
-  });
-
-  it("tracks deployment and cluster health separately", () => {
-    act(() => {
-      useHealthStore.getState().updateDeploymentHealth({
-        deployment_id: "abc123",
-        status: HealthStatus.DEGRADED,
-        gpu_errors: 1,
-        restart_count: 2,
-        last_check: "2026-09-04T12:00:00Z",
-        warnings: ["one rank restarted"],
-        errors: [],
-      });
-      useHealthStore.getState().updateClusterHealth({
-        cluster_name: "spark",
-        status: HealthStatus.HEALTHY,
-        nodes: { "spark-01": HealthStatus.HEALTHY },
-        last_check: "2026-09-04T12:00:00Z",
-        warnings: [],
-        errors: [],
-      });
-    });
-
-    const store = useHealthStore.getState();
-    expect(store.getDeploymentHealth("abc123")!.status).toBe(HealthStatus.DEGRADED);
-    expect(store.getClusterHealth("spark")!.nodes["spark-01"]).toBe(HealthStatus.HEALTHY);
-    expect(store.getDeploymentHealth("never-deployed")).toBeUndefined();
-    expect(store.getClusterHealth("no-such-cluster")).toBeUndefined();
-  });
-
-  it("replaces a resource's health rather than accumulating reports", () => {
-    const base = {
-      deployment_id: "abc123",
-      gpu_errors: 0,
-      restart_count: 0,
-      last_check: "2026-09-04T12:00:00Z",
-      warnings: [],
-      errors: [],
-    };
-    act(() => {
-      useHealthStore.getState().updateDeploymentHealth({ ...base, status: HealthStatus.HEALTHY });
-      useHealthStore
-        .getState()
-        .updateDeploymentHealth({ ...base, status: HealthStatus.UNHEALTHY });
-    });
-
-    expect(useHealthStore.getState().deploymentHealth.size).toBe(1);
-    expect(useHealthStore.getState().getDeploymentHealth("abc123")!.status).toBe(
-      HealthStatus.UNHEALTHY,
-    );
-  });
-
-  it("lists what it is tracking", () => {
-    act(() => {
-      useHealthStore.getState().updateDeploymentHealth({
-        deployment_id: "abc123",
-        status: HealthStatus.HEALTHY,
-        gpu_errors: 0,
-        restart_count: 0,
-        last_check: "2026-09-04T12:00:00Z",
-        warnings: [],
-        errors: [],
-      });
-    });
-
-    expect(useHealthStore.getState().getTrackedResources()).toEqual({
-      deployments: ["abc123"],
-      clusters: [],
-    });
   });
 });

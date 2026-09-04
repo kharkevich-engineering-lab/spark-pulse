@@ -1,4 +1,4 @@
-import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntry, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, CustomRecipeInfo, CustomModInfo, ModFileMap, BenchmarkResult, OciRegistry, OciCollection, OciCollectionRecipe, OciRecipeMeta, OciUpdateCheck, OciUpdateApply, OciUpdateResult, OciAutoUpdateSettings, EngineListResponse, EngineDetail, EngineIndexRefreshResult, RenderRequest, RenderResult, ModelEntry, ModelSource, ModelDownloadJob, ModelSyncResult, ModelPresence, ModelDeleteResult, ImageEntry, ImagePullJob, ImageSyncResult, ImagePresence, ImageDeleteResult, RecipeImportResult, RecipeImportStatus, DeployPlan, DeployPlanRequest, PreflightReport } from "@/lib/types";
+import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntry, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, CustomRecipeInfo, CustomModInfo, ModFileMap, BenchmarkResult, OciRegistry, OciCollection, OciCollectionRecipe, OciRecipeMeta, OciUpdateCheck, OciUpdateApply, OciUpdateResult, OciAutoUpdateSettings, EngineListResponse, EngineDetail, EngineIndexRefreshResult, RenderRequest, RenderResult, ModelEntry, ModelSource, ModelDownloadJob, ModelSyncResult, ModelPresence, ModelDeleteResult, ImageEntry, ImagePullJob, ImageSyncResult, ImagePresence, ImageDeleteResult, RecipeImportResult, RecipeImportStatus, DeployPlan, DeployPlanRequest, PreflightReport, EngineMetricsWindow } from "@/lib/types";
 
 const API = "/api";
 
@@ -103,6 +103,9 @@ export async function runPreflight(body: DeployPlanRequest): Promise<PreflightRe
 
 export async function stopDeployment(id: string): Promise<void> { await json(`/deployments/${id}`, { method: "DELETE" }); }
 export async function fetchLogs(id: string, n = 200): Promise<{ logs: string }> { return json(`/deployments/${id}/logs?lines=${n}`); }
+/** The engine's own metrics window for one deployment. Empty with a stated
+ *  reason whenever the engine publishes nothing — see `EngineMetricsWindow`. */
+export async function fetchEngineMetrics(id: string): Promise<EngineMetricsWindow> { return json<EngineMetricsWindow>(`/deployments/${id}/metrics`); }
 
 // ── Memory ──────────────────────────────────────────────────────────────────
 

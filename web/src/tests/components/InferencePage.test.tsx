@@ -6,12 +6,15 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import InferencePage from "@/pages/InferencePage";
 import { MULTI_NODE_BADGE_TITLE, MULTI_NODE_UNPROVEN } from "@/lib/experimental";
-import type { Deployment } from "@/lib/types";
+import type { Deployment, EngineMetricsWindow } from "@/lib/types";
 
 vi.mock("@/lib/api", () => ({
   // Inert by default: only the tests that care about rank state stub it.
   fetchDeployment: vi.fn(() => Promise.resolve(undefined)),
   fetchDeployments: vi.fn(),
+  // Also inert by default: the metrics panel is exercised in its own file and
+  // in the tests below that stub this deliberately.
+  fetchEngineMetrics: vi.fn(() => Promise.resolve(undefined)),
   stopDeployment: vi.fn(),
   connectLogStream: vi.fn(() => () => {}),
   runBenchmark: vi.fn(),
@@ -21,6 +24,7 @@ import {
   connectLogStream,
   fetchDeployment,
   fetchDeployments,
+  fetchEngineMetrics,
   runBenchmark,
   stopDeployment,
 } from "@/lib/api";
@@ -723,5 +727,122 @@ describe("InferencePage rank health", () => {
     await waitFor(() => expect(fetchDeployment).toHaveBeenCalledWith("c2"));
     const rows = within(screen.getByTestId("deployment-c2")).getByTestId("rank-rows");
     expect(rows).not.toHaveTextContent("exited");
+  });
+});
+
+// ── Engine metrics on the open row ───────────────────────────────────────────
+
+describe("InferencePage engine metrics", () => {
+  const RUNNING = deployment({ id: "m1", name: "metrics job", status: "running" });
+
+  function metricsWindow(over: Partial<EngineMetricsWindow> = {}): EngineMetricsWindow {
+    return {
+      deployment_id: "m1",
+      available: true,
+      reason: null,
+      detail: null,
+      sample_interval_seconds: 5,
+      window_seconds: 3600,
+      volatile: true,
+      samples: [
+        {
+          t: 1_700_000_000,
+          running: 1,
+          waiting: 0,
+          kv_fraction: 0.2,
+          prompt_tokens_total: 10,
+          generation_tokens_total: 5,
+          preemptions_total: 0,
+          prompt_tokens_per_second: null,
+          generation_tokens_per_second: null,
+          preemptions_per_second: null,
+          counter_reset: false,
+        },
+        {
+          t: 1_700_000_005,
+          running: 3,
+          waiting: 12,
+          kv_fraction: 0.5,
+          prompt_tokens_total: 110,
+          generation_tokens_total: 55,
+          preemptions_total: 1,
+          prompt_tokens_per_second: 20,
+          generation_tokens_per_second: 10,
+          preemptions_per_second: 0.2,
+          counter_reset: false,
+        },
+      ],
+      ...over,
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(connectLogStream).mockReturnValue(() => {});
+    vi.mocked(fetchDeployment).mockResolvedValue(undefined as unknown as Deployment);
+    vi.mocked(fetchDeployments).mockResolvedValue([RUNNING]);
+  });
+
+  it("asks for nothing until a row is opened", async () => {
+    render(<InferencePage />);
+    await screen.findByText("metrics job");
+
+    expect(fetchEngineMetrics).not.toHaveBeenCalled();
+  });
+
+  it("reads the open row's window and shows the queue depth", async () => {
+    vi.mocked(fetchEngineMetrics).mockResolvedValue(metricsWindow());
+    render(<InferencePage />);
+
+    await expand("metrics job");
+
+    await waitFor(() => expect(fetchEngineMetrics).toHaveBeenCalledWith("m1"));
+    const row = within(screen.getByTestId("deployment-m1"));
+    expect(await row.findByText("Queued")).toBeInTheDocument();
+    expect(row.getByText("Queued").parentElement).toHaveTextContent("12");
+  });
+
+  it("shows the reason instead of a chart when the engine publishes nothing", async () => {
+    vi.mocked(fetchEngineMetrics).mockResolvedValue(
+      metricsWindow({
+        available: false,
+        reason: "not_enabled",
+        detail: "SGLang serves /metrics only with --enable-metrics.",
+        samples: [],
+      }),
+    );
+    render(<InferencePage />);
+
+    await expand("metrics job");
+
+    expect(
+      await screen.findByText("SGLang serves /metrics only with --enable-metrics."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Queued")).toBeNull();
+  });
+
+  it("stops saying it is reading when the read fails, and invents nothing", async () => {
+    vi.mocked(fetchEngineMetrics).mockRejectedValue(new Error("network"));
+    render(<InferencePage />);
+
+    await expand("metrics job");
+
+    expect(await screen.findByText("No engine metrics yet.")).toBeInTheDocument();
+    expect(screen.queryByText("Queued")).toBeNull();
+  });
+
+  it("does not show one row's window against another", async () => {
+    const OTHER = deployment({ id: "m2", name: "other metrics job", status: "running" });
+    vi.mocked(fetchDeployments).mockResolvedValue([RUNNING, OTHER]);
+    // Only ever answers for m1; opening m2 must therefore show nothing.
+    vi.mocked(fetchEngineMetrics).mockResolvedValue(metricsWindow());
+    render(<InferencePage />);
+    await expand("metrics job");
+    await screen.findByText("Queued");
+
+    await expand("other metrics job");
+
+    const other = within(screen.getByTestId("deployment-m2"));
+    expect(other.queryByText("Queued")).toBeNull();
   });
 });

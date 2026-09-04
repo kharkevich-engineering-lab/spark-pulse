@@ -219,30 +219,6 @@ export function useSSEConnection(
 }
 
 /**
- * Hook for connecting to a health monitoring SSE stream.
- *
- * Usage:
- * ```ts
- * const handleHealthUpdate = useCallback((event: string, data: unknown) => {
- *   if (event === "health") {
- *     setHealth(data as DeploymentHealth);
- *   }
- * }, []);
- *
- * const healthStatus = useHealthStream("/sse/health", handleHealthUpdate);
- * ```
- */
-export function useHealthStream(
-  onHealthUpdate: (health: unknown) => void
-): SSEConnectionStatus {
-  return useSSEConnection(
-    "/sse/health",
-    (_event, data) => onHealthUpdate(data),
-    { maxRetries: 5, retryDelayMs: 1000 }
-  );
-}
-
-/**
  * Hook for connecting to a deployment event SSE stream.
  *
  * Usage:

@@ -1,4 +1,4 @@
-import { HealthStatus, type DeploymentHealth } from "@/lib/operations";
+import { HealthStatus } from "@/lib/operations";
 
 interface HealthBadgeProps {
   status: HealthStatus;
@@ -38,6 +38,10 @@ const statusConfig = {
   },
 };
 
+// The badge is derived from the deployment's own status — the container is
+// running, or it is not. It is deliberately not the output of a health check:
+// nothing in this system runs one, and a badge that implied otherwise would be
+// the most misleading pixel on the page.
 export default function HealthBadge({
   status,
   size = "md",
@@ -71,100 +75,24 @@ export default function HealthBadge({
   );
 }
 
-// ── Health Alert Component ───────────────────────────────────────────────────
-
-interface HealthAlertProps {
-  health: DeploymentHealth;
-  className?: string;
-}
-
-export function HealthAlert({ health, className = "" }: HealthAlertProps) {
-  return (
-    <div className={`space-y-2 ${className}`}>
-      <div className="flex items-center justify-between">
-        <span className="text-sm font-medium">{health.deployment_id}</span>
-        <HealthBadge status={health.status} size="sm" />
-      </div>
-
-      {health.errors.length > 0 && (
-        <div className="space-y-1">
-          {health.errors.map((err, i) => (
-            <p key={i} className="text-xs text-danger">• {err}</p>
-          ))}
-        </div>
-      )}
-
-      {health.warnings.length > 0 && (
-        <div className="space-y-1">
-          {health.warnings.map((warn, i) => (
-            <p key={i} className="text-xs text-warning">• {warn}</p>
-          ))}
-        </div>
-      )}
-
-      <div className="flex gap-4 text-xs text-text-muted">
-        {health.restart_count > 0 && (
-          <span>Restarts: {health.restart_count}</span>
-        )}
-        {health.gpu_errors > 0 && (
-          <span>GPU Errors: {health.gpu_errors}</span>
-        )}
-        <span>Last check: {new Date(health.last_check).toLocaleTimeString()}</span>
-      </div>
-    </div>
-  );
-}
-
-// ── Health Monitor Controls ──────────────────────────────────────────────────
-
-interface HealthMonitorControlsProps {
-  isMonitoring: boolean;
-  onToggle: () => void;
-  className?: string;
-}
-
-export function HealthMonitorControls({
-  isMonitoring,
-  onToggle,
-  className = "",
-}: HealthMonitorControlsProps) {
-  return (
-    <div className={`flex items-center gap-3 ${className}`}>
-      <span className="text-sm font-medium">Health Monitoring:</span>
-      <button
-        onClick={onToggle}
-        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-          isMonitoring ? "bg-primary" : "bg-surface-hover"
-        }`}
-      >
-        <span
-          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-            isMonitoring ? "translate-x-6" : "translate-x-1"
-          }`}
-        />
-      </button>
-      <span className="text-sm text-text-muted">
-        {isMonitoring ? "Active" : "Inactive"}
-      </span>
-    </div>
-  );
-}
-
 // ── Health History Chart ─────────────────────────────────────────────────────
 //
-// There is no stored health history anywhere in this system: `DeploymentHealth`
-// is a point-in-time snapshot and the health monitor broadcasts rather than
-// records. So this chart draws only what the open page has watched go past on
-// the SSE streams it is already subscribed to — the metrics frame every five
-// seconds, and the health events. That series lives in the tab and starts over
-// on reload, which the caption says out loud rather than implying a history
+// Nothing in the browser stores a series. This chart draws only what arrived
+// while the page was open — the metrics frame every five seconds, and whatever
+// the page hands it from the backend's own bounded window. Either way the
+// series is short-lived, and the caption says so rather than implying a history
 // that survives.
 //
-// It never invents a point. Fewer than two real samples is not a chart, and is
-// rendered as the sentence "not enough history yet".
+// It never invents a point, and it never invents a line. Fewer than two real
+// samples is not a chart, and is rendered as the sentence "not enough history
+// yet". The x axis is each sample's own timestamp rather than its position in
+// the array, so five seconds of stream and ten minutes of silence are not drawn
+// the same width — and where the stream stopped, or where a counter reset made
+// a rate unknowable, the line breaks and the missing stretch is shaded instead
+// of being bridged by a straight line no measurement supports.
 
 export interface HealthSample {
-  /** Epoch milliseconds, for ordering and for the elapsed-time caption. */
+  /** Epoch milliseconds. This is the x axis, not the array index. */
   t: number;
   value: number;
 }
@@ -176,6 +104,14 @@ export interface HealthSeries {
   /** Any CSS colour; the page passes its theme variables. */
   color: string;
   samples: HealthSample[];
+  /**
+   * Instants the line must not be drawn *into*, on top of the gaps inferred
+   * from the timestamps. A page that knows a measurement is missing for a
+   * reason of its own — a counter reset, say, which makes the rate across that
+   * interval unknowable rather than zero — declares it here, as the epoch
+   * millisecond timestamp of the sample the line may not reach.
+   */
+  breaks?: number[];
 }
 
 interface HealthHistoryChartProps {
@@ -190,12 +126,63 @@ interface HealthHistoryChartProps {
 /** Two points is the minimum that can honestly be drawn as a line. */
 const MIN_SAMPLES = 2;
 
+/**
+ * How many times the usual interval a silence must exceed before it counts as
+ * a gap rather than a slow tick. Three is loose enough that one dropped frame
+ * is still a line, and tight enough that an `EventSource` reconnect is not.
+ */
+const GAP_FACTOR = 3;
+
 const VIEW_W = 300;
 const VIEW_H = 40;
 const VIEW_PAD = 3;
 
-/** The polyline for one series, scaled to its own range. */
-export function sparklinePath(samples: HealthSample[]): string {
+/**
+ * The usual interval between samples, taken from the samples themselves.
+ *
+ * The median rather than the mean, so that one ten-minute silence cannot
+ * redefine "usual" and thereby hide itself.
+ */
+export function medianInterval(samples: HealthSample[]): number {
+  const gaps: number[] = [];
+  for (let i = 1; i < samples.length; i++) gaps.push(samples[i].t - samples[i - 1].t);
+  if (gaps.length === 0) return 0;
+  gaps.sort((a, b) => a - b);
+  const mid = Math.floor(gaps.length / 2);
+  return gaps.length % 2 ? gaps[mid] : (gaps[mid - 1] + gaps[mid]) / 2;
+}
+
+/** The indices the line must not be drawn into. */
+export function sparklineBreaks(
+  samples: HealthSample[],
+  breaks: number[] = [],
+): number[] {
+  if (samples.length < MIN_SAMPLES) return [];
+  const usual = medianInterval(samples);
+  const declared = new Set(breaks);
+  const at: number[] = [];
+  for (let i = 1; i < samples.length; i++) {
+    const silent = usual > 0 && samples[i].t - samples[i - 1].t > usual * GAP_FACTOR;
+    if (silent || declared.has(samples[i].t)) at.push(i);
+  }
+  return at;
+}
+
+/** Map a timestamp onto the view box. */
+function xFor(t: number, first: number, spanMs: number): number {
+  // Every sample at the same instant: there is no axis to spread them along,
+  // and spreading them anyway would invent the very thing this exists to fix.
+  return spanMs === 0 ? 0 : ((t - first) / spanMs) * VIEW_W;
+}
+
+/**
+ * The polyline for one series, spaced by time and broken at every gap.
+ *
+ * Each break starts a new subpath with `M`, so nothing is drawn across it, and
+ * the x of every point is its own timestamp, so the width of the hole is the
+ * length of the silence.
+ */
+export function sparklinePath(samples: HealthSample[], breaks: number[] = []): string {
   if (samples.length < MIN_SAMPLES) return "";
   const values = samples.map((s) => s.value);
   const min = Math.min(...values);
@@ -205,13 +192,34 @@ export function sparklinePath(samples: HealthSample[]): string {
   const span = max - min;
   const mid = VIEW_H / 2;
   const usable = VIEW_H - VIEW_PAD * 2;
+  const first = samples[0].t;
+  const spanMs = samples[samples.length - 1].t - first;
+  const broken = new Set(sparklineBreaks(samples, breaks));
   return samples
     .map((s, i) => {
-      const x = (i / (samples.length - 1)) * VIEW_W;
+      const x = xFor(s.t, first, spanMs);
       const y = span === 0 ? mid : VIEW_H - VIEW_PAD - ((s.value - min) / span) * usable;
-      return `${i === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`;
+      const move = i === 0 || broken.has(i);
+      return `${move ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`;
     })
     .join(" ");
+}
+
+/** The x extent of each gap, so it can be shaded rather than merely absent. */
+export function sparklineGapBands(
+  samples: HealthSample[],
+  breaks: number[] = [],
+): { x: number; width: number }[] {
+  if (samples.length < MIN_SAMPLES) return [];
+  const first = samples[0].t;
+  const spanMs = samples[samples.length - 1].t - first;
+  return sparklineBreaks(samples, breaks).map((i) => {
+    const x = xFor(samples[i - 1].t, first, spanMs);
+    // A declared break between two adjacent samples is only one interval wide;
+    // give it a floor, or the reader cannot see that the line was cut.
+    const width = Math.max(xFor(samples[i].t, first, spanMs) - x, 2);
+    return { x, width };
+  });
 }
 
 /** "45 s" / "12 min" / "2 h" — the window the samples actually cover. */
@@ -233,6 +241,11 @@ function Sparkline({ series }: { series: HealthSeries }) {
   const peak = Math.max(...values);
   const spanMs = series.samples[series.samples.length - 1].t - series.samples[0].t;
   const span = formatSpan(spanMs);
+  const bands = sparklineGapBands(series.samples, series.breaks);
+  const gapNote =
+    bands.length === 0
+      ? ""
+      : `, ${bands.length} gap${bands.length === 1 ? "" : "s"} where nothing was measured`;
 
   return (
     <div className="space-y-1">
@@ -248,10 +261,22 @@ function Sparkline({ series }: { series: HealthSeries }) {
         preserveAspectRatio="none"
         className="w-full h-10"
         role="img"
-        aria-label={`${series.label}, ${series.samples.length} samples over the last ${span}, now ${formatValue(latest, series.unit)}`}
+        aria-label={`${series.label}, ${series.samples.length} samples over the last ${span}, now ${formatValue(latest, series.unit)}${gapNote}`}
       >
+        {bands.map((band, i) => (
+          <rect
+            key={i}
+            data-testid="sparkline-gap"
+            x={band.x}
+            y={0}
+            width={band.width}
+            height={VIEW_H}
+            fill="var(--color-text-muted)"
+            opacity="0.12"
+          />
+        ))}
         <path
-          d={sparklinePath(series.samples)}
+          d={sparklinePath(series.samples, series.breaks)}
           fill="none"
           stroke={series.color}
           strokeWidth="1.5"
@@ -262,6 +287,8 @@ function Sparkline({ series }: { series: HealthSeries }) {
       </svg>
       <p className="text-[0.65rem] text-text-muted/70">
         {series.samples.length} samples over the last {span}
+        {bands.length > 0 &&
+          ` · ${bands.length} gap${bands.length === 1 ? "" : "s"} with no measurement`}
       </p>
     </div>
   );

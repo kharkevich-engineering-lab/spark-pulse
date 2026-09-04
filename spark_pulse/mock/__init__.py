@@ -15,7 +15,7 @@ from spark_pulse.mock import (
     node_registry as node_registry,
     parallelism as parallelism,
     launch_script as launch_script,
-    health as health,
+    engine_metrics as engine_metrics,
     reconciliation as reconciliation,
     locking as locking,
     events as events,

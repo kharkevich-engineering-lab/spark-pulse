@@ -11,6 +11,8 @@ faults were live when this file was written:
   ``/api/mods/apply`` and ``/api/mods/rollback`` could only ever return 500.
 * ``mock/health.py`` shared *no* names at all with ``tools/health.py``, so
   every ``/api/health/*`` endpoint answered with its own ``AttributeError``.
+  (That module is gone: the health monitor it belonged to never ran, and the
+  engine-metrics sampler replaced it.)
 * ``mock/launch_script.py`` had none of the four names
   ``routers/launch_script.py`` calls.
 
@@ -102,7 +104,7 @@ GAPS = _gaps()
 def test_every_twin_the_package_ships_is_checked():
     """A guard on the guard: a shrunken list would make the rest vacuous."""
     assert len(GAPS) > 15
-    assert {"mods", "health", "recipes", "docker", "launch_script"} <= set(GAPS)
+    assert {"mods", "engine_metrics", "recipes", "docker", "launch_script"} <= set(GAPS)
 
 
 @pytest.mark.parametrize("name", sorted(GAPS))

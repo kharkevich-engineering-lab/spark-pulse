@@ -9,8 +9,6 @@ import {
   type AuditEntry,
   type DryRunResult,
   type SSHError,
-  type DeploymentHealth,
-  type ClusterHealth,
   type OperationResourceType,
 } from "@/lib/operations";
 import { canTransition } from "@/lib/operations";
@@ -318,44 +316,4 @@ export const useSSHErrorStore = create<SSHErrorStore>((set, get) => ({
   getErrors: () => get().errors,
 
   clearErrors: () => set({ errors: [] }),
-}));
-
-// ── Health Tracking Store (Phase 5.1) ────────────────────────────────────────
-
-interface HealthStore {
-  deploymentHealth: Map<string, DeploymentHealth>;
-  clusterHealth: Map<string, ClusterHealth>;
-  updateDeploymentHealth: (health: DeploymentHealth) => void;
-  updateClusterHealth: (health: ClusterHealth) => void;
-  getDeploymentHealth: (id: string) => DeploymentHealth | undefined;
-  getClusterHealth: (name: string) => ClusterHealth | undefined;
-  getTrackedResources: () => { deployments: string[]; clusters: string[] };
-}
-
-export const useHealthStore = create<HealthStore>((set, get) => ({
-  deploymentHealth: new Map(),
-  clusterHealth: new Map(),
-
-  updateDeploymentHealth: (health) =>
-    set((state) => {
-      const next = new Map(state.deploymentHealth);
-      next.set(health.deployment_id, health);
-      return { deploymentHealth: next };
-    }),
-
-  updateClusterHealth: (health) =>
-    set((state) => {
-      const next = new Map(state.clusterHealth);
-      next.set(health.cluster_name, health);
-      return { clusterHealth: next };
-    }),
-
-  getDeploymentHealth: (id) => get().deploymentHealth.get(id),
-
-  getClusterHealth: (name) => get().clusterHealth.get(name),
-
-  getTrackedResources: () => ({
-    deployments: Array.from(get().deploymentHealth.keys()),
-    clusters: Array.from(get().clusterHealth.keys()),
-  }),
 }));

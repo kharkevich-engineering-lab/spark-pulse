@@ -1141,6 +1141,11 @@ def _record_from_plan(plan_obj: DeployPlan, status: str) -> dict[str, Any]:
         "node_count": plan_obj.node_count,
         "mods": plan_obj.mods,
         "readiness_url": plan_obj.readiness_url,
+        # The engine's Prometheus path, persisted so the metrics sampler can
+        # address this deployment without re-resolving a spec that may since
+        # have been withdrawn from the index. It was computed into the plan and
+        # dropped here until there was a sampler to read it.
+        "metrics_path": plan_obj.metrics_path,
         # Per-rank additions.
         "generation": plan_obj.generation,
         "ranks": [_rank_record(r) for r in plan_obj.rank_plans],

@@ -4,7 +4,6 @@ import { useQuery } from "@/hooks/useQuery";
 import { Settings as SettingsIcon, Loader2, AlertCircle, Check, KeyRound, Eye, EyeOff, Trash2, Lock, Server, Clock, Network, Radio, Wifi, WifiOff, Cpu, RefreshCw } from "lucide-react";
 import { EngineList } from "@/components/EngineBadge";
 import { AlertModal } from "@/components/Modal";
-import { HealthMonitorControls } from "@/components/HealthBadge";
 import { setRefresh } from "@/lib/refresh";
 
 export default function SettingsPage() {
@@ -46,8 +45,6 @@ export default function SettingsPage() {
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
   const [discoveryLoading, setDiscoveryLoading] = useState(false);
 
-  // Health monitoring state
-  const [isHealthMonitoring, setIsHealthMonitoring] = useState(false);
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
 
   const isDirty = settings != null && Object.keys(form).some(
@@ -215,20 +212,11 @@ export default function SettingsPage() {
             <input type="number" min="64" step="64" value={Number(getDocker("pids_limit", 4096))} onChange={(e) => setDocker("pids_limit", parseInt(e.target.value) || 4096)} className={inputCls} placeholder="4096" />
           </div>
 
-          {/* ── Health Monitoring ── */}
-          <div className="pt-4 border-t border-border space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <AlertCircle size={16} className="text-primary" />
-                <h4 className="font-semibold text-sm">Health Monitoring</h4>
-              </div>
-            </div>
-            <p className="text-xs text-text-muted">Enable continuous health monitoring for deployments and clusters.</p>
-            <HealthMonitorControls
-              isMonitoring={isHealthMonitoring}
-              onToggle={() => setIsHealthMonitoring(!isHealthMonitoring)}
-            />
-          </div>
+          {/* A "Health Monitoring" toggle stood here. It switched a piece of
+              React state and nothing else — there was no monitor behind it to
+              turn on, and the switch reset itself on every reload. Engine
+              metrics are collected for every running deployment with no
+              setting to forget, and are shown on the Inference page. */}
 
           {/* ── Network Discovery ── */}
           <div className="pt-4 border-t border-border space-y-3">

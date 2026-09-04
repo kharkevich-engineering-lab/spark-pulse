@@ -25,9 +25,6 @@ from spark_pulse import sse
 from spark_pulse import tools
 from spark_pulse.tools.events import DeploymentEvent, EventBroadcaster, EventType
 
-# ``spark_pulse.app`` already imports the real health module, so this is the
-# object ``health_events_generator`` reaches for.
-import spark_pulse.tools.health as real_health
 
 # Captured before any test can replace ``asyncio.sleep``.
 _REAL_SLEEP = asyncio.sleep
@@ -651,55 +648,6 @@ class TestCatalogueStreams:
         assert sse._get_event_broadcaster() is first
 
 
-# ── /sse/health ──────────────────────────────────────────────────────────────
-
-
-class FakeMonitor:
-    def __init__(self, snapshot):
-        self.snapshot = snapshot
-
-    def get_all_health(self):
-        if isinstance(self.snapshot, Exception):
-            raise self.snapshot
-        return self.snapshot
-
-
-class TestHealthStream:
-    async def test_the_monitor_snapshot_is_the_payload(self, sleeps, monkeypatch):
-        snapshot = {"d1": {"container_status": "running", "process_status": "alive"}}
-        monkeypatch.setattr(
-            real_health, "get_health_monitor", lambda: FakeMonitor(snapshot)
-        )
-
-        agen = sse.health_events_generator()
-        (frame,) = await take(agen, 1)
-        await agen.aclose()
-
-        assert parse(frame) == ("health_update", snapshot)
-
-    async def test_a_monitor_failure_becomes_an_error_frame(self, sleeps, monkeypatch):
-        monkeypatch.setattr(
-            real_health,
-            "get_health_monitor",
-            lambda: FakeMonitor(RuntimeError('probe said "no"')),
-        )
-
-        agen = sse.health_events_generator()
-        (frame,) = await take(agen, 1)
-        await agen.aclose()
-
-        assert parse(frame) == ("error", {"message": 'probe said "no"'})
-
-    async def test_the_stream_ticks_every_thirty_seconds(self, sleeps, monkeypatch):
-        monkeypatch.setattr(real_health, "get_health_monitor", lambda: FakeMonitor({}))
-
-        agen = sse.health_events_generator()
-        await take(agen, 2)
-        await agen.aclose()
-
-        assert sleeps == [30]
-
-
 # ── Endpoint wiring ──────────────────────────────────────────────────────────
 
 
@@ -713,7 +661,6 @@ class TestEndpoints:
             "/sse/models",
             "/sse/images",
             "/sse/events/deployments",
-            "/sse/health",
         }
 
     @pytest.mark.parametrize(
@@ -723,7 +670,6 @@ class TestEndpoints:
             ("sse_models", "models_generator"),
             ("sse_images", "images_generator"),
             ("sse_deployment_events", "deployment_events_generator"),
-            ("sse_health", "health_events_generator"),
         ],
     )
     async def test_each_endpoint_streams_its_own_generator(self, endpoint, generator):

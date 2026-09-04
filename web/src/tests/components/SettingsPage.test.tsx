@@ -335,18 +335,15 @@ describe("SettingsPage saving", () => {
     );
   });
 
-  /** Health monitoring is local state with no endpoint behind it yet, so all
-   *  that can be asserted is that the switch reports which way it is set. */
-  it("reports whether health monitoring is on", async () => {
-    const user = userEvent.setup();
+  /** The "Health Monitoring" switch is gone. It set a piece of React state and
+   *  nothing else: there was no monitor behind it, it called no endpoint, and
+   *  it reset on every reload. Engine metrics need no setting. */
+  it("no longer offers a health-monitoring switch that does nothing", async () => {
     render(<SettingsPage />);
-    await screen.findByRole("heading", { name: "Health Monitoring" });
+    await screen.findByRole("heading", { name: "Settings" });
 
-    expect(screen.getByText("Inactive")).toBeInTheDocument();
-    const controls = screen.getByText("Health Monitoring:").parentElement!;
-    await user.click(within(controls).getByRole("button"));
-
-    expect(screen.getByText("Active")).toBeInTheDocument();
+    expect(screen.queryByText("Health Monitoring:")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Health Monitoring" })).toBeNull();
   });
 });
 
