@@ -90,6 +90,45 @@ export type RecipeImportStatus =
   | { imported: false }
   | ({ imported: true } & RecipeImportResult);
 
+/** One rank of a deployment: where it runs and which container it is.
+ *
+ * Not to be confused with DeployPlan.ranks, which is the *rendered launch*
+ * per rank. This is the running gang — the shape the Jobs page expands into
+ * one line per rank.
+ */
+export interface DeploymentRank {
+  rank: number;
+  /** Address of the node it runs on. Empty means the control node. */
+  node: string;
+  host: string;
+  container_name: string;
+  is_head: boolean;
+  /** Live container state; present on the single-deployment endpoint only. */
+  container?: ContainerStatus;
+}
+
+/** A rank we asked to stop and could not confirm gone.
+ *
+ * Its node's ports stay held until something confirms the container is
+ * removed: releasing on inference is where every orphan bug in this class
+ * comes from.
+ */
+export interface DeploymentOrphan {
+  rank: number;
+  node: string;
+  container_name: string;
+  reason: string;
+  since: string;
+}
+
+export interface ContainerStatus {
+  status: string;
+  running: boolean;
+  id: string | null;
+  state: Record<string, unknown>;
+  error?: string | null;
+}
+
 export interface Deployment {
   id: string;
   recipe_id: string;
@@ -115,6 +154,13 @@ export interface Deployment {
   node_count?: number;
   mods?: string[];
   ready?: boolean;
+  /** Monotonic attempt counter; carried in every container name and label. */
+  generation?: number;
+  /** One entry per rank. container_name above is rank zero's, as an alias. */
+  ranks?: DeploymentRank[];
+  /** Ranks that could not be confirmed gone. Empty on a clean teardown. */
+  orphans?: DeploymentOrphan[];
+  container?: ContainerStatus;
 }
 
 export interface GPUStats {
