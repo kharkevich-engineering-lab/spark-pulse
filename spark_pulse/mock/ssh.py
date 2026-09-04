@@ -105,6 +105,15 @@ class MockSSHClient:
             stderr=self._default_stderr,
         )
 
+    def remote_shell_command(
+        self, host: str, remote_command: str | None = None
+    ) -> list[str]:
+        """Argv that would run ``remote_command`` on ``host`` (mocked)."""
+        args = ["ssh", "-o", "BatchMode=yes", host]
+        if remote_command:
+            args.append(remote_command)
+        return args
+
     def copy(
         self,
         local_path: str,
