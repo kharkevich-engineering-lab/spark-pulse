@@ -5,6 +5,7 @@ from __future__ import annotations
 import getpass
 import importlib
 import subprocess
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -469,3 +470,60 @@ class TestModuleFunctions:
         client = ssh_mod._get_default_client()
         assert isinstance(client, OpenSSHClient)
         assert client.host_key_policy == "strict"
+
+
+class TestReverseTunnel:
+    """A worker's docker daemon only trusts a plain-HTTP registry on loopback.
+
+    Verified on a DGX Spark: the daemon's insecure defaults are exactly
+    ``127.0.0.0/8`` and ``::1/128``. Reaching the control node's registry
+    through a reverse tunnel therefore needs no change to any node's
+    daemon.json, and no restart of a daemon that may be running work.
+    """
+
+    def test_the_forward_binds_loopback_on_the_remote(self):
+        client = OpenSSHClient(user="alex")
+        args = client._build_ssh_args(["-R", "127.0.0.1:5000:127.0.0.1:5000"])
+        assert "-R" in args
+        forward = args[args.index("-R") + 1]
+        # Binding the wildcard would expose the control node's registry to the
+        # whole network from every worker.
+        assert forward.startswith("127.0.0.1:")
+
+    def test_the_tunnel_does_not_multiplex(self):
+        """Over a shared control master ssh hands the forward to the master and
+        exits at once, so the tunnel would outlive its context manager."""
+        client = OpenSSHClient(user="alex")
+        with patch("subprocess.Popen") as popen:
+            proc = MagicMock()
+            proc.wait.side_effect = subprocess.TimeoutExpired("ssh", 2)
+            popen.return_value = proc
+            with client.reverse_tunnel("node", remote_port=5000, local_port=5000):
+                pass
+        args = popen.call_args[0][0]
+        assert "ControlMaster=no" in args
+        assert "ControlPath=none" in args
+
+    def test_the_tunnel_is_closed_on_exit(self):
+        client = OpenSSHClient(user="alex")
+        with patch("subprocess.Popen") as popen:
+            proc = MagicMock()
+            proc.wait.side_effect = subprocess.TimeoutExpired("ssh", 2)
+            popen.return_value = proc
+            with client.reverse_tunnel("node", remote_port=5000, local_port=5000):
+                pass
+        proc.terminate.assert_called_once()
+
+    def test_a_forward_that_cannot_bind_raises(self):
+        """ssh exits at once when the remote port is taken; the caller must be
+        told rather than left timing out against a port nothing serves."""
+        client = OpenSSHClient(user="alex")
+        with patch("subprocess.Popen") as popen:
+            proc = MagicMock()
+            proc.wait.return_value = 255
+            proc.returncode = 255
+            proc.stderr.read.return_value = b"remote port forwarding failed"
+            popen.return_value = proc
+            with pytest.raises(SSHError, match="reverse tunnel"):
+                with client.reverse_tunnel("node", remote_port=5000, local_port=5000):
+                    pass
