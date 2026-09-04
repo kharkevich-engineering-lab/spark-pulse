@@ -3,6 +3,10 @@
 An image ref carries slashes and colons, so it never travels as a path
 parameter here: the catalogue is a flat list and every ref-taking route takes
 it in the body or as a query parameter.
+
+Distribution is fetch-once: the control node seeds its own registry with the
+digest intact, and the other nodes pull from it without a credential of any
+kind. ``/registry`` describes that arrangement, ``/sync`` performs it.
 """
 
 from fastapi import APIRouter, Body, HTTPException, Query
@@ -47,6 +51,54 @@ def cancel_pull(job_id: str):
     return job
 
 
+# ── The control node's registry ──────────────────────────────────────────────
+#
+# Nodes pull from this registry **anonymously**. The upstream credential lives
+# in the control node's secrets and is used only for the control node's own
+# fetch, so nothing here ever returns or forwards it — ``nodes_need_credentials``
+# is part of the payload because that is the property the mode exists for.
+
+
+@router.get("/registry")
+def registry_status():
+    """Where nodes pull from, in which mode, and whether it is up."""
+    return tools.registry.status()
+
+
+@router.post("/registry/start")
+def registry_start():
+    """Start the registry on the control node. Idempotent."""
+    try:
+        return tools.registry.start()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/registry/stop")
+def registry_stop():
+    """Stop the registry on the control node. Idempotent."""
+    try:
+        return tools.registry.stop()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/registry/seed")
+def registry_seed(req: dict):
+    """Copy an image into the local registry, digest preserved and verified."""
+    ref = str(req.get("ref") or "").strip()
+    if not ref:
+        raise HTTPException(status_code=400, detail="ref is required")
+    try:
+        return tools.registry.seed(ref, str(req.get("digest") or ""))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        # A digest mismatch is a 502: the registry answered, with the wrong
+        # content. Failing loudly here is the whole point of the check.
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 # ── Distribution ─────────────────────────────────────────────────────────────
 
 
@@ -60,10 +112,15 @@ def sync_image(req: dict):
         raise HTTPException(status_code=400, detail="nodes must be a non-empty list")
     try:
         return tools.images.sync_to_nodes(
-            ref, [str(n) for n in nodes], req.get("ssh_user")
+            ref,
+            [str(n) for n in nodes],
+            req.get("ssh_user"),
+            digest=str(req.get("digest") or ""),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.get("/presence")

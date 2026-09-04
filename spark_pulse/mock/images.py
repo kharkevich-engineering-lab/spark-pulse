@@ -5,6 +5,10 @@ Docker daemon through ``spark_pulse.tools``, so the mock container service
 already stands in for it, and the pull jobs run the real aggregation code over
 the mock's simulated layer stream.
 
+Distribution needs none either: :func:`sync_to_nodes` is the real one, seeding
+through the simulated registry and reaching nodes through the simulated node
+services.
+
 Two things do need canned data. The bundled engine specs carry no digests, so
 nothing would ever show **digest drift** — the failure mode this page exists to
 surface. And a host that has every image it needs makes the "not pulled, N GB
@@ -36,9 +40,16 @@ from spark_pulse.tools.images import (  # noqa: F401 — shared machinery
     list_images as _real_list_images,
     list_pulls as list_pulls,
     local_digest as local_digest,
+    location_fields as location_fields,
     publish_event as publish_event,
     register_event_loop as register_event_loop,
+    registry_base as registry_base,
     start_pull as start_pull,
+    # Distribution needs no simulating at all: it seeds through
+    # ``tools.registry`` and reaches nodes through ``tools.node_service``, both
+    # of which are already the simulated ones in simulation mode. A second
+    # implementation here could only disagree with the one that ships.
+    sync_to_nodes as sync_to_nodes,
 )
 
 # What the simulated engine index advertises. vLLM's differs from the digest
@@ -88,6 +99,18 @@ def list_images() -> list[dict[str, Any]]:
         )
     if not any(e["ref"] == _SIM_MISSING_IMAGE["ref"] for e in entries):
         entries.append(dict(_SIM_MISSING_IMAGE))
+    # The overlay moved the advertised digests, and the composed reference is
+    # built from them, so it is rebuilt rather than left describing the digest
+    # the real catalogue had a moment ago.
+    base = registry_base()
+    for entry in entries:
+        entry.update(
+            location_fields(
+                str(entry["ref"]),
+                str(entry.get("index_digest") or entry.get("local_digest") or ""),
+                base,
+            )
+        )
     entries.sort(key=lambda e: (e["source"] == "local", e["ref"]))
     return entries
 
@@ -124,36 +147,3 @@ def presence(
             for i, node in enumerate(nodes or [])
         ],
     }
-
-
-def sync_to_nodes(
-    ref: str,
-    nodes: list[str],
-    ssh_user: str | None = None,
-    timeout: int = 3600,
-) -> dict[str, Any]:
-    """Simulate ``docker save | ssh docker load``, skipping matching nodes."""
-    entry = get_image(ref)
-    if entry is None or not entry.get("present"):
-        raise ValueError(f"Image not present locally: {ref}")
-    if not nodes:
-        raise ValueError("No nodes specified")
-    results = [
-        {
-            "node": node,
-            "ok": True,
-            # Odd nodes are pretended to already carry the same image ID.
-            "skipped": i % 2 == 1,
-            "error": None,
-            "duration_s": 0.4 if i % 2 else 41.2 + i,
-        }
-        for i, node in enumerate(nodes)
-    ]
-    payload = {
-        "ref": ref,
-        "image_id": entry.get("image_id", ""),
-        "results": results,
-        "ok": True,
-    }
-    publish_event(EVENT_SYNCED, ref, payload)
-    return payload
