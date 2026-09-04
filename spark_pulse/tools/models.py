@@ -628,7 +628,7 @@ def clear_finished_downloads() -> int:
 
 def _make_ssh_client(ssh_user: str | None) -> SSHClient:
     """Build the SSH client used for distribution (overridable in tests)."""
-    return OpenSSHClient(user=ssh_user or "", strict_host_key_checking=True)
+    return OpenSSHClient(user=ssh_user or None, host_key_policy="strict")
 
 
 def sync_to_nodes(
