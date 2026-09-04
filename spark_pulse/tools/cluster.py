@@ -4,9 +4,16 @@ Orchestrates container lifecycle, Ray cluster startup, mod deployment,
 and health validation across multiple nodes.
 
 Depends on:
-- RemoteDockerService for container operations
+- A node resolver (``NodeServices``) handing out the container service bound
+  to each node, so an operation aimed at a worker reaches that worker
 - SSHClient for remote transport
 - RayManager for Ray cluster management
+
+Stop, status and their container listings used to pass an empty host, which
+meant the control node's own Docker daemon. Now every operation names a node
+and gets that node's service. Where the node set is not knowable without the
+node registry — stop and status are given only a cluster name — the control
+node is resolved explicitly and the caller may pass the addresses it knows.
 """
 
 from __future__ import annotations
@@ -15,7 +22,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
+from typing import Any, Callable, Literal
 
 from spark_pulse.tools.cluster_health import validate_cluster
 from spark_pulse.tools.cluster_models import ClusterNode, ClusterState
@@ -30,8 +37,15 @@ from spark_pulse.tools.parallelism import (
     parse_parallelism,
     validate_cluster_capacity,
 )
+from spark_pulse.tools.node_service import (
+    Node,
+    NodeService,
+    NodeServices,
+    control_node,
+    node_for,
+    run_kwargs_from_docker_config,
+)
 from spark_pulse.tools.ray import RayManager
-from spark_pulse.tools.remote_docker import RemoteDockerService
 from spark_pulse.tools.ssh import OpenSSHClient, SSHClient
 
 logger = logging.getLogger(__name__)
@@ -54,23 +68,31 @@ class ClusterOrchestrator:
 
     def __init__(
         self,
-        remote_docker: RemoteDockerService | None = None,
+        services: Callable[[Node], NodeService] | None = None,
         ssh_client: SSHClient | None = None,
         event_broadcaster: EventBroadcaster | None = None,
     ):
         """Initialize cluster orchestrator.
 
         Args:
-            remote_docker: RemoteDockerService for container operations.
+            services: Resolver from node to the container service bound to it.
+                Defaults to :class:`NodeServices` over ``ssh_client``.
             ssh_client: SSH transport for remote operations.
             event_broadcaster: EventBroadcaster for emitting lifecycle events.
         """
-        self._docker = remote_docker or RemoteDockerService(
-            ssh_client or OpenSSHClient()
-        )
         self._ssh = ssh_client or OpenSSHClient()
-        self._ray = RayManager(self._docker)
+        self._services = services or NodeServices(ssh_client=self._ssh)
+        self._ray = RayManager(self._services)
         self._events = event_broadcaster or EventBroadcaster()
+
+    def _service(self, address: str) -> NodeService:
+        """The container service for whichever machine ``address`` names."""
+        return self._services(node_for(address))
+
+    @property
+    def services(self) -> Callable[[Node], NodeService]:
+        """The node resolver this orchestrator hands out services from."""
+        return self._services
 
     def start_cluster(
         self,
@@ -144,8 +166,12 @@ class ClusterOrchestrator:
             head_name = f"{name}-head"
             head_metadata = self._build_metadata(name, image, "head", no_ray=no_ray)
             logger.info("Starting head node %s at %s", head_name, head_ip)
-            self._docker.run_container(
-                head_ip, image, head_name, env_vars, docker_config, head_metadata
+            self._service(head_ip).run_container(
+                image=image,
+                name=head_name,
+                env_vars=env_vars,
+                metadata=head_metadata,
+                **run_kwargs_from_docker_config(docker_config),
             )
             started_containers.append((head_ip, head_name))
 
@@ -169,13 +195,12 @@ class ClusterOrchestrator:
                     no_ray=no_ray,
                 )
                 logger.info("Starting worker node %s at %s", worker_name, worker_ip)
-                self._docker.run_container(
-                    worker_ip,
-                    image,
-                    worker_name,
-                    env_vars,
-                    docker_config,
-                    worker_metadata,
+                self._service(worker_ip).run_container(
+                    image=image,
+                    name=worker_name,
+                    env_vars=env_vars,
+                    metadata=worker_metadata,
+                    **run_kwargs_from_docker_config(docker_config),
                 )
                 started_containers.append((worker_ip, worker_name))
                 worker_nodes.append(
@@ -252,7 +277,7 @@ class ClusterOrchestrator:
                 applied_mods=applied_mods,
             )
 
-            validation = validate_cluster(cluster_state, self._docker)
+            validation = validate_cluster(cluster_state, self._services)
             if validation.healthy:
                 self._events.emit_cluster_event(
                     EventType.CLUSTER_HEALTHY,
@@ -303,58 +328,87 @@ class ClusterOrchestrator:
 
         # Stop head
         try:
-            self._docker.stop_container(head_ip, f"{name}-head")
+            self._service(head_ip).stop_container(f"{name}-head")
         except Exception as e:
             logger.warning("Failed to stop head during rollback: %s", e)
 
         # Stop workers
         for i, worker_ip in enumerate(worker_ips):
             try:
-                self._docker.stop_container(worker_ip, f"{name}-worker-{i}")
+                self._service(worker_ip).stop_container(f"{name}-worker-{i}")
             except Exception as e:
                 logger.warning("Failed to stop worker %d during rollback: %s", i, e)
 
         logger.info("Cluster %s rollback complete", name)
 
-    def stop_cluster(self, name: str) -> None:
-        """Stop all containers in the cluster.
+    def stop_cluster(self, name: str, node_addresses: list[str] | None = None) -> None:
+        """Stop every container of the cluster, each on its own node.
+
+        A container is stopped on the node it was listed from, so the listing
+        and the stop can no longer disagree — which is exactly what the empty
+        host used to make possible.
 
         Args:
             name: Cluster name.
+            node_addresses: Nodes to sweep. Without the node registry the
+                cluster's members cannot be enumerated from a name alone, so
+                the default is the control node only, resolved explicitly.
         """
         logger.info("Stopping cluster %s...", name)
 
-        # List all containers with cluster label
-        containers = self._docker.list_managed_containers("", {CLUSTER_LABEL: name})
-
-        for container in containers:
-            logger.info("Stopping container %s", container.name)
-            self._docker.stop_container("", container.name)
+        for node in self._nodes(node_addresses):
+            service = self._services(node)
+            for container in service.list_managed_containers({CLUSTER_LABEL: name}):
+                logger.info("Stopping container %s on %s", container.name, node.label)
+                service.stop_container(container.name)
 
         logger.info("Cluster %s stopped", name)
 
-    def get_cluster_status(self, name: str) -> ClusterState:
+    def _nodes(self, node_addresses: list[str] | None) -> list[Node]:
+        """Node records for the addresses given, or the control node alone."""
+        if not node_addresses:
+            return [control_node()]
+        return [node_for(address) for address in node_addresses]
+
+    def get_cluster_status(
+        self,
+        name: str,
+        node_addresses: list[str] | None = None,
+    ) -> ClusterState:
         """Reconstruct cluster state from Docker labels.
 
-        1. List all containers with label spark-pulse.cluster={name}
+        1. List containers labelled spark-pulse.cluster={name} on each node
         2. Parse labels into ClusterNode objects
         3. Assemble ClusterState
-        4. Check Ray status on head node
+        4. Check Ray status on the head node's own daemon
 
         Args:
             name: Cluster name.
+            node_addresses: Nodes to ask. Defaults to the control node alone,
+                resolved explicitly, until the node registry lands.
 
         Returns:
             ClusterState reconstructed from container labels.
         """
-        containers = self._docker.list_managed_containers("", {CLUSTER_LABEL: name})
+        # Each container is attributed to the node it was listed from: only
+        # the head carries an address label, so a worker read off labels alone
+        # inherited the head's IP and every follow-up call went to the head.
+        found: list[tuple[Node, Any]] = [
+            (node, container)
+            for node in self._nodes(node_addresses)
+            for container in self._services(node).list_managed_containers(
+                {CLUSTER_LABEL: name}
+            )
+        ]
+        containers = [container for _, container in found]
 
         head_node: ClusterNode | None = None
+        head_address = ""
         worker_nodes: list[ClusterNode] = []
 
-        for container in containers:
+        for source, container in found:
             role = container.metadata.role
-            ip = container.metadata.head_ip or container.name
+            ip = source.address or container.metadata.head_ip or container.name
 
             node = ClusterNode(
                 ip=ip,
@@ -370,6 +424,7 @@ class ClusterOrchestrator:
 
             if role == "head":
                 head_node = node
+                head_address = source.address or container.metadata.head_ip
             elif role == "worker":
                 worker_nodes.append(node)
 
@@ -382,8 +437,7 @@ class ClusterOrchestrator:
 
         if ray_enabled:
             try:
-                ray_status = self._docker.exec_container(
-                    "",
+                ray_status = self._service(head_address).exec_in_container(
                     head_node.container_name,
                     ["ray", "status"],
                     timeout=10,
@@ -480,7 +534,7 @@ class ClusterOrchestrator:
             RuntimeError: If a mod failed on any of its target nodes. The
                 caller rolls the cluster back.
         """
-        orchestrator = ModOrchestrator(ssh_client=self._ssh, remote_docker=self._docker)
+        orchestrator = ModOrchestrator(ssh_client=self._ssh, services=self._services)
         applied: list[str] = []
 
         for mod in mod_deployments:

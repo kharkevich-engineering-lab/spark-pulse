@@ -2,14 +2,21 @@
 
 Mirrors the Phase 2A discovery validation pattern — provides
 comprehensive health checks to prevent silent failures.
+
+Every check resolves the node it is about and asks *that* node's Docker
+daemon. Before, all five checks passed an empty host and so ran against the
+control node's own daemon: a worker's container status was the head's, the
+per-worker Ray probe re-read the head, and the NCCL consistency check compared
+the control node with itself and could never report an inconsistency.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Callable
 
 from spark_pulse.tools.cluster_models import ClusterState
-from spark_pulse.tools.remote_docker import RemoteDockerService
+from spark_pulse.tools.node_service import Node, NodeService, node_for
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,41 +61,39 @@ class ValidationResult:
 
 def validate_cluster(
     cluster_state: ClusterState,
-    remote_docker: RemoteDockerService,
+    services: Callable[[Node], NodeService],
 ) -> ValidationResult:
     """Comprehensive cluster health check.
 
     Checks:
-    - All nodes reachable (SSH ping)
-    - Docker daemon running on all nodes
-    - All containers running (not just started)
-    - Ray healthy on head and workers
-    - Required ports reachable (29501, etc.)
-    - NCCL variables consistent across nodes
-    - GPU accessible on all nodes (nvidia-smi)
+    - All containers running, each on its own node
+    - Ray healthy on the head and on every worker, each asked on its own node
+    - GPU accessible inside every node's container
+    - NCCL socket interface consistent across nodes
 
     Args:
         cluster_state: Current cluster state.
-        remote_docker: RemoteDockerService for container operations.
+        services: Resolver from node to the container service bound to it.
 
     Returns:
         ValidationResult with health status, warnings, and errors.
     """
     result = ValidationResult.ok()
-
-    # Check all nodes are running
     all_nodes = [cluster_state.head, *cluster_state.workers]
+
+    def _service_for_node(node: object) -> NodeService:
+        return services(node_for(getattr(node, "ip", "")))
+
+    # Every container is checked on the machine it actually runs on.
     for node in all_nodes:
-        status = remote_docker.get_container_status("", node.container_name)
+        status = _service_for_node(node).get_container_status(node.container_name)
         if not status.get("running", False):
             result = result.add_error(
                 f"Node {node.ip} ({node.role}) container {node.container_name} is not running"
             )
 
-    # Check Ray on head
     if cluster_state.ray_enabled:
-        head_status = remote_docker.exec_container(
-            "",
+        head_status = _service_for_node(cluster_state.head).exec_in_container(
             cluster_state.head.container_name,
             ["ray", "status"],
             timeout=10,
@@ -96,10 +101,8 @@ def validate_cluster(
         if not head_status.ok or "OK" not in head_status.stdout:
             result = result.add_error("Ray head is not healthy")
 
-        # Check Ray on each worker
         for worker in cluster_state.workers:
-            worker_status = remote_docker.exec_container(
-                "",
+            worker_status = _service_for_node(worker).exec_in_container(
                 worker.container_name,
                 ["ray", "status"],
                 timeout=10,
@@ -109,10 +112,8 @@ def validate_cluster(
                     f"Ray worker on {worker.ip} is not responding"
                 )
 
-    # Check GPU accessibility on all nodes
     for node in all_nodes:
-        gpu_check = remote_docker.exec_container(
-            "",
+        gpu_check = _service_for_node(node).exec_in_container(
             node.container_name,
             ["nvidia-smi", "--query-gpu=count", "--format=csv,noheader"],
             timeout=10,
@@ -122,11 +123,10 @@ def validate_cluster(
                 f"Cannot verify GPU on node {node.ip}: {gpu_check.stderr}"
             )
 
-    # Check NCCL consistency (compare socket_ifname across nodes)
-    nccl_vars = {}
+    # NCCL consistency: one reading per node, so nodes that disagree are seen.
+    nccl_vars: dict[str, str] = {}
     for node in all_nodes:
-        nccl_check = remote_docker.exec_container(
-            "",
+        nccl_check = _service_for_node(node).exec_in_container(
             node.container_name,
             ["env"],
             timeout=10,

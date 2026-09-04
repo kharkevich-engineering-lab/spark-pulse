@@ -225,7 +225,7 @@ def validate_cluster(body: dict[str, Any]):
         name = body.get("name", "")
         state = orchestrator.get_cluster_status(name)
 
-        validation = tools.cluster_health.validate_cluster(state, orchestrator._docker)
+        validation = tools.cluster_health.validate_cluster(state, orchestrator.services)
 
         return {
             "healthy": validation.healthy,
@@ -289,10 +289,11 @@ def list_clusters():
     """
     try:
         orchestrator = _get_orchestrator()
-        # List all containers with cluster labels
-        all_containers = orchestrator._docker.list_managed_containers(
-            "", {CLUSTER_LABEL: ""}
-        )
+        # Cluster membership is read off container labels, and without the
+        # node registry the control node is the only daemon we can enumerate.
+        # It is resolved explicitly rather than reached by an empty host.
+        control = orchestrator.services(tools.node_service.control_node())
+        all_containers = control.list_managed_containers({CLUSTER_LABEL: ""})
 
         # Group by cluster name
         clusters: dict[str, list] = {}

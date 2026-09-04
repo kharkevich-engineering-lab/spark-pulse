@@ -2,7 +2,7 @@
 
 Replaces the --launch-script functionality from launch-cluster.sh.
 Provides script analysis, parallelism extraction, patching, and distribution
-to cluster nodes via SSH/RemoteDockerService abstractions.
+to cluster nodes via SSH and node-bound container services.
 """
 
 from __future__ import annotations
@@ -355,17 +355,25 @@ class LaunchScriptManager:
 class LaunchScriptDistributor:
     """Distributes patched scripts to cluster nodes.
 
-    Uses SSHClient + RemoteDockerService from Phase 3.
-    No duplicated SCP logic.
+    Uses SSHClient plus a node resolver handing out node-bound container
+    services. No duplicated SCP logic.
     """
 
     def __init__(
         self,
         ssh_client: Any = None,
-        remote_docker: Any = None,
+        services: Any = None,
     ):
+        from spark_pulse.tools.node_service import NodeServices
+
         self._ssh = ssh_client
-        self._docker = remote_docker
+        self._services = services or NodeServices()
+
+    def _service(self, address: str) -> Any:
+        """The container service for the node at ``address``."""
+        from spark_pulse.tools.node_service import node_for
+
+        return self._services(node_for(address))
 
     def deploy_to_node(
         self,
@@ -383,15 +391,12 @@ class LaunchScriptDistributor:
             script: Path to the patched script
             container_name: Name of the target container
         """
-        if self._docker is None:
-            raise RuntimeError("LaunchScriptDistributor requires a RemoteDockerService")
-
         remote_path = "/workspace/exec-script.sh"
+        service = self._service(node.ip)
 
         if node.role == "head" and node.ip == "127.0.0.1":
             # Local node: docker cp
-            self._docker.exec_container(
-                host=node.ip,
+            service.exec_in_container(
                 container=container_name,
                 command=["cp", "/tmp/exec-script.sh", remote_path],
             )
@@ -406,8 +411,7 @@ class LaunchScriptDistributor:
                 local_path=str(script),
                 remote_path="/tmp/exec-script.sh",
             )
-            self._docker.exec_container(
-                host=node.ip,
+            service.exec_in_container(
                 container=container_name,
                 command=["cp", "/tmp/exec-script.sh", remote_path],
             )
