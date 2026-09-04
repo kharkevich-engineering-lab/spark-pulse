@@ -149,6 +149,37 @@ def manifest_path(repo: str, commit: str) -> str:
     return os.path.join(repo, "trees", f"{commit}.json")
 
 
+def manifest_unreadable_reason(repo: str, commit: str) -> str | None:
+    """Why the manifest could not be read, when it is there but unusable.
+
+    ``None`` means either it was read fine or it genuinely does not exist.
+    This distinction matters on a real host: engine containers run as root and
+    write into the bind-mounted hub cache, so the manifest routinely lands as
+    root-owned mode 600 and the control-plane user cannot read it. Reporting
+    that as "no manifest" hides a fixable permissions problem behind what looks
+    like a missing feature, and silently drops verification to its weakest
+    evidence.
+    """
+    path = manifest_path(repo, commit)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as handle:
+            handle.read(1)
+    except PermissionError:
+        try:
+            owner = os.stat(path).st_uid
+        except OSError:  # pragma: no cover - defensive
+            owner = -1
+        return (
+            f"manifest trees/{commit}.json is not readable by this user "
+            f"(owned by uid {owner}); engine containers write the cache as root"
+        )
+    except OSError as exc:
+        return f"manifest trees/{commit}.json could not be read: {exc}"
+    return None
+
+
 def read_manifest(repo: str, commit: str) -> dict[str, dict[str, Any]] | None:
     """Return ``{repo-relative path: entry}`` from ``trees/<commit>.json``.
 
@@ -462,7 +493,12 @@ def _verify_structurally(
         report["reason"] = "snapshot is empty"
         return report
     report["state"] = STATE_VERIFIED
-    report["reason"] = f"{present} file(s) resolve, but no manifest to check them"
+    unreadable = manifest_unreadable_reason(repo, commit)
+    if unreadable:
+        report["manifest_unreadable"] = unreadable
+        report["reason"] = f"{present} file(s) resolve, but the {unreadable}"
+    else:
+        report["reason"] = f"{present} file(s) resolve, but no manifest to check them"
     return report
 
 

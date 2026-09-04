@@ -16,6 +16,8 @@ import json
 import sys
 from pathlib import Path
 
+import os
+
 import pytest
 from hub_cache_fixtures import (
     SAMPLE_COMMIT,
@@ -362,3 +364,41 @@ def test_the_verifier_imports_only_the_standard_library():
     assert imported <= set(sys.stdlib_module_names), sorted(
         imported - set(sys.stdlib_module_names)
     )
+
+
+class TestUnreadableManifest:
+    """A manifest that exists but cannot be read is not a missing manifest.
+
+    Engine containers run as root and write into the bind-mounted hub cache,
+    so on a real host the manifest lands root-owned mode 600 and the
+    control-plane user cannot read it. Verified on a DGX Spark. Reporting that
+    as absent hides a fixable permissions problem and silently drops
+    verification to its weakest evidence.
+    """
+
+    def test_an_absent_manifest_is_not_reported_as_unreadable(self, tmp_path):
+        repo = tmp_path / "models--org--name"
+        (repo / "trees").mkdir(parents=True)
+        assert hub_cache.manifest_unreadable_reason(str(repo), "abc") is None
+
+    def test_an_unreadable_manifest_says_so_and_names_the_owner(self, tmp_path):
+        repo = tmp_path / "models--org--name"
+        (repo / "trees").mkdir(parents=True)
+        manifest = repo / "trees" / "abc.json"
+        manifest.write_text("{}")
+        manifest.chmod(0o000)
+        try:
+            reason = hub_cache.manifest_unreadable_reason(str(repo), "abc")
+        finally:
+            manifest.chmod(0o600)
+        if os.geteuid() == 0:  # root reads anything; the check cannot fire
+            pytest.skip("running as root")
+        assert reason is not None
+        assert "not readable" in reason
+        assert "uid" in reason
+
+    def test_a_readable_manifest_reports_nothing(self, tmp_path):
+        repo = tmp_path / "models--org--name"
+        (repo / "trees").mkdir(parents=True)
+        (repo / "trees" / "abc.json").write_text("{}")
+        assert hub_cache.manifest_unreadable_reason(str(repo), "abc") is None
