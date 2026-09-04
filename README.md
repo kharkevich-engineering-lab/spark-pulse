@@ -1,6 +1,8 @@
 # Spark Pulse
 
-Spark Pulse is a web control plane for [spark-vllm-docker](https://github.com/eugr/spark-vllm-docker). It brings recipe discovery, deployment management, live monitoring, cache cleanup, and configuration into one interface for NVIDIA DGX Spark hardware.
+Spark Pulse is a web control plane for deploying inference engines (vLLM, SGLang) on NVIDIA DGX Spark hardware. It drives Docker directly from Python through its own engine plugins — there is no dependency on [spark-vllm-docker](https://github.com/eugr/spark-vllm-docker) to deploy. A spark-vllm-docker checkout is optional and, when configured, is used only as a read-only source for importing existing recipes and browsing mods/example launch scripts.
+
+It brings recipe discovery, deployment management, live monitoring, cache cleanup, and configuration into one interface. Multi-node deployment is supported by the same deploy path, but it has not yet been exercised on more than one physical machine — treat it as unproven until a real two-node bring-up validates it.
 
 **License:** [MIT](LICENSE) — Copyright © 2026 Kharkevich Engineering Lab
 
@@ -81,7 +83,8 @@ Spark Pulse reads settings from `config.yaml` (bundled with the package) and mer
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `spark_vllm_path` | string | `/tmp/spark-vllm-docker` | Absolute path to the spark-vllm-docker installation directory. |
+| `runtime` | string | `native` | Deployment runtime. `native` (Spark Pulse drives Docker itself via the engine registry) is the only one — there is no upstream runtime any more. |
+| `spark_vllm_path` | string | `/tmp/spark-vllm-docker` | Optional path to a spark-vllm-docker checkout. Nothing is executed out of it; it is only read for importing existing recipes and for read-only mod/launch-script discovery. Unset, missing, or wrong just means those sources are unavailable. |
 | `webui_port` | int | `8100` | TCP port the web UI listens on. |
 | `default_container` | string | `vllm-node` | Default Docker container name for deployments. |
 | `default_gpu_mem_util` | float | `0.8` | Default GPU memory utilization fraction (0.0–1.0). |

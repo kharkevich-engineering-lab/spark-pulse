@@ -83,7 +83,7 @@ pytest -v                        # Verbose output
 pytest tests/test_tools_recipes.py  # Single file
 ```
 
-Tests live in `tests/` (18 test modules total) and cover:
+Tests live in `tests/` (66 test modules) and cover:
 - **Config & Auth:** `test_config.py`, `test_auth.py`, `test_config_router.py`
 - **End-to-end:** `test_e2e_oidc.py`, `test_e2e_custom_recipes.py`
 - **Routers:** `test_router_custom_files.py`, `test_router_custom_recipes.py`
@@ -91,9 +91,8 @@ Tests live in `tests/` (18 test modules total) and cover:
 - **System:** `test_service.py`, `test_mock_system.py`
 
 ### CI (GitHub Actions)
-- **`unit-tests.yml`** — on PR and main push: installs Node + Python deps, builds frontend, runs pytest
+- **`unit-tests.yml`** — on pull request: separate jobs for Python unit tests, frontend build + UI unit tests, Playwright e2e, and a pre-commit job (black/ruff, eslint, `tsc --noEmit`)
 - **`release.yml`** — on push to `main`: uses `semantic-release` (npm) for version bump + changelog, then publishes to PyPI
-- **`pre-commit.yml`** — runs pre-commit hooks on PRs
 - **`pr-title.yml`** — validates PR title format for semantic-release
 
 ## Frontend Structure
@@ -101,13 +100,18 @@ Tests live in `tests/` (18 test modules total) and cover:
 The React frontend (`web/src/`) includes:
 
 ### Pages
-- **RecipesPage** — Browse and manage deployment recipes
-- **JobsPage** — View and manage active deployments
-- **CachePage** — Monitor and clean HuggingFace cache
-- **MCPPage** — MCP server documentation and tooling
-- **MemoryPage** — Project memory and context management
-- **SettingsPage** — System configuration and preferences
-- **LoginPage** — OIDC authentication (when enabled)
+- **RecipesPage** (`/`) — Browse and manage deployment recipes
+- **InferencePage** (`/jobs`) — View and manage active deployments
+- **ClusterPage** (`/cluster`) — Node registry plus the deployments running across it
+- **BenchmarkingPage** (`/benchmarking`) — Gated by `benchmarking_enabled`; redirects to `/` otherwise
+- **MemoryPage** (`/monitoring`) — Live GPU/CPU/RAM/disk monitoring
+- **ModelsPage** (`/models`) — Hugging Face model cache management
+- **ImagesPage** (`/images`) — Engine image inventory and pulls
+- **CachePage** (`/cache`) — Monitor and clean HuggingFace cache
+- **MCPPage** (`/mcp`) — MCP server documentation and tooling
+- **OciRegistryPage** (`/oci`) — Browse, install and update recipe collections from OCI registries
+- **SettingsPage** (`/settings`) — System configuration and preferences
+- **LoginPage** (`/login`) — OIDC authentication (when enabled)
 
 ### Key Components
 - **Layout** — Main app shell with navigation
@@ -115,7 +119,7 @@ The React frontend (`web/src/`) includes:
 - **CustomRecipeDrawer**, **CustomModDrawer** — Custom recipe and mod management
 - **NewRecipeModal**, **NewModModal** — Creation dialogs
 - **LazyCodeEditor** — Code editor component (lazy-loaded)
-- **SlideDrawer**, **Modal**, **Notifications** — Common UI primitives
+- **SlideDrawer**, **ConfirmModal**, **AlertModal** — Common UI primitives
 - **StatusBadge**, **BaseCard** — Status indicators and card layout
 
 ## Development Conventions

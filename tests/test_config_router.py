@@ -76,3 +76,22 @@ class TestApiConfigEndpoint:
         client = TestClient(app)
 
         assert client.get("/api/config").json()["cluster_experimental"] is False
+
+    def test_config_reports_simulation_mode_from_is_simulation(self, monkeypatch):
+        """simulation_mode must reflect tools.is_simulation(), not a hardcoded constant.
+
+        Would fail if the endpoint returned a literal ``True``/``False`` instead
+        of calling through to ``is_simulation()``.
+        """
+        import spark_pulse.routers.config as config_router
+
+        app = create_app()
+        from fastapi.testclient import TestClient
+
+        client = TestClient(app)
+
+        monkeypatch.setattr(config_router, "is_simulation", lambda: False)
+        assert client.get("/api/config").json()["simulation_mode"] is False
+
+        monkeypatch.setattr(config_router, "is_simulation", lambda: True)
+        assert client.get("/api/config").json()["simulation_mode"] is True
