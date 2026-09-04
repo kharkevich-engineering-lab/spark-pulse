@@ -908,7 +908,13 @@ def replicate_to_nodes(
         hub_cache.EVIDENCE_MANIFEST,
         hub_cache.EVIDENCE_HASHES,
     )
-    bytes_total = int(source["bytes_expected"])
+    # Two different numbers, and conflating them is how a progress bar ends up
+    # stuck at 103%. ``bytes_total`` is what will land on the node — the whole
+    # entry, manifest and refs included — and is the denominator progress is
+    # measured against. ``manifest_bytes`` is what the revision's files weigh,
+    # and is what verification counts.
+    bytes_total = int(hub_cache.tree_bytes(str(repo_path))["bytes"])
+    manifest_bytes = int(source["bytes_expected"])
 
     ssh = client or _make_ssh_client(ssh_user)
     final_dir = f"{hub_dir()}/{repo_dir_name(model_id)}"
@@ -956,6 +962,7 @@ def replicate_to_nodes(
         "path": str(repo_path),
         "revision": commit,
         "bytes_total": bytes_total,
+        "manifest_bytes": manifest_bytes,
         "local": source,
         "results": results,
         "ok": all(r["ok"] for r in results),
@@ -979,8 +986,11 @@ def _node_result(node: str, **fields: Any) -> dict[str, Any]:
         "error": None,
         "reason": "",
         "revision": None,
+        # Bytes on the node's disk, against the bytes the whole entry weighs.
         "bytes_done": 0,
         "bytes_total": 0,
+        # Bytes the verification actually accounted for against the manifest.
+        "bytes_verified": 0,
         "missing": [],
         "missing_count": 0,
         "verified_at": None,
@@ -1049,8 +1059,9 @@ def _replicate_one(
                     state=already["state"],
                     reason="node already holds a verified copy of this revision",
                     revision=commit,
-                    bytes_done=int(already.get("bytes_present") or 0),
+                    bytes_done=bytes_total,
                     bytes_total=bytes_total,
+                    bytes_verified=int(already.get("bytes_present") or 0),
                     verified_at=already.get("verified_at"),
                 )
 
@@ -1084,7 +1095,7 @@ def _replicate_one(
                 "reason": report.get("reason", ""),
                 "missing": report.get("missing") or [],
                 "missing_count": int(report.get("missing_count") or 0),
-                "bytes_done": int(report.get("bytes_present") or result["bytes_done"]),
+                "bytes_verified": int(report.get("bytes_present") or 0),
             }
         )
         if report["state"] != hub_cache.STATE_VERIFIED:
