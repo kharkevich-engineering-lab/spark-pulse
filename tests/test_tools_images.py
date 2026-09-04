@@ -8,6 +8,7 @@ service the rest of the suite uses.
 from __future__ import annotations
 
 import importlib
+import subprocess
 import time
 from unittest.mock import patch
 
@@ -24,7 +25,11 @@ from spark_pulse.mock.docker import (  # noqa: E402
     MockDockerClient,
     MockDockerService,
 )
-from spark_pulse.tools.ssh import SSHClient, SSHResult  # noqa: E402
+from spark_pulse.tools.ssh import (  # noqa: E402
+    OpenSSHClient,
+    SSHClient,
+    SSHResult,
+)
 
 VLLM_REPO = "ghcr.io/kharkevich-engineering-lab/spark-pulse-engine/vllm"
 VLLM_REF = f"{VLLM_REPO}:0.1.0"
@@ -358,6 +363,24 @@ class TestSync:
 
         assert result["ok"] is False
         assert "no space left" in result["results"][0]["error"]
+
+    def test_transfer_is_built_by_the_ssh_client(self, catalogue, monkeypatch):
+        """No hand-rolled ssh: the pipeline carries the client's own options."""
+        client = OpenSSHClient(user="ubuntu", multiplex=False)
+        seen: dict[str, list[str]] = {}
+
+        def _run(args, **kwargs):
+            seen["args"] = list(args)
+            return subprocess.CompletedProcess(args, 0, "", "")
+
+        monkeypatch.setattr(images.subprocess, "run", _run)
+        images._save_and_load(VLLM_REF, "n1", client)
+
+        pipeline = seen["args"][2]
+        assert pipeline.startswith(f"docker save {VLLM_REF} | ssh ")
+        assert "-o StrictHostKeyChecking=yes" in pipeline
+        assert "-o BatchMode=yes" in pipeline
+        assert pipeline.endswith("ubuntu@n1 'docker load'")
 
     def test_refuses_an_image_that_is_not_local(self, catalogue):
         with pytest.raises(ValueError):
