@@ -12,6 +12,7 @@ from starlette.responses import StreamingResponse
 from spark_pulse.tools import system
 from spark_pulse.tools.events import EventBroadcaster
 from spark_pulse import tools
+from starlette.concurrency import run_in_threadpool
 
 router = APIRouter(prefix="/sse", tags=["sse"])
 
@@ -20,15 +21,19 @@ async def metrics_generator() -> AsyncGenerator[str, None]:
     """Generate SSE events with memory metrics every 5 seconds."""
     from spark_pulse.tools.deployments import list_deployments
 
+    def _collect() -> dict:
+        # nvidia-smi and the deployment store are both blocking; on the loop
+        # they stall every other stream in the process for their duration.
+        data = system.get_all_memory()
+        running = [
+            d for d in list_deployments() if d.get("status") in ("running", "pending")
+        ]
+        system.enrich_gpu_process_tracking(data.get("processes", []), running)
+        return data
+
     while True:
         try:
-            data = system.get_all_memory()
-            running = [
-                d
-                for d in list_deployments()
-                if d.get("status") in ("running", "pending")
-            ]
-            system.enrich_gpu_process_tracking(data.get("processes", []), running)
+            data = await run_in_threadpool(_collect)
             yield f"event: metrics\ndata: {json.dumps(data)}\n\n"
         except Exception as e:
             yield f'event: error\ndata: {{"message": "{e}"}}\n\n'
@@ -58,13 +63,18 @@ async def _native_log_generator(deployment_id: str) -> AsyncGenerator[str, None]
     seen = 0
     last_status: str | None = None
     while True:
-        text = tools.deploy_dispatch.get_logs(deployment_id, 1000)
+        # Both calls below reach docker, and over SSH for a remote node.
+        text = await run_in_threadpool(
+            tools.deploy_dispatch.get_logs, deployment_id, 1000
+        )
         lines = [line for line in text.splitlines() if line]
         for line in lines[seen:]:
             yield f"event: log\ndata: {json.dumps({'text': line})}\n\n"
         seen = max(seen, len(lines))
 
-        dep = tools.deploy_dispatch.get_deployment(deployment_id)
+        dep = await run_in_threadpool(
+            tools.deploy_dispatch.get_deployment, deployment_id
+        )
         if not dep:
             break
         status = dep.get("status")
@@ -325,12 +335,14 @@ async def sse_health():
 
 async def cluster_events_generator() -> AsyncGenerator[str, None]:
     """Stream cluster lifecycle events via SSE."""
-    from spark_pulse.tools.cluster import list_clusters
+    # The cluster listing lives in the router, which derives it from container
+    # labels; tools.cluster has no module-level equivalent.
+    from spark_pulse.routers.cluster import list_clusters
 
     last_clusters = {}
     while True:
         try:
-            clusters = list_clusters()
+            clusters = await run_in_threadpool(list_clusters)
             current_clusters = {
                 c.name if hasattr(c, "name") else c.get("name", ""): c for c in clusters
             }
