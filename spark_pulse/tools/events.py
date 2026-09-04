@@ -60,6 +60,14 @@ class EventType(str, Enum):
     MODEL_DOWNLOAD_CANCELLED = "model.download.cancelled"
     MODEL_DELETED = "model.deleted"
 
+    # Model replication to nodes.  Progress is bytes on the node against bytes
+    # the manifest expects, because a spinner over a six-hour transfer tells an
+    # operator nothing about whether it is moving.
+    MODEL_REPLICATION_STARTED = "model.replication.started"
+    MODEL_REPLICATION_PROGRESS = "model.replication.progress"
+    MODEL_REPLICATION_VERIFIED = "model.replication.verified"
+    MODEL_REPLICATION_FAILED = "model.replication.failed"
+
     # Engine image catalogue
     IMAGE_PULL_QUEUED = "image.pull.queued"
     IMAGE_PULL_STARTED = "image.pull.started"

@@ -79,15 +79,38 @@ def list_models():
 
 @router.post("/{model_id:path}/sync")
 def sync_model(model_id: str, req: dict):
+    """Replicate a model's cache entry to nodes, verified before publishing.
+
+    ``deep`` hashes every file on the node as well as checking sizes, and
+    ``force`` re-transfers to a node that already holds a verified copy.
+    """
     nodes = req.get("nodes")
     if not isinstance(nodes, list) or not nodes:
         raise HTTPException(status_code=400, detail="nodes must be a non-empty list")
     try:
-        return tools.models.sync_to_nodes(
-            model_id, [str(n) for n in nodes], req.get("ssh_user")
+        return tools.models.replicate_to_nodes(
+            model_id,
+            [str(n) for n in nodes],
+            req.get("ssh_user"),
+            revision=req.get("revision"),
+            deep=bool(req.get("deep")),
+            force=bool(req.get("force")),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/{model_id:path}/verify")
+def verify_model(
+    model_id: str,
+    revision: str | None = Query(None, description="Commit hash or ref name"),
+    deep: bool = Query(False, description="Hash every file, not just sizes"),
+    use_cli: bool = Query(
+        False, description="Also cross-check against the hub with `hf cache verify`"
+    ),
+):
+    """Verify the control node's own copy: absent, partial or verified."""
+    return tools.models.verify_local(model_id, revision, deep=deep, use_cli=use_cli)
 
 
 @router.get("/{model_id:path}/presence")
@@ -95,9 +118,14 @@ def model_presence(
     model_id: str,
     nodes: str = Query("", description="Comma-separated node list"),
     ssh_user: str | None = Query(None),
+    revision: str | None = Query(None, description="Commit hash or ref name"),
+    deep: bool = Query(False, description="Hash every file, not just sizes"),
 ):
+    """Per node: absent, partial or verified — with what is missing if partial."""
     node_list = [n.strip() for n in nodes.split(",") if n.strip()]
-    return tools.models.presence(model_id, node_list, ssh_user)
+    return tools.models.presence(
+        model_id, node_list, ssh_user, revision=revision, deep=deep
+    )
 
 
 @router.get("/{model_id:path}")

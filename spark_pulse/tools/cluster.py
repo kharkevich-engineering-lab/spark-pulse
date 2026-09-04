@@ -29,6 +29,7 @@ from spark_pulse.tools.cluster_models import ClusterNode, ClusterState
 from spark_pulse.tools.docker import ContainerMetadata
 from spark_pulse.tools.events import EventBroadcaster, EventType
 from spark_pulse.tools.labels import CLUSTER_LABEL
+from spark_pulse.tools.models import worker_env
 from spark_pulse.tools.mods import ModDeployment as ModPayload
 from spark_pulse.tools.mods import ModOrchestrator
 from spark_pulse.tools.parallelism import (
@@ -201,7 +202,15 @@ class ClusterOrchestrator:
                 f"Head container started on {head_ip}",
             )
 
-            # 3. Start worker nodes
+            # 3. Start worker nodes.
+            #
+            # A worker runs on weights that were replicated to it, so it needs
+            # no hub credential — and must not be given one. Stripping the
+            # token and pinning HF_HUB_OFFLINE turns "a node quietly
+            # re-downloaded 400 GB over the uplink" into an immediate, legible
+            # failure, and keeps the token on the control node where the
+            # fetch-once design puts it.
+            worker_env_vars = worker_env(env_vars)
             worker_nodes: list[ClusterNode] = []
             for i, worker_ip in enumerate(worker_ips):
                 worker_name = f"{name}-worker-{i}"
@@ -218,7 +227,7 @@ class ClusterOrchestrator:
                 self._service(worker_ip).run_container(
                     image=worker_image,
                     name=worker_name,
-                    env_vars=env_vars,
+                    env_vars=worker_env_vars,
                     metadata=worker_metadata,
                     **run_kwargs_from_docker_config(docker_config),
                 )

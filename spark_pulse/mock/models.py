@@ -8,6 +8,15 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from spark_pulse.tools.hub_cache import (
+    STATE_ABSENT as ABSENT,
+)
+from spark_pulse.tools.hub_cache import (
+    STATE_PARTIAL as PARTIAL,
+)
+from spark_pulse.tools.hub_cache import (
+    STATE_VERIFIED as VERIFIED,
+)
 from spark_pulse.tools.models import (  # noqa: F401 — shared constants/helpers
     DEFAULT_SOURCES,
     EVENT_CANCELLED,
@@ -16,11 +25,20 @@ from spark_pulse.tools.models import (  # noqa: F401 — shared constants/helper
     EVENT_FAILED,
     EVENT_PROGRESS,
     EVENT_QUEUED,
+    EVENT_REPLICATION_FAILED,
+    EVENT_REPLICATION_PROGRESS,
+    EVENT_REPLICATION_STARTED,
+    EVENT_REPLICATION_VERIFIED,
     EVENT_STARTED,
+    OFFLINE_ENV,
     TERMINAL_STATES,
+    TOKEN_ENV_KEYS,
     publish_event,
     register_event_loop,
     repo_dir_name,
+)
+from spark_pulse.tools.models import (
+    worker_env as _worker_env,
 )
 
 GB = 1024**3
@@ -410,39 +428,169 @@ def clear_finished_downloads() -> int:
 # ── Distribution ─────────────────────────────────────────────────────────────
 
 
-def sync_to_nodes(
+def _revision_of(model_id: str) -> str:
+    entry = get_model(model_id) or {}
+    return str(entry.get("revision") or "simulated")
+
+
+def replicate_to_nodes(
     model_id: str,
     nodes: list[str],
     ssh_user: str | None = None,
     timeout: int = 3600,
+    client: Any = None,
+    revision: str | None = None,
+    deep: bool = False,
+    force: bool = False,
+    on_progress: Any = None,
 ) -> dict[str, Any]:
-    if get_model(model_id) is None:
+    """Simulated replication, in the real function's three-state shape."""
+    entry = get_model(model_id)
+    if entry is None:
         raise ValueError(f"Model not in local cache: {model_id}")
     if not nodes:
         raise ValueError("No nodes specified")
-    results = [
-        {"node": node, "ok": True, "error": None, "duration_s": 12.5 + i}
-        for i, node in enumerate(nodes)
-    ]
+    commit = revision or _revision_of(model_id)
+    bytes_total = int(entry.get("size_bytes") or 0)
+    results = []
+    for i, node in enumerate(nodes):
+        if on_progress is not None:
+            on_progress(
+                {
+                    "model": model_id,
+                    "node": node,
+                    "bytes_done": bytes_total,
+                    "bytes_total": bytes_total,
+                }
+            )
+        results.append(
+            {
+                "node": node,
+                "ok": True,
+                "state": VERIFIED,
+                "error": None,
+                "reason": f"{42 + i} files match the manifest for {commit}",
+                "revision": commit,
+                "bytes_done": bytes_total,
+                "bytes_total": bytes_total,
+                "bytes_verified": bytes_total,
+                "missing": [],
+                "missing_count": 0,
+                "verified_at": _now(),
+                "published": True,
+                "skipped": False,
+                "token_sent": False,
+                "duration_s": 12.5 + i,
+            }
+        )
     return {
         "model": model_id,
         "path": f"{hub_dir()}/{repo_dir_name(model_id)}",
+        "revision": commit,
+        "bytes_total": bytes_total,
+        "manifest_bytes": bytes_total,
+        "local": {"state": VERIFIED, "revision": commit, "evidence": "manifest"},
         "results": results,
         "ok": True,
     }
 
 
+sync_to_nodes = replicate_to_nodes
+
+
+#: The mock walks the three states in order so the UI and the e2e suite meet a
+#: partial replica, which is the one the old boolean could not express.
+_PRESENCE_CYCLE = (VERIFIED, PARTIAL, ABSENT)
+
+
 def presence(
-    model_id: str, nodes: list[str], ssh_user: str | None = None, timeout: int = 30
+    model_id: str,
+    nodes: list[str],
+    ssh_user: str | None = None,
+    timeout: int = 300,
+    client: Any = None,
+    revision: str | None = None,
+    deep: bool = False,
 ) -> dict[str, Any]:
+    entry = get_model(model_id)
+    commit = revision or _revision_of(model_id)
+    bytes_expected = int((entry or {}).get("size_bytes") or 0)
+    rows = []
+    for i, node in enumerate(nodes or []):
+        state = _PRESENCE_CYCLE[i % len(_PRESENCE_CYCLE)]
+        if state == VERIFIED:
+            files_present, bytes_present, missing = 42, bytes_expected, []
+            reason = f"42 files match the manifest for {commit}"
+        elif state == PARTIAL:
+            files_present = 39
+            bytes_present = int(bytes_expected * 0.93)
+            missing = ["model-00040-of-00042.safetensors"]
+            reason = "1 file(s) missing"
+        else:
+            files_present, bytes_present, missing = 0, 0, []
+            reason = "no cache entry"
+        rows.append(
+            {
+                "node": node,
+                "state": state,
+                "present": state == VERIFIED,
+                "reason": reason,
+                "revision": commit if state != ABSENT else None,
+                "bytes_present": bytes_present,
+                "bytes_expected": bytes_expected if state != ABSENT else 0,
+                "files_present": files_present,
+                "files_expected": 42 if state != ABSENT else 0,
+                "missing": missing,
+                "missing_count": len(missing),
+                "verified_at": _now() if state == VERIFIED else None,
+                "error": None,
+            }
+        )
     return {
         "model": model_id,
-        "local": get_model(model_id) is not None,
-        "nodes": [
-            {"node": node, "present": i % 2 == 0, "error": None}
-            for i, node in enumerate(nodes or [])
-        ],
+        "revision": commit,
+        "local": entry is not None,
+        "local_state": VERIFIED if entry is not None else ABSENT,
+        "local_report": {
+            "state": VERIFIED if entry is not None else ABSENT,
+            "revision": commit if entry is not None else None,
+            "evidence": "manifest" if entry is not None else "none",
+        },
+        "nodes": rows,
     }
+
+
+def verify_local(
+    model_id: str,
+    revision: str | None = None,
+    deep: bool = False,
+    use_cli: bool = False,
+) -> dict[str, Any]:
+    entry = get_model(model_id)
+    if entry is None:
+        return {"state": ABSENT, "revision": None, "evidence": "none", "reason": ""}
+    if use_cli:
+        return {
+            "state": VERIFIED,
+            "revision": revision or _revision_of(model_id),
+            "evidence": "hashes",
+            "reason": "42 files match the manifest",
+            "bytes_expected": int(entry.get("size_bytes") or 0),
+            "bytes_present": int(entry.get("size_bytes") or 0),
+            "hub_cli": {"state": VERIFIED, "reason": "simulated hf cache verify"},
+        }
+    return {
+        "state": VERIFIED,
+        "revision": revision or _revision_of(model_id),
+        "evidence": "manifest",
+        "reason": "42 files match the manifest",
+        "bytes_expected": int(entry.get("size_bytes") or 0),
+        "bytes_present": int(entry.get("size_bytes") or 0),
+    }
+
+
+def worker_env(env: dict[str, str] | None = None) -> dict[str, str]:
+    return _worker_env(env)
 
 
 # ── Deletion ─────────────────────────────────────────────────────────────────
