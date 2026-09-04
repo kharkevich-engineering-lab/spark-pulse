@@ -406,3 +406,7 @@ phase D and E; the architecture for it is being researched separately, with the
 explicit goal that onboarding node two introduces no duplicate code.
 
 ## 7. Still genuinely open
+
+- **How to converge the two deploy paths** without breaking the single-node one that works today. The decision to make solo a cluster of one is taken; the sequencing is under research, along with what genuinely exercises the general path on one machine and what stays unproven until a second Spark exists.
+- **Whether to move the Docker layer to async**, and if so by which route. The plan above notes that a blocking call inside an asyncio handler starves the loop, which matters once a gRPC server shares it. Whether that is a problem today or only prospectively is under research, as is whether unifying local and remote on the docker CLI would be simpler than adopting an async SDK.
+- **A second DGX Spark.** Everything else can be built and verified on one.
