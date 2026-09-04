@@ -106,12 +106,27 @@ with crypto extensions, AES-128-GCM runs at 82 Gb/s on one core.
 
 ### 3.1 Enrollment
 
-Reuse what NVIDIA already ships rather than inventing discovery. Their
-`discover-sparks` browses `_ssh._tcp` over mDNS and pushes SSH keys
-bidirectionally. Confirmed on our Spark: `avahi-daemon` is active, it publishes
-`ssh.service`, and `avahi-browse` and `ibdev2netdev` are both present. For the
-switched case NVIDIA ships a netplan profile using IPv4 link-local, so
-discovery works with no DHCP and no DNS.
+Reuse NVIDIA's discovery, but not their key handling. Their `discover-sparks`
+browses `_ssh._tcp` over mDNS and then **copies one shared private key to every
+node** to make access bidirectional. Compromise of any single Spark then yields
+SSH access to all of them. That is the one thing not to carry forward: our
+private key never leaves the control plane, and only the public half is pushed.
+
+Discovery itself works. Checked on our Spark this session, which settles an open
+question from the research: stock Ubuntu 24.04 ships no avahi service files at
+all, so `_ssh._tcp` would find nothing, but **DGX OS does publish
+`/etc/avahi/services/ssh.service`**, and `avahi-daemon`, `avahi-browse` and
+`ibdev2netdev` are all present. For the switched case NVIDIA ships a netplan
+profile using IPv4 link-local, so discovery needs no DHCP and no DNS.
+
+We should still publish our own `_spark-pulse._tcp` record carrying the node id,
+port and version, rather than depending on `_ssh._tcp` and then guessing whether
+a responder is a Spark or an office printer.
+
+One trap to detect rather than trip over: `spark-vllm-docker`'s networking guide
+sets `link-local: []` on the fabric interfaces, which deletes the IPv6
+link-local address and silently kills any `ff02::1` sweep on that link. NVIDIA's
+own playbook does not set it, so both configurations will be encountered.
 
 **Node identity is a server-minted random UUID.** Not the hostname, and
 explicitly not `/etc/machine-id`. DGX Sparks are reported to ship with duplicate
@@ -131,8 +146,18 @@ The flow, with every secret named and time-boxed:
 7. The agent dials home, presents the token, and receives its certificate. It pins the CA by the SPKI over the whole trust bundle, not one certificate and not the PEM bytes, so that CA renewal does not invalidate every token.
 8. The control plane invalidates the token and the installer overwrites the on-host token file.
 
-`sudo` on our Spark requires a password, so the systemd install step must plan
-for an interactive sudo over the same channel rather than assuming `NOPASSWD`.
+`sudo` on our Spark requires a password, so the install step probes `sudo -n
+true` first and falls back to feeding the password through the SSH channel's
+stdin, never through argv or a remote `echo`. We should offer, but never
+require, a narrowly scoped sudoers drop-in afterwards covering only
+`systemctl start/stop/restart` for our unit.
+
+Two details that will otherwise cost a day each. Ubuntu 24.04 defaults
+`PermitRootLogin` to `prohibit-password`, so a password bootstrap as root cannot
+work, and our SSH client's `user="root"` default is wrong for this hardware
+where onboarding creates a normal sudo user. And certificates must be issued
+with `NotBefore` backdated about five minutes, or a node whose clock is behind
+rejects the certificate it was just given.
 
 Removal is two distinct actions, never one. **Remove** wipes the node's identity
 and requires re-enrollment. **Uninstall, keep identity** allows a reinstall to
@@ -160,8 +185,11 @@ link.
 
 Certificates: a ten-year CA whose key never leaves the control node, a one-year
 server certificate rotated hot through the dynamic credentials fetcher, and
-ninety-day agent certificates renewed at thirty days remaining over the existing
-authenticated channel. Ninety days sits deliberately between Consul's 72 hours
+ninety-day agent certificates renewed at a jittered fifty to eighty percent of
+remaining life over the existing authenticated channel. A node switched off past
+its expiry must be able to re-obtain a certificate using its node password
+rather than a fresh enrollment token, because Swarm has no such fallback and
+ships a dedicated error telling you to leave the cluster and rejoin. Ninety days sits deliberately between Consul's 72 hours
 and k3s's year: short enough to bound a stolen certificate, long enough that a
 node switched off for a fortnight comes back on its own.
 
@@ -320,6 +348,7 @@ over the direct link needs.
 
 ## 6. Open questions
 
-- Whether python-zeroconf coexists with the running avahi-daemon on port 5353, or whether we should shell out to `avahi-browse`.
+- Whether python-zeroconf coexists with the running avahi-daemon on port 5353, or whether we should shell out to `avahi-browse`. Our Spark has avahi bound to 5353 on both address families, so this needs testing rather than assuming.
+- Which SSH library to depend on. The recommendation is `asyncssh`, because it writes the password directly into the encrypted authentication packet with no argv, no environment variable and no pty, where `sshpass` puts it in the process table and says so in its own man page. But `asyncssh` is EPL-2.0 or GPL-2.0-or-later and we publish to PyPI, so the licence is a deliberate decision rather than an afterthought.
 - Whether to accept an SSH password in the web UI at all. The recommendation is yes, as a gated fallback behind the key and token paths, never persisted, over TLS or loopback only. The evidence is genuinely split: Uyuni ships exactly this, Portainer is deprecating theirs, Rancher has none.
 - Whether a single-node cluster through the cluster path is worth building as a proving ground before hardware exists. It exercises registry, pre-flight, per-rank scripts and health, leaving only worker SSH and cross-host rendezvous unproven.
