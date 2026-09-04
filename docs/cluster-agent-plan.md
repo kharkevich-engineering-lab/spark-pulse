@@ -290,9 +290,19 @@ path existence mean ready.
 **Mode B, each node downloads directly**, must be labelled honestly in the UI as
 faster to set up and worse for credentials. GitHub supports only classic
 personal access tokens for its registry, so there is no way to narrow that
-credential per package. Mode B puts a broad token and the HuggingFace token on
-every node, which is exactly what the design is trying to avoid, and at eight
-nodes it costs twenty extra hours on a large model.
+credential per package, and at eight nodes Mode B costs twenty extra hours on a
+large model.
+
+Its credential cost can be reduced, though not eliminated. The control node can
+mint a bearer scoped to one repository, pull only, from its own token, and hand
+that to nodes instead of the broad token. Measured this session: such a token
+from ghcr.io was still valid after twenty-four minutes, which comfortably
+outlives a 14 GB pull, so the refresh loop can be lazy rather than racing the
+transfer. The catch is that GitHub documents no lifetime at all and the
+distribution spec permits sixty seconds, so an implementation must re-mint and
+retry on a mid-pull 401 rather than trusting the observed window. The
+HuggingFace token still has to be present on every node for gated or private
+weights, which is why Mode A remains the default.
 
 Do not send model files over gRPC. Serialization dominates and Python cannot
 parallelise it. gRPC instructs the agent what to fetch and streams progress; the
