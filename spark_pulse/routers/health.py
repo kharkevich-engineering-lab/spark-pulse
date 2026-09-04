@@ -28,9 +28,9 @@ def check_deployment_health(deployment_id: str) -> dict[str, Any]:
 
         docker_service = docker.DockerService()
         # Look up deployment to get container name
-        from spark_pulse.tools import deployments
+        from spark_pulse import tools
 
-        dep = deployments.get_deployment(deployment_id)
+        dep = tools.deployment_records.get(deployment_id)
         if dep is None:
             return {
                 "deployment_id": deployment_id,

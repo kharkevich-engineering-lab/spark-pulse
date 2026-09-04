@@ -1,8 +1,8 @@
 """Deployments API — plan (dry run), CRUD, launch/stop.
 
-Every call goes through ``tools.deploy_dispatch``, which picks the upstream
-(``run-recipe.sh``) or native (Docker from Python) runtime — see that module
-for how the choice is made.
+Every call goes through ``tools.deploy_dispatch``. Creating is always the
+native runtime; acting on an existing deployment follows the record, so one
+made by the removed upstream runner can still be read, stopped and deleted.
 
 A create runs the pre-flight first and refuses a *blocked* verdict, because
 every condition the pre-flight blocks on — no docker, no GPU, a port already
@@ -109,44 +109,28 @@ def create_deployment(req: dict):
     recipe_id = req.get("recipe_id", "")
     name = req.get("name", recipe_id)
 
-    # Look up recipe for defaults
-    recipe = tools.recipes.get_recipe(recipe_id)
-    if recipe is None:
+    # Fail fast on an unknown recipe: the runtime would refuse it too, but
+    # from further in and with a worse error.
+    if tools.recipes.get_recipe(recipe_id) is None:
         raise HTTPException(status_code=404, detail=f"Recipe '{recipe_id}' not found")
 
-    # Merged params drive the upstream path and the display command. The
-    # native path gets the caller's own params, so that it can tell an explicit
-    # request apart from a recipe default when it reports why something was
-    # refused.
+    # The runtime is given the caller's own params, never the recipe's
+    # defaults merged in: merging makes an explicit request indistinguishable
+    # from a default, and the runtime has to tell them apart to decide what to
+    # refuse and how to explain it. The pre-flight gets them for the same
+    # reason — otherwise it would check a port the deploy is not going to use.
     raw_params = req.get("params") or {}
-    params = {**recipe.get("defaults", {}), **raw_params}
-    params.setdefault("port", 8000)
-    params.setdefault("host", "0.0.0.0")
 
-    # Build the vLLM serve command for display/logging
-    launch_cmd = tools.recipes.build_launch_command(recipe, params)
-
-    # The pre-flight is given ``raw_params``, not the merged ``params``, for
-    # the same reason the native path is: merging the recipe's defaults in
-    # makes an explicit request indistinguishable from a default, and the
-    # checker would then check a port the deploy is not going to use.
     preflight = None
-    if not req.get("skip_preflight") and tools.deploy_dispatch.uses_native():
-        # Only the native runtime is what the pre-flight describes: it checks
-        # the image, ports and rendezvous of a plan the native path resolves.
-        # An upstream create forks run-recipe.sh, which decides all of that
-        # itself, so checking it here would be reporting on a deployment that
-        # is not the one about to start.
+    if not req.get("skip_preflight"):
         preflight = _preflight_gate(req, raw_params)
 
     try:
         created = tools.deploy_dispatch.create_deployment(
             recipe_id=recipe_id,
             name=name,
-            params=params,
-            raw_params=raw_params,
+            params=raw_params,
             nodes=req.get("nodes"),
-            launch_command=launch_cmd,
             engine=req.get("engine"),
             variant=req.get("variant"),
             model=req.get("model"),

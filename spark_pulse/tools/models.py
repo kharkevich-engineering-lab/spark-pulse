@@ -1363,7 +1363,7 @@ def models_in_use() -> dict[str, list[str]]:
     try:
         from spark_pulse import tools
 
-        deployments = tools.deployments.list_deployments()
+        deployments = tools.deployment_records.load()
         recipes = {
             str(r.get("id")): str(r.get("model") or "")
             for r in (tools.recipes.list_recipes() or [])

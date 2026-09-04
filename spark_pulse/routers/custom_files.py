@@ -1,21 +1,14 @@
 """Custom recipe and mod management API.
 
-Endpoints for uploading, editing, and deleting custom recipes and mods
-stored in ~/.config/spark-pulse/ (not in spark_vllm_path).
+Endpoints for uploading, editing, and deleting custom recipes and mods stored
+in ~/.config/spark-pulse/. They are read straight from there — by
+``recipe_sources`` for recipes and ``tools.mods`` for mods — so a saved file is
+live immediately, with no checkout and nothing to sync.
 """
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
-from pydantic import BaseModel
-from typing import Literal
 
-from spark_pulse.config import config
 from spark_pulse.tools.custom_files import (
-    create_symlink_for_recipe,
-    remove_symlink_for_recipe,
-    create_symlink_for_mod,
-    remove_symlink_for_mod,
-    create_symlinks,
-    remove_symlinks,
     discover_custom_recipes,
     discover_custom_mods,
     get_custom_recipe_content,
@@ -28,40 +21,6 @@ from spark_pulse.tools.custom_files import (
 )
 
 router = APIRouter(prefix="/api/custom-files", tags=["custom-files"])
-
-
-class SyncSymlinksRequest(BaseModel):
-    mode: Literal["create", "remove"] = "create"
-
-
-# ── Symlink status ─────────────────────────────────────────────────────────
-
-
-@router.get("/symlinks")
-def get_symlink_status():
-    """Check if symlinks are currently active."""
-    try:
-        spark_path = config.spark_vllm_path
-        return {"spark_path": spark_path}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/symlinks/sync")
-def sync_symlinks(body: SyncSymlinksRequest) -> dict[str, list[str]]:
-    """Sync symlinks — create or remove all custom recipe/mod symlinks.
-
-    mode: "create" (add custom to spark) or "remove" (remove custom from spark)
-    Returns {"recipes": [...names...], "mods": [...names...]} in both cases.
-    """
-    try:
-        spark_path = config.spark_vllm_path
-        if body.mode == "create":
-            return create_symlinks(spark_path)
-        else:
-            return remove_symlinks(spark_path)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ── Validation ──────────────────────────────────────────────────────────────
@@ -134,12 +93,6 @@ def save_custom_recipe_endpoint(recipe_id: str, content: dict):
         raise HTTPException(status_code=400, detail="YAML content cannot be empty")
     try:
         save_custom_recipe(recipe_id, yaml_content)
-        # Create symlink for the new recipe (best-effort)
-        recipe_name = recipe_id.replace("custom/", "").split("/")[0]
-        try:
-            create_symlink_for_recipe(recipe_name)
-        except Exception:
-            pass  # Symlink is not critical — will be created on next startup
         return {"saved": True}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -149,12 +102,6 @@ def save_custom_recipe_endpoint(recipe_id: str, content: dict):
 def delete_custom_recipe_endpoint(recipe_id: str):
     """Delete a custom recipe."""
     deleted = delete_custom_recipe(recipe_id)
-    if deleted:
-        recipe_name = recipe_id.replace("custom/", "").split("/")[0]
-        try:
-            remove_symlink_for_recipe(recipe_name)
-        except Exception:
-            pass
     if not deleted:
         raise HTTPException(status_code=404, detail="Recipe not found")
     return {"deleted": True}
@@ -166,14 +113,7 @@ async def upload_custom_recipe_endpoint(file: UploadFile = File(...)):
     filename = file.filename or "recipe.yaml"
     content = await file.read()
     try:
-        result = upload_custom_recipe(content, filename)
-        # Create symlink for the new recipe (best-effort)
-        recipe_name = result["id"].replace("custom/", "")
-        try:
-            create_symlink_for_recipe(recipe_name)
-        except Exception:
-            pass
-        return result
+        return upload_custom_recipe(content, filename)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -209,12 +149,6 @@ def save_custom_mod_endpoint(mod_id: str, files: dict):
         raise HTTPException(status_code=400, detail="Files cannot be empty")
     try:
         save_custom_mod(mod_id, files)
-        # Create symlink for the mod (best-effort)
-        mod_name = mod_id.replace("custom/", "").split("/")[0]
-        try:
-            create_symlink_for_mod(mod_name)
-        except Exception:
-            pass
         return {"saved": True}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -226,12 +160,6 @@ def save_custom_mod_endpoint(mod_id: str, files: dict):
 def delete_custom_mod_endpoint(mod_id: str):
     """Delete a custom mod."""
     deleted = delete_custom_mod(mod_id)
-    if deleted:
-        mod_name = mod_id.replace("custom/", "").split("/")[0]
-        try:
-            remove_symlink_for_mod(mod_name)
-        except Exception:
-            pass
     if not deleted:
         raise HTTPException(status_code=404, detail="Mod not found")
     return {"deleted": True}
@@ -252,9 +180,4 @@ async def upload_custom_mod_endpoint(
     save_custom_mod(
         f"custom/{mod_name}", {"run.sh": f"#!/bin/bash\necho 'Mod: {mod_name}'"}
     )
-    # Create symlink for the new mod (best-effort)
-    try:
-        create_symlink_for_mod(mod_name)
-    except Exception:
-        pass
     return {"id": f"custom/{mod_name}", "name": mod_name, "saved": True}

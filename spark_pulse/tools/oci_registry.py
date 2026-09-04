@@ -26,6 +26,9 @@ logger = logging.getLogger(__name__)
 REGISTRIES_CONFIG = Path.home() / ".config" / "spark-pulse" / "registries.yaml"
 OCI_CACHE_DIR = Path.home() / ".cache" / "spark-pulse" / "oci"
 OCI_META_CACHE_DIR = OCI_CACHE_DIR / "meta_cache"
+#: Where an installed OCI recipe lands. ``recipe_sources`` lists this directory
+#: directly, under ``oci-<stem>`` ids; installing no longer plants a symlink in
+#: a spark-vllm-docker checkout to make the recipe visible.
 RECIPES_DIR = Path.home() / ".config" / "spark-pulse" / "recipes"
 AUTO_UPDATE_LOG = Path.home() / ".local" / "share" / "spark-pulse" / "auto-update.log"
 
@@ -969,9 +972,6 @@ def install_oci_recipe(
         target["filename"], reg["name"], collection_name, version, target["digest"]
     )
 
-    # Create symlink in spark-vllm-docker recipes dir
-    _create_oci_recipe_symlink(target["filename"])
-
     logger.info(
         "%s recipe %s from %s:%s",
         action.capitalize(),
@@ -1012,67 +1012,10 @@ def update_oci_recipe(
     return result
 
 
-def _create_oci_recipe_symlink(recipe_filename: str) -> bool:
-    """Create a symlink for an OCI recipe in spark-vllm-docker recipes dir.
-
-    Returns True if symlink was created successfully.
-    """
-    try:
-        spark_path = Path(config.spark_vllm_path)
-        recipes_dir = spark_path / "recipes"
-        if not recipes_dir.is_dir():
-            return False
-
-        # Create symlink without .yaml extension (like custom recipes)
-        stem = Path(recipe_filename).stem
-        symlink_name = f"oci-{stem}"
-        link_path = recipes_dir / symlink_name
-
-        # Skip if already exists
-        if link_path.exists() or link_path.is_symlink():
-            return False
-
-        source = RECIPES_DIR / recipe_filename
-        if not source.exists():
-            return False
-
-        link_path.symlink_to(source)
-        logger.debug("Created symlink %s → %s", link_path, source)
-        return True
-    except OSError as exc:
-        logger.debug("Failed to create symlink for %s: %s", recipe_filename, exc)
-        return False
-
-
-def _remove_oci_recipe_symlink(recipe_filename: str) -> bool:
-    """Remove the symlink for an OCI recipe.
-
-    Returns True if symlink was removed.
-    """
-    try:
-        spark_path = Path(config.spark_vllm_path)
-        recipes_dir = spark_path / "recipes"
-        if not recipes_dir.is_dir():
-            return False
-
-        stem = Path(recipe_filename).stem
-        symlink_name = f"oci-{stem}"
-        link_path = recipes_dir / symlink_name
-
-        if link_path.is_symlink():
-            link_path.unlink()
-            logger.debug("Removed symlink %s", link_path)
-            return True
-        return False
-    except OSError as exc:
-        logger.debug("Failed to remove symlink for %s: %s", recipe_filename, exc)
-        return False
-
-
 def uninstall_oci_recipe(recipe_name: str) -> dict:
     """Uninstall an OCI-installed recipe.
 
-    Removes the recipe YAML file, its .meta file, and the symlink.
+    Removes the recipe YAML file and its .meta file.
     Returns dict with 'success', 'recipe', 'action' (uninstalled/not_found).
     """
     meta = get_oci_meta(recipe_name)
@@ -1087,9 +1030,6 @@ def uninstall_oci_recipe(recipe_name: str) -> dict:
         else RECIPES_DIR / f"{base}.yaml"
     )
     meta_file = recipe_file.with_suffix(recipe_file.suffix + ".meta")
-
-    # Remove symlink first
-    _remove_oci_recipe_symlink(recipe_file.name)
 
     # Remove files
     removed = []

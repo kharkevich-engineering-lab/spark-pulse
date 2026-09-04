@@ -1,15 +1,19 @@
 """Tests for the deployments dispatcher and the /api/deployments router.
 
-The dispatcher decides *which* runtime handles a call. Two rules are checked
-here, because they are different on purpose: creating follows the ``runtime``
-config flag, while acting on an existing deployment follows that record's own
-``runtime`` field, so records survive a flag flip.
+There is one runtime left, so every create is native. What the dispatcher still
+decides is what happens to a record made by the *removed* upstream runner: it
+routes by the record's own ``runtime`` field, so a deployment that was serving
+before the upgrade can still be seen, read, stopped and deleted — see
+``TestLegacyRecords``, which is the whole migration contract.
 """
 
 from __future__ import annotations
 
 import importlib
 import json
+import signal
+import threading
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 import pytest
@@ -25,6 +29,7 @@ from spark_pulse.tools.atomic_json import StateFileError
 # See the note in test_tools_native_runtime.py — the real modules are what run.
 dispatch = importlib.import_module("spark_pulse.tools.deploy_dispatch")
 nr = importlib.import_module("spark_pulse.tools.native_runtime")
+records = tools.deployment_records
 
 RECIPE = {
     "id": "qwen3-8b",
@@ -47,11 +52,6 @@ _TP2_RECIPE = {
 CATALOGUE = [{"id": "Qwen/Qwen3-8B", "source": "hf", "path": "/models/qwen3-8b"}]
 
 
-def _runtime(value: str):
-    """Patch the runtime flag without touching the user's settings file."""
-    return patch.object(type(config), "runtime", property(lambda self: value))
-
-
 @pytest.fixture
 def env(tmp_path):
     """Temp record file, bundled engine registry, patched recipes/catalogue."""
@@ -60,7 +60,7 @@ def env(tmp_path):
     docker = MockDockerService(MockDockerClient())
     with (
         patch.object(type(config), "engine_indexes", property(lambda self: [])),
-        patch.object(tools.deployments, "_DEPLOYMENTS_FILE", records),
+        patch.object(tools.deployment_records, "RECORDS_FILE", records),
         patch.object(
             tools.recipes,
             "get_recipe",
@@ -80,7 +80,19 @@ def env(tmp_path):
         patch.object(nr, "_docker_service", return_value=docker),
     ):
         yield {"records": records, "docker": docker}
+        # A deploy that had to pull runs on a background thread. Left running,
+        # it writes its record *after* the patch above is released — into the
+        # real simulation store, where the next test file finds an image
+        # apparently in use. Join before the patch goes away.
+        _join_deploy_threads()
     reset_registry()
+
+
+def _join_deploy_threads(timeout: float = 5.0) -> None:
+    """Wait for the runtime's own background threads to finish."""
+    for thread in list(threading.enumerate()):
+        if thread.name.startswith("native-") and thread.is_alive():
+            thread.join(timeout)
 
 
 @pytest.fixture
@@ -94,80 +106,28 @@ def client(env):
 
 
 class TestDispatchRouting:
-    def test_upstream_flag_uses_the_upstream_runtime(self, env):
-        with _runtime("upstream"):
-            with patch.object(
-                tools.deployments, "create_deployment", return_value={"id": "up"}
-            ) as upstream:
-                result = dispatch.create_deployment("qwen3-8b", "n", {"port": 8000})
-
-        assert result == {"id": "up"}
-        assert upstream.called
-
-    def test_native_flag_uses_the_native_runtime(self, env):
-        with _runtime("native"):
-            record = dispatch.create_deployment("qwen3-8b", "n", {})
+    def test_a_create_is_native(self, env):
+        record = dispatch.create_deployment("qwen3-8b", "n", {})
 
         assert record["runtime"] == "native"
         assert record["engine"] == "vllm"
         assert record["container_name"].startswith("spark-pulse-")
 
     def test_native_takes_a_cluster_request(self, env):
-        """A node list no longer changes which runtime handles the create.
+        """A node list does not change which runtime handles the create.
 
-        The dispatcher used to refuse here. A cluster is a deployment of size
-        N, so it goes down the same path; what it meets there is the native
-        runtime's own limit, raised from the runtime rather than from routing.
+        A cluster is a deployment of size N, so it goes down the same path;
+        what it meets there is the native runtime's own limit, raised from the
+        runtime rather than from routing.
         """
-        with _runtime("native"):
-            with patch.object(
-                tools.native_runtime, "create_deployment", return_value={"id": "n"}
-            ) as native:
-                dispatch.create_deployment("qwen3-8b", "n", {}, nodes=["a", "b"])
+        with patch.object(
+            tools.native_runtime, "create_deployment", return_value={"id": "n"}
+        ) as native:
+            dispatch.create_deployment("qwen3-8b", "n", {}, nodes=["a", "b"])
 
         assert native.call_args.kwargs["nodes"] == ["a", "b"]
 
-    def test_upstream_still_accepts_a_cluster_request(self, env):
-        with _runtime("upstream"):
-            with patch.object(
-                tools.deployments, "create_deployment", return_value={"id": "up"}
-            ) as upstream:
-                dispatch.create_deployment("qwen3-8b", "n", {}, nodes=["a", "b"])
-
-        assert upstream.call_args.kwargs["nodes"] == ["a", "b"]
-
-    def test_uses_native_helper(self):
-        """The flag is the whole answer — node count does not enter into it."""
-        with _runtime("native"):
-            assert dispatch.uses_native() is True
-        with _runtime("upstream"):
-            assert dispatch.uses_native() is False
-
-    def test_existing_records_route_by_their_own_runtime(self, env):
-        """A native record stays native after the flag flips back."""
-        with _runtime("native"):
-            record = dispatch.create_deployment("qwen3-8b", "n", {})
-
-        with _runtime("upstream"):
-            stopped = dispatch.stop_deployment(record["id"])
-            logs = dispatch.get_logs(record["id"])
-
-        assert stopped["status"] == "stopped"
-        assert record["container_name"] in logs
-
-    def test_upstream_records_route_to_the_upstream_runtime(self, env):
-        env["records"].write_text(
-            json.dumps([{"id": "legacy", "status": "running", "pid": 1234}])
-        )
-        with _runtime("native"):
-            with patch.object(
-                tools.deployments, "stop_deployment", return_value={"id": "legacy"}
-            ) as upstream:
-                dispatch.stop_deployment("legacy")
-
-        assert upstream.called
-
-    def test_list_merges_both_runtimes(self, env):
+    def test_list_merges_legacy_and_native(self, env):
         env["records"].write_text(
             json.dumps(
                 [
@@ -179,18 +139,17 @@ class TestDispatchRouting:
                 ]
             )
         )
-        with _runtime("native"):
-            native = dispatch.create_deployment("qwen3-8b", "n", {})
+        native = dispatch.create_deployment("qwen3-8b", "n", {})
 
         listed = dispatch.list_deployments()
         assert [d["id"] for d in listed] == ["legacy", native["id"]]
 
-    def test_plan_is_always_native(self, env):
-        with _runtime("upstream"):
-            plan = dispatch.plan_deployment("qwen3-8b")
+    def test_plan_starts_nothing(self, env):
+        plan = dispatch.plan_deployment("qwen3-8b")
 
         assert plan["runtime"] == "native"
         assert plan["engine"] == "vllm"
+        assert env["docker"].list_managed_containers() == []
 
 
 # ── Router ──────────────────────────────────────────────────────────────────
@@ -240,27 +199,11 @@ class TestPlanEndpoint:
 
 
 class TestCreateEndpoint:
-    def test_create_under_upstream_forks_the_script(self, client):
-        with _runtime("upstream"):
-            with patch.object(
-                tools.deployments,
-                "create_deployment",
-                return_value={"id": "up", "status": "running"},
-            ) as upstream:
-                response = client.post(
-                    "/api/deployments", json={"recipe_id": "qwen3-8b", "name": "x"}
-                )
-
-        assert response.status_code == 200
-        assert response.json()["id"] == "up"
-        assert upstream.called
-
-    def test_create_under_native_starts_a_container(self, client, env):
-        with _runtime("native"):
-            response = client.post(
-                "/api/deployments",
-                json={"recipe_id": "qwen3-8b", "name": "x", "engine": "vllm"},
-            )
+    def test_create_starts_a_container(self, client, env):
+        response = client.post(
+            "/api/deployments",
+            json={"recipe_id": "qwen3-8b", "name": "x", "engine": "vllm"},
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -276,13 +219,10 @@ class TestCreateEndpoint:
         One GPU per node means two-way tensor parallelism needs two nodes. A
         rewrite hid that from the operator, and the rewrite is gone.
         """
-        with (
-            patch.object(
-                tools.recipes,
-                "get_recipe",
-                side_effect=lambda rid, *a, **kw: _TP2_RECIPE,
-            ),
-            _runtime("native"),
+        with patch.object(
+            tools.recipes,
+            "get_recipe",
+            side_effect=lambda rid, *a, **kw: _TP2_RECIPE,
         ):
             response = client.post(
                 "/api/deployments",
@@ -294,13 +234,10 @@ class TestCreateEndpoint:
 
     def test_an_explicit_tensor_parallel_reaches_the_engine(self, client, env):
         """The caller's own params still override the recipe's defaults."""
-        with (
-            patch.object(
-                tools.recipes,
-                "get_recipe",
-                side_effect=lambda rid, *a, **kw: _TP2_RECIPE,
-            ),
-            _runtime("native"),
+        with patch.object(
+            tools.recipes,
+            "get_recipe",
+            side_effect=lambda rid, *a, **kw: _TP2_RECIPE,
         ):
             response = client.post(
                 "/api/deployments",
@@ -314,19 +251,18 @@ class TestCreateEndpoint:
         assert response.status_code == 200
         assert "-tp 1" in response.json()["launch_command"]
 
-    def test_a_node_list_reaches_the_native_path_and_sizes_the_deployment(self, client):
-        """The point of the flip: N nodes is a deployment, not a second runtime.
+    def test_a_node_list_sizes_the_deployment(self, client):
+        """N nodes is a deployment, not a second runtime.
 
         The dispatcher used to refuse any node list under the native runtime,
         so a multi-node request could only be served by the legacy runner.
         Now it is planned and started by the one path, and the record carries
         the size it was asked for.
         """
-        with _runtime("native"):
-            response = client.post(
-                "/api/deployments",
-                json={"recipe_id": "qwen3-8b", "name": "x", "nodes": ["a", "b"]},
-            )
+        response = client.post(
+            "/api/deployments",
+            json={"recipe_id": "qwen3-8b", "name": "x", "nodes": ["a", "b"]},
+        )
 
         assert response.status_code == 200, response.text
         body = response.json()
@@ -340,10 +276,9 @@ class TestCreateEndpoint:
 
 class TestLifecycleEndpoints:
     def _create(self, client):
-        with _runtime("native"):
-            return client.post(
-                "/api/deployments", json={"recipe_id": "qwen3-8b", "name": "x"}
-            ).json()
+        return client.post(
+            "/api/deployments", json={"recipe_id": "qwen3-8b", "name": "x"}
+        ).json()
 
     def test_get_returns_live_status(self, client):
         created = self._create(client)
@@ -388,33 +323,155 @@ class TestLifecycleEndpoints:
         assert listed[0]["runtime"] == "native"
 
 
+class TestLegacyRecords:
+    """A deployment made by the removed upstream runner must not become a ghost.
+
+    The runner is gone and nothing can create one of these again. What must
+    survive the upgrade is the operator's ability to *see* and *end* one that
+    was still serving: a record they cannot stop is a GPU held by a process the
+    control plane no longer admits exists.
+    """
+
+    # Recent, so retention purging is not what the test is measuring.
+    RECENTLY = datetime.now(timezone.utc).isoformat()
+
+    LEGACY = {
+        "id": "legacy",
+        "name": "pre-upgrade",
+        "recipe_id": "qwen3-8b",
+        "status": "running",
+        "pid": 4242,
+        "port": 9000,
+        "created_at": "2020-01-01T00:00:00+00:00",
+        "log_path": None,
+    }
+
+    def _seed(self, env, **overrides):
+        env["records"].write_text(json.dumps([{**self.LEGACY, **overrides}]))
+
+    def test_a_legacy_record_is_still_listed(self, client, env):
+        self._seed(env)
+        with patch.object(records, "_pid_is_alive", return_value=True):
+            listed = client.get("/api/deployments").json()
+
+        assert [d["id"] for d in listed] == ["legacy"]
+        assert listed[0]["status"] == "running"
+
+    def test_stopping_one_signals_its_process_group(self, client, env):
+        self._seed(env)
+        with (
+            patch.object(records, "_pid_is_alive", return_value=True),
+            patch.object(records.os, "getpgid", return_value=4242) as getpgid,
+            patch.object(records.os, "killpg") as killpg,
+        ):
+            response = client.delete("/api/deployments/legacy")
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "stopped"
+        getpgid.assert_called_once_with(4242)
+        assert killpg.call_args[0] == (4242, signal.SIGTERM)
+        assert json.loads(env["records"].read_text())[0]["status"] == "stopped"
+
+    def test_a_process_that_is_already_gone_still_marks_the_record(self, client, env):
+        self._seed(env)
+        with (
+            patch.object(records, "_pid_is_alive", return_value=True),
+            patch.object(records.os, "getpgid", side_effect=ProcessLookupError),
+        ):
+            response = client.delete("/api/deployments/legacy")
+
+        assert response.json()["status"] == "stopped"
+
+    def test_a_dead_process_reconciles_the_record_to_stopped(self, client, env):
+        self._seed(env)
+        with patch.object(records, "_pid_is_alive", return_value=False):
+            listed = client.get("/api/deployments").json()
+
+        assert listed[0]["status"] == "stopped"
+
+    def test_deleting_a_stopped_one_drops_the_record(self, client, env):
+        self._seed(env, status="stopped", stopped_at=self.RECENTLY)
+        response = client.delete("/api/deployments/legacy")
+
+        assert response.json() == {"deleted": True, "id": "legacy"}
+        assert json.loads(env["records"].read_text()) == []
+
+    def test_deleting_one_stops_it_first(self, env):
+        """Forgetting a deployment is not the same as ending it."""
+        self._seed(env)
+        with (
+            patch.object(records, "_pid_is_alive", return_value=True),
+            patch.object(records.os, "getpgid", return_value=4242),
+            patch.object(records.os, "killpg") as killpg,
+        ):
+            assert dispatch.delete_deployment("legacy") is True
+
+        assert killpg.called
+        assert records.load() == []
+
+    def test_its_own_log_file_is_still_readable(self, client, env, tmp_path):
+        log = tmp_path / "legacy.log"
+        log.write_text("line one\nline two\n")
+        self._seed(env, log_path=str(log))
+
+        response = client.get("/api/deployments/legacy/logs")
+        assert "line two" in response.json()["logs"]
+
+    def test_startup_names_a_legacy_deployment_that_is_still_running(self, env, capfd):
+        self._seed(env)
+        with patch.object(records, "_pid_is_alive", return_value=True):
+            with TestClient(create_app()):
+                pass
+
+        out = capfd.readouterr().out
+        assert "legacy" in out
+        assert "upstream runtime" in out
+
+    def test_startup_is_quiet_when_nothing_legacy_is_running(self, env, capfd):
+        self._seed(env, status="stopped", stopped_at=self.RECENTLY)
+        with TestClient(create_app()):
+            pass
+
+        assert "upstream runtime" not in capfd.readouterr().out
+
+
 class TestConfigExposesRuntime:
     def test_api_config_reports_the_runtime(self, client):
-        with _runtime("native"):
-            assert client.get("/api/config").json()["runtime"] == "native"
-        with _runtime("upstream"):
-            assert client.get("/api/config").json()["runtime"] == "upstream"
+        assert client.get("/api/config").json()["runtime"] == "native"
 
     def test_settings_report_the_runtime(self, client):
         data = client.get("/api/settings").json()
-        assert data["runtime"] in ("upstream", "native")
+        assert data["runtime"] == "native"
         assert data["deploy_ready_timeout_seconds"] == 900
 
 
 class TestRuntimeFlagValidation:
-    def test_an_unknown_runtime_falls_back_to_upstream(self):
+    """``native`` is the only runtime, so nothing else can be selected.
+
+    The fallback used to be ``upstream``, on the reasoning that a typo must
+    never silently switch the deploy path. There is one path now, and an
+    operator upgrading with ``runtime: upstream`` still in their settings.json
+    must land on it rather than on a runtime that was deleted.
+    """
+
+    def test_an_unknown_runtime_falls_back_to_native(self):
         with patch.dict("os.environ", {"SPARK_PULSE_RUNTIME": "nonsense"}):
-            assert config.runtime == "upstream"
+            assert config.runtime == "native"
+
+    def test_a_stale_upstream_setting_resolves_to_native(self):
+        with patch.dict("os.environ", {"SPARK_PULSE_RUNTIME": "upstream"}):
+            assert config.runtime == "native"
 
     def test_the_env_var_selects_native(self):
         with patch.dict("os.environ", {"SPARK_PULSE_RUNTIME": "native"}):
             assert config.runtime == "native"
-            assert config.native_runtime is True
 
 
 class TestUnreadableRecordFile:
-    """Both runtimes share deployments.json, so both must refuse to read a
-    damaged one as "nothing is deployed". See tests/test_state_durability.py."""
+    """A damaged deployments.json must never read as "nothing is deployed".
+
+    See tests/test_state_durability.py for the store's own guarantees.
+    """
 
     def test_a_missing_record_file_is_an_empty_list(self, env):
         assert not env["records"].exists()
@@ -440,11 +497,10 @@ class TestUnreadableRecordFile:
         assert not env["records"].exists()
 
     def test_creating_a_deployment_leaves_no_temp_file_behind(self, client, env):
-        with _runtime("native"):
-            response = client.post(
-                "/api/deployments",
-                json={"recipe_id": "qwen3-8b", "name": "x", "engine": "vllm"},
-            )
+        response = client.post(
+            "/api/deployments",
+            json={"recipe_id": "qwen3-8b", "name": "x", "engine": "vllm"},
+        )
 
         assert response.status_code == 200
         assert json.loads(env["records"].read_text())[0]["id"] == response.json()["id"]

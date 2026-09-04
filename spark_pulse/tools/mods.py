@@ -215,8 +215,10 @@ def validate_mod_content(mod_path: Path) -> ValidationResult:
     return validate_mod_content_raw(mod_path)
 
 
-def _mods_dir() -> Path:
-    return Path(config.spark_vllm_path) / "mods"
+def _mods_dir() -> Path | None:
+    """``<checkout>/mods``, or ``None`` when there is no checkout."""
+    root = config.spark_vllm_dir
+    return None if root is None else root / "mods"
 
 
 def _extract_description(run_sh: Path) -> str:
@@ -287,17 +289,53 @@ def _mod_info(mod_dir: Path, include_script: bool = False) -> dict[str, Any]:
 
 
 def list_mods() -> list[dict[str, Any]]:
-    d = _mods_dir()
-    if not d.exists():
-        return []
-    return [_mod_info(p) for p in sorted(d.iterdir()) if p.is_dir()]
+    """Mods from the checkout, plus the operator's own under ``custom-`` ids.
+
+    Custom mods used to appear here only because a ``mods/custom-x`` symlink
+    was planted in the checkout. They are read from their own directory now, so
+    they are listed with or without one — under the same ids, which is what the
+    recipes that name them expect.
+    """
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for directory, prefix in _mod_dirs():
+        if not directory.is_dir():
+            continue
+        for path in sorted(directory.iterdir()):
+            if not path.is_dir() or path.name.startswith("."):
+                continue
+            info = _mod_info(path)
+            info["id"] = f"{prefix}{path.name}" if prefix else path.name
+            if info["id"] in seen:
+                continue
+            seen.add(info["id"])
+            out.append(info)
+    return out
+
+
+def _mod_dirs() -> list[tuple[Path, str]]:
+    """``(directory, id prefix)`` for every place a mod can live."""
+    from spark_pulse.tools import custom_files
+
+    dirs: list[tuple[Path, str]] = []
+    checkout = _mods_dir()
+    if checkout is not None:
+        dirs.append((checkout, ""))
+    dirs.append((custom_files.custom_mods_dir(), custom_files.CUSTOM_PREFIX))
+    return dirs
 
 
 def get_mod(mod_id: str) -> dict[str, Any] | None:
     # Sanitise: no path traversal
     if "/" in mod_id or ".." in mod_id:
         return None
-    mod_dir = _mods_dir() / mod_id
-    if not mod_dir.is_dir():
-        return None
-    return _mod_info(mod_dir, include_script=True)
+    for directory, prefix in _mod_dirs():
+        if prefix and not mod_id.startswith(prefix):
+            continue
+        mod_dir = directory / mod_id.removeprefix(prefix)
+        if not mod_dir.is_dir():
+            continue
+        info = _mod_info(mod_dir, include_script=True)
+        info["id"] = mod_id
+        return info
+    return None

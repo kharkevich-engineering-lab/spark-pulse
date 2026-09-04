@@ -1,9 +1,18 @@
-"""Custom recipe and mod management via symlinks.
+"""Custom recipe and mod management.
 
-Custom recipes and mods are stored in ~/.config/spark-pulse/custom-recipes/
-and ~/.config/spark-pulse/custom-mods/. On startup, symlinks are created
-from spark_vllm_path/recipes/custom-* and spark_vllm_path/mods/custom-*
-so spark-vllm-docker can find and run them natively.
+Custom recipes and mods are stored in ``~/.config/spark-pulse/custom-recipes/``
+and ``~/.config/spark-pulse/custom-mods/``, and are read from there directly:
+:mod:`spark_pulse.tools.recipe_sources` lists the recipes as a first-class
+source and :mod:`spark_pulse.tools.mods` lists the mods, both under a
+``custom-`` id prefix.
+
+They used to be reachable only through symlinks planted in a
+spark-vllm-docker checkout (``recipes/custom-*``, ``mods/custom-*``), so that
+upstream's ``run-recipe.sh`` could see them. That runner is gone, and so are
+the symlinks: these files no longer need a checkout to exist.
+
+Real-only: the router imports this module directly and there is no simulated
+behaviour here — only files under the operator's config directory.
 """
 
 from __future__ import annotations
@@ -11,12 +20,23 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from spark_pulse.config import config
+#: Id prefix under which a custom recipe or mod appears in the unified
+#: listings. It matches the name the old symlinks used, so recipe ids,
+#: customizations and existing deployment records all keep resolving.
+CUSTOM_PREFIX = "custom-"
 
 _CUSTOM_RECIPES_DIR = Path.home() / ".config" / "spark-pulse" / "custom-recipes"
 _CUSTOM_MODS_DIR = Path.home() / ".config" / "spark-pulse" / "custom-mods"
-_SYMLINK_RECIPES_PREFIX = "custom-"
-_SYMLINK_MODS_PREFIX = "custom-"
+
+
+def custom_recipes_dir() -> Path:
+    """Where custom recipes live. Read through this, never cached by callers."""
+    return _CUSTOM_RECIPES_DIR
+
+
+def custom_mods_dir() -> Path:
+    """Where custom mods live. Read through this, never cached by callers."""
+    return _CUSTOM_MODS_DIR
 
 
 def _is_safe_path_part(part: str) -> bool:
@@ -38,268 +58,6 @@ def _ensure_dirs():
     """Create custom recipes and mods directories if they don't exist."""
     _CUSTOM_RECIPES_DIR.mkdir(parents=True, exist_ok=True)
     _CUSTOM_MODS_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def _is_symlink_created_by_us(link: Path) -> bool:
-    """Check if a path is a symlink pointing to our custom directory."""
-    if not link.is_symlink():
-        return False
-    try:
-        target = link.resolve()
-        return (
-            (target.is_dir() and _CUSTOM_RECIPES_DIR in target.parents)
-            or (target.is_file() and _CUSTOM_RECIPES_DIR in target.parents)
-            or (target.is_dir() and _CUSTOM_MODS_DIR in target.parents)
-            or (target.is_file() and _CUSTOM_MODS_DIR in target.parents)
-        )
-    except OSError:
-        return False
-
-
-def _create_symlinks_for_dir(
-    spark_dir: Path,
-    custom_dir: Path,
-    symlink_prefix: str,
-) -> list[str]:
-    """Create symlinks from spark_dir/* → custom_dir/*.
-
-    Returns list of symlink paths created.
-    """
-    created = []
-    if not custom_dir.is_dir():
-        return created
-
-    for item in sorted(custom_dir.iterdir()):
-        name = item.name
-        # Skip hidden files and directories
-        if name.startswith("."):
-            continue
-
-        # For YAML files, strip extension when creating symlink name
-        if item.is_file() and item.suffix in (".yaml", ".yml"):
-            symlink_name = f"{symlink_prefix}{item.stem}"
-        else:
-            symlink_name = f"{symlink_prefix}{name}"
-        link_path = spark_dir / symlink_name
-
-        # Skip if already a symlink we created
-        if link_path.is_symlink() and _is_symlink_created_by_us(link_path):
-            continue
-
-        # Skip if something else exists at this path
-        if link_path.exists() or link_path.is_symlink():
-            continue
-
-        # Create the symlink
-        try:
-            if item.is_dir():
-                link_path.symlink_to(item)
-            else:
-                link_path.symlink_to(item)
-            created.append(symlink_name)
-        except OSError:
-            continue
-
-    return created
-
-
-def _remove_symlinks_for_dir(
-    spark_dir: Path,
-    symlink_prefix: str,
-    custom_dir: Path,
-) -> list[str]:
-    """Remove symlinks that point into custom_dir.
-
-    Returns list of symlink names removed.
-    """
-    removed: list[str] = []
-    if not spark_dir.is_dir():
-        return removed
-
-    for item in spark_dir.iterdir():
-        if not item.name.startswith(symlink_prefix):
-            continue
-        if _is_symlink_created_by_us(item):
-            try:
-                item.unlink()
-                removed.append(item.name)
-            except OSError:
-                continue
-
-    return removed
-
-
-def create_symlinks(spark_vllm_path: str) -> dict[str, list[str]]:
-    """Create symlinks for custom recipes and mods (full refresh).
-
-    Returns dict with counts: {"recipes": [...], "mods": [...]}
-    """
-    _ensure_dirs()
-    spark_dir = Path(spark_vllm_path)
-    recipes_dir = spark_dir / "recipes"
-    mods_dir = spark_dir / "mods"
-
-    created = {
-        "recipes": [],
-        "mods": [],
-    }
-
-    # Create recipe symlinks
-    if recipes_dir.is_dir():
-        created["recipes"] = _create_symlinks_for_dir(
-            recipes_dir, _CUSTOM_RECIPES_DIR, _SYMLINK_RECIPES_PREFIX
-        )
-
-    # Create mod symlinks
-    if mods_dir.is_dir():
-        created["mods"] = _create_symlinks_for_dir(
-            mods_dir, _CUSTOM_MODS_DIR, _SYMLINK_MODS_PREFIX
-        )
-
-    return created
-
-
-def remove_symlinks(spark_vllm_path: str) -> dict[str, list[str]]:
-    """Remove symlinks for custom recipes and mods (full refresh).
-
-    Returns dict with names removed: {"recipes": [...], "mods": [...]}
-    """
-    spark_dir = Path(spark_vllm_path)
-    recipes_dir = spark_dir / "recipes"
-    mods_dir = spark_dir / "mods"
-
-    removed: dict[str, list[str]] = {"recipes": [], "mods": []}
-
-    removed["recipes"] = _remove_symlinks_for_dir(
-        recipes_dir, _SYMLINK_RECIPES_PREFIX, _CUSTOM_RECIPES_DIR
-    )
-    removed["mods"] = _remove_symlinks_for_dir(
-        mods_dir, _SYMLINK_MODS_PREFIX, _CUSTOM_MODS_DIR
-    )
-
-    return removed
-
-
-def create_symlink_for_recipe(recipe_name: str) -> bool:
-    """Create symlink for a specific custom recipe.
-
-    Args:
-        recipe_name: The stem of the recipe file (e.g., "my-recipe")
-    Returns:
-        True if symlink was created.
-    """
-    _ensure_dirs()
-    spark_path = Path(config.spark_vllm_path)
-    recipes_dir = spark_path / "recipes"
-
-    if not recipes_dir.is_dir():
-        return False
-
-    symlink_name = f"{_SYMLINK_RECIPES_PREFIX}{recipe_name}"
-    link_path = recipes_dir / symlink_name
-
-    # Skip if already exists
-    if link_path.exists() or link_path.is_symlink():
-        return False
-
-    source_path = _CUSTOM_RECIPES_DIR / f"{recipe_name}.yaml"
-    if not source_path.exists():
-        source_path = _CUSTOM_RECIPES_DIR / f"{recipe_name}.yml"
-        if not source_path.exists():
-            return False
-
-    try:
-        link_path.symlink_to(source_path)
-        return True
-    except OSError:
-        return False
-
-
-def remove_symlink_for_recipe(recipe_name: str) -> bool:
-    """Remove symlink for a specific custom recipe.
-
-    Args:
-        recipe_name: The stem of the recipe file (e.g., "my-recipe")
-    Returns:
-        True if symlink was removed.
-    """
-    spark_path = Path(config.spark_vllm_path)
-    recipes_dir = spark_path / "recipes"
-
-    if not recipes_dir.is_dir():
-        return False
-
-    symlink_name = f"{_SYMLINK_RECIPES_PREFIX}{recipe_name}"
-    link_path = recipes_dir / symlink_name
-
-    if link_path.is_symlink() and _is_symlink_created_by_us(link_path):
-        try:
-            link_path.unlink()
-            return True
-        except OSError:
-            return False
-
-    return False
-
-
-def create_symlink_for_mod(mod_name: str) -> bool:
-    """Create symlink for a specific custom mod.
-
-    Args:
-        mod_name: The name of the mod directory (e.g., "my-mod")
-    Returns:
-        True if symlink was created.
-    """
-    _ensure_dirs()
-    spark_path = Path(config.spark_vllm_path)
-    mods_dir = spark_path / "mods"
-
-    if not mods_dir.is_dir():
-        return False
-
-    symlink_name = f"{_SYMLINK_MODS_PREFIX}{mod_name}"
-    link_path = mods_dir / symlink_name
-
-    # Skip if already exists
-    if link_path.exists() or link_path.is_symlink():
-        return False
-
-    source_path = _CUSTOM_MODS_DIR / mod_name
-    if not source_path.is_dir():
-        return False
-
-    try:
-        link_path.symlink_to(source_path)
-        return True
-    except OSError:
-        return False
-
-
-def remove_symlink_for_mod(mod_name: str) -> bool:
-    """Remove symlink for a specific custom mod.
-
-    Args:
-        mod_name: The name of the mod directory (e.g., "my-mod")
-    Returns:
-        True if symlink was removed.
-    """
-    spark_path = Path(config.spark_vllm_path)
-    mods_dir = spark_path / "mods"
-
-    if not mods_dir.is_dir():
-        return False
-
-    symlink_name = f"{_SYMLINK_MODS_PREFIX}{mod_name}"
-    link_path = mods_dir / symlink_name
-
-    if link_path.is_symlink() and _is_symlink_created_by_us(link_path):
-        try:
-            link_path.unlink()
-            return True
-        except OSError:
-            return False
-
-    return False
 
 
 def discover_custom_recipes() -> list[dict]:

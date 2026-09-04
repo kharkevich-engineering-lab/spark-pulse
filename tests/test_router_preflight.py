@@ -8,7 +8,6 @@ side effects would be a deploy with extra steps.
 
 from __future__ import annotations
 
-from unittest import mock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -18,9 +17,13 @@ from spark_pulse.mock import preflight as mock_preflight
 
 RECIPE = "bundled/qwen2.5-0.5b-instruct"
 
-#: The native runtime refuses a model that is not in the local catalogue, and
-#: the simulated one never is. That refusal is not what these tests are about.
-CREATE = {"recipe_id": RECIPE, "allow_missing_model": True}
+#: A create that should reach the runtime. The simulated catalogue holds every
+#: bundled recipe's model, so nothing here is refused for a missing download.
+CREATE = {"recipe_id": RECIPE}
+
+#: A model no simulated Spark has, for the one test that wants an unresolvable
+#: plan.
+ABSENT_MODEL = "nobody/never-downloaded"
 
 
 @pytest.fixture
@@ -129,23 +132,21 @@ class TestTheDeployGate:
     anyway — minutes later, after a pull, with a worse message. Refusing early
     is the whole reason the checks exist.
 
-    The gate is bound to the *native* runtime, because that is the runtime the
-    pre-flight describes: an upstream create forks ``run-recipe.sh``, which
-    resolves its own image, ports and rendezvous.
+    Every create is native, so the gate runs on every create that does not
+    ask to skip it.
     """
 
     @pytest.fixture(autouse=True)
-    def native_runtime(self, client):
-        with mock.patch.dict("os.environ", {"SPARK_PULSE_RUNTIME": "native"}):
-            before = {d["id"] for d in client.get("/api/deployments").json()}
-            yield
-            # A deployment left behind holds its image, and the image tests
-            # then find it in use. Simulation state outlives the test that
-            # made it, so a create here has to be undone here.
-            for dep in client.get("/api/deployments").json():
-                if dep["id"] not in before:
-                    client.delete(f"/api/deployments/{dep['id']}")
-                    client.delete(f"/api/deployments/{dep['id']}")
+    def clean_up_deployments(self, client):
+        before = {d["id"] for d in client.get("/api/deployments").json()}
+        yield
+        # A deployment left behind holds its image, and the image tests then
+        # find it in use. Simulation state outlives the test that made it, so
+        # a create here has to be undone here.
+        for dep in client.get("/api/deployments").json():
+            if dep["id"] not in before:
+                client.delete(f"/api/deployments/{dep['id']}")
+                client.delete(f"/api/deployments/{dep['id']}")
 
     def test_a_create_goes_ahead_when_nothing_blocks(self, client):
         response = client.post("/api/deployments", json=CREATE)
@@ -183,10 +184,12 @@ class TestTheDeployGate:
         assert response.status_code == 200, response.text
 
     def test_a_plan_the_pre_flight_cannot_resolve_leaves_the_create_alone(self, client):
-        # Without allow_missing_model the pre-flight's own planning raises
-        # before a single check runs. The create must then fail on the real
-        # error rather than on a second, vaguer one from the checker.
-        response = client.post("/api/deployments", json={"recipe_id": RECIPE})
+        # A model that is not downloaded makes the pre-flight's own planning
+        # raise before a single check runs. The create must then fail on the
+        # real error rather than on a second, vaguer one from the checker.
+        response = client.post(
+            "/api/deployments", json={"recipe_id": RECIPE, "model": ABSENT_MODEL}
+        )
         assert response.status_code == 400
         assert "not in the local catalogue" in response.json()["detail"]
 
@@ -207,24 +210,3 @@ class TestTheDeployGate:
         # minutes of apparent silence after a deploy starts.
         assert "preflight" in body
         assert body["preflight"]["verdict"] in ("ready", "slow")
-
-
-class TestTheGateIsBoundToTheNativeRuntime:
-    """An upstream create must not be checked against a native plan.
-
-    ``run-recipe.sh`` resolves its own image, port and rendezvous. Reporting on
-    a plan it will not use is at best noise and at worst a refusal of a deploy
-    that would have worked.
-    """
-
-    def test_an_upstream_create_does_not_run_the_pre_flight(self, client, monkeypatch):
-        def _boom(*_a, **_k):
-            raise AssertionError("the pre-flight ran for an upstream create")
-
-        monkeypatch.setattr(mock_preflight, "run", _boom, raising=False)
-        with mock.patch.dict("os.environ", {"SPARK_PULSE_RUNTIME": "upstream"}):
-            response = client.post("/api/deployments", json=CREATE)
-        assert response.status_code == 200, response.text
-        assert "preflight" not in response.json()
-        client.delete(f"/api/deployments/{response.json()['id']}")
-        client.delete(f"/api/deployments/{response.json()['id']}")

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Manual verification of the native deploy path on a real DGX Spark.
 #
-# Deploys a recipe through the REST API with `runtime: native`, waits for the
-# engine to answer, hits /v1/models, and tears the deployment down again. This
+# Deploys a recipe through the REST API, waits for the engine to answer, hits
+# /v1/models, and tears the deployment down again. This
 # is the hardware check that simulation-mode tests cannot do: it needs a real
 # Docker daemon, a real GPU and the engine image pulled.
 #
@@ -17,8 +17,7 @@
 #   --help           Show this help
 #
 # Prerequisites on the Spark:
-#   * spark-pulse running with `runtime: native` in
-#     ~/.config/spark-pulse/settings.json (or SPARK_PULSE_RUNTIME=native)
+#   * spark-pulse running
 #   * the engine image pulled, and the recipe's model downloaded
 #   * curl and jq on PATH
 #
@@ -76,12 +75,12 @@ log_tail() {
     echo "-----------------------------------------------------------------"
 }
 
-# ── 0. The server must actually be on the native runtime ────────────────────
+# ── 0. The server must be there, and on the runtime this script checks ──────
 
 echo "==> Checking $base_url"
 runtime=$(api GET "/config" | jq -r '.runtime')
 if [[ "$runtime" != "native" ]]; then
-    echo "error: server reports runtime='$runtime'; set runtime: native and restart" >&2
+    echo "error: server reports runtime='$runtime'; this script checks the native path" >&2
     exit 1
 fi
 echo "    runtime: native"

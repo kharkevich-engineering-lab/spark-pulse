@@ -38,7 +38,10 @@ test("deploys a recipe, shows it on the Inference page and stops it", async ({ p
   const created = (await listDeployments(request)).filter((d) => d.recipe_id === RECIPE_ID);
   expect(created, "the deploy should have created exactly one deployment").toHaveLength(1);
   const deployment = created[0];
-  expect(deployment.status).toBe("pending");
+  // The native runtime really starts a container — a simulated one, against
+  // the mock Docker service — so the deployment comes up running rather than
+  // sitting in a status nothing ever advances.
+  expect(deployment.status).toBe("running");
 
   await page.getByRole("navigation").getByRole("link", { name: "Inference" }).click();
   await expect(page.getByRole("heading", { name: "Inference", exact: true })).toBeVisible();
@@ -47,17 +50,13 @@ test("deploys a recipe, shows it on the Inference page and stops it", async ({ p
   await expect(row).toBeVisible();
   await expect(row.getByText(RECIPE_NAME, { exact: true })).toBeVisible();
   await expect(row.getByText(RECIPE_ID, { exact: false })).toBeVisible();
-  await expect(row.getByText("Pending", { exact: true })).toBeVisible();
+  await expect(row.getByText("Running", { exact: true })).toBeVisible();
 
-  // A pending deployment is cancelled rather than stopped, so the row button
-  // and the confirm dialog are both labelled "Cancel".
-  await row.getByTitle("Cancel", { exact: true }).click();
+  await row.getByTitle("Stop", { exact: true }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByRole("heading", { name: "Cancel" })).toBeVisible();
-  // The dialog renders a dismiss button and then the confirm button; both are
-  // labelled "Cancel" for a pending job, and the confirm one comes last.
-  await dialog.getByRole("button", { name: "Cancel", exact: true }).last().click();
+  await expect(dialog.getByRole("heading", { name: "Stop" })).toBeVisible();
+  await dialog.getByRole("button", { name: "Stop", exact: true }).last().click();
 
   await expect(row.getByText("Stopped", { exact: true })).toBeVisible();
   await expectNoCrash(page);
@@ -72,7 +71,7 @@ test("shows the log stream for a deployment", async ({ page, request }) => {
   });
   expect(created.ok(), "POST /api/deployments should succeed").toBeTruthy();
   const deployment = (await created.json()) as { id: string; status: string };
-  expect(deployment.status, "simulation mode should not really launch anything").toBe("pending");
+  expect(deployment.status, "the native runtime starts a simulated container").toBe("running");
 
   await gotoPage(page, "/jobs");
   const row = page.getByTestId(`deployment-${deployment.id}`);

@@ -13,7 +13,7 @@ export interface AppConfig {
   cluster_experimental: boolean;
   benchmarking_enabled: boolean;
   simulation_mode: boolean;
-  /** "upstream" (run-recipe.sh) or "native" (containers we drive ourselves). */
+  /** The deployment runtime. "native" — containers we drive ourselves — is the only one. */
   runtime: string;
 }
 
@@ -24,7 +24,7 @@ const DEFAULT_CONFIG: AppConfig = {
   cluster_experimental: true,
   benchmarking_enabled: false,
   simulation_mode: true,
-  runtime: "upstream",
+  runtime: "native",
 };
 
 let cachedConfig: AppConfig | null = null;

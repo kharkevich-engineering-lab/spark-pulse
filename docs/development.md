@@ -158,29 +158,26 @@ SPARK_PULSE_AUTH_ENABLED=true spark-pulse start
 
 ---
 
-## Deployment runtimes
+## The deployment runtime
 
-`runtime` selects how a deployment is launched:
+There is one: **native**. Spark Pulse drives Docker itself — it starts an idle
+container from the engine's image, applies the recipe's mods over `docker
+exec`, execs the rendered launch script with its output redirected to PID 1's
+stdout (so `docker logs` carries it), and waits on the engine's readiness
+endpoint. A deployment of N nodes is the same path, one container per rank.
 
-| Value | What happens |
-|---|---|
-| `upstream` *(default)* | Forks `spark-vllm-docker/run-recipe.sh` and tracks the PID. |
-| `native` | Spark Pulse drives Docker itself: it starts an idle container from the engine's image, applies the recipe's mods over `docker exec`, execs the rendered launch script with its output redirected to PID 1's stdout (so `docker logs` carries it), and waits on the engine's readiness endpoint. |
+The `upstream` runtime — fork `spark-vllm-docker/run-recipe.sh`, track a PID,
+SIGTERM the process group — was removed. `runtime` stays a settings key
+because deployment *records* carry it, but `native` is the only value that
+resolves; anything else, including a `runtime: upstream` left in an older
+install's settings.json, reads as `native`.
 
-`native` currently handles **solo deployments only**; a multi-node request is
-refused with an explanation rather than silently falling back. Everything else
-— stop, delete, logs, status — follows each deployment record's own `runtime`,
-so records stay usable across a flag flip.
+A deployment made by the removed runner before an upgrade is not abandoned: it
+is still listed, its log file is still readable, and stopping it still signals
+the PID it recorded. It simply cannot be recreated — redeploy it natively.
+Startup names any such deployment that is still running.
 
-```bash
-# Per-run
-SPARK_PULSE_RUNTIME=native ./scripts/run-production.sh
-
-# Or persist it in ~/.config/spark-pulse/settings.json
-{"runtime": "native"}
-```
-
-`POST /api/deployments/plan` is the dry run for either mode: it resolves the
+`POST /api/deployments/plan` is the dry run: it resolves the
 engine, image ref, model, mods, port, rendered command and container profile
 without starting anything. The Deploy drawer's **Preview** button and the
 `plan_deployment` MCP tool both call it.
@@ -315,6 +312,6 @@ Environment variables > ~/.config/spark-pulse/settings.json > config.yaml
 | `oidc_provider_url` | string | *(empty)* | OIDC provider URL |
 | `oidc_client_id` | string | *(empty)* | OIDC client ID |
 | `mcp_enabled` | bool | `true` | Enable MCP server |
-| `runtime` | string | `upstream` | `upstream` (run-recipe.sh) or `native` (Docker driven from Python, solo only). Env: `SPARK_PULSE_RUNTIME` |
+| `runtime` | string | `native` | The deployment runtime. `native` (Docker driven from Python) is the only value; anything else resolves to it. Env: `SPARK_PULSE_RUNTIME` |
 | `deploy_ready_timeout_seconds` | int | `900` | How long a native deploy waits for the engine's readiness endpoint |
 | `simulation_mode` | bool | *(env only)* | Set `SIMULATION_MODE=1` to mock tools |

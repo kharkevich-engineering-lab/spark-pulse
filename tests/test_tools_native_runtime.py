@@ -128,7 +128,7 @@ def registry(tmp_path):
 def records(tmp_path):
     """Point the shared deployments.json at a temp file."""
     path = tmp_path / "deployments.json"
-    with patch.object(tools.deployments, "_DEPLOYMENTS_FILE", path):
+    with patch.object(tools.deployment_records, "RECORDS_FILE", path):
         yield path
 
 

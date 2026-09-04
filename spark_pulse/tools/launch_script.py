@@ -230,10 +230,18 @@ class LaunchScriptManager:
 
     @staticmethod
     def _default_spark_path() -> Path:
-        """Get default spark-vllm-docker path from environment or config."""
+        """The configured spark-vllm-docker checkout, whether or not it exists.
+
+        Never the empty path: ``Path("")`` is the process's working directory,
+        and an unset checkout would then resolve ``examples/`` against whatever
+        the server was started from. An unset path yields one that cannot
+        exist, so lookups fail as "not found" rather than finding the wrong
+        file.
+        """
         from spark_pulse.config import config
 
-        return Path(config.spark_vllm_path)
+        raw = config.spark_vllm_path.strip()
+        return Path(raw).expanduser() if raw else Path("/nonexistent/spark-vllm-docker")
 
     def resolve(self, path: str) -> Path:
         """Resolve launch script path.
