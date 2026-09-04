@@ -405,8 +405,103 @@ implementation. This is the largest change to the plan above and it reshapes
 phase D and E; the architecture for it is being researched separately, with the
 explicit goal that onboarding node two introduces no duplicate code.
 
+## 6b. Converging on a cluster of size one
+
+Researched 2026-09-04. The decision is taken; this is how.
+
+**We are closer than the code suggests.** A size-one cluster already runs end to
+end through the native path. `Topology.is_solo` is `size <= 1`, so a one-element
+node list is already solo, and planning, starting, listing, stopping and
+deleting a deployment with one node in the list all work. The only thing that
+refuses it is a single guard in the dispatcher that raises whenever a node list
+is present. So the work is not routing solo through the cluster code. It is
+growing the working native path from one container to N, and deleting the
+cluster code.
+
+**What the survey says about N=1.** Every system looked at treats one node as a
+degenerate configuration rather than a special case, and the one that ever had a
+distinct single-node path deleted it. Two idioms recur. Never taint, where
+colocation is the default and isolation is opt-in, which is k3s, minikube and
+Swarm. Or taint then untaint, which is kubeadm and kind. For hardware where the
+control plane is also the only GPU, never taint is obviously right.
+
+More useful still, none of them selects a local implementation per call. Swarm's
+manager runs its own agent over a unix-socket loopback transport speaking the
+identical protocol. k3s aims the ordinary remote join path at localhost. Nomad
+seeds the client's server list with the local address so a colocated client goes
+over loopback like any other.
+
+**The interface boundary.** A node-bound container service, constructed for one
+node, with no host argument on any method. Resolution happens once, in a
+registry: the control node gets the local Docker SDK, a peer gets docker over
+SSH, simulation gets the mock. The present pattern, where every call site passes
+a host that defaults to empty meaning local, is a defect generator rather than a
+defect, and it has already fired. Worse, the contract test that exists to catch
+this hardcodes a remote address, so the local branch of the remote service has
+never been exercised.
+
+**What actually differs at N=1, and it is one thing.** vLLM's rendezvous flags
+are stock upstream since 0.11.1 and at one node they are provably never read,
+because vLLM derives a file-based store instead of a TCP one below two nodes. So
+we can emit them at every size and stop rewriting commands for solo. SGLang
+already renders uniformly, and honours its rendezvous address even at one node,
+so that address should be loopback rather than the fabric IP.
+
+The single real difference is interface pinning. `NCCL_SOCKET_IFNAME` and
+`GLOO_SOCKET_IFNAME` are resolved eagerly, before any rank-count logic, with
+find-or-fail semantics. Solo deployments get none of these today because the
+topology carries no nodes. The moment a size-one cluster carries a real node,
+they would start being emitted on a path that has never had them. That is the
+one behavioural regression risk in the whole convergence, and it belongs behind
+a node-count gate in one commented place.
+
+**Sequencing.** Branch by abstraction, not strangler fig, and preparatory
+refactoring rather than fix-first. Fix-first is impossible here because the
+cluster code has no tests and has never run on two machines, so there is no
+oracle for what fixed means. Steps one to six need no second Spark.
+
+1. Node registry including the control node itself, populated from the existing discovery code. Nothing consumes it yet.
+2. The node-bound service boundary. Make the two implementations signature-identical, bind the node at construction, delete the host argument, and extend the contract test to run every implementation against both a self node and a remote one. The empty-host bug becomes a failing test.
+3. Uniform engine rendering at every size, with the interface-pinning gate. Re-verify on the Spark for both engines before going further.
+4. Topology becomes total, constraints get enforced at plan time, and the capacity model stops assuming multiple GPUs per node.
+5. Start becomes a loop over ranks, workers first and head last, with per-rank container names carrying a generation. At one node every loop has length one and behaviour is unchanged. Re-verify on the Spark.
+6. Flip the dispatcher, then delete the cluster orchestrator, its health module, the Ray module and their mocks. This is the first step that removes capability, so it comes last.
+
+**A CI finding worth owning.** The end-to-end job has been reporting success
+while asserting nothing, because the Playwright suite contains no spec files at
+all. I made that worse early in this session by adding a pass-with-no-tests flag
+to get the job green. The convergence work should fill that suite, starting with
+a size-one deployment through the general path.
+
+**What stays unproven until a second Spark exists.** Whether the rendezvous
+forms across machines for either engine. NCCL transport selection over the real
+fabric, and whether the twin-adapter configuration reaches NVIDIA's throughput
+threshold. Interface pinning against real per-role names, including NVIDIA's rule
+that the two devices of one port sit on different subnets. Whether workers-first
+ordering actually avoids the ten-minute collective timeout, and whether the
+startup gates are set right. Failure semantics with a genuinely unreachable peer.
+Anything at three nodes, where the ring configuration differs and bandwidth
+roughly halves, or above four, where NVIDIA publishes no guidance at all.
+
+**One hardware fact that changes recipe tuning.** `nvidia-smi` reports no GPU
+memory on this hardware, verified: total, used and free all come back as not
+available, because the GPU shares the 121 GB unified pool. Our monitoring already
+degrades honestly rather than reporting zeros. But it means any capacity check
+reading those fields is reading nothing, and a `gpu_memory_utilization` value
+copied from an x86 recipe is untrustworthy. NVIDIA's own Spark recipes use 0.4
+single-node and 0.8 to 0.9 for two nodes.
+
 ## 7. Still genuinely open
 
-- **How to converge the two deploy paths** without breaking the single-node one that works today. The decision to make solo a cluster of one is taken; the sequencing is under research, along with what genuinely exercises the general path on one machine and what stays unproven until a second Spark exists.
-- **Whether to move the Docker layer to async**, and if so by which route. The plan above notes that a blocking call inside an asyncio handler starves the loop, which matters once a gRPC server shares it. Whether that is a problem today or only prospectively is under research, as is whether unifying local and remote on the docker CLI would be simpler than adopting an async SDK.
 - **A second DGX Spark.** Everything else can be built and verified on one.
+
+Both questions this section previously held are now answered. The convergence
+sequencing is section 6b. The async question was researched and the answer is
+not yet: no synchronous Docker call reaches the event loop from a request
+handler, because every such handler is synchronous and runs in a thread pool.
+The genuine defects were three blocking calls inside SSE generators, an exec
+endpoint that always returned an empty body, and a cluster event stream that
+imported a function which does not exist. All three are fixed. The trigger that
+would change the answer is holding long-lived log or exec streams open, since a
+blocked read in a thread cannot be cancelled cooperatively; if that lands, the
+recommendation is an async client scoped to streaming operations only.
