@@ -4,6 +4,10 @@ variant: default
 description: vLLM built from source for DGX Spark (GB10, sm_121, CUDA 13) with the Spark patch queue.
 image: ghcr.io/kharkevich-engineering-lab/spark-pulse-engine/vllm
 version: 0.1.0
+# vLLM inside the image, as opposed to the image build above. The rendered
+# launch flags need >= 0.11.1, and a legacy tag can resolve to an older image,
+# so plan time checks this. Verified build: 0.28.1rc1.dev345+g4cc0cb6f7.
+framework_version: "0.28.1"
 legacy_tags: [vllm-node]
 arch: [linux/arm64]
 gpu_arch: ["12.1a"]

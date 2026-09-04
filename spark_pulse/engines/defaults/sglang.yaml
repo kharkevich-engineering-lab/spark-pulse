@@ -4,6 +4,8 @@ variant: default
 description: SGLang for DGX Spark, wrapping the upstream cu130 image with tiktoken files and Spark defaults.
 image: ghcr.io/kharkevich-engineering-lab/spark-pulse-engine/sglang
 version: 0.1.0
+# SGLang inside the image, as opposed to the image build above.
+framework_version: "0.5.10.post1"
 legacy_tags: []
 arch: [linux/arm64]
 gpu_arch: ["12.1a"]

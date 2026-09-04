@@ -37,6 +37,13 @@ RECIPE = {
     "env": {},
 }
 
+# A recipe whose default parallelism needs two GPUs, and so two Sparks.
+_TP2_RECIPE = {
+    **RECIPE,
+    "command": "vllm serve Qwen/Qwen3-8B --port {port} -tp {tensor_parallel}",
+    "defaults": {"port": 8000, "tensor_parallel": 2},
+}
+
 CATALOGUE = [{"id": "Qwen/Qwen3-8B", "source": "hf", "path": "/models/qwen3-8b"}]
 
 
@@ -255,24 +262,17 @@ class TestCreateEndpoint:
             c.name for c in env["docker"].list_managed_containers()
         ]
 
-    def test_recipe_defaults_do_not_defeat_the_solo_override(self, client, env):
-        """A recipe default is not an explicit request.
+    def test_a_recipe_asking_for_two_gpus_on_one_node_is_refused(self, client, env):
+        """The old path silently rewrote this to ``-tp 1``; now it says why.
 
-        The route merges recipe defaults into params for the upstream runner
-        and the display command. If those merged params reach the native path,
-        a recipe's ``tensor_parallel: 2`` looks like the operator asked for it
-        and solo stops forcing tp=1 — which strands a one-GPU box on ``-tp 2``.
+        One GPU per node means two-way tensor parallelism needs two nodes. A
+        rewrite hid that from the operator, and the rewrite is gone.
         """
-        tp_recipe = {
-            **RECIPE,
-            "command": "vllm serve Qwen/Qwen3-8B --port {port} -tp {tensor_parallel}",
-            "defaults": {"port": 8000, "tensor_parallel": 2},
-        }
         with (
             patch.object(
                 tools.recipes,
                 "get_recipe",
-                side_effect=lambda rid, *a, **kw: tp_recipe,
+                side_effect=lambda rid, *a, **kw: _TP2_RECIPE,
             ),
             _runtime("native"),
         ):
@@ -281,20 +281,16 @@ class TestCreateEndpoint:
                 json={"recipe_id": "qwen3-8b", "name": "x", "params": {}},
             )
 
-        assert response.status_code == 200
-        assert "-tp 1" in response.json()["launch_command"]
+        assert response.status_code == 400
+        assert "one GPU per node" in response.json()["detail"]
 
-    def test_an_explicit_tensor_parallel_is_still_honoured(self, client, env):
-        tp_recipe = {
-            **RECIPE,
-            "command": "vllm serve Qwen/Qwen3-8B --port {port} -tp {tensor_parallel}",
-            "defaults": {"port": 8000, "tensor_parallel": 2},
-        }
+    def test_an_explicit_tensor_parallel_reaches_the_engine(self, client, env):
+        """The caller's own params still override the recipe's defaults."""
         with (
             patch.object(
                 tools.recipes,
                 "get_recipe",
-                side_effect=lambda rid, *a, **kw: tp_recipe,
+                side_effect=lambda rid, *a, **kw: _TP2_RECIPE,
             ),
             _runtime("native"),
         ):
@@ -303,12 +299,12 @@ class TestCreateEndpoint:
                 json={
                     "recipe_id": "qwen3-8b",
                     "name": "x",
-                    "params": {"tensor_parallel": 2},
+                    "params": {"tensor_parallel": 1},
                 },
             )
 
         assert response.status_code == 200
-        assert "-tp 2" in response.json()["launch_command"]
+        assert "-tp 1" in response.json()["launch_command"]
 
     def test_create_under_native_refuses_a_cluster(self, client):
         with _runtime("native"):

@@ -15,12 +15,30 @@ RECIPE = {
 
 SERVE = "python3 -m sglang.launch_server --model-path meta-llama/Llama-3.1-8B-Instruct"
 
-TWO_NODES = Topology(
+
+def _node(host: str, ip: str) -> NodeInfo:
+    return NodeInfo(host=host, ip=ip, eth_if="enp1s0f0np0", ib_if="mlx5_0")
+
+
+ONE_NODE = Topology(nodes=[_node("spark-a", "10.0.0.1")])
+TWO_NODES = Topology(nodes=[_node("spark-a", "10.0.0.1"), _node("spark-b", "10.0.0.2")])
+THREE_NODES = Topology(
     nodes=[
-        NodeInfo(host="spark-a", ip="10.0.0.1", eth_if="enp1s0f0np0", ib_if="mlx5_0"),
-        NodeInfo(host="spark-b", ip="10.0.0.2", eth_if="enp1s0f0np0", ib_if="mlx5_0"),
+        _node("spark-a", "10.0.0.1"),
+        _node("spark-b", "10.0.0.2"),
+        _node("spark-c", "10.0.0.3"),
     ]
 )
+
+FLAGS = " --host 0.0.0.0 --port 30000 --mem-fraction-static 0.9"
+
+
+def line(tp: int, nnodes: int, rank: int, addr: str) -> str:
+    """The whole rendered command at any size."""
+    tail = f" --nnodes {nnodes} --node-rank {rank} --dist-init-addr {addr}:50000"
+    if nnodes > 1:
+        tail += " --enable-dp-attention"
+    return f"{SERVE} --tp {tp} --pp-size 1{FLAGS}{tail}"
 
 
 @pytest.fixture
@@ -29,12 +47,21 @@ def engine():
     return SglangEngine(spec)
 
 
-def test_solo_still_passes_rendezvous_flags(engine):
-    result = engine.render(RECIPE)
-    assert result.command == (
-        f"{SERVE} --tp 1 --pp-size 1 --host 0.0.0.0 --port 30000"
-        " --mem-fraction-static 0.9"
-        " --nnodes 1 --node-rank 0 --dist-init-addr 127.0.0.1:50000"
+def test_one_node_rendezvous_addr_is_loopback(engine):
+    """SGLang reads --dist-init-addr at one node, so it must not be the fabric.
+
+    A one-node topology now carries a real node with a real address; pointing
+    the rendezvous at it would break whenever that link is down or unaddressed,
+    and it is never the right address for a launch that talks to itself.
+    """
+    result = engine.render(RECIPE, topology=ONE_NODE)
+    assert result.command == line(tp=1, nnodes=1, rank=0, addr="127.0.0.1")
+    assert result.host == "spark-a"
+
+
+def test_the_default_topology_is_one_node(engine):
+    assert engine.render(RECIPE).command == line(
+        tp=1, nnodes=1, rank=0, addr="127.0.0.1"
     )
 
 
@@ -46,12 +73,7 @@ def test_two_node_rank0(engine):
     result = engine.render(
         RECIPE, params={"tensor_parallel": 2}, topology=TWO_NODES, node_rank=0
     )
-    assert result.command == (
-        f"{SERVE} --tp 2 --pp-size 1 --host 0.0.0.0 --port 30000"
-        " --mem-fraction-static 0.9"
-        " --nnodes 2 --node-rank 0 --dist-init-addr 10.0.0.1:50000"
-        " --enable-dp-attention"
-    )
+    assert result.command == line(tp=2, nnodes=2, rank=0, addr="10.0.0.1")
     assert result.host == "spark-a"
 
 
@@ -59,13 +81,17 @@ def test_two_node_rank1(engine):
     result = engine.render(
         RECIPE, params={"tensor_parallel": 2}, topology=TWO_NODES, node_rank=1
     )
-    assert result.command == (
-        f"{SERVE} --tp 2 --pp-size 1 --host 0.0.0.0 --port 30000"
-        " --mem-fraction-static 0.9"
-        " --nnodes 2 --node-rank 1 --dist-init-addr 10.0.0.1:50000"
-        " --enable-dp-attention"
-    )
+    assert result.command == line(tp=2, nnodes=2, rank=1, addr="10.0.0.1")
     assert result.host == "spark-b"
+
+
+def test_three_node_ranks(engine):
+    for rank, host in enumerate(("spark-a", "spark-b", "spark-c")):
+        result = engine.render(
+            RECIPE, params={"tensor_parallel": 3}, topology=THREE_NODES, node_rank=rank
+        )
+        assert result.command == line(tp=3, nnodes=3, rank=rank, addr="10.0.0.1")
+        assert result.host == host
 
 
 def test_context_length_from_max_model_len(engine):
@@ -162,6 +188,29 @@ def test_base_env_and_script(engine):
     assert result.env["GLOO_SOCKET_IFNAME"] == "enp1s0f0np0"
     assert result.env["NCCL_IB_HCA"] == "mlx5_0"
     assert 'export HF_HOME="/root/.cache/huggingface"' in result.script
+
+
+def test_one_node_pins_no_interface(engine):
+    """The one genuine difference at a single node — see Engine.pinning_env."""
+    env = engine.render(RECIPE, topology=ONE_NODE).env
+    assert "NCCL_SOCKET_IFNAME" not in env
+    assert "NCCL_IB_HCA" not in env
+    assert env["GLOO_SOCKET_IFNAME"] == "lo"
+
+
+def test_more_than_one_node_pins_the_fabric(engine):
+    for topology in (TWO_NODES, THREE_NODES):
+        env = engine.render(RECIPE, topology=topology).env
+        assert env["NCCL_SOCKET_IFNAME"] == "enp1s0f0np0"
+        assert env["GLOO_SOCKET_IFNAME"] == "enp1s0f0np0"
+        assert env["NCCL_IB_HCA"] == "mlx5_0"
+
+
+def test_no_version_demand(engine):
+    """SGLang's flags have always been there; nothing to refuse."""
+    assert engine.min_framework_version == ()
+    assert engine.framework_version() == "0.5.10.post1"
+    assert engine.version_supported() == (True, "")
 
 
 def test_declarative_accessors(engine):
