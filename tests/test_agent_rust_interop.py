@@ -449,30 +449,34 @@ async def test_the_control_plane_can_ask_it_to_describe_itself(
         await agent.stop()
 
 
-async def test_an_operation_it_cannot_do_is_a_failure_not_a_silence(
-    rust_agent, agent_server, tmp_path
+async def test_a_failed_operation_is_definite_and_not_a_silence(
+    rust_agent, agent_server, tmp_path, daemon
 ):
     """The distinction the whole transport exists to keep.
 
-    This build implements `get_facts` and no other operation. Asking for one of
-    the others must come back as a *definite* failure from a reachable node —
-    `NodeOperationError` — and never as `NodeUnreachable`, which would mean the
-    outcome is unknown and would leave a caller holding a GPU it could release.
+    Exec'ing into a container that is not there is a *definite* failure from a
+    reachable node — `NodeOperationError` — and never `NodeUnreachable`, which
+    means the outcome is unknown and would leave a caller free to release a
+    GPU that is still in use. Confusing those two is the expensive direction.
     """
     from spark_pulse.agent.errors import NodeOperationError, NodeUnreachable
     from spark_pulse.agent.operations import NodeOperations
 
     agent = await start_agent(rust_agent, agent_server, tmp_path)
     try:
-        ops = NodeOperations(agent_server.hub, agent.node_id, timeout=20)
+        ops = NodeOperations(agent_server.hub, agent.node_id, timeout=30)
         with pytest.raises(NodeOperationError) as caught:
-            await ops.image_exists("ghcr.io/example/engine:latest")
+            await ops.exec_in_container("no-such-container-anywhere", ["true"])
 
-        assert caught.value.error_type == "NotImplementedError"
-        assert "image_exists" in caught.value.error_message
+        assert caught.value.error_type == "RuntimeError"
         assert not isinstance(caught.value, NodeUnreachable)
         # And the node is still there. A refused command is not a lost node.
         assert agent_server.hub.is_connected(agent.node_id)
+
+        # The mirror image: a *missing* container's logs are a string, not an
+        # error, because every caller displays them and a 404 dump helps
+        # nobody. Same node, same call shape, deliberately different answer.
+        assert "not found" in await ops.get_logs("no-such-container-anywhere")
     finally:
         await agent.stop()
 
@@ -529,3 +533,389 @@ async def test_sigterm_ends_the_session_cleanly(rust_agent, agent_server, tmp_pa
             break
         await asyncio.sleep(0.05)
     assert not agent_server.hub.is_connected(agent.node_id)
+
+
+# ── Against a real Docker daemon ────────────────────────────────────────────
+#
+# The agent's read, exec, copy and teardown paths, driven through the control
+# plane, against a container the *Python* service's own label code created.
+# That direction is deliberate: `prepare_labels` runs in Python and
+# `labels::from_labels` runs in Rust, so a disagreement about the label
+# vocabulary — the source of truth reconciliation rebuilds everything from —
+# fails here rather than on a node.
+#
+# The container is created through the raw SDK rather than through
+# `DockerService.run_container`, because that always requests a GPU and a test
+# machine has none. The *shaping* of that request is covered by
+# `create_config`'s unit tests in `agent/src/executor/containers.rs`.
+
+TEST_IMAGE = "docker.io/library/busybox:latest"
+
+
+def _real_docker():
+    """The real Docker SDK client, or None. Never the simulation one."""
+    try:
+        import docker as docker_sdk
+
+        client = docker_sdk.from_env()
+        client.ping()
+        return client
+    except Exception:
+        return None
+
+
+@pytest.fixture(scope="session")
+def daemon():
+    client = _real_docker()
+    if client is None:
+        pytest.skip("no Docker daemon reachable; the executor cannot be exercised")
+    try:
+        client.images.get(TEST_IMAGE)
+    except Exception:
+        try:
+            client.images.pull(TEST_IMAGE)
+        except Exception as exc:  # pragma: no cover — no registry access
+            pytest.skip(f"cannot obtain {TEST_IMAGE}: {exc}")
+    return client
+
+
+@pytest.fixture
+def managed_container(daemon):
+    """A running container carrying real spark-pulse labels."""
+    import importlib
+
+    real_docker = importlib.import_module("spark_pulse.tools.docker")
+    name = f"spark-pulse-rusttest-{os.getpid()}"
+    metadata = real_docker.ContainerMetadata(
+        deployment="dep-rust",
+        recipe="qwen3",
+        image=TEST_IMAGE,
+        generation=2,
+        rank=1,
+        world_size=3,
+    )
+    labels = real_docker.prepare_labels(metadata, name, TEST_IMAGE)
+
+    for stale in daemon.containers.list(all=True, filters={"name": name}):
+        stale.remove(force=True)
+    container = daemon.containers.run(
+        TEST_IMAGE,
+        name=name,
+        command=["sleep", "600"],
+        labels=labels,
+        detach=True,
+    )
+    try:
+        yield container, metadata, labels
+    finally:
+        try:
+            container.remove(force=True)
+        except Exception:
+            pass
+
+
+async def test_the_agent_reads_back_the_labels_python_wrote(
+    rust_agent, agent_server, tmp_path, managed_container
+):
+    """The label vocabulary, across two implementations of it.
+
+    Container labels are the source of truth reconciliation rebuilds the whole
+    view of a cluster from. If Rust's `from_labels` and Python's
+    `prepare_labels` disagree about one key, a control plane restart loses a
+    deployment — or invents one.
+    """
+    from spark_pulse.agent.operations import NodeOperations
+
+    container, metadata, labels = managed_container
+    agent = await start_agent(rust_agent, agent_server, tmp_path)
+    try:
+        ops = NodeOperations(agent_server.hub, agent.node_id, timeout=30)
+        found = await ops.list_managed_containers()
+
+        mine = [c for c in found if c.name == container.name]
+        assert (
+            mine
+        ), f"the agent did not see {container.name} among {[c.name for c in found]}"
+        info = mine[0]
+
+        assert info.metadata.deployment == "dep-rust"
+        assert info.metadata.recipe == "qwen3"
+        assert info.metadata.generation == 2
+        assert info.metadata.rank == 1
+        assert info.metadata.world_size == 3
+        assert info.status == "running"
+        # Every label Python stamped came back byte for byte.
+        assert dict(info.labels) == labels
+    finally:
+        await agent.stop()
+
+
+async def test_finding_a_container_by_deployment_and_by_recipe(
+    rust_agent, agent_server, tmp_path, managed_container
+):
+    from spark_pulse.agent.operations import NodeOperations
+
+    container, _metadata, _labels = managed_container
+    agent = await start_agent(rust_agent, agent_server, tmp_path)
+    try:
+        ops = NodeOperations(agent_server.hub, agent.node_id, timeout=30)
+
+        found = await ops.get_container_by_deployment("dep-rust")
+        assert found is not None and found.name == container.name
+        assert await ops.get_container_by_deployment("no-such-deployment") is None
+
+        by_recipe = await ops.get_container_by_recipe("qwen3")
+        assert [c.name for c in by_recipe] == [container.name]
+    finally:
+        await agent.stop()
+
+
+async def test_status_exec_logs_and_teardown(
+    rust_agent, agent_server, tmp_path, managed_container
+):
+    """The lifecycle a deploy actually drives, end to end through the agent."""
+    from spark_pulse.agent.operations import NodeOperations
+
+    container, _metadata, _labels = managed_container
+    agent = await start_agent(rust_agent, agent_server, tmp_path)
+    try:
+        ops = NodeOperations(agent_server.hub, agent.node_id, timeout=60)
+
+        status = await ops.get_container_status(container.name)
+        assert status["status"] == "running"
+        assert status["running"] is True
+        assert status["id"]
+
+        result = await ops.exec_in_container(container.name, ["echo", "hello"])
+        assert result.returncode == 0
+        assert "hello" in result.stdout
+
+        failed = await ops.exec_in_container(container.name, ["false"])
+        assert failed.returncode != 0, "a non-zero exit must survive the round trip"
+
+        # `stop_container` stops **and removes**. A container that is merely
+        # stopped still owns its name and its ports, so the next deploy of the
+        # same rank collides with the corpse of the last one.
+        assert await ops.stop_container(container.name) is True
+        gone = await ops.get_container_status(container.name)
+        assert gone["status"] == "missing"
+        assert gone["running"] is False
+
+        # And stopping something that is not there is False, not an error.
+        assert await ops.stop_container(container.name) is False
+    finally:
+        await agent.stop()
+
+
+async def test_copying_a_file_in_needs_no_docker_cli_on_the_node(
+    rust_agent, agent_server, tmp_path, managed_container
+):
+    """The bytes travel as payload and land with their permission bits.
+
+    The Python service shells out to `docker cp`, so a node needs the Docker
+    *CLI* installed beside the daemon. This speaks the Engine API's archive
+    endpoint over the same socket everything else uses — the executable bit
+    matters because what is most often copied this way is a serve script.
+    """
+    from spark_pulse.agent.operations import NodeOperations
+
+    container, _metadata, _labels = managed_container
+    script = tmp_path / "serve.sh"
+    script.write_text("#!/bin/sh\necho served\n")
+    script.chmod(0o755)
+
+    agent = await start_agent(rust_agent, agent_server, tmp_path)
+    try:
+        ops = NodeOperations(agent_server.hub, agent.node_id, timeout=60)
+        assert await ops.copy_to_container(container.name, str(script), "/tmp/serve.sh")
+
+        listing = await ops.exec_in_container(
+            container.name, ["ls", "-l", "/tmp/serve.sh"]
+        )
+        assert listing.returncode == 0
+        assert "rwxr-xr-x" in listing.stdout, listing.stdout
+        ran = await ops.exec_in_container(container.name, ["/tmp/serve.sh"])
+        assert ran.returncode == 0
+        assert "served" in ran.stdout
+    finally:
+        await agent.stop()
+
+
+async def test_copying_a_directory_keeps_its_shape(
+    rust_agent, agent_server, tmp_path, managed_container
+):
+    """A mod with a subdirectory — the shape that used to be lost on a peer."""
+    from spark_pulse.agent.operations import NodeOperations
+
+    container, _metadata, _labels = managed_container
+    root = tmp_path / "mod"
+    (root / "templates").mkdir(parents=True)
+    (root / "run.sh").write_text("#!/bin/sh\necho mod\n")
+    (root / "templates" / "chat.jinja").write_text("{{ messages }}\n")
+
+    agent = await start_agent(rust_agent, agent_server, tmp_path)
+    try:
+        ops = NodeOperations(agent_server.hub, agent.node_id, timeout=60)
+        assert await ops.copy_to_container(container.name, str(root), "/tmp/mod")
+
+        found = await ops.exec_in_container(
+            container.name, ["sh", "-c", "cd /tmp/mod && find . -type f | sort"]
+        )
+        assert found.returncode == 0
+        assert found.stdout.split() == ["./run.sh", "./templates/chat.jinja"]
+    finally:
+        await agent.stop()
+
+
+async def test_image_presence_inspection_and_listing(
+    rust_agent, agent_server, tmp_path, daemon
+):
+    from spark_pulse.agent.operations import NodeOperations
+
+    agent = await start_agent(rust_agent, agent_server, tmp_path)
+    try:
+        ops = NodeOperations(agent_server.hub, agent.node_id, timeout=60)
+
+        assert await ops.image_exists(TEST_IMAGE) is True
+        assert await ops.image_exists("ghcr.io/example/never-pulled:1") is False
+
+        info = await ops.image_info(TEST_IMAGE)
+        assert info is not None
+        assert info["id"].startswith("sha256:")
+        assert info["size_bytes"] > 0
+        assert (
+            any(
+                TEST_IMAGE.endswith(tag.split("/")[-1]) or tag in TEST_IMAGE
+                for tag in info["repo_tags"]
+            )
+            or info["repo_tags"]
+        )
+
+        assert await ops.image_info("ghcr.io/example/never-pulled:1") is None
+
+        listing = await ops.list_images()
+        assert any(i["id"] == info["id"] for i in listing)
+    finally:
+        await agent.stop()
+
+
+async def test_ensure_directories_creates_them_and_reports_what_it_could_not(
+    rust_agent, agent_server, tmp_path
+):
+    """Docker invents a missing bind source **owned by root**, and every path
+    here is one of the login user's caches — so this runs before the container
+    does. A failure is a warning, not an error: docker will still start."""
+    from spark_pulse.agent.operations import NodeOperations
+
+    wanted = tmp_path / "cache" / "vllm"
+    blocker = tmp_path / "a-file"
+    blocker.write_text("not a directory")
+
+    agent = await start_agent(rust_agent, agent_server, tmp_path)
+    try:
+        ops = NodeOperations(agent_server.hub, agent.node_id, timeout=30)
+        failed = await ops.ensure_directories([str(wanted), str(blocker / "under")])
+
+        assert wanted.is_dir()
+        assert failed == [str(blocker / "under")]
+        # Empty and whitespace-only paths are skipped rather than failed.
+        assert await ops.ensure_directories(["", "   "]) == []
+    finally:
+        await agent.stop()
+
+
+PULL_IMAGE = "docker.io/library/hello-world:latest"
+
+
+async def test_a_pull_reports_aggregated_progress_and_a_final_outcome(
+    rust_agent, agent_server, tmp_path, daemon
+):
+    """Progress is aggregated across layers, and it is never an outcome.
+
+    A caller wants one number, not one per layer — a 40 GB engine image has
+    dozens reporting independently. And the pull is finished when the *result*
+    arrives, not when a progress event says 100: the last event is emitted
+    unthrottled precisely so the two agree, but only one of them is the answer.
+    """
+    from spark_pulse.agent.operations import NodeOperations
+
+    agent = await start_agent(rust_agent, agent_server, tmp_path)
+    try:
+        ops = NodeOperations(agent_server.hub, agent.node_id, timeout=180)
+        seen: list[dict] = []
+
+        outcome = await ops.pull_image(PULL_IMAGE, progress=seen.append, interval=0.0)
+
+        assert outcome["ref"] == PULL_IMAGE
+        assert outcome["repository"] == "docker.io/library/hello-world"
+        assert outcome["tag"] == "latest"
+        assert outcome["percent"] == 100.0
+        assert outcome["id"].startswith("sha256:")
+        assert outcome["size_bytes"] > 0
+
+        assert seen, "want_progress was set, so events must arrive"
+        assert seen[-1]["percent"] == 100.0
+        assert seen[-1]["status"] == "pull complete"
+        assert all(event["ref"] == PULL_IMAGE for event in seen)
+
+        # The pull actually landed the image, which is the only thing the
+        # caller was really asking for.
+        assert await ops.image_exists(PULL_IMAGE) is True
+    finally:
+        await agent.stop()
+
+
+async def test_a_pull_of_something_that_does_not_exist_fails_definitely(
+    rust_agent, agent_server, tmp_path, daemon
+):
+    """A registry saying no is a definite failure, not an unknown outcome."""
+    from spark_pulse.agent.errors import NodeOperationError, NodeUnreachable
+    from spark_pulse.agent.operations import NodeOperations
+
+    agent = await start_agent(rust_agent, agent_server, tmp_path)
+    try:
+        ops = NodeOperations(agent_server.hub, agent.node_id, timeout=120)
+        with pytest.raises(NodeOperationError) as caught:
+            await ops.pull_image("docker.io/library/spark-pulse-no-such-image:0")
+
+        assert not isinstance(caught.value, NodeUnreachable)
+        assert "failed" in caught.value.error_message
+        assert agent_server.hub.is_connected(agent.node_id)
+    finally:
+        await agent.stop()
+
+
+async def test_a_pull_cancelled_before_it_starts_never_reaches_the_node(
+    rust_agent, agent_server, tmp_path, daemon
+):
+    """Already withdrawn is refused here, deterministically, with no bytes sent.
+
+    Sending it anyway and chasing it with a Cancel is strictly worse: it starts
+    work nobody wants, and whether the Cancel wins the race decides what the
+    caller sees. `PullCancelled` is what `native_runtime` and `images` catch by
+    type to record a teardown as a teardown rather than a deployment failure.
+    """
+    from spark_pulse.tools.docker import PullCancelled
+    from spark_pulse.agent.errors import NodeOperationError
+    from spark_pulse.agent.operations import NodeOperations
+
+    agent = await start_agent(rust_agent, agent_server, tmp_path)
+    try:
+        ops = NodeOperations(agent_server.hub, agent.node_id, timeout=60)
+        with pytest.raises(NodeOperationError) as caught:
+            await ops.pull_image(PULL_IMAGE, cancel=lambda: True)
+        assert caught.value.error_type == "PullCancelled"
+
+        # And through the synchronous face the control plane really holds, the
+        # type a caller catches is the local one.
+        from spark_pulse.agent.sync_service import AgentNodeService
+
+        service = AgentNodeService(
+            agent_server.hub, agent.node_id, asyncio.get_running_loop(), timeout=60
+        )
+        with pytest.raises(PullCancelled):
+            await asyncio.to_thread(
+                service.pull_image, PULL_IMAGE, None, 0.0, lambda: True
+            )
+    finally:
+        await agent.stop()

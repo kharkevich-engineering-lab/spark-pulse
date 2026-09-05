@@ -28,7 +28,7 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity as TlsIdentity};
 
-use crate::executor::Executor;
+use crate::executor::{CommandContext, Executor, ProgressSink};
 use crate::identity::AgentIdentity;
 use crate::proto::agent_message::Body as AgentBody;
 use crate::proto::control_message::Body as ControlBody;
@@ -245,8 +245,12 @@ impl Agent {
             .insert(id.clone(), Arc::clone(&flag));
         let executor = Arc::clone(&self.executor);
         let running = Arc::clone(&self.running);
+        let context = CommandContext {
+            cancel: Arc::clone(&flag),
+            progress: Some(ProgressSink::new(id.clone(), outbox.clone())),
+        };
         tokio::spawn(async move {
-            let result = executor.execute(command).await;
+            let result = executor.execute(command, context).await;
             running.lock().unwrap().remove(&id);
             // A closed outbox means the stream went away while we worked. The
             // result is dropped rather than logged as an error: the caller has
