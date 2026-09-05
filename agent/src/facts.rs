@@ -299,13 +299,13 @@ fn board_serial() -> String {
 /// A stable-across-reboots, unstable-across-reimage hardware fingerprint.
 ///
 /// A board serial when the hardware exposes one, otherwise a composite of the
-/// things that describe the machine rather than its configuration: the
-/// interface *names* the kernel enumerates, the CPU count, the memory size and
-/// the machine-id.
+/// things that describe the machine rather than its configuration.
 ///
-/// Deliberately not built from the hostname or an IP address. Both change
-/// under DHCP and under a rename, and a fingerprint that moved when a node was
-/// renamed would deny a node for being renamed.
+/// **This consults the machine**, which is why the composite half is a
+/// separate function: on hardware that publishes a serial — including every
+/// cloud VM, which is where tests run — the serial wins and the arguments are
+/// never read. A test of the composite that went through here would pass on a
+/// laptop and assert nothing on a CI runner.
 pub fn fingerprint(
     interfaces: &[NetworkInterface],
     machine_id: &str,
@@ -316,29 +316,47 @@ pub fn fingerprint(
     if !serial.is_empty() {
         return hex(Sha256::digest(format!("serial:{serial}").as_bytes()));
     }
+    let names: Vec<&str> = identifying_names(interfaces);
+    composite_fingerprint(&names, machine_id, cpu_count, memory_bytes)
+}
+
+/// The interface names that describe the *hardware*, sorted.
+///
+/// Docker's interfaces are excluded because they appear and vanish with
+/// workloads: a fingerprint that changed when a container started would be
+/// useless for detecting a reimage. Which names those are is decided by
+/// [`classify_interface`], which mirrors the control plane's own rule.
+pub fn identifying_names(interfaces: &[NetworkInterface]) -> Vec<&str> {
     let mut names: Vec<&str> = interfaces
         .iter()
         .filter(|i| !i.name.is_empty() && i.r#type != "docker")
         .map(|i| i.name.as_str())
         .collect();
     names.sort_unstable();
+    names
+}
 
+/// The fingerprint of a machine with no board serial. Pure.
+///
+/// Deliberately not built from the hostname or an IP address. Both change
+/// under DHCP and under a rename, and a fingerprint that moved when a node was
+/// renamed would deny a node for being renamed — the failure §3.1 says every
+/// name-keyed system in the survey documented.
+pub fn composite_fingerprint(
+    names: &[&str],
+    machine_id: &str,
+    cpu_count: u32,
+    memory_bytes: u64,
+) -> String {
     // Nothing that *identifies* this machine: no interface names and no
     // machine-id. The CPU count and the memory size are not identifying on
     // their own — every Spark has the same ones — so a fingerprint built from
     // them alone would be identical on every node, and the control plane would
     // read two different machines as one. Better to say we do not know.
-    //
-    // The Python agent had this guard too and it never fired: its material was
-    // `"|".join([*names, str(cpu), str(mem), machine_id])`, and `str(0)` is
-    // `"0"`, so stripping `|` always left something. Nothing depended on it —
-    // that agent never reached a release — so this is the guard doing what it
-    // always said it did.
     if names.is_empty() && machine_id.is_empty() {
         return String::new();
     }
-
-    let mut parts: Vec<String> = names.into_iter().map(str::to_string).collect();
+    let mut parts: Vec<String> = names.iter().map(|n| n.to_string()).collect();
     parts.push(cpu_count.to_string());
     parts.push(memory_bytes.to_string());
     parts.push(machine_id.to_string());

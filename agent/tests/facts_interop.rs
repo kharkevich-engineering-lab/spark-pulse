@@ -21,7 +21,9 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use spark_pulse_agent::facts::{classify_interface, fingerprint};
+use spark_pulse_agent::facts::{
+    classify_interface, composite_fingerprint, fingerprint, identifying_names,
+};
 use spark_pulse_agent::proto::NetworkInterface;
 
 fn interface(name: &str) -> NetworkInterface {
@@ -32,9 +34,17 @@ fn interface(name: &str) -> NetworkInterface {
     }
 }
 
+/// The fingerprint of a machine described by these names, through the *pure*
+/// half.
+///
+/// Not through `fingerprint`, deliberately. That one reads this machine's
+/// board serial first, and every cloud VM publishes one — so a property test
+/// routed through it passes on a laptop and asserts nothing on a CI runner,
+/// which is exactly what happened before this was split.
 fn print(names: &[&str], machine_id: &str, cpus: u32, memory: u64) -> String {
     let interfaces: Vec<NetworkInterface> = names.iter().map(|n| interface(n)).collect();
-    fingerprint(&interfaces, machine_id, cpus, memory)
+    let identifying = identifying_names(&interfaces);
+    composite_fingerprint(&identifying, machine_id, cpus, memory)
 }
 
 // ── Classification, against Python's own answers ────────────────────────────
@@ -141,4 +151,33 @@ fn only_docker_interfaces_are_excluded_not_every_virtual_one() {
     // would be the two implementations disagreeing again.
     let bare = print(&["enp1s0"], "m", 20, 1);
     assert_ne!(print(&["enp1s0", "veth1a2b3c"], "m", 20, 1), bare);
+}
+
+// ── And the branch above it ─────────────────────────────────────────────────
+
+#[test]
+fn the_whole_fingerprint_is_stable_whichever_branch_this_machine_takes() {
+    // `fingerprint` reads a board serial when the hardware has one and falls
+    // through to the composite when it does not. Which branch runs depends on
+    // the machine, so what can be asserted everywhere is the property the
+    // control plane actually depends on: ask twice, get the same answer.
+    let interfaces = [interface("enp1s0"), interface("docker0")];
+    let first = fingerprint(&interfaces, "machine-1", 20, 128 << 30);
+    for _ in 0..20 {
+        assert_eq!(fingerprint(&interfaces, "machine-1", 20, 128 << 30), first);
+    }
+    assert!(first.is_empty() || first.len() == 64);
+}
+
+#[test]
+fn docker_interfaces_are_not_identifying() {
+    // The filter `fingerprint` applies before hashing, asserted on its own so
+    // it is covered on hardware whose serial short-circuits the rest.
+    let interfaces = [
+        interface("enp1s0"),
+        interface("docker0"),
+        interface("br-1a2b3c"),
+        interface("ib0"),
+    ];
+    assert_eq!(identifying_names(&interfaces), vec!["enp1s0", "ib0"]);
 }
