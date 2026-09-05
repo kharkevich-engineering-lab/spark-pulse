@@ -20,6 +20,19 @@ to delete, so the operator makes that choice rather than discovering it.
 ``--rotate`` is the explicit form of that choice: it destroys the identity
 first and then enrolls, which is the *Remove and re-enroll* action of §3.1,
 and it says so before doing it.
+
+Two flags exist for the SSH installer and are worth knowing about anywhere the
+agent is driven by a program rather than by hand:
+
+``--token-file``
+    Read the token from a file instead of the command line. An argument is
+    visible in ``ps(1)`` to every user on the node; a 0600 file the installer
+    shreds afterwards is not.
+``--enroll-only``
+    Enroll, write the identity out, print the node id and exit. The installer
+    watches enrollment happen and *then* starts a unit that carries no token at
+    all — so a restart of that unit can never be the "identity plus token" case
+    refused above.
 """
 
 from __future__ import annotations
@@ -57,6 +70,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--token", default="", help="single-use enrollment token")
     parser.add_argument(
+        "--token-file",
+        type=Path,
+        default=None,
+        help=(
+            "read the single-use token from this file instead of the command "
+            "line, and prefer it — an argument is visible in ps(1) to every "
+            "user on the node, which is why the SSH installer uses this"
+        ),
+    )
+    parser.add_argument(
         "--trust-bundle",
         type=Path,
         help="PEM file holding the cluster CA bundle",
@@ -81,13 +104,36 @@ def build_parser() -> argparse.ArgumentParser:
         help="destroy any existing identity and enroll again (Remove, then join)",
     )
     parser.add_argument(
+        "--enroll-only",
+        action="store_true",
+        help=(
+            "enroll, write the identity out, and exit without running. What an "
+            "installer does: the token is spent while the installer is still "
+            "watching, and the unit it then starts carries no token at all"
+        ),
+    )
+    parser.add_argument(
         "--verbose", action="store_true", help="log at DEBUG rather than INFO"
     )
     return parser
 
 
+def _token(args: argparse.Namespace) -> str:
+    """The token, from a file if one was named. The file wins over --token."""
+    if args.token_file:
+        try:
+            return Path(args.token_file).read_text().strip()
+        except OSError as exc:
+            print(
+                f"cannot read the token file {args.token_file}: {exc}", file=sys.stderr
+            )
+            return ""
+    return args.token
+
+
 async def _run(args: argparse.Namespace) -> int:
     directory = args.dir or default_identity_dir()
+    token = _token(args)
     identity = AgentIdentity.load(directory)
 
     if identity is not None and args.rotate:
@@ -99,7 +145,7 @@ async def _run(args: argparse.Namespace) -> int:
         identity.destroy()
         identity = None
 
-    if identity is not None and args.token:
+    if identity is not None and token:
         # The loud refusal. Nothing is changed on disk.
         print(
             f"This node is already enrolled as {identity.node_id} "
@@ -116,7 +162,7 @@ async def _run(args: argparse.Namespace) -> int:
         missing = [
             name
             for name, value in (
-                ("--token", args.token),
+                ("--token", token),
                 ("--enroll-target", args.enroll_target),
                 ("--trust-bundle", args.trust_bundle),
             )
@@ -131,13 +177,20 @@ async def _run(args: argparse.Namespace) -> int:
             return 2
         identity = await enroll(
             args.enroll_target,
-            args.token,
+            token,
             trust_bundle_pem=Path(args.trust_bundle).read_bytes(),
             trust_bundle_pin=args.pin,
             directory=directory,
             requested_name=args.name,
         )
         logger.info("enrolled as %s", identity.node_id)
+
+    if args.enroll_only:
+        # The installer's step. Enrollment is finished and observed here, so a
+        # unit that starts afterwards needs no token, and a restart of it can
+        # never be the "identity plus token" case refused above.
+        print(identity.node_id)
+        return 0
 
     agent = NodeAgent(identity, args.control, executor=LocalExecutor())
     loop = asyncio.get_running_loop()

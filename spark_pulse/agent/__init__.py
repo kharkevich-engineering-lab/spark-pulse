@@ -29,6 +29,12 @@ The pieces, in the order they matter:
 ``local``
     The control node runs an agent too, enrolled and reached exactly like any
     other node.
+``bundle`` / ``bootstrap_transport`` / ``bootstrap_probe`` / ``bootstrap``
+    Getting an agent onto a node over SSH (§3.1): what is copied, the channel
+    it is copied over, what the node can do, and the install itself.
+``doctor``
+    Why a node is not working, and what can safely be repaired from here. It
+    shares its probes with ``bootstrap`` rather than growing a second set.
 
 Names are exported lazily so that importing a submodule does not drag the
 whole package — and, more practically, so that ``facts`` can import
@@ -50,8 +56,13 @@ __all__ = [
     "NodeOperations",
     "NodeOperationError",
     "NodeUnreachable",
+    "diagnose",
     "enroll",
+    "install_agent",
+    "remove_node_and_identity",
     "start_local_agent",
+    "treat",
+    "uninstall_agent_keep_identity",
 ]
 
 _EXPORTS = {
@@ -65,8 +76,19 @@ _EXPORTS = {
     "NodeOperations": ("spark_pulse.agent.operations", "NodeOperations"),
     "NodeOperationError": ("spark_pulse.agent.errors", "NodeOperationError"),
     "NodeUnreachable": ("spark_pulse.agent.errors", "NodeUnreachable"),
+    "diagnose": ("spark_pulse.agent.doctor", "diagnose"),
     "enroll": ("spark_pulse.agent.node_agent", "enroll"),
+    "install_agent": ("spark_pulse.agent.bootstrap", "install_agent"),
+    "remove_node_and_identity": (
+        "spark_pulse.agent.bootstrap",
+        "remove_node_and_identity",
+    ),
     "start_local_agent": ("spark_pulse.agent.local", "start_local_agent"),
+    "treat": ("spark_pulse.agent.doctor", "treat"),
+    "uninstall_agent_keep_identity": (
+        "spark_pulse.agent.bootstrap",
+        "uninstall_agent_keep_identity",
+    ),
 }
 
 

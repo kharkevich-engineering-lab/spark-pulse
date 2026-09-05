@@ -40,6 +40,12 @@ dependencies = [
     # dependency through authlib; named here because this package imports it
     # directly and must not be at the mercy of another package's pin.
     "cryptography>=42.0",
+    # The SSH bootstrap installer (§3.1). In-process rather than an `ssh`
+    # subprocess, because the node password must never become an argv entry
+    # and `sshpass` is explicitly ruled out. Imported lazily inside
+    # spark_pulse/agent/bootstrap_transport.py, so a control plane that never
+    # installs an agent still starts without it.
+    "asyncssh>=2.14.0",
 ]
 
 [project.optional-dependencies]

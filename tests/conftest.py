@@ -96,3 +96,56 @@ def reset_simulated_preflight():
     mock_preflight.reset()
     yield
     mock_preflight.reset()
+
+
+# ── The node agent's SSH bootstrap ──────────────────────────────────────────
+#
+# Used by tests/test_agent_bootstrap.py and tests/test_agent_doctor.py. They
+# live here rather than in either file because both suites need all three, and
+# importing a fixture by name into a module that also takes it as a parameter
+# is exactly the shadowing pytest cannot see through.
+
+
+@pytest.fixture
+async def agent_server(tmp_path):
+    """A control plane on ephemeral loopback ports, with its own CA."""
+    from spark_pulse.agent.hub import AgentHub
+    from spark_pulse.agent.server import ControlPlaneServer
+
+    control = ControlPlaneServer(
+        directory=tmp_path / "control",
+        host="127.0.0.1",
+        session_port=0,
+        enrollment_port=0,
+        hub=AgentHub(cluster_id="bootstrap-tests", epoch=3),
+    )
+    await control.start()
+    try:
+        yield control
+    finally:
+        await control.stop(grace=0)
+
+
+@pytest.fixture
+async def agent_fleet():
+    """Simulated nodes, torn down so no agent task outlives a test."""
+    from spark_pulse.mock.bootstrap_node import SimulatedFleet
+
+    fleet = SimulatedFleet()
+    try:
+        yield fleet
+    finally:
+        await fleet.shutdown()
+
+
+@pytest.fixture
+def agent_bundle():
+    """An agent bundle with no vendored runtime.
+
+    The "node" in these tests is this interpreter, which already has grpcio:
+    what is under test is the shipping and unpacking, not the copying of a
+    hundred megabytes of shared objects into a temporary directory.
+    """
+    from spark_pulse.agent.bundle import build_bundle
+
+    return build_bundle(include_runtime=False)

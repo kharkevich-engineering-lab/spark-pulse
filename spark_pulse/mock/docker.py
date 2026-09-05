@@ -305,6 +305,16 @@ class MockDockerClient:
         self.images = MockImagesManager()
         self.api = MockLowLevelAPI(self.images)
 
+    def version(self) -> dict[str, str]:
+        """What ``docker.DockerClient.version()`` returns, in the shape callers read.
+
+        The node agent puts this in every ``Hello`` and heartbeat, and the
+        doctor reads an *empty* docker version as "the daemon is not answering
+        this node". A mock client with no ``version()`` would therefore make
+        every simulated node look like it had a dead Docker daemon.
+        """
+        return {"Version": "29.2.1", "ApiVersion": "1.52"}
+
     def create_host_config(
         self,
         privileged: bool = False,
