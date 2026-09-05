@@ -26,8 +26,14 @@ use sha2::{Digest, Sha256};
 
 use crate::proto::{NetworkInterface, NodeFacts};
 
-/// The agent's own version, stamped in at build time.
-pub const AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+/// The agent's version, which is *spark-pulse's* version, stamped in at build
+/// time from `pyproject.toml`.
+///
+/// One product, one version. The doctor compares what a node reports against
+/// what the control plane is, and reports a difference as needing a reinstall
+/// — so an agent versioned independently would make that warning fire on every
+/// node for ever and mean nothing.
+pub const AGENT_VERSION: &str = env!("SPARK_PULSE_VERSION");
 
 const BOOT_ID_PATH: &str = "/proc/sys/kernel/random/boot_id";
 

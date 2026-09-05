@@ -138,90 +138,72 @@ async def agent_fleet():
         await fleet.shutdown()
 
 
-class JoinedAgent:
-    """One enrolled agent, its task, and the Docker it speaks to."""
-
-    def __init__(self, agent, task, docker):
-        self.agent = agent
-        self.task = task
-        self.docker = docker
-
-    @property
-    def node_id(self) -> str:
-        return self.agent.node_id
-
-    async def close(self) -> None:
-        await self.agent.stop()
-        self.task.cancel()
-        try:
-            await self.task
-        except BaseException:
-            pass
-
-
 @pytest.fixture
 async def join_agent(agent_server, tmp_path):
-    """Enrol nodes against ``agent_server`` and hold their sessions.
+    """Enrol stub nodes against ``agent_server`` and hold their sessions.
 
-    Each node gets its **own** ``MockDockerService``. That is the point rather
-    than tidiness: when every node reads one daemon, an answer for the wrong
-    node looks exactly like the right answer, which is how thirteen call sites
-    queried the control node while claiming to reach a worker.
+    These are *stubs*, not agents — see ``tests/agent_stub.py``. The agent that
+    ships is one Rust binary and it is driven, as a binary, by
+    ``tests/test_agent_rust_interop.py``. What these fixtures exist for is the
+    other half: testing the control plane against a counterparty that can
+    misbehave, which a correct agent by definition cannot.
     """
-    import asyncio
+    from spark_pulse.mock import agent_node as agent_stub
 
-    from spark_pulse.agent.executor import LocalExecutor
-    from spark_pulse.agent.node_agent import NodeAgent, enroll
-    from spark_pulse.mock.docker import MockDockerClient, MockDockerService
-
-    joined: list[JoinedAgent] = []
+    stubs: list = []
 
     async def _join(
-        name: str, *, docker=None, node_id: str = "", heartbeat: float = 0.2
+        name: str,
+        *,
+        handler=None,
+        node_id: str = "",
+        connect: bool = True,
+        **kwargs,
     ):
-        docker = docker or MockDockerService(MockDockerClient())
-        identity = await enroll(
-            agent_server.enrollment_target(),
-            agent_server.mint_token(name, node_id=node_id),
-            trust_bundle_pem=agent_server.trust_bundle_pem,
-            trust_bundle_pin=agent_server.trust_bundle_pin,
-            directory=tmp_path / f"identity-{name}",
-            requested_name=name,
-            docker_service=docker,
+        identity = await agent_stub.enroll(
+            agent_server,
+            name,
+            tmp_path / f"identity-{name}",
+            token=agent_server.mint_token(name, node_id=node_id),
         )
-        agent = NodeAgent(
+        stub = agent_stub.AgentStub(
             identity,
             agent_server.session_target(),
-            executor=LocalExecutor(docker),
-            heartbeat_interval=heartbeat,
+            handler=handler or agent_stub.answer_facts,
+            **kwargs,
         )
-        task = asyncio.create_task(agent.run_forever(), name=f"agent-{name}")
-        await agent.wait_connected(10)
-        node = JoinedAgent(agent, task, docker)
-        joined.append(node)
-        return node
+        stubs.append(stub)
+        if connect:
+            await stub.connect()
+        return stub
 
     try:
         yield _join
     finally:
-        for node in joined:
-            await node.close()
+        for stub in stubs:
+            await stub.close()
 
 
 @pytest.fixture
 async def agent_node(join_agent):
-    """One enrolled, connected agent."""
+    """One enrolled, connected stub node."""
     return await join_agent("spark-a")
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def agent_bundle():
-    """An agent bundle with no vendored runtime.
+    """The bundle the installer ships: one static binary.
 
-    The "node" in these tests is this interpreter, which already has grpcio:
-    what is under test is the shipping and unpacking, not the copying of a
-    hundred megabytes of shared objects into a temporary directory.
+    Session-scoped because it is content-addressed and therefore identical
+    every time — building it per test would just re-read and re-compress the
+    same 3.5 MB. Skipped, loudly, when no binary has been built here: the
+    alternative is a suite that passes while the thing it ships does not exist.
     """
-    from spark_pulse.agent.bundle import build_bundle
+    import pytest as _pytest
 
-    return build_bundle(include_runtime=False)
+    from spark_pulse.agent.bundle import MissingAgentBinary, build_bundle
+
+    try:
+        return build_bundle()
+    except MissingAgentBinary as exc:
+        _pytest.skip(str(exc))

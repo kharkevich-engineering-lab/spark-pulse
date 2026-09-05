@@ -16,7 +16,7 @@ Three things make it worth more than a stack of mocks:
   identity on disk that a later install genuinely finds.
 * **The agent is real.** ``systemctl enable --now`` reads the unit file the
   installer wrote, parses its ``ExecStart``, and runs the real
-  :func:`spark_pulse.agent.node_agent.enroll` and :class:`NodeAgent` against
+  :mod:`spark_pulse.mock.agent_node` against
   the real :class:`ControlPlaneServer` over real mTLS on loopback. "Installed →
   enrolled → connected" is therefore end to end, not three mocks agreeing.
 * **Every command is recorded with its stdin kept separate.** That is what
@@ -34,11 +34,9 @@ belongs there rather than here.
 from __future__ import annotations
 
 import asyncio
-import io
 import os
 import shlex
 import tarfile
-from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -107,10 +105,33 @@ class UnitState:
     exec_start: str = ""
     #: The task running the agent this unit started, if it dialled home.
     task: asyncio.Task | None = None
+    #: The session that agent is holding. Closed *before* the task is
+    #: cancelled: a coroutine being cancelled cannot reliably await, and a
+    #: gRPC stream that is not closed leaves the node connected after its unit
+    #: has been stopped — which makes "the agent is not running" untestable.
+    session: Any = None
 
 
 class SimulatedNode:
     """One machine: a filesystem, logins, systemd, docker and a sudo policy."""
+
+    def kill_agent(self) -> None:
+        """The agent dies without systemd stopping it. Ungracefully.
+
+        The difference from ``systemctl stop`` matters and is the reason this
+        exists: a stopped unit closes its session, so the control plane reads a
+        clean end. A process that is killed does not, so the control plane sees
+        a stream that simply stops — which is the state the doctor exists for
+        and the one a test cannot produce by asking politely.
+        """
+        for unit in self.units.values():
+            session, unit.session = unit.session, None
+            if session is not None:
+                session.abandon()
+            task, unit.task = unit.task, None
+            unit.active = False
+            if task is not None:
+                task.cancel()
 
     def __init__(
         self,
@@ -925,14 +946,17 @@ class SimulatedSession:
                 1, "", f"Job for {unit_name} failed: {result.stderr[:200]}"
             )
         unit.task = getattr(self, "_last_task", None)
+        unit.session = getattr(self, "_last_session", None)
         return RunResult(0, "", "")
 
     async def _agent(self, parts: list[str], *, background: bool) -> RunResult:
         self.node._last_agent_task = None
+        self.node._last_agent_session = None
         result = await self.node.agent_runner(
             self.node, self.user, parts[1:], background=background
         )
         self._last_task = self.node._last_agent_task
+        self._last_session = self.node._last_agent_session
         return result
 
 
@@ -958,6 +982,12 @@ def _may_write(
 
 
 async def _stop_unit(unit: UnitState) -> None:
+    session, unit.session = unit.session, None
+    if session is not None:
+        try:
+            await session.close()
+        except Exception:  # pragma: no cover — teardown is best effort
+            pass
     task = unit.task
     unit.task = None
     if task is None:
@@ -972,24 +1002,37 @@ async def _stop_unit(unit: UnitState) -> None:
 # ── Running the real agent, in this process ─────────────────────────────────
 
 
-class InProcessAgentRunner:
-    """Runs the *real* agent for a simulated node.
+class SimulatedAgentRunner:
+    """Answers an installer the way the agent binary would.
 
-    ``--help`` answers like the launcher does, which is what the installer's
-    bundle verification uses. ``--enroll-only`` goes through
-    :func:`spark_pulse.agent.__main__._run` unchanged — so the loud refusal of
-    an existing identity, the exit code 2, and the token-file handling are the
-    agent's own code and not a simulation of it. Starting the unit constructs a
-    :class:`NodeAgent` against a private mock Docker service and lets it dial
-    the control plane for real.
+    The agent is a static Rust binary built for aarch64 Linux. A simulated
+    node cannot execute it — the machine running these tests is usually
+    neither — so what is simulated here is its *command-line contract*: the
+    three things an installer invokes and what each does.
+
+    That is a smaller claim than this class used to make, and the difference
+    is worth being clear about. It used to call the Python agent's own
+    ``_run``, so the refusals were the agent's real code. They are now the
+    binary's, and they are tested as the binary's:
+    ``tests/test_agent_rust_interop.py`` covers ``--help`` exiting zero, an
+    existing identity plus a token being refused by name, a spent token, a
+    substituted trust bundle and a partial identity directory — each against
+    the shipped binary. What is under test *here* is the installer: the
+    unpacking, the scoping, the unit file, the sudo, and that no secret ever
+    reaches an argv.
     """
+
+    #: What `--help` prints. The installer only checks the exit code, but a
+    #: node that answered with nothing would make a broken verification look
+    #: like a working one.
+    USAGE = "Usage: spark-pulse-agent [OPTIONS] --control <HOST:PORT>\n"
 
     def __init__(self, docker_factory: Callable[[], Any] | None = None):
         self._docker_factory = docker_factory
         self._agents: dict[str, Any] = {}
 
     def agent_for(self, host: str):
-        """The running :class:`NodeAgent` for a node, if it started one."""
+        """The connected stub node for a host, if it started one."""
         return self._agents.get(host)
 
     async def __call__(
@@ -1000,47 +1043,123 @@ class InProcessAgentRunner:
         *,
         background: bool,
     ) -> RunResult:
-        from spark_pulse.agent.__main__ import build_parser, _run
-
         if "--help" in argv or "-h" in argv:
-            return RunResult(0, "usage: python -m spark_pulse.agent\n", "")
+            return RunResult(0, self.USAGE, "")
+        if "--version" in argv:
+            from spark_pulse.version import __version__
 
-        mapped = _map_paths(node, user, argv)
-        parser = build_parser()
-        try:
-            args = parser.parse_args(mapped)
-        except SystemExit as exc:  # pragma: no cover - argparse rejects
-            return RunResult(int(exc.code or 2), "", "argument error")
+            return RunResult(0, f"spark-pulse-agent {__version__}\n", "")
 
-        if not background:
-            out, err = io.StringIO(), io.StringIO()
-            with redirect_stdout(out), redirect_stderr(err):
-                code = await _run(args)
-            return RunResult(code, out.getvalue(), err.getvalue())
+        args = _parse_agent_argv(_map_paths(node, user, argv))
+        if args is None:
+            return RunResult(2, "", "argument error")
+        if background:
+            return await self._start(node, args)
+        return await self._enroll(node, args)
 
-        return await self._start(node, args)
-
-    async def _start(self, node: SimulatedNode, args) -> RunResult:
-        from spark_pulse.agent.executor import LocalExecutor
-        from spark_pulse.agent.node_agent import NodeAgent
+    async def _enroll(self, node: SimulatedNode, args: dict) -> RunResult:
+        """`--enroll-only`: spend the token, write the identity, print the id."""
         from spark_pulse.agent.store import AgentIdentity
+        from spark_pulse.mock import agent_node
 
+        directory = Path(args["dir"])
         try:
-            identity = AgentIdentity.load(args.dir)
+            existing = AgentIdentity.load(directory)
+        except RuntimeError as exc:
+            return RunResult(1, "", str(exc))
+        if existing is not None:
+            return RunResult(
+                1,
+                "",
+                f"{directory} already holds the identity {existing.node_id}, and a "
+                "token was supplied. Pass --rotate to destroy it and enrol again.",
+            )
+        token = (
+            Path(args["token_file"]).read_text().strip()
+            if args.get("token_file")
+            else args.get("token", "")
+        )
+        try:
+            identity = await agent_node.enroll_at(
+                args["enroll_target"],
+                token,
+                trust_bundle_pem=Path(args["trust_bundle"]).read_bytes(),
+                trust_bundle_pin=args.get("pin", ""),
+                directory=directory,
+                name=args.get("name", node.host),
+            )
+        except Exception as exc:
+            return RunResult(1, "", f"enrolment was refused: {exc}")
+        identity.save()
+        return RunResult(0, f"{identity.node_id}\n", "")
+
+    async def _start(self, node: SimulatedNode, args: dict) -> RunResult:
+        """Running the unit: hold a session, as the agent process would."""
+        from spark_pulse.agent.store import AgentIdentity
+        from spark_pulse.mock import agent_node
+
+        directory = Path(args["dir"])
+        try:
+            identity = AgentIdentity.load(directory)
         except RuntimeError as exc:
             return RunResult(1, "", str(exc))
         if identity is None:
             return RunResult(
-                2, "", f"This node has no identity at {args.dir}, so it must enroll."
+                2, "", f"This node has no identity at {directory}, so it must enroll."
             )
-        docker = self._docker_factory() if self._docker_factory else _default_docker()
-        agent = NodeAgent(identity, args.control, executor=LocalExecutor(docker))
-        task = asyncio.create_task(
-            agent.run_forever(), name=f"simulated-agent-{node.host}"
+        try:
+            stub = agent_node.AgentStub(identity, args["control"])
+            await stub.connect()
+        except Exception as exc:
+            return RunResult(1, "", f"the agent could not connect: {exc}")
+        self._agents[node.host] = stub
+        node._last_agent_session = stub
+        node._last_agent_task = asyncio.create_task(
+            _hold_session(stub), name=f"simulated-agent-{node.host}"
         )
-        self._agents[node.host] = agent
-        node._last_agent_task = task  # picked up by the unit that started it
         return RunResult(0, "", "")
+
+
+#: Kept as the old name so nothing outside has to change at once.
+InProcessAgentRunner = SimulatedAgentRunner
+
+
+def _parse_agent_argv(argv: list[str]) -> dict | None:
+    """The flags the installer passes, as a dict. Values only, no behaviour."""
+    wanted = {
+        "--control": "control",
+        "--enroll-target": "enroll_target",
+        "--token": "token",
+        "--token-file": "token_file",
+        "--trust-bundle": "trust_bundle",
+        "--pin": "pin",
+        "--dir": "dir",
+        "--name": "name",
+    }
+    found: dict = {}
+    index = 0
+    while index < len(argv):
+        item = argv[index]
+        if item in wanted:
+            if index + 1 >= len(argv):
+                return None
+            found[wanted[item]] = argv[index + 1]
+            index += 2
+            continue
+        index += 1
+    if "dir" not in found:
+        return None
+    return found
+
+
+async def _hold_session(stub) -> None:
+    """Keep a simulated node's session open until its unit is stopped."""
+    try:
+        await asyncio.Event().wait()
+    finally:
+        # Synchronous, because this runs while the task is being cancelled and
+        # a cancelled coroutine cannot reliably await.
+        stub.abandon()
 
 
 def _default_docker():

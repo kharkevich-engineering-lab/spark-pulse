@@ -45,3 +45,7 @@ htmlcov/
 # Rust agent build output
 agent/target/
 agent/agent-aarch64*
+
+# Built agent binaries and their build cache
+spark_pulse/agent/bin/
+.agent-build-cache/

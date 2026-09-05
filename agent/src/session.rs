@@ -55,17 +55,19 @@ const OUTBOX_DEPTH: usize = 256;
 type CancelFlag = Arc<AtomicBool>;
 
 pub struct Agent {
-    identity: AgentIdentity,
+    identity: Mutex<AgentIdentity>,
     target: String,
     executor: Arc<Executor>,
     heartbeat_interval: Duration,
     running: Arc<Mutex<HashMap<String, CancelFlag>>>,
+    node_id: String,
 }
 
 impl Agent {
     pub fn new(identity: AgentIdentity, target: String, executor: Arc<Executor>) -> Self {
         Self {
-            identity,
+            node_id: identity.meta.node_id.clone(),
+            identity: Mutex::new(identity),
             target,
             executor,
             heartbeat_interval: HEARTBEAT_INTERVAL,
@@ -79,7 +81,7 @@ impl Agent {
     }
 
     pub fn node_id(&self) -> &str {
-        &self.identity.meta.node_id
+        &self.node_id
     }
 
     /// Dial, hold, redial. Returns only when `stop` is signalled.
@@ -121,12 +123,17 @@ impl Agent {
     /// next dial picks it up. The window is weeks wide, so that is never
     /// urgent.
     async fn connect(&self) -> Result<Channel> {
+        let (bundle, certificate, key) = {
+            let identity = self.identity.lock().unwrap();
+            (
+                identity.trust_bundle_pem.clone(),
+                identity.certificate_pem.clone(),
+                identity.key_pem.clone(),
+            )
+        };
         let tls = ClientTlsConfig::new()
-            .ca_certificate(Certificate::from_pem(&self.identity.trust_bundle_pem))
-            .identity(TlsIdentity::from_pem(
-                &self.identity.certificate_pem,
-                &self.identity.key_pem,
-            ));
+            .ca_certificate(Certificate::from_pem(&bundle))
+            .identity(TlsIdentity::from_pem(&certificate, &key));
         Channel::from_shared(format!("https://{}", self.target))
             .with_context(|| format!("{} is not a usable target", self.target))?
             .tls_config(tls)
@@ -149,7 +156,7 @@ impl Agent {
         outbox
             .send(AgentMessage {
                 body: Some(AgentBody::Hello(Hello {
-                    node_id: self.identity.meta.node_id.clone(),
+                    node_id: self.node_id.clone(),
                     agent_version: crate::facts::AGENT_VERSION.to_string(),
                     facts: Some(self.executor.collect_facts().await),
                     known_epoch: self.executor.epoch(),
@@ -158,7 +165,7 @@ impl Agent {
             .await
             .context("queueing the Hello")?;
 
-        let mut client = NodeSessionClient::new(channel);
+        let mut client = NodeSessionClient::new(channel.clone());
         let mut inbound = client
             .session(ReceiverStream::new(rx))
             .await
@@ -175,12 +182,14 @@ impl Agent {
             Arc::clone(&self.executor),
             self.heartbeat_interval,
         ));
+        let renew = tokio::spawn(renewal_loop(channel, self.renewal_state()));
 
         let result = self.read_loop(&mut inbound, &outbox, stop).await;
 
         // Everything in flight is abandoned deliberately. A command whose
         // result cannot be delivered must not be reported as anything.
         beat.abort();
+        renew.abort();
         for (_, flag) in self.running.lock().unwrap().drain() {
             flag.store(true, Ordering::SeqCst);
         }
@@ -207,7 +216,7 @@ impl Agent {
                     tracing::info!(
                         cluster = %welcome.cluster_id,
                         epoch = welcome.epoch,
-                        node = %self.identity.meta.node_id,
+                        node = %self.node_id,
                         "session established"
                     );
                 }
@@ -299,4 +308,134 @@ fn now_unix() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+// ── Certificate renewal ─────────────────────────────────────────────────────
+
+/// Renewal fractions, matching `spark_pulse.agent.identity.renewal_delay`.
+///
+/// Jittered across a wide band rather than a fixed point, because a rack of
+/// Sparks enrolled in the same hour would otherwise all renew in the same
+/// minute ninety days later.
+const RENEWAL_FRACTION_MIN: f64 = 0.50;
+const RENEWAL_FRACTION_MAX: f64 = 0.80;
+
+/// After a failed renewal, before trying again. A node certificate is valid
+/// for ninety days, so there is a great deal of time to retry in — and no
+/// reason to hammer a control plane that is having a bad day.
+const RENEWAL_RETRY: Duration = Duration::from_secs(300);
+
+/// What the renewal task needs: where to write, and what it holds now.
+type Shared = Arc<Mutex<AgentIdentity>>;
+
+impl Agent {
+    fn renewal_state(&self) -> Option<Shared> {
+        // Only meaningful once we know when the certificate expires. An
+        // identity with no window recorded is one written before expiry was
+        // tracked; renewing on a guess would be worse than leaving it.
+        let identity = self.identity.lock().unwrap();
+        (identity.meta.not_after > 0.0).then(|| Arc::new(Mutex::new(identity.clone())))
+    }
+}
+
+/// Renew the node's certificate before it expires, over the channel the
+/// *current* certificate already authenticated.
+///
+/// That is what makes renewal need no token and no operator. Without it a node
+/// simply stops being able to connect ninety days after it was installed —
+/// silently, and long after anyone would connect the two events.
+///
+/// The new certificate is written to disk and takes effect on the next dial.
+/// The window is weeks wide, so that is never urgent, and reconnecting on
+/// purpose to pick it up would be a self-inflicted outage.
+async fn renewal_loop(channel: Channel, state: Option<Shared>) {
+    let Some(state) = state else { return };
+    loop {
+        let delay = {
+            let identity = state.lock().unwrap();
+            renewal_delay(identity.meta.not_before, identity.meta.not_after)
+        };
+        tokio::time::sleep(delay).await;
+        match renew_once(&channel, &state).await {
+            Ok(node_id) => tracing::info!(node = %node_id, "renewed certificate"),
+            Err(error) => {
+                tracing::warn!("certificate renewal failed: {error:#}");
+                tokio::time::sleep(RENEWAL_RETRY).await;
+            }
+        }
+    }
+}
+
+async fn renew_once(channel: &Channel, state: &Shared) -> Result<String> {
+    use crate::proto::enrollment_client::EnrollmentClient;
+    use crate::proto::RenewRequest;
+
+    let pair = crate::identity::build_csr(crate::identity::CSR_COMMON_NAME)?;
+    let issued = EnrollmentClient::new(channel.clone())
+        .renew(RenewRequest {
+            csr_pem: pair.csr_pem.clone().into_bytes(),
+            facts: None,
+        })
+        .await
+        .map_err(|status| anyhow::anyhow!("the control plane refused: {}", status.message()))?
+        .into_inner();
+
+    let mut identity = state.lock().unwrap();
+    // The pin is *checked*, not replaced. A renewal that arrives carrying a
+    // different trust bundle is the one thing a pin exists to catch, and
+    // adopting it would delete the protection at exactly the moment it
+    // mattered.
+    if !identity.verify_pin(&issued.trust_bundle_pem) {
+        anyhow::bail!(
+            "the trust bundle offered on renewal does not match the pin recorded \
+             at enrolment; refusing it"
+        );
+    }
+    identity.key_pem = pair.key_pem.into_bytes();
+    identity.certificate_pem = issued.certificate_pem;
+    identity.trust_bundle_pem = issued.trust_bundle_pem;
+    identity.meta.not_before = issued.not_before_unix as f64;
+    identity.meta.not_after = issued.not_after_unix as f64;
+    identity.meta.epoch = issued.epoch;
+    identity.save().context("writing the renewed identity")?;
+    Ok(identity.meta.node_id.clone())
+}
+
+/// How long to wait before renewing: jittered over 50–80% of the lifetime.
+///
+/// Never negative — a certificate already past its renewal point renews now.
+fn renewal_delay(not_before: f64, not_after: f64) -> Duration {
+    let lifetime = (not_after - not_before).max(0.0);
+    let fraction = rand::rng().random_range(RENEWAL_FRACTION_MIN..RENEWAL_FRACTION_MAX);
+    let renew_at = not_before + lifetime * fraction;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0);
+    Duration::from_secs_f64((renew_at - now).max(0.0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn renewal_lands_inside_the_certificates_life() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64();
+        let lifetime = 90.0 * 86_400.0;
+        for _ in 0..200 {
+            let delay = renewal_delay(now, now + lifetime).as_secs_f64();
+            assert!(delay >= lifetime * RENEWAL_FRACTION_MIN - 1.0, "{delay}");
+            assert!(delay <= lifetime * RENEWAL_FRACTION_MAX + 1.0, "{delay}");
+        }
+    }
+
+    #[test]
+    fn an_overdue_certificate_renews_now_rather_than_never() {
+        let long_ago = 1_000_000.0;
+        assert_eq!(renewal_delay(long_ago, long_ago + 10.0), Duration::ZERO);
+    }
 }

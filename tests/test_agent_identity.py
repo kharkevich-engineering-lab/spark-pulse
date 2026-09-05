@@ -377,7 +377,6 @@ def test_destroy_is_the_remove_action(tmp_path, ca):
 
 def test_a_renewal_carrying_a_different_bundle_is_refused(tmp_path, ca):
     """The one thing a pin exists to catch."""
-    from spark_pulse.agent import agent_pb2 as pb
 
     other = ident.CertificateAuthority.load_or_create(tmp_path / "other")
     pair = ident.build_csr()
@@ -391,10 +390,10 @@ def test_a_renewal_carrying_a_different_bundle_is_refused(tmp_path, ca):
         trust_bundle_pin=ca.trust_bundle_pin,
     )
     identity.save()
-    with pytest.raises(RuntimeError, match="does not match the pin"):
-        identity.update_from(
-            pb.Identity(
-                certificate_pem=issued.certificate_pem,
-                trust_bundle_pem=other.trust_bundle_pem,
-            )
-        )
+    # The check renewal makes before adopting anything. A renewal that arrives
+    # carrying a different trust bundle is the one thing a pin exists to
+    # catch, and adopting it would delete the protection at exactly the moment
+    # it mattered. The agent refuses it; this is the predicate it refuses on.
+    assert identity.verify_pin(identity.trust_bundle_pem)
+    assert not identity.verify_pin(other.trust_bundle_pem)
+    del issued

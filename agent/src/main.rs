@@ -42,7 +42,8 @@ use spark_pulse_agent::{enroll, executor, identity, session};
 #[command(
     name = "spark-pulse-agent",
     about = "Run the spark-pulse node agent.",
-    version
+    // spark-pulse's version, not the crate's — see `facts::AGENT_VERSION`.
+    version = spark_pulse_agent::facts::AGENT_VERSION
 )]
 struct Args {
     /// The control plane's session listener (mTLS).

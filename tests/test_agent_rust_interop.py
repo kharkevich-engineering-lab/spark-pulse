@@ -24,6 +24,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -917,5 +918,62 @@ async def test_a_pull_cancelled_before_it_starts_never_reaches_the_node(
             await asyncio.to_thread(
                 service.pull_image, PULL_IMAGE, None, 0.0, lambda: True
             )
+    finally:
+        await agent.stop()
+
+
+async def test_the_agent_renews_its_certificate_before_it_expires(
+    rust_agent, agent_server, tmp_path
+):
+    """Without this a node stops being able to connect ninety days after it
+    was installed — silently, and long after anyone would connect the two
+    events.
+
+    Renewal happens over the channel the *current* certificate already
+    authenticated, which is what makes it need no token and no operator. The
+    renewal point is 50–80% of the certificate's life, so it is forced here by
+    backdating the window rather than by waiting: the certificate stays valid
+    (mTLS still works) but its renewal point is already behind us.
+    """
+    enrolled = await enroll_with_rust(rust_agent, agent_server, tmp_path)
+    assert enrolled.returncode == 0, enrolled.stderr
+    directory = tmp_path / "identity"
+
+    meta_path = directory / "identity.json"
+    meta = json.loads(meta_path.read_text())
+    now = time.time()
+    meta["not_before"] = now - 89 * 86400  # issued nearly ninety days ago…
+    meta["not_after"] = now + 1 * 86400  # …and still valid, just barely
+    meta_path.write_text(json.dumps(meta))
+    before = (directory / "node.crt").read_bytes()
+    key_before = (directory / "node.key").read_bytes()
+
+    process = await asyncio.create_subprocess_exec(
+        str(rust_agent),
+        "--control",
+        agent_server.session_target(),
+        "--dir",
+        str(directory),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    agent = RunningAgent(process, enrolled.stdout.strip())
+    try:
+        for _ in range(200):
+            if (directory / "node.crt").read_bytes() != before:
+                break
+            if process.returncode is not None:
+                _, err = await process.communicate()
+                pytest.fail(f"the agent exited early:\n{err.decode()[-2000:]}")
+            await asyncio.sleep(0.05)
+        else:
+            pytest.fail("the certificate was not renewed within ten seconds")
+
+        # A new key as well as a new certificate: renewal is a fresh CSR, so a
+        # key that leaked before is not still in use after.
+        assert (directory / "node.key").read_bytes() != key_before
+        # The identity is the same. Renewal is not re-enrolment.
+        assert json.loads(meta_path.read_text())["node_id"] == agent.node_id
+        assert json.loads(meta_path.read_text())["not_after"] > meta["not_after"]
     finally:
         await agent.stop()

@@ -500,12 +500,7 @@ async def test_the_doctor_works_over_ssh_when_the_agent_is_unreachable(
     """The case the doctor exists for: the agent channel is gone."""
     node = make_node(tmp_path)
     report = await install(agent_server, agent_fleet, node, agent_bundle)
-    for unit in node.units.values():
-        task = unit.task
-        unit.task = None
-        unit.active = False
-        if task is not None:
-            task.cancel()
+    node.kill_agent()
     await wait_disconnected(agent_server, report.node_id)
 
     found = await diagnose(
