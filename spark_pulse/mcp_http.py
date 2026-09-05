@@ -8,6 +8,7 @@ The `spark-pulse mcp` CLI command still uses stdio mode.
 
 from __future__ import annotations
 
+import contextvars
 import json
 from typing import Any
 
@@ -278,11 +279,44 @@ TOOLS = [
 # ── Tool handlers ────────────────────────────────────────────────────────────
 
 
+#: The caller's own credentials, for the duration of one MCP request.
+#:
+#: Every tool is implemented by calling this app's REST API over loopback, so
+#: that MCP behaviour *is* REST behaviour. That call went out anonymous, which
+#: meant every tool answered 401 the moment ``auth_enabled`` was true — the
+#: MCP endpoint inherits the auth middleware, so the caller had been
+#: authenticated and then the work was done as nobody. Carrying the inbound
+#: request's ``Cookie`` and ``Authorization`` across the hop makes the loopback
+#: call the same principal as the request that provoked it, and no more: a
+#: caller the middleware refused never reaches here at all.
+_forwarded_headers: contextvars.ContextVar[dict[str, str]] = contextvars.ContextVar(
+    "mcp_forwarded_headers", default={}
+)
+
+#: Headers worth carrying over the loopback hop. Deliberately short — a
+#: wholesale copy would forward Host, Content-Length and the rest, which
+#: describe the *outer* request and would corrupt the inner one.
+_FORWARDED_HEADER_NAMES = ("cookie", "authorization")
+
+
+def forwarded_headers(headers: Any) -> dict[str, str]:
+    """The subset of ``headers`` an MCP tool call should carry inward."""
+    if not headers:
+        return {}
+    carried = {}
+    for name in _FORWARDED_HEADER_NAMES:
+        value = headers.get(name)
+        if value:
+            carried[name] = value
+    return carried
+
+
 async def _http(
     method: str, path: str, json_body: dict | None = None, params: dict | None = None
 ) -> Any:
     url = f"http://127.0.0.1:{config.webui_port}/api{path}"
-    async with httpx.AsyncClient(timeout=30) as client:
+    headers = _forwarded_headers.get()
+    async with httpx.AsyncClient(timeout=30, headers=headers) as client:
         if method == "GET":
             r = await client.get(url, params=params)
         elif method == "POST":
@@ -385,8 +419,15 @@ HANDLERS: dict[str, Any] = {
 MCP_PATH = config.mcp_path.strip("/")
 
 
-async def handle_mcp(request_json: dict) -> dict:
-    """Handle a single MCP JSON-RPC request."""
+async def handle_mcp(request_json: dict, *, headers: Any = None) -> dict:
+    """Handle a single MCP JSON-RPC request.
+
+    ``headers`` are the inbound request's, so a tool call reaches the REST API
+    as the caller that made it rather than anonymously. Optional, because the
+    stdio wrapper has no HTTP request to take them from — and in that mode
+    there is no session to forward.
+    """
+    _forwarded_headers.set(forwarded_headers(headers))
     method = request_json.get("method", "")
     params = request_json.get("params", {})
     req_id = request_json.get("id")

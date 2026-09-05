@@ -70,6 +70,17 @@ pub async fn copy_file(
     upload(docker, container, &directory, archive).await
 }
 
+/// Whether a path inside an archive would land outside the destination.
+///
+/// Absolute, or reaching upward through `..`. Used for member names *and* for
+/// link targets, because a link target that escapes escapes just as well.
+fn unsafe_path(path: &Path) -> bool {
+    path.is_absolute()
+        || path
+            .components()
+            .any(|c| c == std::path::Component::ParentDir)
+}
+
 /// Copy a directory tree, arriving as a gzipped tar, into a container.
 pub async fn copy_dir(
     docker: &Docker,
@@ -103,15 +114,38 @@ pub async fn copy_dir(
         // channel — but an agent unpacking as root is not where anyone should
         // be relying on that. Python uses tarfile's "data" filter for the same
         // reason; this is the same rule, stated.
-        if path.is_absolute()
-            || path
-                .components()
-                .any(|c| c == std::path::Component::ParentDir)
-        {
+        if unsafe_path(&path) {
             return Err(OpError::new(
                 "ValueError",
                 format!("the archive contains an unsafe path: {}", path.display()),
             ));
+        }
+        // A link's *target* escapes just as effectively as a member's name,
+        // and it is the half that is easy to forget: a symlink `x -> /etc`
+        // followed by a member `x/passwd` writes outside the destination
+        // however carefully the second name was checked. Python's tarfile
+        // "data" filter refuses these, and the comment above says this is the
+        // same rule — so it has to actually be the same rule.
+        let entry_type = entry.header().entry_type();
+        if entry_type.is_symlink() || entry_type.is_hard_link() {
+            let link = entry
+                .link_name()
+                .map_err(|error| {
+                    OpError::new("OSError", format!("reading a link target: {error}"))
+                })?
+                .map(|target| target.into_owned())
+                .unwrap_or_default();
+            if link.as_os_str().is_empty() || unsafe_path(&link) {
+                return Err(OpError::new(
+                    "ValueError",
+                    format!(
+                        "the archive contains a link that escapes the destination: \
+                         {} -> {}",
+                        path.display(),
+                        link.display()
+                    ),
+                ));
+            }
         }
         let mut header = entry.header().clone();
         let target = Path::new(&name).join(&path);
@@ -157,7 +191,8 @@ async fn upload(
 
 #[cfg(test)]
 mod tests {
-    use super::destination;
+    use super::{copy_dir, destination, unsafe_path};
+    use std::path::Path;
 
     #[test]
     fn a_destination_splits_into_a_directory_and_a_name() {
@@ -180,5 +215,69 @@ mod tests {
     fn a_destination_with_no_name_is_refused() {
         assert!(destination("/").is_err());
         assert!(destination("").is_err());
+    }
+
+    #[test]
+    fn a_path_that_escapes_the_destination_is_unsafe() {
+        assert!(unsafe_path(Path::new("/etc/passwd")));
+        assert!(unsafe_path(Path::new("../outside")));
+        assert!(unsafe_path(Path::new("mods/../../outside")));
+        assert!(!unsafe_path(Path::new("mods/run.sh")));
+        assert!(!unsafe_path(Path::new("./run.sh")));
+    }
+
+    /// A gzipped tar carrying one entry, built by hand so the test can put
+    /// things in it that a well-behaved producer never would.
+    fn archive_of(entries: Vec<tar::Header>, names: Vec<&str>) -> Vec<u8> {
+        let mut builder = tar::Builder::new(Vec::new());
+        for (mut header, name) in entries.into_iter().zip(names) {
+            header.set_cksum();
+            builder.append_data(&mut header, name, &[][..]).unwrap();
+        }
+        let raw = builder.into_inner().unwrap();
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        std::io::Write::write_all(&mut encoder, &raw).unwrap();
+        encoder.finish().unwrap()
+    }
+
+    fn symlink_header(target: &str) -> tar::Header {
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(tar::EntryType::Symlink);
+        header.set_size(0);
+        header.set_mode(0o777);
+        header.set_link_name(target).unwrap();
+        header
+    }
+
+    /// The rule the module docs claim — Python's tarfile "data" filter — was
+    /// only half implemented: member *names* were checked and link *targets*
+    /// were not. A symlink `x -> /etc` followed by a member `x/passwd` writes
+    /// outside the destination however carefully the second name was checked,
+    /// and this agent unpacks as root.
+    #[tokio::test]
+    async fn a_symlink_out_of_the_destination_is_refused() {
+        let docker = bollard::Docker::connect_with_defaults();
+        let Ok(docker) = docker else { return };
+        let tar_gz = archive_of(vec![symlink_header("/etc")], vec!["escape"]);
+
+        let error = copy_dir(&docker, "no-such-container", "/workspace/mod", &tar_gz)
+            .await
+            .expect_err("a link out of the tree must be refused");
+
+        assert_eq!(error.kind, "ValueError");
+        assert!(error.message.contains("escapes"), "{}", error.message);
+    }
+
+    #[tokio::test]
+    async fn a_symlink_climbing_out_with_dotdot_is_refused() {
+        let docker = bollard::Docker::connect_with_defaults();
+        let Ok(docker) = docker else { return };
+        let tar_gz = archive_of(vec![symlink_header("../../etc")], vec!["escape"]);
+
+        let error = copy_dir(&docker, "no-such-container", "/workspace/mod", &tar_gz)
+            .await
+            .expect_err("a link climbing out must be refused");
+
+        assert_eq!(error.kind, "ValueError");
     }
 }

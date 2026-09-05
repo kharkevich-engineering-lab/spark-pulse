@@ -32,7 +32,7 @@ from spark_pulse.routers import (
     engines as engines_router,
     preflight as preflight_router,
 )
-from spark_pulse.auth import AuthMiddleware, router as auth_router
+from spark_pulse.auth import AuthMiddleware, CsrfMiddleware, router as auth_router
 from spark_pulse.sse import router as sse_router
 from spark_pulse import tools
 from spark_pulse.tools import is_simulation
@@ -285,9 +285,14 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    # An explicit origin list, never "*". Starlette reflects the caller's own
+    # Origin back when the wildcard is combined with allow_credentials, so
+    # `allow_origins=["*"]` made every page the operator visits a fully
+    # privileged client of this control plane — able to stop deployments, read
+    # settings, and read the answers. See `config.cors_allowed_origins`.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=config.cors_allowed_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -295,6 +300,11 @@ def create_app() -> FastAPI:
 
     # Auth middleware (only active when auth is configured)
     app.add_middleware(AuthMiddleware)
+
+    # Cross-origin writes are refused before authentication is even consulted,
+    # because the CSRF case is precisely one where the browser *has* the
+    # operator's credentials. Added after AuthMiddleware so it runs first.
+    app.add_middleware(CsrfMiddleware)
 
     # API routes
     app.include_router(custom_files_router.router)
@@ -346,7 +356,7 @@ def create_app() -> FastAPI:
                     },
                     status_code=400,
                 )
-            result = await handle_mcp(body)
+            result = await handle_mcp(body, headers=request.headers)
             return JSONResponse(result)
 
         print(f"MCP server enabled at /{MCP_PATH}")

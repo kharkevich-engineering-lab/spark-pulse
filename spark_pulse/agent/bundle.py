@@ -236,9 +236,13 @@ def unpack_for_test(bundle: AgentBundle, destination: Path) -> Path:
 
 
 def _extract_all(tar: tarfile.TarFile, destination: Path) -> None:
+    root = destination.resolve()
     for member in tar.getmembers():
         target = (destination / member.name).resolve()
-        if not str(target).startswith(str(destination.resolve())):
+        # ``is_relative_to``, not ``startswith``: a string prefix test accepts
+        # ``/tmp/dest-evil`` for a destination of ``/tmp/dest``, because the
+        # separator is not part of the comparison.
+        if target != root and not target.is_relative_to(root):
             raise RuntimeError(f"refusing path traversal in bundle: {member.name}")
         target.parent.mkdir(parents=True, exist_ok=True)
         extracted = tar.extractfile(member)

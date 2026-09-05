@@ -57,7 +57,10 @@ def _load_user_settings() -> dict:
 def _save_user_settings(data: dict) -> None:
     from spark_pulse.tools.atomic_json import write_json_atomic  # see _save_secrets
 
-    write_json_atomic(_SETTINGS_PATH, data, indent=2)
+    # 0600, not the default 0644: ``oidc_client_secret`` is read from this file
+    # (see the property below), so it is a secrets file whenever OIDC is
+    # configured through settings rather than through secrets.json.
+    write_json_atomic(_SETTINGS_PATH, data, mode=0o600, indent=2)
 
 
 class _Config:
@@ -134,6 +137,37 @@ class _Config:
     @property
     def webui_port(self) -> int:
         return int(self._data.get("webui_port", 8100))
+
+    @property
+    def cors_allowed_origins(self) -> list[str]:
+        """Browser origins allowed to call this API cross-origin.
+
+        Never ``*``. Starlette reflects the request's own ``Origin`` back when
+        the wildcard is combined with ``allow_credentials``, which turns every
+        page the operator visits into a client of this control plane — able to
+        read deployments and to write settings, and able to *read the answers*.
+
+        The default covers the two origins the product actually has: the port
+        it serves the SPA on, and the Vite dev server that proxies to it.
+        ``cors_allowed_origins`` in settings.json replaces the list for anyone
+        serving the UI from somewhere else.
+        """
+        configured = self._data.get("cors_allowed_origins")
+        if isinstance(configured, list) and configured:
+            return [str(origin).rstrip("/") for origin in configured if origin]
+        port = self.webui_port
+        origins = [
+            f"http://localhost:{port}",
+            f"http://127.0.0.1:{port}",
+            # The dev server (`scripts/run-dev-server.sh`) proxies /api to the
+            # backend, so the browser's Origin is Vite's, not the backend's.
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+        ]
+        # De-duplicated but order-preserving: the webui port may be 3000.
+        return list(dict.fromkeys(origins))
 
     @property
     def image_registry(self) -> dict:

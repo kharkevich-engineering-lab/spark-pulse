@@ -328,6 +328,22 @@ async def open_node_session(
 # ── Rendering ───────────────────────────────────────────────────────────────
 
 
+def _single_line(value: str, what: str) -> str:
+    """``value`` with no way to become a second directive.
+
+    A systemd unit and a sudoers file are both line-oriented, so a newline in
+    an interpolated value is not a formatting problem — it is a new directive,
+    or a new sudo rule, written by whoever supplied the value. Node names and
+    remote usernames both reach these renderers, so both are checked here
+    rather than trusted because of where they came from.
+    """
+    if any(character in value for character in "\r\n\x00"):
+        raise BootstrapError(
+            f"{what} may not contain a newline or a null byte: {value!r}"
+        )
+    return value
+
+
 def render_unit(
     paths: InstallPaths, control_target: str, *, node_name: str = ""
 ) -> str:
@@ -345,7 +361,10 @@ def render_unit(
     """
     description = "spark-pulse node agent"
     if node_name:
-        description += f" ({node_name})"
+        description += f" ({_single_line(node_name, 'a node name')})"
+    _single_line(control_target, "a control target")
+    _single_line(paths.identity_dir, "an identity directory")
+    _single_line(paths.launcher, "a launcher path")
     return f"""[Unit]
 Description={description}
 Documentation=https://github.com/kharkevich-engineering-lab/spark-pulse
@@ -376,6 +395,10 @@ def render_sudoers(user: str, *, unit: str = UNIT_NAME) -> str:
     Only useful for a *system* install: a user unit needs no elevation to
     start or stop at all, which is why the user scope is preferred.
     """
+    # ``user`` is whatever the node's own ``whoami`` said, so it is checked
+    # before it becomes a line in a file that grants root.
+    _single_line(user, "a remote username")
+    _single_line(unit, "a unit name")
     verbs = ", ".join(
         f"/usr/bin/systemctl {verb} {unit}" for verb in ("start", "stop", "restart")
     )

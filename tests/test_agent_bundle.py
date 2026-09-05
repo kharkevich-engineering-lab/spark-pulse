@@ -155,3 +155,51 @@ def test_a_binary_is_located_by_triple_never_searched_for():
     # packaged binary for this triple, or a local cargo build.
     assert host_binary().is_file()
     assert host_target().endswith(("-linux-musl", "-apple-darwin"))
+
+
+def test_unpacking_refuses_a_sibling_that_merely_shares_a_prefix(tmp_path):
+    """The traversal guard compared strings, not paths.
+
+    ``str(target).startswith(str(destination))`` accepts ``/tmp/dest-evil``
+    for a destination of ``/tmp/dest``, because the separator is not part of
+    the comparison — so a member named ``../dest-evil/x`` escaped a check
+    written to stop exactly that.
+    """
+    import tarfile as tar_module
+
+    from spark_pulse.agent.bundle import AgentBundle, unpack_for_test
+
+    destination = tmp_path / "dest"
+    destination.mkdir()
+    (tmp_path / "dest-evil").mkdir()
+
+    buffer = io.BytesIO()
+    with tar_module.open(fileobj=buffer, mode="w:gz") as tar:
+        info = tar_module.TarInfo("../dest-evil/planted")
+        payload = b"planted"
+        info.size = len(payload)
+        tar.addfile(info, io.BytesIO(payload))
+
+    bundle = AgentBundle(
+        version="0", digest="0" * 64, data=buffer.getvalue(), target="t"
+    )
+
+    with pytest.raises(RuntimeError, match="path traversal"):
+        unpack_for_test(bundle, destination)
+    assert not (tmp_path / "dest-evil" / "planted").exists()
+
+
+def test_unpacking_an_ordinary_bundle_still_works(tmp_path):
+    """The guard must not refuse the layout every install depends on."""
+    from spark_pulse.agent.bundle import build_bundle, unpack_for_test
+
+    binary = tmp_path / "fake-agent"
+    binary.write_bytes(b"\x7fELF not really")
+    bundle = build_bundle(target="aarch64-unknown-linux-musl", binary=binary)
+
+    destination = unpack_for_test(bundle, tmp_path / "unpacked")
+
+    assert (
+        destination / "bin" / "spark-pulse-agent"
+    ).read_bytes() == binary.read_bytes()
+    assert json.loads((destination / "BUNDLE.json").read_text())["binary_size"] == 15

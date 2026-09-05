@@ -136,13 +136,40 @@ class TestOidcLoginFlow:
         assert "code" in query_params
         assert len(query_params["code"]) > 0
 
-    def test_callback_with_invalid_code(self, app_client):
-        """Callback with an invalid authorization code should fail."""
+    def test_callback_with_a_forged_state_is_refused_before_the_exchange(
+        self, app_client
+    ):
+        """A state we did not issue never reaches the token endpoint.
+
+        This used to assert 401/500 — the token exchange failing on a bad
+        code — because ``state`` was minted at ``/auth/login`` and then never
+        looked at again. That made the callback accept an authorization code
+        from anybody, which is login CSRF: an attacker completes the flow in
+        the victim's browser and the victim works inside the attacker's
+        account. The refusal now happens first, and 400 says why.
+        """
         resp = app_client.get(
             "/auth/callback?code=invalid-code&state=fake-state",
             follow_redirects=False,
         )
-        # Should return an error
+        assert resp.status_code == 400
+        assert "state" in resp.json()["detail"].lower()
+
+    def test_callback_with_our_own_state_reaches_the_exchange(self, app_client):
+        """And a state we *did* issue gets past the check to the real work.
+
+        Otherwise the fix above would be indistinguishable from a callback
+        that refuses everything.
+        """
+        from spark_pulse import auth
+
+        state = auth._issue_state()
+        resp = app_client.get(
+            f"/auth/callback?code=invalid-code&state={state}",
+            follow_redirects=False,
+        )
+        # Past the state check, and now failing on the code, which is the
+        # provider's business rather than ours.
         assert resp.status_code in [401, 500]
 
 
