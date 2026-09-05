@@ -2257,6 +2257,19 @@ def sweep_orphans(
     This is the other half of releasing on evidence: a node that was
     unreachable at teardown may answer later, and only its answer frees the
     ports the record has been holding. Returns how many orphans were cleared.
+
+    It also *finishes the teardown* rather than only watching for it. An
+    orphan is a rank that was asked to stop and never confirmed gone, and for
+    as long as ``RemoteNodeService.stop_container`` stopped a peer's container
+    without removing it, every multi-node teardown produced one: the container
+    sat in ``exited`` answering ``docker inspect``, so ``missing`` never came
+    and the record held its ports for good. Removal is fixed now, but the
+    records that leak was already writing are on disk, and nothing that only
+    *looks* at a stopped container will ever clear them. So when the node
+    answers and the container is still there, the stop is asked for again —
+    idempotent on a container that is already stopped, and the one thing that
+    turns an inherited orphan into a freed port range. That is the migration:
+    the first sweep after this change clears them, with no separate step.
     """
     services = services or rank_services(docker)
     records = _load_records()
@@ -2272,9 +2285,14 @@ def sweep_orphans(
         for orphan in orphans:
             name = str(orphan.get("container_name") or "")
             try:
-                gone = _is_confirmed_gone(
-                    services(str(orphan.get("node") or "")).get_container_status(name)
-                )
+                service = services(str(orphan.get("node") or ""))
+                status = service.get_container_status(name)
+                gone = _is_confirmed_gone(status)
+                if not gone and status.get("status") != "unknown":
+                    # The node answered and the container is still there:
+                    # retry the removal rather than wait for someone else.
+                    service.stop_container(name)
+                    gone = _is_confirmed_gone(service.get_container_status(name))
             except Exception as exc:
                 logger.debug("orphan %s still unverifiable: %s", name, exc)
                 gone = False

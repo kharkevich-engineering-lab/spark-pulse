@@ -16,6 +16,7 @@ from typing import Any
 from spark_pulse.tools.docker import (
     ContainerInfo,
     DockerService,
+    prepare_labels as prepare_labels,
     split_ref,
 )
 
@@ -413,8 +414,15 @@ class MockDockerService(DockerService):
 
         Simulation must not reach into a developer's home directory, so the
         paths are remembered for tests to assert on instead.
+
+        Stripped, because the real implementations strip: ``os.makedirs`` is
+        given ``str(raw).strip()`` and the SSH path quotes the stripped path,
+        so remembering the padded one would have made simulation the only
+        place where a trailing newline stayed part of a directory name.
         """
-        self.ensured.extend(str(path) for path in (paths or []) if str(path).strip())
+        self.ensured.extend(
+            str(path).strip() for path in (paths or []) if str(path).strip()
+        )
         return []
 
     def pull_image(

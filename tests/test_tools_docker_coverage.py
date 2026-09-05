@@ -914,13 +914,18 @@ class TestGetContainerStatus:
 
         assert service.get_container_status("ghost")["status"] == "missing"
 
-    def test_an_api_error_is_reported_as_an_error_not_as_missing(self, service, client):
-        """ "Missing" would make the health monitor reap a container that is fine."""
+    def test_an_api_error_is_reported_as_unknown_not_as_missing(self, service, client):
+        """ "Missing" would free the ports of a container that is fine.
+
+        ``unknown``, not ``error``: that is the name the remote path has always
+        given the third state, and the same fact must not read differently
+        depending only on which node the container is on.
+        """
         client.containers.get_error = docker_sdk.errors.APIError("500 Server Error")
 
         status = service.get_container_status("live")
 
-        assert status["status"] == "error"
+        assert status["status"] == "unknown"
         assert status["running"] is False
         assert "500 Server Error" in status["error"]
 

@@ -881,8 +881,11 @@ class TestRankStateIsThreeStates:
         nr.status("dep2")
 
         asked = [c["command"] for c in fleet.commands if c["host"] == PEERS[0]]
+        # One inspect, carrying both the state and the container id — the same
+        # two facts the SDK path returns from one call.
         assert asked == [
-            "docker inspect --format '{{json .State}}' spark-pulse-dep2-r1-g1"
+            "docker inspect --format '{{json .State}}\t{{.Id}}' "
+            "spark-pulse-dep2-r1-g1"
         ]
 
     def test_a_rank_whose_daemon_died_reads_unknown_not_stopped(self, fleet):
