@@ -29,11 +29,14 @@
 
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
 use clap::Parser;
 
-use spark_pulse_agent::{enroll, identity};
+use tokio::signal::unix::{signal, SignalKind};
+
+use spark_pulse_agent::{enroll, executor, identity, session};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -218,9 +221,30 @@ async fn run(args: Args) -> Result<()> {
         return Ok(());
     }
 
-    let _ = &args.control;
-    bail!(
-        "this build can enrol but cannot yet hold a session; run with \
-         --enroll-only. (Session support is the next commit.)"
-    )
+    let executor = Arc::new(executor::Executor::connect());
+    let agent = session::Agent::new(identity, args.control.clone(), executor);
+    tracing::info!(node = %agent.node_id(), control = %args.control, "agent starting");
+
+    // SIGTERM is what systemd sends on `stop` and on a restart during an
+    // upgrade, so it is handled rather than left to kill the process: an agent
+    // that is told to stop should close its stream, which the control plane
+    // reads as a clean end rather than as a node that vanished.
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    tokio::spawn(async move {
+        let mut term = match signal(SignalKind::terminate()) {
+            Ok(term) => term,
+            Err(error) => {
+                tracing::warn!(%error, "cannot listen for SIGTERM");
+                return;
+            }
+        };
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => tracing::info!("interrupted"),
+            _ = term.recv() => tracing::info!("terminated"),
+        }
+        let _ = tx.send(true);
+    });
+
+    agent.run_forever(rx).await;
+    Ok(())
 }

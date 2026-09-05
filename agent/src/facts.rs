@@ -67,18 +67,43 @@ pub fn read_boot_id() -> String {
     read_trimmed(BOOT_ID_PATH).unwrap_or_default()
 }
 
+/// `uname(2)`, which is what Python's `platform.uname()` and
+/// `socket.gethostname()` read underneath.
+///
+/// Read through `uname` rather than out of `/proc`, even though a node is
+/// always Linux: `/proc/sys/kernel/hostname` does not exist on a developer's
+/// machine, so a `/proc`-only reader reports an empty hostname there and an
+/// empty hostname *feeds the fingerprint's neighbours in the facts an operator
+/// reads*. A fact that is right on the node and wrong everywhere else is a
+/// fact nobody can test.
+fn uname() -> Option<libc::utsname> {
+    // SAFETY: uname fills a struct we own; it cannot fail for a valid pointer
+    // other than by returning non-zero, which is checked.
+    let mut info: libc::utsname = unsafe { std::mem::zeroed() };
+    (unsafe { libc::uname(&mut info) } == 0).then_some(info)
+}
+
+fn from_c(field: &[libc::c_char]) -> String {
+    let bytes: Vec<u8> = field
+        .iter()
+        .take_while(|c| **c != 0)
+        .map(|c| *c as u8)
+        .collect();
+    String::from_utf8_lossy(&bytes).to_string()
+}
+
 fn hostname() -> String {
-    read_trimmed("/proc/sys/kernel/hostname")
-        .or_else(|| std::env::var("HOSTNAME").ok().filter(|v| !v.is_empty()))
-        .unwrap_or_default()
+    match uname() {
+        Some(info) => from_c(&info.nodename),
+        None => std::env::var("HOSTNAME").unwrap_or_default(),
+    }
 }
 
 /// `"<system> <release>"`, matching Python's `platform.uname()` pair.
 fn kernel() -> String {
-    let system = read_trimmed("/proc/sys/kernel/ostype").unwrap_or_else(|| "Linux".into());
-    match read_trimmed("/proc/sys/kernel/osrelease") {
-        Some(release) => format!("{system} {release}"),
-        None => system,
+    match uname() {
+        Some(info) => format!("{} {}", from_c(&info.sysname), from_c(&info.release)),
+        None => String::new(),
     }
 }
 

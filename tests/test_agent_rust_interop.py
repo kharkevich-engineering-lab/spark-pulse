@@ -54,9 +54,7 @@ def rust_agent() -> Path:
         # CI job that *does* have a toolchain sets this, so a missing cargo
         # there is a broken job rather than a machine without Rust.
         if os.environ.get("SPARK_PULSE_REQUIRE_RUST"):
-            pytest.fail(
-                "SPARK_PULSE_REQUIRE_RUST is set but there is no cargo on PATH"
-            )
+            pytest.fail("SPARK_PULSE_REQUIRE_RUST is set but there is no cargo on PATH")
         pytest.skip("no cargo on PATH; the Rust agent cannot be built here")
     build = subprocess.run(
         [cargo, "build", "--quiet"],
@@ -102,13 +100,20 @@ async def enroll_with_rust(
     token_file = tmp_path / "token"
     token_file.write_text(overrides.pop("token", server.mint_token(name)) + "\n")
     args = [
-        "--control", server.session_target(),
-        "--enroll-target", server.enrollment_target(),
-        "--token-file", str(token_file),
-        "--trust-bundle", str(overrides.pop("bundle_path", bundle)),
-        "--pin", overrides.pop("pin", server.trust_bundle_pin),
-        "--dir", str(directory),
-        "--name", name,
+        "--control",
+        server.session_target(),
+        "--enroll-target",
+        server.enrollment_target(),
+        "--token-file",
+        str(token_file),
+        "--trust-bundle",
+        str(overrides.pop("bundle_path", bundle)),
+        "--pin",
+        overrides.pop("pin", server.trust_bundle_pin),
+        "--dir",
+        str(directory),
+        "--name",
+        name,
         "--enroll-only",
     ]
     args.extend(overrides.pop("extra", []))
@@ -318,3 +323,209 @@ async def test_a_partial_identity_directory_is_an_error_not_a_fresh_node(
     assert again.returncode != 0
     assert "partial agent identity" in again.stderr
     assert "node.crt" in again.stderr
+
+
+# ── The session ─────────────────────────────────────────────────────────────
+
+
+class RunningAgent:
+    """A Rust agent held open against the control plane, as a real one is."""
+
+    def __init__(self, process, node_id: str):
+        self.process = process
+        self.node_id = node_id
+
+    async def stop(self) -> int:
+        """Ask it to stop the way systemd does, and wait."""
+        if self.process.returncode is None:
+            self.process.terminate()
+        try:
+            await asyncio.wait_for(self.process.wait(), timeout=10)
+        except asyncio.TimeoutError:  # pragma: no cover — it should stop
+            self.process.kill()
+            await self.process.wait()
+        return self.process.returncode
+
+
+async def start_agent(
+    binary: Path, server, tmp_path: Path, *, name: str = "spark-rust"
+) -> RunningAgent:
+    """Enrol, then run — which is what the installer arranges on a node.
+
+    Enrolment happens under `--enroll-only` while the installer watches, and
+    the long-running process is then started with no token at all, so a
+    restart of the unit can never be the refused identity-plus-token case.
+    """
+    enrolled = await enroll_with_rust(binary, server, tmp_path, name=name)
+    assert enrolled.returncode == 0, enrolled.stderr
+    node_id = enrolled.stdout.strip()
+
+    process = await asyncio.create_subprocess_exec(
+        str(binary),
+        "--control",
+        server.session_target(),
+        "--dir",
+        str(tmp_path / "identity"),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    agent = RunningAgent(process, node_id)
+
+    for _ in range(200):  # 10s, in 50ms steps
+        if server.hub.is_connected(node_id):
+            return agent
+        if process.returncode is not None:
+            _, err = await process.communicate()
+            pytest.fail(f"the agent exited early:\n{err.decode()[-3000:]}")
+        await asyncio.sleep(0.05)
+    await agent.stop()
+    pytest.fail(f"{node_id} never appeared in the hub")
+
+
+async def test_the_agent_connects_and_the_hub_sees_it_healthy(
+    rust_agent, agent_server, tmp_path
+):
+    """Liveness *is* the command channel: one stream, one fact about it."""
+    from spark_pulse.agent.hub import Liveness
+
+    agent = await start_agent(rust_agent, agent_server, tmp_path)
+    try:
+        assert agent_server.hub.connected() == [agent.node_id]
+        assert agent_server.hub.liveness(agent.node_id) is Liveness.HEALTHY
+
+        snapshot = agent_server.hub.nodes()[0]
+        assert snapshot.node_id == agent.node_id
+        assert snapshot.agent_version
+        # The facts arrived on the Hello, before any command was sent.
+        assert snapshot.facts.hostname
+        assert snapshot.facts.kernel
+    finally:
+        await agent.stop()
+
+
+async def test_it_keeps_beating_so_the_node_does_not_go_suspect(
+    rust_agent, agent_server, tmp_path
+):
+    """A node is *suspect* at 15s of silence. This one must not be."""
+    from spark_pulse.agent.hub import Liveness
+
+    agent = await start_agent(rust_agent, agent_server, tmp_path)
+    try:
+        first = agent_server.hub._connections[agent.node_id].last_seen
+        # Two heartbeat intervals plus slack.
+        await asyncio.sleep(11)
+        later = agent_server.hub._connections[agent.node_id].last_seen
+        assert later > first, "no heartbeat arrived in eleven seconds"
+        assert agent_server.hub.liveness(agent.node_id) is Liveness.HEALTHY
+    finally:
+        await agent.stop()
+
+
+async def test_the_control_plane_can_ask_it_to_describe_itself(
+    rust_agent, agent_server, tmp_path
+):
+    """A whole command round trip, through the control plane's own API.
+
+    `NodeOperations` is what the rest of spark-pulse calls; driving the Rust
+    agent through it rather than through a bespoke client is what makes this a
+    test of the thing that ships.
+    """
+    from spark_pulse.agent.operations import NodeOperations
+
+    agent = await start_agent(rust_agent, agent_server, tmp_path)
+    try:
+        facts = await NodeOperations(
+            agent_server.hub, agent.node_id, timeout=20
+        ).get_facts()
+
+        assert facts.hostname
+        assert facts.agent_version
+        assert facts.cpu_count > 0
+        assert facts.memory_bytes > 0
+        # The fingerprint is what reimage detection compares on every beat, so
+        # an agent that could not compute one would make every node look new.
+        assert facts.hardware_fingerprint
+    finally:
+        await agent.stop()
+
+
+async def test_an_operation_it_cannot_do_is_a_failure_not_a_silence(
+    rust_agent, agent_server, tmp_path
+):
+    """The distinction the whole transport exists to keep.
+
+    This build implements `get_facts` and no other operation. Asking for one of
+    the others must come back as a *definite* failure from a reachable node —
+    `NodeOperationError` — and never as `NodeUnreachable`, which would mean the
+    outcome is unknown and would leave a caller holding a GPU it could release.
+    """
+    from spark_pulse.agent.errors import NodeOperationError, NodeUnreachable
+    from spark_pulse.agent.operations import NodeOperations
+
+    agent = await start_agent(rust_agent, agent_server, tmp_path)
+    try:
+        ops = NodeOperations(agent_server.hub, agent.node_id, timeout=20)
+        with pytest.raises(NodeOperationError) as caught:
+            await ops.image_exists("ghcr.io/example/engine:latest")
+
+        assert caught.value.error_type == "NotImplementedError"
+        assert "image_exists" in caught.value.error_message
+        assert not isinstance(caught.value, NodeUnreachable)
+        # And the node is still there. A refused command is not a lost node.
+        assert agent_server.hub.is_connected(agent.node_id)
+    finally:
+        await agent.stop()
+
+
+async def test_a_command_from_a_superseded_control_plane_is_refused(
+    rust_agent, agent_server, tmp_path
+):
+    """Fencing happens at the resource, not at a leader election.
+
+    The agent that owns the Docker daemon is the thing that refuses, so a
+    command issued by a control plane that has since been replaced cannot act
+    even if it is still in flight somewhere.
+    """
+    from spark_pulse.agent import agent_pb2 as pb
+
+    agent = await start_agent(rust_agent, agent_server, tmp_path)
+    try:
+        # The hub's epoch reached the agent on the Welcome. Anything older than
+        # that is a message from a control plane that has been superseded.
+        stale = pb.Command(
+            command_id="stale-1",
+            epoch=max(agent_server.hub.epoch - 1, 0),
+            get_facts=pb.GetFacts(),
+        )
+        assert (
+            stale.epoch < agent_server.hub.epoch
+        ), "the fixture needs an epoch there is something older than"
+
+        result = await agent_server.hub.call(agent.node_id, stale, timeout=20)
+
+        assert result.WhichOneof("outcome") == "failure"
+        assert result.failure.type == "StaleEpochError"
+        assert "older than" in result.failure.message
+        # Fencing is a refusal, not a disconnection: the node stays connected
+        # and will happily serve the *current* control plane's commands.
+        assert agent_server.hub.is_connected(agent.node_id)
+    finally:
+        await agent.stop()
+
+
+async def test_sigterm_ends_the_session_cleanly(rust_agent, agent_server, tmp_path):
+    """systemd sends SIGTERM on stop and on an upgrade restart.
+
+    An agent that ignored it would be killed, and the control plane would read
+    a node that was told to stop as a node that vanished — which is the state
+    that holds a rank's GPU rather than releasing it.
+    """
+    agent = await start_agent(rust_agent, agent_server, tmp_path)
+    code = await agent.stop()
+
+    assert code == 0, "SIGTERM should be a clean exit, not a kill"
+    for _ in range(100):
+        if not agent_server.hub.is_connected(agent.node_id):
+            break
+        await asyncio.sleep(0.05)
+    assert not agent_server.hub.is_connected(agent.node_id)
