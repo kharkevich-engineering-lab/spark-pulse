@@ -2,9 +2,11 @@
 
 Spark Pulse has three implementations of one node-bound container service:
 
-* ``DockerService`` — this machine, Docker SDK.
-* ``RemoteNodeService`` — one node: the docker CLI over SSH for a peer, the
-  local SDK when the node it was built for is this machine.
+* ``DockerService`` — a Docker daemon, through the SDK. On the control plane
+  this is what an agent's executor holds; here it is driven directly.
+* ``AgentNodeService`` — one node, over its agent: a real mTLS gRPC stream to
+  a real agent whose executor is a ``DockerService``. What the control plane
+  actually holds for every node, including its own.
 * ``MockDockerService`` — simulation mode, in memory.
 
 They are used interchangeably (the orchestrator does not know which one it
@@ -18,17 +20,27 @@ daemon. With the node fixed at construction there is nothing to pass, and both
 branches are exercised here.
 
 Each implementation is driven through a fake at its own boundary — a mocked
-docker SDK client, and the simulated docker-over-SSH transport that simulation
-mode itself uses — so the production code paths, not stand-ins for them, run.
+docker SDK client, in every case including the agent's, whose executor holds
+one. Nothing between the call and that client is a stand-in: the agent path
+crosses a real TLS handshake, a real gRPC stream, the real codec and the real
+hub, on a loop in a background thread, which is precisely the arrangement
+production runs.
 
 **All fifteen interface methods, not six.** This file used to exercise six of
 :data:`NODE_SERVICE_METHODS`; ``docs/transport-reexamined.md`` §5.1 audited the
 seam method by method and found thirty semantic divergences between the two
 real implementations, three of them live bugs, and **twenty-seven of the thirty
 in the nine methods with no behavioural test at all**. The whole interface is
-under contract now, and where two implementations do not agree the difference
-is asserted from both sides in :class:`TestDeclaredDifferences` with the reason
-it is kept, rather than skipped.
+under contract now.
+
+**Most of those divergences no longer exist**, and that is the point of the
+change that removed them rather than a happy accident: they were divergences
+between the Docker SDK and a second implementation that drove the docker *CLI*
+over SSH, and there is no second implementation of Docker any more. One
+``DockerService`` runs on each node, and the agent carries its return value
+back as payload. :class:`TestDeclaredDifferences` records what is left — and
+:class:`TestDivergencesThatNoLongerExist` records what went, so that
+reintroducing any of them fails here.
 :meth:`TestImplementationsAreDistinct.test_every_interface_method_has_a_behavioural_contract`
 is the ratchet: adding a method to the interface without exercising it here
 fails, by name.
@@ -36,10 +48,14 @@ fails, by name.
 
 from __future__ import annotations
 
+import asyncio
 import importlib
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -47,7 +63,6 @@ import pytest
 
 from spark_pulse.config import config
 from spark_pulse.mock.docker import MockDockerService, MockDockerClient
-from spark_pulse.mock.node_service import SimulatedDockerSSHClient
 from spark_pulse.tools.docker import (
     ContainerInfo,
     ContainerMetadata,
@@ -70,10 +85,11 @@ from spark_pulse.tools.labels import (
     ROLE_LABEL,
     WORLD_SIZE_LABEL,
 )
+from spark_pulse.agent.errors import NodeOperationError, NodeUnreachable
+from spark_pulse.agent.sync_service import AgentNodeService
 from spark_pulse.tools.node_service import (
     NODE_SERVICE_METHODS,
     Node,
-    RemoteNodeService,
     control_node,
     peer_node,
 )
@@ -81,7 +97,6 @@ from spark_pulse.tools.reconciliation import (
     _reconcile_clusters_real,
     _reconcile_deployments_real,
 )
-from spark_pulse.tools.ssh import SSHError, SSHResult
 
 # pytest-env forces SIMULATION_MODE=1, so the package attribute
 # ``spark_pulse.tools.docker`` is the mock re-export. ``copy_to_container`` is
@@ -244,10 +259,10 @@ def _fake_sdk_client() -> MagicMock:
 
 PEER_ADDRESS = "10.0.0.2"
 
-
-def _simulated_ssh() -> SimulatedDockerSSHClient:
-    """The docker-over-SSH transport simulation mode ships, seeded with IMAGE."""
-    return SimulatedDockerSSHClient(images={IMAGE: IMAGE_SIZE})
+NODES = {
+    "self": control_node(address="127.0.0.1"),
+    "peer": peer_node(PEER_ADDRESS),
+}
 
 
 def _mock_service(_node: Node):
@@ -262,25 +277,127 @@ def _sdk_service(_node: Node):
     return DockerService(client=_fake_sdk_client())
 
 
-def _remote_service(node: Node):
-    """The real node-bound service: SSH for a peer, the SDK for this machine."""
-    return RemoteNodeService(
-        node,
-        ssh_client=_simulated_ssh(),
-        docker_service=DockerService(client=_fake_sdk_client()),
-    )
+class AgentFleet:
+    """A control plane and one agent per node, on a loop in another thread.
+
+    Built once for the module because a TLS handshake and an enrolment per
+    test would dominate the run. What is *not* shared is state: every test
+    gets a brand new ``DockerService`` over a brand new fake SDK client behind
+    each agent, installed by :meth:`fresh`. The transport is reused; nothing
+    that answers a question is.
+
+    The loop runs on its own thread and the tests call from the main one,
+    which is not a testing convenience either — it is exactly how production
+    runs, and it is the arrangement the sync bridge exists to survive.
+    """
+
+    def __init__(self):
+        self.loop = asyncio.new_event_loop()
+        self.thread = threading.Thread(
+            target=self.loop.run_forever, name="contract-loop", daemon=True
+        )
+        self.thread.start()
+        self.directory = tempfile.mkdtemp(prefix="contract-agents-")
+        self.server = None
+        self.agents: dict[str, object] = {}
+        self.backing: dict[str, DockerService] = {}
+        self._submit(self._start())
+
+    def _submit(self, coro):
+        return asyncio.run_coroutine_threadsafe(coro, self.loop).result(30)
+
+    async def _start(self) -> None:
+        from spark_pulse.agent.hub import AgentHub
+        from spark_pulse.agent.server import ControlPlaneServer
+
+        self.server = ControlPlaneServer(
+            directory=Path(self.directory) / "control",
+            host="127.0.0.1",
+            session_port=0,
+            enrollment_port=0,
+            hub=AgentHub(cluster_id="contract", epoch=1),
+        )
+        await self.server.start()
+        for name in NODES:
+            await self._join(name)
+
+    async def _join(self, name: str) -> None:
+        from spark_pulse.agent.executor import LocalExecutor
+        from spark_pulse.agent.node_agent import NodeAgent, enroll
+
+        identity = await enroll(
+            self.server.enrollment_target(),
+            self.server.mint_token(name),
+            trust_bundle_pem=self.server.trust_bundle_pem,
+            trust_bundle_pin=self.server.trust_bundle_pin,
+            directory=Path(self.directory) / name,
+            requested_name=name,
+            docker_service=DockerService(client=_fake_sdk_client()),
+        )
+        agent = NodeAgent(
+            identity,
+            self.server.session_target(),
+            executor=LocalExecutor(DockerService(client=_fake_sdk_client())),
+            heartbeat_interval=0.2,
+        )
+        task = asyncio.create_task(agent.run_forever(), name=f"contract-{name}")
+        await agent.wait_connected(20)
+        self.agents[name] = (agent, task)
+
+    def fresh(self, name: str) -> AgentNodeService:
+        """A service for ``name`` over an agent with a clean Docker behind it."""
+        agent, _task = self.agents[name]
+        backing = DockerService(client=_fake_sdk_client())
+        agent.executor._docker = backing
+        self.backing[name] = backing
+        service = AgentNodeService(
+            self.server.hub, agent.node_id, self.loop, timeout=20
+        )
+        service._fleet_name = name
+        service._fleet = self
+        return service
+
+    def close(self) -> None:
+        async def _shutdown():
+            for agent, task in self.agents.values():
+                await agent.stop()
+                task.cancel()
+            await self.server.stop(grace=0)
+
+        try:
+            self._submit(_shutdown())
+        finally:
+            self.loop.call_soon_threadsafe(self.loop.stop)
+            self.thread.join(timeout=10)
+            shutil.rmtree(self.directory, ignore_errors=True)
+
+
+_FLEET: AgentFleet | None = None
+
+
+def _agent_service(node: Node):
+    """The node-bound service the control plane really holds: over the agent."""
+    assert _FLEET is not None, "the agent fleet fixture did not run"
+    return _FLEET.fresh("self" if node.is_self else "peer")
 
 
 IMPLEMENTATIONS = {
     "mock": _mock_service,
     "docker-sdk": _sdk_service,
-    "remote-ssh": _remote_service,
+    "agent": _agent_service,
 }
 
-NODES = {
-    "self": control_node(address="127.0.0.1"),
-    "peer": peer_node(PEER_ADDRESS),
-}
+
+@pytest.fixture(scope="module", autouse=True)
+def agent_fleet():
+    """Stand the agents up once for the module, and take them down after."""
+    global _FLEET
+    _FLEET = AgentFleet()
+    try:
+        yield _FLEET
+    finally:
+        _FLEET.close()
+        _FLEET = None
 
 
 @pytest.fixture(params=sorted(IMPLEMENTATIONS), ids=sorted(IMPLEMENTATIONS))
@@ -299,15 +416,6 @@ def node(request) -> Node:
 def service(implementation, node):
     """One container service, bound to one node. No method takes a host."""
     return implementation(node)
-
-
-class _MkdirRefused(SimulatedDockerSSHClient):
-    """A node whose ``mkdir -p`` is refused, everything else intact."""
-
-    def _exec_one(self, host: str, command: str):
-        if command.strip().startswith("mkdir"):
-            return SSHResult(returncode=1, stdout="", stderr="Permission denied")
-        return super()._exec_one(host, command)
 
 
 @pytest.fixture
@@ -336,10 +444,18 @@ def docker_cp(monkeypatch):
     the SDK, so this is the one method whose local implementation needs a
     process stubbed rather than a client injected.
     """
-    calls: list[list[str]] = []
+    calls: list[dict] = []
 
     def _run(args, **_kwargs):
-        calls.append(list(args))
+        # Snapshot the source *now*: the agent stages a copied tree in a
+        # temporary directory and removes it as soon as ``docker cp`` returns,
+        # so a test that looks afterwards finds nothing and would pass whether
+        # the tree arrived or not.
+        source = Path(args[2]) if len(args) > 2 else None
+        tree: list[str] = []
+        if source is not None and source.is_dir():
+            tree = sorted(str(child.relative_to(source)) for child in source.rglob("*"))
+        calls.append({"args": list(args), "tree": tree})
         return subprocess.CompletedProcess(args, returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(
@@ -360,9 +476,15 @@ def docker_cp(monkeypatch):
 
 
 def _backing_service(service):
-    """The :class:`DockerService` behind ``service``, or None for a peer."""
-    if isinstance(service, RemoteNodeService):
-        return None if not service.is_local else service._local
+    """The :class:`DockerService` that will actually answer ``service``.
+
+    For the agent that is the executor's Docker on the far side of the
+    stream — reachable here because both ends are in this process, which is
+    the whole reason the agent was built as an object with a stream rather
+    than a process you have to deploy before you can observe it.
+    """
+    if isinstance(service, AgentNodeService):
+        return service._fleet.backing[service._fleet_name]
     return service
 
 
@@ -373,9 +495,6 @@ def _exit_container(service, name: str) -> None:
     ``docker rm`` — the state that used to be permanent on every peer.
     """
     backing = _backing_service(service)
-    if backing is None:
-        service._ssh.containers_on(service.node.address)[name]["State"] = "exited"
-        return
     container = backing.client.containers.get(name)
     container.status = "exited"
     container.attrs["State"] = {"Status": "exited", "Running": False}
@@ -384,9 +503,6 @@ def _exit_container(service, name: str) -> None:
 def _stop_answering(service) -> None:
     """Make the node's daemon stop answering, without unmaking the node."""
     backing = _backing_service(service)
-    if backing is None:
-        service._ssh.daemon_down_hosts.add(service.node.address)
-        return
 
     def _refuse(*_args, **_kwargs):
         raise RuntimeError("Cannot connect to the Docker daemon at unix://...")
@@ -472,19 +588,22 @@ class TestImplementationsAreDistinct:
         ]
         assert len({id(service) for service in built}) == 6
 
-    def test_the_remote_service_takes_a_different_branch_per_node(self):
-        """The self node and the peer are not the same code path.
+    def test_the_control_node_is_reached_the_same_way_as_a_peer(self):
+        """There is no local branch left to leave untested, because there is none.
 
-        This is the assertion the old suite could not make: it hardcoded a
-        remote address, so the local branch never ran and the empty-host
-        default was never tested at all.
+        The old suite could not assert this: the remote service had a
+        ``is_local`` branch, the suite hardcoded a remote address, so the
+        local branch never ran and the empty-host default was never tested at
+        all. Now the control node runs an agent for itself and is reached over
+        loopback exactly as a peer is — same class, same transport, different
+        node id. A reader who cannot tell which of these is the control node
+        from the code that talks to it is reading it correctly.
         """
-        on_self = _remote_service(NODES["self"])
-        on_peer = _remote_service(NODES["peer"])
+        on_self = _agent_service(NODES["self"])
+        on_peer = _agent_service(NODES["peer"])
 
-        assert on_self.is_local is True
-        assert on_peer.is_local is False
-        assert on_self.node != on_peer.node
+        assert type(on_self) is type(on_peer) is AgentNodeService
+        assert on_self.node_id != on_peer.node_id
 
     def test_every_implementation_offers_the_whole_interface(self):
         """Signature-identical, which is what let the adapters be deleted."""
@@ -681,17 +800,24 @@ class TestRestartPolicy:
         kwargs = client.containers.run.call_args.kwargs
         assert kwargs["restart_policy"] == {"Name": "no"}
 
-    def test_the_ssh_path_asks_for_no_restart(self):
-        ssh = _simulated_ssh()
-        RemoteNodeService(NODES["peer"], ssh_client=ssh).run_container(
+    def test_a_peer_asks_for_no_restart_too(self):
+        """It is the same code deciding, on the node, so it cannot differ.
+
+        Kept as an assertion rather than deleted as tautological: the reason
+        it cannot differ is that there is one implementation, and this is
+        where that stops being true if someone adds a second.
+        """
+        service = _agent_service(NODES["peer"])
+        service.run_container(
             image=IMAGE,
             name="contract-restart-remote",
             env_vars={},
             metadata=_metadata("contract-restart-remote"),
         )
 
-        run = next(c["command"] for c in ssh.commands if " run " in c["command"])
-        assert "--restart no" in run
+        backing = _backing_service(service)
+        kwargs = backing.client.containers.run.call_args.kwargs
+        assert kwargs["restart_policy"] == {"Name": "no"}
 
 
 class TestImageContract:
@@ -807,8 +933,8 @@ class TestReconciliationContract:
         assert [d["id"] for d in deployments] == ["contract-reconcile-mock"]
 
     def test_reconcile_finds_a_cluster(self):
-        """A cluster container started over SSH is reconciled from its labels."""
-        remote = _remote_service(NODES["peer"])
+        """A cluster container on a peer is reconciled from its labels."""
+        remote = _agent_service(NODES["peer"])
         remote.run_container(
             image=IMAGE,
             name="contract-cluster-head",
@@ -1157,10 +1283,10 @@ class TestMemorySwapDerivation:
         kwargs = client.containers.run.call_args.kwargs
         assert kwargs["memswap_limit"] == int(110 * 1024 * 1024 * 1024)
 
-    def test_the_ssh_path_derives_the_same_swap_limit(self):
+    def test_a_peer_derives_the_same_swap_limit(self):
         """It used to derive none, so a peer's rank ran with swap unlimited."""
-        ssh = _simulated_ssh()
-        RemoteNodeService(NODES["peer"], ssh_client=ssh).run_container(
+        service = _agent_service(NODES["peer"])
+        service.run_container(
             image=IMAGE,
             name="contract-swap-remote",
             env_vars={},
@@ -1168,9 +1294,9 @@ class TestMemorySwapDerivation:
             memory_limit_gb=100,
         )
 
-        run = next(c["command"] for c in ssh.commands if " run " in c["command"])
-        assert "--memory 100g" in run
-        assert f"--memory-swap {int(110 * 1024 * 1024 * 1024)}" in run
+        kwargs = _backing_service(service).client.containers.run.call_args.kwargs
+        assert kwargs["mem_limit"] == 100 * 1024 * 1024 * 1024
+        assert kwargs["memswap_limit"] == int(110 * 1024 * 1024 * 1024)
 
 
 class TestStopRemoves:
@@ -1530,10 +1656,18 @@ class TestCopyIntoContainerContract:
             service.copy_to_container("contract-cp-dir", local_tree, "/tmp/mod") is True
         )
 
-    def test_a_directory_travels_over_the_recursive_transport(self, local_tree):
-        """The peer path, at the transport: ``copy_dir``, never ``copy``."""
-        ssh = _simulated_ssh()
-        service = RemoteNodeService(NODES["peer"], ssh_client=ssh)
+    def test_a_directory_arrives_on_a_peer_with_its_subdirectories(
+        self, local_tree, docker_cp
+    ):
+        """The shape that used to fail, asserted where it used to be lost.
+
+        The peer path staged with ``scp`` and no ``-r``, so a mod directory
+        never arrived and its ``run.sh`` failed on the far side of a fan-out.
+        The bytes now travel as a gzipped tar in the command itself, so what
+        is worth asserting is not a flag but the tree: every file, at its own
+        relative path, present on the node before ``docker cp`` runs.
+        """
+        service = _agent_service(NODES["peer"])
         service.run_container(
             image=IMAGE,
             name="contract-cp-recursive",
@@ -1545,21 +1679,28 @@ class TestCopyIntoContainerContract:
             "contract-cp-recursive", local_tree, "/tmp/mod"
         )
 
-        assert ssh.copies[-1]["recursive"] is True
+        assert docker_cp[-1]["tree"] == ["run.sh", "templates", "templates/chat.jinja"]
 
-    def test_a_file_travels_over_the_plain_transport(self, local_file):
-        ssh = _simulated_ssh()
-        service = RemoteNodeService(NODES["peer"], ssh_client=ssh)
+    def test_a_file_arrives_on_a_peer_as_a_file(self, local_file, docker_cp):
+        """A single file is not tarred, and its mode goes with it.
+
+        The thing most often copied this way is a serve script, which has to
+        be executable when it lands.
+        """
+        service = _agent_service(NODES["peer"])
         service.run_container(
             image=IMAGE,
             name="contract-cp-plain",
             env_vars={},
             metadata=_metadata("contract-cp-plain"),
         )
+        Path(local_file).chmod(0o755)
 
         assert service.copy_to_container("contract-cp-plain", local_file, "/tmp/f")
 
-        assert ssh.copies[-1]["recursive"] is False
+        staged = Path(docker_cp[-1]["args"][2])
+        assert docker_cp[-1]["tree"] == []
+        assert staged.name == "launch.sh"
 
 
 # ── Where the implementations differ, deliberately ──────────────────────────
@@ -1571,202 +1712,27 @@ class TestDeclaredDifferences:
     A contract test that skipped these would be a contract test that let them
     drift. Every one of them is asserted from both sides instead, so if either
     side changes, this file says so.
+
+    There are two left of the seven this class once held. The other five are
+    in :class:`TestDivergencesThatNoLongerExist`.
     """
 
-    def test_exec_timeout_binds_a_peer_and_is_advisory_locally(self):
-        """The SDK's exec has no per-call deadline; ``ssh`` does.
-
-        Kept because the argument is real on one transport and unavailable on
-        the other, and dropping it from the signature would mean a caller
-        could not bound a remote exec at all. ``DockerService`` documents the
-        asymmetry in its own docstring.
-        """
-        ssh = _simulated_ssh()
-        remote = RemoteNodeService(NODES["peer"], ssh_client=ssh)
-        remote.run_container(
-            image=IMAGE,
-            name="contract-timeout",
-            env_vars={},
-            metadata=_metadata("contract-timeout"),
-        )
-        remote.exec_in_container("contract-timeout", ["true"], timeout=7)
-        assert ssh.commands[-1]["timeout"] == 7
-
-        client = _fake_sdk_client()
-        local = DockerService(client=client)
-        local.run_container(
-            image=IMAGE,
-            name="contract-timeout",
-            env_vars={},
-            metadata=_metadata("contract-timeout"),
-        )
-        local.exec_in_container("contract-timeout", ["true"], timeout=7)
-        assert (
-            "timeout"
-            not in client.containers.get("contract-timeout").exec_run.call_args.kwargs
-        )
-
-    def test_exec_on_a_container_that_is_not_there(self):
-        """The SDK raises; the CLI returns a failed result.
-
-        Kept because both callers — ``_apply_mods`` and ``_launch_rank`` —
-        already fail the deploy on either, and turning the SDK's ``NotFound``
-        into a synthetic exit code would invent a return code Docker never
-        produced.
-        """
-        with pytest.raises(Exception):
-            DockerService(client=_fake_sdk_client()).exec_in_container(
-                "contract-nothing", ["true"]
-            )
-
-        remote = RemoteNodeService(NODES["peer"], ssh_client=_simulated_ssh())
-        result = remote.exec_in_container("contract-nothing", ["true"])
-        assert isinstance(result, ExecResult)
-        assert result.ok is False
-
-    def test_pull_progress_is_per_layer_locally_and_terminal_on_a_peer(self):
-        """``docker pull`` over ssh is one blocking command with no stream.
-
-        Kept, and documented on the method: fetch-once on the control node
-        followed by a fan-out is the plan's answer, and it is later work. What
-        is *not* kept is the cancel: see
-        :class:`TestPullCancellationContract`.
-        """
-        seen_local: list[dict] = []
-        DockerService(client=_fake_sdk_client()).pull_image(
-            MISSING_IMAGE, seen_local.append, interval=0
-        )
-        assert len(seen_local) > 1
-        assert seen_local[-1]["layers"] == len(FAKE_LAYERS)
-
-        seen_remote: list[dict] = []
-        RemoteNodeService(NODES["peer"], ssh_client=_simulated_ssh()).pull_image(
-            MISSING_IMAGE, seen_remote.append, interval=0
-        )
-        assert len(seen_remote) == 1
-        assert seen_remote[0]["layers"] == 0
-        assert seen_remote[0]["percent"] == 100.0
-
-    def test_ensure_directories_cannot_attribute_a_failure_on_a_peer(self, tmp_path):
-        """One ``mkdir -p`` for the whole list, so one answer for all of them.
-
-        Kept because the alternative is one round trip per cache directory on
-        a path that runs before every deploy, and the caller treats the result
-        as a warning either way: docker will still start, it will just have
-        invented the bind source as root.
-        """
-        blocker = tmp_path / "a-file"
-        blocker.write_text("not a directory")
-        local = DockerService(client=_fake_sdk_client())
-
-        failed = local.ensure_directories([str(tmp_path / "fine"), str(blocker / "no")])
-
-        assert failed == [str(blocker / "no")]
-        assert (tmp_path / "fine").is_dir()
-
-        remote = RemoteNodeService(NODES["peer"], ssh_client=_MkdirRefused())
-        wanted = ["/opt/one", "/opt/two"]
-        assert remote.ensure_directories(wanted) == wanted
-
-    def test_a_label_value_with_a_comma_does_not_survive_docker_ps(self):
-        """Docker's own listing format, not ours.
-
-        ``docker ps`` renders every label into one comma-separated string, so
-        a value containing a comma cannot be parsed back out of it. Kept
-        because the fix is not a parser — it is ``docker inspect`` per
-        container, which is the Engine-API unification
-        ``docs/transport-reexamined.md`` §5.1 recommends and this change
-        deliberately does not attempt. Nothing spark-pulse writes contains a
-        comma today; this is here so that when something does, a test says so.
-        """
-        metadata = _metadata("contract-comma", recipe="qwen3,awq")
-
-        local = DockerService(client=_fake_sdk_client())
-        local.run_container(
-            image=IMAGE, name="contract-comma", env_vars={}, metadata=metadata
-        )
-        assert local.list_managed_containers()[0].metadata.recipe == "qwen3,awq"
-
-        remote = RemoteNodeService(NODES["peer"], ssh_client=_simulated_ssh())
-        remote.run_container(
-            image=IMAGE,
-            name="contract-comma",
-            env_vars={},
-            metadata=_metadata("contract-comma", recipe="qwen3,awq"),
-        )
-        assert remote.list_managed_containers()[0].metadata.recipe == "qwen3"
-
-    def test_a_node_that_cannot_be_reached_raises_where_a_daemon_returns_false(self):
-        """``image_exists`` is False for "not there" and raises for "cannot ask".
-
-        There is no local analogue of an unreachable node, so this is not two
-        answers to one question: a daemon that refuses is ``False`` on both
-        paths, and only the peer has a third case at all. Kept because the
-        alternative — swallowing the transport failure into ``False`` — is the
-        inference ``list_managed_containers`` was just cured of.
-        """
-        ssh = _simulated_ssh()
-        remote = RemoteNodeService(NODES["peer"], ssh_client=ssh)
-        assert remote.image_exists(IMAGE) is True
-
-        ssh.daemon_down_hosts.add(PEER_ADDRESS)
-        assert remote.image_exists(IMAGE) is False
-
-        ssh.daemon_down_hosts.clear()
-        ssh.fail_hosts.add(PEER_ADDRESS)
-        with pytest.raises(SSHError):
-            remote.image_exists(IMAGE)
-
-    def test_an_attached_run_is_not_a_shape_either_service_supports(self):
+    def test_an_attached_run_is_not_a_shape_any_service_supports(self):
         """``detach=False`` is on the signature and is not honoured anywhere.
 
         Recorded rather than fixed. The SDK's ``containers.run(detach=False)``
-        returns the container's *logs*, not a container, so the local path's
-        ``container.id`` would fail; the CLI path reads the first line of a
-        foreground ``docker run``'s output as an id, which it is not. Nothing
-        in spark-pulse passes it — every caller starts an idle container and
-        execs into it — so both paths assume detached. Making them agree means
-        either implementing an attached run twice or dropping the argument, and
-        the argument is part of ``DockerService``'s published signature.
+        returns the container's *logs*, not a container, so the code that
+        reads ``container.id`` afterwards would fail. Nothing in spark-pulse
+        passes it — every caller starts an idle container and execs into it —
+        so every path assumes detached. Making them agree means either
+        implementing an attached run or dropping the argument, and the
+        argument is part of ``DockerService``'s published signature.
         """
         import inspect
 
         for factory in IMPLEMENTATIONS.values():
             signature = inspect.signature(factory(NODES["peer"]).run_container)
             assert signature.parameters["detach"].default is True
-
-    def test_the_simulated_transport_is_faithful_where_it_used_to_be_kind(self):
-        """The four simulator properties that were hiding real bugs.
-
-        A simulation that is kinder than the thing it stands in for cannot
-        catch a bug in it, and this one was kind in exactly the places the seam
-        was broken: ``docker stop`` deleted the container, so the missing
-        ``docker rm`` was invisible; ``scp`` accepted a directory, so the
-        missing ``-r`` was invisible; ``&&`` was truncated, so a two-command
-        teardown could not be told from a one-command one.
-        """
-        ssh = _simulated_ssh()
-        ssh.exec(PEER_ADDRESS, "docker run -d --name sim img")
-
-        # 1. Stop keeps the container; only rm takes it away.
-        ssh.exec(PEER_ADDRESS, "docker stop -t 1 sim")
-        assert ssh.containers_on(PEER_ADDRESS)["sim"]["State"] == "exited"
-        assert ssh.exec(PEER_ADDRESS, "docker inspect sim").ok
-
-        # 2. Clauses run in order, and a failure short-circuits the rest.
-        assert ssh.exec(PEER_ADDRESS, "docker rm -f sim && docker inspect sim").ok is (
-            False
-        )
-        assert "sim" not in ssh.containers_on(PEER_ADDRESS)
-
-        # 3. An ``&&`` inside a quoted ``bash -lc`` is one argument, not two
-        #    commands — which is how ``_apply_mods`` runs every mod.
-        ssh.exec(PEER_ADDRESS, "docker run -d --name sim2 img")
-        inner = ssh.exec(
-            PEER_ADDRESS, "docker exec sim2 bash -lc 'cd /mods/m && bash run.sh'"
-        )
-        assert inner.ok
-        assert "bash run.sh" in inner.stdout
 
     def test_the_simulated_service_reports_every_copy_as_done(self, tmp_path):
         """``MockDockerService.copy_to_container`` is unconditionally True.
@@ -1779,3 +1745,127 @@ class TestDeclaredDifferences:
         service = MockDockerService(MockDockerClient())
 
         assert service.copy_to_container("nothing", str(tmp_path), "/tmp/x") is True
+
+
+class TestDivergencesThatNoLongerExist:
+    """Five differences this file used to document, and no longer can.
+
+    Each was a difference between the Docker SDK and a second implementation
+    that drove the docker *CLI* over SSH. There is no second implementation of
+    Docker any more: one ``DockerService`` runs on each node and the agent
+    carries its return value back as payload, so the peer's answer is produced
+    by the same code as the control node's.
+
+    They are asserted rather than deleted because "we removed the second
+    implementation" is a claim, and a claim that nothing checks is a claim
+    that quietly stops being true. Each test below fails the moment a peer
+    starts answering differently again.
+    """
+
+    def test_pull_progress_is_per_layer_on_a_peer_too(self):
+        """It used to be one terminal event: ``docker pull`` had no stream.
+
+        A 40 GB pull on a worker showed nothing at all until it finished, and
+        the plan's answer was to fetch once on the control node and fan out.
+        The agent streams the daemon's own layer events back on the command's
+        stream instead, so a peer is now as legible as this machine.
+        """
+        seen_local: list[dict] = []
+        DockerService(client=_fake_sdk_client()).pull_image(
+            MISSING_IMAGE, seen_local.append, interval=0
+        )
+
+        seen_peer: list[dict] = []
+        _agent_service(NODES["peer"]).pull_image(
+            MISSING_IMAGE, seen_peer.append, interval=0
+        )
+
+        assert len(seen_peer) > 1
+        assert seen_peer[-1]["layers"] == len(FAKE_LAYERS) == seen_local[-1]["layers"]
+
+    def test_ensure_directories_attributes_a_failure_on_a_peer(self, tmp_path):
+        """It used to be one ``mkdir -p`` for the list, so one answer for all.
+
+        A caller could learn that *something* failed and never which, on a
+        path that runs before every deploy. The node runs the same
+        ``ensure_directories`` this machine does, so it reports the same list.
+        """
+        blocker = tmp_path / "a-file"
+        blocker.write_text("not a directory")
+        wanted = [str(tmp_path / "fine"), str(blocker / "no")]
+
+        local = DockerService(client=_fake_sdk_client()).ensure_directories(wanted)
+        peer = _agent_service(NODES["peer"]).ensure_directories(wanted)
+
+        assert local == peer == [str(blocker / "no")]
+
+    def test_a_label_value_with_a_comma_survives_on_a_peer(self):
+        """It used to be lost: ``docker ps`` renders labels comma-separated.
+
+        A recipe named ``qwen3,awq`` came back as ``qwen3`` from a worker and
+        intact from this machine. Nothing spark-pulse writes contained a comma
+        at the time, which is why it had never been noticed. Nothing parses
+        ``docker ps`` output now.
+        """
+        metadata = _metadata("contract-comma", recipe="qwen3,awq")
+
+        local = DockerService(client=_fake_sdk_client())
+        local.run_container(
+            image=IMAGE, name="contract-comma", env_vars={}, metadata=metadata
+        )
+
+        peer = _agent_service(NODES["peer"])
+        peer.run_container(
+            image=IMAGE,
+            name="contract-comma",
+            env_vars={},
+            metadata=_metadata("contract-comma", recipe="qwen3,awq"),
+        )
+
+        assert local.list_managed_containers()[0].metadata.recipe == "qwen3,awq"
+        assert peer.list_managed_containers()[0].metadata.recipe == "qwen3,awq"
+
+    def test_exec_on_a_container_that_is_not_there_fails_the_same_way(self):
+        """It used to raise here and return a failed result there.
+
+        Both callers — ``_apply_mods`` and ``_launch_rank`` — failed the
+        deploy on either, so nothing was broken by it; it was two answers to
+        one question, which is the kind of difference that becomes a bug the
+        first time somebody writes a third caller. The node raises, and the
+        raise arrives as a definite failure.
+        """
+        with pytest.raises(Exception):
+            DockerService(client=_fake_sdk_client()).exec_in_container(
+                "contract-nothing", ["true"]
+            )
+
+        with pytest.raises(NodeOperationError):
+            _agent_service(NODES["peer"]).exec_in_container(
+                "contract-nothing", ["true"]
+            )
+
+    def test_a_node_that_cannot_be_reached_is_a_different_type_entirely(self):
+        """It used to be an ``SSHError`` a caller had to know to catch.
+
+        The distinction is the same one — a daemon that refuses is ``False``,
+        a node we cannot ask is neither True nor False — but it is now carried
+        by a type that cannot be confused with a failure, and one no caller
+        has to remember to name: ``NodeUnreachable`` is not a subclass of the
+        error a failed operation raises, and vice versa.
+        """
+        reachable = _agent_service(NODES["peer"])
+        assert reachable.image_exists(IMAGE) is True
+
+        def _refuse(*_args, **_kwargs):
+            raise RuntimeError("Cannot connect to the Docker daemon at unix://...")
+
+        _backing_service(reachable).client.images.get = _refuse
+        assert reachable.image_exists(IMAGE) is False
+
+        gone = AgentNodeService(
+            _FLEET.server.hub, "no-such-node", _FLEET.loop, timeout=2
+        )
+        with pytest.raises(NodeUnreachable):
+            gone.image_exists(IMAGE)
+        assert not issubclass(NodeUnreachable, NodeOperationError)
+        assert not issubclass(NodeOperationError, NodeUnreachable)

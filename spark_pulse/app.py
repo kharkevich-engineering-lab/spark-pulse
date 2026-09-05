@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
+from spark_pulse.agent import runtime as agent_runtime
 from spark_pulse.config import config
 from spark_pulse.routers import (
     recipes,
@@ -43,6 +44,16 @@ from spark_pulse.tools.oci_registry import (
 from spark_pulse.tools.reconciliation import reconcile_all
 from spark_pulse.version import get_version
 from spark_pulse.mcp_http import handle_mcp, MCP_PATH
+
+
+def agent_state_dir() -> Path:
+    """Where the control plane keeps its CA, its ledger and its own identity.
+
+    Beside the node registry, because they describe the same thing from two
+    sides, and outside anything a package upgrade replaces.
+    """
+    return Path.home() / ".config" / "spark-pulse" / "agent"
+
 
 # ── SPA serving ──────────────────────────────────────────────────────────────
 
@@ -166,7 +177,40 @@ async def lifespan(app: FastAPI):
                 f"{', '.join(tools.discovery.real_interface_names()) or 'no interface'}"
             )
     except Exception as e:
+        this_node = None
         print(f"Warning: could not register this node: {e}")
+
+    # Bring up the agent transport, and with it this machine's own agent.
+    #
+    # Every node operation goes through it, this machine's included, so it has
+    # to be up before reconciliation asks anything about a container. The
+    # control node is enrolled under the id the registry just minted rather
+    # than a second one of its own — one machine, one identity.
+    #
+    # The enrollment listener is deliberately *not* opened here. It is opened
+    # only for the seconds an install needs it, so a token endpoint is not
+    # reachable for the life of the process.
+    #
+    # In simulation the resolver is the mock and never consults this, but it
+    # is started anyway, on ephemeral ports: a transport only production
+    # exercises is a transport nothing exercises.
+    try:
+        app.state.control_plane = await agent_runtime.start_runtime(
+            directory=agent_state_dir(),
+            node_id=this_node.id if this_node is not None else "",
+            docker_service=tools.docker._get_service() if is_simulation() else None,
+            session_port=0 if is_simulation() else None,
+        )
+        print(
+            "Agent transport listening on "
+            f"{app.state.control_plane.server.session_port}; control node is "
+            f"{app.state.control_plane.control_node_id[:8]}"
+        )
+    except Exception as e:
+        app.state.control_plane = None
+        print(f"FATAL: could not start the agent transport: {e}")
+        print("FATAL: without it no node — including this one — can be reached.")
+        raise
 
     # Start OCI background update checker
     start_background_updater()
@@ -207,6 +251,11 @@ async def lifespan(app: FastAPI):
 
     # Cleanup on shutdown
     stop_background_updater()
+
+    try:
+        await agent_runtime.stop_runtime(getattr(app.state, "control_plane", None))
+    except Exception as e:  # pragma: no cover — shutdown is best effort
+        print(f"Warning: could not stop the agent transport: {e}")
 
     try:
         tools.engine_metrics.stop_sampler()

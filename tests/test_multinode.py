@@ -15,13 +15,19 @@ actually witness:
   nobody could reach is recorded as an outstanding orphan rather than assumed
   gone.
 
-The transport underneath is ``mock.node_service``: the *real*
-:class:`RemoteNodeService` over a simulated SSH channel, so the docker command
-building, the label filtering and the local-versus-peer branch under test are
-the production ones. Only the bytes on the wire are invented — including the
-unreachable case, where the simulated channel raises the same
-:class:`~spark_pulse.tools.ssh.SSHError` ``OpenSSHClient`` raises on ssh's own
-exit 255.
+The transport underneath is ``mock.node_service``: one in-memory container
+service per node behind a wrapper that can fail the two ways a real node
+fails. Every node has its own Docker, which is the property that matters — an
+answer for the wrong node is then visibly the wrong containers rather than a
+plausible-looking right answer, and that is precisely what the shared-daemon
+arrangement this replaced could not show.
+
+The two failure modes are kept apart here because production keeps them
+apart: a node whose agent is not connected raises
+:class:`~spark_pulse.agent.errors.NodeUnreachable` and its ranks are
+*unknown*; a node whose Docker daemon refuses raises, and that failure is
+definite. Releasing a rank's GPU on the first of those is how two gangs end up
+on one device, so simulation has to be able to produce both.
 
 The size-one class at the end is the safety property the whole convergence
 rests on: at one node nothing about this changed.
@@ -44,15 +50,16 @@ from spark_pulse.mock import docker as mock_docker
 from spark_pulse.mock import node_service as mock_node_service
 from spark_pulse.tools.discovery import MESH_NCCL_ENV
 from spark_pulse.tools.labels import RANK_LABEL, WORLD_SIZE_LABEL
-from spark_pulse.tools.ssh import SSHError, SSHErrorType
+from spark_pulse.agent.errors import NodeUnreachable
 
 # See test_tools_native_runtime.py: under SIMULATION_MODE the package attribute
 # is the mock re-export, so hold the real module to patch its globals.
 nr = importlib.import_module("spark_pulse.tools.native_runtime")
 
 #: The control node, as the simulated registry seeds it. Simulation resolves
-#: this address to this machine, so rank zero runs on the local container
-#: service and every other rank goes over SSH — the real shape.
+#: this address to this machine, so rank zero runs on the control node's own
+#: container service and every other rank on that node's own — the real shape,
+#: where the difference between them is a node id and nothing else.
 CONTROL = "192.168.1.100"
 
 #: Peers, in the order ranks are assigned. The first is seeded; the rest this
@@ -118,10 +125,14 @@ def registry(tmp_path):
 def fleet(tmp_path, registry):
     """Four enrolled Sparks, a temp record file, and a clean transport.
 
-    The peers are reached through the process-wide simulated SSH channel,
-    which is what :func:`native_runtime.rank_services` resolves to on its
-    own — so the tests below drive the production resolver rather than
-    handing ``start`` a services callable of their own.
+    The peers are reached through the process-wide simulated transport, which
+    is what :func:`native_runtime.rank_services` resolves to on its own — so
+    the tests below drive the production resolver rather than handing
+    ``start`` a services callable of their own.
+
+    What is yielded is the ``mock.node_service`` module itself: the fleet is
+    process-wide state, not an object a test holds, because the resolver under
+    test finds it the same way production finds the hub.
     """
     mock_node_service.reset()
     mock_docker.reset_mock()
@@ -157,7 +168,7 @@ def fleet(tmp_path, registry):
             ),
         ),
     ):
-        yield mock_node_service.default_ssh_client()
+        yield mock_node_service
     mock_node_service.reset()
     mock_docker.reset_mock()
 
@@ -174,9 +185,31 @@ def plan_for(size: int, **overrides: Any):
     )
 
 
-def containers_on(ssh, address: str) -> list[str]:
-    """Container names live on one peer, per the simulated docker store."""
-    return sorted(ssh.containers_on(address))
+def peer_docker(fleet, address: str):
+    """One simulated peer's own Docker, for setting a node up or reading it."""
+    return fleet.docker_for(tools.node_service.peer_node(address))
+
+
+def _is_launch(entry: dict) -> bool:
+    """Whether this call is a rank's *serve* exec, not some other exec.
+
+    The serve command redirects to ``/proc/1/fd/1`` so the engine's output
+    lands on the container's own stdout; nothing else spark-pulse execs does.
+    """
+    if entry["op"] != "exec_in_container":
+        return False
+    command = entry["args"][1] if len(entry["args"]) > 1 else ""
+    text = " ".join(command) if isinstance(command, (list, tuple)) else str(command)
+    return "/proc/1/fd/1" in text
+
+
+def containers_on(fleet, address: str) -> list[str]:
+    """Container names live on one node, per that node's own docker store."""
+    if tools.node_service.is_local_address(address):
+        return sorted(
+            c.name for c in mock_docker._get_service().list_managed_containers()
+        )
+    return fleet.containers_on(address)
 
 
 def local_containers() -> list[str]:
@@ -283,28 +316,15 @@ class TestLifecycle:
 
         nr.start(plan, wait=True)
 
-        runs = [
-            entry["host"]
-            for entry in fleet.commands
-            if entry["command"].startswith("docker run")
-        ]
-        launches = [
-            entry["host"]
-            for entry in fleet.commands
-            if entry["command"].startswith("docker exec")
-            and "/proc/1/fd/1" in entry["command"]
-        ]
+        runs = [e["host"] for e in fleet.calls if e["op"] == "run_container"]
+        launches = [e["host"] for e in fleet.calls if _is_launch(e)]
         assert runs == FLEET[1:size]
         assert launches == list(reversed(FLEET[1:size]))
 
         kinds = [
-            "run" if entry["command"].startswith("docker run") else "launch"
-            for entry in fleet.commands
-            if entry["command"].startswith("docker run")
-            or (
-                entry["command"].startswith("docker exec")
-                and "/proc/1/fd/1" in entry["command"]
-            )
+            "run" if entry["op"] == "run_container" else "launch"
+            for entry in fleet.calls
+            if entry["op"] == "run_container" or _is_launch(entry)
         ]
         assert kinds == ["run"] * (size - 1) + ["launch"] * (size - 1)
 
@@ -327,7 +347,7 @@ class TestLifecycle:
 
     def test_stop_tears_every_rank_down_head_first(self, fleet, size):
         nr.start(plan_for(size), wait=True)
-        before = len(fleet.commands)
+        before = len(fleet.calls)
 
         record = nr.stop_deployment(f"dep{size}")
 
@@ -338,8 +358,8 @@ class TestLifecycle:
             assert containers_on(fleet, address) == []
         stops = [
             entry["host"]
-            for entry in fleet.commands[before:]
-            if entry["command"].startswith("docker stop")
+            for entry in fleet.calls[before:]
+            if entry["op"] == "stop_container"
         ]
         # Rank zero is local and stops first, off the wire; the peers follow
         # in rank order, so the rendezvous collapses before the workers wait.
@@ -486,7 +506,7 @@ class TestUnreachablePeer:
     """All-or-nothing, and released on evidence rather than on inference."""
 
     def test_a_peer_that_is_already_gone_starts_nothing_anywhere(self, fleet):
-        fleet.fail_hosts.add(PEERS[0])
+        fleet.unreachable.add(PEERS[0])
         plan = plan_for(3)
 
         record = nr.start(plan, wait=True)
@@ -506,15 +526,18 @@ class TestUnreachablePeer:
         """
         plan = plan_for(3)
 
-        original_exec = fleet.exec
+        # Lose the middle peer the moment the last one has its container: the
+        # hook hangs off that node's *own* Docker, which is where a real node
+        # going away would be noticed too.
+        last = peer_docker(fleet, PEERS[1])
+        original_run = last.run_container
 
-        def _lose_the_middle_peer(host, command, *args, **kwargs):
-            result = original_exec(host, command, *args, **kwargs)
-            if host == PEERS[1] and command.startswith("docker run"):
-                fleet.fail_hosts.add(PEERS[0])
+        def _lose_the_middle_peer(*args, **kwargs):
+            result = original_run(*args, **kwargs)
+            fleet.unreachable.add(PEERS[0])
             return result
 
-        with patch.object(fleet, "exec", _lose_the_middle_peer):
+        with patch.object(last, "run_container", _lose_the_middle_peer):
             record = nr.start(plan, wait=True)
 
         assert record["status"] == "error"
@@ -534,7 +557,7 @@ class TestUnreachablePeer:
     def test_a_deployment_with_an_orphan_is_not_deleted(self, fleet):
         plan = plan_for(3)
         nr.start(plan, wait=True)
-        fleet.fail_hosts.add(PEERS[0])
+        fleet.unreachable.add(PEERS[0])
 
         assert nr.delete_deployment("dep3") is False
         record = nr.get_deployment("dep3")
@@ -548,14 +571,13 @@ class TestUnreachablePeer:
         container". Returning a definite negative is how a rank that is still
         holding a GPU gets confirmed gone on inference.
         """
-        from spark_pulse.tools.ssh import SSHError
 
         service = tools.node_service.NodeServices().for_address(PEERS[0])
-        fleet.fail_hosts.add(PEERS[0])
+        fleet.unreachable.add(PEERS[0])
 
-        with pytest.raises(SSHError):
+        with pytest.raises(NodeUnreachable):
             service.get_container_status("anything")
-        with pytest.raises(SSHError):
+        with pytest.raises(NodeUnreachable):
             service.list_managed_containers()
 
 
@@ -726,25 +748,18 @@ class TestCacheDirectories:
 
         nr.start(plan, wait=True)
 
-        made = fleet.directories.get(PEERS[0]) or []
-        assert made, "the peer was never asked to create its bind sources"
+        asked = [
+            entry
+            for entry in fleet.calls
+            if entry["host"] == PEERS[0] and entry["op"] == "ensure_directories"
+        ]
+        assert asked, "the peer was never asked to create its bind sources"
+        made = list(asked[0]["args"][0])
         assert set(made) == set(plan.rank_plans[1].container.mounts)
 
-        indices = [
-            index
-            for index, entry in enumerate(fleet.commands)
-            if entry["host"] == PEERS[0]
-        ]
-        first_mkdir = next(
-            index
-            for index in indices
-            if fleet.commands[index]["command"].startswith("mkdir -p")
-        )
-        first_run = next(
-            index
-            for index in indices
-            if fleet.commands[index]["command"].startswith("docker run")
-        )
+        operations = fleet.operations_on(PEERS[0])
+        first_mkdir = operations.index("ensure_directories")
+        first_run = operations.index("run_container")
         assert first_mkdir < first_run
 
     def test_the_control_node_creates_its_own_too(self, fleet):
@@ -827,22 +842,26 @@ class TestRankStateIsThreeStates:
     """A daemon that did not answer is not a container that is not there."""
 
     def test_a_dead_daemon_reports_unknown_rather_than_missing(self, fleet):
-        """The distinction the local path has always had, at the peer.
+        """The distinction the local path has always had, now at every node.
 
         ``DockerService.get_container_status`` separates ``NotFound`` from
-        ``APIError``, so the control node's own rank is told the truth. The
-        peer gets one exit code for both, and inventing "not found" out of it
-        is a claim we have no evidence for.
+        ``APIError``, so the control node's own rank was always told the
+        truth. The peer used to get one exit code for both, and inventing
+        "not found" out of it is a claim we have no evidence for. It is the
+        same ``DockerService`` on both now, so it cannot answer differently.
+
+        Which node this is about is carried by the rank record rather than by
+        the error string; the string is the daemon's own words, which is what
+        an operator wants to read.
         """
         service = tools.node_service.NodeServices().for_address(PEERS[0])
-        fleet.daemon_down_hosts.add(PEERS[0])
+        fleet.daemon_down.add(PEERS[0])
 
         state = service.get_container_status("spark-pulse-anything-r1-g1")
 
         assert state["status"] == "unknown"
         assert state["running"] is False
-        assert PEERS[0] in state["error"]
-        assert "unknown" in state["error"]
+        assert "Cannot connect to the Docker daemon" in state["error"]
         # And it must not claim the container is absent, which is the sentence
         # the old code wrote for exactly this case.
         assert "not found" not in state["error"]
@@ -856,42 +875,44 @@ class TestRankStateIsThreeStates:
         assert state["status"] == "missing"
         assert state["running"] is False
 
-    def test_the_signal_is_the_daemon_probe_and_not_the_stderr_text(self, fleet):
-        """What the branch actually reads.
+    def test_the_signal_is_structural_and_costs_no_second_command(self, fleet):
+        """What the branch reads, and what it no longer has to guess.
 
-        Both cases arrive as exit 1 with different English. The decision is
-        taken on a second command — ``docker version``, which reports the
-        *server* version and so exits zero only when a daemon answered — and
-        this asserts that command is the one that gets asked.
+        These two cases used to arrive identically — exit 1 with different
+        English — so telling them apart meant a *second* command asking the
+        daemon for its server version, and a substring match on the first. The
+        answer now carries which it is: a missing container is a value, a
+        refusing daemon is a raised failure. One operation either way.
         """
         service = tools.node_service.NodeServices().for_address(PEERS[0])
-        fleet.commands.clear()
+        fleet.calls.clear()
 
-        service.get_container_status("spark-pulse-never-existed-r1-g1")
+        gone = service.get_container_status("spark-pulse-never-existed-r1-g1")
+        assert gone["status"] == "missing"
+        assert fleet.operations_on(PEERS[0]) == ["get_container_status"]
 
-        asked = [c["command"] for c in fleet.commands if c["host"] == PEERS[0]]
-        assert asked[0].startswith("docker inspect")
-        assert asked[1] == tools.node_service.DAEMON_PROBE_COMMAND
+        fleet.calls.clear()
+        fleet.daemon_down.add(PEERS[0])
+        refused = service.get_container_status("spark-pulse-never-existed-r1-g1")
+        assert refused["status"] == "unknown"
+        assert fleet.operations_on(PEERS[0]) == ["get_container_status"]
 
     def test_a_healthy_rank_costs_no_extra_round_trip(self, fleet):
         """The daemon probe runs on the failure path and nowhere else."""
         nr.start(plan_for(2), wait=True)
-        fleet.commands.clear()
+        fleet.calls.clear()
 
         nr.status("dep2")
 
-        asked = [c["command"] for c in fleet.commands if c["host"] == PEERS[0]]
-        # One inspect, carrying both the state and the container id — the same
-        # two facts the SDK path returns from one call.
-        assert asked == [
-            "docker inspect --format '{{json .State}}\t{{.Id}}' "
-            "spark-pulse-dep2-r1-g1"
-        ]
+        # One question, carrying the state and the container id together.
+        assert fleet.operations_on(PEERS[0]) == ["get_container_status"]
+        asked = [c["args"] for c in fleet.calls if c["host"] == PEERS[0]]
+        assert asked == [("spark-pulse-dep2-r1-g1",)]
 
     def test_a_rank_whose_daemon_died_reads_unknown_not_stopped(self, fleet):
         """End to end, through the endpoint's own code path."""
         nr.start(plan_for(3), wait=True)
-        fleet.daemon_down_hosts.add(PEERS[0])
+        fleet.daemon_down.add(PEERS[0])
 
         live = nr.status("dep3")
 
@@ -914,7 +935,7 @@ class TestRankStateIsThreeStates:
         held = {record["port"], record["rendezvous_port"]}
 
         # Rank 1's node goes away mid-teardown, so its rank is outstanding.
-        fleet.fail_hosts.add(PEERS[0])
+        fleet.unreachable.add(PEERS[0])
         nr.stop_deployment("dep3")
         assert [o["node"] for o in nr.get_deployment("dep3")["orphans"]] == [PEERS[0]]
         assert held <= nr._ports_in_use()
@@ -922,9 +943,9 @@ class TestRankStateIsThreeStates:
         # The node comes back and its container really is gone — but its
         # Docker daemon is not answering, so we cannot know that, and the
         # whole point is that we do not guess.
-        fleet.fail_hosts.discard(PEERS[0])
-        fleet.containers_on(PEERS[0]).clear()
-        fleet.daemon_down_hosts.add(PEERS[0])
+        fleet.unreachable.discard(PEERS[0])
+        peer_docker(fleet, PEERS[0]).client.containers._containers.clear()
+        fleet.daemon_down.add(PEERS[0])
 
         assert nr.sweep_orphans("dep3") == 0
         assert [o["node"] for o in nr.get_deployment("dep3")["orphans"]] == [PEERS[0]]
@@ -933,7 +954,7 @@ class TestRankStateIsThreeStates:
         # Once a daemon answers, the same absence becomes evidence and the
         # ports are released — on evidence, which is the only way they ever
         # should be.
-        fleet.daemon_down_hosts.discard(PEERS[0])
+        fleet.daemon_down.discard(PEERS[0])
 
         assert nr.sweep_orphans("dep3") == 1
         assert nr.get_deployment("dep3")["orphans"] == []
@@ -942,7 +963,7 @@ class TestRankStateIsThreeStates:
     def test_a_teardown_against_a_dead_daemon_leaves_an_orphan(self, fleet):
         """Stopping a rank we cannot confirm gone must not read as success."""
         nr.start(plan_for(3), wait=True)
-        fleet.daemon_down_hosts.add(PEERS[0])
+        fleet.daemon_down.add(PEERS[0])
 
         # The confirmation window is shortened only so the test does not sit
         # through it: the point is that it expires without evidence, not how
@@ -962,25 +983,22 @@ class TestOneSilentRankDoesNotStallTheRest:
         """Three silent peers cost one stall, not three.
 
         The simulated transport answers instantly, so the stall is injected
-        here: every peer sleeps and then raises the same ``SSHError`` the real
-        client raises on ssh's exit 255. Serially that is three sleeps; the
-        assertion is that it is nearer one.
+        here: every peer's Docker sleeps and then the node is declared
+        unreachable, which is what a real deadline expiring produces. Serially
+        that is three sleeps; the assertion is that it is nearer one.
         """
         nr.start(plan_for(4), wait=True)
         stall = 0.4
-        original_exec = fleet.exec
 
-        def _silent_peer(host, command, *args, **kwargs):
-            if host in PEERS:
-                time.sleep(stall)
-                raise SSHError(
-                    error_type=SSHErrorType.TIMEOUT,
-                    host=host,
-                    message=f"Command timed out after {stall}s",
-                )
-            return original_exec(host, command, *args, **kwargs)
+        def _silent(*_args, **_kwargs):
+            time.sleep(stall)
+            raise NodeUnreachable(PEERS[0])
 
-        with patch.object(fleet, "exec", _silent_peer):
+        patches = [
+            patch.object(peer_docker(fleet, host), "get_container_status", _silent)
+            for host in PEERS
+        ]
+        with patches[0], patches[1], patches[2]:
             began = time.monotonic()
             live = nr.status("dep4")
             elapsed = time.monotonic() - began
@@ -996,7 +1014,7 @@ class TestOneSilentRankDoesNotStallTheRest:
     ):
         """A dead node marks its own rank; it does not fail the request."""
         nr.start(plan_for(4), wait=True)
-        fleet.fail_hosts.add(PEERS[1])
+        fleet.unreachable.add(PEERS[1])
 
         live = nr.status("dep4")
 

@@ -363,18 +363,21 @@ class LaunchScriptManager:
 class LaunchScriptDistributor:
     """Distributes patched scripts to cluster nodes.
 
-    Uses SSHClient plus a node resolver handing out node-bound container
-    services. No duplicated SCP logic.
+    One code path, because there is one transport: the node-bound container
+    service copies the script in, and the service knows which node it belongs
+    to. What this replaces had two — ``docker cp`` on the head and
+    ``scp``-then-``docker cp`` on a worker — and the head branch copied from
+    ``/tmp/exec-script.sh`` *inside the container*, a path nothing had put
+    anything at. It could only ever have worked by accident.
     """
 
     def __init__(
         self,
-        ssh_client: Any = None,
         services: Any = None,
+        **_legacy: Any,
     ):
         from spark_pulse.tools.node_service import NodeServices
 
-        self._ssh = ssh_client
         self._services = services or NodeServices()
 
     def _service(self, address: str) -> Any:
@@ -389,40 +392,16 @@ class LaunchScriptDistributor:
         script: Path,
         container_name: str,
     ) -> None:
-        """Deploy a patched script to a node's container.
-
-        Local node: docker cp script container:/workspace/exec-script.sh
-        Remote node: scp to node, then docker cp into container
+        """Copy a patched script into a node's container.
 
         Args:
             node: ClusterNode with ip, role, container_name attributes
             script: Path to the patched script
             container_name: Name of the target container
         """
-        remote_path = "/workspace/exec-script.sh"
-        service = self._service(node.ip)
-
-        if node.role == "head" and node.ip == "127.0.0.1":
-            # Local node: docker cp
-            service.exec_in_container(
-                container=container_name,
-                command=["cp", "/tmp/exec-script.sh", remote_path],
-            )
-        else:
-            # Remote node: scp to host, then docker cp into container
-            if self._ssh is None:
-                raise RuntimeError(
-                    "LaunchScriptDistributor requires an SSHClient for remote nodes"
-                )
-            self._ssh.copy(
-                host=node.ip,
-                local_path=str(script),
-                remote_path="/tmp/exec-script.sh",
-            )
-            service.exec_in_container(
-                container=container_name,
-                command=["cp", "/tmp/exec-script.sh", remote_path],
-            )
+        self._service(node.ip).copy_to_container(
+            container_name, str(script), "/workspace/exec-script.sh"
+        )
 
     def deploy_to_cluster(
         self,

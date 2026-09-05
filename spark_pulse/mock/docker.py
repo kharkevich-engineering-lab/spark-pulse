@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from docker import errors as _docker_errors
+
 # Import real types so isinstance checks work across mock/real boundary
 from spark_pulse.tools.docker import (
     ContainerInfo,
@@ -122,10 +124,12 @@ _MOCK_PULL_TICK = 0.05
 class MockImagesManager:
     """Simulates ``docker.DockerClient.images``."""
 
-    def __init__(self):
+    def __init__(self, seeded: bool = True, daemon: Any = None):
+        self.daemon = daemon or _Daemon()
         self._images: dict[str, MockImage] = {}
-        for ref, image_id, size, created in _SEED_IMAGES:
-            self.add(ref, image_id=image_id, size=size, created=created)
+        if seeded:
+            for ref, image_id, size, created in _SEED_IMAGES:
+                self.add(ref, image_id=image_id, size=size, created=created)
 
     def add(
         self,
@@ -136,16 +140,23 @@ class MockImagesManager:
     ) -> MockImage:
         """Register an image as present on the simulated host."""
         repo, tag = split_ref(ref)
+        pinned = tag.startswith("sha256:")
         image = MockImage(
             id=image_id or ("sha256:" + uuid.uuid4().hex * 2),
-            tags=[f"{repo}:{tag}"] if not tag.startswith("sha256:") else [],
+            tags=[] if pinned else [f"{repo}:{tag}"],
         )
+        # A digest-pinned pull records *that* digest, not the image's own id.
+        # Docker keeps the two apart — ``Id`` is the config digest, a repo
+        # digest is the manifest's — and conflating them made simulation kinder
+        # than the daemon in the one place distribution depends on: a node that
+        # pulled ``repo@sha256:D`` has to be able to say it holds ``sha256:D``,
+        # or every seeded image looks like it needs pulling again.
         image.attrs = {
             "Id": image.id,
             "Size": size,
             "Created": created or datetime.now(timezone.utc).isoformat(),
             "RepoTags": list(image.tags),
-            "RepoDigests": [f"{repo}@{image.id}"],
+            "RepoDigests": [f"{repo}@{tag}" if pinned else f"{repo}@{image.id}"],
         }
         self._images[ref] = image
         if not tag.startswith("sha256:"):
@@ -153,18 +164,21 @@ class MockImagesManager:
         return image
 
     def get(self, ref: str) -> MockImage:
+        self.daemon.check()
         image = self._images.get(ref)
         if image is None:
             raise ImageNotFound(f"No such image: {ref}")
         return image
 
     def list(self, **_kwargs: Any) -> list[MockImage]:
+        self.daemon.check()
         seen: dict[str, MockImage] = {}
         for image in self._images.values():
             seen[image.id] = image
         return list(seen.values())
 
     def remove(self, ref: str, force: bool = False, **_kwargs: Any) -> None:
+        self.daemon.check()
         image = self._images.get(ref)
         if image is None:
             raise ImageNotFound(f"No such image: {ref}")
@@ -215,10 +229,42 @@ class MockLowLevelAPI:
         yield {"status": f"Status: Downloaded newer image for {ref}"}
 
 
+class DaemonDown(_docker_errors.APIError):
+    """What a client raises when the Docker daemon is not answering.
+
+    A real ``docker.errors.APIError``, deliberately: ``DockerService`` catches
+    that type by name and turns it into ``unknown``, and the whole point of
+    this state is that it reaches *that* branch. A bespoke exception here
+    would fall through to the substring fallback instead, which is a different
+    code path from the one production takes — and simulation that exercises a
+    different branch is worse than none.
+
+    It comes from the *client*, not from the transport, because that is where
+    a real daemon refuses. What runs above it is then ``DockerService``'s own
+    handling: ``unknown`` from a status, ``False`` from ``image_exists``, a
+    raise from a listing.
+    """
+
+
+class _Daemon:
+    """Whether this simulated node's Docker is answering. Shared by managers."""
+
+    def __init__(self) -> None:
+        self.down = False
+
+    def check(self) -> None:
+        if self.down:
+            raise DaemonDown(
+                "Cannot connect to the Docker daemon at "
+                "unix:///var/run/docker.sock. Is the docker daemon running?"
+            )
+
+
 class MockContainersManager:
     """Simulates docker.DockerClient.containers."""
 
-    def __init__(self):
+    def __init__(self, daemon: Any = None):
+        self.daemon = daemon or _Daemon()
         self._containers: dict[str, MockContainer] = {}
 
     def run(
@@ -235,6 +281,7 @@ class MockContainersManager:
         **_kwargs: Any,
     ) -> MockContainer:
         """Simulate running a container."""
+        self.daemon.check()
         container = MockContainer(
             id=uuid.uuid4().hex[:12],
             name=name,
@@ -249,6 +296,7 @@ class MockContainersManager:
 
     def get(self, name: str) -> MockContainer:
         """Get a container by name."""
+        self.daemon.check()
         if name not in self._containers:
             raise NotFound(f"Container {name} not found")
         container = self._containers[name]
@@ -260,6 +308,7 @@ class MockContainersManager:
         self, all: bool = False, filters: dict[str, Any] | None = None
     ) -> list[MockContainer]:
         """List containers with optional label filters."""
+        self.daemon.check()
         containers = [c for c in self._containers.values() if not c._removed]
         if not all:
             containers = [c for c in containers if c.status == "running"]
@@ -300,9 +349,10 @@ class MockContainersManager:
 class MockDockerClient:
     """Simulates docker.DockerClient for testing without Docker daemon."""
 
-    def __init__(self):
-        self.containers = MockContainersManager()
-        self.images = MockImagesManager()
+    def __init__(self, seeded_images: bool = True):
+        self.daemon = _Daemon()
+        self.containers = MockContainersManager(daemon=self.daemon)
+        self.images = MockImagesManager(seeded=seeded_images, daemon=self.daemon)
         self.api = MockLowLevelAPI(self.images)
 
     def version(self) -> dict[str, str]:

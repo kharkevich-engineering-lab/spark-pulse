@@ -314,6 +314,15 @@ class NodeOperations:
         downgrade it to unknown. A caller that cancels a pull knows the pull
         did not happen; it should not have to guess.
         """
+        if cancel is not None and cancel():
+            # Already withdrawn before anything was sent. Sending it anyway and
+            # then chasing it with a Cancel is strictly worse — it starts work
+            # on the node that nobody wants, and whether the Cancel wins the
+            # race decides what the caller sees. Refusing here is the same
+            # outcome, deterministically, with no bytes on the wire.
+            raise NodeOperationError(
+                self.node_id, "PullCancelled", f"pull of {ref} cancelled"
+            )
         message = pb.PullImage(ref=ref, want_progress=progress is not None)
         codec.set_optional(message, "interval", interval)
         codec.set_optional(message, "stall_timeout", stall_timeout)
@@ -348,7 +357,6 @@ class NodeOperations:
         """
         period = min(interval or CANCEL_POLL_INTERVAL, CANCEL_POLL_INTERVAL)
         while True:
-            await asyncio.sleep(period)
             try:
                 fired = bool(cancel())
             except Exception as exc:  # pragma: no cover — a caller's callback
@@ -357,6 +365,11 @@ class NodeOperations:
             if fired:
                 self.hub.cancel_command(self.node_id, command_id)
                 return
+            # Polled *before* sleeping: a caller that cancels before the pull
+            # has begun — a teardown racing a deploy — must not have to wait
+            # out a poll interval first, and a fast pull must not finish
+            # inside one and report success for work the caller withdrew.
+            await asyncio.sleep(period)
 
     async def remove_image(self, ref: str, force: bool | None = None) -> bool:
         message = pb.RemoveImage(ref=ref)

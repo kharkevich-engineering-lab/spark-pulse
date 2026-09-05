@@ -157,11 +157,59 @@ class AgentNodeService:
         name: str,
         env_vars: dict[str, str],
         metadata: ContainerMetadata,
-        **kwargs: Any,
+        privileged: bool = True,
+        memory_limit_gb: float | None = None,
+        shm_size_gb: float = 64,
+        pids_limit: int = 4096,
+        nofile_limit: int = 1048576,
+        cache_dirs: list[str] | None = None,
+        port_mappings: list[str] | None = None,
+        entrypoint_clear: bool = True,
+        detach: bool = True,
+        command: str | list[str] | None = None,
+        mounts: dict[str, str] | None = None,
+        network_host: bool | None = None,
+        ipc_host: bool = False,
+        devices: list[str] | None = None,
+        cap_add: list[str] | None = None,
+        ulimits: dict[str, str] | None = None,
+        auto_remove: bool = True,
     ) -> ContainerInfo:
-        """Build and start a container carrying spark-pulse labels."""
+        """Build and start a container carrying spark-pulse labels.
+
+        Written out rather than taking ``**kwargs``, and every value forwarded
+        rather than left to the node's default. The signature *is* the
+        interface — a caller holds one of these without knowing which
+        implementation it has, so a default that differs between them is a
+        divergence nothing at the call site would reveal, and the contract
+        test compares names and defaults for exactly that reason. Sending each
+        value explicitly is what makes the two ends agree by construction
+        instead of by both happening to hold the same constant.
+        """
         return self._run(
-            self.ops.run_container(image, name, env_vars, metadata, **kwargs)
+            self.ops.run_container(
+                image,
+                name,
+                env_vars,
+                metadata,
+                privileged=privileged,
+                memory_limit_gb=memory_limit_gb,
+                shm_size_gb=shm_size_gb,
+                pids_limit=pids_limit,
+                nofile_limit=nofile_limit,
+                cache_dirs=cache_dirs,
+                port_mappings=port_mappings,
+                entrypoint_clear=entrypoint_clear,
+                detach=detach,
+                command=command,
+                mounts=mounts,
+                network_host=network_host,
+                ipc_host=ipc_host,
+                devices=devices,
+                cap_add=cap_add,
+                ulimits=ulimits,
+                auto_remove=auto_remove,
+            )
         )
 
     def ensure_directories(self, paths: Iterable[str]) -> list[str]:

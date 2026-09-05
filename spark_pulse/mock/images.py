@@ -128,6 +128,7 @@ def presence(
     nodes: list[str],
     ssh_user: str | None = None,
     timeout: int = 30,
+    services: Any | None = None,
 ) -> dict[str, Any]:
     """Every other node is pretended to have the image, with a matching ID."""
     entry = get_image(ref)

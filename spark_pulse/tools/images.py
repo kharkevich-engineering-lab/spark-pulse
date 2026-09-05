@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import shlex
 import threading
 import time
 import uuid
@@ -32,7 +31,6 @@ from typing import Any, Callable
 from spark_pulse.engines import get_registry
 from spark_pulse.tools.docker import PullCancelled, split_ref
 from spark_pulse.tools.events import DeploymentEvent, EventType
-from spark_pulse.tools.ssh import OpenSSHClient, SSHClient, SSHError
 
 logger = logging.getLogger(__name__)
 
@@ -309,30 +307,40 @@ def presence(
     nodes: list[str],
     ssh_user: str | None = None,
     timeout: int = 30,
-    client: SSHClient | None = None,
+    services: Any | None = None,
 ) -> dict[str, Any]:
-    """Report which nodes carry ``ref``, and with which image ID."""
+    """Report which nodes carry ``ref``, and with which image ID.
+
+    Asked through each node's own container service — the same
+    ``image_info`` every other caller uses — rather than by parsing a
+    ``docker image inspect`` this function composed itself. A node whose agent
+    is not there is *unknown*, and says so, rather than being reported absent:
+    "we could not ask" and "it is not there" are different answers, and only
+    the second one is a reason to pull.
+    """
     docker = _docker()
     info = docker.image_info(ref) or {}
     local_id = str(info.get("id") or "")
-    ssh = client or _make_ssh_client(ssh_user)
-    inspect = f"docker image inspect {shlex.quote(ref)} --format '{{{{.Id}}}}'"
+    resolve = _node_services(services)
 
-    def _one(node: str) -> dict[str, Any]:
+    def _one(address: str) -> dict[str, Any]:
+        from spark_pulse import tools
+
         try:
-            result = ssh.exec(node, inspect, timeout=timeout)
-        except (SSHError, OSError) as exc:
+            node = tools.node_service.node_for(address, ssh_user=ssh_user or "")
+            remote = resolve(node).image_info(ref) or {}
+        except Exception as exc:
             return {
-                "node": node,
+                "node": address,
                 "present": False,
                 "image_id": "",
                 "matches": False,
                 "error": str(exc)[:500],
             }
-        remote_id = (result.stdout or "").strip()
+        remote_id = str(remote.get("id") or "")
         return {
-            "node": node,
-            "present": bool(result.returncode == 0 and remote_id),
+            "node": address,
+            "present": bool(remote_id),
             "image_id": remote_id,
             "matches": bool(remote_id and remote_id == local_id),
             "error": None,
@@ -594,25 +602,18 @@ def delete_image(ref: str, force: bool = False) -> dict[str, Any]:
 # ── Distribution ─────────────────────────────────────────────────────────────
 
 
-def _make_ssh_client(ssh_user: str | None) -> SSHClient:
-    """Build the SSH client used for distribution (overridable in tests)."""
-    return OpenSSHClient(user=ssh_user or None, host_key_policy="strict")
-
-
-def _node_services(
-    client: SSHClient | None, services: Any | None = None
-) -> Callable[[Any], Any]:
+def _node_services(services: Any | None = None) -> Callable[[Any], Any]:
     """The resolver distribution reaches nodes through.
 
-    Node-bound services, not raw ssh: the transport, the local/peer branch and
-    the command building are then the ones every other remote operation uses,
-    and simulation swaps them at the resolver.
+    Node-bound services: the transport and the command building are then the
+    ones every other node operation uses, and simulation swaps them at the
+    resolver rather than at this call site.
     """
     if services is not None:
         return services
     from spark_pulse import tools
 
-    return tools.node_service.NodeServices(ssh_client=client)
+    return tools.node_service.NodeServices()
 
 
 def _node_has(info: dict[str, Any] | None, digest: str, image_id: str) -> bool:
@@ -638,7 +639,6 @@ def sync_to_nodes(
     nodes: list[str],
     ssh_user: str | None = None,
     timeout: int = 3600,
-    client: SSHClient | None = None,
     services: Any | None = None,
     digest: str = "",
 ) -> dict[str, Any]:
@@ -662,7 +662,6 @@ def sync_to_nodes(
         nodes: Node addresses to seed.
         ssh_user: SSH login for the nodes.
         timeout: Per-operation timeout, in seconds.
-        client: SSH transport override (tests, simulation).
         services: Node-service resolver override (tests, simulation).
         digest: The advertised digest, when the caller knows it.
 
@@ -688,7 +687,7 @@ def sync_to_nodes(
     pull_ref = str(seeded["pull_ref"])
     seed_digest = str(seeded["digest"])
 
-    resolve = _node_services(client, services)
+    resolve = _node_services(services)
 
     def _one(address: str) -> dict[str, Any]:
         started = time.monotonic()
@@ -715,12 +714,12 @@ def sync_to_nodes(
             service = resolve(node)
             if _node_has(service.image_info(pull_ref), seed_digest, local_id):
                 return _result(True, True, None)
-        except (SSHError, OSError, RuntimeError) as exc:
+        except (OSError, RuntimeError) as exc:
             return _result(False, False, str(exc))
 
         try:
             service.pull_image(pull_ref)
-        except (SSHError, OSError, RuntimeError) as exc:
+        except (OSError, RuntimeError) as exc:
             return _result(False, False, str(exc))
         return _result(True, False, None)
 

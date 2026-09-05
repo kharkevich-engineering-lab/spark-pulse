@@ -1732,8 +1732,26 @@ def _create_rank(
 
 
 def _launch_rank(docker: Any, plan_obj: DeployPlan, rank_plan: RankPlan) -> None:
-    """Exec one rank's rendered script in the container already created for it."""
-    _deploy_script(docker, rank_plan)
+    """Exec one rank's rendered script in the container already created for it.
+
+    Raises :class:`NativeRuntimeError` for anything that goes wrong, including
+    a node that stopped answering between creating its container and launching
+    it. That last case used to arrive here as a ``False`` return from
+    ``copy_to_container``, because the transport could not tell "the copy
+    failed" from "the node is gone" and had to pick one. It can now, so the
+    conversion happens *here* — where the answer is the same either way (the
+    gang cannot start) and the rank's container is still recorded as
+    outstanding rather than assumed absent.
+    """
+    try:
+        _deploy_script(docker, rank_plan)
+    except NativeRuntimeError:
+        raise
+    except Exception as exc:
+        raise NativeRuntimeError(
+            f"could not launch {rank_plan.container.name} on "
+            f"{rank_plan.node or 'this machine'}: {exc}"
+        ) from exc
     logger.info(
         "rank %s of %s is running on %s",
         rank_plan.rank,
