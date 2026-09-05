@@ -32,20 +32,16 @@ jobs:
           restore-keys: agent-${{ runner.os }}-
       - name: Install protoc
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-      # Two binaries, for two different jobs.
+      # The agent, for *this* machine. The control node runs one of its own,
+      # and the bundle and installer suites build a bundle around it — nothing
+      # in them executes the payload, so a host binary is the honest article
+      # rather than a stand-in, and a cross-build here would be a
+      # fifteen-minute emulated compile on every run. What ships to a node is
+      # built and checked by the `agent-release-build` job below.
       #
-      # The bundle ships aarch64-musl — the node's platform, whatever this
-      # runner is — and the bootstrap and bundle suites need a real one:
-      # substituting a host binary under that name would let a packaging bug
-      # through while every test stayed green.
-      #
-      # The control node runs an agent of its *own*, and that one has to run
-      # here, so it is a plain host build. Without either, ~85 tests skip
-      # rather than fail, which is the quietest way for a suite to stop
-      # testing anything.
-      - name: Build the node agent (aarch64, for the bundle)
-        run: ./scripts/build-agent.sh
-      - name: Build the node agent (host, for the control node)
+      # Without this, ~85 tests skip rather than fail, which is the quietest
+      # way for a suite to stop testing anything.
+      - name: Build the node agent
         run: cargo build --release
         working-directory: agent
       - name: Install dependencies
@@ -163,6 +159,44 @@ jobs:
       - name: Run Rust tests
         run: cargo test
         working-directory: agent
+
+  agent-release-build:
+    name: Build the node agent for a node
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      # The thing an operator installs is built for aarch64 Linux, and this
+      # runner is not that. Emulation is slow, but the alternative is a release
+      # path nothing exercises until a release fails — and this is the only
+      # place the *shipped* artifact is produced at all.
+      - name: Enable aarch64 emulation
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - name: Cache the agent build
+        uses: actions/cache@v4
+        with:
+          path: .agent-build-cache
+          key: agent-release-${{ hashFiles('agent/Cargo.lock') }}
+          restore-keys: agent-release-
+      - name: Build
+        run: ./scripts/build-agent.sh
+      - name: Check what came out
+        run: |
+          set -euo pipefail
+          binary=spark_pulse/agent/bin/spark-pulse-agent-aarch64-unknown-linux-musl
+          file "$binary"
+          file "$binary" | grep -q "ARM aarch64"
+          file "$binary" | grep -q "statically linked"
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: spark-pulse-agent-aarch64-unknown-linux-musl
+          path: spark_pulse/agent/bin/spark-pulse-agent-*
+          if-no-files-found: error
 
   pre-commit:
     name: Run pre-commit

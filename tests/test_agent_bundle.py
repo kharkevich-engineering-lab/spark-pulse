@@ -27,8 +27,11 @@ from spark_pulse.agent.bundle import (
     VERIFY_COMMAND,
     MissingAgentBinary,
     agent_binary,
+    binary_dir,
     build_bundle,
     cached_bundle,
+    host_binary,
+    host_target,
     prune_cache,
     unpack_for_test,
 )
@@ -60,12 +63,12 @@ def test_the_binary_is_executable_where_it_lands(agent_bundle, tmp_path):
     assert binary.stat().st_mode & 0o111
 
 
-def test_the_digest_names_the_directory_and_the_bytes_are_reproducible():
+def test_the_digest_names_the_directory_and_the_bytes_are_reproducible(agent_bundle):
     """Two builds of one version must not share a directory, and identical
     inputs must produce identical bytes — otherwise every install writes a new
     directory and the cache never hits."""
-    first = build_bundle()
-    second = build_bundle()
+    first = agent_bundle
+    second = build_bundle(target=first.target, binary=host_binary())
     assert first.data == second.data
     assert first.digest == second.digest
     assert first.name == f"{__version__}-{first.digest[:12]}"
@@ -74,7 +77,7 @@ def test_the_digest_names_the_directory_and_the_bytes_are_reproducible():
 def test_the_manifest_records_what_a_node_is_being_given(agent_bundle):
     recorded = manifest(agent_bundle)
     assert recorded["version"] == __version__
-    assert recorded["target"] == DEFAULT_TARGET
+    assert recorded["target"] == agent_bundle.target
     assert recorded["binary_size"] == agent_bundle.binary_size > 0
     # The binary's own digest, separate from the bundle's: an operator
     # comparing what is on a node with what was built compares this.
@@ -84,12 +87,18 @@ def test_the_manifest_records_what_a_node_is_being_given(agent_bundle):
 def test_the_target_is_the_nodes_platform_not_the_control_planes():
     """The whole reason for the rewrite, stated as an assertion.
 
-    The bundle is built for aarch64 Linux whatever the control plane is. The
-    Python bundle vendored the control plane's own extension modules, so a
-    control plane that was not itself a Spark shipped binaries that could not
-    load — and nothing in the old suite noticed.
+    What a bundle ships by default is aarch64 Linux — the *node's* platform —
+    whatever the control plane happens to be. The Python bundle vendored the
+    control plane's own extension modules, so a control plane that was not
+    itself a Spark shipped objects that could not load, and nothing in the old
+    suite noticed.
+
+    Asserted on the constant rather than by building one, because building for
+    a foreign target on a machine that is not it is a fifteen-minute emulated
+    compile — and it is the *default* that carries the meaning.
     """
-    assert build_bundle().target == "aarch64-unknown-linux-musl"
+    assert DEFAULT_TARGET == "aarch64-unknown-linux-musl"
+    assert "musl" in DEFAULT_TARGET, "the node must not depend on its own libc"
 
 
 def test_a_missing_binary_is_refused_rather_than_worked_around(tmp_path):
@@ -109,7 +118,9 @@ def test_the_verify_command_is_what_the_installer_runs():
 
 
 def test_the_cache_returns_the_same_bytes_or_nothing(tmp_path):
-    bundle = build_bundle(cache_dir=tmp_path)
+    bundle = build_bundle(
+        target=host_target(), binary=host_binary(), cache_dir=tmp_path
+    )
     assert cached_bundle(tmp_path, bundle.name) == bundle.data
     assert cached_bundle(tmp_path, "spark-pulse-agent-0.0.0-nothere") is None
 
@@ -121,7 +132,18 @@ def test_pruning_keeps_the_newest(tmp_path):
     assert len(list(tmp_path.glob("*.tar.gz"))) == 2
 
 
-def test_the_built_binary_is_where_the_installer_looks():
-    """Located, not searched for. A bundle assembled from whatever happened to
-    be on the path is the failure mode this design removed."""
-    assert agent_binary().name == f"spark-pulse-agent-{DEFAULT_TARGET}"
+def test_a_binary_is_located_by_triple_never_searched_for():
+    """A bundle assembled from whatever happened to be on the path is the
+    failure mode this design removed: the old one vendored the control plane's
+    own site-packages and shipped whatever it found there.
+
+    ``host_binary`` never falls back to the *node's* triple either. On a Spark
+    the two are the same string, so a fallback buys nothing; anywhere else it
+    would hand this machine a binary for another operating system, and the
+    failure would be an exec error with no clue in it.
+    """
+    assert agent_binary(DEFAULT_TARGET) == (
+        binary_dir() / f"spark-pulse-agent-{DEFAULT_TARGET}"
+    )
+    assert host_binary().is_file()
+    assert host_target().endswith(("-linux-musl", "-apple-darwin"))

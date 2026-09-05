@@ -194,16 +194,29 @@ async def agent_node(join_agent):
 def agent_bundle():
     """The bundle the installer ships: one static binary.
 
+    Built for *this* machine's target, from this machine's binary, rather than
+    for the node's. Nothing here executes the payload — the bundle suite
+    asserts layout, digest and permissions, and the installer suite ships it to
+    a simulated node — so what a real cross-built binary would add is a
+    fifteen-minute emulated compile on every run. That the *default* target is
+    the node's platform is asserted separately, in
+    ``test_the_target_is_the_nodes_platform_not_the_control_planes``, and
+    ``scripts/build-agent.sh`` is exercised by its own CI job.
+
     Session-scoped because it is content-addressed and therefore identical
-    every time — building it per test would just re-read and re-compress the
-    same 3.5 MB. Skipped, loudly, when no binary has been built here: the
+    every time. Skipped, loudly, when no binary has been built here: the
     alternative is a suite that passes while the thing it ships does not exist.
     """
     import pytest as _pytest
 
-    from spark_pulse.agent.bundle import MissingAgentBinary, build_bundle
+    from spark_pulse.agent.bundle import (
+        MissingAgentBinary,
+        build_bundle,
+        host_binary,
+        host_target,
+    )
 
     try:
-        return build_bundle()
+        return build_bundle(target=host_target(), binary=host_binary())
     except MissingAgentBinary as exc:
         _pytest.skip(str(exc))

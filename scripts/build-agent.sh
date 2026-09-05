@@ -30,8 +30,22 @@ fi
 
 mkdir -p "$OUT" "$ROOT/.agent-build-cache"
 
-echo "build-agent: building $TARGET with $ENGINE"
-"$ENGINE" run --rm \
+# The container runs as the *target's* architecture, so the compile is native
+# inside it rather than a cross-build. On an aarch64 machine that is free; on
+# an x86_64 one it needs binfmt/qemu, which is why CI enables it. The
+# alternative — cross-compiling — means a musl cross toolchain plus a linker
+# for ring's assembly, which is a great deal of machinery to maintain for a
+# build that runs a handful of times a week.
+if [[ -z "${PLATFORM:-}" ]]; then
+  case "${TARGET%%-*}" in
+    aarch64|arm64) PLATFORM=linux/arm64 ;;
+    x86_64|amd64) PLATFORM=linux/amd64 ;;
+    *) PLATFORM="linux/${TARGET%%-*}" ;;
+  esac
+fi
+
+echo "build-agent: building $TARGET on $PLATFORM with $ENGINE"
+"$ENGINE" run --rm --platform "$PLATFORM" \
   -v "$ROOT":/src:z \
   -v "$ROOT/.agent-build-cache":/target:z \
   -w /src/agent \
