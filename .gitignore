@@ -41,3 +41,7 @@ htmlcov/
 
 # Local virtualenv (agents symlink this into worktrees)
 .venv
+
+# Rust agent build output
+agent/target/
+agent/agent-aarch64*
