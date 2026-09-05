@@ -9,6 +9,13 @@
 #
 # Built inside a container so the result does not depend on what happens to be
 # installed here. musl, so the binary needs no libc on the node either.
+#
+# **Native only.** The container runs as the target's architecture, so the
+# compile inside it is native — never emulated. Emulation would work, and it
+# is refused anyway: the same build takes 1m32s on an aarch64 runner and 26
+# minutes under qemu on an x86_64 one, and a build slow enough that people
+# start skipping it is a build that stops being run. If the architectures do
+# not match, this says so and stops rather than quietly taking half an hour.
 set -euo pipefail
 
 TARGET="${TARGET:-aarch64-unknown-linux-musl}"
@@ -30,22 +37,37 @@ fi
 
 mkdir -p "$OUT" "$ROOT/.agent-build-cache"
 
-# The container runs as the *target's* architecture, so the compile is native
-# inside it rather than a cross-build. On an aarch64 machine that is free; on
-# an x86_64 one it needs binfmt/qemu, which is why CI enables it. The
-# alternative — cross-compiling — means a musl cross toolchain plus a linker
-# for ring's assembly, which is a great deal of machinery to maintain for a
-# build that runs a handful of times a week.
-if [[ -z "${PLATFORM:-}" ]]; then
-  case "${TARGET%%-*}" in
-    aarch64|arm64) PLATFORM=linux/arm64 ;;
-    x86_64|amd64) PLATFORM=linux/amd64 ;;
-    *) PLATFORM="linux/${TARGET%%-*}" ;;
+# Normalise both the target's architecture and this machine's to the names a
+# container platform uses, so they can be compared.
+canonical() {
+  case "$1" in
+    aarch64|arm64) echo arm64 ;;
+    x86_64|amd64) echo amd64 ;;
+    *) echo "$1" ;;
   esac
+}
+
+TARGET_ARCH="$(canonical "${TARGET%%-*}")"
+HOST_ARCH="$(canonical "$(uname -m)")"
+
+if [[ "$TARGET_ARCH" != "$HOST_ARCH" ]]; then
+  host_triple="${HOST_ARCH/arm64/aarch64}"
+  host_triple="${host_triple/amd64/x86_64}-unknown-linux-musl"
+  {
+    echo "build-agent: refusing to build $TARGET on $HOST_ARCH."
+    echo
+    echo "  It would run under emulation, which works and takes about half an"
+    echo "  hour rather than a minute and a half. Run this on a $TARGET_ARCH"
+    echo "  machine or CI runner instead."
+    echo
+    echo "  To build for *this* machine instead:"
+    echo "    TARGET=$host_triple $0"
+  } >&2
+  exit 1
 fi
 
-echo "build-agent: building $TARGET on $PLATFORM with $ENGINE"
-"$ENGINE" run --rm --platform "$PLATFORM" \
+echo "build-agent: building $TARGET natively on $HOST_ARCH with $ENGINE"
+"$ENGINE" run --rm --platform "linux/$TARGET_ARCH" \
   -v "$ROOT":/src:z \
   -v "$ROOT/.agent-build-cache":/target:z \
   -w /src/agent \
