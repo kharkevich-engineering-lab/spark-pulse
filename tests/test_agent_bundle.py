@@ -142,8 +142,16 @@ def test_a_binary_is_located_by_triple_never_searched_for():
     would hand this machine a binary for another operating system, and the
     failure would be an exec error with no clue in it.
     """
-    assert agent_binary(DEFAULT_TARGET) == (
-        binary_dir() / f"spark-pulse-agent-{DEFAULT_TARGET}"
-    )
+    # One directory, one name per triple. Asserted through the refusal,
+    # because that is observable whether or not a binary for that triple has
+    # been built here — and the path it names is what an operator will go
+    # looking in.
+    with pytest.raises(MissingAgentBinary) as caught:
+        agent_binary("sparc64-unknown-nothing")
+    expected = binary_dir() / "spark-pulse-agent-sparc64-unknown-nothing"
+    assert str(expected) in str(caught.value)
+
+    # And the control node's own agent is found, wherever it came from: the
+    # packaged binary for this triple, or a local cargo build.
     assert host_binary().is_file()
     assert host_target().endswith(("-linux-musl", "-apple-darwin"))
