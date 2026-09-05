@@ -1,7 +1,13 @@
-"""The spark-pulse node agent, and the control plane's side of it.
+"""The control plane's side of the node agent.
 
 One implementation of every container operation, on every node, reached
 through one protocol. That sentence is the entire point of this package.
+
+**The agent itself is not here.** It is a static Rust binary built from
+``agent/`` and shipped as one file — see ``bundle`` below for why it stopped
+being Python. What lives here is everything the *control plane* needs: the
+protocol, the certificate authority, the listeners, the hub, and the installer
+that puts the binary on a node.
 
 ``docs/transport-reexamined.md`` measured what the alternative costs: thirty
 semantic divergences across fifteen methods between the two ``NodeService``
@@ -18,20 +24,20 @@ The pieces, in the order they matter:
 ``identity`` / ``enrollment`` / ``store``
     The CA, SPIFFE names, the trust-bundle pin, single-use tokens, and what a
     node keeps on disk.
-``executor``
-    Runs one command against this machine's ``DockerService``. The one
-    implementation.
-``node_agent`` / ``__main__``
-    The agent process. ``python -m spark_pulse.agent``.
 ``server`` / ``servicer`` / ``hub`` / ``operations``
     The control plane: listeners, authentication, who is connected, and the
     internal API the rest of the control plane calls.
 ``local``
-    The control node runs an agent too, enrolled and reached exactly like any
-    other node.
+    The control node runs an agent too — the same binary, as a child process,
+    enrolled and reached exactly like any other node. There is no in-process
+    shortcut, because a shortcut is a second implementation.
 ``bundle`` / ``bootstrap_transport`` / ``bootstrap_probe`` / ``bootstrap``
     Getting an agent onto a node over SSH (§3.1): what is copied, the channel
-    it is copied over, what the node can do, and the install itself.
+    it is copied over, what the node can do, and the install itself. What is
+    copied is one static binary — the Python bundle vendored the control
+    plane's own extension modules, which worked only when the control plane
+    was itself a Spark, and silently shipped unloadable objects when it was
+    not.
 ``doctor``
     Why a node is not working, and what can safely be repaired from here. It
     shares its probes with ``bootstrap`` rather than growing a second set.
@@ -51,13 +57,10 @@ __all__ = [
     "CertificateAuthority",
     "ControlPlaneServer",
     "EnrollmentLedger",
-    "LocalExecutor",
-    "NodeAgent",
     "NodeOperations",
     "NodeOperationError",
     "NodeUnreachable",
     "diagnose",
-    "enroll",
     "install_agent",
     "remove_node_and_identity",
     "start_local_agent",
@@ -71,13 +74,10 @@ _EXPORTS = {
     "CertificateAuthority": ("spark_pulse.agent.identity", "CertificateAuthority"),
     "ControlPlaneServer": ("spark_pulse.agent.server", "ControlPlaneServer"),
     "EnrollmentLedger": ("spark_pulse.agent.enrollment", "EnrollmentLedger"),
-    "LocalExecutor": ("spark_pulse.agent.executor", "LocalExecutor"),
-    "NodeAgent": ("spark_pulse.agent.node_agent", "NodeAgent"),
     "NodeOperations": ("spark_pulse.agent.operations", "NodeOperations"),
     "NodeOperationError": ("spark_pulse.agent.errors", "NodeOperationError"),
     "NodeUnreachable": ("spark_pulse.agent.errors", "NodeUnreachable"),
     "diagnose": ("spark_pulse.agent.doctor", "diagnose"),
-    "enroll": ("spark_pulse.agent.node_agent", "enroll"),
     "install_agent": ("spark_pulse.agent.bootstrap", "install_agent"),
     "remove_node_and_identity": (
         "spark_pulse.agent.bootstrap",

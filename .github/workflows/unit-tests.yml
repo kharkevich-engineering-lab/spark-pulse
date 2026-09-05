@@ -18,6 +18,32 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.13"
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            agent/target
+            .agent-build-cache
+          key: agent-${{ runner.os }}-${{ hashFiles('agent/Cargo.lock') }}
+          restore-keys: agent-${{ runner.os }}-
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      # The agent, for *this* machine. The control node runs one of its own,
+      # and the bundle and installer suites build a bundle around it — nothing
+      # in them executes the payload, so a host binary is the honest article
+      # rather than a stand-in, and a cross-build here would be a
+      # fifteen-minute emulated compile on every run. What ships to a node is
+      # built and checked by the `agent-release-build` job below.
+      #
+      # Without this, ~85 tests skip rather than fail, which is the quietest
+      # way for a suite to stop testing anything.
+      - name: Build the node agent
+        run: cargo build --release
+        working-directory: agent
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -25,6 +51,8 @@ jobs:
       - name: Run Python tests
         run: |
           pytest --tb=short -v tests/
+        env:
+          SPARK_PULSE_REQUIRE_RUST: "1"
 
   ui-unit-tests:
     name: Run UI unit tests
@@ -99,6 +127,74 @@ jobs:
       - name: Run Playwright e2e tests
         working-directory: web
         run: npm run test:e2e
+  rust-agent:
+    name: Run node agent tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            agent/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('agent/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: Check formatting
+        run: cargo fmt --all --check
+        working-directory: agent
+      - name: Lint
+        run: cargo clippy --all-targets -- -D warnings
+        working-directory: agent
+      - name: Run Rust tests
+        run: cargo test
+        working-directory: agent
+
+  agent-release-build:
+    name: Build the node agent for a node
+    # An aarch64 runner, so the build is *native*: the same compile takes 26
+    # minutes under emulation on an x86_64 runner, which is too long to sit in
+    # front of every merge. This is the only place the shipped artifact is
+    # produced at all, so it runs on every change rather than only at release
+    # time — a release path nothing exercises is one that breaks at a release.
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Cache the agent build
+        uses: actions/cache@v4
+        with:
+          path: .agent-build-cache
+          key: agent-release-${{ hashFiles('agent/Cargo.lock') }}
+          restore-keys: agent-release-
+      - name: Build
+        run: ./scripts/build-agent.sh
+      - name: Check what came out
+        run: |
+          set -euo pipefail
+          binary=spark_pulse/agent/bin/spark-pulse-agent-aarch64-unknown-linux-musl
+          file "$binary"
+          file "$binary" | grep -q "ARM aarch64"
+          file "$binary" | grep -q "statically linked"
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: spark-pulse-agent-aarch64-unknown-linux-musl
+          path: spark_pulse/agent/bin/spark-pulse-agent-*
+          if-no-files-found: error
+
   pre-commit:
     name: Run pre-commit
     runs-on: ubuntu-latest

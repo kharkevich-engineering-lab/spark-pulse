@@ -108,6 +108,13 @@ spark_pulse = [
     # debugging a node can read the contract on the node.
     "agent/*.proto",
     "agent/*.pyi",
+    # The node agent binary. One static file per target triple, built by
+    # scripts/build-agent.sh and shipped as data — never imported here, and
+    # never for this machine's platform: it is cargo for a *node*. The wheel
+    # therefore stays `py3-none-any`, because tagging it for the node's
+    # architecture would make it uninstallable on a control plane that is not
+    # itself a Spark, which is backwards.
+    "agent/bin/spark-pulse-agent-*",
 ]
 
 # ── Formatting and linting ──────────────────────────────────────────────────

@@ -1,55 +1,48 @@
-"""What gets copied to a node, and why it is a self-contained tarball.
+"""What gets copied to a node: one static binary.
 
-**The decision.** One gzipped tar, built on the control plane, holding three
-things: the ``spark_pulse`` package, every third-party module the agent
-imports, and a launcher that puts them on ``sys.path`` in that order. It is
-unpacked into ``<install root>/<version>-<digest>/`` and run by the node's own
-``python3``. No pip, no venv, no wheel index, no network.
+**The decision, and what it replaces.** The agent used to ship as a gzipped
+tar of the ``spark_pulse`` package plus every third-party module it imported —
+grpcio, cryptography, the Docker SDK — run by the node's own ``python3``. That
+worked exactly when one assumption held, and the assumption was written down
+in this file: *"It is a DGX Spark running DGX OS, and so is every node it
+enrolls: same architecture, same CPython minor version, so grpcio's and
+cryptography's extension modules load."*
 
-**Why not a wheel and a venv.** A venv is the obvious answer and it is the
-wrong one here for one reason that outranks the rest: *an air-gapped fabric
-link is normal on this hardware.* ``pip install`` — even ``--no-index
---find-links`` — still needs pip on the node, still needs a working
-``ensurepip``, and still resolves and builds. Every one of those is a step that
-can fail on a machine with no way to fetch a fix. Copying bytes and prepending
-a path has no steps that can fail, and the failure it *can* have (a binary
-built for the wrong interpreter) is detected at install time by
-:data:`VERIFY_COMMAND` rather than at 3am by a unit that will not start.
+The assumption is false the moment the control plane is not itself a Spark. A
+bundle built on a developer's Mac shipped ``cygrpc.cpython-314-darwin.so`` to
+an aarch64 Linux node running CPython 3.12: wrong operating system, wrong
+interpreter, and it could not load for either reason. The documented escape
+hatch did not escape either — without the vendored runtime the node needs
+grpcio, cryptography and the Docker SDK already installed, which means pip and
+a network, which is precisely what an air-gapped fabric does not have.
 
-**Where the third-party bytes come from.** The control plane's own environment.
-It is a DGX Spark running DGX OS, and so is every node it enrolls: same
-architecture, same CPython minor version, so ``grpcio``'s and ``cryptography``'s
-extension modules load. That is an assumption, and assumptions on hardware get
-checked rather than believed — which is what :data:`VERIFY_COMMAND` is: the
-installer runs the launcher on the node immediately after unpacking, and a
-mismatched extension module fails there, loudly, naming the module, with
-nothing yet started.
+So the agent is a single statically linked binary now, built for the *node's*
+platform rather than assembled out of the control plane's environment. 3.5 MB
+against 18 MB compressed, no interpreter, no shared objects, no matching of
+anything. It runs on a machine with nothing on it but a kernel.
 
-**Upgrades and version skew.** The directory is named for the version and a
-digest of its contents, and ``current`` is a symlink. Installing a newer agent
-writes a new directory and flips the symlink, so the previous bytes are still
-on disk and a rollback is one ``ln -sfn``. The identity directory is outside
-the install root entirely, so neither an upgrade nor an uninstall touches it.
-A node therefore keeps running its own version until it is upgraded — the
-control plane moving ahead does not break it — and the version it is running
-is visible in the hub, because the agent puts it in every ``Hello``.
+**Where the binary comes from.** ``scripts/build-agent.sh``, which builds it in
+a container so the result does not depend on what is installed on the machine
+that ran it. The bundle refuses to build without one rather than shipping
+something that cannot run, and says which command produces it.
 
-**When the node already has the dependencies**, pass
-``include_runtime=False``: the bundle is then a few hundred kilobytes of pure
-Python and the node's own ``grpcio`` is used. The launcher prefers ``vendor/``
-when it is present and falls through to the system path when it is not, so the
-same launcher works for both.
+**Upgrades and version skew are unchanged.** The directory is named for the
+version and a digest of its contents and ``current`` is a symlink, so
+installing a newer agent writes a new directory and flips the symlink; the
+previous bytes stay on disk and a rollback is one ``ln -sfn``. The identity
+directory is outside the install root entirely, so neither an upgrade nor an
+uninstall touches it.
 """
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import io
 import json
 import logging
 import tarfile
 from dataclasses import dataclass
-from importlib import util as import_util
 from pathlib import Path
 
 from spark_pulse.version import __version__
@@ -58,70 +51,93 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "AgentBundle",
-    "DEFAULT_RUNTIME_MODULES",
-    "LAUNCHER",
+    "DEFAULT_TARGET",
+    "MissingAgentBinary",
     "VERIFY_COMMAND",
+    "agent_binary",
+    "binary_dir",
+    "host_binary",
+    "host_target",
     "build_bundle",
 ]
 
-#: Top-level importable names the agent needs that are not ``spark_pulse``.
-#:
-#: Derived from what ``spark_pulse.agent.node_agent`` pulls in transitively:
-#: gRPC and protobuf for the transport, ``cryptography`` (and the ``cffi``
-#: machinery under it) for the CSR and the pin, the Docker SDK and its HTTP
-#: stack for the executor, and PyYAML because ``spark_pulse.tools`` reads
-#: recipes. A name that cannot be resolved on the control plane is skipped and
-#: recorded, not fatal — the node may well have it already, and
-#: :data:`VERIFY_COMMAND` is what decides.
-DEFAULT_RUNTIME_MODULES: tuple[str, ...] = (
-    "grpc",
-    "google",
-    "protobuf",
-    "cryptography",
-    "cffi",
-    "_cffi_backend",
-    "pycparser",
-    "docker",
-    "requests",
-    "urllib3",
-    "idna",
-    "charset_normalizer",
-    "certifi",
-    "yaml",
-    "_yaml",
-)
+#: The platform every DGX Spark is. musl rather than gnu so the binary carries
+#: its own libc and cannot be broken by the node's.
+DEFAULT_TARGET = "aarch64-unknown-linux-musl"
 
-#: Files and directories never shipped: build output, caches, and simulation
-#: state. ``ui`` in particular is a compiled SPA of tens of megabytes that a
-#: node has no use for.
-_EXCLUDED = {"ui", "__pycache__", ".DS_Store", "data"}
-_EXCLUDED_SUFFIXES = (".pyc", ".pyo", ".map")
 
-#: The launcher. Deliberately tiny and dependency-free: it is the one piece
-#: that must work before anything it sets up is importable.
-LAUNCHER = """#!/usr/bin/env python3
-# Generated by spark-pulse. Runs the node agent out of this bundle.
-import os
-import sys
+#: Where a built binary is looked for. Package data, so a wheel can carry one;
+#: gitignored, because a build artifact does not belong in the source tree.
+def binary_dir() -> Path:
+    return Path(__file__).resolve().parent / "bin"
 
-root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
-vendor = os.path.join(root, "vendor")
-if os.path.isdir(vendor):
-    # Ahead of the system path: the bundle's own grpcio is the one that was
-    # tested against these stubs. Absent (include_runtime=False), the node's
-    # installed packages are used instead and nothing here objects.
-    sys.path.insert(0, vendor)
-sys.path.insert(0, os.path.join(root, "lib"))
 
-from spark_pulse.agent.__main__ import main
+class MissingAgentBinary(RuntimeError):
+    """No agent binary for the target, and therefore nothing to install.
 
-raise SystemExit(main())
-"""
+    Raised rather than falling back to anything. There is no second way to put
+    an agent on a node any more, and an installer that appeared to work while
+    shipping something unrunnable is worse than one that refuses.
+    """
 
-#: Run on the node the moment the bundle is unpacked. ``--help`` imports the
-#: whole agent — gRPC, protobuf, cryptography, the Docker SDK — and exits 0, so
-#: an extension module built for the wrong interpreter fails here, named, with
-#: nothing installed and nothing started.
+
+def agent_binary(target: str = DEFAULT_TARGET) -> Path:
+    """The built agent for ``target``, or a refusal naming how to build it."""
+    path = binary_dir() / f"spark-pulse-agent-{target}"
+    if path.is_file():
+        return path
+    raise MissingAgentBinary(
+        f"no agent binary for {target} at {path}. Build one with "
+        f"`TARGET={target} ./scripts/build-agent.sh`, or install a spark-pulse "
+        "release, which ships one."
+    )
+
+
+def host_target() -> str:
+    """The triple for the machine this process is running on.
+
+    Only two matter: a Spark, and a developer's laptop. On a Spark this is the
+    same triple the bundle ships, which is why the control node can run the
+    very binary it hands to its peers.
+    """
+    import platform
+
+    machine = platform.machine().lower()
+    arch = "aarch64" if machine in ("aarch64", "arm64") else machine
+    if platform.system() == "Darwin":
+        return f"{arch}-apple-darwin"
+    return f"{arch}-unknown-linux-musl"
+
+
+def host_binary() -> Path:
+    """An agent this machine can execute, for the control node's own agent.
+
+    Looked for by *this host's* triple only — never falling back to the triple
+    the bundle ships. On a Spark those are the same string, so the fallback
+    would buy nothing; anywhere else it would hand this machine a binary built
+    for a different operating system and the failure would be an exec error
+    with no clue in it. A cargo build is accepted last, purely so a developer
+    who has just built the crate does not also have to package it.
+    """
+    candidates = [binary_dir() / f"spark-pulse-agent-{host_target()}"]
+    crate = Path(__file__).resolve().parents[2] / "agent" / "target"
+    candidates += [
+        crate / "release" / "spark-pulse-agent",
+        crate / "debug" / "spark-pulse-agent",
+    ]
+    for path in candidates:
+        if path.is_file():
+            return path
+    raise MissingAgentBinary(
+        f"no agent binary this machine can run ({host_target()}). Build one "
+        "with `./scripts/build-agent.sh`, or `cd agent && cargo build` for a "
+        "native one."
+    )
+
+
+#: Run on the node the moment the bundle is unpacked. ``--help`` loads the
+#: whole program and exits 0, so a binary for the wrong architecture fails
+#: here, named, with nothing installed and nothing started.
 VERIFY_COMMAND = "--help"
 
 
@@ -132,9 +148,8 @@ class AgentBundle:
     version: str
     digest: str
     data: bytes
-    includes_runtime: bool
-    runtime_modules: tuple[str, ...] = ()
-    missing_modules: tuple[str, ...] = ()
+    target: str
+    binary_size: int = 0
 
     @property
     def name(self) -> str:
@@ -149,9 +164,8 @@ class AgentBundle:
 
 def build_bundle(
     *,
-    include_runtime: bool = True,
-    runtime_modules: tuple[str, ...] | None = None,
-    source_root: Path | None = None,
+    target: str = DEFAULT_TARGET,
+    binary: Path | None = None,
     cache_dir: Path | None = None,
 ) -> AgentBundle:
     """Build (or reuse) the bundle for this control plane's version.
@@ -160,97 +174,47 @@ def build_bundle(
     is content-addressed, so a cached file is either exactly the bytes that
     would be built or it is not used.
     """
-    modules = (
-        tuple(runtime_modules)
-        if runtime_modules is not None
-        else (DEFAULT_RUNTIME_MODULES if include_runtime else ())
-    )
-    package_root = source_root or Path(__file__).resolve().parent.parent
-
-    resolved: list[tuple[str, Path, bool]] = []
-    missing: list[str] = []
-    for name in modules:
-        location = _resolve_module(name)
-        if location is None:
-            missing.append(name)
-            logger.debug("agent bundle: %s is not importable here; skipping", name)
-            continue
-        resolved.append((name, *location))
+    source = binary or agent_binary(target)
+    payload = source.read_bytes()
 
     buffer = io.BytesIO()
-    # mtime is fixed and the member list is sorted, so the same inputs produce
-    # the same bytes and therefore the same digest and the same directory name.
-    with tarfile.open(fileobj=buffer, mode="w:gz", compresslevel=6) as tar:
-        _add_tree(tar, package_root, "lib/spark_pulse")
-        for name, path, is_dir in resolved:
-            arcname = f"vendor/{path.name}"
-            if is_dir:
-                _add_tree(tar, path, arcname)
-            else:
-                _add_bytes(tar, arcname, path.read_bytes(), 0o644)
-        _add_bytes(tar, "bin/spark-pulse-agent", LAUNCHER.encode(), 0o755)
-        _add_bytes(
-            tar,
-            "BUNDLE.json",
-            json.dumps(
-                {
-                    "version": __version__,
-                    "includes_runtime": bool(resolved),
-                    "runtime_modules": [name for name, _, _ in resolved],
-                    "missing_modules": missing,
-                },
-                indent=2,
-                sort_keys=True,
-            ).encode(),
-            0o644,
-        )
+    # Every member's mtime is zero *and* so is the gzip header's, which is the
+    # part that is easy to miss: `tarfile.open(mode="w:gz")` stamps the current
+    # time into the gzip header, so two builds of identical inputs produced
+    # different bytes, a different digest and therefore a different install
+    # directory — and the bundle cache never hit. Wrapping an explicit
+    # GzipFile with `mtime=0` is what makes the bundle content-addressed in
+    # fact rather than only in intent.
+    with gzip.GzipFile(fileobj=buffer, mode="wb", compresslevel=6, mtime=0) as raw:
+        with tarfile.open(fileobj=raw, mode="w") as tar:
+            _add_bytes(tar, "bin/spark-pulse-agent", payload, 0o755)
+            _add_bytes(
+                tar,
+                "BUNDLE.json",
+                json.dumps(
+                    {
+                        "version": __version__,
+                        "target": target,
+                        "binary_sha256": hashlib.sha256(payload).hexdigest(),
+                        "binary_size": len(payload),
+                    },
+                    indent=2,
+                    sort_keys=True,
+                ).encode(),
+                0o644,
+            )
     data = buffer.getvalue()
     bundle = AgentBundle(
         version=__version__,
         digest=hashlib.sha256(data).hexdigest(),
         data=data,
-        includes_runtime=bool(resolved),
-        runtime_modules=tuple(name for name, _, _ in resolved),
-        missing_modules=tuple(missing),
+        target=target,
+        binary_size=len(payload),
     )
     if cache_dir is not None:
         cache_dir.mkdir(parents=True, exist_ok=True)
         (cache_dir / f"spark-pulse-agent-{bundle.name}.tar.gz").write_bytes(data)
     return bundle
-
-
-def _resolve_module(name: str) -> tuple[Path, bool] | None:
-    """Where ``name`` lives on this machine, and whether it is a package."""
-    try:
-        spec = import_util.find_spec(name)
-    except (ImportError, ValueError):  # pragma: no cover - malformed install
-        return None
-    if spec is None:
-        return None
-    locations = list(spec.submodule_search_locations or [])
-    if locations:
-        return Path(locations[0]), True
-    if spec.origin and spec.origin not in ("built-in", "frozen"):
-        path = Path(spec.origin)
-        if path.exists():
-            return path, False
-    return None
-
-
-def _add_tree(tar: tarfile.TarFile, root: Path, arcname: str) -> None:
-    """Add a directory, sorted, filtered, and with no local metadata."""
-    for path in sorted(root.rglob("*")):
-        relative = path.relative_to(root)
-        if any(part in _EXCLUDED for part in relative.parts):
-            continue
-        if path.suffix in _EXCLUDED_SUFFIXES:
-            continue
-        if path.is_dir():
-            continue
-        if not path.is_file():  # sockets, dangling symlinks
-            continue
-        mode = 0o755 if path.stat().st_mode & 0o100 else 0o644
-        _add_bytes(tar, f"{arcname}/{relative.as_posix()}", path.read_bytes(), mode)
 
 
 def _add_bytes(tar: tarfile.TarFile, arcname: str, data: bytes, mode: int) -> None:

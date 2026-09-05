@@ -19,8 +19,6 @@ What is actually under test is the bridge's three obligations:
 from __future__ import annotations
 
 import asyncio
-import threading
-import time
 
 import pytest
 
@@ -32,7 +30,7 @@ from spark_pulse.agent.sync_service import (
     RESULT_MARGIN,
     AgentNodeService,
 )
-from spark_pulse.mock.docker import MockDockerClient, MockDockerService
+from spark_pulse.agent import agent_pb2 as pb
 from spark_pulse.tools.docker import ContainerMetadata, PullCancelled
 from spark_pulse.tools.node_service import (
     NODE_SERVICE_METHODS,
@@ -73,75 +71,139 @@ async def test_it_implements_every_node_service_method(agent_server, agent_node)
     assert missing == []
 
 
-async def test_a_container_runs_inspects_and_stops(agent_server, agent_node):
-    service = service_for_node(agent_server, agent_node)
+def answers(**scripted):
+    """A handler that returns a prepared `CommandResult` per operation.
+
+    The bridge's job is to carry a call across a thread boundary and hand back
+    exactly what the node said. Scripting the answer is therefore the *right*
+    fixture here: with a real Docker behind it, a test that failed would not
+    say whether the bridge or the daemon was at fault. What the node's answers
+    mean is settled against a real daemon in
+    ``tests/test_agent_rust_interop.py``.
+    """
+
+    def handler(command):
+        op = command.WhichOneof("op")
+        result = pb.CommandResult(command_id=command.command_id)
+        outcome = scripted.get(op)
+        if outcome is None:
+            result.failure.CopyFrom(
+                pb.CommandFailure(type="KeyError", message=f"no answer for {op}")
+            )
+            return result
+        field, value = outcome
+        getattr(result, field).CopyFrom(value)
+        return result
+
+    return handler
+
+
+def container(name: str, status: str = "running") -> pb.ContainerInfo:
+    return pb.ContainerInfo(id=f"id-{name}", name=name, status=status, image="img:1")
+
+
+async def test_the_bridge_hands_back_what_the_node_said(agent_server, join_agent):
+    """Across a thread boundary, decoded, unchanged."""
+    node = await join_agent(
+        "spark-a",
+        handler=answers(
+            run_container=(
+                "container",
+                pb.ContainerRef(found=True, container=container("c1")),
+            ),
+            get_container_status=(
+                "status",
+                pb.ContainerStatus(status="running", running=True, id="id-c1"),
+            ),
+            stop_container=("boolean", pb.BoolValue(value=True)),
+        ),
+    )
+    service = service_for_node(agent_server, node)
+
     info = await call(service, "run_container", "img:1", "c1", {"A": "b"}, METADATA)
-    assert info.name == "c1"
+    assert (info.name, info.id) == ("c1", "id-c1")
 
     status = await call(service, "get_container_status", "c1")
     assert status["running"] is True
-
-    listing = await call(service, "list_managed_containers")
-    assert [c.name for c in listing] == ["c1"]
+    assert status["id"] == "id-c1"
 
     assert await call(service, "stop_container", "c1") is True
-    assert (await call(service, "get_container_status", "c1"))["status"] == "missing"
 
 
 async def test_it_answers_for_its_own_node_and_no_other(agent_server, join_agent):
-    """Two nodes, two dockers: an answer for the wrong node is visibly wrong."""
-    a = await join_agent("spark-a")
-    b = await join_agent("spark-b")
-    try:
-        loop = asyncio.get_running_loop()
-        first = AgentNodeService(agent_server.hub, a.node_id, loop, timeout=10)
-        second = AgentNodeService(agent_server.hub, b.node_id, loop, timeout=10)
-        await call(first, "run_container", "img:1", "only-on-a", {}, METADATA)
+    """An answer for the wrong node must be visibly the wrong answer."""
+    a = await join_agent(
+        "spark-a",
+        handler=answers(
+            list_managed_containers=(
+                "containers",
+                pb.ContainerList(containers=[container("only-on-a")]),
+            )
+        ),
+    )
+    b = await join_agent(
+        "spark-b",
+        handler=answers(list_managed_containers=("containers", pb.ContainerList())),
+    )
+    loop = asyncio.get_running_loop()
+    first = AgentNodeService(agent_server.hub, a.node_id, loop, timeout=10)
+    second = AgentNodeService(agent_server.hub, b.node_id, loop, timeout=10)
 
-        assert [c.name for c in await call(first, "list_managed_containers")] == [
-            "only-on-a"
-        ]
-        assert await call(second, "list_managed_containers") == []
-    finally:
-        await a.close()
-        await b.close()
+    assert [c.name for c in await call(first, "list_managed_containers")] == [
+        "only-on-a"
+    ]
+    assert await call(second, "list_managed_containers") == []
 
 
 async def test_exec_accepts_a_container_object_the_way_docker_service_does(
-    agent_server, agent_node
+    agent_server, join_agent
 ):
-    """``native_runtime`` passes the ContainerInfo it just got back."""
-    service = service_for_node(agent_server, agent_node)
-    info = await call(service, "run_container", "img:1", "c1", {}, METADATA)
-    result = await call(service, "exec_in_container", info, ["echo", "hi"])
+    """``native_runtime`` passes the ContainerInfo it just got back.
+
+    The bridge has to reduce it to a name, because the protocol carries a
+    string — and getting that wrong would send the repr of an object as a
+    container name, which fails at the far end with a mystifying message.
+    """
+    node = await join_agent(
+        "spark-a",
+        handler=answers(
+            exec=("exec", pb.ExecOutcome(returncode=0, stdout="hi")),
+            exec_in_container=("exec", pb.ExecOutcome(returncode=0, stdout="hi")),
+        ),
+    )
+    service = service_for_node(agent_server, node)
+
+    result = await call(service, "exec_in_container", container("c1"), ["echo", "hi"])
+
     assert result.returncode == 0
-
-
-# ── The two failure kinds, kept apart ───────────────────────────────────────
+    assert node.commands[-1].exec_in_container.container == "c1"
 
 
 async def test_a_failed_operation_on_a_reachable_node_is_an_operation_error(
     agent_server, join_agent
 ):
     """The node answered, and the answer was "no". Definite, and still here."""
+    node = await join_agent(
+        "spark-broken",
+        handler=lambda command: _failure(
+            command, "RuntimeError", "the docker daemon is not running"
+        ),
+    )
+    service = service_for_node(agent_server, node)
 
-    class Broken(MockDockerService):
-        def list_images(self):
-            raise RuntimeError("the docker daemon is not running")
+    with pytest.raises(NodeOperationError) as caught:
+        await call(service, "list_images")
 
-    joined = await join_agent("spark-broken", docker=Broken(MockDockerClient()))
-    try:
-        service = AgentNodeService(
-            agent_server.hub, joined.node_id, asyncio.get_running_loop(), timeout=10
-        )
-        with pytest.raises(NodeOperationError) as caught:
-            await call(service, "list_images")
-        assert caught.value.error_type == "RuntimeError"
-        assert not isinstance(caught.value, NodeUnreachable)
-        # A failed command is not a lost node.
-        assert agent_server.hub.is_connected(joined.node_id)
-    finally:
-        await joined.close()
+    assert caught.value.error_type == "RuntimeError"
+    assert not isinstance(caught.value, NodeUnreachable)
+    # A failed command is not a lost node.
+    assert agent_server.hub.is_connected(node.node_id)
+
+
+def _failure(command, kind: str, message: str):
+    result = pb.CommandResult(command_id=command.command_id)
+    result.failure.CopyFrom(pb.CommandFailure(type=kind, message=message))
+    return result
 
 
 async def test_a_node_that_never_connected_is_unreachable_not_failed(agent_server):
@@ -161,12 +223,11 @@ async def test_a_dropped_connection_is_unreachable_not_missing(
     agent_server, join_agent
 ):
     """A container on a node we lost is *unknown*, never reported as gone."""
-    joined = await join_agent("spark-a")
+    node = await join_agent("spark-a")
     service = AgentNodeService(
-        agent_server.hub, joined.node_id, asyncio.get_running_loop(), timeout=2
+        agent_server.hub, node.node_id, asyncio.get_running_loop(), timeout=2
     )
-    await call(service, "run_container", "img:1", "c1", {}, METADATA)
-    await joined.close()
+    await node.close()
     await asyncio.sleep(0.1)
 
     with pytest.raises(NodeUnreachable):
@@ -176,70 +237,41 @@ async def test_a_dropped_connection_is_unreachable_not_missing(
 # ── Contract exceptions ─────────────────────────────────────────────────────
 
 
-class SlowPull(MockDockerService):
-    """A Docker whose pull takes long enough to be cancelled, and honours it.
-
-    It polls ``cancel`` and raises ``PullCancelled`` because that is what
-    ``DockerService.pull_image`` does; Docker is the declared fake here, and
-    standing in for it means standing in for its contract too.
-    """
-
-    def pull_image(self, ref, progress=None, interval=0.0, cancel=None, **kwargs):
-        for _ in range(400):
-            if cancel is not None and cancel():
-                raise PullCancelled(f"pull of {ref} cancelled")
-            time.sleep(0.01)
-        return super().pull_image(ref, progress, interval=interval, cancel=cancel)
-
-
-async def test_a_cancelled_pull_travels_to_the_node_and_comes_back_as_pull_cancelled(
+async def test_a_pull_cancelled_on_the_node_comes_back_as_pull_cancelled(
     agent_server, join_agent
 ):
     """``native_runtime`` and ``images`` catch ``PullCancelled`` by type.
 
-    Two things at once, because they are one property: the Cancel reaches the
-    node (or the pull never ends), and the node's answer arrives as
-    ``PullCancelled`` rather than a generic failure — a remote pull that came
-    back as a plain ``NodeOperationError`` would slip past all three handlers
-    and be recorded as a deployment failure instead of a teardown.
+    The node reports a cancelled pull as a failure whose *type* is
+    ``PullCancelled``; the bridge's job is to raise the local class of that
+    name, or all three handlers miss it and a teardown is filed as a
+    deployment failure.
     """
-    joined = await join_agent("spark-slow", docker=SlowPull(MockDockerClient()))
-    try:
-        service = AgentNodeService(
-            agent_server.hub, joined.node_id, asyncio.get_running_loop(), timeout=30
-        )
-        cancelled = threading.Event()
+    node = await join_agent(
+        "spark-slow",
+        handler=lambda command: _failure(
+            command, "PullCancelled", "pull of slow:1 cancelled"
+        ),
+    )
+    service = service_for_node(agent_server, node)
 
-        async def trip():
-            await asyncio.sleep(0.3)
-            cancelled.set()
-
-        asyncio.create_task(trip())
-        with pytest.raises(PullCancelled):
-            await call(service, "pull_image", "slow:1", None, 0.05, cancelled.is_set)
-    finally:
-        await joined.close()
+    with pytest.raises(PullCancelled):
+        await call(service, "pull_image", "slow:1")
 
 
 async def test_a_pull_failure_the_table_does_not_name_stays_an_agent_error(
     agent_server, join_agent
 ):
     """The table is a contract, not a general-purpose exception tunnel."""
+    node = await join_agent(
+        "spark-refuses",
+        handler=lambda command: _failure(command, "ValueError", "no such registry"),
+    )
+    service = service_for_node(agent_server, node)
 
-    class Refuses(MockDockerService):
-        def pull_image(self, ref, *args, **kwargs):
-            raise ValueError("no such registry")
-
-    joined = await join_agent("spark-refuses", docker=Refuses(MockDockerClient()))
-    try:
-        service = AgentNodeService(
-            agent_server.hub, joined.node_id, asyncio.get_running_loop(), timeout=10
-        )
-        with pytest.raises(NodeOperationError) as caught:
-            await call(service, "pull_image", "img:1")
-        assert caught.value.error_type == "ValueError"
-    finally:
-        await joined.close()
+    with pytest.raises(NodeOperationError) as caught:
+        await call(service, "pull_image", "img:1")
+    assert caught.value.error_type == "ValueError"
 
 
 async def test_the_translation_table_is_small_and_explicit():

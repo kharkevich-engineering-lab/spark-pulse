@@ -1,0 +1,62 @@
+[package]
+name = "spark-pulse-agent"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "The spark-pulse node agent: one static binary per node."
+license = "MIT"
+publish = false
+
+[lib]
+name = "spark_pulse_agent"
+path = "src/lib.rs"
+
+[[bin]]
+name = "spark-pulse-agent"
+path = "src/main.rs"
+
+[dependencies]
+# `tls-ring` rather than the default aws-lc: ring is pure Rust plus a little
+# assembly and cross-compiles to aarch64-musl without cmake or a C toolchain,
+# which is the whole point of shipping one static binary.
+tonic = { version = "0.14", default-features = false, features = [
+  "channel", "codegen", "tls-ring", "transport",
+] }
+tonic-prost = "0.14"
+prost = "0.14"
+tokio = { version = "1", features = [
+  "rt-multi-thread", "macros", "signal", "fs", "time", "sync", "io-util", "net",
+] }
+tokio-stream = "0.1"
+bollard = "0.21"
+rcgen = { version = "0.14", features = ["pem"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+rustls-pemfile = "2"
+x509-parser = "0.17"
+sha2 = "0.10"
+base64 = "0.22"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+futures-util = "0.3"
+flate2 = "1"
+libc = "0.2"
+rand = "0.9"
+tar = "0.4"
+
+[build-dependencies]
+tonic-prost-build = "0.14"
+
+[dev-dependencies]
+tempfile = "3"
+serde_json = "1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

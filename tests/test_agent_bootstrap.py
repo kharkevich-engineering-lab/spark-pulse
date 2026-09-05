@@ -4,7 +4,7 @@ Everything here is real except the machine. The control plane is a real
 :class:`ControlPlaneServer` on ephemeral loopback ports with a real CA; the
 the bundle is really built and really unpacked; the enrolment is a real gRPC call
 over real TLS; and the agent that appears in the hub is a real
-:class:`NodeAgent` holding a real mTLS stream. What is simulated is the node —
+a simulated node holding a real mTLS stream. What is simulated is the machine —
 its filesystem, its logins, its sudo policy, its Docker socket and its systemd
 — because that is the thing there is a matrix of, and the matrix is where the
 installer is either right or wrong.
@@ -117,32 +117,29 @@ async def test_a_replayed_token_is_refused(
     agent_server, agent_fleet, agent_bundle, tmp_path
 ):
     """One node, one token, one use. A second enrolment with it is rejected."""
-    from spark_pulse.agent.errors import EnrollmentRejected
-    from spark_pulse.agent.node_agent import enroll
+    from spark_pulse.mock.agent_node import enroll_at
 
     token = agent_server.mint_token("worker-1")
-    identity = await enroll(
+    identity = await enroll_at(
         agent_server.enrollment_target(),
         token,
         trust_bundle_pem=agent_server.trust_bundle_pem,
         trust_bundle_pin=agent_server.trust_bundle_pin,
         directory=tmp_path / "first",
-        requested_name="worker-1",
+        name="worker-1",
     )
     assert identity.node_id
 
     with pytest.raises(Exception) as caught:
-        await enroll(
+        await enroll_at(
             agent_server.enrollment_target(),
             token,
             trust_bundle_pem=agent_server.trust_bundle_pem,
             trust_bundle_pin=agent_server.trust_bundle_pin,
             directory=tmp_path / "second",
-            requested_name="worker-1",
+            name="worker-1",
         )
-    assert "already used" in str(caught.value) or isinstance(
-        caught.value, EnrollmentRejected
-    )
+    assert "already used" in str(caught.value)
 
 
 # ── The operator's part ─────────────────────────────────────────────────────

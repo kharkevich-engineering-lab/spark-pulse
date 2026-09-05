@@ -75,7 +75,12 @@ from spark_pulse.agent.bootstrap_transport import (
     generate_keypair,
     keypair_from_private_pem,
 )
-from spark_pulse.agent.bundle import VERIFY_COMMAND, AgentBundle, build_bundle
+from spark_pulse.agent.bundle import (
+    DEFAULT_TARGET,
+    VERIFY_COMMAND,
+    AgentBundle,
+    build_bundle,
+)
 from spark_pulse.agent.server import ControlPlaneServer
 
 logger = logging.getLogger(__name__)
@@ -328,7 +333,7 @@ def render_unit(
 ) -> str:
     """The systemd unit. ``Restart=`` is a backstop, not the mechanism.
 
-    ``NodeAgent.run_forever`` already redials with backoff, so a control plane
+    The agent already redials with backoff, so a control plane
     that restarts does not need systemd's help and a flapping unit would only
     hide that. ``Restart=on-failure`` is here for a process that actually died.
 
@@ -409,7 +414,7 @@ async def install_agent(
     sudo_password_prompt: Prompt | None = None,
     scope: str = "auto",
     bundle: AgentBundle | None = None,
-    include_runtime: bool = True,
+    target: str = DEFAULT_TARGET,
     offer_sudoers: bool = False,
     connect_timeout: float = CONNECT_TIMEOUT,
 ) -> InstallReport:
@@ -498,7 +503,7 @@ async def install_agent(
             sudo_password_prompt=sudo_password_prompt,
             scope=scope,
             bundle=bundle,
-            include_runtime=include_runtime,
+            target=target,
             offer_sudoers=offer_sudoers,
             connect_timeout=connect_timeout,
         )
@@ -522,7 +527,7 @@ async def _install_over(
     sudo_password_prompt: Prompt | None,
     scope: str,
     bundle: AgentBundle | None,
-    include_runtime: bool,
+    target: str,
     offer_sudoers: bool,
     connect_timeout: float,
 ) -> InstallReport:
@@ -569,7 +574,7 @@ async def _install_over(
             name=name,
             node_id=node_id,
             bundle=bundle,
-            include_runtime=include_runtime,
+            target=target,
             offer_sudoers=offer_sudoers,
         )
         report.node_id = installation.node_id
@@ -759,7 +764,7 @@ async def _place_agent(
     name: str,
     node_id: str,
     bundle: AgentBundle | None,
-    include_runtime: bool,
+    target: str,
     offer_sudoers: bool,
 ) -> AgentInstallation:
     existing = await _read_identity(session, paths.identity_dir)
@@ -768,14 +773,14 @@ async def _place_agent(
         converge_on = _converge_or_refuse(server, existing, paths, report)
 
     bundle = bundle or build_bundle(
-        include_runtime=include_runtime, cache_dir=server.directory / "bundles"
+        target=target, cache_dir=server.directory / "bundles"
     )
     report.bundle = {
         "version": bundle.version,
         "name": bundle.name,
         "size": bundle.size,
-        "includes_runtime": bundle.includes_runtime,
-        "missing_modules": list(bundle.missing_modules),
+        "target": bundle.target,
+        "binary_size": bundle.binary_size,
     }
     await _ship_bundle(session, runner, paths, bundle, report)
 

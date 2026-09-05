@@ -198,13 +198,19 @@ async def lifespan(app: FastAPI):
         app.state.control_plane = await agent_runtime.start_runtime(
             directory=agent_state_dir(),
             node_id=this_node.id if this_node is not None else "",
-            docker_service=tools.docker._get_service() if is_simulation() else None,
             session_port=0 if is_simulation() else None,
+            # In simulation the resolver is the mock and never consults the
+            # runtime, so this machine's own agent would be started, waited
+            # for, and never asked anything. Skipped rather than tolerated:
+            # every test that builds an app was paying the full connect
+            # timeout for a process nothing would use.
+            local_agent=not is_simulation(),
         )
+        control_id = app.state.control_plane.control_node_id
         print(
             "Agent transport listening on "
             f"{app.state.control_plane.server.session_port}; control node is "
-            f"{app.state.control_plane.control_node_id[:8]}"
+            + (f"{control_id[:8]}" if control_id else "not running an agent here")
         )
     except Exception as e:
         app.state.control_plane = None

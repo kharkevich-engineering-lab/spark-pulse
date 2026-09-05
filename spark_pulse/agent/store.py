@@ -30,7 +30,6 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from spark_pulse.agent import agent_pb2 as pb
 from spark_pulse.agent.identity import spki_pin
 
 logger = logging.getLogger(__name__)
@@ -154,25 +153,6 @@ class AgentIdentity:
             return spki_pin(bundle_pem) == self.trust_bundle_pin
         except Exception:
             return False
-
-    def update_from(self, identity: pb.Identity) -> None:
-        """Adopt a freshly issued certificate, keeping the key.
-
-        Called on renewal. The pin is *checked*, not replaced: a renewal that
-        arrives carrying a different trust bundle is the one thing a pin
-        exists to catch, and adopting it would delete the protection.
-        """
-        if not self.verify_pin(identity.trust_bundle_pem):
-            raise RuntimeError(
-                "the trust bundle offered on renewal does not match the pin "
-                "recorded at enrollment; refusing it"
-            )
-        self.certificate_pem = identity.certificate_pem
-        self.trust_bundle_pem = identity.trust_bundle_pem
-        self.not_before = float(identity.not_before_unix)
-        self.not_after = float(identity.not_after_unix)
-        self.epoch = int(identity.epoch)
-        self.save()
 
     @property
     def not_before_dt(self) -> dt.datetime:
