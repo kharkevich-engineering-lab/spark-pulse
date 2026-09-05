@@ -1,0 +1,464 @@
+// The spark-pulse node agent protocol.
+//
+// One long-lived bidirectional stream per node. The *agent dials the control
+// plane*, so the control plane listens on exactly one inbound port rather than
+// one per node, identity is authenticated once per connection, and heartbeat
+// liveness and command-channel liveness become the same fact
+// (docs/cluster-agent-plan.md §3.2).
+//
+// The load-bearing rule of this file: **command outcomes travel as payload,
+// never as a gRPC status.** Every operation answers with a CommandResult whose
+// `outcome` is either a typed success or a CommandFailure. A CommandResult
+// that arrives means the node was reachable and the outcome is definite. No
+// CommandResult means unreachable and the outcome is unknown. A gracefully
+// shutting-down gRPC server also returns UNAVAILABLE, so a status code cannot
+// carry that distinction and is never asked to.
+//
+// The second rule: every field whose Python default is not the proto3 zero
+// value is `optional`, so "the caller did not say" is distinguishable from
+// "the caller said zero". The agent builds its kwargs from present fields only
+// and lets the one real DockerService supply its own defaults. There is
+// therefore no second copy of a default anywhere in the transport. Repeated
+// and map fields carry no presence flag on purpose: DockerService reads every
+// one of them as `x or []` / `x or {}`, so None and empty are already the same
+// call, and a presence bit would be a distinction the receiver cannot honour.
+
+syntax = "proto3";
+
+package sparkpulse.agent.v1;
+
+// ── Services ────────────────────────────────────────────────────────────────
+
+// Bootstrap and certificate lifecycle.
+//
+// `Enroll` is reached over server-authenticated TLS with no client
+// certificate, because the node does not have one yet; it is authenticated by
+// a single-use enrollment token instead. `Renew` requires the mutually
+// authenticated channel the agent already holds.
+service Enrollment {
+  rpc Enroll(EnrollRequest) returns (Identity);
+  rpc Renew(RenewRequest) returns (Identity);
+}
+
+// The command and liveness channel. mTLS only; the servicer rejects any
+// stream whose peer did not present a certificate the CA signed.
+service NodeSession {
+  rpc Session(stream AgentMessage) returns (stream ControlMessage);
+}
+
+// ── Enrollment ──────────────────────────────────────────────────────────────
+
+message EnrollRequest {
+  // Single-use, scoped to one node, ten minute lifetime.
+  string token = 1;
+  // PKCS#10. The node's private key never leaves the node, and the control
+  // plane's CA key never leaves the control node.
+  bytes csr_pem = 2;
+  // Operator-facing label. Never identity: identity is the server-minted uuid.
+  string requested_name = 3;
+  NodeFacts facts = 4;
+}
+
+message RenewRequest {
+  bytes csr_pem = 1;
+  NodeFacts facts = 2;
+}
+
+message Identity {
+  // Server-minted random uuid4. Never the hostname, and explicitly never
+  // /etc/machine-id — DGX Sparks ship duplicates (§3.1).
+  string node_id = 1;
+  bytes certificate_pem = 2;
+  // Every CA the node should trust, concatenated.
+  bytes trust_bundle_pem = 3;
+  // base64(sha256) over the sorted DER SubjectPublicKeyInfo of *every*
+  // certificate in the bundle, so rotating one CA in does not invalidate the
+  // pin the way pinning a single certificate or the PEM bytes would.
+  string trust_bundle_spki = 4;
+  // Backdated about five minutes: a node whose clock is behind must not reject
+  // the certificate it was just handed.
+  int64 not_before_unix = 5;
+  int64 not_after_unix = 6;
+  string cluster_id = 7;
+  // Controller epoch, bumped once per control-plane start. An agent refuses
+  // any command carrying a lower epoch than the one it has seen.
+  uint64 epoch = 8;
+  // spiffe://spark-pulse/node/<uuid>
+  string spiffe_id = 9;
+}
+
+// ── The session ─────────────────────────────────────────────────────────────
+
+message AgentMessage {
+  oneof body {
+    Hello hello = 1;
+    Heartbeat heartbeat = 2;
+    CommandResult result = 3;
+    Progress progress = 4;
+  }
+}
+
+message ControlMessage {
+  oneof body {
+    Welcome welcome = 1;
+    Command command = 2;
+    Cancel cancel = 3;
+  }
+}
+
+// First message on every stream. The node_id claimed here must equal the uuid
+// in the peer certificate's SPIFFE URI SAN or the stream is refused.
+message Hello {
+  string node_id = 1;
+  string agent_version = 2;
+  NodeFacts facts = 3;
+  uint64 known_epoch = 4;
+}
+
+message Welcome {
+  string cluster_id = 1;
+  uint64 epoch = 2;
+  int64 server_time_unix = 3;
+}
+
+message Heartbeat {
+  uint64 seq = 1;
+  int64 sent_unix = 2;
+  // Carried on every beat so a reimage is detected rather than inferred: a
+  // changed hardware fingerprint or boot_id for an already-accepted uuid is
+  // surfaced for a human decision.
+  NodeFacts facts = 3;
+}
+
+message Cancel {
+  string command_id = 1;
+}
+
+// Out-of-band progress for a command still running. Never an outcome.
+message Progress {
+  string command_id = 1;
+  PullProgress pull = 2;
+}
+
+message PullProgress {
+  string ref = 1;
+  string status = 2;
+  uint32 layers = 3;
+  uint64 bytes_done = 4;
+  uint64 bytes_total = 5;
+  double percent = 6;
+}
+
+// ── Commands ────────────────────────────────────────────────────────────────
+
+message Command {
+  string command_id = 1;
+  // The agent refuses a command carrying an epoch lower than the highest it
+  // has seen. Fencing happens at the resource, not at a leader election.
+  uint64 epoch = 2;
+  optional double timeout_seconds = 3;
+  oneof op {
+    RunContainer run_container = 10;
+    EnsureDirectories ensure_directories = 11;
+    StopContainer stop_container = 12;
+    GetContainerStatus get_container_status = 13;
+    ExecInContainer exec_in_container = 14;
+    CopyToContainer copy_to_container = 15;
+    CopyDirToContainer copy_dir_to_container = 16;
+    GetLogs get_logs = 17;
+    ListManagedContainers list_managed_containers = 18;
+    GetContainerByDeployment get_container_by_deployment = 19;
+    GetContainerByRecipe get_container_by_recipe = 20;
+    ImageExists image_exists = 21;
+    ImageInfo image_info = 22;
+    ListImages list_images = 23;
+    PullImage pull_image = 24;
+    RemoveImage remove_image = 25;
+    GetFacts get_facts = 26;
+  }
+}
+
+message CommandResult {
+  string command_id = 1;
+  // Exactly one is set, always. `failure` means the node ran the operation and
+  // it failed — reachable, definite. Absence of the whole message means
+  // unreachable and unknown, and is never expressible here.
+  oneof outcome {
+    CommandFailure failure = 2;
+    ContainerRef container = 3;
+    StringList strings = 4;
+    BoolValue boolean = 5;
+    ContainerStatus status = 6;
+    ExecOutcome exec = 7;
+    StringValue text = 8;
+    ContainerList containers = 9;
+    ImageRef image = 10;
+    ImageList images = 11;
+    PullOutcome pull = 12;
+    NodeFacts facts = 13;
+  }
+}
+
+message CommandFailure {
+  // Exception class name, so the caller can re-raise the same kind of error
+  // rather than string-matching a message.
+  string type = 1;
+  string message = 2;
+}
+
+// ── Operations ──────────────────────────────────────────────────────────────
+
+message RunContainer {
+  string image = 1;
+  string name = 2;
+  map<string, string> env_vars = 3;
+  ContainerMetadata metadata = 4;
+  optional bool privileged = 5;
+  optional double memory_limit_gb = 6;
+  optional double shm_size_gb = 7;
+  optional uint32 pids_limit = 8;
+  optional uint64 nofile_limit = 9;
+  repeated string cache_dirs = 10;
+  repeated string port_mappings = 11;
+  optional bool entrypoint_clear = 12;
+  optional bool detach = 13;
+  optional Cmd command = 14;
+  map<string, string> mounts = 15;
+  optional bool network_host = 16;
+  optional bool ipc_host = 17;
+  repeated string devices = 18;
+  repeated string cap_add = 19;
+  map<string, string> ulimits = 20;
+  optional bool auto_remove = 21;
+}
+
+message EnsureDirectories {
+  repeated string paths = 1;
+}
+
+message StopContainer {
+  string name = 1;
+  optional int32 timeout = 2;
+}
+
+message GetContainerStatus {
+  string name = 1;
+}
+
+message ExecInContainer {
+  string container = 1;
+  Cmd command = 2;
+  optional bool detach = 3;
+  optional int32 timeout = 4;
+}
+
+// The source file lives on the control node, so its *content* crosses the
+// wire. Bulk artifacts do not travel this channel — a model or an image goes
+// through the registry on the control node (§3.4).
+message CopyToContainer {
+  string container = 1;
+  string remote_path = 2;
+  bytes content = 3;
+  // Permission bits of the source file, preserved across the hop.
+  optional uint32 mode = 4;
+  optional int32 timeout = 5;
+  // Basename of the source, so the temporary file on the node keeps its name.
+  string source_name = 6;
+}
+
+message CopyDirToContainer {
+  string container = 1;
+  string remote_path = 2;
+  // A gzipped tar of the directory, unpacked into a temporary directory on
+  // the node and handed to the same copy_to_container the file path uses.
+  bytes tar_gz = 3;
+  optional int32 timeout = 4;
+  string source_name = 5;
+}
+
+message GetLogs {
+  string name = 1;
+  optional int32 tail = 2;
+}
+
+message ListManagedContainers {
+  map<string, string> labels = 1;
+}
+
+message GetContainerByDeployment {
+  string deployment = 1;
+}
+
+message GetContainerByRecipe {
+  string recipe = 1;
+}
+
+message ImageExists {
+  string ref = 1;
+}
+
+message ImageInfo {
+  string ref = 1;
+}
+
+message ListImages {}
+
+message PullImage {
+  string ref = 1;
+  // Progress is reported back as Progress messages on the same stream; the
+  // caller's callback is invoked by the hub as they arrive.
+  bool want_progress = 2;
+  optional double interval = 3;
+  optional double stall_timeout = 4;
+}
+
+message RemoveImage {
+  string ref = 1;
+  optional bool force = 2;
+}
+
+message GetFacts {}
+
+// ── Shared shapes ───────────────────────────────────────────────────────────
+
+message Cmd {
+  oneof form {
+    string shell = 1;
+    Argv argv = 2;
+  }
+}
+
+message Argv {
+  repeated string parts = 1;
+}
+
+message BoolValue {
+  bool value = 1;
+}
+
+message StringValue {
+  string value = 1;
+}
+
+message StringList {
+  repeated string values = 1;
+}
+
+message ContainerMetadata {
+  string deployment = 1;
+  string recipe = 2;
+  string image = 3;
+  optional string mode = 4;
+  optional string created_at = 5;
+  optional double memory_limit_gb = 6;
+  optional double shm_size_gb = 7;
+  optional bool privileged = 8;
+  uint32 generation = 9;
+  uint32 rank = 10;
+  optional uint32 world_size = 11;
+  string cluster = 12;
+  string role = 13;
+  uint32 node_rank = 14;
+  string head_ip = 15;
+  bool ray_enabled = 16;
+}
+
+message ContainerInfo {
+  string id = 1;
+  string name = 2;
+  string status = 3;
+  string image = 4;
+  ContainerMetadata metadata = 5;
+  map<string, string> labels = 6;
+}
+
+// `found` is what carries a None return; an unset `container` with found=true
+// is never produced.
+message ContainerRef {
+  bool found = 1;
+  ContainerInfo container = 2;
+}
+
+message ContainerList {
+  repeated ContainerInfo containers = 1;
+}
+
+message ContainerStatus {
+  string status = 1;
+  bool running = 2;
+  optional string id = 3;
+  // Docker's own State object, passed through opaquely as JSON. It is a
+  // daemon-defined blob with no stable schema of ours, so modelling it here
+  // would be inventing a second definition of somebody else's data.
+  string state_json = 4;
+  optional string error = 5;
+}
+
+message ExecOutcome {
+  int32 returncode = 1;
+  string stdout = 2;
+  string stderr = 3;
+}
+
+message ImageInfoValue {
+  string id = 1;
+  uint64 size_bytes = 2;
+  optional string created = 3;
+  repeated string repo_tags = 4;
+  repeated string repo_digests = 5;
+}
+
+message ImageRef {
+  bool found = 1;
+  ImageInfoValue image = 2;
+}
+
+message ImageList {
+  repeated ImageInfoValue images = 1;
+}
+
+message PullOutcome {
+  string ref = 1;
+  string repository = 2;
+  string tag = 3;
+  uint64 bytes_done = 4;
+  uint64 bytes_total = 5;
+  double percent = 6;
+  string id = 7;
+  uint64 size_bytes = 8;
+}
+
+// ── Node facts ──────────────────────────────────────────────────────────────
+
+message NodeFacts {
+  string hostname = 1;
+  string boot_id = 2;
+  // Diagnostic only. Sparks ship duplicates, so this may never be identity;
+  // it exists so the control plane can warn that two nodes share one.
+  string machine_id = 3;
+  string os_release = 4;
+  string kernel = 5;
+  string agent_version = 6;
+  string docker_version = 7;
+  uint32 cpu_count = 8;
+  uint64 memory_bytes = 9;
+  uint32 gpu_count = 10;
+  repeated NetworkInterface interfaces = 11;
+  repeated string infiniband_interfaces = 12;
+  // Stable across reboots, unstable across a reimage. Compared on every
+  // heartbeat against what enrollment recorded.
+  string hardware_fingerprint = 13;
+}
+
+// Field-for-field the repository's own tools.discovery.NetworkInterface. The
+// phase-E lesson was that a second implementation of the per-node interface
+// mapping (tools/network.py) drifted from the first and was deleted; this
+// message deliberately mirrors the survivor rather than inventing a third
+// shape with a mac address and a link speed nothing collects.
+message NetworkInterface {
+  string name = 1;
+  string ip = 2;
+  uint32 mtu = 3;
+  bool is_up = 4;
+  string type = 5;
+}
