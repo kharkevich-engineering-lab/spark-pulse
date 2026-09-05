@@ -133,6 +133,13 @@ class TokenGrant:
     expires_at: float
     used_at: float = 0.0
     node_id: str = ""
+    #: The identity this token will mint, chosen by the *control plane* at
+    #: mint time rather than at redemption. Empty means "mint a fresh one".
+    #: The rule it protects is unchanged — the node still never proposes an
+    #: identity — and what it buys is one id per machine instead of two: the
+    #: node registry has already minted one by the time an install starts, and
+    #: a second uuid for the same machine is a join waiting to go wrong.
+    assign_node_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -194,10 +201,16 @@ class EnrollmentLedger:
 
     # ── Tokens ───────────────────────────────────────────────────────────
 
-    def mint_token(self, name: str, *, ttl: int = TOKEN_TTL_SECONDS) -> str:
+    def mint_token(
+        self, name: str, *, ttl: int = TOKEN_TTL_SECONDS, node_id: str = ""
+    ) -> str:
         """Mint a single-use token scoped to one node, and return the secret.
 
         The secret is returned once and never stored; only its hash is kept.
+
+        ``node_id`` pins the identity this token will mint. A caller that has
+        already registered the machine passes the registry's id so the two
+        stores agree; a caller that has not omits it and redemption mints.
         """
         secret = secrets.token_urlsafe(32)
         now = time.time()
@@ -208,6 +221,7 @@ class EnrollmentLedger:
                 name=name,
                 created_at=now,
                 expires_at=now + ttl,
+                assign_node_id=node_id,
             )
             self._save()
         return secret
@@ -220,8 +234,10 @@ class EnrollmentLedger:
         operator debugging a failed install needs to know whether to wait or
         to mint another.
 
-        The uuid is minted *here*, on redemption. The node never proposes an
-        identity and cannot choose one.
+        The uuid is minted *here*, on redemption — unless the control plane
+        already chose one when it minted the token. Either way the node never
+        proposes an identity and cannot choose one, which is the property that
+        matters.
         """
         now = now if now is not None else time.time()
         with self._lock:
@@ -239,7 +255,7 @@ class EnrollmentLedger:
                     f"enrollment token for {grant.name!r} expired "
                     f"{int(now - grant.expires_at)}s ago"
                 )
-            node_id = mint_node_id()
+            node_id = grant.assign_node_id or mint_node_id()
             grant.used_at = now
             grant.node_id = node_id
             self._state.nodes[node_id] = LedgerEntry(

@@ -212,10 +212,13 @@ class ControlPlaneServer:
         """End a token's life, redeemed or not. §3.1 step 8."""
         return self.ledger.revoke_token(secret)
 
-    def mint_token(self, name: str) -> str:
+    def mint_token(self, name: str, *, node_id: str = "") -> str:
         """A single-use enrollment token for one node, valid ten minutes.
 
         This is what the SSH installer carries to the node, alongside the
         trust bundle and its pin. Those three things are the entire handoff.
+
+        ``node_id`` pins the identity the token will mint, for a caller that
+        has already put the machine in the node registry.
         """
-        return self.ledger.mint_token(name)
+        return self.ledger.mint_token(name, node_id=node_id)

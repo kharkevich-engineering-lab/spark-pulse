@@ -400,6 +400,7 @@ async def install_agent(
     username: str,
     control_host: str,
     name: str = "",
+    node_id: str = "",
     port: int = 22,
     connector: Connector | None = None,
     private_key: bytes | None = None,
@@ -417,6 +418,9 @@ async def install_agent(
     ``scope`` is ``"auto"`` (prefer a rootless user unit), ``"user"`` or
     ``"system"``. An explicit scope is never quietly downgraded: if it cannot
     be had, the call fails naming the capability that is missing.
+
+    ``node_id`` pins the identity to mint, for a caller that has already put
+    the machine in the node registry. Omitted, enrolment mints a fresh one.
     """
     connector = connector or AsyncSSHConnector()
     report = InstallReport(host=host, username=username, name=name or host)
@@ -489,6 +493,7 @@ async def install_agent(
             username=username,
             control_host=control_host,
             name=name or host,
+            node_id=node_id,
             login_password=password,
             sudo_password_prompt=sudo_password_prompt,
             scope=scope,
@@ -512,6 +517,7 @@ async def _install_over(
     username: str,
     control_host: str,
     name: str,
+    node_id: str,
     login_password: str | None,
     sudo_password_prompt: Prompt | None,
     scope: str,
@@ -561,6 +567,7 @@ async def _install_over(
             report=report,
             control_host=control_host,
             name=name,
+            node_id=node_id,
             bundle=bundle,
             include_runtime=include_runtime,
             offer_sudoers=offer_sudoers,
@@ -750,6 +757,7 @@ async def _place_agent(
     report: InstallReport,
     control_host: str,
     name: str,
+    node_id: str,
     bundle: AgentBundle | None,
     include_runtime: bool,
     offer_sudoers: bool,
@@ -781,6 +789,7 @@ async def _place_agent(
             report=report,
             control_host=control_host,
             name=name,
+            node_id=node_id,
         )
 
     await _write_unit(session, runner, paths, control_host, server, name, report)
@@ -896,9 +905,10 @@ async def _enrol(
     report: InstallReport,
     control_host: str,
     name: str,
+    node_id: str = "",
 ) -> str:
     """Mint, deliver, redeem, shred, invalidate. Steps 5, 7 and 8 of §3.1."""
-    token = server.mint_token(name)
+    token = server.mint_token(name, node_id=node_id)
     token_file = f"{paths.staging}/token"
     bundle_file = f"{paths.staging}/ca.pem"
     try:
