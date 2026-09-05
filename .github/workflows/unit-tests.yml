@@ -162,20 +162,17 @@ jobs:
 
   agent-release-build:
     name: Build the node agent for a node
-    runs-on: ubuntu-latest
+    # An aarch64 runner, so the build is *native*: the same compile takes 26
+    # minutes under emulation on an x86_64 runner, which is too long to sit in
+    # front of every merge. This is the only place the shipped artifact is
+    # produced at all, so it runs on every change rather than only at release
+    # time — a release path nothing exercises is one that breaks at a release.
+    runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-      # The thing an operator installs is built for aarch64 Linux, and this
-      # runner is not that. Emulation is slow, but the alternative is a release
-      # path nothing exercises until a release fails — and this is the only
-      # place the *shipped* artifact is produced at all.
-      - name: Enable aarch64 emulation
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
       - name: Cache the agent build
         uses: actions/cache@v4
         with:
