@@ -251,6 +251,27 @@ class EnrollmentLedger:
             self._save()
         return node_id
 
+    def revoke_token(self, secret: str) -> bool:
+        """Invalidate a token whether or not it was ever redeemed.
+
+        §3.1 step 8 is "the control plane invalidates the token", and that has
+        to hold on the failure path too: an install that died between minting
+        and enrolling would otherwise leave a live ten-minute credential on a
+        node it never finished configuring. Redemption already marks a token
+        used; this marks an unredeemed one used as well, so the same call ends
+        a token's life either way.
+
+        Returns whether a token was found to invalidate.
+        """
+        with self._lock:
+            grant = self._state.tokens.get(_hash(secret))
+            if grant is None:
+                return False
+            if not grant.used_at:
+                grant.used_at = time.time()
+                self._save()
+            return True
+
     def token_for(self, secret: str) -> TokenGrant | None:
         """The grant behind a secret, for diagnostics only."""
         with self._lock:

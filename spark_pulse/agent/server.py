@@ -197,6 +197,21 @@ class ControlPlaneServer:
 
     # ── Bootstrap ────────────────────────────────────────────────────────
 
+    @property
+    def enrollment_open(self) -> bool:
+        """Whether the bootstrap listener is running right now.
+
+        The SSH installer asks so it can restore what it found: a control plane
+        that keeps the token endpoint closed except during an install must not
+        be left with it open by one, and a control plane that keeps it open
+        must not have it closed underneath a concurrent enrolment.
+        """
+        return self._enrollment is not None
+
+    def revoke_token(self, secret: str) -> bool:
+        """End a token's life, redeemed or not. §3.1 step 8."""
+        return self.ledger.revoke_token(secret)
+
     def mint_token(self, name: str) -> str:
         """A single-use enrollment token for one node, valid ten minutes.
 
