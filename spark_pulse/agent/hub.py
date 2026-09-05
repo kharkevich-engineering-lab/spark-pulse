@@ -337,6 +337,19 @@ class AgentHub:
         finally:
             connection.discard(command.command_id)
 
+    def cancel_command(self, node_id: str, command_id: str) -> None:
+        """Ask a node to stop a running command, without giving up on it.
+
+        This is deliberately not the same as cancelling the await. The caller
+        still wants the node's answer — a cancelled pull comes back as a
+        ``PullCancelled`` *failure*, which is a definite outcome — and
+        abandoning the future here would turn that definite outcome into
+        "unknown". A node that is not connected has nothing to cancel.
+        """
+        connection = self._connections.get(node_id)
+        if connection is not None:
+            connection.cancel_command(command_id)
+
     async def shutdown(self) -> None:
         """Abandon every connection, reporting every in-flight call unknown."""
         for connection in list(self._connections.values()):

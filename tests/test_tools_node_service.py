@@ -1,28 +1,37 @@
-"""Tests for the node-bound container service.
+"""Tests for the node-bound container service's *boundary*.
 
-The service used to take a host as the first argument of every method, where
-an empty string meant "this node". Thirteen call sites passed that empty
-string, so operations aimed at a worker ran against the control plane's own
-Docker daemon. The node is now fixed at construction, and these tests pin the
-two properties that make the mistake unrepresentable:
+The behaviour of a service — all fifteen methods, on both a self node and a
+peer, against every implementation — is under contract in
+``tests/test_container_service_contract.py``. What is left here is the part
+that file cannot exercise: how a :class:`Node` is decided, how one is turned
+into a service, and what happens when it cannot be.
 
-* a service built for a peer never touches the local daemon, and
-* a service built for the control node never shells out to ssh.
+The property the module exists to keep is unchanged, and the shape that
+guarantees it is stronger than it was. The service used to take a host as the
+first argument of every method with an empty string meaning "this node";
+thirteen call sites passed that empty string, so operations aimed at a worker
+ran against the control plane's own Docker daemon. Fixing the node at
+construction removed the argument. Removing the docker-over-SSH service —
+which had a local branch inside it — removed the last place where "this node"
+could be substituted for another one, because there is no longer any code that
+chooses between them.
+
+So the resolver now has exactly two outcomes: the service bound to a node's
+agent, or a named refusal. Never a quietly wrong daemon.
 """
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+import asyncio
 
 import pytest
 
-from spark_pulse.mock.node_service import SimulatedDockerSSHClient
-from spark_pulse.tools.docker import ContainerInfo, ContainerMetadata
+from spark_pulse.agent.runtime import ControlPlaneRuntime, use
+from spark_pulse.agent.sync_service import AgentNodeService
 from spark_pulse.tools.node_service import (
-    NODE_SERVICE_METHODS,
+    NoAgent,
     Node,
     NodeServices,
-    RemoteNodeService,
     control_node,
     is_local_address,
     node_for,
@@ -45,41 +54,13 @@ def _fresh_local_addresses():
     reset_local_addresses()
 
 
-def _metadata(name: str) -> ContainerMetadata:
-    return ContainerMetadata(deployment=name, image=IMAGE, mode="cluster")
-
-
-def _forbidden_local() -> MagicMock:
-    """A local Docker service that fails the test if anything reaches it."""
-    local = MagicMock(name="local DockerService")
-    for method in NODE_SERVICE_METHODS:
-        getattr(local, method).side_effect = AssertionError(
-            f"a peer-bound service called the local daemon's {method}"
-        )
-    return local
-
-
-def _forbidden_ssh() -> MagicMock:
-    """An SSH client that fails the test if anything shells out."""
-    ssh = MagicMock(name="SSHClient")
-    ssh.exec.side_effect = AssertionError("a self-bound service shelled out to ssh")
-    ssh.copy.side_effect = AssertionError("a self-bound service scp'd")
-    return ssh
-
-
-def _peer_service(address: str = PEER, ssh=None) -> RemoteNodeService:
-    """A service bound to a peer, with a local daemon that must go untouched."""
-    return RemoteNodeService(
-        peer_node(address),
-        ssh_client=ssh or SimulatedDockerSSHClient(images={IMAGE: 10}),
-        docker_service=_forbidden_local(),
-    )
+# ── The node record ─────────────────────────────────────────────────────────
 
 
 class TestNodeRecord:
-    """The minimal node record, and who counts as "us"."""
+    """A node is decided once, here, so no caller has to ask "is that us?"."""
 
-    @pytest.mark.parametrize("address", ["", "localhost", "127.0.0.1", "::1"])
+    @pytest.mark.parametrize("address", ["", "127.0.0.1", "localhost", "::1"])
     def test_loopback_is_this_machine(self, address):
         assert is_local_address(address) is True
 
@@ -89,214 +70,86 @@ class TestNodeRecord:
     def test_node_for_resolves_loopback_to_the_control_node(self):
         node = node_for("127.0.0.1")
         assert node.is_self is True
-        assert node.id == "control"
+        assert node.address == "127.0.0.1"
 
     def test_node_for_resolves_a_peer_to_a_peer(self):
         node = node_for(PEER, ssh_user="spark")
         assert node.is_self is False
-        assert node.address == PEER
+        assert node.id == PEER
         assert node.ssh_user == "spark"
 
     def test_an_empty_address_can_never_be_a_peer(self):
-        """The old local sentinel must not become an ssh attempt to ""."""
+        """The old local sentinel. A stray "" must not become a machine."""
         with pytest.raises(ValueError):
             peer_node("")
 
     def test_a_node_carries_its_interfaces(self):
-        node = Node(id="w1", address=PEER, interfaces=("eth0", "ib0"))
-        assert node.interfaces == ("eth0", "ib0")
-        assert node.label == PEER
+        node = peer_node(PEER, interfaces=("rocep1s0f1", "roceP2p1s0f1"))
+        assert node.interfaces == ("rocep1s0f1", "roceP2p1s0f1")
+
+    def test_the_label_prefers_an_address_over_an_opaque_id(self):
+        """It goes in error messages, and a uuid tells an operator nothing."""
+        assert peer_node(PEER, node_id="0f3c…").label == PEER
+        assert Node(id="0f3c…").label == "0f3c…"
 
 
-class TestPeerNeverTouchesTheLocalDaemon:
-    """Everything a peer-bound service does leaves this machine."""
-
-    def test_run_container_goes_over_ssh(self):
-        ssh = SimulatedDockerSSHClient(images={IMAGE: 10})
-        service = _peer_service(ssh=ssh)
-
-        info = service.run_container(
-            image=IMAGE,
-            name="cluster-worker-0",
-            env_vars={"NCCL_SOCKET_IFNAME": "eth0"},
-            metadata=_metadata("cluster"),
-        )
-
-        assert isinstance(info, ContainerInfo)
-        assert [c["host"] for c in ssh.commands] == [PEER]
-        assert "docker run" in ssh.commands[0]["command"]
-        assert "--label" in ssh.commands[0]["command"]
-
-    @pytest.mark.parametrize(
-        "call",
-        [
-            lambda s: s.stop_container("cluster-worker-0"),
-            lambda s: s.get_container_status("cluster-worker-0"),
-            lambda s: s.exec_in_container("cluster-worker-0", ["ray", "status"]),
-            lambda s: s.list_managed_containers(),
-            lambda s: s.get_logs("cluster-worker-0"),
-            lambda s: s.image_exists(IMAGE),
-            lambda s: s.image_info(IMAGE),
-            lambda s: s.list_images(),
-        ],
-        ids=[
-            "stop",
-            "status",
-            "exec",
-            "list",
-            "logs",
-            "image_exists",
-            "image_info",
-            "list_images",
-        ],
-    )
-    def test_every_read_and_write_reaches_the_peer(self, call):
-        """The whole surface, not just the one method somebody remembered."""
-        ssh = SimulatedDockerSSHClient(images={IMAGE: 10})
-        service = _peer_service(ssh=ssh)
-
-        call(service)
-
-        assert ssh.hosts_seen() == [PEER]
-
-    def test_copy_to_container_stages_on_the_peer(self, tmp_path):
-        payload = tmp_path / "run.sh"
-        payload.write_text("echo hi\n")
-        ssh = SimulatedDockerSSHClient(images={IMAGE: 10})
-        service = _peer_service(ssh=ssh)
-        service.run_container(
-            image=IMAGE,
-            name="worker",
-            env_vars={},
-            metadata=_metadata("cluster"),
-        )
-
-        assert service.copy_to_container("worker", str(payload), "/workspace/run.sh")
-
-        assert [c["host"] for c in ssh.copies] == [PEER]
-        assert any("docker cp" in c["command"] for c in ssh.commands)
-
-    def test_reaching_for_the_local_daemon_is_an_error(self):
-        """A peer has no local Docker daemon, and asking says so."""
-        service = _peer_service()
-        with pytest.raises(RuntimeError, match="peer"):
-            _ = service._local
-
-
-class TestExecOnAPeerLeavesTheMachine:
-    """The regression test for the defect itself.
-
-    On the old code every one of these ran against the control node, because
-    the host argument defaulted to the empty string and the callers took the
-    default. Here the service is bound to a worker, so an exec that does not
-    reach that worker fails.
-    """
-
-    def test_ray_start_on_a_worker_is_seen_by_that_worker(self):
-        ssh = SimulatedDockerSSHClient()
-        service = _peer_service(ssh=ssh)
-        service.run_container(
-            image=IMAGE, name="c-worker-0", env_vars={}, metadata=_metadata("c")
-        )
-
-        service.exec_in_container(
-            "c-worker-0", ["ray", "start", "--address", "10.0.0.1:29501"]
-        )
-
-        execs = [c for c in ssh.commands if c["command"].startswith("docker exec")]
-        assert len(execs) == 1
-        assert execs[0]["host"] == PEER
-        assert "ray start" in execs[0]["command"]
-
-    def test_two_peers_do_not_share_a_container_store(self):
-        """The property the empty host destroyed: nodes are separate."""
-        ssh = SimulatedDockerSSHClient()
-        first = _peer_service(PEER, ssh=ssh)
-        second = _peer_service(OTHER_PEER, ssh=ssh)
-
-        first.run_container(
-            image=IMAGE, name="only-on-first", env_vars={}, metadata=_metadata("c")
-        )
-
-        assert [c.name for c in first.list_managed_containers()] == ["only-on-first"]
-        assert second.list_managed_containers() == []
-
-
-class TestControlNodeNeverShellsOut:
-    """A service bound to this machine uses the SDK and nothing else."""
-
-    def _service(self, local) -> RemoteNodeService:
-        return RemoteNodeService(
-            control_node(address="127.0.0.1"),
-            ssh_client=_forbidden_ssh(),
-            docker_service=local,
-        )
-
-    def test_is_local_is_true(self):
-        assert self._service(MagicMock()).is_local is True
-
-    @pytest.mark.parametrize(
-        "call,method",
-        [
-            (lambda s: s.stop_container("c"), "stop_container"),
-            (lambda s: s.get_container_status("c"), "get_container_status"),
-            (lambda s: s.exec_in_container("c", ["ray"]), "exec_in_container"),
-            (lambda s: s.list_managed_containers(), "list_managed_containers"),
-            (lambda s: s.get_logs("c"), "get_logs"),
-            (lambda s: s.image_exists(IMAGE), "image_exists"),
-            (lambda s: s.image_info(IMAGE), "image_info"),
-            (lambda s: s.list_images(), "list_images"),
-            (lambda s: s.remove_image(IMAGE), "remove_image"),
-            (
-                lambda s: s.get_container_by_deployment("d"),
-                "get_container_by_deployment",
-            ),
-            (lambda s: s.get_container_by_recipe("r"), "get_container_by_recipe"),
-        ],
-        ids=lambda value: value if isinstance(value, str) else "",
-    )
-    def test_every_call_goes_to_the_sdk(self, call, method):
-        local = MagicMock(name="DockerService")
-        service = self._service(local)
-
-        call(service)
-
-        assert getattr(local, method).called
-
-    def test_pull_keeps_the_sdk_progress_contract(self):
-        """Cancel and the stall watchdog survive the local branch."""
-        local = MagicMock(name="DockerService")
-        service = self._service(local)
-        cancel = object()
-
-        service.pull_image("ref", None, interval=3, cancel=cancel, stall_timeout=7)
-
-        _, kwargs = local.pull_image.call_args
-        assert kwargs == {"interval": 3, "cancel": cancel, "stall_timeout": 7}
-
-    def test_reaching_for_ssh_is_an_error(self):
-        service = self._service(MagicMock())
-        with pytest.raises(RuntimeError, match="not reached over SSH"):
-            _ = service._ssh
+# ── The resolver ────────────────────────────────────────────────────────────
 
 
 class TestResolver:
-    """``service_for`` binds a node to an implementation, once."""
+    """``service_for`` binds a node to its agent, once, or refuses by name."""
 
-    def test_a_peer_gets_the_remote_service(self):
-        service = service_for(peer_node(PEER))
-        assert isinstance(service, RemoteNodeService)
-        assert service.node.address == PEER
+    def test_a_node_resolves_to_a_service_over_its_agent(
+        self, agent_server, agent_node
+    ):
+        runtime = ControlPlaneRuntime(agent_server, asyncio.get_event_loop())
+        with use(runtime):
+            service = service_for(Node(id=agent_node.node_id, address=PEER))
 
-    def test_the_control_node_gets_the_local_docker_service(self):
-        from spark_pulse.tools.docker import DockerService
+        assert isinstance(service, AgentNodeService)
+        assert service.node_id == agent_node.node_id
 
-        service = service_for(control_node())
-        assert isinstance(service, DockerService)
+    def test_the_control_node_resolves_the_same_way_a_peer_does(
+        self, agent_server, agent_node
+    ):
+        """Not a special case, and not a different class.
 
-    def test_the_control_node_shares_one_service(self):
-        """One DockerService process-wide, thread-local clients underneath."""
-        assert service_for(control_node()) is service_for(control_node())
+        This process runs an agent for itself and reaches it over loopback.
+        There is no local branch here — which matters because the local branch
+        of the service this replaced was never once executed by a test.
+        """
+
+        class Local:
+            node_id = agent_node.node_id
+
+        runtime = ControlPlaneRuntime(agent_server, asyncio.get_event_loop())
+        runtime.local = Local()
+        with use(runtime):
+            mine = service_for(control_node())
+            theirs = service_for(Node(id=agent_node.node_id, address=PEER))
+
+        assert type(mine) is type(theirs) is AgentNodeService
+
+    def test_a_node_with_no_agent_is_refused_by_name(self, agent_server):
+        """Never a fallback. A fallback here reads the wrong machine."""
+        runtime = ControlPlaneRuntime(agent_server, asyncio.get_event_loop())
+        with use(runtime), pytest.raises(NoAgent) as caught:
+            service_for(peer_node(PEER))
+
+        assert PEER in str(caught.value)
+
+    def test_resolving_before_the_transport_is_up_says_so(self):
+        """A startup-ordering bug, named as one rather than as a missing node."""
+        with use(None), pytest.raises(NoAgent) as caught:
+            service_for(peer_node(PEER))
+
+        assert "not running" in str(caught.value)
+
+    def test_a_pinned_service_skips_resolution_entirely(self):
+        """For a caller that already holds one. Never used as a fallback."""
+        sentinel = object()
+        with use(None):
+            assert service_for(peer_node(PEER), docker_service=sentinel) is sentinel
 
     def test_simulation_resolves_to_the_mock(self):
         from spark_pulse.mock.docker import MockDockerService
@@ -304,8 +157,34 @@ class TestResolver:
 
         assert isinstance(mock_service_for(control_node()), MockDockerService)
 
+    def test_simulation_gives_every_peer_its_own_docker(self):
+        """One daemon for all nodes is how a wrong answer looks plausible."""
+        from spark_pulse.mock import node_service as mock_node_service
+
+        mock_node_service.reset()
+        try:
+            first = mock_node_service.docker_for(peer_node(PEER))
+            again = mock_node_service.docker_for(peer_node(PEER))
+            other = mock_node_service.docker_for(peer_node(OTHER_PEER))
+
+            assert first is again
+            assert first is not other
+            assert mock_node_service.docker_for(control_node()) is not first
+        finally:
+            mock_node_service.reset()
+
+
+class TestResolverCache:
+    """Callers act on several nodes, so they hold a resolver, not a service."""
+
     def test_the_cache_hands_back_one_service_per_node(self):
-        services = NodeServices()
+        built: dict[str, object] = {}
+
+        def resolver(node, **_kwargs):
+            built.setdefault(node.id, object())
+            return built[node.id]
+
+        services = NodeServices(resolver=resolver)
 
         first = services(peer_node(PEER))
         again = services(peer_node(PEER))
@@ -314,13 +193,32 @@ class TestResolver:
         assert first is again
         assert first is not other
 
-    def test_for_address_routes_loopback_home_and_peers_out(self):
-        from spark_pulse.tools.docker import DockerService
+    def test_for_address_decides_self_versus_peer_once(self):
+        seen: list[Node] = []
 
-        services = NodeServices()
+        def resolver(node, **_kwargs):
+            seen.append(node)
+            return object()
 
-        assert isinstance(services.for_address("127.0.0.1"), DockerService)
-        assert isinstance(services.for_address(PEER), RemoteNodeService)
+        services = NodeServices(resolver=resolver)
+        services.for_address("127.0.0.1")
+        services.for_address(PEER)
+
+        assert [node.is_self for node in seen] == [True, False]
+
+    def test_control_asks_for_the_machine_this_process_runs_on(self):
+        seen: list[Node] = []
+
+        def resolver(node, **_kwargs):
+            seen.append(node)
+            return object()
+
+        NodeServices(resolver=resolver).control()
+
+        assert seen[0].is_self is True
+
+
+# ── The untyped config blob ─────────────────────────────────────────────────
 
 
 class TestDockerConfigMapping:
@@ -354,59 +252,3 @@ class TestDockerConfigMapping:
 
     def test_an_empty_config_still_yields_the_defaults(self):
         assert run_kwargs_from_docker_config(None)["privileged"] is True
-
-
-def _self_service() -> RemoteNodeService:
-    """A service bound to this machine, which must never shell out."""
-    return RemoteNodeService(
-        control_node(address="127.0.0.1"),
-        ssh_client=_forbidden_ssh(),
-        docker_service=MagicMock(),
-    )
-
-
-class TestEnsureDirectories:
-    """Bind sources are created before the container, on whichever node it is.
-
-    Docker invents a missing bind source **owned by root**, and every path we
-    mount is one of the login user's caches — so a directory that does not
-    exist yet is how ``~/.cache/huggingface`` becomes unwritable and the model
-    copy fails afterwards. ``launch-cluster.sh`` does the same ``mkdir -p``,
-    locally at line 1094 and over SSH at line 1104.
-    """
-
-    def test_a_peer_is_asked_over_ssh(self):
-        ssh = SimulatedDockerSSHClient(images={IMAGE: 10})
-        service = _peer_service(ssh=ssh)
-
-        assert service.ensure_directories(["/home/spark/.cache/vllm", "/x y"]) == []
-
-        assert [c["host"] for c in ssh.commands] == [PEER]
-        command = ssh.commands[0]["command"]
-        assert command.startswith("mkdir -p ")
-        # Quoted, because a path with a space is one path, not two.
-        assert "'/x y'" in command
-
-    def test_the_control_node_makes_them_here(self, tmp_path):
-        target = tmp_path / "cache" / "vllm"
-
-        assert _self_service().ensure_directories([str(target)]) == []
-
-        assert target.is_dir()
-
-    def test_an_empty_list_asks_nothing_of_anyone(self):
-        ssh = SimulatedDockerSSHClient(images={IMAGE: 10})
-        service = _peer_service(ssh=ssh)
-
-        assert service.ensure_directories([]) == []
-        assert service.ensure_directories(["", "  "]) == []
-
-        assert ssh.commands == []
-
-    def test_a_path_that_cannot_be_made_is_returned_not_raised(self, tmp_path):
-        """A failed mkdir is a warning: docker will still start the container."""
-        blocker = tmp_path / "file"
-        blocker.write_text("not a directory")
-        under = str(blocker / "under")
-
-        assert _self_service().ensure_directories([under]) == [under]

@@ -6,7 +6,6 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from unittest.mock import MagicMock
 
 from spark_pulse.tools.launch_script import (
     LaunchScriptManager,
@@ -268,10 +267,11 @@ class TestLaunchScriptDistributor:
             address = node.address or node.id
 
             class _Service:
-                def exec_in_container(
-                    self, container, command, detach=False, timeout=None
+                def copy_to_container(
+                    self, container, local_path, remote_path, timeout=120
                 ):
-                    calls.append((address, container, list(command)))
+                    calls.append((address, container, local_path, remote_path))
+                    return True
 
             return _Service()
 
@@ -282,8 +282,7 @@ class TestLaunchScriptDistributor:
 
     def test_a_worker_script_is_copied_inside_the_worker(self):
         services = self._Services()
-        ssh = MagicMock()
-        distributor = LaunchScriptDistributor(ssh_client=ssh, services=services)
+        distributor = LaunchScriptDistributor(services=services)
 
         distributor.deploy_to_node(
             node=self._Node("10.0.0.2", "worker"),
@@ -295,12 +294,19 @@ class TestLaunchScriptDistributor:
             (
                 "10.0.0.2",
                 "worker-container",
-                ["cp", "/tmp/exec-script.sh", "/workspace/exec-script.sh"],
+                "/tmp/patched.sh",
+                "/workspace/exec-script.sh",
             )
         ]
-        assert ssh.copy.call_args.kwargs["host"] == "10.0.0.2"
 
-    def test_a_local_head_needs_no_ssh(self):
+    def test_the_head_takes_the_very_same_path(self):
+        """One code path, and the head is not the exception it used to be.
+
+        The branch this replaces copied from ``/tmp/exec-script.sh`` *inside*
+        the head's container — a path nothing had put a script at — so the
+        head's script only ever arrived if a previous deploy had left one
+        there.
+        """
         services = self._Services()
         distributor = LaunchScriptDistributor(services=services)
 
@@ -311,7 +317,14 @@ class TestLaunchScriptDistributor:
         )
 
         assert services.nodes[0].is_self is True
-        assert services.calls[0][1] == "head-container"
+        assert services.calls == [
+            (
+                "127.0.0.1",
+                "head-container",
+                "/tmp/patched.sh",
+                "/workspace/exec-script.sh",
+            )
+        ]
 
 
 class TestValidateModContent:

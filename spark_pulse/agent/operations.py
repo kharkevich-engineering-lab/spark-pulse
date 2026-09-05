@@ -23,8 +23,10 @@ vocabulary are all settled here.
 
 from __future__ import annotations
 
+import asyncio
 import gzip
 import io
+import logging
 import os
 import tarfile
 from pathlib import Path
@@ -36,7 +38,14 @@ from spark_pulse.agent.errors import NodeOperationError
 from spark_pulse.agent.hub import AgentHub
 from spark_pulse.tools.docker import ContainerInfo, ContainerMetadata, ExecResult
 
-__all__ = ["NodeOperations", "NODE_OPERATIONS"]
+logger = logging.getLogger(__name__)
+
+__all__ = ["NodeOperations", "NODE_OPERATIONS", "CANCEL_POLL_INTERVAL"]
+
+#: How often a ``cancel`` callback is polled while a pull is in flight. A
+#: teardown wants the pull to stop promptly; the callback is cheap, and the
+#: node stops on the first Cancel it sees.
+CANCEL_POLL_INTERVAL = 0.5
 
 #: Every operation the protocol carries, in the order they appear below. The
 #: fifteen ``NodeService`` methods plus ``copy_dir_to_container`` and
@@ -288,6 +297,7 @@ class NodeOperations:
         interval: float | None = None,
         stall_timeout: float | None = None,
         timeout: float | None = None,
+        cancel: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
         """Pull an image onto the node, streaming progress back as it goes.
 
@@ -296,13 +306,70 @@ class NodeOperations:
         messages on the same stream the command went out on. A progress
         message is never an outcome: the pull is finished when — and only when
         — the result arrives.
+
+        ``cancel`` is polled here and, when it turns true, a Cancel is sent to
+        the node — and then we **keep waiting**. That is the whole subtlety:
+        the node answers a cancelled pull with a ``PullCancelled`` failure,
+        which is a definite outcome, and giving up on the await instead would
+        downgrade it to unknown. A caller that cancels a pull knows the pull
+        did not happen; it should not have to guess.
         """
+        if cancel is not None and cancel():
+            # Already withdrawn before anything was sent. Sending it anyway and
+            # then chasing it with a Cancel is strictly worse — it starts work
+            # on the node that nobody wants, and whether the Cancel wins the
+            # race decides what the caller sees. Refusing here is the same
+            # outcome, deterministically, with no bytes on the wire.
+            raise NodeOperationError(
+                self.node_id, "PullCancelled", f"pull of {ref} cancelled"
+            )
         message = pb.PullImage(ref=ref, want_progress=progress is not None)
         codec.set_optional(message, "interval", interval)
         codec.set_optional(message, "stall_timeout", stall_timeout)
         command = self.hub.new_command(pull_image=message)
-        outcome = await self._call(command, "pull", timeout=timeout, progress=progress)
+        call = asyncio.ensure_future(
+            self._call(command, "pull", timeout=timeout, progress=progress)
+        )
+        watcher = (
+            None
+            if cancel is None
+            else asyncio.ensure_future(
+                self._watch_for_cancel(command.command_id, cancel, interval)
+            )
+        )
+        try:
+            outcome = await call
+        finally:
+            if watcher is not None:
+                watcher.cancel()
         return codec.decode_pull_outcome(outcome)
+
+    async def _watch_for_cancel(
+        self,
+        command_id: str,
+        cancel: Callable[[], bool],
+        interval: float | None,
+    ) -> None:
+        """Poll ``cancel`` and send one Cancel to the node when it fires.
+
+        One, not one per tick: the agent records the id and the second message
+        would be about a command it has already stopped.
+        """
+        period = min(interval or CANCEL_POLL_INTERVAL, CANCEL_POLL_INTERVAL)
+        while True:
+            try:
+                fired = bool(cancel())
+            except Exception as exc:  # pragma: no cover — a caller's callback
+                logger.warning("cancel callback for %s raised: %s", self.node_id, exc)
+                return
+            if fired:
+                self.hub.cancel_command(self.node_id, command_id)
+                return
+            # Polled *before* sleeping: a caller that cancels before the pull
+            # has begun — a teardown racing a deploy — must not have to wait
+            # out a poll interval first, and a fast pull must not finish
+            # inside one and report success for work the caller withdrew.
+            await asyncio.sleep(period)
 
     async def remove_image(self, ref: str, force: bool | None = None) -> bool:
         message = pb.RemoveImage(ref=ref)

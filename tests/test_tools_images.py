@@ -10,7 +10,7 @@ from __future__ import annotations
 import ast
 import importlib
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -29,53 +29,70 @@ from spark_pulse.mock.docker import (  # noqa: E402
     MockDockerService,
 )
 from spark_pulse.mock import registry as mock_registry  # noqa: E402
-from spark_pulse.mock.node_service import (  # noqa: E402
-    NodeServices,
-    SimulatedDockerSSHClient,
-)
-from spark_pulse.tools.ssh import SSHClient, SSHResult  # noqa: E402
+from spark_pulse.mock import node_service as mock_node_service  # noqa: E402
+from spark_pulse.mock.node_service import NodeServices  # noqa: E402
 
 VLLM_REPO = "ghcr.io/kharkevich-engineering-lab/spark-pulse-engine/vllm"
 VLLM_REF = f"{VLLM_REPO}:0.1.0"
 
 
-class _RecordingSSHClient(SSHClient):
-    """SSH double answering like ``docker image inspect`` on a remote node."""
-
-    def __init__(self, ids: dict[str, str] | None = None):
-        self.execs: list[tuple[str, str]] = []
-        self._ids = ids or {}
-
-    def exec(self, host, command, timeout=30, batch_mode=True):
-        self.execs.append((host, command))
-        image_id = self._ids.get(host, "")
-        if not image_id:
-            return SSHResult(returncode=1, stdout="", stderr="No such image")
-        return SSHResult(returncode=0, stdout=f"{image_id}\n", stderr="")
-
-
 @dataclass
 class _Cluster:
-    """The simulated other machines, and this machine's own registry."""
+    """The simulated other machines, and this machine's own registry.
 
-    ssh: SimulatedDockerSSHClient
+    Each node has its own container service, so "n1 pulled and n2 did not" is
+    a fact about two different stores rather than a filter over one command
+    log. That distinction is why the old shared-daemon simulation could not
+    have caught a distribution bug: every node's answer came from the same
+    place.
+    """
+
     services: Any
     registry: Any
+    pulls: dict[str, list[str]] = field(default_factory=dict)
+
+    def docker(self, host: str) -> Any:
+        """The simulated Docker belonging to one node, recording its pulls."""
+        docker = mock_node_service.docker_for(mock_node_service.peer_node(host))
+        if host not in self.pulls:
+            self.pulls[host] = []
+            original = docker.pull_image
+
+            def _record(ref, *args, **kwargs):
+                self.pulls[host].append(ref)
+                return original(ref, *args, **kwargs)
+
+            docker.pull_image = _record
+        return docker
 
     def fail(self, host: str) -> None:
-        """Make every command on ``host`` fail, as an unreachable node would."""
-        self.ssh.fail_hosts.add(host)
+        """Make that node unreachable, as a node with no agent would be."""
 
-    def commands(self, needle: str) -> list[str]:
-        """Every command sent to a node containing ``needle``."""
-        return [c["command"] for c in self.ssh.commands if needle in c["command"]]
+        def _unreachable(*_args, **_kwargs):
+            raise RuntimeError(f"node {host} is unreachable (not_connected)")
+
+        docker = self.docker(host)
+        docker.image_info = _unreachable
+        docker.pull_image = _unreachable
+
+    def pulled(self, host: str) -> list[str]:
+        """Every image reference this node was asked to pull."""
+        self.docker(host)
+        return list(self.pulls.get(host, []))
 
 
 @pytest.fixture
 def nodes():
-    """Node services over a simulated SSH transport, plus the local registry."""
-    ssh = SimulatedDockerSSHClient()
-    return _Cluster(ssh, NodeServices(ssh_client=ssh), mock_registry.default_registry())
+    """One simulated container service per node, plus the local registry."""
+    mock_node_service.reset()
+    cluster = _Cluster(None, mock_registry.default_registry())
+    cluster.services = NodeServices(
+        resolver=lambda node, **_kwargs: cluster.docker(node.address or node.id)
+    )
+    try:
+        yield cluster
+    finally:
+        mock_node_service.reset()
 
 
 @pytest.fixture
@@ -405,18 +422,16 @@ class TestSync:
 
         assert result["ok"] is True
         assert [r["skipped"] for r in result["results"]] == [False, False]
-        pulls = nodes.commands("docker pull")
-        assert len(pulls) == 2
-        assert all(result["pull_ref"] in command for command in pulls)
+        assert nodes.pulled("n1") == nodes.pulled("n2") == [result["pull_ref"]]
 
     def test_a_node_that_already_has_it_is_skipped(self, catalogue, nodes):
         images.sync_to_nodes(VLLM_REF, ["n1", "n2"], services=nodes.services)
-        before = len(nodes.commands("docker pull"))
+        before = len(nodes.pulled("n1")) + len(nodes.pulled("n2"))
 
         again = images.sync_to_nodes(VLLM_REF, ["n1", "n2"], services=nodes.services)
 
         assert [r["skipped"] for r in again["results"]] == [True, True]
-        assert len(nodes.commands("docker pull")) == before
+        assert len(nodes.pulled("n1")) + len(nodes.pulled("n2")) == before
 
     def test_nodes_receive_no_credentials(self, catalogue, nodes, monkeypatch):
         """The credential authenticates the control node's fetch, nothing else."""
@@ -428,9 +443,11 @@ class TestSync:
         result = images.sync_to_nodes(VLLM_REF, ["n1"], services=nodes.services)
 
         assert result["nodes_need_credentials"] is False
-        for entry in nodes.ssh.commands:
-            assert "s3cr3t" not in entry["command"]
-            assert "ci-bot" not in entry["command"]
+        # What a node is asked to pull is the whole of what it is told, and it
+        # is anonymous: no credential is a component of it.
+        for ref in nodes.pulled("n1"):
+            assert "s3cr3t" not in ref
+            assert "ci-bot" not in ref
         # It is used, though — on this machine, for the copy from upstream.
         copies = [c for c in nodes.registry.commands if c[:2] == ["skopeo", "copy"]]
         assert any("ci-bot:s3cr3t" in " ".join(argv) for argv in copies)
@@ -475,14 +492,28 @@ class TestSync:
         with pytest.raises(ValueError):
             images.sync_to_nodes(VLLM_REF, [])
 
-    def test_presence_reports_matching_ids(self, catalogue):
+    def test_presence_reports_matching_ids(self, catalogue, nodes):
+        """Same id is a match; a different id is present and not a match."""
         local_id = catalogue.image_info(VLLM_REF)["id"]
-        ssh = _RecordingSSHClient({"n1": local_id, "n2": "sha256:other"})
+        nodes.docker("n1").image_info = lambda _ref: {"id": local_id}
+        nodes.docker("n2").image_info = lambda _ref: {"id": "sha256:other"}
 
-        result = images.presence(VLLM_REF, ["n1", "n2"], client=ssh)
+        result = images.presence(VLLM_REF, ["n1", "n2"], services=nodes.services)
 
         assert result["local"] is True
         by_node = {r["node"]: r for r in result["nodes"]}
         assert by_node["n1"]["matches"] is True
         assert by_node["n2"]["present"] is True
         assert by_node["n2"]["matches"] is False
+
+    def test_presence_reports_a_node_it_could_not_ask_as_an_error(
+        self, catalogue, nodes
+    ):
+        """Not as absent. "We could not ask" is not "it is not there"."""
+        nodes.fail("n2")
+
+        result = images.presence(VLLM_REF, ["n1", "n2"], services=nodes.services)
+
+        by_node = {r["node"]: r for r in result["nodes"]}
+        assert by_node["n2"]["present"] is False
+        assert "unreachable" in by_node["n2"]["error"]

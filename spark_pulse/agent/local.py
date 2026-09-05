@@ -74,6 +74,7 @@ async def start_local_agent(
     docker_service: Any | None = None,
     host: str = "127.0.0.1",
     name: str = CONTROL_NODE_NAME,
+    node_id: str = "",
     heartbeat_interval: float | None = None,
     wait: float | None = 10.0,
 ) -> LocalAgent:
@@ -87,11 +88,18 @@ async def start_local_agent(
     """
     directory = Path(directory) if directory else server.directory / "local-agent"
     identity = AgentIdentity.load(directory)
-    if identity is None or server.ledger.get(identity.node_id) is None:
-        # Either never enrolled, or enrolled against a CA/ledger that is gone —
-        # a fresh control-plane state directory, say. Both need a new identity,
-        # and both go through the same enrollment a remote node goes through.
-        token = server.mint_token(name)
+    stale = identity is not None and bool(node_id) and identity.node_id != node_id
+    if identity is None or server.ledger.get(identity.node_id) is None or stale:
+        # Never enrolled; enrolled against a CA/ledger that is gone (a fresh
+        # control-plane state directory, say); or holding an identity the node
+        # registry no longer agrees with. All three need a new identity, and
+        # all three go through the same enrollment a remote node goes through.
+        #
+        # Re-enrolling *ourselves* is safe in a way re-enrolling a peer is not:
+        # the identity lives on this disk, the transport is loopback, and no
+        # other machine has to be told. That asymmetry is why re-enrolment is
+        # automatic here and never automatic there.
+        token = server.mint_token(name, node_id=node_id)
         identity = await enroll(
             server.enrollment_target(host),
             token,

@@ -138,6 +138,82 @@ async def agent_fleet():
         await fleet.shutdown()
 
 
+class JoinedAgent:
+    """One enrolled agent, its task, and the Docker it speaks to."""
+
+    def __init__(self, agent, task, docker):
+        self.agent = agent
+        self.task = task
+        self.docker = docker
+
+    @property
+    def node_id(self) -> str:
+        return self.agent.node_id
+
+    async def close(self) -> None:
+        await self.agent.stop()
+        self.task.cancel()
+        try:
+            await self.task
+        except BaseException:
+            pass
+
+
+@pytest.fixture
+async def join_agent(agent_server, tmp_path):
+    """Enrol nodes against ``agent_server`` and hold their sessions.
+
+    Each node gets its **own** ``MockDockerService``. That is the point rather
+    than tidiness: when every node reads one daemon, an answer for the wrong
+    node looks exactly like the right answer, which is how thirteen call sites
+    queried the control node while claiming to reach a worker.
+    """
+    import asyncio
+
+    from spark_pulse.agent.executor import LocalExecutor
+    from spark_pulse.agent.node_agent import NodeAgent, enroll
+    from spark_pulse.mock.docker import MockDockerClient, MockDockerService
+
+    joined: list[JoinedAgent] = []
+
+    async def _join(
+        name: str, *, docker=None, node_id: str = "", heartbeat: float = 0.2
+    ):
+        docker = docker or MockDockerService(MockDockerClient())
+        identity = await enroll(
+            agent_server.enrollment_target(),
+            agent_server.mint_token(name, node_id=node_id),
+            trust_bundle_pem=agent_server.trust_bundle_pem,
+            trust_bundle_pin=agent_server.trust_bundle_pin,
+            directory=tmp_path / f"identity-{name}",
+            requested_name=name,
+            docker_service=docker,
+        )
+        agent = NodeAgent(
+            identity,
+            agent_server.session_target(),
+            executor=LocalExecutor(docker),
+            heartbeat_interval=heartbeat,
+        )
+        task = asyncio.create_task(agent.run_forever(), name=f"agent-{name}")
+        await agent.wait_connected(10)
+        node = JoinedAgent(agent, task, docker)
+        joined.append(node)
+        return node
+
+    try:
+        yield _join
+    finally:
+        for node in joined:
+            await node.close()
+
+
+@pytest.fixture
+async def agent_node(join_agent):
+    """One enrolled, connected agent."""
+    return await join_agent("spark-a")
+
+
 @pytest.fixture
 def agent_bundle():
     """An agent bundle with no vendored runtime.
