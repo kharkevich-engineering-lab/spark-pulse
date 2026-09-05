@@ -80,5 +80,9 @@ echo "build-agent: building $TARGET natively on $HOST_ARCH with $ENGINE"
   '
 
 BINARY="$OUT/spark-pulse-agent-$TARGET"
-chmod +x "$BINARY"
+# 755 outright, not `chmod +x`: the file arrives with whatever umask the
+# container had, and `+x` only adds the execute bit to that. A binary that
+# ships 711 works and is unreadable to everyone but its owner, which is a
+# surprise nobody needs to debug.
+chmod 755 "$BINARY"
 echo "build-agent: $(du -h "$BINARY" | cut -f1) -> ${BINARY#"$ROOT"/}"

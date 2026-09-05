@@ -4,8 +4,63 @@ on:
     branches: [main]
 
 jobs:
+  # The node agent, built natively per architecture.
+  #
+  # Natively, because `scripts/build-agent.sh` refuses to run under emulation:
+  # the same build is 1m30s on a matching runner and about half an hour under
+  # qemu, and a release step slow enough to be skipped is one that will be.
+  # So there is one runner per target rather than one runner cross-building.
+  #
+  # aarch64 is the Spark — every node, and a control plane that is one. x86_64
+  # is for a control plane that is *not* a Spark, which still has to run an
+  # agent for itself or it will not start. Both go in the same `py3-none-any`
+  # wheel: they are data for other machines, never imported here, so tagging
+  # the wheel for either architecture would be wrong.
+  agent:
+    name: Build the node agent (${{ matrix.target }})
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-unknown-linux-musl
+            runs-on: ubuntu-24.04-arm
+          - target: x86_64-unknown-linux-musl
+            runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runs-on }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Cache the agent build
+        uses: actions/cache@v4
+        with:
+          path: .agent-build-cache
+          key: agent-release-${{ matrix.target }}-${{ hashFiles('agent/Cargo.lock') }}
+          restore-keys: agent-release-${{ matrix.target }}-
+      - name: Build
+        run: TARGET=${{ matrix.target }} ./scripts/build-agent.sh
+      - name: Check what came out
+        run: |
+          set -euo pipefail
+          binary="spark_pulse/agent/bin/spark-pulse-agent-${{ matrix.target }}"
+          file "$binary"
+          file "$binary" | grep -q "statically linked"
+          # It must run nowhere but on its target, so this only asserts the
+          # architecture the name claims.
+          case "${{ matrix.target }}" in
+            aarch64-*) file "$binary" | grep -q "ARM aarch64" ;;
+            x86_64-*) file "$binary" | grep -q "x86-64" ;;
+          esac
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-${{ matrix.target }}
+          path: spark_pulse/agent/bin/spark-pulse-agent-${{ matrix.target }}
+          if-no-files-found: error
+
   release:
     name: Release
+    needs: agent
     runs-on: ubuntu-latest
     environment:
       name: PyPI
@@ -22,6 +77,22 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 24
+      # Into the package tree, where `pyproject.toml`'s package-data picks them
+      # up. `scripts/release.sh` refuses to build a wheel without them: the
+      # failure is otherwise silent until an operator installs the release and
+      # the control plane will not boot.
+      - name: Collect the agent binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: agent-*
+          merge-multiple: true
+          path: spark_pulse/agent/bin
+      - name: Check the binaries arrived
+        run: |
+          set -euo pipefail
+          chmod +x spark_pulse/agent/bin/spark-pulse-agent-*
+          ls -l spark_pulse/agent/bin/
+          test -f spark_pulse/agent/bin/spark-pulse-agent-aarch64-unknown-linux-musl
       - name: Run semantic-release
         id: release
         uses: cycjimmy/semantic-release-action@v6

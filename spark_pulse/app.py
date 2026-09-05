@@ -199,12 +199,12 @@ async def lifespan(app: FastAPI):
             directory=agent_state_dir(),
             node_id=this_node.id if this_node is not None else "",
             session_port=0 if is_simulation() else None,
-            # In simulation the resolver is the mock and never consults this,
-            # so a machine with no agent binary built still runs the dev
-            # server. In production every node service — this machine's
-            # included — goes through an agent, so there is no starting
-            # without one.
-            require_local_agent=not is_simulation(),
+            # In simulation the resolver is the mock and never consults the
+            # runtime, so this machine's own agent would be started, waited
+            # for, and never asked anything. Skipped rather than tolerated:
+            # every test that builds an app was paying the full connect
+            # timeout for a process nothing would use.
+            local_agent=not is_simulation(),
         )
         control_id = app.state.control_plane.control_node_id
         print(

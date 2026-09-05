@@ -181,7 +181,7 @@ async def start_runtime(
     enrollment_port: int | None = None,
     wait: float | None = 10.0,
     install: bool = True,
-    require_local_agent: bool = True,
+    local_agent: bool = True,
 ) -> ControlPlaneRuntime:
     """Start the listeners and the control node's own agent.
 
@@ -189,14 +189,21 @@ async def start_runtime(
     seconds an install needs it (``bootstrap.enrollment_window``), so a token
     endpoint is not reachable for the life of the process.
 
-    ``require_local_agent`` is the one thing a caller has to decide. In
-    production it is not optional: every node service goes through an agent,
-    *including this machine's*, so a control plane that cannot start its own
-    cannot reach its own Docker and is not a control plane. In simulation the
-    resolver is the mock and never consults any of this, so a machine with no
-    agent binary built still runs the dev server — the listeners come up
-    either way, because a transport only production exercises is a transport
-    nothing exercises.
+    ``local_agent`` is the one thing a caller has to decide. In production it
+    is not optional: every node service goes through an agent, *including this
+    machine's*, so a control plane that cannot start its own cannot reach its
+    own Docker and is not a control plane — a failure there unwinds the whole
+    startup.
+
+    In simulation it is skipped entirely. The resolver is the mock and never
+    consults any of this, so the agent would be started, waited for, and never
+    asked anything — and *waiting* is the problem: every test that builds an
+    app paid the full connect timeout, which is how a suite goes from two
+    minutes to ten. The listeners still come up, so the shape is the same; it
+    is the child process that does not.
+
+    The transport is not left unexercised by that. It is covered end to end,
+    against the real binary, by ``tests/test_agent_rust_interop.py``.
     """
     ports: dict[str, int] = {}
     if session_port is not None:
@@ -208,6 +215,9 @@ async def start_runtime(
     runtime = ControlPlaneRuntime(server, asyncio.get_running_loop())
     if install:
         set_current(runtime)
+    if not local_agent:
+        logger.info("not starting an agent for this machine (simulation)")
+        return runtime
     try:
         runtime.local = await start_local_agent(
             server,
@@ -217,14 +227,7 @@ async def start_runtime(
             node_id=node_id,
             wait=wait,
         )
-    except Exception as exc:
-        if not require_local_agent:
-            logger.warning(
-                "the control node has no agent of its own (%s); the listeners "
-                "are up but nothing can be reached through them",
-                exc,
-            )
-            return runtime
+    except Exception:
         # A control plane whose own agent will not start is not a control
         # plane: every node service, including this machine's, goes through
         # it. Unwind rather than leave a half-started server listening.

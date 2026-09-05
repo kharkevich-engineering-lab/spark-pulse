@@ -163,29 +163,34 @@ pub fn classify_interface(name: &str) -> &'static str {
 }
 
 /// The interfaces the kernel enumerates, and the RoCE device names beside them.
+///
+/// Names come from `getifaddrs`, which every unix has, and the details that
+/// only Linux publishes — MTU and link state, under `/sys/class/net` — are
+/// read on top when they are there. Enumerating from `/sys` alone would mean
+/// an agent that reports no interfaces at all anywhere but Linux, and
+/// therefore an empty hardware fingerprint on a control plane that is a
+/// developer's machine. A fact that is right on a node and absent everywhere
+/// it can be tested is a fact nobody can test.
 fn interfaces() -> (Vec<NetworkInterface>, Vec<String>) {
-    let mut found = Vec::new();
-    if let Ok(entries) = fs::read_dir("/sys/class/net") {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            let base = entry.path();
-            let mtu = read_trimmed(base.join("mtu"))
-                .and_then(|v| v.parse::<u32>().ok())
-                .unwrap_or(0);
-            // `operstate` is "up", "down", "unknown"… Loopback reports
-            // "unknown" while being perfectly up, so carrier is consulted too.
-            let operstate = read_trimmed(base.join("operstate")).unwrap_or_default();
-            let is_up = operstate == "up"
-                || (operstate == "unknown"
-                    && read_trimmed(base.join("carrier")).as_deref() == Some("1"));
-            found.push(NetworkInterface {
-                name: name.clone(),
-                ip: ipv4_for(&name).unwrap_or_default(),
-                mtu,
-                is_up,
-                r#type: classify_interface(&name).to_string(),
-            });
-        }
+    let mut found: Vec<NetworkInterface> = Vec::new();
+    for name in interface_names() {
+        let base = Path::new("/sys/class/net").join(&name);
+        let mtu = read_trimmed(base.join("mtu"))
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(0);
+        // `operstate` is "up", "down", "unknown"… Loopback reports "unknown"
+        // while being perfectly up, so carrier is consulted too.
+        let operstate = read_trimmed(base.join("operstate")).unwrap_or_default();
+        let is_up = operstate == "up"
+            || (operstate == "unknown"
+                && read_trimmed(base.join("carrier")).as_deref() == Some("1"));
+        found.push(NetworkInterface {
+            ip: ipv4_for(&name).unwrap_or_default(),
+            mtu,
+            is_up,
+            r#type: classify_interface(&name).to_string(),
+            name,
+        });
     }
     found.sort_by(|a, b| a.name.cmp(&b.name));
 
@@ -196,6 +201,39 @@ fn interfaces() -> (Vec<NetworkInterface>, Vec<String>) {
         }
     }
     (found, hcas.into_iter().collect())
+}
+
+/// Every interface name this machine has, once each.
+fn interface_names() -> Vec<String> {
+    use std::ffi::CStr;
+
+    let mut names: BTreeSet<String> = BTreeSet::new();
+    let mut head: *mut libc::ifaddrs = std::ptr::null_mut();
+    // SAFETY: getifaddrs allocates a list freed below; each pointer is
+    // null-checked before it is read and none is retained.
+    if unsafe { libc::getifaddrs(&mut head) } == 0 {
+        let mut cursor = head;
+        while !cursor.is_null() {
+            let entry = unsafe { &*cursor };
+            cursor = entry.ifa_next;
+            if !entry.ifa_name.is_null() {
+                names.insert(
+                    unsafe { CStr::from_ptr(entry.ifa_name) }
+                        .to_string_lossy()
+                        .into_owned(),
+                );
+            }
+        }
+        unsafe { libc::freeifaddrs(head) };
+    }
+    // `/sys` can list an interface `getifaddrs` does not — one that is down
+    // and has no address at all — and those still describe the hardware.
+    if let Ok(entries) = fs::read_dir("/sys/class/net") {
+        for entry in entries.flatten() {
+            names.insert(entry.file_name().to_string_lossy().into_owned());
+        }
+    }
+    names.into_iter().collect()
 }
 
 /// The first non-loopback IPv4 address on an interface.
@@ -284,15 +322,27 @@ pub fn fingerprint(
         .map(|i| i.name.as_str())
         .collect();
     names.sort_unstable();
+
+    // Nothing that *identifies* this machine: no interface names and no
+    // machine-id. The CPU count and the memory size are not identifying on
+    // their own — every Spark has the same ones — so a fingerprint built from
+    // them alone would be identical on every node, and the control plane would
+    // read two different machines as one. Better to say we do not know.
+    //
+    // The Python agent had this guard too and it never fired: its material was
+    // `"|".join([*names, str(cpu), str(mem), machine_id])`, and `str(0)` is
+    // `"0"`, so stripping `|` always left something. Nothing depended on it —
+    // that agent never reached a release — so this is the guard doing what it
+    // always said it did.
+    if names.is_empty() && machine_id.is_empty() {
+        return String::new();
+    }
+
     let mut parts: Vec<String> = names.into_iter().map(str::to_string).collect();
     parts.push(cpu_count.to_string());
     parts.push(memory_bytes.to_string());
     parts.push(machine_id.to_string());
-    let material = parts.join("|");
-    if material.trim_matches('|').is_empty() {
-        return String::new();
-    }
-    hex(Sha256::digest(material.as_bytes()))
+    hex(Sha256::digest(parts.join("|").as_bytes()))
 }
 
 fn hex(bytes: impl AsRef<[u8]>) -> String {

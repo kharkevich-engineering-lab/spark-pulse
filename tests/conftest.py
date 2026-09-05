@@ -98,6 +98,22 @@ def reset_simulated_preflight():
     mock_preflight.reset()
 
 
+@pytest.fixture(autouse=True)
+def isolate_the_control_planes_agent_state(tmp_path, monkeypatch):
+    """Keep the CA, the enrolment ledger and this machine's identity out of
+    the developer's real ``~/.config``.
+
+    ``app.lifespan`` starts the agent transport, and the transport creates a
+    certificate authority and an enrolment ledger the first time it runs. Every
+    test that builds an app was creating those in the *real* config directory —
+    writing a CA key into a developer's home, and then failing to enrol against
+    a ledger left behind by a previous test.
+    """
+    import spark_pulse.app as app_module
+
+    monkeypatch.setattr(app_module, "agent_state_dir", lambda: tmp_path / "_agent")
+
+
 # ── The node agent's SSH bootstrap ──────────────────────────────────────────
 #
 # Used by tests/test_agent_bootstrap.py and tests/test_agent_doctor.py. They
