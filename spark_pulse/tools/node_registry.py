@@ -79,6 +79,18 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _valid_fabric_mode(value: Any) -> str:
+    """A fabric mode we recognise, or ``""``.
+
+    Imported lazily so the registry keeps no import-time dependency on
+    discovery, which reaches for ``psutil`` and ``zeroconf``.
+    """
+    from spark_pulse.tools.discovery import FABRIC_MODES
+
+    mode = str(value or "")
+    return mode if mode in FABRIC_MODES else ""
+
+
 def mint_node_id() -> str:
     """Mint a fresh node id.
 
@@ -104,8 +116,18 @@ class NodeRecord:
         ssh_key_path: Optional path to the private key for this node. The key
             itself never leaves the control plane; only a path is stored.
         ethernet_interface: Management interface name, for NCCL/GLOO pinning.
-        infiniband_interfaces: Fabric interface names, in the order discovery
-            reported them.
+        infiniband_interfaces: RoCE **device** names as they appear in
+            ``/sys/class/infiniband`` — ``rocep1s0f1``, not the ``enp1s0f1np1``
+            netdev it drives — in the order ``ibdev2netdev`` reported them.
+            This is ``NCCL_IB_HCA``'s selector list, and it holds *both* twins
+            of every cabled port: one QSFP port is two RoCE devices sharing a
+            PCIe x4 pair, and naming one halves the bandwidth silently
+            (``spark-vllm-docker`` ``docs/NETWORKING.md`` lines 15-40).
+        fabric_mode: How this machine is cabled, from
+            :data:`~spark_pulse.tools.discovery.FABRIC_MODES` — ``direct`` for
+            one cable (a pair, or a QSFP switch), ``mesh`` for the switchless
+            three-node ring, ``""`` when it has not been determined. A mesh
+            needs three extra NCCL settings that a direct fabric must not get.
         state: One of :data:`NODE_STATES`.
         last_seen: ISO-8601 UTC timestamp of the last time we had contact, or
             ``None`` if we never have.
@@ -121,6 +143,7 @@ class NodeRecord:
     ssh_key_path: str = ""
     ethernet_interface: str = ""
     infiniband_interfaces: tuple[str, ...] = ()
+    fabric_mode: str = ""
     state: str = "unknown"
     last_seen: str | None = None
     machine_id: str = ""
@@ -153,6 +176,7 @@ class NodeRecord:
             ssh_key_path=str(data.get("ssh_key_path") or ""),
             ethernet_interface=str(data.get("ethernet_interface") or ""),
             infiniband_interfaces=tuple(str(name) for name in interfaces),
+            fabric_mode=_valid_fabric_mode(data.get("fabric_mode")),
             state=state if state in NODE_STATES else "unknown",
             last_seen=data.get("last_seen") or None,
             machine_id=str(data.get("machine_id") or ""),
@@ -236,6 +260,7 @@ def add_node(
     ssh_key_path: str = "",
     ethernet_interface: str = "",
     infiniband_interfaces: Iterable[str] = (),
+    fabric_mode: str = "",
     state: str = "unknown",
     machine_id: str = "",
 ) -> NodeRecord:
@@ -267,6 +292,7 @@ def add_node(
         ssh_key_path=ssh_key_path.strip(),
         ethernet_interface=ethernet_interface.strip(),
         infiniband_interfaces=tuple(infiniband_interfaces),
+        fabric_mode=_valid_fabric_mode(fabric_mode),
         state=state,
         last_seen=_now() if is_control_plane else None,
         machine_id=machine_id,
@@ -287,6 +313,7 @@ _UPDATABLE = frozenset(
         "ssh_key_path",
         "ethernet_interface",
         "infiniband_interfaces",
+        "fabric_mode",
         "state",
         "last_seen",
         "machine_id",
@@ -308,6 +335,16 @@ def update_node(node_id: str, **changes: Any) -> NodeRecord:
         raise ValueError(f"state must be one of {', '.join(NODE_STATES)}")
     if "infiniband_interfaces" in changes:
         changes["infiniband_interfaces"] = tuple(changes["infiniband_interfaces"])
+    if "fabric_mode" in changes:
+        raw = changes["fabric_mode"]
+        changes["fabric_mode"] = _valid_fabric_mode(raw)
+        if raw and not changes["fabric_mode"]:
+            from spark_pulse.tools.discovery import FABRIC_MODES
+
+            raise ValueError(
+                f"fabric_mode must be one of {', '.join(FABRIC_MODES)}, or "
+                "empty when it is not known"
+            )
 
     nodes = list_nodes()
     for index, node in enumerate(nodes):
@@ -370,8 +407,25 @@ def read_machine_id() -> str:
 
 
 def _discovered_self() -> dict[str, Any]:
-    """What the existing discovery code knows about this machine."""
+    """What the existing discovery code knows about this machine.
+
+    ``ibdev2netdev`` is the authority when it answers, because on this
+    hardware the RoCE devices ``NCCL_IB_HCA`` names are **not** network
+    interfaces at all: ``rocep1s0f1`` lives in ``/sys/class/infiniband`` while
+    the netdev it drives is ``enp1s0f1np1``, which a name-prefix scan
+    classifies as plain ethernet. Reading the fabric through the generic
+    interface list therefore produced an empty ``NCCL_IB_HCA`` on a real Spark
+    and picked the management link by scan order. The prefix scan stays as the
+    fallback for machines with IPoIB-style ``ib0`` devices and for developer
+    machines with no fabric at all.
+    """
     from spark_pulse.tools import discovery
+
+    try:
+        fabric = discovery.detect_fabric()
+    except Exception as exc:  # pragma: no cover — discovery is best effort
+        logger.debug("Fabric detection failed: %s", exc)
+        fabric = None
 
     try:
         interfaces = discovery.detect_network_interfaces()
@@ -380,16 +434,25 @@ def _discovered_self() -> dict[str, Any]:
         interfaces = []
 
     ethernet = ""
-    for interface in interfaces:
-        if interface.type == "ethernet" and interface.is_up and interface.ip:
-            ethernet = interface.name
-            break
+    hcas: tuple[str, ...] = ()
+    mode = ""
+    if fabric is not None and fabric.ok:
+        ethernet = fabric.ethernet
+        hcas = fabric.ib_hca
+        mode = fabric.mode
 
-    fabric = tuple(
-        interface.name
-        for interface in interfaces
-        if interface.type == "infiniband" and interface.is_up
-    )
+    if not ethernet:
+        for interface in interfaces:
+            if interface.type == "ethernet" and interface.is_up and interface.ip:
+                ethernet = interface.name
+                break
+
+    if not hcas:
+        hcas = tuple(
+            interface.name
+            for interface in interfaces
+            if interface.type == "infiniband" and interface.is_up
+        )
 
     try:
         address = discovery.detect_local_ip() or ""
@@ -400,7 +463,8 @@ def _discovered_self() -> dict[str, Any]:
     return {
         "address": address,
         "ethernet_interface": ethernet,
-        "infiniband_interfaces": fabric,
+        "infiniband_interfaces": hcas,
+        "fabric_mode": mode,
     }
 
 
@@ -438,6 +502,8 @@ def register_self(*, name: str = "") -> NodeRecord:
         changes["ethernet_interface"] = discovered["ethernet_interface"]
     if not existing.infiniband_interfaces and discovered["infiniband_interfaces"]:
         changes["infiniband_interfaces"] = discovered["infiniband_interfaces"]
+    if not existing.fabric_mode and discovered["fabric_mode"]:
+        changes["fabric_mode"] = discovered["fabric_mode"]
     changes["state"] = "healthy"
     changes["last_seen"] = _now()
     changes["machine_id"] = read_machine_id()

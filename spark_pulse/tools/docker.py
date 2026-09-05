@@ -10,6 +10,7 @@ single source of truth — no external state database needed.
 from __future__ import annotations
 
 import logging
+import os
 import queue
 import subprocess
 import threading
@@ -325,6 +326,37 @@ class ContainerInfo:
     labels: dict[str, str] = field(default_factory=dict)
 
 
+def prepare_labels(
+    metadata: ContainerMetadata, name: str, image: str
+) -> dict[str, str]:
+    """The label set a container carries, whichever service creates it.
+
+    Both container services build labels from the same metadata, and for a
+    while they built *different* ones: the SDK path stamped ``created_at`` and
+    the container-name label, the CLI path stamped neither, so a rank on a
+    peer came back from reconciliation without the creation time the deployment
+    list sorts by and without the name label
+    :func:`~spark_pulse.tools.reconciliation._reconstruct_deployment` reads.
+    Labels are the only place any of this survives the process, so there is one
+    function that makes them and both paths call it.
+
+    ``metadata`` is mutated on purpose: the caller returns it inside the
+    :class:`ContainerInfo`, and the stamped time has to be the one on the
+    container.
+    """
+    if not metadata.image:
+        metadata.image = image
+    # Stamped *before* the labels are built: the label is the only place the
+    # creation time survives this process, and reconciliation rebuilds
+    # deployments from labels alone. A caller that already has a time — the
+    # deploy planner stamps one for the whole gang — keeps it.
+    if not metadata.created_at:
+        metadata.created_at = datetime.now(timezone.utc).isoformat()
+    labels = metadata.to_labels()
+    labels[NAME_LABEL] = name
+    return labels
+
+
 # ── Docker Service ───────────────────────────────────────────────────────────
 
 
@@ -435,8 +467,7 @@ class DockerService:
         import docker
 
         client = self.client
-        labels = metadata.to_labels()
-        labels[NAME_LABEL] = name
+        labels = prepare_labels(metadata, name, image)
 
         # Build volume mounts for cache dirs
         volumes: dict[str, dict[str, str]] = {}
@@ -521,8 +552,6 @@ class DockerService:
         except docker.errors.APIError as exc:
             raise RuntimeError(f"Docker API error: {exc}") from exc
 
-        metadata.created_at = datetime.now(timezone.utc).isoformat()
-        labels[CREATED_AT_LABEL] = metadata.created_at
         return ContainerInfo(
             id=container.id,
             name=container.name,
@@ -531,6 +560,26 @@ class DockerService:
             metadata=metadata,
             labels=labels,
         )
+
+    def ensure_directories(self, paths: Any) -> list[str]:
+        """``mkdir -p`` every path on this machine. Returns the ones that failed.
+
+        Bind-mount sources have to exist before ``docker run`` or the daemon
+        invents them **owned by root**, and every path passed here is one of
+        the login user's caches. ``launch-cluster.sh`` line 1094 does the same
+        thing for the same reason.
+        """
+        failed: list[str] = []
+        for raw in paths or []:
+            path = str(raw).strip()
+            if not path:
+                continue
+            try:
+                os.makedirs(path, exist_ok=True)
+            except OSError as exc:
+                logger.warning("could not create %s: %s", path, exc)
+                failed.append(path)
+        return failed
 
     # ── Images ─────────────────────────────────────────────────────────────
 
@@ -729,7 +778,15 @@ class DockerService:
             return False
 
     def get_container_status(self, name: str) -> dict[str, Any]:
-        """Return container state: running, stopped, missing.
+        """Return container state.
+
+        Three kinds of answer, the same three
+        :meth:`~spark_pulse.tools.node_service.RemoteNodeService.get_container_status`
+        gives for a peer: whatever Docker's own status vocabulary says
+        (``running``, ``exited``, ``created``, ``paused``, ``restarting``,
+        ``dead``) when the daemon described the container, ``missing`` when the
+        daemon said there is no such container, and ``unknown`` when the daemon
+        did not answer at all.
 
         Args:
             name: Container name.
@@ -752,8 +809,17 @@ class DockerService:
         except docker.errors.NotFound:
             return _missing_status(name)
         except docker.errors.APIError as exc:
+            # A daemon that will not answer is the *third* state, and it has
+            # one name across both services: ``unknown``. The remote path has
+            # always called it that (``RemoteNodeService._inspect_failed_status``)
+            # while this one called it ``error``, so the same fact read
+            # differently depending only on which node the rank landed on —
+            # and ``_rank_status``'s docstring names a single third state.
+            # It is emphatically not ``missing``: nothing here is evidence the
+            # container is gone, and ``_is_confirmed_gone`` frees ports on
+            # exactly that evidence.
             return {
-                "status": "error",
+                "status": "unknown",
                 "running": False,
                 "id": None,
                 "state": {},
@@ -819,9 +885,16 @@ class DockerService:
         The native runtime redirects the serve script into PID 1's stdout, so
         this is the deployment log.
         """
+        import docker
+
         client = self.client
         try:
             container = client.containers.get(name)
+        except docker.errors.NotFound:
+            # The SDK's message is "404 ... No such container: x", which the
+            # text check below does not match — so it has to be caught by type
+            # or a missing container becomes a 500 with an HTTP dump in it.
+            return f"Container '{name}' not found"
         except Exception as exc:
             if "not found" in str(exc).lower():
                 return f"Container '{name}' not found"

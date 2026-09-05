@@ -8,11 +8,20 @@ from __future__ import annotations
 
 from typing import Any
 
+# The event *vocabulary* is shared: a simulated event has to be the same kind
+# of thing a real one is, or a consumer reading ``tools.events`` through the
+# switch would see a different enum in simulation than in production.
+from spark_pulse.tools.events import (
+    DeploymentEvent as DeploymentEvent,
+    EventType as EventType,
+)
 
-class MockEventBroadcaster:
+
+class EventBroadcaster:
     """Mock EventBroadcaster for simulation mode.
 
-    Simulates event broadcasting without actual SSE clients.
+    Simulates event broadcasting without actual SSE clients. Named for its real
+    twin: ``tools.events.EventBroadcaster`` has to resolve in both modes.
     """
 
     def __init__(self):

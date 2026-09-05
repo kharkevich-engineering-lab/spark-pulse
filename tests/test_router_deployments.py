@@ -257,17 +257,48 @@ class TestCreateEndpoint:
         The dispatcher used to refuse any node list under the native runtime,
         so a multi-node request could only be served by the legacy runner.
         Now it is planned and started by the one path, and the record carries
-        the size it was asked for.
+        the size it was asked for. The addresses are the simulated registry's
+        own, because a peer is deployed to by its registry record.
         """
-        response = client.post(
-            "/api/deployments",
-            json={"recipe_id": "qwen3-8b", "name": "x", "nodes": ["a", "b"]},
-        )
+        with patch.object(
+            tools.recipes,
+            "get_recipe",
+            side_effect=lambda rid, *a, **kw: _TP2_RECIPE,
+        ):
+            response = client.post(
+                "/api/deployments",
+                json={
+                    "recipe_id": "qwen3-8b",
+                    "name": "x",
+                    "nodes": ["192.168.1.100", "10.0.0.11"],
+                },
+            )
 
         assert response.status_code == 200, response.text
         body = response.json()
         assert body["node_count"] == 2
         assert [r["rank"] for r in body["ranks"]] == [0, 1]
+
+    def test_an_unregistered_node_is_refused_by_name(self, client):
+        """A peer is reached through its registry record, or not at all."""
+        with patch.object(
+            tools.recipes,
+            "get_recipe",
+            side_effect=lambda rid, *a, **kw: _TP2_RECIPE,
+        ):
+            response = client.post(
+                "/api/deployments",
+                json={
+                    "recipe_id": "qwen3-8b",
+                    "name": "x",
+                    "nodes": ["192.168.1.100", "10.9.9.9"],
+                },
+            )
+
+        assert response.status_code == 400
+        detail = response.json()["detail"]
+        assert "10.9.9.9" in detail
+        assert "not in the node registry" in detail
 
     def test_create_of_an_unknown_recipe_is_404(self, client):
         response = client.post("/api/deployments", json={"recipe_id": "nope"})

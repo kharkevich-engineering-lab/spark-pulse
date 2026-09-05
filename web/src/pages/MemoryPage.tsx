@@ -1,14 +1,52 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { connectMetricsStream, fetchMemory, killGpuProcess } from "@/lib/api";
 import { useQuery } from "@/hooks/useQuery";
 import { Activity, Cpu, HardDrive, Loader2, AlertCircle, Zap, Workflow, OctagonX } from "lucide-react";
-import type { MemoryResponse } from "@/lib/types";
+import type { GPUProcess, MemoryResponse } from "@/lib/types";
 import { setRefresh } from "@/lib/refresh";
+import { AlertModal, ConfirmModal } from "@/components/Modal";
+import { HealthHistoryChart, type HealthSeries } from "@/components/HealthBadge";
+
+/** One reading of a GPU, as the metrics stream reported it. */
+interface GPUSample {
+  t: number;
+  utilization: number | null;
+  temperature: number | null;
+}
+
+/** An hour of five-second frames. The series lives in the tab, not on disk. */
+const MAX_SAMPLES = 720;
+
+const HISTORY_CAPTION =
+  "Sampled from the live metrics stream since this page was opened. Nothing stores it, so it starts over on reload.";
+
+/** The two things the metrics frame actually carries per GPU. */
+function gpuSeries(samples: GPUSample[]): HealthSeries[] {
+  const of = (pick: (s: GPUSample) => number | null) =>
+    samples.filter((s) => pick(s) !== null).map((s) => ({ t: s.t, value: pick(s) as number }));
+  return [
+    {
+      label: "GPU utilization",
+      unit: "%",
+      color: "var(--color-primary)",
+      samples: of((s) => s.utilization),
+    },
+    {
+      label: "Temperature",
+      unit: "°C",
+      color: "var(--color-warning)",
+      samples: of((s) => s.temperature),
+    },
+  ];
+}
 
 export default function MemoryPage() {
   const { data: memory, loading, error, refetch } = useQuery(fetchMemory);
   const [sse, setSse] = useState<MemoryResponse | null>(null);
   const [killing, setKilling] = useState<number | null>(null);
+  const [pendingKill, setPendingKill] = useState<GPUProcess | null>(null);
+  const [alert, setAlert] = useState<{ title: string; message: string } | null>(null);
+  const [history, setHistory] = useState<Record<string, GPUSample[]>>({});
   const d = sse || memory;
 
   useEffect(() => { setRefresh(refetch); }, [refetch]);
@@ -17,12 +55,52 @@ export default function MemoryPage() {
     return stop;
   }, []);
 
-  async function handleKill(pid: number) {
-    setKilling(pid);
+  // Accumulate the readings that go past. Every point here was reported by the
+  // backend; none is interpolated, and a GPU that stops reporting simply stops
+  // gaining points.
+  useEffect(() => {
+    if (!d) return;
+    const t = Date.now();
+    setHistory((prev) => {
+      const next = { ...prev };
+      for (const gpu of d.gpu) {
+        next[gpu.uuid] = [
+          ...(next[gpu.uuid] ?? []),
+          { t, utilization: gpu.utilization, temperature: gpu.temperature },
+        ].slice(-MAX_SAMPLES);
+      }
+      return next;
+    });
+  }, [d]);
+
+  const series = useMemo(() => {
+    const byGpu: Record<string, HealthSeries[]> = {};
+    for (const [uuid, samples] of Object.entries(history)) byGpu[uuid] = gpuSeries(samples);
+    return byGpu;
+  }, [history]);
+
+  async function handleKill(proc: GPUProcess) {
+    setPendingKill(null);
+    setKilling(proc.pid);
     try {
-      await killGpuProcess(pid);
+      const result = await killGpuProcess(proc.pid);
+      // The API answers `{killed, error}`; a refusal and a success are the
+      // same HTTP 200, so the flag is the only thing that separates them.
+      if (!result?.killed) {
+        setAlert({
+          title: `PID ${proc.pid} was not killed`,
+          message:
+            result?.error ??
+            `The backend refused to signal ${proc.process_name} (PID ${proc.pid}) and gave no reason.`,
+        });
+      }
       await refetch();
       setSse(null);
+    } catch (e) {
+      setAlert({
+        title: `Could not kill PID ${proc.pid}`,
+        message: e instanceof Error ? e.message : String(e),
+      });
     } finally {
       setKilling(null);
     }
@@ -69,6 +147,12 @@ export default function MemoryPage() {
                     <div className="p-2 rounded bg-bg"><span className="text-text-muted text-xs">Power Draw</span><p className="font-mono">{gpu.power_draw ?? "—"} W</p></div>
                     <div className="p-2 rounded bg-bg"><span className="text-text-muted text-xs">Power Limit</span><p className="font-mono">{gpu.power_limit ?? "—"} W</p></div>
                   </div>
+                  <HealthHistoryChart
+                    className="mt-4"
+                    title="Live history"
+                    caption={HISTORY_CAPTION}
+                    series={series[gpu.uuid] ?? []}
+                  />
                   {gpuProcs.length > 0 && (
                     <div className="mt-4 pt-4 border-t border-border">
                       <div className="flex items-center gap-2 mb-3"><Workflow size={14} className="text-primary" /><span className="text-sm font-semibold">GPU Processes</span></div>
@@ -95,7 +179,7 @@ export default function MemoryPage() {
                                 <td className="py-1.5 pr-4 font-mono text-xs">{p.used_memory} MB</td>
                                 <td className="py-1.5">
                                   <button
-                                    onClick={() => handleKill(p.pid)}
+                                    onClick={() => setPendingKill(p)}
                                     disabled={killing === p.pid}
                                     className="flex items-center gap-1 px-2 py-1 text-xs rounded bg-danger/10 text-danger border border-danger/30 hover:bg-danger/20 transition-colors disabled:opacity-50"
                                     title="Kill process (SIGTERM)"
@@ -121,8 +205,35 @@ export default function MemoryPage() {
           </div>
         </div>
       )}
+
+      <ConfirmModal
+        open={pendingKill !== null}
+        onClose={() => setPendingKill(null)}
+        onConfirm={() => pendingKill && handleKill(pendingKill)}
+        title="Kill this GPU process?"
+        confirmLabel="Kill process"
+        confirmVariant="danger"
+        message={pendingKill ? killMessage(pendingKill) : ""}
+      />
+
+      <AlertModal
+        open={alert !== null}
+        onClose={() => setAlert(null)}
+        title={alert?.title ?? ""}
+        message={alert?.message ?? ""}
+      />
     </div>
   );
+}
+
+/** Name what dies, in the terms the row already showed the operator. */
+function killMessage(p: GPUProcess): string {
+  const held = `${p.used_memory} MB of GPU memory`;
+  const provenance =
+    p.is_tracked === false
+      ? "Nothing on this page started it, so it belongs to something else on this machine."
+      : "It belongs to a deployment this page is tracking, which will stop.";
+  return `SIGTERM will be sent to PID ${p.pid} (${p.process_name}), holding ${held}. ${provenance} Any inference run it is serving stops immediately, and this cannot be undone.`;
 }
 
 function CPUCard({ cpu }: { cpu: { total: number; used: number; free: number; available: number; usage_percent: number } }) {

@@ -103,7 +103,13 @@ def enrich_gpu_process_tracking(
     process_list: list[dict[str, Any]],
     running_deployments: list[dict[str, Any]],
 ) -> None:
-    """Mark processes that correspond to running deployments."""
-    running_pids = {d["pid"] for d in running_deployments}
+    """Mark processes that correspond to running deployments.
+
+    A deployment record carries ``pid: None`` until its container reports one,
+    and a record written by an older build may not carry the key at all — the
+    real implementation guards for both, so this one does too rather than
+    turning the memory endpoint into a 500.
+    """
+    running_pids = {d["pid"] for d in running_deployments if d.get("pid")}
     for proc in process_list:
-        proc["is_tracked"] = proc["pid"] in running_pids
+        proc["is_tracked"] = proc.get("pid") in running_pids

@@ -719,7 +719,8 @@ def test_pinned_interfaces_that_exist_pass():
         )
 
 
-def test_a_missing_pinned_interface_fails_and_explains_find_or_fail():
+def test_a_missing_pinned_socket_interface_fails_and_says_it_aborts():
+    """``NCCL_SOCKET_IFNAME`` is find-or-fail, and the remedy has to say so."""
     report = run(
         targets=[CONTROL, PEER],
         plan=two_node_plan(
@@ -731,11 +732,39 @@ def test_a_missing_pinned_interface_fails_and_explains_find_or_fail():
         services=two_node_services(),
     )
     check = check_of(report, preflight.CHECK_INTERFACES, "spark-02")
-    assert_named_failure(check, "spark-02", "enp9s0f9np9", "find-or-fail")
+    assert_named_failure(check, "spark-02", "enp9s0f9np9", "aborts the collective")
     assert check_of(report, preflight.CHECK_INTERFACES, "spark-01")["status"] == (
         STATUS_PASS
     )
     assert report["verdict"] == VERDICT_BLOCKED
+
+
+def test_a_missing_roce_device_fails_and_says_it_drops_to_tcp_silently():
+    """``NCCL_IB_HCA`` is *not* find-or-fail, and that is the worse case.
+
+    A selector matching no device leaves NCCL with zero IB devices, which
+    disables the IB plugin and falls through to sockets at INFO level. The
+    deployment serves, slowly, and says nothing — so the remedy must not
+    describe it as an abort.
+    """
+    report = run(
+        targets=[CONTROL, PEER],
+        plan=two_node_plan(
+            ranks=[
+                {"node_rank": 0, "env": {"NCCL_IB_HCA": "rocep1s0f1"}},
+                {"node_rank": 1, "env": {"NCCL_IB_HCA": "rocep9s9f9"}},
+            ]
+        ),
+        services=two_node_services(),
+    )
+    check = next(
+        c
+        for c in report["checks"]
+        if c["id"] == preflight.CHECK_INTERFACES
+        and c["detail"].get("interface") == "rocep9s9f9"
+    )
+    assert_named_failure(check, "spark-02", "rocep9s9f9", "tcp sockets")
+    assert "without an error" in check["remedy"]
 
 
 def test_the_registry_supplies_the_names_when_the_plan_pins_none_yet():
@@ -777,6 +806,244 @@ def test_a_plan_pinning_nothing_at_all_warns_about_autoselection():
     assert check["status"] == STATUS_WARN
     assert "spark-03" in check["observed"]
     assert check["remedy"]
+
+
+# ── Fabric ───────────────────────────────────────────────────────────────────
+#
+# Everything below checks the node's ConnectX cabling against what the launch
+# was configured for, which is upstream's ``detect_interfaces`` applied to a
+# peer rather than to the launcher's own machine. The simulated probe answers
+# with the exact ``ibdev2netdev`` output ``docs/NETWORKING.md`` prints at lines
+# 22-27: one cable in the outermost port, so two of four RoCE devices up.
+
+
+def fabric_probe(address: str, ibdev: str = "", addrs: str = "") -> Probe:
+    """A probe whose fabric answer is overridden and nothing else."""
+    from spark_pulse.mock.preflight import SIM_IBDEV2NETDEV, SIM_IP_ADDRESSES
+
+    body = (ibdev or SIM_IBDEV2NETDEV) + "\n== addr\n" + (addrs or SIM_IP_ADDRESSES)
+    return Probe(
+        address,
+        overrides={
+            "ibdev2netdev": ProbeResult(reachable=True, returncode=0, stdout=body)
+        },
+    )
+
+
+def fabric_plan(control_env: dict[str, str], peer_env: dict[str, str]):
+    return two_node_plan(
+        ranks=[
+            {"node_rank": 0, "env": control_env},
+            {"node_rank": 1, "env": peer_env},
+        ]
+    )
+
+
+BOTH_TWINS = {
+    "NCCL_SOCKET_IFNAME": "enp1s0f0np0",
+    "NCCL_IB_HCA": "rocep1s0f1,roceP2p1s0f1",
+}
+
+
+def test_a_node_with_both_roce_twins_pinned_passes():
+    report = run(
+        targets=[CONTROL, PEER],
+        plan=fabric_plan(BOTH_TWINS, BOTH_TWINS),
+        services=two_node_services(),
+    )
+    for node in ("spark-01", "spark-02"):
+        check = check_of(report, preflight.CHECK_FABRIC, node)
+        assert check["status"] == STATUS_PASS
+        assert "rocep1s0f1,roceP2p1s0f1" in check["observed"]
+
+
+def test_pinning_one_twin_of_a_port_warns_and_names_the_other():
+    """The twin rule, NETWORKING.md lines 15-40.
+
+    A QSFP port gets one PCIe 5.0 x4 link, presented as two RoCE devices, so
+    NCCL reaches full bandwidth only when told both. Naming one is a silent
+    halving rather than a failure, which is why upstream never has to refuse
+    it — it just always passes both.
+    """
+    one_twin = {**BOTH_TWINS, "NCCL_IB_HCA": "rocep1s0f1"}
+    report = run(
+        targets=[CONTROL, PEER],
+        plan=fabric_plan(one_twin, BOTH_TWINS),
+        services=two_node_services(),
+    )
+
+    check = check_of(report, preflight.CHECK_FABRIC, "spark-01")
+    assert check["status"] == STATUS_WARN
+    assert "roceP2p1s0f1" in check["observed"]
+    assert "NCCL_IB_HCA=rocep1s0f1,roceP2p1s0f1" in check["remedy"]
+    # The peer named both, so it has nothing to say.
+    assert check_of(report, preflight.CHECK_FABRIC, "spark-02")["status"] == STATUS_PASS
+
+
+MESH_IBDEV = (
+    "rocep1s0f0 port 1 ==> enp1s0f0np0 (Up)\n"
+    "rocep1s0f1 port 1 ==> enp1s0f1np1 (Up)\n"
+    "roceP2p1s0f0 port 1 ==> enP2p1s0f0np0 (Up)\n"
+    "roceP2p1s0f1 port 1 ==> enP2p1s0f1np1 (Up)"
+)
+
+MESH_ADDRS = (
+    "2: enp1s0f0np0    inet 192.168.177.11/24 scope global enp1s0f0np0\n"
+    "3: enP2p1s0f0np0    inet 192.168.178.11/24 scope global enP2p1s0f0np0\n"
+    "4: enp1s0f1np1    inet 192.168.187.11/24 scope global enp1s0f1np1\n"
+    "5: enP2p1s0f1np1    inet 192.168.188.11/24 scope global enP2p1s0f1np1\n"
+    "6: enP7s7    inet 10.0.0.11/24 scope global enP7s7"
+)
+
+ALL_FOUR = "rocep1s0f0,rocep1s0f1,roceP2p1s0f0,roceP2p1s0f1"
+
+
+def test_a_mesh_cabled_node_without_the_mesh_settings_warns():
+    """``autodiscover.sh`` lines 186-190 set three NCCL variables in mesh mode.
+
+    They configure NCCL itself, not the engine, and a ring whose link pairs
+    land on different subnets does not route without them.
+    """
+    report = run(
+        targets=[CONTROL, PEER],
+        plan=fabric_plan(
+            {"NCCL_SOCKET_IFNAME": "enP7s7", "NCCL_IB_HCA": ALL_FOUR},
+            BOTH_TWINS,
+        ),
+        probes={
+            CONTROL.id: fabric_probe(CONTROL.address, MESH_IBDEV, MESH_ADDRS),
+            PEER.id: fabric_probe(PEER.address),
+        },
+        services=two_node_services(),
+    )
+
+    check = check_of(report, preflight.CHECK_FABRIC, "spark-01")
+    assert check["status"] == STATUS_WARN
+    assert "NCCL_IB_SUBNET_AWARE_ROUTING" in check["observed"]
+    assert "NCCL_NET_PLUGIN=none" in check["remedy"]
+
+
+def test_a_mesh_cabled_node_that_carries_them_passes():
+    mesh_env = {
+        "NCCL_SOCKET_IFNAME": "enP7s7",
+        "NCCL_IB_HCA": ALL_FOUR,
+        "NCCL_NET_PLUGIN": "none",
+        "NCCL_IB_SUBNET_AWARE_ROUTING": "1",
+        "NCCL_IB_MERGE_NICS": "0",
+    }
+    report = run(
+        targets=[CONTROL, PEER],
+        plan=fabric_plan(mesh_env, BOTH_TWINS),
+        probes={
+            CONTROL.id: fabric_probe(CONTROL.address, MESH_IBDEV, MESH_ADDRS),
+            PEER.id: fabric_probe(PEER.address),
+        },
+        services=two_node_services(),
+    )
+    assert check_of(report, preflight.CHECK_FABRIC, "spark-01")["status"] == STATUS_PASS
+
+
+def test_a_single_cable_node_carrying_the_mesh_settings_warns():
+    strayed = {**BOTH_TWINS, "NCCL_IB_SUBNET_AWARE_ROUTING": "1"}
+    report = run(
+        targets=[CONTROL, PEER],
+        plan=fabric_plan(strayed, BOTH_TWINS),
+        services=two_node_services(),
+    )
+    check = check_of(report, preflight.CHECK_FABRIC, "spark-01")
+    assert check["status"] == STATUS_WARN
+    assert "single cable" in check["observed"]
+
+
+def test_an_unaddressed_twin_fails_the_way_autodiscovery_refuses():
+    """autodiscover.sh lines 94-101: an up ``enp*`` link must carry an IP."""
+    report = run(
+        targets=[CONTROL, PEER],
+        plan=fabric_plan(BOTH_TWINS, BOTH_TWINS),
+        probes={
+            CONTROL.id: fabric_probe(
+                CONTROL.address,
+                addrs="2: enP2p1s0f1np1    inet 192.168.178.11/24 scope global x",
+            ),
+            PEER.id: fabric_probe(PEER.address),
+        },
+        services=two_node_services(),
+    )
+    check = check_of(report, preflight.CHECK_FABRIC, "spark-01")
+    assert_named_failure(check, "spark-01", "enp1s0f1np1", "netplan")
+    assert report["verdict"] == VERDICT_BLOCKED
+
+
+def test_two_links_on_one_subnet_fail():
+    """autodiscover.sh lines 103-117, and NETWORKING.md line 133 in bold."""
+    same_subnet = (
+        "3: enp1s0f1np1    inet 192.168.177.11/24 scope global enp1s0f1np1\n"
+        "4: enP2p1s0f1np1    inet 192.168.177.12/24 scope global enP2p1s0f1np1"
+    )
+    report = run(
+        targets=[CONTROL, PEER],
+        plan=fabric_plan(BOTH_TWINS, BOTH_TWINS),
+        probes={
+            CONTROL.id: fabric_probe(CONTROL.address, addrs=same_subnet),
+            PEER.id: fabric_probe(PEER.address),
+        },
+        services=two_node_services(),
+    )
+    check = check_of(report, preflight.CHECK_FABRIC, "spark-01")
+    assert_named_failure(check, "spark-01", "192.168.177.0/24", "netplan")
+
+
+def test_a_port_count_that_is_neither_two_nor_four_fails():
+    """autodiscover.sh line 193 refuses by number; so does this."""
+    three_up = (
+        "rocep1s0f0 port 1 ==> enp1s0f0np0 (Up)\n"
+        "rocep1s0f1 port 1 ==> enp1s0f1np1 (Up)\n"
+        "roceP2p1s0f1 port 1 ==> enP2p1s0f1np1 (Up)"
+    )
+    three_addrs = (
+        "2: enp1s0f0np0    inet 192.168.177.11/24 scope global enp1s0f0np0\n"
+        "3: enp1s0f1np1    inet 192.168.187.11/24 scope global enp1s0f1np1\n"
+        "4: enP2p1s0f1np1    inet 192.168.188.11/24 scope global enP2p1s0f1np1"
+    )
+    report = run(
+        targets=[CONTROL, PEER],
+        plan=fabric_plan(BOTH_TWINS, BOTH_TWINS),
+        probes={
+            CONTROL.id: fabric_probe(CONTROL.address, three_up, three_addrs),
+            PEER.id: fabric_probe(PEER.address),
+        },
+        services=two_node_services(),
+    )
+    check = check_of(report, preflight.CHECK_FABRIC, "spark-01")
+    assert_named_failure(check, "spark-01", "(3)", "cabling")
+
+
+def test_a_node_with_no_connectx_warns_rather_than_blocking():
+    """We take interface names from the registry, so a fabricless pair runs.
+
+    Upstream refuses here because ``ETH_IF`` has nowhere to come from. Ours
+    comes from the node's registry record, so the honest answer is that this
+    will work over sockets and be far slower.
+    """
+    report = run(
+        targets=[CONTROL, PEER],
+        plan=fabric_plan(BOTH_TWINS, BOTH_TWINS),
+        probes={
+            CONTROL.id: fabric_probe(CONTROL.address, ibdev="   ", addrs="   "),
+            PEER.id: fabric_probe(PEER.address),
+        },
+        services=two_node_services(),
+    )
+    check = check_of(report, preflight.CHECK_FABRIC, "spark-01")
+    assert check["status"] == STATUS_WARN
+    assert "no ConnectX ports" in check["observed"]
+    assert report["verdict"] != VERDICT_BLOCKED
+
+
+def test_the_fabric_is_not_checked_at_one_node():
+    """Same gate as interface pinning: one machine never touches the fabric."""
+    report = run()
+    assert not [c for c in report["checks"] if c["id"] == preflight.CHECK_FABRIC]
 
 
 # ── Disk ─────────────────────────────────────────────────────────────────────
@@ -972,6 +1239,10 @@ def test_the_disk_command_quotes_its_paths():
 
 RECIPE = "bundled/qwen2.5-0.5b-instruct"
 
+#: One GPU per node, so a two-node plan has to occupy two ranks; a recipe left
+#: at tp=1 is refused before the pre-flight has a plan to check.
+TWO_WAY = {"tensor_parallel": 2}
+
 
 def test_the_mock_twin_exports_everything_the_real_module_does():
     """Both ``__init__`` lists carry preflight, so both must satisfy callers."""
@@ -996,7 +1267,9 @@ def test_simulation_runs_the_real_checks_over_a_simulated_host():
 def test_simulation_reports_a_peer_that_has_to_pull_the_image():
     from spark_pulse import tools
 
-    report = tools.preflight.run(RECIPE, nodes=["192.168.1.100", "10.0.0.11"])
+    report = tools.preflight.run(
+        RECIPE, nodes=["192.168.1.100", "10.0.0.11"], params=TWO_WAY
+    )
     image = check_of(report, preflight.CHECK_IMAGE, "spark-02")
     assert image["status"] == STATUS_WARN
     assert image["detail"]["pull_required"] is True
@@ -1008,7 +1281,9 @@ def test_simulation_can_make_a_node_unreachable():
     from spark_pulse.mock import preflight as mock_preflight
 
     mock_preflight.UNREACHABLE.add("10.0.0.11")
-    report = tools.preflight.run(RECIPE, nodes=["192.168.1.100", "10.0.0.11"])
+    report = tools.preflight.run(
+        RECIPE, nodes=["192.168.1.100", "10.0.0.11"], params=TWO_WAY
+    )
     assert report["verdict"] == VERDICT_BLOCKED
     assert_named_failure(
         check_of(report, preflight.CHECK_REACHABILITY, "spark-02"), "spark-02"
@@ -1037,3 +1312,79 @@ def test_an_address_the_registry_has_never_seen_is_still_a_target():
     targets = preflight.targets_for(make_plan(nodes=["10.9.9.9"], node_count=1))
     assert [t.label for t in targets] == ["10.9.9.9"]
     assert targets[0].is_control_plane is False
+
+
+# ── Selector grammar ─────────────────────────────────────────────────────────
+#
+# ``NCCL_IB_HCA`` and ``NCCL_SOCKET_IFNAME`` share a grammar that is not a
+# plain list of names: ``^`` inverts the list, ``=`` forces exact matching, an
+# entry may carry ``:port[:rail[:plane]]``, and matching is by prefix
+# otherwise. Checking the raw tokens against /sys fails values NCCL accepts.
+
+
+def test_a_plain_list_is_the_names_it_contains():
+    assert preflight.selector_names("rocep1s0f1,roceP2p1s0f1") == {
+        "rocep1s0f1",
+        "roceP2p1s0f1",
+    }
+
+
+def test_the_port_suffix_is_not_part_of_the_device_name():
+    """``=mlx5_0:1,mlx5_1:1`` is one of the doc's own examples."""
+    assert preflight.selector_names("=mlx5_0:1,mlx5_1:1") == {"mlx5_0", "mlx5_1"}
+    assert preflight.selector_names("=mlx5_0:1:0:0") == {"mlx5_0"}
+
+
+def test_an_exclusion_list_asks_a_different_question_and_is_not_checked():
+    """``^`` names what to avoid, so "does it exist" is meaningless."""
+    assert preflight.selector_names("^=mlx5_1,mlx5_4") == set()
+    assert preflight.selector_names("^docker") == set()
+
+
+def test_an_empty_selector_is_no_selector():
+    assert preflight.selector_names("") == set()
+    assert preflight.selector_names("   ") == set()
+
+
+def test_a_prefix_selector_passes_when_something_matches_it():
+    """Matching is by prefix unless the list is introduced by ``=``.
+
+    ``mlx5`` meaning "every mlx5 device" is legal, and demanding an exact
+    ``/sys`` entry called ``mlx5`` would fail it.
+    """
+    report = run(
+        targets=[CONTROL, PEER],
+        plan=two_node_plan(
+            ranks=[
+                {"node_rank": 0, "env": {"NCCL_IB_HCA": "rocep"}},
+                {"node_rank": 1, "env": {"NCCL_IB_HCA": "rocep1s0f1:1"}},
+            ]
+        ),
+        services=two_node_services(),
+    )
+    for node in ("spark-01", "spark-02"):
+        statuses = {
+            c["status"]
+            for c in report["checks"]
+            if c["id"] == preflight.CHECK_INTERFACES and c["node"] == node
+        }
+        assert STATUS_FAIL not in statuses
+
+
+def test_an_exclusion_list_is_not_reported_as_a_missing_device():
+    report = run(
+        targets=[CONTROL, PEER],
+        plan=two_node_plan(
+            ranks=[
+                {"node_rank": 0, "env": {"NCCL_IB_HCA": "^=rocep1s0f0"}},
+                {"node_rank": 1, "env": {"NCCL_IB_HCA": "^=rocep1s0f0"}},
+            ]
+        ),
+        services=two_node_services(),
+    )
+    named = {
+        c["detail"].get("interface")
+        for c in report["checks"]
+        if c["id"] == preflight.CHECK_INTERFACES
+    }
+    assert "rocep1s0f0" not in named

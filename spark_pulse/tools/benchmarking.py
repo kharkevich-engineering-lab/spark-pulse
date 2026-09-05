@@ -51,26 +51,6 @@ def _reset_cache() -> None:
         _bench_cache_dirty = True
 
 
-def _purge_expired(data: list[dict]) -> list[dict]:
-    global _bench_cache_dirty
-    if not data:
-        return []
-    cutoff = datetime.now(timezone.utc).timestamp() - _RETENTION_DAYS * 86400
-    before = len(data)
-    data = [
-        b for b in data if datetime.fromisoformat(b["started_at"]).timestamp() > cutoff
-    ]
-    purged = before - len(data)
-    if purged > 0:
-        logger.info(
-            "Purged %d expired benchmark records (>%d days old)",
-            purged,
-            _RETENTION_DAYS,
-        )
-        _bench_cache_dirty = True
-    return data
-
-
 def _load() -> list[dict]:
     if not _BENCHMARKS_PATH.exists():
         return []
@@ -92,6 +72,7 @@ def _save(data: list[dict]) -> None:
 @contextmanager
 def _atomic_benchmarks():
     """Context manager for atomic read-modify-write of the benchmarks file."""
+    global _bench_cache_dirty
     with _BENCHMARKS_LOCK:
         data = _load()
         yield data

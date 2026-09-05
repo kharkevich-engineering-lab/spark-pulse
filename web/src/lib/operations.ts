@@ -196,32 +196,24 @@ export interface LockInfo {
   expires_at?: string;
 }
 
-// ── Health Monitoring (Phase 5.1) ────────────────────────────────────────────
+// ── Health ───────────────────────────────────────────────────────────────────
+//
+// The four words a deployment's status badge can say. This is derived from the
+// deployment's own status, not from a health check: nothing runs one.
+//
+// `DeploymentHealth` and `ClusterHealth` used to live here, declaring
+// `status`, `gpu_errors`, `restart_count`, `last_check`, `warnings` and
+// `errors`. The backend never produced a single one of those field names —
+// they were where the interface's promise of "restarts" and a "check success
+// rate" came from, and `restart_count` could not have been produced, because
+// the deployment record keeps one `started_at` and overwrites it on every
+// transition. They are deleted rather than left as an aspiration.
 
 export enum HealthStatus {
   HEALTHY = "healthy",
   DEGRADED = "degraded",
   UNHEALTHY = "unhealthy",
   UNKNOWN = "unknown",
-}
-
-export interface DeploymentHealth {
-  deployment_id: string;
-  status: HealthStatus;
-  gpu_errors: number;
-  restart_count: number;
-  last_check: string;
-  warnings: string[];
-  errors: string[];
-}
-
-export interface ClusterHealth {
-  cluster_name: string;
-  status: HealthStatus;
-  nodes: Record<string, HealthStatus>;
-  last_check: string;
-  warnings: string[];
-  errors: string[];
 }
 
 // ── SSH Error Classification (Phase 6.4) ─────────────────────────────────────

@@ -82,3 +82,37 @@ test("shows the log stream for a deployment", async ({ page, request }) => {
   await expect(row.getByText("Streaming")).toBeVisible();
   await expectNoCrash(page);
 });
+
+/** The engine's own metrics on an open row.
+ *
+ * This is the one place a reader can see that the sampler is actually running:
+ * it is started by the app's lifespan, discovers running deployments on its own
+ * sweep, and the panel below is fed from the window it keeps in memory. The
+ * predecessor of all this — a health monitor — was constructed at startup and
+ * never started, so an end-to-end check that a number really arrives is the
+ * point of this test rather than a nicety.
+ */
+test("shows the engine's own metrics for a running deployment", async ({ page, request }) => {
+  const created = await request.post("/api/deployments", {
+    data: { recipe_id: RECIPE_ID, name: RECIPE_NAME, params: {} },
+  });
+  expect(created.ok(), "POST /api/deployments should succeed").toBeTruthy();
+  const deployment = (await created.json()) as { id: string };
+
+  await gotoPage(page, "/jobs");
+  const row = page.getByTestId(`deployment-${deployment.id}`);
+  await row.getByText(RECIPE_NAME, { exact: true }).click();
+
+  // Up to one backend sweep plus one UI poll before the first window arrives.
+  await expect(row.getByText("Queued", { exact: true })).toBeVisible({ timeout: 20_000 });
+  await expect(row.getByText("KV cache", { exact: true })).toBeVisible();
+  await expect(row.getByText("Preemptions", { exact: true })).toBeVisible();
+
+  // The window is memory only, and the page says so rather than implying that
+  // anything here survives a restart of the control plane.
+  await expect(row.getByText(/Restarting Spark Pulse loses this window/)).toBeVisible();
+  // And it says why it shows no percentile, rather than inventing one from a
+  // histogram bucket.
+  await expect(row.getByText(/Latency percentiles are not shown/)).toBeVisible();
+  await expectNoCrash(page);
+});

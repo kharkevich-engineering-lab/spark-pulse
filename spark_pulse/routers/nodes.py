@@ -115,6 +115,7 @@ def add_node(body: dict[str, Any] = Body(...)):
             infiniband_interfaces=[
                 str(name) for name in (body.get("infiniband_interfaces") or [])
             ],
+            fabric_mode=str(body.get("fabric_mode") or ""),
             state=str(body.get("state") or "unknown"),
             machine_id=str(body.get("machine_id") or ""),
         )

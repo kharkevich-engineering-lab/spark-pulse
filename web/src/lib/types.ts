@@ -163,6 +163,45 @@ export interface Deployment {
   container?: ContainerStatus;
 }
 
+// ── Engine metrics ───────────────────────────────────────────────────────────
+//
+// What the engine's own Prometheus endpoint said, read by the backend into a
+// bounded in-memory window. Every number here was published by the engine or
+// differenced from two of its counters; nothing is a percentile, because
+// neither engine publishes one, and nothing is interpolated.
+
+export interface EngineMetricSample {
+  /** Epoch **seconds**, stamped by the backend when it scraped. */
+  t: number;
+  running: number | null;
+  waiting: number | null;
+  /** KV-cache occupancy as a fraction from 0 to 1, not a percentage. */
+  kv_fraction: number | null;
+  prompt_tokens_total: number | null;
+  generation_tokens_total: number | null;
+  preemptions_total: number | null;
+  prompt_tokens_per_second: number | null;
+  generation_tokens_per_second: number | null;
+  preemptions_per_second: number | null;
+  /** The engine restarted: its counters went backwards, so the rates across
+   *  this interval are null rather than negative, and the chart breaks here. */
+  counter_reset: boolean;
+}
+
+export interface EngineMetricsWindow {
+  deployment_id: string;
+  available: boolean;
+  /** Machine-readable reason the window is empty; null when available. */
+  reason: string | null;
+  /** The sentence to show an operator when `available` is false. */
+  detail: string | null;
+  sample_interval_seconds: number;
+  window_seconds: number;
+  /** Always true: this window is in memory and a restart loses it. */
+  volatile: boolean;
+  samples: EngineMetricSample[];
+}
+
 export interface GPUStats {
   index: number;
   gpu: string;

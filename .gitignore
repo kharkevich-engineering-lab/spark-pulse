@@ -33,3 +33,11 @@ web/playwright-report/
 web/test-results/
 .ralph/
 .claude/
+
+# Coverage artefacts
+.coverage
+coverage.json
+htmlcov/
+
+# Local virtualenv (agents symlink this into worktrees)
+.venv

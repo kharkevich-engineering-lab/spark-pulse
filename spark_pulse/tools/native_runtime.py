@@ -17,10 +17,14 @@ reproduces the upstream lifecycle described in the native-runtime plan §1.4:
 The gang semantics are the ones §3.3 of ``docs/cluster-agent-plan.md`` takes
 from every system surveyed:
 
-* **Ordered.** Workers are created first and rank zero last, which is
-  upstream's proven order and collapses the rendezvous cleanly. Teardown is
-  the reverse — rank zero first — so workers are not left in a ten-minute NCCL
-  collective timeout.
+* **Ordered.** Every container is created first and only then launched —
+  workers first, rank zero last, which is upstream's order. Teardown is the
+  reverse, rank zero first, so a worker is not left blocking on a store whose
+  server has gone. That block is bounded by PyTorch's ``init_process_group``
+  timeout, which defaults to ten minutes for NCCL and thirty for gloo and
+  which vLLM leaves alone unless ``--distributed-timeout-seconds`` is passed.
+  It is *PyTorch's* timeout: NCCL itself has no collective timeout and no
+  environment variable for one.
 * **All-or-nothing.** Any rank failing fails the deployment. There is no
   partial state and no per-rank restart, because the model is sharded across
   exactly those ranks. Docker's restart policy is ``no`` so a rebooting node
@@ -52,6 +56,7 @@ import tempfile
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -67,12 +72,12 @@ from spark_pulse.engines import (
     Topology,
     get_registry,
 )
+from spark_pulse.tools.discovery import FABRIC_MESH, MESH_RING_NODES
 from spark_pulse.tools.docker import ContainerMetadata, PullCancelled
 from spark_pulse.tools.events import DeploymentEvent, EventType
 from spark_pulse.tools.labels import (
     DEPLOYMENT_LABEL,
     GENERATION_LABEL,
-    MODE_LABEL,
     RANK_LABEL,
     WORLD_SIZE_LABEL,
 )
@@ -100,6 +105,43 @@ HF_CACHE_IN_CONTAINER = "/root/.cache/huggingface"
 #: never races a rank that is still holding the GPU.
 CONFIRM_GONE_TIMEOUT = 30.0
 CONFIRM_GONE_INTERVAL = 0.5
+
+#: How many ranks :func:`status` probes at once, and why the number is four.
+#:
+#: OpenSSH's ``MaxSessions`` defaults to 10 and ``sshd_config(5)`` defines it
+#: as "the maximum number of open shell, login or subsystem sessions permitted
+#: **per network connection**". We hold one multiplexed connection per node,
+#: so the ceiling is per node, and it is a cliff rather than a slope: the
+#: eleventh concurrent session on a connection is refused, ssh falls back to a
+#: full handshake and logs ``ControlSocket … already exists, disabling
+#: multiplexing``, after which *that connection* stops multiplexing for as
+#: long as it stays saturated. Measured on a GB10: 59 ms at ten concurrent
+#: inspects, 575 ms at twelve (``docs/rank-state-transport.md`` §1.2).
+#:
+#: Four is the bound that cannot cross it. It is charged against a single
+#: node, not against the fleet, so it holds even in the case this code does
+#: not otherwise defend against — every rank of a deployment landing on one
+#: machine — and it still leaves six of that node's ten slots for the log
+#: follows, event tails and an operator's own ssh that share the connection.
+#: It is also :data:`~spark_pulse.engines.MAX_CLUSTER_NODES`, so the largest
+#: cluster this hardware has a published topology for is probed in one wave.
+RANK_STATUS_MAX_WORKERS = 4
+
+#: Attached to every plan above one node, and to the record it becomes.
+#:
+#: Multi-node is implemented and exercised end to end in simulation — every
+#: rank rendered, started worker-first, torn down head-first and accounted for.
+#: It has never been run on two machines, because there is only one DGX Spark.
+#: The full list of what a second machine would prove is in
+#: ``docs/cluster-agent-plan.md`` section 7 and in the UI banner; this is the
+#: one line that travels with the plan itself.
+MULTI_NODE_UNPROVEN = (
+    "multi-node has never been run on hardware: only one DGX Spark exists, so "
+    "the rendering, ordering and bookkeeping below are exercised in simulation "
+    "and nothing about the rendezvous forming across machines, NCCL transport "
+    "over the real fabric or interface pinning against real per-role names has "
+    "been observed"
+)
 
 
 class NativeRuntimeError(RuntimeError):
@@ -267,7 +309,7 @@ class DeployPlan:
         return list(reversed(self.rank_plans))
 
     def teardown_order(self) -> list[RankPlan]:
-        """Rank zero first, so no worker sits in a collective timeout."""
+        """Rank zero first, so no worker sits blocked on a store that is gone."""
         return list(self.rank_plans)
 
 
@@ -633,6 +675,7 @@ def _build_env(
             eth_if=node.eth_if,
             ib_if=node.ib_if,
             node_count=topology.size,
+            mesh=node.mesh,
         )
     )
     # Per-engine env, so deploying a v2 recipe on its non-default engine does
@@ -700,18 +743,158 @@ def _check_capacity(recipe_id: str, command: str, nodes: int) -> None:
     quietly getting something else.
     """
     parallelism = parse_parallelism(command)
+    needed = parallelism["tp"] * parallelism["pp"] * parallelism["dp"]
+    shape = f"tp={parallelism['tp']} pp={parallelism['pp']} dp={parallelism['dp']}"
     ok, message = validate_cluster_capacity(
         parallelism, ClusterCapacity.for_nodes(nodes)
     )
-    if ok:
-        return
-    needed = parallelism["tp"] * parallelism["pp"] * parallelism["dp"]
-    raise NativeRuntimeError(
-        f"recipe '{recipe_id}' does not fit {nodes} node(s): {message} "
-        f"(tp={parallelism['tp']} pp={parallelism['pp']} dp={parallelism['dp']}). "
-        "This hardware has one GPU per node, so either lower the parallelism "
-        f"or deploy across {needed} nodes"
-    )
+    if not ok:
+        raise NativeRuntimeError(
+            f"recipe '{recipe_id}' does not fit {nodes} node(s): {message} "
+            f"({shape}). "
+            "This hardware has one GPU per node, so either lower the "
+            f"parallelism or deploy across {needed} nodes"
+        )
+    if needed < nodes:
+        # Upstream trimmed the extra peers silently (launch-cluster.sh line
+        # 1267). Refusing is the honest version, and vLLM agrees: above one
+        # node it requires --nnodes to divide the world size exactly and
+        # raises "must evenly divide the total world size" otherwise
+        # (vllm/engine/arg_utils.py, since 0.11.1). So a trimmed launch does
+        # not hang — it fails on every rank with an argument error, N
+        # containers after the point where we could have said this once.
+        raise NativeRuntimeError(
+            f"recipe '{recipe_id}' asks for {nodes} nodes but its parallelism "
+            f"only occupies {needed} of them ({shape}). One GPU per node means "
+            f"the world size is the node count, and vLLM refuses a --nnodes "
+            f"that does not divide the world size exactly, so this would fail "
+            f"on every rank rather than serve on a subset. Deploy on "
+            f"{needed} node(s), or raise the parallelism until tp*pp*dp is "
+            f"{nodes}"
+        )
+
+
+def _registry_by_address() -> dict[str, Any]:
+    """Every registered node, keyed by the address a deploy would name.
+
+    Raising rather than degrading is deliberate: a multi-node plan reads the
+    registry for the interface names it pins, and pinning is find-or-fail. A
+    registry we cannot read is not "no interfaces", it is "we do not know".
+    """
+    try:
+        nodes = list(tools.node_registry.list_nodes())
+    except Exception as exc:
+        raise NativeRuntimeError(
+            f"the node registry could not be read, so a multi-node "
+            f"deployment cannot resolve its nodes: {exc}"
+        ) from exc
+    return {node.address: node for node in nodes if node.address}
+
+
+def _resolve_topology(node_list: list[str], warnings: list[str]) -> Topology:
+    """The requested addresses as a topology carrying real interface names.
+
+    An empty list is this machine — the size-one case, which never consults
+    the registry at all, so nothing about a solo deployment depends on what
+    the registry holds.
+
+    Above one node the registry is the authority, and it is the *only*
+    authority: it is where an operator records which interface on that
+    particular machine carries the fabric, and interface pinning is
+    find-or-fail. An address we have no record for would be launched with no
+    pinning at all, so it is refused rather than started blind.
+    """
+    if not node_list:
+        return Topology(nodes=[])
+
+    seen: set[str] = set()
+    for address in node_list:
+        if address in seen:
+            raise NativeRuntimeError(
+                f"node '{address}' is listed twice; each rank runs on its own "
+                "machine, and one GPU per node means a machine cannot hold two"
+            )
+        seen.add(address)
+
+    records = _registry_by_address()
+    if len(node_list) > len(records):
+        known = ", ".join(sorted(records)) or "none"
+        raise NativeRuntimeError(
+            f"{len(node_list)} nodes were requested but the registry holds "
+            f"{len(records)} ({known}). Enroll the missing machines on the "
+            "Cluster page (POST /api/nodes) before deploying across them"
+        )
+    unknown = [address for address in node_list if address not in records]
+    if unknown:
+        known = ", ".join(sorted(records)) or "none"
+        raise NativeRuntimeError(
+            f"node(s) {', '.join(unknown)} are not in the node registry "
+            f"(it holds {known}). A peer is deployed to by its registry "
+            "record, which is where its fabric interface names live; NCCL "
+            "pinning is find-or-fail, so an unregistered address would be "
+            "launched with no pinning at all"
+        )
+
+    nodes: list[NodeInfo] = []
+    unpinned: list[str] = []
+    by_fabric: dict[str, list[str]] = {}
+    for address in node_list:
+        record = records[address]
+        if not record.ethernet_interface and not record.infiniband_interfaces:
+            unpinned.append(record.label)
+        if record.fabric_mode:
+            by_fabric.setdefault(record.fabric_mode, []).append(record.label)
+        nodes.append(
+            NodeInfo(
+                host=address,
+                ip=address,
+                eth_if=record.ethernet_interface,
+                # NCCL_IB_HCA takes a comma-separated selector list, which is
+                # the order discovery reported the fabric ports in. It holds
+                # both RoCE twins of every cabled port; naming one halves the
+                # bandwidth without failing.
+                ib_if=",".join(record.infiniband_interfaces),
+                mesh=record.fabric_mode == FABRIC_MESH,
+            )
+        )
+    if len(by_fabric) > 1:
+        # A mesh is a ring every member takes part in — port 0 of one Spark
+        # into port 1 of the next, all four ports up. One node cabled that way
+        # and another on a single cable is not a fabric, and it decides three
+        # NCCL settings that either apply to the whole collective or to none
+        # of it.
+        described = "; ".join(
+            f"{mode}: {', '.join(sorted(labels))}"
+            for mode, labels in sorted(by_fabric.items())
+        )
+        raise NativeRuntimeError(
+            f"the nodes disagree about how the fabric is cabled ({described}). "
+            "A switchless mesh is a ring every node is part of, and it needs "
+            "NCCL settings a single-cable fabric must not get, so the "
+            "collective cannot be configured for both. Re-run discovery on "
+            "the nodes whose cabling changed, or correct fabric_mode on their "
+            "registry records (PATCH /api/nodes/{id})"
+        )
+    if FABRIC_MESH in by_fabric and len(node_list) != MESH_RING_NODES:
+        raise NativeRuntimeError(
+            f"{', '.join(sorted(by_fabric[FABRIC_MESH]))} report the switchless "
+            f"ring, which NVIDIA documents at exactly {MESH_RING_NODES} nodes "
+            f"and not at {len(node_list)}. Its own NCCL launcher refuses any "
+            "other count outright, and a four-node ring has no published "
+            "cabling, no published NCCL configuration and no reference "
+            "bandwidth. Deploy the ring on three nodes, or put the cluster "
+            "behind a QSFP switch and re-run discovery so the nodes report a "
+            "single cable"
+        )
+    warnings.append(MULTI_NODE_UNPROVEN)
+    if unpinned:
+        warnings.append(
+            f"no interface names are recorded for {', '.join(unpinned)}, so "
+            "NCCL will choose a link itself — usually the management one, "
+            "which is a performance bug rather than a failure. Record them on "
+            "the node's registry entry (PATCH /api/nodes/{id})"
+        )
+    return Topology(nodes=nodes)
 
 
 def plan(
@@ -742,8 +925,11 @@ def plan(
     # An empty node list is not "no nodes": it is this machine. The topology
     # is total, so every size below takes the same code path.
     node_list = [] if solo else [str(n) for n in (nodes or [])]
-    topology = Topology(nodes=[NodeInfo(host=n, ip=n) for n in node_list])
-    _check_constraints(recipe_id, recipe, topology.size)
+    # The recipe's own constraints are checked against the requested count
+    # first, so "this recipe is solo_only" is reported before anything about
+    # the registry: it is the more specific answer.
+    _check_constraints(recipe_id, recipe, max(1, len(node_list)))
+    topology = _resolve_topology(node_list, warnings)
 
     engine_obj, engine_name, resolved_variant = _select_engine(
         registry, recipe, engine, variant
@@ -767,7 +953,15 @@ def plan(
     )
 
     # Checked after the image is resolved, because a legacy container tag can
-    # map to an older image than the engine's default variant would use.
+    # map to an older image than the engine's default variant would use — and
+    # the capabilities travel with the image, so the size claim does too.
+    size_ok, size_reason = engine_obj.supports_size(topology.size)
+    if not size_ok:
+        raise NativeRuntimeError(
+            f"recipe '{recipe_id}' cannot be planned on {topology.size} "
+            f"node(s): {size_reason}"
+        )
+
     version_ok, version_reason = engine_obj.version_supported()
     if not version_ok:
         raise NativeRuntimeError(
@@ -969,6 +1163,11 @@ def _record_from_plan(plan_obj: DeployPlan, status: str) -> dict[str, Any]:
         "node_count": plan_obj.node_count,
         "mods": plan_obj.mods,
         "readiness_url": plan_obj.readiness_url,
+        # The engine's Prometheus path, persisted so the metrics sampler can
+        # address this deployment without re-resolving a spec that may since
+        # have been withdrawn from the index. It was computed into the plan and
+        # dropped here until there was a sampler to read it.
+        "metrics_path": plan_obj.metrics_path,
         # Per-rank additions.
         "generation": plan_obj.generation,
         "ranks": [_rank_record(r) for r in plan_obj.rank_plans],
@@ -1143,6 +1342,22 @@ def _wait_ready(
 # ── Reaping, confirmation and teardown ───────────────────────────────────────
 
 
+def _is_confirmed_gone(container: dict[str, Any]) -> bool:
+    """Whether a container status is *evidence* the container is not there.
+
+    Only ``missing`` is, and ``missing`` now means what it says: a daemon
+    answered and told us the object does not exist
+    (:meth:`~spark_pulse.tools.node_service.RemoteNodeService.get_container_status`).
+    ``unknown`` — a daemon that did not answer, a node we could not reach, a
+    reply we could not parse — is not evidence of anything, and the two
+    callers of this predicate both release a resource on a True: one starts a
+    new generation on the GPU, the other frees the ports an orphan record was
+    holding. Releasing on inference rather than on evidence is the failure the
+    orphan machinery exists to prevent, so the predicate names itself.
+    """
+    return container.get("status") == "missing"
+
+
 def _confirm_gone(
     docker: Any,
     name: str,
@@ -1154,7 +1369,7 @@ def _confirm_gone(
     interval = CONFIRM_GONE_INTERVAL if interval is None else interval
     deadline = time.monotonic() + timeout
     while True:
-        if docker.get_container_status(name).get("status") == "missing":
+        if _is_confirmed_gone(docker.get_container_status(name)):
             return True
         if time.monotonic() >= deadline:
             return False
@@ -1200,7 +1415,11 @@ def _stale_names(docker: Any, plan_obj: DeployPlan, rank_plan: RankPlan) -> list
     target = rank_plan.container.name
     if target not in names:
         try:
-            present = docker.get_container_status(target).get("status") != "missing"
+            # Anything short of confirmed-gone counts as present, so an
+            # `unknown` sends us down the reap path and the deploy fails
+            # loudly rather than racing a container that may still hold the
+            # GPU. The asymmetry with `_is_confirmed_gone` is the point.
+            present = not _is_confirmed_gone(docker.get_container_status(target))
         except Exception:  # pragma: no cover - defensive
             present = False
         if present:
@@ -1259,7 +1478,9 @@ def _teardown_entries(
     """Tear ranks down head-first, collecting the ones left outstanding.
 
     Rank zero dies first so the rendezvous collapses instead of leaving the
-    workers in a ten-minute NCCL collective timeout.
+    workers blocked on it for PyTorch's ``init_process_group`` timeout — ten
+    minutes for NCCL, thirty for gloo. It is PyTorch's, not NCCL's: NCCL has
+    no collective timeout of its own.
     """
     orphans: list[dict[str, Any]] = []
     for entry in sorted(entries, key=lambda e: int(e.get("rank", 0))):
@@ -1424,13 +1645,20 @@ def persist_planned_record(plan_obj: DeployPlan, status: str) -> dict[str, Any]:
     return record
 
 
-def _start_rank(
+def _create_rank(
     docker: Any,
     plan_obj: DeployPlan,
     rank_plan: RankPlan,
     warnings: list[str],
 ) -> None:
-    """Bring one rank up: idle container -> mods -> exec script.
+    """Create one rank's idle container and apply the mods to it.
+
+    Nothing is *launched* here — that is :func:`_launch_rank`, and the split
+    is upstream's. ``launch-cluster.sh`` runs every container first (line
+    1097 for the head, 1106 for each worker), applies mods to all of them
+    (1111-1121), and only then execs the serve command (1201-1242). Doing it
+    in one pass per rank instead would have rank one already rendezvousing
+    while rank zero's image turns out to be missing.
 
     Raises :class:`NativeRuntimeError` with an explained reason. The caller
     tears the whole gang down on any failure; nothing is retried per rank,
@@ -1439,6 +1667,20 @@ def _start_rank(
     dep_id = plan_obj.deployment_id
     spec = rank_plan.container
     where = rank_plan.node or "this machine"
+
+    # Bind sources have to exist before the container does, or docker creates
+    # them owned by root and every later write to the HF cache fails.
+    if spec.mounts:
+        try:
+            unmade = docker.ensure_directories(sorted(spec.mounts))
+        except Exception as exc:  # pragma: no cover — best effort
+            logger.debug("could not create mount sources on %s: %s", where, exc)
+            unmade = []
+        if unmade:
+            warnings.append(
+                f"could not create {', '.join(unmade)} on {where}; docker will "
+                "create them as root, which breaks later writes to the cache"
+            )
 
     try:
         docker.run_container(
@@ -1488,8 +1730,16 @@ def _start_rank(
             {"mods": applied, "warnings": warnings, "rank": rank_plan.rank},
         )
 
+
+def _launch_rank(docker: Any, plan_obj: DeployPlan, rank_plan: RankPlan) -> None:
+    """Exec one rank's rendered script in the container already created for it."""
     _deploy_script(docker, rank_plan)
-    logger.info("rank %s of %s is running on %s", rank_plan.rank, dep_id, where)
+    logger.info(
+        "rank %s of %s is running on %s",
+        rank_plan.rank,
+        plan_obj.deployment_id,
+        rank_plan.node or "this machine",
+    )
 
 
 def start(
@@ -1563,23 +1813,37 @@ def start(
     except NativeRuntimeError as exc:
         return _fail(str(exc))
 
-    started_ranks: list[RankPlan] = []
+    # Two phases, as upstream has them. Every container is created and
+    # modded before any of them is launched, so an image that is missing on
+    # rank zero surfaces before rank one has joined a rendezvous; then the
+    # workers are launched and rank zero last, so nobody is left in a
+    # store-connect timeout waiting for a head that never started.
+    touched: list[RankPlan] = []
+
+    def _abort(rank_plan: RankPlan, exc: Exception, phase: str) -> dict[str, Any]:
+        # The rank that failed may itself have a container: run_container can
+        # succeed and a mod or the script copy fail after it.
+        pending = [*touched] if rank_plan in touched else [*touched, rank_plan]
+        orphans = _teardown_entries(services, [_rank_record(r) for r in pending])
+        return _fail(
+            f"rank {rank_plan.rank} of {plan_obj.node_count} on "
+            f"{rank_plan.node or 'this machine'} failed to {phase}, so the "
+            f"whole deployment was torn down: {exc}",
+            orphans,
+        )
+
+    for rank_plan in plan_obj.teardown_order():
+        try:
+            _create_rank(services(rank_plan.node), plan_obj, rank_plan, warnings)
+        except NativeRuntimeError as exc:
+            return _abort(rank_plan, exc, "start")
+        touched.append(rank_plan)
+
     for rank_plan in plan_obj.start_order():
         try:
-            _start_rank(services(rank_plan.node), plan_obj, rank_plan, warnings)
+            _launch_rank(services(rank_plan.node), plan_obj, rank_plan)
         except NativeRuntimeError as exc:
-            # The rank that failed may itself have a container: run_container
-            # can succeed and a mod or the script copy fail after it.
-            orphans = _teardown_entries(
-                services, [_rank_record(r) for r in [*started_ranks, rank_plan]]
-            )
-            return _fail(
-                f"rank {rank_plan.rank} of {plan_obj.node_count} on "
-                f"{rank_plan.node or 'this machine'} failed, so the whole "
-                f"deployment was torn down: {exc}",
-                orphans,
-            )
-        started_ranks.append(rank_plan)
+            return _abort(rank_plan, exc, "launch")
 
     started = _now()
     _update_record(dep_id, status="starting", started_at=started, warnings=warnings)
@@ -1806,6 +2070,37 @@ def _rank_status(
     return {**entry, "container": container}
 
 
+def _gather_rank_statuses(
+    services: Callable[[str], Any], entries: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Every rank's container state, asked for at the same time.
+
+    Serially, a rank on a silent node cost the whole request its own timeout,
+    and the ranks behind it waited their turn: four ranks with one silent node
+    took 10.14 s where four healthy ones took 0.13 s, measured
+    (``docs/rank-state-transport.md`` §2.2). ``GET /api/deployments/{id}`` is
+    a sync route, so that was an AnyIO threadpool worker held for ten seconds,
+    on every poll, for as long as the node stayed down.
+
+    Concurrently, the cost is the slowest rank rather than the sum, and with
+    :data:`~spark_pulse.tools.node_service.STATUS_PROBE_TIMEOUT` bounding each
+    probe the slowest rank is bounded too. Nothing here raises:
+    :func:`_rank_status` turns a failure into ``unknown``, so a dead node
+    marks its own rank and the endpoint still answers.
+
+    Order is the rank order the record gives, because ``Executor.map`` yields
+    in submission order and rank zero is what ``status`` reports as *the*
+    container.
+    """
+    if len(entries) < 2:
+        return [_rank_status(services, entry) for entry in entries]
+    workers = min(len(entries), RANK_STATUS_MAX_WORKERS)
+    with ThreadPoolExecutor(
+        max_workers=workers, thread_name_prefix="rank-status"
+    ) as pool:
+        return list(pool.map(lambda entry: _rank_status(services, entry), entries))
+
+
 def status(
     deployment_id: str,
     docker: Any | None = None,
@@ -1820,7 +2115,7 @@ def status(
     if record is None:
         return None
     services = services or rank_services(docker)
-    ranks = [_rank_status(services, entry) for entry in rank_entries(record)]
+    ranks = _gather_rank_statuses(services, rank_entries(record))
     container = ranks[0]["container"]
     port = record.get("port")
     url = record.get("readiness_url") or (f"http://127.0.0.1:{port}/v1/models")
@@ -1851,13 +2146,19 @@ def list_deployments(docker: Any | None = None) -> list[dict[str, Any]]:
     record for (server reinstalled, records lost) is adopted, and a record
     whose container is gone is marked stopped. Only ranks on the machine whose
     containers were enumerated count as evidence.
+
+    The filter is the deployment label rather than ``mode=solo``. Filtering on
+    the mode was invisible while every deployment was solo and wrong the
+    moment one was not: a rank of a multi-node deployment carries
+    ``mode=cluster``, so it was never enumerated, and a running deployment was
+    marked stopped on the absence of a container the filter had excluded.
     """
     docker_arg = docker
     records = _load_records()
     native = [r for r in records if r.get("runtime") == RUNTIME_NAME]
     try:
         docker = docker or _docker_service()
-        containers = docker.list_managed_containers({MODE_LABEL: "solo"})
+        containers = docker.list_managed_containers({DEPLOYMENT_LABEL: ""})
     except Exception as exc:
         logger.debug("Native reconciliation skipped: %s", exc)
         return native
@@ -1956,6 +2257,19 @@ def sweep_orphans(
     This is the other half of releasing on evidence: a node that was
     unreachable at teardown may answer later, and only its answer frees the
     ports the record has been holding. Returns how many orphans were cleared.
+
+    It also *finishes the teardown* rather than only watching for it. An
+    orphan is a rank that was asked to stop and never confirmed gone, and for
+    as long as ``RemoteNodeService.stop_container`` stopped a peer's container
+    without removing it, every multi-node teardown produced one: the container
+    sat in ``exited`` answering ``docker inspect``, so ``missing`` never came
+    and the record held its ports for good. Removal is fixed now, but the
+    records that leak was already writing are on disk, and nothing that only
+    *looks* at a stopped container will ever clear them. So when the node
+    answers and the container is still there, the stop is asked for again —
+    idempotent on a container that is already stopped, and the one thing that
+    turns an inherited orphan into a freed port range. That is the migration:
+    the first sweep after this change clears them, with no separate step.
     """
     services = services or rank_services(docker)
     records = _load_records()
@@ -1971,9 +2285,14 @@ def sweep_orphans(
         for orphan in orphans:
             name = str(orphan.get("container_name") or "")
             try:
-                gone = (
-                    services(str(orphan.get("node") or "")).get_container_status(name)
-                ).get("status") == "missing"
+                service = services(str(orphan.get("node") or ""))
+                status = service.get_container_status(name)
+                gone = _is_confirmed_gone(status)
+                if not gone and status.get("status") != "unknown":
+                    # The node answered and the container is still there:
+                    # retry the removal rather than wait for someone else.
+                    service.stop_container(name)
+                    gone = _is_confirmed_gone(service.get_container_status(name))
             except Exception as exc:
                 logger.debug("orphan %s still unverifiable: %s", name, exc)
                 gone = False

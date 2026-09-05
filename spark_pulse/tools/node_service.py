@@ -35,7 +35,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shlex
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
@@ -45,7 +47,9 @@ from spark_pulse.tools.docker import (
     ContainerMetadata,
     DockerService,
     ExecResult,
+    PullCancelled,
     _labels_match,
+    prepare_labels,
     split_ref,
 )
 from spark_pulse.tools.labels import MANAGED_FILTER
@@ -61,6 +65,33 @@ CONTROL_NODE_ID = "control"
 LOOPBACK_ADDRESSES = frozenset(
     {"", "local", "localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"}
 )
+
+#: Seconds a container-state probe waits for a node before giving up on it.
+#:
+#: This is a *liveness* timeout, not a work timeout, and the two want very
+#: different numbers. A node that is up answers ``docker inspect`` in 28.7 ms
+#: over a warm multiplexed connection, and pays about 500 ms when the control
+#: master has to be established first — both measured on a GB10
+#: (``docs/rank-state-transport.md`` §1.1-1.2). A node that is gone answers
+#: never, and the only thing a long wait buys is the wait: with ssh's own
+#: ``ConnectTimeout`` of 10 s, one silent node cost a full ten seconds on
+#: every probe, nine consecutive times over ninety seconds, and the poller
+#: learned nothing in between (§2.1). Three seconds is six times the cold
+#: handshake and a hundred times the warm answer, so it is only ever spent on
+#: a node that was not going to answer at all.
+#:
+#: Exceeding it raises :class:`~spark_pulse.tools.ssh.SSHError` from the
+#: transport, which is the honest outcome: unreachable, not missing.
+STATUS_PROBE_TIMEOUT = 3
+
+#: A daemon-liveness probe, run only once an inspect has already failed.
+#:
+#: ``docker inspect`` exits 1 both for a container that is not there and for a
+#: daemon that is not there, so the exit code we already hold carries no
+#: signal. Asking the daemon for its *server* version does: it cannot fail on
+#: account of the container, and it exits zero only if a daemon answered. See
+#: :meth:`RemoteNodeService.get_container_status`.
+DAEMON_PROBE_COMMAND = "docker version --format '{{.Server.Version}}'"
 
 
 # ── The node record ──────────────────────────────────────────────────────────
@@ -220,6 +251,21 @@ class NodeService(Protocol):
         """Build and start a container carrying spark-pulse labels."""
         ...
 
+    def ensure_directories(self, paths: Iterable[str]) -> list[str]:
+        """Create bind-mount source directories on the node before a run.
+
+        Docker creates a missing bind source itself, **owned by root**, and
+        the caches mounted here are the login user's — so a directory that
+        does not exist yet is how ``~/.cache/huggingface`` ends up root-owned
+        and every later model copy fails with a permission error.
+        ``launch-cluster.sh`` does the same ``mkdir -p``, on the head at line
+        1094 and on every worker at line 1104.
+
+        Returns the paths it could not create; a caller treats them as a
+        warning rather than a failure, since docker will still start.
+        """
+        ...
+
     def stop_container(self, name: str, timeout: int = 30) -> bool:
         """Stop and remove a container by name."""
         ...
@@ -298,6 +344,7 @@ class NodeService(Protocol):
 #: The method names the three implementations must agree on.
 NODE_SERVICE_METHODS: tuple[str, ...] = (
     "run_container",
+    "ensure_directories",
     "stop_container",
     "get_container_status",
     "exec_in_container",
@@ -335,6 +382,22 @@ def _argv(command: str | list[str]) -> str:
     return " ".join(shlex.quote(part) for part in command)
 
 
+def _image_info_from_attrs(attrs: dict[str, Any]) -> dict[str, Any]:
+    """The ``image_info`` shape out of ``docker image inspect``'s JSON.
+
+    The SDK path builds the same dict out of ``image.attrs``, which is the
+    same daemon response — so there is one function rather than two spellings
+    of one mapping.
+    """
+    return {
+        "id": attrs.get("Id", ""),
+        "size_bytes": int(attrs.get("Size") or 0),
+        "created": attrs.get("Created"),
+        "repo_tags": list(attrs.get("RepoTags") or []),
+        "repo_digests": list(attrs.get("RepoDigests") or []),
+    }
+
+
 def _parse_cli_labels(raw: str) -> dict[str, str]:
     """Parse the comma-separated ``key=value`` label list from ``docker ps``."""
     labels: dict[str, str] = {}
@@ -345,10 +408,43 @@ def _parse_cli_labels(raw: str) -> dict[str, str]:
     return labels
 
 
-def _normalize_cli_status(raw: str | None) -> str:
-    """Map a ``docker ps`` status/state string onto running | stopped."""
-    text = (raw or "").lower()
-    return "running" if "running" in text or text.startswith("up") else "stopped"
+#: Docker's own container status vocabulary, which is what the SDK path hands
+#: back verbatim as ``container.status``.
+DOCKER_STATES = frozenset(
+    {"created", "restarting", "running", "removing", "paused", "exited", "dead"}
+)
+
+
+def _normalize_cli_status(raw: str | None, running: bool = False) -> str:
+    """Map a ``docker ps``/``docker inspect`` state word onto Docker's own.
+
+    This used to collapse everything to ``running`` or ``stopped``, which is a
+    vocabulary the local path never speaks: ``DockerService`` returns
+    ``container.status``, so ``exited``, ``created``, ``paused`` and ``dead``
+    all reach a caller unchanged from the control node and never from a peer.
+    :func:`~spark_pulse.tools.reconciliation._clean_orphaned_containers` sweeps
+    on ``status == "exited"`` and so could not fire on a peer at all.
+
+    ``docker ps --format '{{json .}}'`` puts that same word in ``State``, and
+    ``docker inspect``'s ``State.Status`` is the identical field, so in practice
+    this passes it straight through. The ``Up 2 minutes`` / ``Exited (0) …``
+    prose of the ``Status`` column is the fallback, for a Docker old enough not
+    to publish ``State``.
+    """
+    text = (raw or "").strip().lower()
+    if text in DOCKER_STATES:
+        return text
+    if text.startswith("up"):
+        return "running"
+    if text.startswith("exited") or text.startswith("dead"):
+        return "exited"
+    if text.startswith("created"):
+        return "created"
+    if text.startswith("paused"):
+        return "paused"
+    if text.startswith("restarting"):
+        return "restarting"
+    return "running" if running else "exited"
 
 
 def run_kwargs_from_docker_config(docker_config: dict[str, Any] | None) -> dict:
@@ -383,14 +479,28 @@ def run_kwargs_from_docker_config(docker_config: dict[str, Any] | None) -> dict:
 class RemoteNodeService(NodeService):
     """The container service for one node, over SSH or over the local SDK.
 
-    The node is fixed at construction. ``node.is_self`` picks the transport
-    once and for all: the control node is served by :class:`DockerService`
-    through the Docker SDK, and a peer by the docker CLI over SSH. Both return
-    the same shapes, so callers never learn which one they hold.
+    The node is fixed at construction, so no *caller* ever chooses a
+    transport: the control node is served by :class:`DockerService` through
+    the Docker SDK, and a peer by the docker CLI over SSH. Both return the same
+    shapes, so callers never learn which one they hold.
 
     The local branch exists so a size-one cluster runs the ordinary path
     against loopback rather than through a special case, which is what every
     orchestrator surveyed for the cluster-agent plan does.
+
+    What the branch is *not* is "picked once and for all". Every method below
+    branches on ``node.is_self`` again, so there are two implementations of one
+    interface speaking two languages about the same facts — the SDK's objects
+    and typed exceptions on one side, the CLI's text and exit codes on the
+    other — and each pair is a place they can disagree.
+    ``docs/transport-reexamined.md`` §5.1 audited them and found thirty
+    divergences, three of them live bugs, twenty-seven of them in methods no
+    test exercised. ``tests/test_container_service_contract.py`` now drives all
+    fifteen methods through every implementation and states the differences
+    that are deliberate, so a new one fails a test rather than a deployment.
+    The permanent fix is one implementation over two transports — the Docker
+    Engine API over a unix socket locally and over SSH remotely — which is that
+    document's recommendation and is not what this class is.
     """
 
     def __init__(
@@ -476,9 +586,6 @@ class RemoteNodeService(NodeService):
         auto_remove: bool = True,
     ) -> ContainerInfo:
         """Run a container on the node."""
-        if not metadata.image:
-            metadata.image = image
-
         if self.node.is_self:
             return self._local.run_container(
                 image=image,
@@ -504,7 +611,7 @@ class RemoteNodeService(NodeService):
                 auto_remove=auto_remove,
             )
 
-        labels = metadata.to_labels()
+        labels = prepare_labels(metadata, name, image)
         cmd_parts = ["docker", "run"]
         if detach:
             cmd_parts.append("-d")
@@ -523,6 +630,16 @@ class RemoteNodeService(NodeService):
                 cmd_parts.extend(["--cap-add", capability])
         if memory_limit_gb:
             cmd_parts.extend(["--memory", f"{memory_limit_gb}g"])
+            # The SDK path derives ``memswap_limit`` from the memory limit and
+            # for a long time this one did not, so a rank on a peer got the
+            # daemon's default (swap unlimited) where the control node's rank
+            # got limit + 10 GB. ``run_kwargs_from_docker_config`` drops the
+            # caller's ``memory_swap_limit_gb`` because "the container service
+            # derives swap from the memory limit itself, on both the SDK and
+            # CLI paths" — which was true of one path only.
+            memswap = DockerService._calc_memory_swap(memory_limit_gb)
+            if memswap is not None:
+                cmd_parts.extend(["--memory-swap", str(memswap)])
         if pids_limit:
             cmd_parts.extend(["--pids-limit", str(pids_limit)])
         if shm_size_gb:
@@ -586,30 +703,109 @@ class RemoteNodeService(NodeService):
             labels=labels,
         )
 
+    def ensure_directories(self, paths: Iterable[str]) -> list[str]:
+        """``mkdir -p`` every path on the node. Returns the ones that failed.
+
+        Upstream does exactly this before ``docker run``, locally at
+        ``launch-cluster.sh`` line 1094 and over SSH at line 1104, and for the
+        same reason: a bind source docker has to invent is created as root,
+        and these are the login user's caches. The runbook's whole
+        "Troubleshoot model-copy permissions" section is the aftermath.
+        """
+        # Stripped, like the local path: a trailing newline out of a config
+        # file would otherwise become part of a directory name on a peer and
+        # not on the control node.
+        wanted = [str(path).strip() for path in paths or [] if str(path).strip()]
+        if not wanted:
+            return []
+
+        if self.node.is_self:
+            failed: list[str] = []
+            for path in wanted:
+                try:
+                    os.makedirs(path, exist_ok=True)
+                except OSError as exc:
+                    logger.warning("could not create %s: %s", path, exc)
+                    failed.append(path)
+            return failed
+
+        quoted = " ".join(shlex.quote(path) for path in wanted)
+        result = self._exec(f"mkdir -p {quoted}", timeout=30)
+        if result.ok:
+            return []
+        logger.warning(
+            "could not create %s on %s: %s", quoted, self.node.label, result.stderr
+        )
+        return wanted
+
     def stop_container(self, name: str, timeout: int = 30) -> bool:
-        """Stop and remove a container on the node."""
+        """Stop **and remove** a container on the node.
+
+        The removal is not decoration. ``DockerService.stop_container`` does
+        ``container.stop()`` followed by ``container.remove(force=True)``, and
+        this path used to issue ``docker stop`` alone — the string ``docker
+        rm`` appeared nowhere in this module — while its docstring promised the
+        same thing. Containers are created with ``auto_remove=False``
+        (``native_runtime`` keeps them so ``docker logs`` survives a crash), so
+        nothing removed them afterwards either. A stopped-but-present container
+        still answers ``docker inspect``, so it never read as ``missing``,
+        :func:`~spark_pulse.tools.native_runtime._is_confirmed_gone` never
+        confirmed it, ``_confirm_gone`` spun for its full 30 s and **every
+        multi-node teardown recorded an outstanding orphan and held that rank's
+        ports for good** — per rank, per teardown, on every peer.
+
+        ``&&`` rather than ``;`` on purpose: it mirrors the local path, where a
+        ``stop`` that raises returns False without reaching the remove.
+        """
         if self.node.is_self:
             return self._local.stop_container(name, timeout=timeout)
 
-        result = self._exec(f"docker stop -t {timeout} {name}", timeout=timeout + 10)
+        quoted = shlex.quote(name)
+        result = self._exec(
+            f"docker stop -t {timeout} {quoted} && docker rm -f {quoted}",
+            timeout=timeout + 10,
+        )
         if not result.ok:
             logger.warning(
-                "Failed to stop container %s on %s: %s",
+                "Failed to stop and remove container %s on %s: %s",
                 name,
                 self.node.label,
                 result.stderr,
             )
         return bool(result.ok)
 
-    def get_container_status(self, name: str) -> dict[str, Any]:
-        """Return the container's state on the node."""
-        if self.node.is_self:
-            return self._local.get_container_status(name)
+    def _daemon_answered(self) -> bool:
+        """Whether this node's Docker daemon is there at all.
 
-        result = self._exec(
-            f"docker inspect --format '{{{{json .State}}}}' {name}", timeout=10
-        )
-        if not result.ok:
+        Raises :class:`~spark_pulse.tools.ssh.SSHError` if the node itself
+        cannot be reached — the caller must not turn that into an answer.
+        """
+        return bool(self._exec(DAEMON_PROBE_COMMAND, timeout=STATUS_PROBE_TIMEOUT).ok)
+
+    def _inspect_failed_status(self, name: str, stderr: str) -> dict[str, Any]:
+        """Tell "no such container" apart from "no daemon answered".
+
+        Both exit 1. Measured on a GB10 running Docker 29.2.1
+        (``docs/rank-state-transport.md`` §2.4): ``docker inspect`` against a
+        container that does not exist exits 1 with ``no such object``, and
+        ``docker inspect`` against an unreachable daemon exits 1 with ``Cannot
+        connect to the Docker daemon``. So the exit code carries no signal and
+        the only difference sitting in front of us is English prose.
+
+        Rather than read that prose and call it a fact, this asks the daemon a
+        question that cannot fail on account of the container: ``docker
+        version`` reports the *server* version, so it exits zero only when a
+        daemon answered. That exit status is structural, it costs one extra
+        round trip on a path that has already failed, and it is what this
+        branches on. The stderr text is carried into ``error`` for a human and
+        is never a decision input.
+
+        Getting this wrong in the "missing" direction is the expensive one:
+        :func:`native_runtime.sweep_orphans` clears an orphan — and with it
+        the ports the record was holding — on ``status == "missing"`` alone.
+        A rank we could not ask about must never produce it.
+        """
+        if self._daemon_answered():
             return {
                 "status": "missing",
                 "running": False,
@@ -617,9 +813,55 @@ class RemoteNodeService(NodeService):
                 "state": {},
                 "error": f"Container '{name}' not found on {self.node.label}",
             }
+        detail = stderr.strip() or "docker did not answer"
+        return {
+            # The same third state the local path reports as "error"
+            # (``DockerService.get_container_status``) and that ``_rank_status``
+            # names for a node it could not reach: we did not learn anything,
+            # which is not the same as learning the container is gone.
+            "status": "unknown",
+            "running": False,
+            "id": None,
+            "state": {},
+            "error": (
+                f"Docker on {self.node.label} did not answer, so the state of "
+                f"'{name}' is unknown: {detail}"
+            ),
+        }
 
+    def get_container_status(self, name: str) -> dict[str, Any]:
+        """Return the container's state on the node.
+
+        Three outcomes, never two: Docker's own status word when the daemon
+        described the container, ``missing`` when the daemon told us there is
+        no such container, and ``unknown`` when nobody told us anything. An
+        unreachable node raises instead, which is the fourth way of saying the
+        third thing.
+
+        The status word is ``State.Status`` verbatim — ``running``, ``exited``,
+        ``created``, ``paused``, ``restarting``, ``dead`` — because that is
+        what the local path returns and callers compare against it:
+        :func:`~spark_pulse.tools.reconciliation._clean_orphaned_containers`
+        sweeps on ``status == "exited"``, which a running/stopped collapse
+        could never match on a peer. ``id`` is asked for in the same inspect,
+        so a caller can compare a peer's container id with a local one.
+        """
+        if self.node.is_self:
+            return self._local.get_container_status(name)
+
+        result = self._exec(
+            # One inspect, both facts. ``.Id`` is the full 64-hex id, the same
+            # thing the SDK's ``container.id`` is.
+            f"docker inspect --format '{{{{json .State}}}}\t{{{{.Id}}}}' "
+            f"{shlex.quote(name)}",
+            timeout=STATUS_PROBE_TIMEOUT,
+        )
+        if not result.ok:
+            return self._inspect_failed_status(name, result.stderr or "")
+
+        raw_state, _, raw_id = (result.stdout or "").strip().partition("\t")
         try:
-            state = json.loads(result.stdout.strip())
+            state = json.loads(raw_state.strip())
         except json.JSONDecodeError:
             return {
                 "status": "unknown",
@@ -631,9 +873,9 @@ class RemoteNodeService(NodeService):
 
         running = bool(state.get("Running", False))
         return {
-            "status": "running" if running else "stopped",
+            "status": _normalize_cli_status(state.get("Status"), running=running),
             "running": running,
-            "id": None,
+            "id": raw_id.strip() or None,
             "state": state,
             "error": None,
         }
@@ -647,7 +889,13 @@ class RemoteNodeService(NodeService):
         detach: bool = False,
         timeout: int | None = None,
     ) -> ExecResult:
-        """Execute a command inside a container on the node."""
+        """Execute a command inside a container on the node.
+
+        ``container`` may be a name or an object with a ``name`` — the SDK path
+        accepts a ``Container`` and this one used to interpolate whatever it
+        was handed straight into a shell command, which for an object is its
+        ``repr``.
+        """
         if self.node.is_self:
             return _to_exec_result(
                 self._local.exec_in_container(
@@ -656,9 +904,10 @@ class RemoteNodeService(NodeService):
             )
 
         flags = " -d" if detach else ""
+        name = container if isinstance(container, str) else getattr(container, "name")
         return _to_exec_result(
             self._exec(
-                f"docker exec{flags} {container} {_argv(command)}",
+                f"docker exec{flags} {shlex.quote(str(name))} {_argv(command)}",
                 timeout=timeout if timeout is not None else 30,
             )
         )
@@ -670,31 +919,66 @@ class RemoteNodeService(NodeService):
         remote_path: str,
         timeout: int = 120,
     ) -> bool:
-        """Copy a file from this machine into a container on the node.
+        """Copy a file **or directory** from this machine into a container.
 
-        On a peer the file is staged in ``/tmp`` there first, then
+        On a peer the path is staged in ``/tmp`` there first, then
         ``docker cp``-ed into the container and removed.
+
+        The directory case is the one that was broken. ``docker cp`` takes
+        files and directories alike, and
+        :func:`~spark_pulse.tools.native_runtime._apply_mods` says so in a
+        comment while copying every entry of a mod directory — but the peer
+        path staged with :meth:`~spark_pulse.tools.ssh.SSHClient.copy`, which
+        is ``scp`` with no ``-r``, so a mod with a subdirectory worked on the
+        control node and failed on every peer. Directories go over
+        :meth:`~spark_pulse.tools.ssh.SSHClient.copy_dir` (rsync, or ``scp -r``
+        when there is no rsync), which is the transport's own recursive path.
+
+        Every failure — including an unreachable node — comes back as
+        ``False``, on both halves of the peer path. It used to come back as
+        ``False`` from the staging copy and as a raised
+        :class:`~spark_pulse.tools.ssh.SSHError` from the ``docker cp``, so one
+        method answered the same question two ways depending on which half of
+        it failed. ``False`` is the whole contract here and it is honest either
+        way: unlike an empty container list, it is not a claim about the state
+        of the node — only that the file is not in the container. The transport
+        detail goes to the log, and both callers
+        (:func:`~spark_pulse.tools.native_runtime._deploy_script` and
+        ``_apply_mods``) turn ``False`` into a fatal error naming the node.
         """
         if self.node.is_self:
             return self._local.copy_to_container(
                 container, local_path, remote_path, timeout=timeout
             )
 
-        staged = f"/tmp/spark-pulse-{container}-{local_path.rsplit('/', 1)[-1]}"
+        basename = local_path.rstrip("/").rsplit("/", 1)[-1]
+        staged = f"/tmp/spark-pulse-{container}-{basename}"
         try:
-            self._ssh.copy(local_path, self.node.address, staged, timeout=timeout)
+            if os.path.isdir(local_path):
+                # rsync and ``scp -r`` both want the destination to exist.
+                self._exec(f"mkdir -p {shlex.quote(staged)}", timeout=timeout)
+                self._ssh.copy_dir(
+                    local_path, self.node.address, staged, timeout=timeout
+                )
+            else:
+                self._ssh.copy(local_path, self.node.address, staged, timeout=timeout)
+
+            result = self._exec(
+                f"docker cp {shlex.quote(staged)} "
+                f"{shlex.quote(container)}:{shlex.quote(remote_path)} "
+                f"&& rm -rf {shlex.quote(staged)}",
+                timeout=timeout,
+            )
         except Exception as exc:
             logger.error(
-                "Failed to stage %s on %s: %s", local_path, self.node.label, exc
+                "Failed to copy %s into %s on %s: %s",
+                local_path,
+                container,
+                self.node.label,
+                exc,
             )
             return False
 
-        result = self._exec(
-            f"docker cp {shlex.quote(staged)} "
-            f"{shlex.quote(container)}:{shlex.quote(remote_path)} "
-            f"&& rm -f {shlex.quote(staged)}",
-            timeout=timeout,
-        )
         if not result.ok:
             logger.error(
                 "docker cp into %s on %s failed: %s",
@@ -705,12 +989,34 @@ class RemoteNodeService(NodeService):
         return bool(result.ok)
 
     def get_logs(self, name: str, tail: int = 200) -> str:
-        """Return the tail of a container's logs on the node."""
+        """Return the tail of a container's logs on the node.
+
+        ``2>&1`` is the whole point of the redirection. ``docker logs`` writes
+        the container's stdout to *its* stdout and the container's stderr to
+        *its* stderr, and this used to return ``result.stdout`` alone — so a
+        peer's log pane silently dropped every line the engine wrote to stderr,
+        which for vLLM and SGLang is most of them. The local path calls
+        ``container.logs()``, whose default is ``stdout=True, stderr=True``:
+        both streams, interleaved. This is that, over a shell.
+        """
         if self.node.is_self:
             return self._local.get_logs(name, tail=tail)
 
-        result = self._exec(f"docker logs --tail {int(tail)} {name}", timeout=30)
-        return result.stdout if result.ok else ""
+        result = self._exec(
+            f"docker logs --tail {int(tail)} {shlex.quote(name)} 2>&1", timeout=30
+        )
+        if result.ok:
+            return result.stdout
+        # A failure here used to return "", which reads exactly like a
+        # container that started quietly. The local path says the container is
+        # not there, and raises for anything else; so does this, and it decides
+        # which by asking the daemon rather than by reading its prose.
+        if self._daemon_answered():
+            return f"Container '{name}' not found"
+        raise RuntimeError(
+            f"Docker on {self.node.label} did not answer, so the logs of "
+            f"'{name}' could not be read: {(result.stderr or '').strip()}"
+        )
 
     # ── Inspection ───────────────────────────────────────────────────────
 
@@ -718,7 +1024,23 @@ class RemoteNodeService(NodeService):
         self,
         labels: dict[str, str] | None = None,
     ) -> list[ContainerInfo]:
-        """Managed containers on the node matching ``labels``."""
+        """Managed containers on the node matching ``labels``.
+
+        Raises rather than returning ``[]`` when the node did not answer. An
+        empty list is a claim — "there is nothing here" — and this method used
+        to make it out of every failure, which is the same "we learned nothing,
+        therefore there is nothing" inference that
+        :meth:`_inspect_failed_status` exists to refuse, three methods away.
+        The consequences were not hypothetical:
+        :func:`~spark_pulse.tools.reconciliation._reconcile_clusters_real` and
+        ``_reconcile_deployments_real`` rebuild the world from this list, so a
+        peer whose daemon had died erased that peer's clusters and deployments
+        from the reconciled state; ``_clean_orphaned_containers`` saw nothing to
+        clean; and ``native_runtime._stale_names`` concluded there was no
+        earlier generation to reap and started a new one **on top of a rank
+        that may still hold the GPU** — the failure the reap path exists to
+        prevent. The local path lets the exception out, so this does too.
+        """
         if self.node.is_self:
             return self._local.list_managed_containers(labels)
 
@@ -727,10 +1049,16 @@ class RemoteNodeService(NodeService):
             filter_args += f" --filter label={key}" + (f"={value}" if value else "")
 
         result = self._exec(
-            f"docker ps --all{filter_args} --format '{{{{json .}}}}'", timeout=10
+            # --no-trunc so container ids are the full 64 hex the SDK path
+            # returns; a truncated id compares equal to nothing.
+            f"docker ps --all --no-trunc{filter_args} --format '{{{{json .}}}}'",
+            timeout=10,
         )
         if not result.ok:
-            return []
+            detail = (result.stderr or "").strip() or "docker did not answer"
+            raise RuntimeError(
+                f"could not list containers on {self.node.label}: {detail}"
+            )
 
         containers: list[ContainerInfo] = []
         for line in result.stdout.strip().split("\n"):
@@ -747,8 +1075,13 @@ class RemoteNodeService(NodeService):
             containers.append(
                 ContainerInfo(
                     id=info.get("ID", ""),
-                    name=info.get("Names", ""),
-                    status=_normalize_cli_status(info.get("State", info.get("Status"))),
+                    # A container can carry several names; ``docker ps`` joins
+                    # them with commas and the SDK's ``container.name`` is the
+                    # first one.
+                    name=str(info.get("Names", "")).split(",")[0],
+                    status=_normalize_cli_status(
+                        info.get("State") or info.get("Status")
+                    ),
                     image=info.get("Image", ""),
                     metadata=ContainerMetadata.from_labels(container_labels),
                     labels=container_labels,
@@ -801,45 +1134,55 @@ class RemoteNodeService(NodeService):
             attrs = json.loads(result.stdout.strip())
         except json.JSONDecodeError:
             return None
-        return {
-            "id": attrs.get("Id", ""),
-            "size_bytes": int(attrs.get("Size") or 0),
-            "created": attrs.get("Created"),
-            "repo_tags": list(attrs.get("RepoTags") or []),
-            "repo_digests": list(attrs.get("RepoDigests") or []),
-        }
+        return _image_info_from_attrs(attrs)
 
     def list_images(self) -> list[dict[str, Any]]:
-        """Every image on the node."""
+        """Every image on the node, shaped exactly like :meth:`image_info`.
+
+        Two commands, not one, and the second is why. ``docker images``
+        publishes ``Size`` only as prose — ``26.8GB`` — so this used to
+        hardcode ``"size_bytes": 0`` for every image on a peer while the local
+        path reported the real number: the Images page showed a fleet where the
+        control node had images with a size and every other node had images
+        weighing nothing, and disk arithmetic over the fleet was wrong by the
+        whole of it. ``docker image inspect`` answers with the same JSON the
+        SDK's ``image.attrs`` carries — exact ``Size``, full ``Id``, ISO
+        ``Created``, ``RepoTags`` and ``RepoDigests`` — so the peer's rows are
+        the local rows, field for field.
+        """
         if self.node.is_self:
             return self._local.list_images()
-        result = self._exec("docker images --format '{{json .}}'", timeout=60)
-        if not result.ok:
+        listing = self._exec("docker image ls --quiet --no-trunc", timeout=60)
+        if not listing.ok:
             raise RuntimeError(
-                f"could not list images on {self.node.label}: {result.stderr}"
+                f"could not list images on {self.node.label}: {listing.stderr}"
+            )
+        ids: list[str] = []
+        for line in (listing.stdout or "").splitlines():
+            image_id = line.strip()
+            # ``docker image ls -q`` repeats an id once per tag.
+            if image_id and image_id not in ids:
+                ids.append(image_id)
+        if not ids:
+            return []
+
+        quoted = " ".join(shlex.quote(image_id) for image_id in ids)
+        details = self._exec(
+            f"docker image inspect {quoted} --format '{{{{json .}}}}'", timeout=60
+        )
+        if not details.ok:
+            raise RuntimeError(
+                f"could not inspect images on {self.node.label}: {details.stderr}"
             )
         out: list[dict[str, Any]] = []
-        for line in (result.stdout or "").strip().split("\n"):
+        for line in (details.stdout or "").strip().split("\n"):
             if not line.strip():
                 continue
             try:
-                entry = json.loads(line)
+                attrs = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            tag = f"{entry.get('Repository', '')}:{entry.get('Tag', '')}"
-            out.append(
-                {
-                    "id": entry.get("ID", ""),
-                    "size_bytes": 0,
-                    "created": entry.get("CreatedAt"),
-                    "repo_tags": [tag] if entry.get("Repository") else [],
-                    "repo_digests": (
-                        [entry["Digest"]]
-                        if entry.get("Digest") not in (None, "")
-                        else []
-                    ),
-                }
-            )
+            out.append(_image_info_from_attrs(attrs))
         return out
 
     def pull_image(
@@ -854,11 +1197,21 @@ class RemoteNodeService(NodeService):
 
         On the control node this is the SDK path, with real per-layer
         aggregation, cancellation and the stall watchdog. Over SSH the docker
-        CLI runs non-interactively as one blocking command, so ``interval``,
-        ``cancel`` and ``stall_timeout`` have nothing to act on: a single
-        terminal snapshot is reported when the pull finishes. Fetch-once on the
-        control node followed by a fan-out is the plan's answer to that, and it
-        is later work.
+        CLI runs non-interactively as one blocking command, so ``interval`` and
+        ``stall_timeout`` have nothing to act on: a single terminal snapshot is
+        reported when the pull finishes. Fetch-once on the control node
+        followed by a fan-out is the plan's answer to that, and it is later
+        work.
+
+        ``cancel`` is honoured, at the only two moments this shape has one: on
+        entry, and when the blocking pull returns. That is coarse — a cancel
+        raised mid-pull is not seen until the pull finishes — but the outcome
+        is the one that matters. ``native_runtime.start`` catches
+        :class:`~spark_pulse.tools.docker.PullCancelled` to record a deployment
+        torn down during its own image pull as ``stopped``; without it that
+        handler could only ever fire for the control node, and a teardown
+        during a peer's pull was recorded as ``error`` — the exact
+        miscategorisation the handler exists to prevent.
         """
         if not ref:
             raise RuntimeError("pull_image needs an image reference")
@@ -871,8 +1224,12 @@ class RemoteNodeService(NodeService):
                 stall_timeout=stall_timeout,
             )
 
+        if cancel is not None and cancel():
+            raise PullCancelled(f"pull of {ref} cancelled")
         repo, tag = split_ref(ref)
         result = self._exec(f"docker pull {shlex.quote(ref)}", timeout=7200)
+        if cancel is not None and cancel():
+            raise PullCancelled(f"pull of {ref} cancelled")
         if not result.ok:
             raise RuntimeError(
                 f"docker pull {ref} failed on {self.node.label}: "
@@ -986,8 +1343,11 @@ class NodeServices:
 
 __all__ = [
     "CONTROL_NODE_ID",
+    "DAEMON_PROBE_COMMAND",
+    "DOCKER_STATES",
     "LOOPBACK_ADDRESSES",
     "NODE_SERVICE_METHODS",
+    "STATUS_PROBE_TIMEOUT",
     "Node",
     "NodeService",
     "NodeServices",

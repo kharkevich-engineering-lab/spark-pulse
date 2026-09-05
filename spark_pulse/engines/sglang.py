@@ -50,9 +50,10 @@ class SglangEngine(Engine):
         eth_if: str = "",
         ib_if: str = "",
         node_count: int = 1,
+        mesh: bool = False,
     ) -> dict[str, str]:
         env: dict[str, str] = dict(self.spec.runtime.env)
-        env.update(self.pinning_env(eth_if, ib_if, node_count))
+        env.update(self.pinning_env(eth_if, ib_if, node_count, mesh))
         return env
 
     # ``supports`` is the base implementation: a top-level ``command`` is
@@ -133,6 +134,7 @@ class SglangEngine(Engine):
             eth_if=node.eth_if,
             ib_if=node.ib_if,
             node_count=topology.size,
+            mesh=node.mesh,
         )
         env.update(self._block_env(recipe))
 

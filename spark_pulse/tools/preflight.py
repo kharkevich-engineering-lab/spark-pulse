@@ -60,6 +60,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, Protocol
 
 from spark_pulse import tools
+from spark_pulse.tools import discovery
 from spark_pulse.tools.ssh import SSHClient, SSHError
 
 logger = logging.getLogger(__name__)
@@ -87,6 +88,7 @@ CHECK_IMAGE = "image"
 CHECK_MODEL = "model"
 CHECK_PORTS = "ports"
 CHECK_INTERFACES = "interfaces"
+CHECK_FABRIC = "fabric"
 CHECK_DISK = "disk"
 
 CHECK_ORDER = (
@@ -98,6 +100,7 @@ CHECK_ORDER = (
     CHECK_MODEL,
     CHECK_PORTS,
     CHECK_INTERFACES,
+    CHECK_FABRIC,
     CHECK_DISK,
 )
 
@@ -541,6 +544,8 @@ class _NodeFacts:
     interfaces: ProbeResult | None = None
     netdevs: set[str] = field(default_factory=set)
     ibdevs: set[str] = field(default_factory=set)
+    fabric_probe: ProbeResult | None = None
+    fabric: Any = None  # discovery.FabricConfig | None
     disk: dict[str, dict[str, Any]] = field(default_factory=dict)
     disk_probe: ProbeResult | None = None
 
@@ -591,6 +596,10 @@ def _gather(target: NodeTarget, probe: HostProbe, hub_dir: str) -> _NodeFacts:
         head, _, tail = facts.interfaces.stdout.partition("== ib")
         facts.netdevs = {line.strip() for line in head.splitlines() if line.strip()}
         facts.ibdevs = {line.strip() for line in tail.splitlines() if line.strip()}
+
+    facts.fabric_probe = probe.run(discovery.FABRIC_COMMAND)
+    if facts.fabric_probe.ok:
+        facts.fabric = discovery.fabric_from_output(facts.fabric_probe.stdout)
 
     facts.disk_probe = probe.run(disk_command([facts.docker_root, hub_dir]))
     if facts.disk_probe.ok:
@@ -1145,11 +1154,20 @@ def _check_ports(target: NodeTarget, ctx: _Context) -> list[Check]:
 def _check_interfaces(target: NodeTarget, ctx: _Context) -> list[Check]:
     """That the interface names the plan will pin exist on the node.
 
-    ``NCCL_SOCKET_IFNAME`` and ``GLOO_SOCKET_IFNAME`` are find-or-fail: a
-    collective told to use ``enp1s0f0np0`` aborts if that name is missing
-    rather than choosing another. They are resolved eagerly, before any
-    rank-count logic, so a wrong name is a launch that dies at the first
-    collective with a message from inside NCCL.
+    The two kinds of name fail in opposite ways, and both are worth catching.
+
+    ``NCCL_SOCKET_IFNAME`` and ``GLOO_SOCKET_IFNAME`` are find-or-fail — NCCL's
+    own selector says ``// Specified by user : find or fail`` and its callers
+    turn an empty result into ``no socket interface found`` — so a wrong name
+    is a launch that dies at the first collective with a message from inside
+    NCCL. Loud, and at least legible.
+
+    ``NCCL_IB_HCA`` is the quiet one. A selector matching no device leaves NCCL
+    with zero IB devices, which disables the IB plugin and falls through to the
+    socket transport at INFO level. The deployment comes up, serves, and runs
+    at a fraction of the fabric's bandwidth with nothing in the log unless
+    ``NCCL_DEBUG=INFO`` was set. That is precisely the failure a pre-flight is
+    for.
 
     Only above one node, which is exactly the gate the engines apply.
     """
@@ -1188,8 +1206,11 @@ def _check_interfaces(target: NodeTarget, ctx: _Context) -> list[Check]:
 
     checks: list[Check] = []
     for name, present, where in [
-        (n, n in facts.netdevs, "/sys/class/net") for n in sorted(wanted_net)
-    ] + [(n, n in facts.ibdevs, "/sys/class/infiniband") for n in sorted(wanted_ib)]:
+        (n, _resolves(n, facts.netdevs), "/sys/class/net") for n in sorted(wanted_net)
+    ] + [
+        (n, _resolves(n, facts.ibdevs), "/sys/class/infiniband")
+        for n in sorted(wanted_ib)
+    ]:
         if present:
             checks.append(
                 _check(
@@ -1211,16 +1232,62 @@ def _check_interfaces(target: NodeTarget, ctx: _Context) -> list[Check]:
                 f"the plan pins {name} but {target.label} has no such device "
                 f"in {where} (it has "
                 f"{', '.join(sorted(facts.netdevs | facts.ibdevs)) or 'none'})",
-                f"Interface pinning is find-or-fail: the collective aborts on "
-                f"{target.label} rather than picking another link. Correct the "
-                "name on the node's registry record (PATCH /api/nodes/{id}) — "
-                "ip -brief link on the node lists the real ones, and NVIDIA's "
-                "two-port rule puts the two devices of one port on different "
-                "subnets.",
+                "A socket interface NCCL cannot find aborts the collective on "
+                f"{target.label} rather than picking another link, and a RoCE "
+                "device it cannot find is worse: NCCL disables its IB plugin "
+                "and drops to TCP sockets without an error, so the deployment "
+                "serves at a fraction of the bandwidth and nothing says why. "
+                "Correct the name on the node's registry record (PATCH "
+                "/api/nodes/{id}) — ip -brief link and ls /sys/class/infiniband "
+                "on the node list the real ones, and the two RoCE devices of "
+                "one QSFP port sit on different subnets.",
                 interface=name,
             )
         )
     return checks
+
+
+def _resolves(name: str, devices: set[str]) -> bool:
+    """Whether a selector entry names at least one device on the node.
+
+    Both ``NCCL_IB_HCA`` and ``NCCL_SOCKET_IFNAME`` match by **prefix** unless
+    the list is introduced by ``=``, and the docs warn that ``mlx5_1`` also
+    matches ``mlx5_10``. So an exact hit is not the only hit, and demanding
+    one would fail a legitimate ``mlx5`` meaning "every mlx5 device".
+    """
+    return name in devices or any(device.startswith(name) for device in devices)
+
+
+def selector_names(value: str) -> set[str]:
+    """The device names a NCCL selector list asks for, or none.
+
+    ``NCCL_IB_HCA`` and ``NCCL_SOCKET_IFNAME`` share a small grammar that is
+    not just a comma-separated list of names, and checking the raw tokens
+    against ``/sys`` fails perfectly valid values:
+
+    * a leading ``^`` makes the whole list an **exclusion**, so the entries
+      name devices to avoid and "does this exist" is the wrong question —
+      returns an empty set, which the caller reads as "nothing to check";
+    * a leading ``=`` forces exact rather than prefix matching and is not part
+      of any device name;
+    * an entry may carry ``:port[:rail[:plane]]``, none of which appears in
+      ``/sys/class/infiniband``.
+
+    Prefix matching itself is left alone: we render whole names, and an
+    operator who writes ``mlx5`` meaning "every mlx5 device" gets no check
+    rather than a wrong one — see the caller.
+    """
+    text = value.strip()
+    if not text or text.startswith("^"):
+        return set()
+    if text.startswith("="):
+        text = text[1:]
+    names: set[str] = set()
+    for entry in text.split(","):
+        name = entry.strip().lstrip("=").split(":", 1)[0].strip()
+        if name:
+            names.add(name)
+    return names
 
 
 def _pinned_interfaces(target: NodeTarget, ctx: _Context) -> tuple[set[str], set[str]]:
@@ -1239,15 +1306,191 @@ def _pinned_interfaces(target: NodeTarget, ctx: _Context) -> tuple[set[str], set
         for key in ("NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME"):
             value = str(env.get(key) or "").strip()
             if value and value != "lo":
-                netdevs.update(part for part in value.split(",") if part)
-        hca = str(env.get("NCCL_IB_HCA") or "").strip()
-        if hca:
-            ibdevs.update(part for part in hca.split(",") if part)
+                netdevs.update(selector_names(value))
+        ibdevs.update(selector_names(str(env.get("NCCL_IB_HCA") or "")))
     if not netdevs and target.ethernet_interface:
         netdevs.add(target.ethernet_interface)
     if not ibdevs:
         ibdevs.update(target.infiniband_interfaces)
     return netdevs, ibdevs
+
+
+def _check_fabric(target: NodeTarget, ctx: _Context) -> list[Check]:
+    """That the node's CX7 cabling matches what the launch was configured for.
+
+    Everything here is upstream's ``detect_interfaces`` applied to a *peer*
+    rather than to the machine running the launcher. ``launch-cluster.sh``
+    reads the head's interfaces and hands the same ``ETH_IF``/``IB_IF`` to
+    every node (line 963-966), which is right only while every Spark is
+    cabled identically; asking each node itself is how a mismatch becomes a
+    sentence instead of a collective that aborts at rank two.
+
+    The status follows what the reference itself does. Where
+    ``autodiscover.sh`` ``return 1``s — a twin with no address, two links on
+    one subnet, a port count that is neither two nor four — this fails. Where
+    upstream silently does the right thing and we might not have, it warns and
+    names the value to set.
+    """
+    if ctx.node_count < 2:
+        return []
+    facts = ctx.facts[target.id]
+    fabric = facts.fabric
+    if fabric is None or not fabric.ports:
+        # No ConnectX at all. Upstream refuses here because it has nowhere to
+        # get ETH_IF from; we take the names from the registry, so a fabricless
+        # cluster runs over sockets — slowly, and worth saying so.
+        return [
+            _check(
+                CHECK_FABRIC,
+                "Fabric",
+                target,
+                STATUS_WARN,
+                f"{target.label} reports no ConnectX ports, so there is no "
+                "RDMA fabric to use",
+                "NCCL falls back to sockets over the management link, which "
+                "works and is far slower. Check that the CX7 is present and "
+                "its links are up: ibdev2netdev on the node.",
+            )
+        ]
+
+    checks: list[Check] = []
+    for problem in fabric.errors:
+        checks.append(
+            _check(
+                CHECK_FABRIC,
+                "Fabric",
+                target,
+                STATUS_FAIL,
+                f"{target.label}: {problem}",
+                "This is one of the conditions NVIDIA's own autodiscovery "
+                "refuses to run past. Fix the netplan profile on the node "
+                "(/etc/netplan/40-cx7.yaml, then sudo netplan apply) and "
+                "re-run the pre-flight.",
+                fabric_mode=fabric.mode,
+            )
+        )
+    for note in fabric.warnings:
+        checks.append(
+            _check(
+                CHECK_FABRIC,
+                "Fabric",
+                target,
+                STATUS_WARN,
+                f"{target.label}: {note}",
+                "Upstream accepts this and says the same thing; it is a "
+                "performance note rather than a fault.",
+                fabric_mode=fabric.mode,
+            )
+        )
+
+    pinned_hcas, pinned_env = _pinned_fabric(target, ctx)
+
+    # The twin rule. One QSFP port is two RoCE devices sharing a PCIe x4 pair,
+    # and NCCL reaches full bandwidth only when told both.
+    for hca in sorted(pinned_hcas):
+        twins = fabric.twins_of(hca)
+        if not twins:
+            continue
+        missing = [name for name in twins if name not in pinned_hcas]
+        if not missing:
+            continue
+        checks.append(
+            _check(
+                CHECK_FABRIC,
+                "RoCE twins",
+                target,
+                STATUS_WARN,
+                f"the plan pins {hca} on {target.label} but not its twin "
+                f"{', '.join(missing)}, which shares the same QSFP port",
+                "Each port is limited to a PCIe 5.0 x4 link, so one device "
+                "carries about half the port's bandwidth. Name both: "
+                f"NCCL_IB_HCA={','.join(twins)}. Record them together on the "
+                "node's registry entry (PATCH /api/nodes/{id}).",
+                interface=hca,
+            )
+        )
+
+    # Mesh cabling decides three NCCL settings that a single cable must not
+    # get, and that a mesh cannot do without.
+    wanted_mesh = dict(discovery.MESH_NCCL_ENV) if fabric.is_mesh else {}
+    if fabric.mode:
+        wrong = {
+            key: value
+            for key, value in wanted_mesh.items()
+            if pinned_env.get(key) != value
+        }
+        stray = (
+            [key for key in discovery.MESH_NCCL_ENV if key in pinned_env]
+            if (not fabric.is_mesh)
+            else []
+        )
+        if wrong:
+            checks.append(
+                _check(
+                    CHECK_FABRIC,
+                    "Mesh settings",
+                    target,
+                    STATUS_WARN,
+                    f"{target.label} is cabled as the switchless mesh (four "
+                    "CX7 ports up) but the launch does not carry "
+                    f"{', '.join(sorted(wrong))}",
+                    "A mesh puts each link pair on its own subnet, so NCCL "
+                    "needs subnet-aware routing and no NIC merging: "
+                    + ", ".join(f"{k}={v}" for k, v in sorted(wrong.items()))
+                    + ". Record the node's fabric_mode as mesh (PATCH "
+                    "/api/nodes/{id}) and the plan will emit them.",
+                    fabric_mode=fabric.mode,
+                )
+            )
+        elif stray:
+            checks.append(
+                _check(
+                    CHECK_FABRIC,
+                    "Mesh settings",
+                    target,
+                    STATUS_WARN,
+                    f"{target.label} is on a single cable but the launch "
+                    f"carries the mesh-only settings {', '.join(sorted(stray))}",
+                    "Those three exist to route a ring whose link pairs sit "
+                    "on different subnets. Clear the node's fabric_mode "
+                    "(PATCH /api/nodes/{id}) so a pair is configured as a "
+                    "pair.",
+                    fabric_mode=fabric.mode,
+                )
+            )
+
+    if not checks:
+        shape = "mesh" if fabric.is_mesh else "single cable"
+        checks.append(
+            _check(
+                CHECK_FABRIC,
+                "Fabric",
+                target,
+                STATUS_PASS,
+                f"{len(fabric.up_ports)} CX7 port(s) up on {target.label} "
+                f"({shape}); {fabric.ib_hca_value or 'no RoCE device'} on "
+                f"{fabric.ethernet or 'no management link'}",
+                fabric_mode=fabric.mode,
+            )
+        )
+    return checks
+
+
+def _pinned_fabric(
+    target: NodeTarget, ctx: _Context
+) -> tuple[set[str], dict[str, str]]:
+    """The RoCE devices and the NCCL environment this node's rank will carry."""
+    hcas: set[str] = set()
+    env: dict[str, str] = {}
+    for rank in ctx.plan.get("ranks") or []:
+        if int(rank.get("node_rank", -1)) not in target.ranks:
+            continue
+        rank_env = rank.get("env") or {}
+        env.update({str(k): str(v) for k, v in rank_env.items()})
+        hcas.update(selector_names(str(rank_env.get("NCCL_IB_HCA") or "")))
+    if not hcas:
+        hcas.update(target.infiniband_interfaces)
+    return hcas, env
 
 
 def _check_disk(target: NodeTarget, ctx: _Context) -> list[Check]:
@@ -1413,6 +1656,7 @@ _CHECKS: tuple[tuple[str, Callable[[NodeTarget, _Context], Any]], ...] = (
     (CHECK_MODEL, _check_model),
     (CHECK_PORTS, _check_ports),
     (CHECK_INTERFACES, _check_interfaces),
+    (CHECK_FABRIC, _check_fabric),
     (CHECK_DISK, _check_disk),
 )
 
@@ -1828,6 +2072,7 @@ __all__ = [
     "ASSUMED_IMAGE_BYTES",
     "CHECK_DISK",
     "CHECK_DOCKER",
+    "CHECK_FABRIC",
     "CHECK_GPU",
     "CHECK_IMAGE",
     "CHECK_INTERFACES",

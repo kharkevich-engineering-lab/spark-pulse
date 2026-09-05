@@ -164,8 +164,10 @@ def stop_or_delete_deployment(deployment_id: str):
         )
 
     if dep.get("status") in ("stopped", "error"):
-        # Terminal state — remove from history
+        # Terminal state — remove from history, and drop the metrics window
+        # with it rather than waiting for the sampler's next sweep to notice.
         tools.deploy_dispatch.delete_deployment(deployment_id)
+        tools.engine_metrics.forget(deployment_id)
         return {"deleted": True, "id": deployment_id}
 
     # Active — stop the process or container
@@ -191,3 +193,22 @@ def get_deployment(deployment_id: str):
 def get_logs(deployment_id: str, lines: int = 200):
     logs = tools.deploy_dispatch.get_logs(deployment_id, lines)
     return {"logs": logs}
+
+
+@router.get("/{deployment_id}/metrics")
+def get_engine_metrics(deployment_id: str) -> dict[str, Any]:
+    """The engine's own metrics for this deployment, as a bounded window.
+
+    Read from the engine's Prometheus endpoint by a background sampler, kept in
+    memory only. ``available`` is false whenever there is nothing honest to
+    draw — the deployment is not running, the engine publishes no endpoint, it
+    was started with metrics turned off, it did not answer, or it answered with
+    nothing this build recognises — and ``detail`` says which, so the UI can
+    explain rather than render an empty chart.
+    """
+    dep = tools.deploy_dispatch.get_deployment(deployment_id)
+    if dep is None:
+        raise HTTPException(
+            status_code=404, detail=f"Deployment '{deployment_id}' not found"
+        )
+    return tools.engine_metrics.snapshot(deployment_id)

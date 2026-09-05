@@ -50,6 +50,7 @@ import {
   fetchModelDownloads,
   fetchModelSources,
   fetchModels,
+  saveModelSources,
   startModelDownload,
 } from "@/lib/api";
 
@@ -204,5 +205,208 @@ describe("ModelsPage", () => {
     vi.mocked(fetchModels).mockResolvedValue([]);
     renderPage();
     expect(await screen.findByText("No models cached yet.")).toBeInTheDocument();
+  });
+
+  it("surfaces a failed catalogue read instead of an empty page", async () => {
+    vi.mocked(fetchModels).mockRejectedValue(new Error("API 500: hub cache unreadable"));
+    renderPage();
+    expect(await screen.findByText("API 500: hub cache unreadable")).toBeInTheDocument();
+  });
+
+  /** Every one of these ends in the same modal, and each carries a different
+   *  title, because "Delete failed" and "Download failed" are different
+   *  problems with different next steps. */
+  it("names which operation failed, and why", async () => {
+    const user = userEvent.setup();
+    vi.mocked(startModelDownload).mockRejectedValue(new Error("no such repo on the hub"));
+    renderPage();
+    await screen.findByText("acme/plain-7b");
+
+    await user.type(screen.getByLabelText("Model id"), "acme/missing");
+    await user.click(screen.getByRole("button", { name: /^Download$/ }));
+
+    expect(await screen.findByRole("heading", { name: "Download failed" })).toBeInTheDocument();
+    expect(screen.getByText("no such repo on the hub")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "OK" }));
+    await waitFor(() => expect(screen.queryByText("no such repo on the hub")).toBeNull());
+  });
+
+  it("says why a delete failed rather than leaving the row in place unexplained", async () => {
+    const user = userEvent.setup();
+    vi.mocked(deleteModel).mockRejectedValue(new Error("snapshot is in use"));
+    renderPage();
+
+    await user.click(await screen.findByLabelText("Delete acme/plain-7b"));
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+
+    expect(await screen.findByRole("heading", { name: "Delete failed" })).toBeInTheDocument();
+    expect(screen.getByText("snapshot is in use")).toBeInTheDocument();
+  });
+
+  it("says why a cancel failed rather than leaving the job looking cancelled", async () => {
+    const user = userEvent.setup();
+    vi.mocked(fetchModelDownloads).mockResolvedValue([
+      {
+        id: "job5", model: "acme/running", source: "hf", revision: null, allow_patterns: null,
+        status: "running", bytes_done: 10, bytes_total: 100, current_file: null, path: null,
+        error: null, created_at: "", started_at: null, finished_at: null,
+      },
+    ]);
+    vi.mocked(cancelModelDownload).mockRejectedValue(new Error("job already finished"));
+    renderPage();
+
+    await user.click(await screen.findByLabelText("Cancel download of acme/running"));
+
+    expect(await screen.findByRole("heading", { name: "Cancel failed" })).toBeInTheDocument();
+  });
+
+  it("refuses to start a download with no model id", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText("acme/plain-7b");
+    const before = vi.mocked(startModelDownload).mock.calls.length;
+
+    await user.click(screen.getByRole("button", { name: /^Download$/ }));
+
+    expect(vi.mocked(startModelDownload).mock.calls.length).toBe(before);
+  });
+
+  it("re-reads the catalogue when a download reports itself finished", async () => {
+    renderPage();
+    await screen.findByText("acme/plain-7b");
+    const before = vi.mocked(fetchModels).mock.calls.length;
+    const source = CapturingEventSource.instances.find((s) => s.url === "/sse/models")!;
+
+    act(() => {
+      source.emit({
+        type: "model.download.completed",
+        resource: "job9",
+        resource_type: "model",
+        metadata: {
+          id: "job9", model: "acme/streamed", source: "hf", revision: null, allow_patterns: null,
+          status: "completed", bytes_done: 100, bytes_total: 100, current_file: null,
+          path: "/hub/acme", error: null, created_at: "", started_at: null, finished_at: null,
+        },
+      });
+    });
+
+    await waitFor(() =>
+      expect(vi.mocked(fetchModels).mock.calls.length).toBeGreaterThan(before),
+    );
+  });
+
+  it("ignores stream frames about something other than a model", async () => {
+    renderPage();
+    await screen.findByText("acme/plain-7b");
+    const source = CapturingEventSource.instances.find((s) => s.url === "/sse/models")!;
+
+    act(() => {
+      source.emit({
+        type: "image.pull.progress",
+        resource_type: "image",
+        metadata: { id: "job-other", ref: "ghcr.io/acme/x" },
+      });
+    });
+    // And a model frame with no job in it at all.
+    act(() => source.emit({ type: "model.download.progress", resource_type: "model", metadata: {} }));
+
+    expect(screen.queryByTestId("job-job-other")).toBeNull();
+  });
+});
+
+/** The sources editor.
+ *
+ * A source is where a model id is resolved from, so a broken one means every
+ * download fails with a network error rather than a useful message. It is a
+ * draft-then-save editor: nothing is written until Save, the shape of the row
+ * follows the type (a hub source has an endpoint and a token, a local one has
+ * a path), and a rejected save has to say so rather than looking applied.
+ */
+describe("ModelsPage sources editor", () => {
+  const SOURCES: { name: string; type: "hf_hub" | "local_path"; endpoint?: string; token_secret?: string; path?: string }[] = [
+    { name: "hf", type: "hf_hub", endpoint: "https://huggingface.co", token_secret: "hf_token" },
+  ];
+
+  beforeEach(() => {
+    CapturingEventSource.instances = [];
+    vi.stubGlobal("EventSource", CapturingEventSource);
+    vi.mocked(fetchModels).mockResolvedValue([]);
+    vi.mocked(fetchModelDownloads).mockResolvedValue([]);
+    vi.mocked(fetchModelSources).mockResolvedValue(SOURCES);
+    vi.mocked(saveModelSources).mockResolvedValue(SOURCES as never);
+  });
+
+  it("edits a source in a draft and writes it only on save", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    const endpoint = await screen.findByLabelText("Source 1 endpoint");
+    await user.clear(endpoint);
+    await user.type(endpoint, "http://mirror.local");
+    expect(saveModelSources).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: /^Save$/ }));
+
+    await waitFor(() =>
+      expect(saveModelSources).toHaveBeenCalledWith([
+        expect.objectContaining({ name: "hf", endpoint: "http://mirror.local" }),
+      ]),
+    );
+  });
+
+  it("swaps a hub source's endpoint and token for a path when it becomes local", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.selectOptions(await screen.findByLabelText("Source 1 type"), "local_path");
+
+    expect(screen.queryByLabelText("Source 1 endpoint")).toBeNull();
+    expect(screen.queryByLabelText("Source 1 token secret")).toBeNull();
+    const path = screen.getByLabelText("Source 1 path");
+    await user.type(path, "/srv/models");
+    await user.click(screen.getByRole("button", { name: /^Save$/ }));
+
+    await waitFor(() =>
+      expect(saveModelSources).toHaveBeenCalledWith([
+        expect.objectContaining({ type: "local_path", path: "/srv/models" }),
+      ]),
+    );
+  });
+
+  it("adds and removes rows without touching the stored list until saved", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByLabelText("Source 1 name");
+
+    await user.click(screen.getByRole("button", { name: /add source/i }));
+    await user.type(screen.getByLabelText("Source 2 name"), "spare");
+
+    await user.click(screen.getByLabelText("Remove source 1"));
+    // The second row is now the first, and it is the one that survives.
+    expect(screen.queryByLabelText("Source 2 name")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: /^Save$/ }));
+    await waitFor(() =>
+      expect(saveModelSources).toHaveBeenCalledWith([expect.objectContaining({ name: "spare" })]),
+    );
+  });
+
+  it("says the list is empty rather than showing bare buttons", async () => {
+    vi.mocked(fetchModelSources).mockResolvedValue([]);
+    renderPage();
+
+    expect(await screen.findByText("No sources configured.")).toBeInTheDocument();
+  });
+
+  it("says why a save was refused", async () => {
+    const user = userEvent.setup();
+    vi.mocked(saveModelSources).mockRejectedValue(new Error("endpoint is not a URL"));
+    renderPage();
+    await screen.findByLabelText("Source 1 name");
+
+    await user.click(screen.getByRole("button", { name: /^Save$/ }));
+
+    expect(await screen.findByRole("heading", { name: "Save failed" })).toBeInTheDocument();
+    expect(screen.getByText("endpoint is not a URL")).toBeInTheDocument();
   });
 });

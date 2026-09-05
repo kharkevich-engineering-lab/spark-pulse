@@ -1,7 +1,8 @@
-import { Bot, Code2, Copy, Check, Plug, Globe, Key, Lock, Terminal, ChevronDown } from "lucide-react";
+import { Bot, Code2, Copy, Check, Plug, Globe, Key, Lock, Terminal, ChevronDown, PowerOff } from "lucide-react";
 import { useState } from "react";
 import { fetchSettings } from "@/lib/api";
 import { useQuery } from "@/hooks/useQuery";
+import { getConfig, useConfig } from "@/lib/config";
 
 const TOOLS = [
   { name: "list_recipes", desc: "List all deployment recipes" },
@@ -62,20 +63,27 @@ export default function MCPPage() {
     : `${browserUrl?.protocol ?? "http:"}//${browserUrl?.hostname ?? "127.0.0.1"}:${port}`;
   const endpoint = `${backendOrigin}${mcpPath}`;
   const isDevServer = currentPort !== "" && currentPort !== String(port);
-  const enabled = true; // MCP is always running alongside the web UI
+  // `app.py` mounts `/mcp` only when `config.mcp_enabled`, so the page has to
+  // read the same flag `/api/config` already publishes. Outside a
+  // ConfigProvider the context is null; `getConfig()` is the same cached
+  // answer the rest of the SPA falls back to.
+  const { config } = useConfig();
+  const enabled = config?.mcp_enabled ?? getConfig().mcp_enabled;
 
   return (
     <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-bold">MCP Server</h2>
         <p className="text-text-muted mt-1">Model Context Protocol — connect AI assistants to manage deployments</p>
-        <p className="text-xs text-text-muted mt-2">
-          In the packaged app, the frontend and MCP endpoint are served by the same FastAPI process on port {port}.
-          {" "}
-          {isDevServer
-            ? `You are currently viewing the Vite dev server on port ${currentPort}, so MCP still lives on the backend at ${endpoint}.`
-            : `This page is already being served by the backend, so ${endpoint} is the same app origin.`}
-        </p>
+        {enabled && (
+          <p className="text-xs text-text-muted mt-2">
+            In the packaged app, the frontend and MCP endpoint are served by the same FastAPI process on port {port}.
+            {" "}
+            {isDevServer
+              ? `You are currently viewing the Vite dev server on port ${currentPort}, so MCP still lives on the backend at ${endpoint}.`
+              : `This page is already being served by the backend, so ${endpoint} is the same app origin.`}
+          </p>
+        )}
       </div>
 
       {/* Status + connection */}
@@ -89,7 +97,27 @@ export default function MCPPage() {
             ? <span className="flex items-center gap-1.5 text-xs text-success font-medium px-2.5 py-1 rounded-full bg-success/15"><span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />Active</span>
             : <span className="text-xs text-text-muted px-2.5 py-1 rounded-full bg-bg">Disabled</span>}
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+        {!enabled && (
+          <div className="space-y-3">
+            <div className="flex items-start gap-3 p-3 rounded-lg bg-warning/10 border border-warning/30">
+              <PowerOff size={16} className="text-warning shrink-0 mt-0.5" />
+              <div className="space-y-1 text-sm">
+                <p className="font-medium">The MCP endpoint is not mounted.</p>
+                <p className="text-text-muted text-xs">
+                  This server started with MCP disabled, so nothing is listening at
+                  {" "}<span className="font-mono">{mcpPath}</span> — a client pointed there would be refused.
+                  No endpoint is shown until it is turned back on.
+                </p>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <p className="text-xs text-text-muted">Turn it on either way, then restart Spark Pulse:</p>
+              <CodeBlock label="environment variable" code={`SPARK_PULSE_MCP_ENABLED=true spark-pulse start`} />
+              <CodeBlock label="~/.config/spark-pulse/settings.json" code={`{\n  "mcp_enabled": true\n}`} />
+            </div>
+          </div>
+        )}
+        {enabled && <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
           <div className="flex items-center justify-between p-2.5 rounded-lg bg-bg gap-3">
             <span className="flex items-center gap-2 text-text-muted shrink-0"><Globe size={13} />Endpoint</span>
             <span className="font-mono text-xs truncate">{endpoint}</span>
@@ -106,12 +134,13 @@ export default function MCPPage() {
             <span className="flex items-center gap-2 text-text-muted shrink-0"><Key size={13} />API Token</span>
             <span className="font-mono text-xs">Optional — set in Settings</span>
           </div>
-        </div>
+        </div>}
       </div>
 
       {/* Tools grid */}
       <div>
         <h3 className="text-base font-semibold mb-3 flex items-center gap-2"><Code2 size={16} className="text-primary" />Available Tools ({TOOLS.length})</h3>
+        {!enabled && <p className="text-xs text-text-muted mb-3">These are what MCP would expose. None of them can be called while it is disabled.</p>}
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
           {TOOLS.map((tool) => (
             <div key={tool.name} className="p-4 rounded-xl bg-surface border border-border hover:border-border-hover transition-colors group">
@@ -122,8 +151,9 @@ export default function MCPPage() {
         </div>
       </div>
 
-      {/* Setup guides (collapsible) */}
-      <div>
+      {/* Setup guides (collapsible) — every snippet embeds the endpoint, so
+          there is nothing honest to show while MCP is off. */}
+      {enabled && <div>
         <h3 className="text-base font-semibold mb-3 flex items-center gap-2"><Terminal size={16} className="text-primary" />Setup Guides</h3>
         <div className="space-y-2">
           <SetupSection title="Claude Desktop (HTTP transport)">
@@ -169,7 +199,7 @@ async with Client("${endpoint}") as client:
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_memory","arguments":{}}}'`} />
           </SetupSection>
         </div>
-      </div>
+      </div>}
     </div>
   );
 }

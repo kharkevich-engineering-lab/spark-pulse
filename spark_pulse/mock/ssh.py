@@ -5,8 +5,19 @@ Mirrors the real ssh.py API exactly for testing without real SSH access.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
+
+# The error vocabulary and the paths are shared: a caller reaching
+# ``tools.ssh`` through the switch must catch the same exception type and read
+# the same control-socket directory in either mode.
+from spark_pulse.tools.ssh import (
+    SSHError as SSHError,
+    SSHErrorType as SSHErrorType,
+    control_path_dir as control_path_dir,
+    default_ssh_user as default_ssh_user,
+    ensure_control_dir as ensure_control_dir,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,7 +34,7 @@ class SSHResult:
         return self.returncode == 0
 
 
-class MockSSHClient:
+class SSHClient:
     """Mock SSH client for simulation mode.
 
     Returns pre-configured responses instead of executing real commands.
@@ -48,9 +59,10 @@ class MockSSHClient:
         self._default_stdout = default_stdout
         self._default_stderr = default_stderr
         self._fail_hosts = fail_hosts or []
-        self._executed_commands: list[dict[str, Any]] = field(
-            init=False, default_factory=list
-        )
+        # This is a plain class, not a dataclass: ``dataclasses.field()`` here
+        # produced a Field object, so the first ``exec()`` died on
+        # ``Field.append``.
+        self._executed_commands: list[dict[str, Any]] = []
 
     def exec(
         self,
@@ -158,15 +170,20 @@ class MockSSHClient:
         self._executed_commands.clear()
 
 
+#: The real module's concrete implementation is ``OpenSSHClient``; here there
+#: is only one client and it is simulated, so the two names are the same class.
+OpenSSHClient = SSHClient
+
+
 # Module-level convenience functions
-_default_client: MockSSHClient | None = None
+_default_client: SSHClient | None = None
 
 
-def _get_default_client() -> MockSSHClient:
+def _get_default_client() -> SSHClient:
     """Get or create the default mock SSH client."""
     global _default_client
     if _default_client is None:
-        _default_client = MockSSHClient()
+        _default_client = SSHClient()
     return _default_client
 
 

@@ -51,6 +51,12 @@ def _is_safe_rel_path(rel_path: str) -> bool:
     p = Path(rel_path)
     if p.is_absolute():
         return False
+    # ``Path`` normalises "" and "." away to no parts at all, so the check
+    # below never saw them and the caller went on to write to the mod
+    # directory itself — an IsADirectoryError, i.e. a 500 for what is really
+    # a rejected file name.
+    if not p.parts:
+        return False
     return all(part not in {"", ".", ".."} for part in p.parts)
 
 
@@ -71,6 +77,12 @@ def discover_custom_recipes() -> list[dict]:
         "created_at": "2025-01-15T10:30:00",
     }, ...]
     """
+    # A directory recipe reads YAML too, and ``import yaml`` inside the file
+    # branch made the name local to this whole function: a custom-recipes
+    # directory whose first entry is a subdirectory raised UnboundLocalError
+    # and took every recipe listing down with it.
+    import yaml
+
     _ensure_dirs()
     recipes = []
 
@@ -85,8 +97,6 @@ def discover_custom_recipes() -> list[dict]:
         # For YAML files
         if item.suffix in (".yaml", ".yml"):
             try:
-                import yaml
-
                 with open(item) as f:
                     data = yaml.safe_load(f) or {}
                 name = data.get("name", item.stem)

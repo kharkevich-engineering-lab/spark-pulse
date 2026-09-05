@@ -96,8 +96,8 @@ Output is redirected to `/proc/1/fd/1` so `docker logs` works.
 **Topologies**
 
 - solo: strip `--distributed-executor-backend`, force `tensor_parallel=1` unless overridden.
-- multi-node (no-Ray): required nodes = tp*pp*dp (1 GPU/node), trim peers. Workers first with `--nnodes N --node-rank R --master-addr HEAD --master-port 29501 --headless`, head last with rank 0.
-- mesh (3 or 4 nodes without a switch): `IB_IF` covers all four CX7 ports, `ETH_IF` is the 10G port, plus `NCCL_NET_PLUGIN=none`, `NCCL_IB_SUBNET_AWARE_ROUTING=1`, `NCCL_IB_MERGE_NICS=0`. Models cannot use tp=3, so 3-node means pp=3 or dp=3.
+- multi-node (no-Ray): required nodes = tp*pp*dp (1 GPU/node), trim peers. Workers first with `--nnodes N --node-rank R --master-addr HEAD --master-port 29501 --headless`, head last with rank 0. **We refuse rather than trim** (phase E): a rank with no shard to hold still joins the rendezvous, so a node count that does not equal tp*pp*dp hangs instead of serving on a subset, and saying so at plan time is better than discovering it after a 600 s timeout.
+- mesh (3 or 4 nodes without a switch): `IB_IF` covers all four CX7 ports, `ETH_IF` is the 10G port, plus `NCCL_NET_PLUGIN=none`, `NCCL_IB_SUBNET_AWARE_ROUTING=1`, `NCCL_IB_MERGE_NICS=0`. Models cannot use tp=3, so 3-node means pp=3 or dp=3. An engine claims this arrangement with `capabilities.mesh`, read by `Engine.supports_size`; three or four nodes on an engine that declares `mesh: false` is refused at plan time, and five or more is refused for every engine, since NVIDIA publishes no configuration above four.
 - pre-flight: SSH reachability, image ID parity across nodes (`docker image inspect --format '{{.Id}}'`), refuse to reuse a running container when PR mods are requested.
 
 **Mods**: dir or zip with `run.sh`; runtime PR mods synthesised from

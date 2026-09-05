@@ -6,6 +6,7 @@ whenever the network is unavailable or simulation mode is on.
 """
 
 from spark_pulse.engines.base import (
+    MAX_CLUSTER_NODES,
     Engine,
     EngineCapabilities,
     EngineContainer,
@@ -31,6 +32,7 @@ from spark_pulse.engines.vllm import VllmEngine
 
 __all__ = [
     "ENGINE_CLASSES",
+    "MAX_CLUSTER_NODES",
     "Engine",
     "EngineCapabilities",
     "EngineContainer",

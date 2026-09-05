@@ -14,6 +14,13 @@ import type { ClusterNode, DeployPlan, EngineSummary, PreflightReport, RecipeDet
 import { AlertCircle, ChevronDown, Eye, Loader2 } from "lucide-react";
 import { formatSize } from "@/lib/utils";
 import PreflightPanel from "@/components/PreflightPanel";
+import { ExperimentalBadge, ExperimentalBanner } from "@/components/Experimental";
+import {
+  MULTI_NODE_BADGE_TITLE,
+  MULTI_NODE_REASON,
+  MULTI_NODE_TITLE,
+  MULTI_NODE_UNPROVEN,
+} from "@/lib/experimental";
 
 export interface DeployOptionsValue {
   engine?: string;
@@ -23,6 +30,121 @@ export interface DeployOptionsValue {
    *  control node — see the node selector below for why the control node's
    *  own address is always the first entry once there is more than one. */
   nodes?: string[];
+  /** Tensor-parallel width. Undefined means "whatever the recipe declares";
+   *  the form seeds it from there so the number on screen is the number sent. */
+  tensor_parallel?: number;
+  /** Pipeline-parallel depth, same convention as `tensor_parallel`. */
+  pipeline_parallel?: number;
+}
+
+/** The parallelism shape the form can express. `dp` is deliberately absent:
+ *  no recipe in the tree sets it and no engine block maps it to a flag, so
+ *  offering a control for it would be offering a knob with nothing behind it.
+ *  The server still counts it — see `_check_capacity` — which is why the
+ *  occupancy line below says what *this* shape occupies rather than claiming
+ *  to be the rule. */
+export interface Parallelism {
+  tensor_parallel: number;
+  pipeline_parallel: number;
+}
+
+/** A recipe's declared parallelism, as the number the form should start at.
+ *
+ * `params` and `defaults` are the same dict on the wire (the API writes both
+ * from one source); `params` is read first because it is the name the v2
+ * schema uses. Anything missing or unreadable is 1, which is what the engine
+ * would render for an absent parameter anyway.
+ */
+export function recipeParallelism(recipe: RecipeDetail): Parallelism {
+  const declared = { ...(recipe.defaults ?? {}), ...(recipe.params ?? {}) };
+  const read = (key: string): number => {
+    const raw = declared[key];
+    const n = typeof raw === "number" ? raw : Number.parseInt(String(raw ?? ""), 10);
+    return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 1;
+  };
+  return { tensor_parallel: read("tensor_parallel"), pipeline_parallel: read("pipeline_parallel") };
+}
+
+/** How many nodes a shape occupies. One GPU per node, so this is the product. */
+export function occupancy(shape: Parallelism): number {
+  return shape.tensor_parallel * shape.pipeline_parallel;
+}
+
+/** The shape to propose when the operator changes the node count.
+ *
+ * One GPU per node means the world size *is* the node count, so a shape that
+ * occupies anything else is refused — too large as "does not fit", too small
+ * as a launch vLLM refuses outright. Ticking a second node must
+ * therefore leave the form in a state that works, and the only free variable
+ * the operator has not spoken about is tensor width.
+ *
+ * So: leave a shape that already fits alone, keep a deliberate pipeline depth
+ * when the node count divides by it, and otherwise fall back to the one shape
+ * that always fits a one-GPU-per-node cluster — `tp = nodes, pp = 1`.
+ */
+export function proposeParallelism(nodeCount: number, current: Parallelism): Parallelism {
+  const nodes = Math.max(1, nodeCount);
+  if (occupancy(current) === nodes) return current;
+  const pp = current.pipeline_parallel;
+  if (pp >= 1 && nodes % pp === 0) {
+    return { tensor_parallel: nodes / pp, pipeline_parallel: pp };
+  }
+  return { tensor_parallel: nodes, pipeline_parallel: 1 };
+}
+
+/** The occupancy line: what this shape occupies against what is selected.
+ *
+ * Worded from the server's own refusals (`native_runtime._check_capacity`) on
+ * purpose. The operator meets one of those sentences if they press Preview or
+ * Deploy anyway, and two different explanations of one rule read as two rules.
+ */
+export function describeOccupancy(
+  shape: Parallelism,
+  nodeCount: number,
+): { fits: boolean; text: string } {
+  const needed = occupancy(shape);
+  const flags = `tp=${shape.tensor_parallel} pp=${shape.pipeline_parallel}`;
+  const nodeWord = (n: number) => `${n} node${n === 1 ? "" : "s"}`;
+  if (needed === nodeCount) {
+    return { fits: true, text: `${flags} occupies ${nodeWord(nodeCount)} — the nodes selected.` };
+  }
+  if (needed > nodeCount) {
+    return {
+      fits: false,
+      text:
+        `${flags} does not fit ${nodeWord(nodeCount)}: it needs ${needed}. ` +
+        `This hardware has one GPU per node, so either lower the parallelism ` +
+        `or deploy across ${nodeWord(needed)}.`,
+    };
+  }
+  return {
+    fits: false,
+    text:
+      `${flags} only occupies ${needed} of the ${nodeWord(nodeCount)} selected. ` +
+      `One GPU per node means the world size is the node count, so the extra ` +
+      `${nodeCount - needed} would join the rendezvous with nothing to hold and ` +
+      `and vLLM refuses a --nnodes that does not divide it exactly, so this ` +
+      `would fail on every rank rather than serve on a subset. ` +
+      `Deploy on ${nodeWord(needed)}, or raise the ` +
+      `parallelism until tp*pp is ${nodeCount}.`,
+  };
+}
+
+/** The `params` body a plan, a pre-flight and a create all get.
+ *
+ * Falls back to the recipe's own numbers so an unseeded form still sends what
+ * it displays: previewing and deploying must be the same request, or the
+ * preview is a description of some other deployment.
+ */
+export function deployParams(
+  recipe: RecipeDetail,
+  value: DeployOptionsValue,
+): Record<string, unknown> {
+  const declared = recipeParallelism(recipe);
+  return {
+    tensor_parallel: value.tensor_parallel ?? declared.tensor_parallel,
+    pipeline_parallel: value.pipeline_parallel ?? declared.pipeline_parallel,
+  };
 }
 
 /** Split a free-text args field into argv, respecting simple quoting. */
@@ -118,6 +240,16 @@ export default function DeployOptions({
   const [models, setModels] = useState<string[]>([]);
   const [nodes, setNodes] = useState<ClusterNode[]>([]);
   const [extraArgsText, setExtraArgsText] = useState("");
+  // Free text rather than the number itself: a controlled number input snaps
+  // an emptied field back to a digit, so clearing it to retype "2" would give
+  // "12". The parent only ever hears whole numbers >= 1.
+  const [tpText, setTpText] = useState("");
+  const [ppText, setPpText] = useState("");
+  // Whether the operator has spoken about tensor width. The node-count
+  // proposal below is for a form that is still showing the recipe's number;
+  // once an operator has typed one, changing the node count must not quietly
+  // replace it.
+  const [tpTouched, setTpTouched] = useState(false);
   const [plan, setPlan] = useState<DeployPlan | null>(null);
   const [preflight, setPreflight] = useState<PreflightReport | null>(null);
   const [planning, setPlanning] = useState(false);
@@ -136,6 +268,28 @@ export default function DeployOptions({
       .catch(() => setNodes([]));
   }, []);
 
+  const declared = useMemo(() => recipeParallelism(recipe), [recipe]);
+
+  // Seed from the recipe, once per recipe. Seeding the *parent's* value —
+  // rather than only the text on screen — is the point: the plan, the
+  // pre-flight and the create all read it, so a form that displayed 2 while
+  // sending nothing would preview a deployment nobody asked for.
+  useEffect(() => {
+    setTpText(String(declared.tensor_parallel));
+    setPpText(String(declared.pipeline_parallel));
+    setTpTouched(false);
+    onChange({ ...value, ...declared });
+    // Deliberately only `recipe.id`: `value` and `onChange` are read fresh
+    // from the render that changed it, and re-running on every value change
+    // would undo the operator's own edits on the next keystroke.
+  }, [recipe.id]);
+
+  /** What the form is currently asking for, whether or not the parent kept it. */
+  const shape: Parallelism = {
+    tensor_parallel: value.tensor_parallel ?? declared.tensor_parallel,
+    pipeline_parallel: value.pipeline_parallel ?? declared.pipeline_parallel,
+  };
+
   const choices = useMemo(() => engineChoices(engines, recipe), [engines, recipe]);
   const available = useMemo(() => choices.filter((c) => c.supported), [choices]);
   const unavailable = useMemo(() => choices.filter((c) => !c.supported), [choices]);
@@ -147,22 +301,48 @@ export default function DeployOptions({
   const otherNodes = useMemo(() => nodes.filter((n) => !n.is_control_plane), [nodes]);
   const selectedAddresses = useMemo(() => new Set(value.nodes ?? []), [value.nodes]);
   const worldSize = 1 + otherNodes.filter((n) => selectedAddresses.has(n.address)).length;
+  // Live, so the mismatch is on screen before Preview is pressed rather than
+  // arriving as a 400 afterwards. The server is still the one that decides.
+  const fit = describeOccupancy(shape, worldSize);
 
   const toggleNode = (address: string) => {
     const next = new Set(selectedAddresses);
     if (next.has(address)) next.delete(address);
     else next.add(address);
-    if (next.size === 0) {
-      onChange({ ...value, nodes: undefined });
-      return;
-    }
+    // Solo is "no peers picked", not "nothing in the set". The set always
+    // holds the control node's own address once anything has been picked, so
+    // testing the set for emptiness never fired: unticking the last peer left
+    // `nodes: [<control address>]` behind, which is a *cluster of one* — it
+    // plans with the machine's LAN address instead of 127.0.0.1 and carries
+    // the multi-node warning, for a deployment the operator asked to be solo.
+    const peers = otherNodes.filter((n) => next.has(n.address)).map((n) => n.address);
     // The control node is never deselectable, so it always leads the list —
     // and always at rank 0, since the plan assigns ranks by array order.
-    const ordered = [
-      ...(controlNode ? [controlNode.address] : []),
-      ...otherNodes.filter((n) => next.has(n.address)).map((n) => n.address),
-    ];
-    onChange({ ...value, nodes: ordered });
+    const ordered = [...(controlNode ? [controlNode.address] : []), ...peers];
+    // `undefined`, not `[]`: a solo deploy is the one that names no nodes.
+    const chosen = peers.length === 0 ? undefined : ordered;
+    // Propose a shape that fits the new count. Ticking a peer used to leave
+    // the form asking for two nodes with a tp of 1, which the server refuses
+    // — and no control here could raise it, so the tick was a dead end.
+    const proposed = tpTouched ? shape : proposeParallelism(peers.length + 1, shape);
+    setTpText(String(proposed.tensor_parallel));
+    setPpText(String(proposed.pipeline_parallel));
+    onChange({ ...value, nodes: chosen, ...proposed });
+  };
+
+  /** Take a typed parallelism value, if it is one. Text that is not a whole
+   *  number >= 1 stays on screen and is not sent: half-typed input is not an
+   *  instruction, and a form that "corrected" it would fight the operator. */
+  const editParallelism = (key: keyof Parallelism, raw: string) => {
+    if (key === "tensor_parallel") {
+      setTpText(raw);
+      setTpTouched(true);
+    } else {
+      setPpText(raw);
+    }
+    const parsed = Number.parseInt(raw, 10);
+    if (!/^\d+$/.test(raw.trim()) || !Number.isFinite(parsed) || parsed < 1) return;
+    onChange({ ...value, [key]: parsed });
   };
 
   const preview = async () => {
@@ -176,6 +356,8 @@ export default function DeployOptions({
       model: value.model || undefined,
       extra_args: value.extra_args ?? [],
       nodes: value.nodes?.length ? value.nodes : undefined,
+      // The same body the deploy sends — see `deployParams`.
+      params: deployParams(recipe, value),
     };
     try {
       const result = await planDeployment(body);
@@ -285,9 +467,56 @@ export default function DeployOptions({
             <p className="text-xs text-text-muted mt-1">Appended to the engine command, quoted.</p>
           </div>
 
+          <div data-testid="deploy-parallelism">
+            <span className="block text-sm font-medium mb-1">Parallelism</span>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label
+                  htmlFor="deploy-tensor-parallel"
+                  className="block text-xs text-text-muted mb-1"
+                >
+                  Tensor parallel
+                </label>
+                <input
+                  id="deploy-tensor-parallel"
+                  type="number"
+                  min={1}
+                  value={tpText}
+                  onChange={(e) => editParallelism("tensor_parallel", e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-surface border border-border focus:border-primary focus:outline-none font-mono text-sm"
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="deploy-pipeline-parallel"
+                  className="block text-xs text-text-muted mb-1"
+                >
+                  Pipeline parallel
+                </label>
+                <input
+                  id="deploy-pipeline-parallel"
+                  type="number"
+                  min={1}
+                  value={ppText}
+                  onChange={(e) => editParallelism("pipeline_parallel", e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-surface border border-border focus:border-primary focus:outline-none font-mono text-sm"
+                />
+              </div>
+            </div>
+            <p
+              className={`text-xs mt-1 ${fit.fits ? "text-text-muted" : "text-warning"}`}
+              data-testid="deploy-occupancy"
+            >
+              {fit.text}
+            </p>
+          </div>
+
           {nodes.length >= 2 && (
-            <div>
-              <label className="block text-sm font-medium mb-1">Nodes</label>
+            <div data-testid="deploy-node-selector">
+              <label className="flex items-center gap-2 text-sm font-medium mb-1">
+                Nodes
+                <ExperimentalBadge title={MULTI_NODE_BADGE_TITLE} />
+              </label>
               <div
                 className="space-y-1.5 p-2 rounded-lg bg-surface border border-border"
                 data-testid="deploy-nodes"
@@ -319,6 +548,14 @@ export default function DeployOptions({
               <p className="text-xs text-text-muted mt-1" data-testid="deploy-world-size">
                 {worldSize} node{worldSize === 1 ? "" : "s"}, ranks 0-{worldSize - 1}
               </p>
+              {worldSize > 1 && (
+                <ExperimentalBanner
+                  className="mt-2"
+                  title={MULTI_NODE_TITLE}
+                  reason={MULTI_NODE_REASON}
+                  items={MULTI_NODE_UNPROVEN}
+                />
+              )}
             </div>
           )}
 
@@ -333,7 +570,10 @@ export default function DeployOptions({
           </button>
 
           {planError && (
-            <div className="flex items-start gap-2 p-3 rounded-lg bg-danger/10 border border-danger/30 text-danger text-sm">
+            <div
+              className="flex items-start gap-2 p-3 rounded-lg bg-danger/10 border border-danger/30 text-danger text-sm"
+              data-testid="deploy-plan-error"
+            >
               <AlertCircle size={16} className="shrink-0 mt-0.5" />
               <span>{planError}</span>
             </div>

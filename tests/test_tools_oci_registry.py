@@ -6,7 +6,11 @@ from unittest.mock import patch
 
 import pytest
 
+import yaml
+
 from spark_pulse.tools.oci_registry import (
+    BUNDLED_REGISTRIES_CONFIG,
+    _safe_layer_filename,
     add_registry,
     apply_updates,
     check_updates,
@@ -26,6 +30,11 @@ from spark_pulse.tools.oci_registry import (
     _write_recipe_meta,
     _read_recipe_meta,
 )
+
+
+def bundled_registries() -> list[dict]:
+    """The registry list the package ships as its default."""
+    return yaml.safe_load(BUNDLED_REGISTRIES_CONFIG.read_text())["registries"]
 
 
 @pytest.fixture
@@ -61,8 +70,31 @@ def sample_registry(temp_registries_file):
 class TestRegistryConfig:
     """Tests for registry configuration management."""
 
-    def test_load_empty_registries(self, temp_registries_file):
-        """Loading from non-existent file returns empty list."""
+    def test_bundled_default_ships_inside_the_package(self):
+        """The fallback path resolves to the file the wheel actually ships.
+
+        It lives at ``spark_pulse/registries.yaml``, not under ``tools/``; a
+        fallback pointing anywhere else leaves a fresh install with no
+        registries at all.
+        """
+        assert BUNDLED_REGISTRIES_CONFIG.parent.name == "spark_pulse"
+        assert BUNDLED_REGISTRIES_CONFIG.exists()
+        assert bundled_registries()
+
+    def test_missing_user_config_falls_back_to_the_bundled_default(
+        self, temp_registries_file
+    ):
+        """A user who has never written a config still sees the shipped registries."""
+        assert not temp_registries_file.exists()
+        assert _load_registries() == bundled_registries()
+
+    def test_load_empty_registries(self, temp_registries_file, tmp_path, monkeypatch):
+        """With neither a user config nor a bundled default the list is empty."""
+        import spark_pulse.tools.oci_registry as mod
+
+        monkeypatch.setattr(
+            mod, "BUNDLED_REGISTRIES_CONFIG", tmp_path / "nowhere" / "registries.yaml"
+        )
         assert _load_registries() == []
 
     def test_load_registries(self, sample_registry):
@@ -84,7 +116,12 @@ class TestRegistryConfig:
         result = add_registry(reg)
         assert result["name"] == "new-registry"
         assert result["url"] == "example.com/recipes"
-        assert len(_load_registries()) == 1
+        # The first write materialises the bundled defaults into the user
+        # config alongside the addition, so neither is lost.
+        loaded = _load_registries()
+        assert [r["name"] for r in loaded] == [
+            r["name"] for r in bundled_registries()
+        ] + ["new-registry"]
 
     def test_add_duplicate_registry(self, sample_registry):
         """Adding a registry with existing name replaces it."""
@@ -181,9 +218,12 @@ class TestListCollections:
     """Tests for collection listing."""
 
     def test_list_collections_no_registries(self, temp_registries_file):
-        """Listing with no registries returns empty."""
-        collections = list_collections()
+        """An explicitly empty registry list yields nothing and hits no network."""
+        _save_registries([])
+        with patch("spark_pulse.tools.oci_registry._oras_list_tags") as mock_tags:
+            collections = list_collections()
         assert collections == []
+        mock_tags.assert_not_called()
 
     @patch("spark_pulse.tools.oci_registry._oras_list_tags")
     @patch("spark_pulse.tools.oci_registry._fetch_oci_index")
@@ -278,7 +318,8 @@ class TestInstallCollection:
         assert "recipe2.yaml" in installed
 
     def test_install_collection_no_registries(self, temp_registries_file):
-        """Installing with no registries raises ValueError."""
+        """Installing with an explicitly empty registry list raises ValueError."""
+        _save_registries([])
         with pytest.raises(ValueError, match="No registries configured"):
             install_collection(name="test", version="1.0.0")
 
@@ -506,6 +547,53 @@ class TestOrasListTags:
 
         tags = _oras_list_tags("ghcr.io/test/repo")
         assert tags == []
+
+
+class TestLayerFilenameIsNotRegistryControlled:
+    """A layer's title comes from a remote registry, so it is not a filename.
+
+    ``org.opencontainers.image.title`` was joined onto the layout directory
+    verbatim. A registry that served ``../../../.ssh/authorized_keys`` as a
+    layer title therefore wrote that file, as whichever user runs the server,
+    on any ``oci install``. These are the payloads that must not survive.
+    """
+
+    @pytest.mark.parametrize(
+        "hostile",
+        [
+            "../../../.ssh/authorized_keys",
+            "../../etc/cron.d/pwn",
+            "/etc/passwd",
+            "..",
+            ".",
+            "",
+            "   ",
+            "sub/dir/recipe.yaml",
+            "..\\..\\windows\\system32\\drivers\\etc\\hosts",
+        ],
+    )
+    def test_a_hostile_title_never_escapes_the_layout_directory(
+        self, hostile, tmp_path
+    ):
+        name = _safe_layer_filename(hostile, "sha256:abcdef1234567890")
+
+        assert "/" not in name and "\\" not in name
+        assert name not in {"", ".", ".."}
+        # The real test: joining the result must stay inside the directory.
+        resolved = (tmp_path / name).resolve()
+        assert (
+            resolved.parent == tmp_path.resolve()
+        ), f"{hostile!r} escaped to {resolved}"
+
+    def test_an_ordinary_title_is_kept_as_it_is(self, tmp_path):
+        assert _safe_layer_filename("qwen3-8b.yaml", "sha256:abc") == "qwen3-8b.yaml"
+
+    def test_a_discarded_title_falls_back_to_the_digest(self):
+        # Deterministic, and distinct per layer, so two hostile layers in one
+        # artifact cannot collide onto a single file.
+        assert _safe_layer_filename("../..", "sha256:deadbeefcafe") == (
+            "recipe-sha256:deadb.yaml"
+        )
 
 
 class TestOrasPullToLayout:

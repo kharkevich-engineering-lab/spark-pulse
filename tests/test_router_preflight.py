@@ -33,6 +33,12 @@ def client():
 
 def post(client: TestClient, **body):
     body.setdefault("recipe_id", RECIPE)
+    # One GPU per node means the world size is the node count, so a plan that
+    # names two nodes has to occupy both. Without this the plan is refused and
+    # there is no pre-flight to run.
+    nodes = body.get("nodes") or []
+    if len(nodes) > 1:
+        body.setdefault("params", {"tensor_parallel": len(nodes)})
     return client.post("/api/preflight/run", json=body)
 
 

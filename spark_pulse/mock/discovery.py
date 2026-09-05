@@ -16,13 +16,24 @@ from dataclasses import dataclass
 from typing import Literal
 
 from spark_pulse.tools import discovery as _real
-from spark_pulse.tools.discovery import (
+from spark_pulse.tools.discovery import (  # noqa: F401 — re-exported shapes
+    FABRIC_DIRECT as FABRIC_DIRECT,
+    FABRIC_MESH as FABRIC_MESH,
+    FABRIC_MODES as FABRIC_MODES,
+    MESH_NCCL_ENV as MESH_NCCL_ENV,
     DiscoveredPeer,
     DiscoveryResult,
+    FabricConfig,
     InfinibandDevice,
     NCCLConfig,
     NetworkInterface,
+    RoCEPort as RoCEPort,
     ValidationResult,
+    build_fabric_config as build_fabric_config,
+    fabric_from_output as fabric_from_output,
+    parse_fabric_output as parse_fabric_output,
+    parse_ibdev2netdev as parse_ibdev2netdev,
+    parse_ip_addresses as parse_ip_addresses,
 )
 
 
@@ -438,3 +449,42 @@ def reset_mock_discovery() -> None:
     reset_mdns_history()
     set_mock_peers(None)
     set_mdns_available(True)
+
+
+# ── The CX7 fabric ───────────────────────────────────────────────────────────
+#
+# Simulation answers with the ``ibdev2netdev`` output ``spark-vllm-docker``'s
+# ``docs/NETWORKING.md`` prints at lines 22-27 — one cable in the outermost
+# QSFP port, so two of the four RoCE devices up — and the addresses its netplan
+# profile assigns at lines 95-112. The parsing and the rule application are the
+# real module's; only the bytes are invented.
+
+SIM_IBDEV2NETDEV = (
+    "rocep1s0f0 port 1 ==> enp1s0f0np0 (Down)\n"
+    "rocep1s0f1 port 1 ==> enp1s0f1np1 (Up)\n"
+    "roceP2p1s0f0 port 1 ==> enP2p1s0f0np0 (Down)\n"
+    "roceP2p1s0f1 port 1 ==> enP2p1s0f1np1 (Up)"
+)
+
+SIM_FABRIC_ADDRESSES = (
+    "1: lo    inet 127.0.0.1/8 scope host lo\n"
+    "2: enp1s0f1np1    inet 192.168.177.11/24 scope global enp1s0f1np1\n"
+    "3: enP2p1s0f1np1    inet 192.168.178.11/24 scope global enP2p1s0f1np1"
+)
+
+#: Scenarios with no ConnectX at all. ``detect_fabric`` then reports no ports,
+#: which is a warning rather than an error — a workstation is allowed to have
+#: no fabric.
+_FABRICLESS_SCENARIOS = ("single_gpu",)
+
+
+def fabric_output() -> str:
+    """What :data:`FABRIC_COMMAND` would print in the current scenario."""
+    if _get_default_provider().scenario in _FABRICLESS_SCENARIOS:
+        return "\n== addr\n" + SIM_FABRIC_ADDRESSES
+    return SIM_IBDEV2NETDEV + "\n== addr\n" + SIM_FABRIC_ADDRESSES
+
+
+def detect_fabric() -> FabricConfig:
+    """Mock: the scenario's fabric, read by the real rules."""
+    return _real.fabric_from_output(fabric_output())

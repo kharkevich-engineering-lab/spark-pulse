@@ -37,7 +37,11 @@ async def metrics_generator() -> AsyncGenerator[str, None]:
             data = await run_in_threadpool(_collect)
             yield f"event: metrics\ndata: {json.dumps(data)}\n\n"
         except Exception as e:
-            yield f'event: error\ndata: {{"message": "{e}"}}\n\n'
+            # Interpolating the message straight into the frame produced
+            # unparseable JSON the moment it held a quote, and split the frame
+            # in two the moment it held a newline — which docker and nvidia-smi
+            # messages routinely do.
+            yield f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n"
         await asyncio.sleep(5)
 
 
@@ -291,37 +295,6 @@ async def sse_deployment_events():
     """
     return StreamingResponse(
         deployment_events_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
-
-# ── Health SSE ───────────────────────────────────────────────────────────────
-
-
-async def health_events_generator() -> AsyncGenerator[str, None]:
-    """Stream health check events via SSE."""
-    from spark_pulse.tools.health import get_health_monitor
-
-    while True:
-        try:
-            monitor = get_health_monitor()
-            deployments = monitor.get_all_health()
-            yield f"event: health_update\ndata: {json.dumps(deployments)}\n\n"
-        except Exception as e:
-            yield f'event: error\ndata: {{"message": "{e}"}}\n\n'
-        await asyncio.sleep(30)
-
-
-@router.get("/health")
-async def sse_health():
-    """Stream health check events via SSE."""
-    return StreamingResponse(
-        health_events_generator(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

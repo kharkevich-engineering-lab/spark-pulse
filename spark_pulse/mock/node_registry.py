@@ -121,6 +121,7 @@ def add_node(
     ssh_key_path: str = "",
     ethernet_interface: str = "",
     infiniband_interfaces: Iterable[str] = (),
+    fabric_mode: str = "",
     state: str = "unknown",
     machine_id: str = "",
 ) -> NodeRecord:
@@ -145,6 +146,7 @@ def add_node(
         ssh_key_path=ssh_key_path.strip(),
         ethernet_interface=ethernet_interface.strip(),
         infiniband_interfaces=tuple(infiniband_interfaces),
+        fabric_mode=_real._valid_fabric_mode(fabric_mode),
         state=state,
         machine_id=machine_id,
     )
@@ -163,6 +165,16 @@ def update_node(node_id: str, **changes: Any) -> NodeRecord:
         raise ValueError(f"state must be one of {', '.join(NODE_STATES)}")
     if "infiniband_interfaces" in changes:
         changes["infiniband_interfaces"] = tuple(changes["infiniband_interfaces"])
+    if "fabric_mode" in changes:
+        raw = changes["fabric_mode"]
+        changes["fabric_mode"] = _real._valid_fabric_mode(raw)
+        if raw and not changes["fabric_mode"]:
+            from spark_pulse.tools.discovery import FABRIC_MODES
+
+            raise ValueError(
+                f"fabric_mode must be one of {', '.join(FABRIC_MODES)}, or "
+                "empty when it is not known"
+            )
 
     for index, node in enumerate(_nodes):
         if node.id != node_id:
