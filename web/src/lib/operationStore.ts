@@ -78,6 +78,10 @@ export const useOperationStore = create<OperationStore>((set, get) => ({
     set((state) => {
       const op = state.operations.get(operationId);
       if (!op) return state;
+      // A finished operation does not make progress. Without this, a
+      // cancelled deploy kept ticking towards 100% because the request it was
+      // cancelling had not noticed yet.
+      if (TERMINAL_STATES.has(op.state)) return state;
       const next = new Map(state.operations);
       next.set(operationId, {
         ...op,
@@ -92,6 +96,23 @@ export const useOperationStore = create<OperationStore>((set, get) => ({
       const op = state.operations.get(operationId);
       if (!op) return state;
       const newState = success ? OperationState.SUCCESS : OperationState.FAILED;
+      // Through the same gate `updateState` uses. This wrote the new state
+      // directly, so the state machine the store defines was enforced on one
+      // path and ignored on the other — and the path that ignored it is the
+      // one the documented usage takes:
+      //
+      //     const id = startOperation(...)
+      //     try { await work(); completeOperation(id, true) }
+      //     catch (e) { completeOperation(id, false, e.message) }
+      //
+      // Cancel that operation and the request still resolves, so a deployment
+      // the operator cancelled was reported to them as having succeeded.
+      if (!canTransition(op.state, newState)) {
+        console.warn(
+          `[operations] refused ${op.state} -> ${newState} for ${operationId}`,
+        );
+        return state;
+      }
       const next = new Map(state.operations);
       next.set(operationId, {
         ...op,
