@@ -527,13 +527,21 @@ def _save_records(records: list[dict[str, Any]]) -> None:
 
 
 def _update_record(deployment_id: str, **fields: Any) -> dict[str, Any] | None:
-    records = _load_records()
-    for record in records:
-        if record.get("id") == deployment_id:
-            record.update(fields)
-            _save_records(records)
-            return record
-    return None
+    """Change one record's fields, or answer None if it is no longer there.
+
+    The whole load-modify-save runs under the record store's mutex. Without
+    it, a background pull thread that had already loaded the list would write
+    back a deployment the API thread deleted in the meantime — and the caller
+    saw a successful delete followed by the record reappearing.
+    """
+    with tools.deployment_records.transaction():
+        records = _load_records()
+        for record in records:
+            if record.get("id") == deployment_id:
+                record.update(fields)
+                _save_records(records)
+                return record
+        return None
 
 
 def get_deployment(deployment_id: str) -> dict[str, Any] | None:
@@ -1639,9 +1647,10 @@ def persist_planned_record(plan_obj: DeployPlan, status: str) -> dict[str, Any]:
     caller seeing nothing until a 26 GB download finishes.
     """
     record = _record_from_plan(plan_obj, status)
-    records = [r for r in _load_records() if r.get("id") != plan_obj.deployment_id]
-    records.append(record)
-    _save_records(records)
+    with tools.deployment_records.transaction():
+        records = [r for r in _load_records() if r.get("id") != plan_obj.deployment_id]
+        records.append(record)
+        _save_records(records)
     return record
 
 
@@ -2026,11 +2035,12 @@ def delete_deployment(
     stopped = stop_deployment(deployment_id, docker=docker, services=services)
     if stopped is not None and stopped.get("orphans"):
         return False
-    records = _load_records()
-    remaining = [r for r in records if r.get("id") != deployment_id]
-    if len(remaining) == len(records):
-        return False
-    _save_records(remaining)
+    with tools.deployment_records.transaction():
+        records = _load_records()
+        remaining = [r for r in records if r.get("id") != deployment_id]
+        if len(remaining) == len(records):
+            return False
+        _save_records(remaining)
     return True
 
 

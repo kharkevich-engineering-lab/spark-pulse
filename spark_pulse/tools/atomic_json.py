@@ -33,6 +33,7 @@ from typing import Any
 __all__ = [
     "StateFileError",
     "write_json_atomic",
+    "write_text_atomic",
     "read_state_file",
     "quarantine_corrupt",
 ]
@@ -78,21 +79,21 @@ def _fsync_dir(directory: Path) -> None:
         os.close(dir_fd)
 
 
-def write_json_atomic(
-    path: Path | str,
-    data: Any,
-    *,
-    mode: int = 0o644,
-    indent: int | None = 2,
-    default: Any = None,
-) -> None:
-    """Write ``data`` as JSON to ``path`` atomically and durably.
+def write_text_atomic(path: Path | str, text: str, *, mode: int = 0o644) -> None:
+    """Write ``text`` to ``path`` atomically and durably.
 
-    The sequence is: temp file in the same directory, ``json.dump``, ``flush``,
+    The sequence is: temp file in the same directory, write, ``flush``,
     ``os.fsync`` on the file, ``chmod`` to ``mode``, ``os.replace``, then
     ``os.fsync`` on the directory. A reader either sees the previous complete
     file or the new complete file, never a truncated one, and no temp file is
     left behind on failure.
+
+    The text half exists because not every durable file here is JSON —
+    ``registries.yaml`` is YAML, and it was being written with a plain
+    truncating ``open(path, "w")``. YAML makes that worse rather than better:
+    a JSON file torn mid-write fails to parse and is *detected*, while a YAML
+    file torn mid-write usually still parses and yields a plausible wrong
+    value, and one truncated to nothing parses as empty.
     """
     path = Path(path)
     directory = path.parent
@@ -104,7 +105,7 @@ def write_json_atomic(
     tmp_path = Path(tmp_name)
     try:
         with os.fdopen(fd, "w") as handle:
-            json.dump(data, handle, indent=indent, default=default)
+            handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
         os.chmod(tmp_path, mode)
@@ -113,6 +114,27 @@ def write_json_atomic(
         tmp_path.unlink(missing_ok=True)
         raise
     _fsync_dir(directory)
+
+
+def write_json_atomic(
+    path: Path | str,
+    data: Any,
+    *,
+    mode: int = 0o644,
+    indent: int | None = 2,
+    default: Any = None,
+) -> None:
+    """Write ``data`` as JSON to ``path`` atomically and durably.
+
+    See :func:`write_text_atomic` for the sequence; this is that, with the
+    serialisation done first so a value that cannot be encoded raises before
+    anything on disk is touched.
+    """
+    write_text_atomic(
+        path,
+        json.dumps(data, indent=indent, default=default),
+        mode=mode,
+    )
 
 
 def quarantine_corrupt(path: Path | str) -> Path | None:

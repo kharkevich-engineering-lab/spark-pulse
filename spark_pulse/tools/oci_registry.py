@@ -18,6 +18,7 @@ from pathlib import Path
 import yaml
 
 from spark_pulse.config import config
+from spark_pulse.tools.atomic_json import write_text_atomic
 
 logger = logging.getLogger(__name__)
 
@@ -105,8 +106,9 @@ def _write_cache(key: str, data: dict) -> None:
     try:
         cache_file = _cache_path(key)
         cache_file.parent.mkdir(parents=True, exist_ok=True)
-        cache_file.write_text(
-            json.dumps({"_cached_at": time.time(), "data": data}, indent=2)
+        write_text_atomic(
+            cache_file,
+            json.dumps({"_cached_at": time.time(), "data": data}, indent=2),
         )
     except Exception as exc:
         logger.debug("Cache write failed for %s: %s", key, exc)
@@ -229,25 +231,60 @@ def _load_registries() -> list[dict]:
 
     if not config_path.exists():
         return []
-    try:
-        with open(config_path) as f:
-            data = yaml.safe_load(f)
-        if not isinstance(data, dict) or "registries" not in data:
-            return []
-        regs = data["registries"]
-        if not isinstance(regs, list):
-            return []
+
+    regs = _read_registries_file(config_path)
+    if regs is not None:
         return regs
+
+    # An unusable file yields no registries, and says so loudly.
+    #
+    # Falling back to the bundled defaults was the other candidate and is the
+    # wrong one: an operator who configured only their own private registry
+    # would then find a corrupted file had silently substituted the public
+    # default, and recipes would start being pulled from somewhere they did
+    # not choose. Doing nothing is the safe failure for a source list. What
+    # was actually wrong here is that the failure was *silent* — and that the
+    # torn write which caused it is no longer possible, because the write is
+    # atomic now.
+    logger.error(
+        "%s exists but holds no usable registry list, so no registries are "
+        "configured. Inspect or remove the file; a backup of a working list "
+        "is the only way back to one.",
+        config_path,
+    )
+    return []
+
+
+def _read_registries_file(path: Path) -> list[dict] | None:
+    """The registry list in ``path``, or None when the file is unusable.
+
+    None means "this file did not tell us anything", and is deliberately
+    distinct from ``[]``, which means "this file says there are none".
+    """
+    try:
+        with open(path) as f:
+            data = yaml.safe_load(f)
     except Exception as exc:
-        logger.warning("Failed to load registries config: %s", exc)
-        return []
+        logger.warning("Failed to load registries config %s: %s", path, exc)
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("registries"), list):
+        return None
+    return data["registries"]
 
 
 def _save_registries(registries: list[dict]) -> None:
-    """Persist registries list to registries.yaml."""
-    REGISTRIES_CONFIG.parent.mkdir(parents=True, exist_ok=True)
-    with open(REGISTRIES_CONFIG, "w") as f:
-        yaml.dump({"registries": registries}, f, default_flow_style=False)
+    """Persist registries list to registries.yaml, atomically.
+
+    A plain ``open(path, "w")`` truncates before it writes, so a crash, a full
+    disk or a power loss between those two moments leaves the operator's
+    registry list empty or half-written — and YAML makes that worse rather
+    than better, because a torn file usually still parses into a plausible
+    wrong value instead of failing loudly.
+    """
+    write_text_atomic(
+        REGISTRIES_CONFIG,
+        yaml.dump({"registries": registries}, default_flow_style=False),
+    )
 
 
 def list_registries() -> list[dict]:
@@ -902,8 +939,7 @@ def install_collection(
             except OSError:
                 pass
 
-        with open(dest, "w") as f:
-            f.write(recipe["content"])
+        write_text_atomic(dest, recipe["content"])
 
         # Create metadata sidecar
         _write_recipe_meta(filename, reg["name"], name, version, recipe["digest"])
@@ -982,8 +1018,7 @@ def install_oci_recipe(
 
     # Install/update the recipe
     RECIPES_DIR.mkdir(parents=True, exist_ok=True)
-    with open(dest, "w") as f:
-        f.write(target["content"])
+    write_text_atomic(dest, target["content"])
 
     # Update metadata
     _write_recipe_meta(
@@ -1190,8 +1225,7 @@ def _write_recipe_meta(
     }
 
     meta_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(meta_path, "w") as f:
-        yaml.dump(meta, f, default_flow_style=False)
+    write_text_atomic(meta_path, yaml.dump(meta, default_flow_style=False))
 
 
 def _read_recipe_meta(recipe_filename: str) -> RecipeMeta | None:
