@@ -665,8 +665,15 @@ async def test_finding_a_container_by_deployment_and_by_recipe(
         assert found is not None and found.name == container.name
         assert await ops.get_container_by_deployment("no-such-deployment") is None
 
+        # Membership, not equality. This asks the *machine's* daemon for every
+        # container labelled with a recipe, so an exact list asserts that
+        # nothing else on the host — another suite's leftovers, a developer's
+        # own container — carries that label. That is not a property of the
+        # code under test, and it is what made this test flake in a full run.
         by_recipe = await ops.get_container_by_recipe("qwen3")
-        assert [c.name for c in by_recipe] == [container.name]
+        names = [c.name for c in by_recipe]
+        assert container.name in names, f"{container.name} not among {names}"
+        assert all(c.metadata.recipe == "qwen3" for c in by_recipe)
     finally:
         await agent.stop()
 

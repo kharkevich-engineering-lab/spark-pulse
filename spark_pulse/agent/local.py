@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -161,11 +162,17 @@ async def _enroll(
     from spark_pulse.agent.bootstrap import enrollment_window
 
     directory.mkdir(parents=True, exist_ok=True)
+    os.chmod(directory, 0o700)
     bundle = directory / "ca.bootstrap.pem"
     bundle.write_bytes(server.trust_bundle_pem)
     token_file = directory / "token"
     # A file, not an argument: an argument is visible in `ps(1)` to every user.
-    token_file.write_text(server.mint_token(name, node_id=node_id) + "\n")
+    # 0600 from the moment it exists, for the same reason — the SSH installer
+    # uploads its token at 0600 and this is the same secret with the same life,
+    # so it does not get to be the one written at the umask's mercy.
+    fd = os.open(str(token_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as handle:
+        handle.write(server.mint_token(name, node_id=node_id) + "\n")
     try:
         async with enrollment_window(server):
             process = await asyncio.create_subprocess_exec(

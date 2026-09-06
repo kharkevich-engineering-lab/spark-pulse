@@ -319,3 +319,104 @@ class TestAuthRoutes:
         assert data["authenticated"] is True
         assert data["user"]["name"] == "Bob"
         assert data["user"]["email"] == "bob@example.com"
+
+
+# ── The OIDC round trip's own integrity ──────────────────────────────────────
+
+
+class TestOidcState:
+    """``state`` exists to tie a callback to a login this server started.
+
+    It was minted at ``/auth/login``, embedded in the redirect, and then never
+    looked at again — so ``/auth/callback`` accepted an authorization code
+    from anybody. That is login CSRF: an attacker completes the flow in the
+    victim's browser and the victim ends up working inside the attacker's
+    account, on the attacker's data, believing it is their own.
+    """
+
+    def test_a_state_is_single_use(self):
+        state = auth._issue_state()
+
+        assert auth._consume_state(state) is True
+        assert auth._consume_state(state) is False, "a replayed state is refused"
+
+    def test_a_state_we_never_issued_is_refused(self):
+        assert auth._consume_state("not-one-of-ours") is False
+
+    def test_a_state_expires(self, monkeypatch):
+        state = auth._issue_state()
+        auth._pending_states[state] -= auth._STATE_TTL_SECONDS + 1
+
+        assert auth._consume_state(state) is False
+
+    def test_the_callback_refuses_an_unknown_state(self, tmp_path, monkeypatch):
+        from fastapi.testclient import TestClient
+
+        from spark_pulse.app import create_app
+
+        monkeypatch.setenv("SPARK_PULSE_AUTH_ENABLED", "true")
+        monkeypatch.setitem(
+            auth.config._data, "oidc_provider_url", "https://issuer.example"
+        )
+        monkeypatch.setitem(auth.config._data, "oidc_client_id", "client-id")
+        monkeypatch.setitem(auth.config._data, "oidc_client_secret", "secret")
+
+        with TestClient(create_app()) as client:
+            resp = client.get("/auth/callback?code=stolen&state=forged")
+
+        assert resp.status_code == 400
+        assert "state" in resp.json()["detail"].lower()
+
+
+class TestSessionExpiry:
+    """``expires_at`` was recorded at login and then never read.
+
+    A session therefore outlived the provider's own token for as long as the
+    process ran, and ``_active_tokens`` grew for every login that ever
+    happened. The cookie's ``max-age`` governs only the browser; a client that
+    keeps sending an expired cookie was honoured indefinitely.
+    """
+
+    def test_an_expired_session_is_refused(self):
+        assert auth._session_expired({"expires_at": 1.0}) is True
+
+    def test_a_live_session_is_not(self):
+        import time
+
+        assert auth._session_expired({"expires_at": time.time() + 3600}) is False
+
+    def test_a_session_with_no_recorded_expiry_is_kept(self):
+        """Sessions written before this field was consulted must not all die."""
+        assert auth._session_expired({}) is False
+
+    def test_sweeping_drops_only_the_expired(self):
+        import time
+
+        auth._active_tokens.clear()
+        auth._active_tokens["old"] = {"expires_at": 1.0}
+        auth._active_tokens["new"] = {"expires_at": time.time() + 3600}
+
+        auth._sweep_sessions()
+
+        assert "old" not in auth._active_tokens
+        assert "new" in auth._active_tokens
+        auth._active_tokens.clear()
+
+    def test_get_me_refuses_an_expired_session(self, monkeypatch):
+        from fastapi.testclient import TestClient
+
+        from spark_pulse.app import create_app
+
+        monkeypatch.setenv("SPARK_PULSE_AUTH_ENABLED", "true")
+        monkeypatch.setitem(
+            auth.config._data, "oidc_provider_url", "https://issuer.example"
+        )
+        monkeypatch.setitem(auth.config._data, "oidc_client_id", "client-id")
+        monkeypatch.setitem(auth.config._data, "oidc_client_secret", "secret")
+
+        auth._active_tokens["stale"] = {"user": {"name": "Bob"}, "expires_at": 1.0}
+        with TestClient(create_app()) as client:
+            resp = client.get("/auth/me", cookies={"token": "stale"})
+
+        assert resp.status_code == 401
+        assert "stale" not in auth._active_tokens, "an expired session is dropped"

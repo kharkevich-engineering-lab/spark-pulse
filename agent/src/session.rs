@@ -50,6 +50,26 @@ const RECONNECT_MAX: Duration = Duration::from_secs(15);
 /// rather than buffered indefinitely.
 const OUTBOX_DEPTH: usize = 256;
 
+/// The largest message either side will encode or decode. **Must equal
+/// `spark_pulse.agent.keepalive.MAX_MESSAGE_BYTES`**, which the control plane
+/// configures its own server with.
+///
+/// tonic's default decode limit is 4 MiB, and nothing said so. A
+/// `CopyDirToContainer` carrying a directory of mods is well inside the 64 MiB
+/// the protocol was designed around and well outside 4 MiB, so the node
+/// refused it — as a decode error on a command the control plane had every
+/// reason to believe was deliverable.
+pub const MAX_MESSAGE_BYTES: usize = 64 * 1024 * 1024;
+
+/// How often an idle agent pings the control plane, and how long it waits for
+/// an answer. **Must match `spark_pulse.agent.keepalive`**: that module's
+/// invariant is that the server's minimum ping interval (5s) stays below this,
+/// or the server answers with `ENHANCE_YOUR_CALM` and HTTP/2 tells the client
+/// to silently double its interval — detection then gets slower every time it
+/// happens, over hours, with nothing in any log saying so.
+const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
+const KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// A command that is running, and the flag its operation polls to be told to
 /// stop. Mirrors the Python agent's `cancel()` callable exactly.
 type CancelFlag = Arc<AtomicBool>;
@@ -139,6 +159,16 @@ impl Agent {
             .tls_config(tls)
             .context("configuring mTLS for the session")?
             .connect_timeout(Duration::from_secs(10))
+            // An agent holding an idle stream is the *normal* state, so pings
+            // have to be permitted without calls or the keepalive never fires
+            // and a half-open connection — a NAT that forgot us, a link that
+            // went away without a FIN — leaves this agent believing it is
+            // connected while the control plane has already given up on it.
+            // Nothing then redials, and the node is offline until the process
+            // is restarted.
+            .http2_keep_alive_interval(KEEPALIVE_INTERVAL)
+            .keep_alive_timeout(KEEPALIVE_TIMEOUT)
+            .keep_alive_while_idle(true)
             .connect()
             .await
             .with_context(|| format!("dialling {}", self.target))
@@ -165,7 +195,9 @@ impl Agent {
             .await
             .context("queueing the Hello")?;
 
-        let mut client = NodeSessionClient::new(channel.clone());
+        let mut client = NodeSessionClient::new(channel.clone())
+            .max_decoding_message_size(MAX_MESSAGE_BYTES)
+            .max_encoding_message_size(MAX_MESSAGE_BYTES);
         let mut inbound = client
             .session(ReceiverStream::new(rx))
             .await
@@ -372,6 +404,8 @@ async fn renew_once(channel: &Channel, state: &Shared) -> Result<String> {
 
     let pair = crate::identity::build_csr(crate::identity::CSR_COMMON_NAME)?;
     let issued = EnrollmentClient::new(channel.clone())
+        .max_decoding_message_size(MAX_MESSAGE_BYTES)
+        .max_encoding_message_size(MAX_MESSAGE_BYTES)
         .renew(RenewRequest {
             csr_pem: pair.csr_pem.clone().into_bytes(),
             facts: None,

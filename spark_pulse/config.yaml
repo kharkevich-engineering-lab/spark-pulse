@@ -33,6 +33,12 @@ oidc_client_secret: ""
 oidc_provider_url: ""
 spark_vllm_path: /tmp/spark-vllm-docker
 webui_port: 8100
+# Browser origins allowed to call this API cross-origin. Empty means "the
+# defaults": this port on localhost, plus the Vite dev server. Never "*" —
+# Starlette reflects the caller's own origin back when the wildcard is combined
+# with credentials, which makes every page the operator visits a client of this
+# control plane. Set this only when the UI is served from another origin.
+cors_allowed_origins: []
 oci_auto_update_enabled: false
 oci_auto_update_schedule: "0 2 * * *"
 oci_auto_update_overwrite_local: false

@@ -77,6 +77,8 @@ pub async fn enroll(request: Enrolment<'_>) -> Result<AgentIdentity> {
     tracing::debug!("connected; sending the enrolment request");
 
     let issued = EnrollmentClient::new(channel)
+        .max_decoding_message_size(crate::session::MAX_MESSAGE_BYTES)
+        .max_encoding_message_size(crate::session::MAX_MESSAGE_BYTES)
         .enroll(EnrollRequest {
             token: request.token.to_string(),
             csr_pem: pair.csr_pem.clone().into_bytes(),
@@ -92,11 +94,27 @@ pub async fn enroll(request: Enrolment<'_>) -> Result<AgentIdentity> {
         })?
         .into_inner();
 
-    if !request.trust_bundle_pin.is_empty() && issued.trust_bundle_spki != request.trust_bundle_pin
-    {
+    // Recomputed from the bundle we were handed, never taken from the field
+    // beside it. `trust_bundle_spki` is the server's *claim* about its own
+    // bundle, so comparing that to the installer's pin checks a string against
+    // a string and tells us nothing about the bytes we are about to write to
+    // disk and trust for the next ninety days. Hashing what arrived is what
+    // makes the pin a pin.
+    let returned_pin = identity::spki_pin(&issued.trust_bundle_pem)
+        .context("computing the pin of the trust bundle the control plane returned")?;
+    if !request.trust_bundle_pin.is_empty() && returned_pin != request.trust_bundle_pin {
         bail!(
             "the control plane returned a trust bundle that does not match the \
              pin the installer supplied"
+        );
+    }
+    if issued.trust_bundle_spki != returned_pin {
+        // Not fatal to security — we just computed the truth — but it means
+        // the two sides disagree about what a pin is, and a node enrolled now
+        // would record a pin that fails on its first renewal.
+        bail!(
+            "the control plane's stated trust-bundle pin does not describe the \
+             bundle it sent; refusing to enroll against a mismatched pair"
         );
     }
     if issued.node_id.is_empty() {
@@ -107,7 +125,7 @@ pub async fn enroll(request: Enrolment<'_>) -> Result<AgentIdentity> {
         directory: request.directory.to_path_buf(),
         meta: IdentityMeta {
             node_id: issued.node_id,
-            trust_bundle_pin: issued.trust_bundle_spki,
+            trust_bundle_pin: returned_pin,
             cluster_id: issued.cluster_id,
             spiffe_id: issued.spiffe_id,
             epoch: issued.epoch,

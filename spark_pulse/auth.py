@@ -13,7 +13,10 @@ When enabled, only /health, /auth/*, and static files are public.
 from __future__ import annotations
 
 import os
+import secrets
+import time
 from datetime import datetime, timezone
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -26,6 +29,55 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 # In-memory token store (replace with Redis in production)
 _active_tokens: dict[str, dict] = {}
 
+#: How long an unredeemed OIDC ``state`` stays valid. The round trip is one
+#: browser redirect to the provider and back; ten minutes is generous.
+_STATE_TTL_SECONDS = 600
+
+#: Issued ``state`` values, mapped to when they were minted. Verified and
+#: consumed on the callback — without this the callback accepts a code from
+#: anyone, which is login CSRF: an attacker can complete the flow in the
+#: victim's browser and land them in the attacker's session.
+_pending_states: dict[str, float] = {}
+
+
+def _sweep_states(now: float | None = None) -> None:
+    now = time.time() if now is None else now
+    for state, minted in list(_pending_states.items()):
+        if now - minted > _STATE_TTL_SECONDS:
+            _pending_states.pop(state, None)
+
+
+def _issue_state() -> str:
+    state = secrets.token_urlsafe(24)
+    _sweep_states()
+    _pending_states[state] = time.time()
+    return state
+
+
+def _consume_state(state: str) -> bool:
+    """Whether ``state`` was one we issued, and has not been used yet."""
+    _sweep_states()
+    return _pending_states.pop(state, None) is not None
+
+
+def _session_expired(user: dict, now: float | None = None) -> bool:
+    """Whether a stored session has passed the expiry it was created with.
+
+    ``expires_at`` was recorded at login and then never read, so a session
+    outlived the provider's own token for as long as the process ran and the
+    store grew without bound. Both are fixed by consulting it.
+    """
+    expires_at = user.get("expires_at")
+    if not expires_at:
+        return False
+    return (time.time() if now is None else now) >= float(expires_at)
+
+
+def _sweep_sessions() -> None:
+    for key, user in list(_active_tokens.items()):
+        if _session_expired(user):
+            _active_tokens.pop(key, None)
+
 
 def _oidc_configured() -> bool:
     """Check if OIDC is configured and enabled."""
@@ -35,6 +87,56 @@ def _oidc_configured() -> bool:
         and config.oidc_client_id
         and config.oidc_client_secret
     )
+
+
+#: Methods that cannot change anything, and so need no cross-origin defence.
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
+
+
+def _same_origin(request: Request, origin: str) -> bool:
+    """Whether ``origin`` is this server's own, as the request describes it."""
+    url = request.url
+    return origin == f"{url.scheme}://{url.netloc}"
+
+
+class CsrfMiddleware(BaseHTTPMiddleware):
+    """Refuse state-changing requests that a *different site* originated.
+
+    This is the protection the frontend's ``X-CSRF-Token`` header was always
+    supposed to have: the header was read from a ``<meta name="csrf-token">``
+    tag that nothing ever emitted, so it was never sent, and nothing on this
+    side ever checked it. Both halves were decoration.
+
+    The rule here is the one that does not need a token to be plumbed through
+    every client:
+
+    * A request with **no ``Origin`` header** is not from a browser's
+      cross-site machinery — ``curl``, the MCP client, the test client, a
+      server-to-server call — and is allowed. A browser attaches ``Origin`` to
+      every cross-origin request and to every unsafe same-origin one, so this
+      exempts exactly the callers that cannot be victims of CSRF.
+    * A request **with** an ``Origin`` must carry one this server serves the UI
+      on. Anything else is another site driving the operator's browser.
+
+    Combined with a CORS policy that no longer reflects arbitrary origins, a
+    page on ``evil.example`` can neither read an answer from this API nor
+    provoke a write it cannot read.
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        if request.method in _SAFE_METHODS:
+            return await call_next(request)
+        origin = request.headers.get("origin")
+        if not origin:
+            return await call_next(request)
+        if _same_origin(request, origin) or origin.rstrip("/") in set(
+            config.cors_allowed_origins
+        ):
+            return await call_next(request)
+        return JSONResponse(
+            status_code=403,
+            content={"detail": f"Cross-origin request from {origin} refused"},
+        )
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -76,6 +178,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
         user = _active_tokens.get(token)
         if not user:
             return JSONResponse(status_code=401, content={"detail": "Invalid token"})
+        if _session_expired(user):
+            # The provider's own token has expired, so ours has too. Dropped
+            # here rather than left to accumulate: the cookie's max-age only
+            # governs the browser, and a client that keeps sending an expired
+            # cookie was otherwise honoured for the life of the process.
+            _active_tokens.pop(token, None)
+            return JSONResponse(status_code=401, content={"detail": "Session expired"})
 
         # Attach user to request state
         request.state.user = user
@@ -112,7 +221,7 @@ async def login(request: Request):
             status_code=500, detail="Missing authorization_endpoint in OIDC config"
         )
 
-    state = os.urandom(16).hex()
+    state = _issue_state()
     redirect_uri = str(request.url.replace(path="/auth/callback", query=""))
 
     params = {
@@ -122,8 +231,10 @@ async def login(request: Request):
         "scope": "openid profile email",
         "state": state,
     }
-    query = "&".join(f"{k}={v}" for k, v in params.items())
-    return RedirectResponse(f"{auth_url}?{query}")
+    # urlencode, not a hand-rolled join: ``redirect_uri`` carries "://" and
+    # "/", and a client id may carry anything at all. Joining raw values
+    # produced a URL the provider had to guess at.
+    return RedirectResponse(f"{auth_url}?{urlencode(params)}")
 
 
 @router.get("/callback")
@@ -131,6 +242,15 @@ async def callback(request: Request, code: str, state: str):
     """Exchange authorization code for tokens."""
     if not _oidc_configured():
         return {"message": "Authentication is not configured"}
+
+    # The state we issued at /auth/login, and only that one, once. Without
+    # this the callback accepts an authorization code from anybody — which is
+    # login CSRF: an attacker completes the flow in the victim's browser and
+    # the victim ends up working inside the attacker's account.
+    if not _consume_state(state):
+        raise HTTPException(
+            status_code=400, detail="Invalid or expired authentication state"
+        )
 
     try:
         import httpx
@@ -164,8 +284,10 @@ async def callback(request: Request, code: str, state: str):
             )
             user_info = user_resp.json() if user_resp.status_code == 200 else {}
 
-            # Store token
-            token_key = os.urandom(16).hex()
+            # Store token, dropping anything that has already expired so the
+            # store stays bounded by the number of live sessions.
+            _sweep_sessions()
+            token_key = secrets.token_urlsafe(32)
             _active_tokens[token_key] = {
                 "access_token": access_token,
                 "refresh_token": refresh_token,
@@ -214,6 +336,9 @@ async def get_me(request: Request):
     user_data = _active_tokens.get(token)
     if not user_data:
         raise HTTPException(status_code=401, detail="Invalid token")
+    if _session_expired(user_data):
+        _active_tokens.pop(token, None)
+        raise HTTPException(status_code=401, detail="Session expired")
 
     return {
         "authenticated": True,
