@@ -22,6 +22,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
+from spark_pulse import app as app_module
 from spark_pulse import config as config_module
 from spark_pulse.app import create_app
 from spark_pulse.config import config
@@ -211,8 +212,20 @@ def test_an_unknown_api_path_is_a_404_not_the_spa(client):
         assert response.headers["content-type"].startswith("application/json")
 
 
-def test_a_client_side_route_still_gets_the_app(client):
-    """And the catch-all still does the job it exists for."""
+def test_a_client_side_route_still_gets_the_app(client, tmp_path, monkeypatch):
+    """And the catch-all still does the job it exists for.
+
+    The UI directory is stood up here rather than assumed. It is build output:
+    present on a developer's machine that has run the frontend build, absent
+    in the CI job that runs these tests, so a test that just asks for a route
+    asserts "the frontend happens to be built" in one place and raises in the
+    other.
+    """
+    index = tmp_path / "index.html"
+    index.write_text("<!doctype html><title>Spark Pulse</title>")
+    monkeypatch.setattr(app_module, "_UI_DIR", tmp_path)
+    monkeypatch.setattr(app_module, "_INDEX_FILE", index)
+
     response = client.get("/monitoring")
 
     assert response.status_code == 200
