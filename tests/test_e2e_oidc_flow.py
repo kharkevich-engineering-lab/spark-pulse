@@ -173,7 +173,16 @@ def test_a_second_login_does_not_reuse_the_first_ones_state(client):
     assert first_state != second_state
 
     callback_url = _authorize(second.headers["location"])
-    assert client.get(_callback_path(callback_url)).status_code in (200, 302)
+    # ``follow_redirects=False``, like every other callback call here. The
+    # callback redirects to "/", and following it lands on the SPA handler,
+    # which raises when the frontend has not been built — so a test that
+    # follows passes on a developer's machine and 500s in CI, where the Python
+    # job never runs `npm run build`. What is being asserted is the callback's
+    # own answer, not what the browser would do next.
+    assert (
+        client.get(_callback_path(callback_url), follow_redirects=False).status_code
+        == 302
+    )
     # The first state was never redeemed and is still live; the second is spent.
     assert auth._consume_state(second_state) is None
     assert auth._consume_state(first_state) is not None
