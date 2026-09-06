@@ -59,7 +59,9 @@ class TestRenderedFilesAreNotInjectable:
     def test_a_username_cannot_add_a_sudo_rule(self):
         from spark_pulse.agent.bootstrap import BootstrapError, render_sudoers
 
-        with pytest.raises(BootstrapError, match="newline"):
+        # Refused for its shape rather than for its newline specifically —
+        # the allowlist below catches this and everything like it.
+        with pytest.raises(BootstrapError):
             render_sudoers("spark\nspark ALL=(ALL) NOPASSWD: ALL")
 
     def test_an_ordinary_username_still_renders(self):
@@ -69,3 +71,32 @@ class TestRenderedFilesAreNotInjectable:
 
         assert drop_in.count("\n") == 3, "two comments and one rule"
         assert "spark ALL=(root) NOPASSWD:" in drop_in
+
+    def test_a_username_cannot_reshape_the_rule_with_a_comma(self):
+        """A newline is the obvious escape and not the only one.
+
+        sudoers gives meaning to a comma (another entry in the list),
+        whitespace (the next field), ``%`` (a group), ``+`` (a netgroup) and
+        ``\\`` (a line continuation). The username comes from the node's own
+        ``whoami``, so the rule is an allowlist of what a username may be.
+        """
+        from spark_pulse.agent.bootstrap import BootstrapError, render_sudoers
+
+        for hostile in (
+            "spark, root",
+            "spark root",
+            "%wheel",
+            "+netgroup",
+            "spark\\",
+            "spark=ALL",
+            "",
+        ):
+            with pytest.raises(BootstrapError):
+                render_sudoers(hostile)
+
+    def test_the_usernames_a_node_actually_has_are_accepted(self):
+        """And the allowlist must not refuse a name a real node reports."""
+        from spark_pulse.agent.bootstrap import render_sudoers
+
+        for ordinary in ("spark", "ubuntu", "nvidia-user", "user_1", "a.b", "svc$"):
+            assert f"{ordinary} ALL=(root) NOPASSWD:" in render_sudoers(ordinary)

@@ -48,6 +48,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import shlex
 import time
 from contextlib import asynccontextmanager
@@ -328,6 +329,11 @@ async def open_node_session(
 # ── Rendering ───────────────────────────────────────────────────────────────
 
 
+#: What a username may look like before it is written into a sudoers rule.
+#: The portable POSIX set plus the trailing ``$`` a machine account carries.
+_POSIX_USERNAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,31}\$?")
+
+
 def _single_line(value: str, what: str) -> str:
     """``value`` with no way to become a second directive.
 
@@ -396,8 +402,17 @@ def render_sudoers(user: str, *, unit: str = UNIT_NAME) -> str:
     start or stop at all, which is why the user scope is preferred.
     """
     # ``user`` is whatever the node's own ``whoami`` said, so it is checked
-    # before it becomes a line in a file that grants root.
-    _single_line(user, "a remote username")
+    # before it becomes a line in a file that grants root. A newline is the
+    # obvious escape and was blocked first; it is not the only one. sudoers
+    # gives meaning to a comma (another entry in the list), whitespace (the
+    # next field), ``%`` (a group), ``+`` (a netgroup), ``\`` (a line
+    # continuation) and ``=`` — so the rule is an allowlist of what a POSIX
+    # username may contain, not a denylist of what it may not.
+    if not _POSIX_USERNAME.fullmatch(user):
+        raise BootstrapError(
+            f"{user!r} is not a username this can write a sudoers rule for; "
+            "expected letters, digits, and any of '_', '-', '.', '$'"
+        )
     _single_line(unit, "a unit name")
     verbs = ", ".join(
         f"/usr/bin/systemctl {verb} {unit}" for verb in ("start", "stop", "restart")

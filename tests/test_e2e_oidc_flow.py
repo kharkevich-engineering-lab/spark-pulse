@@ -345,3 +345,51 @@ def test_an_expired_id_token_is_refused(verify):
         run(_mint(key, exp=int(_time.time()) - 3600))
 
     assert caught.value.status_code == 401
+
+
+# ── Where the provider is told to send the browser back ─────────────────────
+
+
+def test_the_redirect_uri_follows_the_host_header_by_default(client):
+    """Unchanged behaviour when no external URL is configured."""
+    start = client.get(
+        "/auth/login", follow_redirects=False, headers={"Host": "testserver"}
+    )
+
+    sent = parse_qs(urlparse(start.headers["location"]).query)["redirect_uri"][0]
+    assert sent == "http://testserver/auth/callback"
+
+
+def test_a_configured_external_url_wins_over_the_host_header(client, monkeypatch):
+    """``request.url``'s host is the ``Host`` header, which the *client* sends.
+
+    An attacker who can set it chooses the ``redirect_uri`` this server hands
+    the provider, and a provider with a loose redirect allowlist then sends
+    the authorization code wherever they asked. Only the operator knows
+    whether there is a proxy in front and what name it answers to, so the
+    answer is configuration rather than a guess.
+    """
+    monkeypatch.setitem(config._data, "external_url", "https://pulse.example.com/")
+
+    start = client.get(
+        "/auth/login", follow_redirects=False, headers={"Host": "evil.example"}
+    )
+
+    sent = parse_qs(urlparse(start.headers["location"]).query)["redirect_uri"][0]
+    assert sent == "https://pulse.example.com/auth/callback"
+
+
+def test_login_and_callback_agree_on_the_redirect_uri(client, monkeypatch):
+    """They must be byte-identical or the exchange is refused.
+
+    The token endpoint compares the ``redirect_uri`` of the exchange against
+    the one the code was issued for, so computing them in two places is how
+    they drift apart. One function serves both.
+    """
+    monkeypatch.setitem(config._data, "external_url", "http://testserver")
+
+    start = client.get("/auth/login", follow_redirects=False)
+    callback_url = _authorize(start.headers["location"])
+    done = client.get(_callback_path(callback_url), follow_redirects=False)
+
+    assert done.status_code == 302, done.text[:400]

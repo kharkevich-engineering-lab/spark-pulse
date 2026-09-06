@@ -139,6 +139,25 @@ class _Config:
         return int(self._data.get("webui_port", 8100))
 
     @property
+    def external_url(self) -> str:
+        """The address browsers reach this control plane at, if it is fixed.
+
+        Empty — the default — means "work it out from the request", which is
+        what the OIDC flow did unconditionally: it built ``redirect_uri`` from
+        ``request.url``, and ``request.url``'s host comes from the ``Host``
+        header, which the client sends. An attacker who can set that header
+        chooses the ``redirect_uri`` this server hands the identity provider,
+        and an provider with a loose redirect allowlist will then send the
+        authorization code somewhere else.
+
+        Setting this pins the value instead. It is a deployment fact — only
+        the operator knows whether there is a proxy in front and what name it
+        answers to — so it is configuration rather than a guess, and leaving
+        it unset keeps exactly the previous behaviour.
+        """
+        return str(self._data.get("external_url", "")).rstrip("/")
+
+    @property
     def cors_allowed_origins(self) -> list[str]:
         """Browser origins allowed to call this API cross-origin.
 
@@ -300,6 +319,18 @@ class _Config:
 
     @property
     def mcp_api_token(self) -> str:
+        """A bearer token the ``/mcp`` endpoint requires, when one is set.
+
+        Empty — the default — means the endpoint is governed by the session
+        cookie like every other route, which is right for an MCP client
+        running in the operator's own browser session and useless for one
+        running as a program, because a program cannot complete an OIDC
+        redirect. Setting this gives that program a credential of its own.
+
+        This was declared here and in ``config.yaml`` from the start and read
+        by nothing at all, so an operator who set it got no protection and no
+        warning that they had not.
+        """
         return str(
             os.environ.get(
                 "SPARK_PULSE_MCP_API_TOKEN", self._data.get("mcp_api_token", "")

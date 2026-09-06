@@ -207,6 +207,29 @@ def _oidc_configured() -> bool:
 #: Methods that cannot change anything, and so need no cross-origin defence.
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
 
+#: The path the identity provider sends the browser back to.
+CALLBACK_PATH = "/auth/callback"
+
+
+def callback_url(request: Request) -> str:
+    """Where the provider should return the browser to.
+
+    ``config.external_url`` when the operator has stated it, and only
+    otherwise the request's own URL — whose host is the ``Host`` header, which
+    the *client* chooses. An attacker who can set that header picks the
+    ``redirect_uri`` we hand the provider, and a provider with a loose
+    redirect allowlist then sends the authorization code wherever they asked.
+
+    The same function serves ``/auth/login`` and ``/auth/callback`` because
+    the two values must be byte-identical: the token endpoint compares the
+    ``redirect_uri`` of the exchange against the one the code was issued for,
+    and computes them separately is how they drift apart.
+    """
+    external = config.external_url
+    if external:
+        return f"{external}{CALLBACK_PATH}"
+    return str(request.url.replace(path=CALLBACK_PATH, query=""))
+
 
 def _same_origin(request: Request, origin: str) -> bool:
     """Whether ``origin`` is this server's own, as the request describes it."""
@@ -323,7 +346,7 @@ async def login(request: Request):
         )
 
     state, nonce = _issue_state()
-    redirect_uri = str(request.url.replace(path="/auth/callback", query=""))
+    redirect_uri = callback_url(request)
 
     params = {
         "response_type": "code",
@@ -367,7 +390,9 @@ async def callback(request: Request, code: str, state: str):
     try:
         import httpx
 
-        redirect_uri = str(request.url.replace(query=""))
+        # The same value /auth/login sent, computed the same way: the token
+        # endpoint compares it against the one the code was issued for.
+        redirect_uri = callback_url(request)
 
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(

@@ -189,3 +189,68 @@ def test_settings_json_is_not_world_readable(client, tmp_path):
     assert path.exists()
     assert json.loads(path.read_text())["job_retention_days"] == 9
     assert path.stat().st_mode & 0o077 == 0
+
+
+# ── Unmatched API paths ─────────────────────────────────────────────────────
+
+
+def test_an_unknown_api_path_is_a_404_not_the_spa(client):
+    """The SPA catch-all answers every method, so a mistyped or removed
+    endpoint answered with 200 and a page of HTML. A client cannot tell that
+    from success, and the ones that suffer are the ones least able to
+    complain: an MCP tool call or a script parsing HTML as though it were the
+    JSON it asked for."""
+    for method, path in (
+        ("post", "/api/deployment"),  # the real one is /api/deployments
+        ("delete", "/api/nodes"),
+        ("get", "/api/no-such-thing"),
+        ("post", "/auth/nope"),
+    ):
+        response = getattr(client, method)(path)
+        assert response.status_code == 404, f"{method.upper()} {path}"
+        assert response.headers["content-type"].startswith("application/json")
+
+
+def test_a_client_side_route_still_gets_the_app(client):
+    """And the catch-all still does the job it exists for."""
+    response = client.get("/monitoring")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+
+
+# ── The MCP endpoint's own credential ───────────────────────────────────────
+
+
+def test_mcp_is_open_when_no_token_is_configured(client):
+    """Unset keeps the previous behaviour exactly: the session governs."""
+    body = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+
+    response = client.post("/mcp", json=body)
+
+    assert response.status_code == 200
+    assert "result" in response.json()
+
+
+def test_mcp_requires_the_token_once_one_is_configured(monkeypatch):
+    """``mcp_api_token`` was declared in config.yaml and read by nothing, so an
+    operator who set one got no protection and no sign that they had not.
+
+    It matters because an MCP client running as a program cannot complete an
+    OIDC redirect, so without this there is no way for it to authenticate at
+    all."""
+    monkeypatch.setitem(config._data, "mcp_api_token", "s3cret-token")
+    body = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+    with TestClient(create_app()) as guarded:
+        assert guarded.post("/mcp", json=body).status_code == 401
+        assert (
+            guarded.post(
+                "/mcp", json=body, headers={"Authorization": "Bearer wrong"}
+            ).status_code
+            == 401
+        )
+        allowed = guarded.post(
+            "/mcp", json=body, headers={"Authorization": "Bearer s3cret-token"}
+        )
+        assert allowed.status_code == 200
+        assert "result" in allowed.json()
