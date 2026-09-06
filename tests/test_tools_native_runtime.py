@@ -706,6 +706,57 @@ class TestMods:
         assert plan.workdir == "/workspace/vllm"
 
 
+class TestRecordWrites:
+    """``native_runtime`` still hands the store the whole list.
+
+    That shape is not changing — it is what every caller here has — and it is
+    no longer what gets written. The store diffs the set it is given, so a
+    status change on one deployment costs one row rather than an UPDATE for
+    every deployment on the machine.
+    """
+
+    def _seed(self, count):
+        tools.deployment_records.save(
+            [
+                {"id": f"dep-{i}", "status": "running", "runtime": "native"}
+                for i in range(count)
+            ]
+        )
+
+    def test_updating_one_record_writes_only_that_row(self, records):
+        store = importlib.import_module("spark_pulse.tools.deployment_records")
+        self._seed(3)
+        written: list[str] = []
+        apply_record = store._apply
+
+        def spy(row, record):
+            changed = apply_record(row, record)
+            if changed:
+                written.append(row.id)
+            return changed
+
+        with patch.object(store, "_apply", spy):
+            updated = nr._update_record("dep-1", status="stopped")
+
+        assert updated["status"] == "stopped"
+        assert written == ["dep-1"]
+
+    def test_updating_one_record_leaves_the_others_as_they_were(self, records):
+        self._seed(3)
+
+        nr._update_record("dep-1", status="stopped")
+
+        assert {r["id"]: r["status"] for r in tools.deployment_records.load()} == {
+            "dep-0": "running",
+            "dep-1": "stopped",
+            "dep-2": "running",
+        }
+
+    def test_updating_a_record_that_is_gone_answers_none(self, records):
+        self._seed(1)
+        assert nr._update_record("dep-9", status="stopped") is None
+
+
 class TestLifecycle:
     def _running(self, native, docker):
         plan = native.plan("qwen3-8b")

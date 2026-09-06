@@ -94,8 +94,11 @@ class TestSaveCustomization:
         mock_custom_path.write_text(json.dumps({"r": {"command": "old"}}))
         resp = app_client.put("/api/recipes/customize/r", json={"model": "new"})
         assert resp.status_code == 200
-        # The stored file should have both
-        stored = json.loads(mock_custom_path.read_text())
+        # Read back through the store: the seeded file is only its one-time
+        # migration source, so a write after that does not land there.
+        import spark_pulse.tools.custom_recipes as cr
+
+        stored = cr.load_customizations()
         assert stored["r"]["command"] == "old"
         assert stored["r"]["model"] == "new"
 
@@ -122,7 +125,9 @@ class TestDeleteCustomization:
         mock_custom_path.write_text(json.dumps({"r1": {}, "r2": {}}))
         resp = app_client.delete("/api/recipes/customize/r1")
         assert resp.status_code == 200
-        stored = json.loads(mock_custom_path.read_text())
+        import spark_pulse.tools.custom_recipes as cr
+
+        stored = cr.load_customizations()
         assert "r1" not in stored
         assert "r2" in stored
 

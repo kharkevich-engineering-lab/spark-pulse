@@ -15,9 +15,18 @@ node keeps its id across a rename or a re-address, and the machine-id is read
 only by :func:`read_machine_id` and used only by :func:`diagnose`, which warns
 when two nodes report the same one.
 
-State lives in ``~/.config/spark-pulse/nodes.json`` and goes through
-:mod:`spark_pulse.tools.atomic_json`, so a crash mid-write cannot lose the
-registry and an unreadable file is a hard error rather than an empty cluster.
+State lives in the state database (:mod:`spark_pulse.db`). A pre-existing
+``~/.config/spark-pulse/nodes.json`` is imported once, keyed on the ``meta``
+table rather than on an empty ``nodes`` table — see :data:`_IMPORT_KEY` — and a
+``nodes.json`` that exists but cannot be parsed is a hard error rather than an
+empty cluster.
+
+Writes are per row. Every mutation here changes exactly one node, so it reads
+one row and writes one row; :func:`_save` is kept for the bulk case, where the
+caller has a whole registry rather than one change. Both are serialised by
+:data:`_MUTATION_LOCK`, because every rule this module enforces — one control
+plane, one node per address — is set-wide, and so every mutation is a
+look-then-write.
 
 :func:`register_self` is what puts the control node in the registry on first
 run. It is idempotent across restarts and it **fills blanks only**: a value an
@@ -27,14 +36,16 @@ operator has typed is never replaced by a discovered one.
 from __future__ import annotations
 
 import logging
+import threading
 import uuid
+from contextlib import AbstractContextManager
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
 from sqlalchemy import JSON, Boolean, String, select
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from spark_pulse.db import Base, is_done, mark_done, session_scope
 from spark_pulse.tools.atomic_json import read_state_file
@@ -208,9 +219,6 @@ class Finding:
         return data
 
 
-# ── Persistence ──────────────────────────────────────────────────────────────
-
-
 # ── The table ────────────────────────────────────────────────────────────────
 
 #: Recorded once ``nodes.json`` has been imported. In ``meta`` rather than
@@ -235,6 +243,103 @@ class _NodeRow(Base):
     record: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
+def _row_of(node: NodeRecord) -> _NodeRow:
+    """The row for a record: two queried columns, and the record as a document.
+
+    ``address`` and ``is_control_plane`` are duplicated out of the document
+    because they are what the uniqueness rules are checked against, and a check
+    that scanned the document would have to read every node to write one.
+    """
+    return _NodeRow(
+        id=node.id,
+        address=node.address,
+        is_control_plane=node.is_control_plane,
+        record=node.to_dict(),
+    )
+
+
+# ── Per-row access ───────────────────────────────────────────────────────────
+
+
+#: Held across every look-then-write in this module.
+#:
+#: Each rule here is set-wide — one control plane, one node per address — so
+#: every mutation reads the registry before it writes, and two threads that
+#: each *check, then write* both find the address free and both register it.
+#: The whole-set save hid half of that behind a different bug: the second
+#: writer replaced the entire registry with the list it had read before the
+#: first landed, so the duplicate never appeared because the first node had
+#: been deleted instead. Per-row writes remove the deletion, which leaves the
+#: check-then-write exposed, which is what this closes. Reentrant because
+#: :func:`register_self` decides between :func:`add_node` and
+#: :func:`update_node` while holding it — that decision is itself a
+#: look-then-write, and two of them racing is how a cluster ends up with two
+#: control-plane records.
+_MUTATION_LOCK = threading.RLock()
+
+
+def _transaction() -> AbstractContextManager[None]:
+    """Serialise a look-then-write. See :data:`_MUTATION_LOCK`."""
+    return _MUTATION_LOCK
+
+
+def _get(db: Session, node_id: str) -> NodeRecord | None:
+    """One node by primary key, without loading the registry."""
+    row = db.get(_NodeRow, node_id)
+    return NodeRecord.from_dict(dict(row.record)) if row is not None else None
+
+
+def _upsert(db: Session, node: NodeRecord) -> None:
+    """Write one node, leaving every other row untouched.
+
+    This is the point of the per-row layer: marking a single peer ``dead`` used
+    to rewrite every node in the registry, which on PostgreSQL means taking a
+    row lock on each one for a change that concerns exactly one.
+    """
+    db.merge(_row_of(node))
+
+
+def _delete(db: Session, node_id: str) -> bool:
+    """Drop one node. ``False`` when there was nothing to drop."""
+    row = db.get(_NodeRow, node_id)
+    if row is None:
+        return False
+    db.delete(row)
+    return True
+
+
+def _control_plane_row(db: Session) -> _NodeRow | None:
+    """The control-plane row, by its indexed column rather than by scanning."""
+    return (
+        db.execute(select(_NodeRow).where(_NodeRow.is_control_plane.is_(True)))
+        .scalars()
+        .first()
+    )
+
+
+def _refuse_duplicate_address(
+    db: Session, address: str, *, except_id: str = ""
+) -> None:
+    """Raise if another node already answers at ``address``.
+
+    Takes the session it is checked in, so the check and the write it guards
+    are the same transaction and the check cannot read a registry the write
+    then lands on top of. Two *processes* would still need a unique constraint
+    to be stopped; one control plane is what this program runs, and
+    :data:`_MUTATION_LOCK` covers its threads.
+
+    An empty address is not a collision: the control plane is allowed to exist
+    before discovery has found one.
+    """
+    if not address:
+        return
+    query = select(_NodeRow.id).where(_NodeRow.address == address)
+    if except_id:
+        query = query.where(_NodeRow.id != except_id)
+    if db.execute(query).first() is not None:
+        raise ValueError(f"a node with address {address} is already registered")
+
+
 def _migrate_from_json() -> None:
     """Import ``nodes.json`` once, if there is one. See §3.3."""
     if is_done(_IMPORT_KEY):
@@ -255,15 +360,7 @@ def _migrate_from_json() -> None:
         for item in raw:
             if not isinstance(item, dict):
                 continue
-            node = NodeRecord.from_dict(item)
-            db.merge(
-                _NodeRow(
-                    id=node.id,
-                    address=node.address,
-                    is_control_plane=node.is_control_plane,
-                    record=node.to_dict(),
-                )
-            )
+            _upsert(db, NodeRecord.from_dict(item))
     logger.info(
         "imported %d node(s) from %s into the state database", len(raw), registry_path()
     )
@@ -288,43 +385,42 @@ def _sorted(nodes: Iterable[NodeRecord]) -> list[NodeRecord]:
 
 
 def _save(nodes: Iterable[NodeRecord]) -> None:
-    """Replace the whole registry, in one transaction.
+    """Replace the whole registry with ``nodes``, in one transaction.
 
-    Whole-set because that is the shape every caller has — add, update and
-    remove each rebuild the list — and one transaction so a reader sees the
-    previous registry or the new one, never half of either.
+    *Replace*: a node absent from ``nodes`` is deleted. That is the contract a
+    caller holding a whole registry wants — reconciliation against an external
+    source of truth, or a restore — and it is why this is not the path a single
+    change takes: :func:`update_node` renaming one peer through here would read
+    and rewrite every other one, and would delete any node a concurrent writer
+    had added since ``nodes`` was read. Single changes go through
+    :func:`_upsert` and :func:`_delete` instead.
+
+    One transaction, so a reader sees the previous registry or the new one and
+    never half of either.
     """
     wanted = {node.id: node for node in nodes}
-    with session_scope() as db:
-        for row in list(db.execute(select(_NodeRow)).scalars()):
-            if row.id not in wanted:
-                db.delete(row)
-        for node in wanted.values():
-            record = node.to_dict()
-            db.merge(
-                _NodeRow(
-                    id=node.id,
-                    address=node.address,
-                    is_control_plane=node.is_control_plane,
-                    record=record,
-                )
-            )
+    with _transaction():
+        with session_scope() as db:
+            for row in list(db.execute(select(_NodeRow)).scalars()):
+                if row.id not in wanted:
+                    db.delete(row)
+            for node in wanted.values():
+                _upsert(db, node)
 
 
 def get_node(node_id: str) -> NodeRecord | None:
     """The node with ``node_id``, or ``None``."""
-    for node in list_nodes():
-        if node.id == node_id:
-            return node
-    return None
+    _migrate_from_json()
+    with session_scope() as db:
+        return _get(db, node_id)
 
 
 def self_node() -> NodeRecord | None:
     """The control-plane record, or ``None`` before :func:`register_self`."""
-    for node in list_nodes():
-        if node.is_control_plane:
-            return node
-    return None
+    _migrate_from_json()
+    with session_scope() as db:
+        row = _control_plane_row(db)
+        return NodeRecord.from_dict(dict(row.record)) if row is not None else None
 
 
 def add_node(
@@ -353,12 +449,6 @@ def add_node(
     if state not in NODE_STATES:
         raise ValueError(f"state must be one of {', '.join(NODE_STATES)}")
 
-    nodes = list_nodes()
-    if address and any(n.address == address for n in nodes):
-        raise ValueError(f"a node with address {address} is already registered")
-    if is_control_plane and any(n.is_control_plane for n in nodes):
-        raise ValueError("the control plane is already registered")
-
     node = NodeRecord(
         id=mint_node_id(),
         name=name or address,
@@ -373,8 +463,13 @@ def add_node(
         last_seen=_now() if is_control_plane else None,
         machine_id=machine_id,
     )
-    nodes.append(node)
-    _save(nodes)
+    with _transaction():
+        _migrate_from_json()
+        with session_scope() as db:
+            _refuse_duplicate_address(db, address)
+            if is_control_plane and _control_plane_row(db) is not None:
+                raise ValueError("the control plane is already registered")
+            _upsert(db, node)
     return node
 
 
@@ -422,21 +517,16 @@ def update_node(node_id: str, **changes: Any) -> NodeRecord:
                 "empty when it is not known"
             )
 
-    nodes = list_nodes()
-    for index, node in enumerate(nodes):
-        if node.id != node_id:
-            continue
-        updated = replace(node, **changes)
-        if updated.address and any(
-            other.address == updated.address and other.id != node_id for other in nodes
-        ):
-            raise ValueError(
-                f"a node with address {updated.address} is already registered"
-            )
-        nodes[index] = updated
-        _save(nodes)
-        return updated
-    raise KeyError(node_id)
+    with _transaction():
+        _migrate_from_json()
+        with session_scope() as db:
+            current = _get(db, node_id)
+            if current is None:
+                raise KeyError(node_id)
+            updated = replace(current, **changes)
+            _refuse_duplicate_address(db, updated.address, except_id=node_id)
+            _upsert(db, updated)
+    return updated
 
 
 def remove_node(node_id: str) -> NodeRecord:
@@ -450,16 +540,18 @@ def remove_node(node_id: str) -> NodeRecord:
         KeyError: No such node.
         ValueError: The node is the control plane, which cannot forget itself.
     """
-    nodes = list_nodes()
-    for index, node in enumerate(nodes):
-        if node.id != node_id:
-            continue
-        if node.is_control_plane:
-            raise ValueError("the control plane cannot be removed from the registry")
-        nodes.pop(index)
-        _save(nodes)
-        return node
-    raise KeyError(node_id)
+    with _transaction():
+        _migrate_from_json()
+        with session_scope() as db:
+            node = _get(db, node_id)
+            if node is None:
+                raise KeyError(node_id)
+            if node.is_control_plane:
+                raise ValueError(
+                    "the control plane cannot be removed from the registry"
+                )
+            _delete(db, node_id)
+    return node
 
 
 # ── The control node registers itself ────────────────────────────────────────
@@ -553,37 +645,44 @@ def register_self(*, name: str = "") -> NodeRecord:
     so an address or an interface name an operator corrected by hand survives
     the next restart. ``last_seen`` and ``machine_id`` are refreshed each time
     because they are observations, not settings.
+
+    "Is there a control node already?" and the write that follows are one
+    decision, so they are taken under :data:`_MUTATION_LOCK`: two startups
+    racing — the lifespan hook and an agent re-enrolling — would otherwise both
+    see no control node and one of them would fail on the uniqueness rule
+    rather than adopting the record the other had just written.
     """
     import socket
 
     discovered = _discovered_self()
     default_name = name.strip() or socket.gethostname() or "control"
 
-    existing = self_node()
-    if existing is None:
-        return add_node(
-            name=default_name,
-            is_control_plane=True,
-            state="healthy",
-            machine_id=read_machine_id(),
-            **discovered,
-        )
+    with _transaction():
+        existing = self_node()
+        if existing is None:
+            return add_node(
+                name=default_name,
+                is_control_plane=True,
+                state="healthy",
+                machine_id=read_machine_id(),
+                **discovered,
+            )
 
-    changes: dict[str, Any] = {}
-    if not existing.name:
-        changes["name"] = default_name
-    if not existing.address and discovered["address"]:
-        changes["address"] = discovered["address"]
-    if not existing.ethernet_interface and discovered["ethernet_interface"]:
-        changes["ethernet_interface"] = discovered["ethernet_interface"]
-    if not existing.infiniband_interfaces and discovered["infiniband_interfaces"]:
-        changes["infiniband_interfaces"] = discovered["infiniband_interfaces"]
-    if not existing.fabric_mode and discovered["fabric_mode"]:
-        changes["fabric_mode"] = discovered["fabric_mode"]
-    changes["state"] = "healthy"
-    changes["last_seen"] = _now()
-    changes["machine_id"] = read_machine_id()
-    return update_node(existing.id, **changes)
+        changes: dict[str, Any] = {}
+        if not existing.name:
+            changes["name"] = default_name
+        if not existing.address and discovered["address"]:
+            changes["address"] = discovered["address"]
+        if not existing.ethernet_interface and discovered["ethernet_interface"]:
+            changes["ethernet_interface"] = discovered["ethernet_interface"]
+        if not existing.infiniband_interfaces and discovered["infiniband_interfaces"]:
+            changes["infiniband_interfaces"] = discovered["infiniband_interfaces"]
+        if not existing.fabric_mode and discovered["fabric_mode"]:
+            changes["fabric_mode"] = discovered["fabric_mode"]
+        changes["state"] = "healthy"
+        changes["last_seen"] = _now()
+        changes["machine_id"] = read_machine_id()
+        return update_node(existing.id, **changes)
 
 
 # ── Diagnostics ──────────────────────────────────────────────────────────────

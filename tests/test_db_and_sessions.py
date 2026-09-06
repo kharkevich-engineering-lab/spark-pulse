@@ -289,6 +289,42 @@ class TestTheLegacyImportRunsOnce:
 
         assert store.load() == []
 
+    def test_a_per_row_write_imports_the_legacy_file_before_it_writes(
+        self, tmp_path, monkeypatch
+    ):
+        """The import is keyed on ``meta``, not on which call happened first.
+
+        ``upsert`` can be the first thing a process does — a deploy that starts
+        before anything has listed. If it skipped the import, its row would be
+        the only row, and the operator's existing deployments would arrive on
+        whichever later call did remember, over the top of it.
+        """
+        from spark_pulse.tools import deployment_records as store
+
+        db.configure(f"sqlite:///{tmp_path / 'state.db'}")
+        legacy = tmp_path / "deployments.json"
+        self._seed(legacy, [{"id": "dep-1", "status": "running", "runtime": "native"}])
+        monkeypatch.setattr(store, "RECORDS_FILE", legacy)
+
+        store.upsert({"id": "dep-2", "status": "pending", "runtime": "native"})
+
+        assert {r["id"] for r in store.load()} == {"dep-1", "dep-2"}
+
+    def test_a_per_row_delete_of_the_last_record_does_not_resurrect_the_file(
+        self, tmp_path, monkeypatch
+    ):
+        """The same guarantee ``delete`` has, through the batched form."""
+        from spark_pulse.tools import deployment_records as store
+
+        db.configure(f"sqlite:///{tmp_path / 'state.db'}")
+        legacy = tmp_path / "deployments.json"
+        self._seed(legacy, [{"id": "dep-1", "status": "running", "runtime": "native"}])
+        monkeypatch.setattr(store, "RECORDS_FILE", legacy)
+
+        assert store.delete_many(["dep-1"]) == 1
+
+        assert store.load() == [], "the legacy file was imported a second time"
+
     def test_a_file_restored_after_a_fresh_start_is_still_imported(
         self, tmp_path, monkeypatch
     ):
@@ -303,3 +339,51 @@ class TestTheLegacyImportRunsOnce:
         self._seed(legacy, [{"id": "dep-1", "status": "running", "runtime": "native"}])
 
         assert [r["id"] for r in store.load()] == ["dep-1"]
+
+
+def test_concurrent_schema_creation_does_not_fail(tmp_path):
+    """Two control planes starting at once must both come up.
+
+    ``create_all`` checks what exists and then creates what does not, and
+    those are two steps. Once there is more than one instance against one
+    database that is the *ordinary* startup, not a rare race — both see a
+    table missing, both create it, and the loser gets a duplicate-object
+    error from the server. Six agents sharing one PostgreSQL reproduced it
+    immediately while this branch was being written.
+
+    The loser's answer is to look again, not to fail.
+    """
+    import threading
+
+    from sqlalchemy import create_engine
+
+    url = f"sqlite:///{tmp_path / 'race.db'}"
+    db._load_models()
+    failures = []
+
+    def build():
+        try:
+            engine = create_engine(url)
+            db._create_schema(engine)
+            engine.dispose()
+        except Exception as exc:  # noqa: BLE001 — the point is to catch any
+            failures.append(exc)
+
+    threads = [threading.Thread(target=build) for _ in range(6)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert failures == []
+
+
+def test_schema_creation_is_idempotent(tmp_path):
+    """Called twice against the same database, the second is a no-op."""
+    db.configure(f"sqlite:///{tmp_path / 'twice.db'}")
+    engine = db.engine()
+
+    db._create_schema(engine)
+    db._create_schema(engine)
+
+    assert sessions.count() == 0

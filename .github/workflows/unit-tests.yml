@@ -54,6 +54,108 @@ jobs:
         env:
           SPARK_PULSE_REQUIRE_RUST: "1"
 
+  # The same suite, a second time, against a real PostgreSQL.
+  #
+  # spark_pulse/db.py goes through SQLAlchemy rather than the sqlite3 driver
+  # for one reason: so that one appliance becoming several is a change to a
+  # URL. Until this job existed the only evidence for that claim was
+  # test_every_table_emits_postgresql_ddl, which compiles the schema for the
+  # PostgreSQL dialect with no server behind it — it proves the column types
+  # are portable and nothing at all about whether the queries run. The day
+  # somebody set SPARK_PULSE_DATABASE_URL would have been the day the rest
+  # was found out.
+  python-unit-tests-postgres:
+    name: Run Python unit tests against PostgreSQL
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: pulse
+          POSTGRES_PASSWORD: pulse
+          POSTGRES_DB: spark_pulse
+        ports:
+          - 5432:5432
+        # Without the health check the first connection races initdb and the
+        # job fails on a connection refused that has nothing to do with the
+        # change under test — the flake that teaches people to re-run CI.
+        options: >-
+          --health-cmd "pg_isready -U pulse -d spark_pulse"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      # tests/conftest.py reads this once: anything that is not a SQLite URL
+      # means "that server, cleaned between tests" instead of a private file
+      # per test. Setting it is the entire difference between this job and the
+      # one above, which is the point being demonstrated.
+      SPARK_PULSE_DATABASE_URL: postgresql+psycopg://pulse:pulse@127.0.0.1:5432/spark_pulse
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # [postgres] is psycopg, the driver the URL above names. Installing
+          # it here also keeps the extra honest: an extra nothing installs is
+          # an extra that has stopped resolving without anyone noticing.
+          pip install -e ".[dev,postgres]"
+      # No Rust toolchain here, unlike the job above: what the ~85 agent-binary
+      # tests would add on PostgreSQL is enrolment writes that the stub-based
+      # enrolment tests in test_agent_bootstrap.py already make, and the price
+      # is a second full agent compile on every run. They skip, and the job
+      # above is where they run.
+      - name: Run Python tests
+        run: |
+          pytest --tb=short -v tests/
+      # A suite that quietly ignored the URL would pass this job while proving
+      # nothing, which is the exact failure this job exists to end. The tables
+      # are created once and emptied between tests, never dropped, so after a
+      # real run the server holds every one of them; after a run that fell
+      # back to SQLite it holds none.
+      - name: Confirm the suite really ran on PostgreSQL
+        # The same import environment as the suite: a model module that failed
+        # to import here would shrink the list of tables being looked for, and
+        # a check that silently asks for less is worse than none.
+        env:
+          SIMULATION_MODE: "1"
+        run: |
+          python - <<'PY'
+          import os
+          import tempfile
+
+          from sqlalchemy import create_engine, inspect
+
+          from spark_pulse import db
+
+          url = os.environ["SPARK_PULSE_DATABASE_URL"]
+
+          # engine() imports every model module, which is how the full set of
+          # tables is learned here without repeating the list — a table added
+          # later is covered by this check on the day it is added. Against a
+          # throwaway SQLite file, so that learning it cannot itself be what
+          # creates them on the server.
+          db.configure(f"sqlite:///{tempfile.mkdtemp()}/probe.db")
+          db.engine()
+          expected = {table.name for table in db.Base.metadata.sorted_tables}
+
+          found = set(inspect(create_engine(url)).get_table_names())
+          missing = expected - found
+          if missing:
+              raise SystemExit(
+                  f"the run never created {sorted(missing)} on the PostgreSQL "
+                  f"server, so it did not run against it. Found: "
+                  f"{sorted(found) or 'nothing at all'}."
+              )
+          print(f"{len(expected)} tables were created on PostgreSQL by the run")
+          PY
+
   ui-unit-tests:
     name: Run UI unit tests
     runs-on: ubuntu-latest

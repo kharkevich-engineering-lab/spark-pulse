@@ -11,6 +11,8 @@ from __future__ import annotations
 import datetime as dt
 import random
 
+import hashlib
+
 import pytest
 from cryptography import x509
 
@@ -214,8 +216,34 @@ def test_token_mints_a_random_uuid_not_the_name(ledger):
 
 
 def test_the_token_itself_is_never_stored(ledger, tmp_path):
+    """Only the SHA-256 is kept, so a stolen state store yields no token.
+
+    Asserted against what the store actually holds rather than against a
+    serialisation of it: the ledger lives in the database now, and what matters
+    is that the secret is absent from whatever is written, not from the shape
+    it used to be written in. On SQLite that is the bytes of the file, which
+    would catch the secret leaking into any column or index; on a server
+    backend the file is on another machine, so it is the rows themselves.
+    """
+    from pathlib import Path
+
+    from sqlalchemy import text
+    from sqlalchemy.engine import make_url
+
+    from spark_pulse import db as database
+
     secret = ledger.mint_token("spark-a")
-    assert secret not in (tmp_path / "enrollment.json").read_text()
+    url = make_url(database.database_url())
+    if url.get_backend_name() == "sqlite":
+        database.dispose()  # flush the pool so the file on disk is complete
+        stored = Path(url.database or "").read_bytes()
+    else:
+        with database.session_scope() as session:
+            rows = session.execute(text("SELECT * FROM enrollment_tokens")).all()
+        stored = repr(rows).encode()
+
+    assert secret.encode() not in stored
+    assert hashlib.sha256(secret.encode()).hexdigest().encode() in stored
 
 
 def test_token_reuse_is_refused_and_says_so(ledger):
@@ -256,6 +284,155 @@ def test_ledger_survives_a_reload(tmp_path):
     second = EnrollmentLedger(tmp_path / "e.json")
     assert second.get(node_id).state == NodeState.ACCEPTED.value
     assert second.authorize(node_id)
+
+
+def test_the_json_import_runs_once_and_a_removal_does_not_undo_it(tmp_path):
+    """Keyed on the ``meta`` table, never on "are the tables empty".
+
+    Removing the last node empties them, and an import keyed on emptiness
+    would then readmit exactly the node an operator had deliberately removed —
+    which for a membership list is the worst of the stores to get wrong.
+    """
+    import json
+
+    path = tmp_path / "e.json"
+    path.write_text(
+        json.dumps(
+            {
+                "nodes": {"node-1": {"node_id": "node-1", "state": "accepted"}},
+                "tokens": {},
+            }
+        )
+    )
+    assert EnrollmentLedger(path).get("node-1").state == NodeState.ACCEPTED.value
+
+    EnrollmentLedger(path).remove("node-1")
+
+    assert EnrollmentLedger(path).get("node-1") is None
+
+
+# ── One row at a time ───────────────────────────────────────────────────────
+#
+# Two ledgers over one database is how these state "somebody else wrote a row
+# we have not seen". It is also the only cheap way to observe *which* rows a
+# write touched: a write that rewrote the whole ledger from its own working
+# copy shows up as the other ledger's node quietly disappearing.
+
+
+def test_accepting_one_node_leaves_a_node_it_never_saw_alone(tmp_path):
+    """One acceptance writes one row.
+
+    The whole-ledger write deleted every row absent from the working copy, so
+    admitting a node erased any node enrolled after this ledger last read.
+    """
+    first = EnrollmentLedger(tmp_path / "e.json")
+    second = EnrollmentLedger(tmp_path / "e.json")
+    mine = first.redeem_token(first.mint_token("spark-a"))
+    theirs = second.redeem_token(second.mint_token("spark-b"))
+
+    first.record_issue(mine, public_key_fingerprint="k", not_after=1.0)
+
+    reloaded = EnrollmentLedger(tmp_path / "e.json")
+    assert reloaded.get(mine).state == NodeState.ACCEPTED.value
+    assert reloaded.get(theirs) is not None
+
+
+def test_denying_one_node_leaves_a_node_it_never_saw_alone(tmp_path):
+    """Denial is the mutation on the connection path, and it is one row."""
+    first = EnrollmentLedger(tmp_path / "e.json")
+    second = EnrollmentLedger(tmp_path / "e.json")
+    mine = first.redeem_token(first.mint_token("spark-a"))
+    theirs = second.redeem_token(second.mint_token("spark-b"))
+
+    first.deny(mine, "operator said so")
+
+    reloaded = EnrollmentLedger(tmp_path / "e.json")
+    assert reloaded.get(mine).state == NodeState.DENIED.value
+    assert reloaded.get(theirs) is not None
+
+
+def test_removing_a_node_deletes_that_row_and_no_other(tmp_path):
+    """A removal names the node it removes, rather than everything else."""
+    first = EnrollmentLedger(tmp_path / "e.json")
+    second = EnrollmentLedger(tmp_path / "e.json")
+    mine = first.redeem_token(first.mint_token("spark-a"))
+    theirs = second.redeem_token(second.mint_token("spark-b"))
+
+    first.remove(mine)
+
+    reloaded = EnrollmentLedger(tmp_path / "e.json")
+    assert reloaded.get(mine) is None
+    assert reloaded.get(theirs) is not None
+
+
+def test_a_redemption_stores_the_spent_token_and_the_node_together(ledger, tmp_path):
+    """Half a redemption is a token that can be spent a second time."""
+    secret = ledger.mint_token("spark-a")
+    node_id = ledger.redeem_token(secret)
+
+    reloaded = EnrollmentLedger(tmp_path / "enrollment.json")
+    assert reloaded.get(node_id).state == NodeState.PENDING.value
+    with pytest.raises(EnrollmentRejected, match="already used"):
+        reloaded.redeem_token(secret)
+
+
+def test_a_certificate_count_is_not_reset_by_a_ledger_that_missed_the_others(tmp_path):
+    """``issued`` is the "re-enrolling in a loop" signal, and it is a counter.
+
+    A counter is the one field a narrow write can silently roll back: this
+    ledger's copy says zero because it has not read since. Writing one over a
+    stored two is the reading that says nothing is wrong.
+    """
+    first = EnrollmentLedger(tmp_path / "e.json")
+    node_id = first.redeem_token(first.mint_token("spark-a"))
+    second = EnrollmentLedger(tmp_path / "e.json")
+    second.record_issue(node_id, public_key_fingerprint="k", not_after=1.0)
+    second.record_issue(node_id, public_key_fingerprint="k", not_after=1.0)
+
+    assert first.record_issue(node_id, public_key_fingerprint="k", not_after=1.0).issued
+    assert EnrollmentLedger(tmp_path / "e.json").get(node_id).issued == 3
+
+
+def test_a_heartbeat_reaches_the_database_with_that_nodes_next_write(tmp_path):
+    """Ten-second heartbeats are not ten-second database writes."""
+    ledger = EnrollmentLedger(tmp_path / "e.json")
+    node_id = ledger.redeem_token(ledger.mint_token("spark-a"))
+
+    ledger.note_seen(node_id)
+    seen = ledger.get(node_id).last_seen
+    assert seen > 0
+    assert EnrollmentLedger(tmp_path / "e.json").get(node_id).last_seen == 0.0
+
+    ledger.record_issue(node_id, public_key_fingerprint="k", not_after=1.0)
+    assert EnrollmentLedger(tmp_path / "e.json").get(node_id).last_seen == seen
+
+
+def test_the_housekeeping_sweep_is_the_write_that_reconciles_the_whole_ledger(tmp_path):
+    """The whole-ledger write keeps its semantics: absent from the set, gone.
+
+    That is why nothing on the enrollment or connection path uses it any more.
+    Housekeeping is where reconciling the tables with the working copy is the
+    job rather than a side effect of saving one node.
+    """
+    first = EnrollmentLedger(tmp_path / "e.json")
+    second = EnrollmentLedger(tmp_path / "e.json")
+    theirs = second.redeem_token(second.mint_token("spark-b"))
+    first.mint_token("spark-a")
+
+    assert first.sweep(now=9e9) == 1
+
+    reloaded = EnrollmentLedger(tmp_path / "e.json")
+    assert reloaded.get(theirs) is None
+
+
+def test_minting_a_token_deletes_the_tokens_its_sweep_dropped(tmp_path):
+    """A token dropped from memory and left in the table comes back on reload."""
+    ledger = EnrollmentLedger(tmp_path / "e.json")
+    ledger.mint_token("spark-a", ttl=-2 * TOKEN_TTL_SECONDS)
+    ledger.mint_token("spark-b")
+
+    reloaded = EnrollmentLedger(tmp_path / "e.json")
+    assert reloaded.sweep(now=9e9) == 1
 
 
 # ── Membership and reimage detection ────────────────────────────────────────

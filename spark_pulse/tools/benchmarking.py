@@ -10,12 +10,16 @@ import json
 import logging
 import threading
 import uuid
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from filelock import FileLock
+from sqlalchemy import JSON, String, select
+from sqlalchemy.orm import Mapped, mapped_column
+
+from spark_pulse.db import Base, is_done, mark_done, session_scope
 
 logger = logging.getLogger(__name__)
 
@@ -51,33 +55,214 @@ def _reset_cache() -> None:
         _bench_cache_dirty = True
 
 
-def _load() -> list[dict]:
+class _BenchmarkRow(Base):
+    """One benchmark result."""
+
+    __tablename__ = "benchmarks"
+
+    benchmark_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    record: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+#: Recorded once ``benchmarks.json`` has been imported. See the deployment
+#: store for why this is a row rather than "are the tables empty".
+_IMPORT_KEY = "benchmarks.imported_from_json"
+
+
+def _migrate_from_json() -> None:
+    if is_done(_IMPORT_KEY):
+        return
     if not _BENCHMARKS_PATH.exists():
-        return []
+        return
     try:
-        with open(_BENCHMARKS_PATH) as f:
-            return json.load(f)
+        with open(_BENCHMARKS_PATH) as handle:
+            data = json.load(handle)
     except (json.JSONDecodeError, OSError):
-        return []
+        return
+    if not isinstance(data, list) or not mark_done(_IMPORT_KEY):
+        return
+    with session_scope() as db:
+        for record in data:
+            if isinstance(record, dict) and record.get("benchmark_id"):
+                db.merge(
+                    _BenchmarkRow(
+                        benchmark_id=str(record["benchmark_id"]), record=record
+                    )
+                )
+
+
+def _apply(row: _BenchmarkRow, record: dict) -> bool:
+    """Copy ``record`` onto an existing row; ``False`` if nothing differed.
+
+    Assigning an equal-but-distinct dict to a JSON column still marks the
+    attribute dirty, so without this comparison a whole-set save that changed
+    one benchmark emits an UPDATE for every other one — on PostgreSQL a dead
+    tuple and a WAL record per untouched benchmark, on every backend a write
+    that grows with the size of the history rather than the size of the change.
+    """
+    if row.record == record:
+        return False
+    row.record = record
+    return True
+
+
+def _transaction() -> AbstractContextManager[Any]:
+    """Serialise a read-modify-write of the benchmark set.
+
+    Every caller that reads records, changes them and writes them back holds
+    this for the whole sequence — not merely around the write, which is where
+    the transaction already is. A single write being one transaction is a
+    different guarantee and not the one that was missing: two callers that
+    each *load, change, save* still lose one of the changes, because the
+    second writes back a list it read before the first landed. The whole-set
+    path makes that worse than a lost field — it deletes every row absent from
+    the list it loaded, so a benchmark created while it was running is not
+    stale, it is gone. The per-row writers take the same lock for exactly that
+    reason.
+
+    ``_BENCHMARKS_LOCK`` rather than a mutex because it is the one of the two
+    that also holds when a second process — a CLI invocation beside the
+    server — writes the same database. ``filelock`` counts acquisitions per
+    thread, so it is reentrant for the helpers that call one another and still
+    exclusive between threads.
+    """
+    return _BENCHMARKS_LOCK
+
+
+# ── The whole set ────────────────────────────────────────────────────────────
+
+
+def _load() -> list[dict]:
+    """Every stored record.
+
+    Ordered by id, so the sequence is the same on both backends. Without an
+    ``ORDER BY`` a row order is whatever the storage engine last did to the
+    heap, which is not a property to let ``list_benchmarks``' tie-breaking
+    depend on.
+    """
+    _migrate_from_json()
+    with session_scope() as db:
+        rows = db.execute(select(_BenchmarkRow).order_by(_BenchmarkRow.benchmark_id))
+        return [dict(row.record) for row in rows.scalars()]
 
 
 def _save(data: list[dict]) -> None:
-    _BENCHMARKS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = _BENCHMARKS_PATH.with_suffix(".tmp")
-    with open(tmp, "w") as f:
-        json.dump(data, f, indent=2)
-    tmp.rename(_BENCHMARKS_PATH)
+    """Replace the whole set, in one transaction.
+
+    Kept because callers still hold the whole list, and because "the set is
+    now exactly this" — records absent from ``data`` are removed — is a
+    guarantee :func:`_upsert_row` deliberately does not make. What it no
+    longer does is *write* the whole set: only rows that actually differ are
+    updated, so saving a list in which one benchmark changed costs one row
+    rather than the table.
+    """
+    wanted = {
+        str(r["benchmark_id"]): r
+        for r in data
+        if isinstance(r, dict) and r.get("benchmark_id")
+    }
+    with _transaction():
+        # Before the write, not after: an import that ran later would merge
+        # the old JSON file back in and resurrect every record this save had
+        # just removed.
+        _migrate_from_json()
+        with session_scope() as db:
+            stored = {
+                row.benchmark_id: row
+                for row in db.execute(select(_BenchmarkRow)).scalars()
+            }
+            for benchmark_id, row in stored.items():
+                if benchmark_id not in wanted:
+                    db.delete(row)
+            for benchmark_id, record in wanted.items():
+                row = stored.get(benchmark_id)
+                if row is None:
+                    db.add(_BenchmarkRow(benchmark_id=benchmark_id, record=record))
+                else:
+                    _apply(row, record)
 
 
 @contextmanager
 def _atomic_benchmarks():
-    """Context manager for atomic read-modify-write of the benchmarks file."""
+    """Context manager for atomic read-modify-write of the whole benchmark set."""
     global _bench_cache_dirty
-    with _BENCHMARKS_LOCK:
+    with _transaction():
         data = _load()
         yield data
         _save(data)
         _bench_cache_dirty = True
+
+
+# ── One row at a time ────────────────────────────────────────────────────────
+#
+# Everything above treats the benchmark history as one value. That is the right
+# shape for a caller that genuinely rewrote it, and the wrong one for the case
+# that dominates here: one benchmark being created, and that same benchmark
+# finishing. Rewriting ninety days of history to record either is what these
+# replace.
+
+
+def _get_row(benchmark_id: str) -> dict | None:
+    """One record by id, read by primary key rather than by loading the table."""
+    _migrate_from_json()
+    with session_scope() as db:
+        row = db.get(_BenchmarkRow, benchmark_id)
+        return dict(row.record) if row is not None else None
+
+
+def _upsert_row(record: dict) -> None:
+    """Store one record, leaving every other row exactly as it was.
+
+    Unlike :func:`_save` this never deletes: a benchmark this call was not
+    given is one it has no opinion about, not one to remove. That difference
+    is the point — it is what makes the write safe to issue from a caller that
+    never loaded the rest of the history.
+    """
+    benchmark_id = str(record.get("benchmark_id") or "")
+    if not benchmark_id:
+        # ``_save`` skips these silently because in a whole set they are
+        # noise. A per-row write of one is a caller bug that would otherwise
+        # look like a successful write and lose the record.
+        raise ValueError("a benchmark record needs a benchmark_id to be stored")
+    with _transaction():
+        _migrate_from_json()
+        with session_scope() as db:
+            row = db.get(_BenchmarkRow, benchmark_id)
+            if row is None:
+                db.add(_BenchmarkRow(benchmark_id=benchmark_id, record=record))
+            else:
+                _apply(row, record)
+
+
+def _delete_row(benchmark_id: str) -> bool:
+    """Drop one record. ``False`` when there was nothing to drop.
+
+    Naming the row is what lets retention express "delete this expired one"
+    instead of "the set is now these other forty", which would also delete
+    whatever was created while it was deciding.
+    """
+    with _transaction():
+        _migrate_from_json()
+        with session_scope() as db:
+            row = db.get(_BenchmarkRow, benchmark_id)
+            if row is None:
+                return False
+            db.delete(row)
+            return True
+
+
+def _cache_put(record: dict) -> None:
+    """Keep the point-read cache in step with a single-row write.
+
+    Marking the whole cache dirty would also be correct, and is what the
+    whole-set path does — but then the next ``get_benchmark`` reloads every
+    benchmark in order to learn about one, which is the cost the per-row write
+    exists to avoid. A cache that has never been loaded is left dirty: there is
+    nothing yet to keep in step.
+    """
+    with _bench_cache_lock:
+        if not _bench_cache_dirty:
+            _bench_cache[str(record["benchmark_id"])] = record
 
 
 def _purge_expired(data: list[dict]) -> list[dict]:
@@ -122,14 +307,16 @@ def create_benchmark(
         "results": None,
     }
 
-    with _atomic_benchmarks() as benchmarks:
-        benchmarks.append(record)
-        logger.info(
-            "Created benchmark %s for deployment %s (recipe: %s)",
-            benchmark_id,
-            deployment_id,
-            recipe_name,
-        )
+    # One insert. Appending to the loaded list and saving it back would have
+    # rewritten every benchmark ever run to record this one starting.
+    _upsert_row(record)
+    _cache_put(record)
+    logger.info(
+        "Created benchmark %s for deployment %s (recipe: %s)",
+        benchmark_id,
+        deployment_id,
+        recipe_name,
+    )
 
     return record
 
@@ -138,10 +325,12 @@ def execute_benchmark(benchmark_id: str) -> None:
     """Load a 'running' benchmark record, run llama-benchy, and update its status."""
     logger.info("Executing benchmark %s", benchmark_id)
 
-    with _atomic_benchmarks() as benchmarks:
-        record = next(
-            (b for b in benchmarks if b["benchmark_id"] == benchmark_id), None
-        )
+    # The mutex spans the run, exactly as it did when this was a whole-set
+    # read-modify-write. The record read here is written back when the run
+    # ends, so releasing in between would let a concurrent whole-set save
+    # delete the benchmark and this call quietly resurrect it.
+    with _transaction():
+        record = _get_row(benchmark_id)
         if record is None:
             logger.warning("Benchmark %s not found for execution", benchmark_id)
             return
@@ -178,22 +367,43 @@ def execute_benchmark(benchmark_id: str) -> None:
             record["results"] = {"error": str(e)}
             logger.error("Benchmark %s failed: %s", benchmark_id, e)
 
+        # One row: the benchmark that just finished. The record this writes is
+        # the one read above, so it can only clobber fields of the benchmark
+        # this call owns.
+        _upsert_row(record)
+        _cache_put(record)
+
 
 def list_benchmarks() -> list[dict]:
     """Return all benchmarks sorted by started_at descending."""
+    global _bench_cache_dirty
+
     with _bench_cache_lock:
-        _ensure_cache_loaded()
-        # Re-purge expired on each list call (also marks cache dirty if records removed)
-        raw = _load()
-        raw = _purge_expired(raw)
-        # Sync cache with purged data
+        records = _load()
+        kept = _purge_expired(records)
         _bench_cache.clear()
-        _bench_cache.update({b["benchmark_id"]: b for b in raw})
-        return sorted(
+        _bench_cache.update({b["benchmark_id"]: b for b in kept})
+        _bench_cache_dirty = False
+        listed = sorted(
             _bench_cache.values(),
             key=lambda b: b.get("started_at", ""),
             reverse=True,
         )
+
+    # Outside the cache lock, because deleting takes the mutex and the write
+    # paths take the mutex *before* the cache lock; holding them in both orders
+    # is a deadlock. Expired records used to be filtered out of the answer and
+    # left in the store, so a log line claimed a purge that never happened and
+    # the table grew for ever. Deleting them by name rather than saving the
+    # surviving set keeps the purge from also removing whatever was created
+    # while this list was being assembled.
+    if len(kept) != len(records):
+        surviving = {b["benchmark_id"] for b in kept}
+        for record in records:
+            if record["benchmark_id"] not in surviving:
+                _delete_row(record["benchmark_id"])
+
+    return listed
 
 
 def get_benchmark(benchmark_id: str) -> dict | None:

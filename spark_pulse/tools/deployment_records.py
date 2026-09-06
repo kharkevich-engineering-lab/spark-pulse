@@ -28,10 +28,12 @@ import signal
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import threading
+from collections.abc import Iterable
 from contextlib import AbstractContextManager
 from typing import Any
 
 from sqlalchemy import JSON, String, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, mapped_column
 
 from spark_pulse.config import RUNTIME_NATIVE, config
@@ -89,20 +91,51 @@ class DeploymentRow(Base):
     record: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
+def _fields_of(record: dict[str, Any]) -> dict[str, Any]:
+    """The columns a record projects onto, denormalised out of the document."""
+    return {
+        "id": str(record.get("id") or ""),
+        "status": str(record.get("status") or ""),
+        "runtime": str(record.get("runtime") or ""),
+        "created_at": str(record.get("created_at") or ""),
+        "record": record,
+    }
+
+
 def _row_of(record: dict[str, Any]) -> DeploymentRow:
-    return DeploymentRow(
-        id=str(record.get("id") or ""),
-        status=str(record.get("status") or ""),
-        runtime=str(record.get("runtime") or ""),
-        created_at=str(record.get("created_at") or ""),
-        record=record,
-    )
+    return DeploymentRow(**_fields_of(record))
+
+
+def _apply(row: DeploymentRow, record: dict[str, Any]) -> bool:
+    """Copy ``record`` onto an existing row; ``False`` if nothing differed.
+
+    Assigning an equal-but-distinct dict to a JSON column still marks the
+    attribute dirty, so without this comparison a whole-set save that changed
+    one deployment emits an UPDATE for every other one — on PostgreSQL a dead
+    tuple and a WAL record per untouched deployment, on every backend a write
+    amplification that grows with the size of the cluster rather than with the
+    size of the change.
+    """
+    changed = False
+    for column, value in _fields_of(record).items():
+        if getattr(row, column) != value:
+            setattr(row, column, value)
+            changed = True
+    return changed
 
 
 #: Recorded once the legacy file has been imported. Keyed in ``meta`` rather
 #: than inferred from an empty table: deleting the last deployment empties the
 #: table, and an import that re-ran then would resurrect everything.
 _IMPORT_KEY = "deployments.imported_from_json"
+
+#: Held for the whole check-claim-import, which every read and every write
+#: begins with. ``mark_done`` is a read followed by an insert, so two threads
+#: arriving together both see the key missing and both try to write it: one
+#: gets the row, the other gets a primary-key violation out of what was
+#: supposed to be a question. The startup reconcile and the first API request
+#: are exactly that pair.
+_IMPORT_LOCK = threading.Lock()
 
 
 def _migrate_from_json() -> None:
@@ -114,24 +147,36 @@ def _migrate_from_json() -> None:
     """
     if is_done(_IMPORT_KEY):
         return
-    data = read_state_file(RECORDS_FILE, expect=list)
-    if data is None:
-        # No file to import, and nothing to remember: a fresh install must not
-        # record an import it never did, or a file restored later is ignored.
-        return
-    if not mark_done(_IMPORT_KEY, RECORDS_FILE.name):
-        return  # another thread got there first
-    with session_scope() as db:
-        for record in data:
-            if isinstance(record, dict) and record.get("id"):
-                db.merge(_row_of(record))
-    if not data:
-        return
-    logger.info(
-        "imported %d deployment record(s) from %s into the state database",
-        len(data),
-        RECORDS_FILE,
-    )
+    with _IMPORT_LOCK:
+        if is_done(_IMPORT_KEY):
+            return  # another thread imported it while this one waited
+        data = read_state_file(RECORDS_FILE, expect=list)
+        if data is None:
+            # No file to import, and nothing to remember: a fresh install must
+            # not record an import it never did, or a file restored later is
+            # ignored.
+            return
+        try:
+            claimed = mark_done(_IMPORT_KEY, RECORDS_FILE.name)
+        except IntegrityError:
+            # A second control plane against the same PostgreSQL claimed it
+            # between the read and the insert. The lock above cannot reach
+            # that one, and the outcome is the one that matters: somebody
+            # imported the file, and it was not this process.
+            return
+        if not claimed:
+            return
+        with session_scope() as db:
+            for record in data:
+                if isinstance(record, dict) and record.get("id"):
+                    db.merge(_row_of(record))
+        if not data:
+            return
+        logger.info(
+            "imported %d deployment record(s) from %s into the state database",
+            len(data),
+            RECORDS_FILE,
+        )
 
 
 # ── The file ─────────────────────────────────────────────────────────────────
@@ -149,14 +194,17 @@ def load() -> list[dict[str, Any]]:
     with session_scope() as db:
         rows = list(db.execute(select(DeploymentRow)).scalars())
     data = [dict(row.record) for row in rows]
-    changed = False
     for record in data:
         command = record.get("launch_command") if isinstance(record, dict) else None
         if command and _SENSITIVE_ENV_RE.search(command):
             record["launch_command"] = _redact(command)
-            changed = True
-    if changed:
-        save(data)
+            # Per row, not ``save(data)``. A redaction is a repair to the
+            # records that need it, and a whole-set save here would delete
+            # every deployment another thread created since this load began —
+            # on the read path, which callers reasonably assume writes nothing
+            # they did not ask for.
+            if record.get("id"):
+                update(str(record["id"]), launch_command=record["launch_command"])
     return data
 
 
@@ -194,21 +242,95 @@ def transaction() -> AbstractContextManager[None]:
 def save(records: list[dict[str, Any]]) -> None:
     """Persist the whole record set, replacing what is stored.
 
-    Whole-set rather than per-row because that is the shape every caller
-    already has — ``native_runtime`` loads the list, changes it and saves it
-    back — and changing that shape and the storage in one step would make
-    neither reviewable. The replacement happens in one transaction, so a
-    reader sees the previous set or the new one.
+    Kept because callers still hold the whole list — ``native_runtime`` loads
+    it, changes it and saves it back — and because "the set is now exactly
+    this" is a guarantee :func:`upsert` deliberately does not make: records
+    absent from ``records`` are removed. The replacement happens in one
+    transaction, so a reader sees the previous set or the new one.
+
+    What it no longer does is *write* the whole set. Only rows that actually
+    differ are updated, so the common shape — load the list, change one
+    deployment, save it back — costs one row rather than the table.
+
+    Under the mutex, because a save is one half of the read-modify-write the
+    mutex exists to serialise, and a caller that holds it already re-enters
+    harmlessly.
     """
     wanted = {
         str(r.get("id")): r for r in records if isinstance(r, dict) and r.get("id")
     }
-    with session_scope() as db:
-        for row in list(db.execute(select(DeploymentRow)).scalars()):
-            if row.id not in wanted:
-                db.delete(row)
-        for record in wanted.values():
-            db.merge(_row_of(record))
+    with transaction():
+        with session_scope() as db:
+            stored = {
+                row.id: row for row in db.execute(select(DeploymentRow)).scalars()
+            }
+            for row_id, row in stored.items():
+                if row_id not in wanted:
+                    db.delete(row)
+            for record_id, record in wanted.items():
+                row = stored.get(record_id)
+                if row is None:
+                    db.add(_row_of(record))
+                else:
+                    _apply(row, record)
+
+
+# ── One row at a time ────────────────────────────────────────────────────────
+#
+# Everything above treats the record set as one value. That is the right shape
+# for a caller that genuinely rewrote the set, and the wrong one for the case
+# that actually dominates: a deploy changing the status of the single
+# deployment it is running. These are that case, and they are the operations
+# to reach for when the caller knows which record it touched.
+
+
+def upsert(record: dict[str, Any]) -> None:
+    """Store one record, leaving every other row exactly as it was.
+
+    Unlike :func:`save`, this never deletes: a record that is not in the
+    argument is one this call has no opinion about, not one to remove. That
+    difference is the point — it is what makes a per-row write safe to issue
+    from a caller holding a partial view of the set.
+    """
+    deployment_id = str(record.get("id") or "")
+    if not deployment_id:
+        # ``save`` skips these silently because they are noise in a whole set.
+        # A per-row write of one is a caller bug that would otherwise look
+        # like a successful write and lose the record.
+        raise ValueError("a deployment record needs an id to be stored")
+    with transaction():
+        _migrate_from_json()
+        with session_scope() as db:
+            row = db.get(DeploymentRow, deployment_id)
+            if row is None:
+                db.add(_row_of(record))
+            else:
+                _apply(row, record)
+
+
+def update(deployment_id: str, **fields: Any) -> dict[str, Any] | None:
+    """Merge ``fields`` into one stored record. ``None`` if it is not there.
+
+    This is a read-modify-write, which is precisely what the mutex exists for,
+    so it happens inside the mutex and against what is *stored now* rather
+    than against a copy the caller loaded earlier — a caller cannot use this
+    to write a stale field back over somebody else's change, only the fields
+    it named.
+
+    The row is also selected ``FOR UPDATE``, which SQLAlchemy renders for
+    PostgreSQL and omits for SQLite. The mutex serialises one process; the
+    reason PostgreSQL is a supported backend at all is the day there is more
+    than one, and a lock held in Python says nothing to the other process.
+    """
+    with transaction():
+        _migrate_from_json()
+        with session_scope() as db:
+            row = db.get(DeploymentRow, deployment_id, with_for_update=True)
+            if row is None:
+                return None
+            record = {**row.record, **fields}
+            _apply(row, record)
+            return record
 
 
 def check_state_file() -> None:
@@ -235,14 +357,26 @@ def get(deployment_id: str) -> dict[str, Any] | None:
 
 def delete(deployment_id: str) -> bool:
     """Drop a record. ``False`` when there was nothing to drop."""
+    return delete_many([deployment_id]) == 1
+
+
+def delete_many(deployment_ids: Iterable[str]) -> int:
+    """Drop several records in one transaction; answers how many existed.
+
+    Retention purging is the caller: naming the rows to remove keeps it from
+    having to express "delete these three" as "the set is now these forty",
+    which would also delete anything created while it was deciding.
+    """
     with transaction():
         _migrate_from_json()
+        removed = 0
         with session_scope() as db:
-            row = db.get(DeploymentRow, deployment_id)
-            if row is None:
-                return False
-            db.delete(row)
-        return True
+            for deployment_id in deployment_ids:
+                row = db.get(DeploymentRow, deployment_id)
+                if row is not None:
+                    db.delete(row)
+                    removed += 1
+        return removed
 
 
 def purge_expired(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -252,7 +386,7 @@ def purge_expired(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return records
     cutoff = datetime.now(timezone.utc) - timedelta(days=retention)
     kept: list[dict[str, Any]] = []
-    changed = False
+    expired: list[str] = []
     for record in records:
         if record.get("status") in ("stopped", "error"):
             stopped_at = record.get("stopped_at")
@@ -262,13 +396,18 @@ def purge_expired(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     if ts.tzinfo is None:
                         ts = ts.replace(tzinfo=timezone.utc)
                     if ts < cutoff:
-                        changed = True
+                        if record.get("id"):
+                            expired.append(str(record["id"]))
                         continue
                 except ValueError:
                     pass
         kept.append(record)
-    if changed:
-        save(kept)
+    if expired:
+        # The rows this decided are expired, not "the set is now ``kept``":
+        # purging runs on the list path, so the set it would write back was
+        # read before the purge started and would take a deployment created
+        # since with it.
+        delete_many(expired)
     return kept
 
 
@@ -308,33 +447,39 @@ def list_legacy() -> list[dict[str, Any]]:
     with no PID never got as far as a process and is marked errored. This is
     the only reconciliation these records will ever get.
     """
-    records = load()
-    legacy = [r for r in records if is_legacy(r)]
-    changed = False
-    for record in legacy:
-        status = record.get("status")
-        if status not in ("running", "pending"):
-            continue
-        pid = record.get("pid")
-        if not pid:
-            if status == "pending":
-                record["status"] = "error"
-                record["error_message"] = (
-                    "Interrupted: the deployment runtime that started this was removed"
-                )
-                record["stopped_at"] = _now()
-                changed = True
-            continue
-        if not _pid_is_alive(int(pid)):
-            record["status"] = "stopped"
-            record.setdefault("stopped_at", _now())
-            changed = True
-        elif status == "pending":
-            record["status"] = "running"
-            changed = True
-    if changed:
-        save(records)
-    return [r for r in purge_expired(records) if is_legacy(r)]
+    with transaction():
+        records = load()
+        reconciled: list[dict[str, Any]] = []
+        for record in records:
+            if not is_legacy(record):
+                continue
+            status = record.get("status")
+            if status not in ("running", "pending"):
+                continue
+            pid = record.get("pid")
+            if not pid:
+                if status == "pending":
+                    record["status"] = "error"
+                    record["error_message"] = (
+                        "Interrupted: the deployment runtime that started this "
+                        "was removed"
+                    )
+                    record["stopped_at"] = _now()
+                    reconciled.append(record)
+                continue
+            if not _pid_is_alive(int(pid)):
+                record["status"] = "stopped"
+                record.setdefault("stopped_at", _now())
+                reconciled.append(record)
+            elif status == "pending":
+                record["status"] = "running"
+                reconciled.append(record)
+        for record in reconciled:
+            # Only the records this sweep decided something about. A native
+            # deployment created while the PIDs were being probed is none of
+            # this function's business, and a whole-set save would delete it.
+            upsert(record)
+        return [r for r in purge_expired(records) if is_legacy(r)]
 
 
 def stop_legacy(deployment_id: str) -> dict[str, Any] | None:
@@ -344,21 +489,21 @@ def stop_legacy(deployment_id: str) -> dict[str, Any] | None:
     ``start_new_session=True``, so the whole tree goes. A PID that is already
     gone is success: the point is that the record and the machine agree.
     """
-    records = load()
-    for record in records:
-        if record.get("id") != deployment_id:
-            continue
+    with transaction():
+        record = get(deployment_id)
+        if record is None:
+            return None
         pid = record.get("pid")
         if pid:
             try:
                 os.killpg(os.getpgid(int(pid)), signal.SIGTERM)
             except (ProcessLookupError, PermissionError, OSError):
                 pass
-        record["status"] = "stopped"
-        record["stopped_at"] = _now()
-        save(records)
-        return record
-    return None
+        # The signal and the record change are one step, so a concurrent
+        # delete cannot land between them and leave a signalled process with
+        # no record; and it is a two-field update of one row, not a rewrite of
+        # every deployment on the machine.
+        return update(deployment_id, status="stopped", stopped_at=_now())
 
 
 #: How much of a log file the tail may read. An engine log runs to gigabytes;

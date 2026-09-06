@@ -23,6 +23,21 @@ therefore matches the code that has the most state to store, and the async
 callers reach it through ``run_in_threadpool`` — which is §3.3's "all access
 off the event loop" stated as a rule rather than hoped for.
 
+**Do not use ``Session.merge`` for an upsert.** It decides between UPDATE and
+INSERT from a load it performs itself, and on PostgreSQL that produced
+``StaleDataError: UPDATE statement on table 'blobs' expected to update 1
+row(s); 0 were matched`` — it had chosen to update a row its own load had
+seen, and the statement then matched nothing. SQLite never showed it. Write
+the decision out instead::
+
+    row = db.get(Model, key)
+    if row is None:
+        db.add(Model(...))
+    else:
+        row.field = value
+
+which puts the choice inside the transaction, where it can be held.
+
 **Portability is a constraint on the schema, not a promise about it.** Column
 types here are the ones both backends have: ``String``, ``Integer``,
 ``Float``, ``Boolean``, ``Text``, and JSON via SQLAlchemy's dialect-neutral
@@ -184,6 +199,65 @@ def _create_engine(url: str) -> Engine:
     return create_engine(url, pool_pre_ping=True)
 
 
+#: Every module that declares a table. Imported before ``create_all`` so the
+#: schema is the whole schema: SQLAlchemy only emits DDL for models it has
+#: seen, so a process that happened not to import one would create a database
+#: missing that table and fail on the first query against it — at runtime, on
+#: whichever call site got there first.
+_MODEL_MODULES = (
+    "spark_pulse.sessions",
+    "spark_pulse.blobs",
+    "spark_pulse.tools.deployment_records",
+    "spark_pulse.tools.node_registry",
+    "spark_pulse.tools.benchmarking",
+    "spark_pulse.tools.custom_recipes",
+    "spark_pulse.agent.enrollment",
+)
+
+
+def _load_models() -> None:
+    import importlib
+
+    for name in _MODEL_MODULES:
+        try:
+            importlib.import_module(name)
+        except Exception:  # pragma: no cover - a stripped install
+            pass
+
+
+def _create_schema(engine: Engine) -> None:
+    """Create any missing table, tolerating another instance doing the same.
+
+    ``create_all`` checks what exists and then creates what does not, and
+    those are two steps. Two control planes starting against one PostgreSQL
+    — which is the *ordinary* case once there is more than one instance, not
+    a rare race — both see a table missing and both create it, and the loser
+    gets ``duplicate key value violates unique constraint
+    "pg_type_typname_nsp_index"``. Observed, not imagined: six agents sharing
+    one database reproduced it immediately.
+
+    The loser's answer is not to fail. It is to look again: if the table it
+    was told it could not create now exists, the schema is what it needed to
+    be and somebody else did the work.
+    """
+    from sqlalchemy import inspect as sa_inspect
+    from sqlalchemy.exc import DBAPIError, IntegrityError, ProgrammingError
+
+    try:
+        Base.metadata.create_all(engine)
+        return
+    except (IntegrityError, ProgrammingError, DBAPIError):
+        pass
+
+    existing = set(sa_inspect(engine).get_table_names())
+    missing = [name for name in Base.metadata.tables if name not in existing]
+    if not missing:
+        return  # another instance created them while we were looking
+    # Something other than a race: create_all again so the real error is the
+    # one that reaches the caller, rather than a stale one from the retry.
+    Base.metadata.create_all(engine)
+
+
 def engine() -> Engine:
     """The process-wide engine, built on first use and reused after."""
     global _engine, _sessionmaker, _configured_url
@@ -195,7 +269,8 @@ def engine() -> Engine:
             _engine = _create_engine(url)
             _sessionmaker = sessionmaker(bind=_engine, expire_on_commit=False)
             _configured_url = url
-            Base.metadata.create_all(_engine)
+            _load_models()
+            _create_schema(_engine)
         return _engine
 
 

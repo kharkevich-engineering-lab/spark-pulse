@@ -22,11 +22,16 @@ already-accepted uuid, or a hardware fingerprint that no longer matches, marks
 the node ``denied`` and surfaces it for a human decision — which is what
 ``salt-key`` does, and is the opposite of quietly trusting whatever answered.
 
-Storage is the repository's own atomic JSON writer, so the ledger inherits the
-same durability the deployment records have: fsync, atomic rename, and a
-refusal to start on an unreadable file rather than a cheerful empty cluster
-(§3.3). Desired *state* moves to SQLite in a later step; the ledger is a small
-append-mostly membership list and does not need it.
+Storage is the state database (:mod:`spark_pulse.db`), which the ledger shares
+with deployments and sessions: one transaction per mutation, and a one-time
+import of the ``enrollment.json`` this used to be — keyed on the ``meta`` table,
+never on "are the tables empty", because removing the last node empties them
+and an import that re-ran then would readmit it. An unreadable ledger still
+refuses to start rather than reporting a cheerful empty cluster (§3.3).
+
+Writes are per-row: admitting one node writes one row, and the whole-ledger
+write survives only as the housekeeping sweep, which is the pass whose job is
+to reconcile the tables with this ledger's working copy.
 """
 
 from __future__ import annotations
@@ -36,6 +41,7 @@ import logging
 import secrets
 import threading
 import time
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -43,7 +49,11 @@ from typing import Any
 
 from spark_pulse.agent.errors import EnrollmentRejected
 from spark_pulse.agent.identity import mint_node_id
-from spark_pulse.tools.atomic_json import read_state_file, write_json_atomic
+from sqlalchemy import JSON, String, select
+from sqlalchemy.orm import Mapped, mapped_column
+
+from spark_pulse.db import Base, is_done, mark_done, session_scope
+from spark_pulse.tools.atomic_json import read_state_file
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +160,57 @@ class TokenGrant:
         return cls(**{k: v for k, v in data.items() if k in known})
 
 
+# ── The tables ───────────────────────────────────────────────────────────────
+
+
+class _LedgerNodeRow(Base):
+    """One node's membership record."""
+
+    __tablename__ = "enrollment_nodes"
+
+    node_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    state: Mapped[str] = mapped_column(String(32), default="", index=True)
+    entry: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class _LedgerTokenRow(Base):
+    """One minted enrollment token, by hash. The secret is never stored."""
+
+    __tablename__ = "enrollment_tokens"
+
+    token_hash: Mapped[str] = mapped_column(String(128), primary_key=True)
+    grant: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+def _node_row(entry: LedgerEntry) -> _LedgerNodeRow:
+    return _LedgerNodeRow(
+        node_id=entry.node_id, state=entry.state, entry=entry.to_dict()
+    )
+
+
+def _token_row(grant: TokenGrant) -> _LedgerTokenRow:
+    return _LedgerTokenRow(token_hash=grant.token_hash, grant=grant.to_dict())
+
+
+def _entry_of(row: _LedgerNodeRow) -> LedgerEntry:
+    """The stored membership record, addressed by the row's own id.
+
+    The id comes from the row rather than from the payload because every write
+    addresses a row by ``entry.node_id``: a row whose two disagreed — an
+    imported file, a hand-edited one — would be a row no later write could
+    ever reach again.
+    """
+    entry = LedgerEntry.from_dict(dict(row.entry))
+    entry.node_id = row.node_id
+    return entry
+
+
+def _grant_of(row: _LedgerTokenRow) -> TokenGrant:
+    grant = TokenGrant.from_dict(dict(row.grant))
+    grant.token_hash = row.token_hash
+    return grant
+
+
 @dataclass
 class _State:
     nodes: dict[str, LedgerEntry] = field(default_factory=dict)
@@ -160,8 +221,15 @@ class EnrollmentLedger:
     """Who may connect, and with which key.
 
     Thread-safe: the control plane's event loop and its request threads both
-    reach it. Every mutation writes the whole file atomically, which is ample
-    for a list bounded by the number of machines on a desk.
+    reach it. ``_state`` is the working copy, and it is what keeps
+    :meth:`authorize` — called on every connection — off the database entirely;
+    the lock is what makes each *load, change, store* sequence indivisible, so
+    two threads accepting and denying the same node cannot interleave into one
+    of the two decisions being lost.
+
+    Mutations write the rows they changed and nothing else. A whole-ledger
+    write is kept for :meth:`sweep`, which is housekeeping and is the one pass
+    that is supposed to reconcile the tables with the working copy.
     """
 
     def __init__(self, path: Path | str):
@@ -171,33 +239,138 @@ class EnrollmentLedger:
 
     # ── Persistence ──────────────────────────────────────────────────────
 
-    def _load(self) -> _State:
+    def _import_key(self) -> str:
+        """The ``meta`` key recording that this ledger's file was imported.
+
+        Per path, because a process can hold more than one ledger and an import
+        marked done for one file must not skip another. The path is *hashed*
+        rather than spelled out because the key is a 128-character column:
+        SQLite ignores that length, PostgreSQL enforces it, so a config
+        directory nested deeper than about ninety characters was a control
+        plane that started on one backend and failed its first INSERT on the
+        other. The readable path is kept as the row's value.
+        """
+        return f"enrollment.imported_from_json:{_hash(str(self.path))}"
+
+    def _migrate_from_json(self) -> None:
+        """Import ``enrollment.json`` once, if there is one.
+
+        Recorded in ``meta`` rather than inferred from empty tables: removing
+        the last node empties them, and an import that re-ran then would
+        readmit a node the operator had deliberately removed — which for a
+        membership list is the worst of the three stores to get wrong.
+        """
+        if is_done(self._import_key()):
+            return
         # read_state_file raises rather than returning empty when the file is
         # there but unreadable: an unreadable ledger must stop a start, not
         # report a cluster with nobody in it.
         data = read_state_file(self.path, expect=dict)
-        if not data:
-            return _State()
-        nodes = {
-            node_id: LedgerEntry.from_dict(raw)
-            for node_id, raw in (data.get("nodes") or {}).items()
-        }
-        tokens = {
-            token_hash: TokenGrant.from_dict(raw)
-            for token_hash, raw in (data.get("tokens") or {}).items()
-        }
+        if data is None:
+            return
+        if not mark_done(self._import_key(), str(self.path)):
+            return
+        with session_scope() as db:
+            for node_id, raw in (data.get("nodes") or {}).items():
+                entry = LedgerEntry.from_dict(raw)
+                # The key wins over the payload: every later write addresses a
+                # row by ``entry.node_id``, so a file whose two disagreed would
+                # leave a row that nothing could ever update again.
+                entry.node_id = node_id
+                db.merge(_node_row(entry))
+            for token_hash, raw in (data.get("tokens") or {}).items():
+                grant = TokenGrant.from_dict(raw)
+                grant.token_hash = token_hash
+                db.merge(_token_row(grant))
+
+    def _load(self) -> _State:
+        self._migrate_from_json()
+        with session_scope() as db:
+            nodes = {
+                row.node_id: _entry_of(row)
+                for row in db.execute(select(_LedgerNodeRow)).scalars()
+            }
+            tokens = {
+                row.token_hash: _grant_of(row)
+                for row in db.execute(select(_LedgerTokenRow)).scalars()
+            }
         return _State(nodes=nodes, tokens=tokens)
 
+    def _write(
+        self,
+        *,
+        nodes: Iterable[LedgerEntry] = (),
+        tokens: Iterable[TokenGrant] = (),
+        drop_nodes: Iterable[str] = (),
+        drop_tokens: Iterable[str] = (),
+    ) -> None:
+        """Write exactly the rows named here, in one transaction.
+
+        Every mutation used to go through :meth:`_save`, so admitting one node
+        rewrote the row of every node on the desk. The cost is the smaller
+        half of the problem: the whole-ledger write also writes back rows this
+        instance's working copy is merely *holding*, which is how a field
+        another writer has already changed gets quietly replaced by the value
+        we read before they changed it. A write that names its rows cannot
+        reach a row the call never touched.
+
+        One transaction rather than one per row, because the calls that change
+        two rows change them together: redemption marks a token used *and*
+        admits the node it minted, and a failure between the two leaves a node
+        nobody has a token for. Callers hold ``self._lock`` across the
+        read-modify-write that produced these rows — narrowing a write is not
+        a substitute for serialising the decision behind it.
+        """
+        with session_scope() as db:
+            for node_id in drop_nodes:
+                node_row = db.get(_LedgerNodeRow, node_id)
+                if node_row is not None:
+                    db.delete(node_row)
+            for token_hash in drop_tokens:
+                token_row = db.get(_LedgerTokenRow, token_hash)
+                if token_row is not None:
+                    db.delete(token_row)
+            for entry in nodes:
+                db.merge(_node_row(entry))
+            for grant in tokens:
+                db.merge(_token_row(grant))
+
+    def _stored_node(self, node_id: str) -> LedgerEntry | None:
+        """One node's row as the database has it, not as this copy has it.
+
+        The working copy answers every read on the connection path; this is
+        for the rare write that must not be based on a copy which may have
+        been read before somebody else's change landed.
+        """
+        with session_scope() as db:
+            row = db.get(_LedgerNodeRow, node_id)
+            return _entry_of(row) if row is not None else None
+
     def _save(self) -> None:
-        write_json_atomic(
-            self.path,
-            {
-                "version": 1,
-                "nodes": {k: v.to_dict() for k, v in self._state.nodes.items()},
-                "tokens": {k: v.to_dict() for k, v in self._state.tokens.items()},
-            },
-            mode=0o600,
-        )
+        """Write the whole ledger, in one transaction.
+
+        Both tables together, because a node accepted without the token that
+        admitted it — or the reverse — is a half-written membership list, and
+        that is the state this store exists to make unreachable.
+
+        This is the *reconciling* write, and the reason it survives the move to
+        per-row writes: rows absent from the working copy are deleted, so a row
+        left behind by a write that failed halfway does not live forever, and
+        the ``last_seen`` hints that :meth:`note_seen` deliberately keeps in
+        memory reach the database. :meth:`sweep` — housekeeping, off every
+        connection path — is what calls it.
+        """
+        with session_scope() as db:
+            for row in list(db.execute(select(_LedgerNodeRow)).scalars()):
+                if row.node_id not in self._state.nodes:
+                    db.delete(row)
+            for entry in self._state.nodes.values():
+                db.merge(_node_row(entry))
+            for row in list(db.execute(select(_LedgerTokenRow)).scalars()):
+                if row.token_hash not in self._state.tokens:
+                    db.delete(row)
+            for grant in self._state.tokens.values():
+                db.merge(_token_row(grant))
 
     # ── Tokens ───────────────────────────────────────────────────────────
 
@@ -215,15 +388,16 @@ class EnrollmentLedger:
         secret = secrets.token_urlsafe(32)
         now = time.time()
         with self._lock:
-            self._sweep_locked(now)
-            self._state.tokens[_hash(secret)] = TokenGrant(
+            stale = self._sweep_locked(now)
+            grant = TokenGrant(
                 token_hash=_hash(secret),
                 name=name,
                 created_at=now,
                 expires_at=now + ttl,
                 assign_node_id=node_id,
             )
-            self._save()
+            self._state.tokens[grant.token_hash] = grant
+            self._write(tokens=(grant,), drop_tokens=stale)
         return secret
 
     def redeem_token(self, secret: str, *, now: float | None = None) -> str:
@@ -258,13 +432,16 @@ class EnrollmentLedger:
             node_id = grant.assign_node_id or mint_node_id()
             grant.used_at = now
             grant.node_id = node_id
-            self._state.nodes[node_id] = LedgerEntry(
+            entry = LedgerEntry(
                 node_id=node_id,
                 name=grant.name,
                 state=NodeState.PENDING.value,
                 enrolled_at=now,
             )
-            self._save()
+            self._state.nodes[node_id] = entry
+            # Both rows or neither: a node admitted without the token that
+            # spent itself admitting it is a token that can be redeemed twice.
+            self._write(nodes=(entry,), tokens=(grant,))
         return node_id
 
     def revoke_token(self, secret: str) -> bool:
@@ -285,7 +462,7 @@ class EnrollmentLedger:
                 return False
             if not grant.used_at:
                 grant.used_at = time.time()
-                self._save()
+                self._write(tokens=(grant,))
             return True
 
     def token_for(self, secret: str) -> TokenGrant | None:
@@ -306,11 +483,22 @@ class EnrollmentLedger:
         """Record a certificate issued to a node and accept it."""
         facts = facts or {}
         with self._lock:
-            entry = self._state.nodes.get(node_id) or LedgerEntry(node_id=node_id)
+            # The stored row, not only the working copy: enrolment is rare
+            # enough to afford one read, and it is the call that must not
+            # start from a copy read before another writer's change landed.
+            stored = self._stored_node(node_id)
+            entry = (
+                self._state.nodes.get(node_id) or stored or LedgerEntry(node_id=node_id)
+            )
             entry.state = NodeState.ACCEPTED.value
             entry.public_key_fingerprint = public_key_fingerprint
             entry.cert_not_after = not_after
-            entry.issued += 1
+            # A counter is the one field a narrow write can silently roll
+            # back. ``issued`` exists so that a node re-enrolling in a loop
+            # shows up as a jump; writing our count over a higher stored one
+            # would turn that jump back into a 1, which is the reading that
+            # says nothing is wrong.
+            entry.issued = max(entry.issued, stored.issued if stored else 0) + 1
             entry.denied_reason = ""
             if not entry.enrolled_at:
                 entry.enrolled_at = time.time()
@@ -318,7 +506,7 @@ class EnrollmentLedger:
                 if facts.get(key):
                     setattr(entry, key, facts[key])
             self._state.nodes[node_id] = entry
-            self._save()
+            self._write(nodes=(entry,))
             return entry
 
     def get(self, node_id: str) -> LedgerEntry | None:
@@ -337,7 +525,7 @@ class EnrollmentLedger:
                 return
             entry.state = NodeState.DENIED.value
             entry.denied_reason = reason
-            self._save()
+            self._write(nodes=(entry,))
         logger.warning("node %s denied: %s", node_id, reason)
 
     def remove(self, node_id: str) -> None:
@@ -350,7 +538,10 @@ class EnrollmentLedger:
         """
         with self._lock:
             self._state.nodes.pop(node_id, None)
-            self._save()
+            # By id, not by "everything except this one": a node this ledger
+            # never knew about — enrolled against the same database by someone
+            # else — is not something a removal was asked to delete.
+            self._write(drop_nodes=(node_id,))
 
     def note_seen(self, node_id: str) -> None:
         with self._lock:
@@ -358,10 +549,11 @@ class EnrollmentLedger:
             if entry is None:
                 return
             entry.last_seen = time.time()
-            # Deliberately not saved: a heartbeat every ten seconds must not
-            # be a disk write every ten seconds. Liveness lives in the hub,
+            # Deliberately not written: a heartbeat every ten seconds must not
+            # be a database write every ten seconds. Liveness lives in the hub,
             # in memory, where it belongs; this field is a coarse hint that
-            # gets flushed by the next real mutation.
+            # reaches storage with this node's next real mutation — a renewal,
+            # a denial — or with the next sweep, which writes the ledger whole.
 
     # ── Authorisation ────────────────────────────────────────────────────
 
@@ -394,7 +586,7 @@ class EnrollmentLedger:
                 reason = "a different key was presented for this node id"
                 entry.state = NodeState.DENIED.value
                 entry.denied_reason = reason
-                self._save()
+                self._write(nodes=(entry,))
                 return IdentityVerdict(False, reason)
             fingerprint = facts.get("hardware_fingerprint") or ""
             if (
@@ -405,7 +597,7 @@ class EnrollmentLedger:
                 reason = "hardware fingerprint changed; the node may be reimaged"
                 entry.state = NodeState.DENIED.value
                 entry.denied_reason = reason
-                self._save()
+                self._write(nodes=(entry,))
                 return IdentityVerdict(False, reason)
             return IdentityVerdict(True)
 
@@ -418,14 +610,27 @@ class EnrollmentLedger:
         blacklist from growing without bound. A *used* token is kept for a
         grace period so that a retried install is told "already used" rather
         than the less useful "not recognised".
+
+        The one caller of the whole-ledger write, and the only one that should
+        be: housekeeping is off every connection path, it is where the cost of
+        rewriting a list bounded by the machines on a desk is affordable, and
+        reconciling the tables with the working copy is exactly the job it was
+        given. Everything on the enrollment and connection paths writes the
+        rows it changed.
         """
         with self._lock:
-            removed = self._sweep_locked(now if now is not None else time.time())
+            removed = len(self._sweep_locked(now if now is not None else time.time()))
             if removed:
                 self._save()
             return removed
 
-    def _sweep_locked(self, now: float) -> int:
+    def _sweep_locked(self, now: float) -> list[str]:
+        """Drop stale tokens from the working copy; return what was dropped.
+
+        The hashes rather than a count, because the caller has to write the
+        deletions too — a token dropped from memory and left in the table is a
+        token the next reload readmits.
+        """
         grace = TOKEN_TTL_SECONDS
         stale = [
             token_hash
@@ -435,4 +640,4 @@ class EnrollmentLedger:
         ]
         for token_hash in stale:
             del self._state.tokens[token_hash]
-        return len(stale)
+        return stale

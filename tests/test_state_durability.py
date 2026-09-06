@@ -20,6 +20,7 @@ import importlib
 import json
 import os
 import stat
+import threading
 from pathlib import Path
 
 import pytest
@@ -303,6 +304,200 @@ class TestDeploymentStateFile:
         state_file.write_text("[[[")
         with pytest.raises(StateFileError):
             nr._load_records()
+
+
+# ── Per-row writes ───────────────────────────────────────────────────────────
+
+
+@contextlib.contextmanager
+def sql_recorded():
+    """Every statement the shared engine executes inside the block."""
+    from sqlalchemy import event
+
+    from spark_pulse import db
+
+    executed: list[tuple[str, object]] = []
+
+    def observe(_conn, _cursor, statement, parameters, _context, _many):
+        executed.append((statement, parameters))
+
+    active = db.engine()
+    event.listen(active, "before_cursor_execute", observe)
+    try:
+        yield executed
+    finally:
+        event.remove(active, "before_cursor_execute", observe)
+
+
+def _writes(executed: list[tuple[str, object]], verb: str) -> list[tuple[str, object]]:
+    return [(s, p) for s, p in executed if s.lstrip().upper().startswith(verb)]
+
+
+THREE = [
+    {"id": "dep-1", "status": "running", "port": 8000},
+    {"id": "dep-2", "status": "running", "port": 8001},
+    {"id": "dep-3", "status": "stopped", "port": 8002},
+]
+
+
+class TestPerRowWrites:
+    """One deployment can change without the rest being rewritten.
+
+    The whole-set :func:`save` is still what ``native_runtime`` calls and still
+    means "the set is now exactly this", deletions included. What it may not go
+    on doing is *writing* the whole set: on PostgreSQL that is a dead tuple and
+    a WAL record for every deployment on the machine each time one of them
+    changes status, and the cost grows with the size of the cluster rather than
+    with the size of the change.
+    """
+
+    def test_the_whole_set_save_still_removes_what_is_absent(self, state_file):
+        records.save(THREE)
+
+        records.save(THREE[:1])
+
+        assert [r["id"] for r in records.load()] == ["dep-1"]
+
+    def test_saving_the_whole_set_writes_only_the_row_that_changed(self, state_file):
+        records.save(THREE)
+        changed = [dict(r) for r in THREE]
+        changed[1]["status"] = "stopped"
+
+        with sql_recorded() as executed:
+            records.save(changed)
+
+        updates = _writes(executed, "UPDATE")
+        assert len(updates) == 1, executed
+        assert "dep-2" in repr(updates[0][1])
+        assert "dep-1" not in repr(updates[0][1])
+
+    def test_saving_a_set_nothing_changed_in_writes_nothing_at_all(self, state_file):
+        records.save(THREE)
+
+        with sql_recorded() as executed:
+            records.save(THREE)
+
+        assert _writes(executed, "UPDATE") == []
+        assert _writes(executed, "INSERT") == []
+        assert _writes(executed, "DELETE") == []
+
+    def test_upsert_stores_one_record_and_leaves_the_others_alone(self, state_file):
+        """The difference from ``save``, which would have deleted the others."""
+        records.save(THREE)
+
+        records.upsert({"id": "dep-2", "status": "stopped", "port": 8001})
+
+        assert {r["id"]: r["status"] for r in records.load()} == {
+            "dep-1": "running",
+            "dep-2": "stopped",
+            "dep-3": "stopped",
+        }
+
+    def test_upsert_inserts_a_record_that_was_not_stored_yet(self, state_file):
+        records.save(THREE)
+
+        records.upsert({"id": "dep-4", "status": "pending"})
+
+        assert records.get("dep-4") == {"id": "dep-4", "status": "pending"}
+        assert len(records.load()) == 4
+
+    def test_a_record_with_no_id_is_refused_rather_than_silently_dropped(
+        self, state_file
+    ):
+        with pytest.raises(ValueError):
+            records.upsert({"status": "running"})
+
+    def test_update_merges_onto_what_is_stored_not_onto_the_callers_copy(
+        self, state_file
+    ):
+        """The lost update the mutex exists to prevent, in per-row form."""
+        records.save(THREE)
+        stale = records.get("dep-1")  # a caller's copy, taken early
+        records.update("dep-1", port=9999)  # somebody else changes a field
+
+        stale["status"] = "stopped"
+        records.update("dep-1", status=stale["status"])
+
+        stored = records.get("dep-1")
+        assert stored["status"] == "stopped"
+        assert stored["port"] == 9999, "the stale copy's port was written back"
+
+    def test_update_answers_none_for_a_record_that_is_gone(self, state_file):
+        records.save(THREE)
+        assert records.update("dep-9", status="stopped") is None
+
+    def test_delete_many_removes_exactly_the_named_rows(self, state_file):
+        records.save(THREE)
+
+        assert records.delete_many(["dep-1", "dep-3", "dep-9"]) == 2
+
+        assert [r["id"] for r in records.load()] == ["dep-2"]
+
+    def test_a_per_row_write_waits_for_a_whole_set_write_to_finish(self, state_file):
+        """Both kinds of write take the same mutex, or neither of them is safe."""
+        records.save(THREE)
+        done = threading.Event()
+
+        def stop_it():
+            records.update("dep-1", status="stopped")
+            done.set()
+
+        worker = threading.Thread(target=stop_it)
+        with records.transaction():
+            worker.start()
+            assert not done.wait(0.2), "the per-row write did not take the mutex"
+
+        assert done.wait(5)
+        worker.join()
+        assert records.get("dep-1")["status"] == "stopped"
+
+    def test_a_redaction_on_load_does_not_delete_a_record_created_since(
+        self, state_file, monkeypatch
+    ):
+        """``load`` repairs the records it read, and touches nothing else.
+
+        The redaction used to write the whole set back, which on a *read* path
+        means deleting whatever another thread created while the read was in
+        flight — and ``load`` holds no mutex, so that window is real.
+        ``_redact`` runs inside it, which makes it the seam that can stand in
+        for the other thread.
+        """
+        records.save([{"id": "dep-1", "launch_command": "run -e HF_TOKEN=hunter2"}])
+        redact = records._redact
+
+        def redact_and_race(command):
+            records.upsert({"id": "dep-2", "status": "running"})
+            return redact(command)
+
+        monkeypatch.setattr(records, "_redact", redact_and_race)
+
+        loaded = records.load()
+
+        assert loaded[0]["launch_command"] == "run -e HF_TOKEN=[REDACTED]"
+        assert records.get("dep-1")["launch_command"].endswith("[REDACTED]")
+        assert records.get("dep-2") is not None, "the concurrent record was deleted"
+
+    def test_reconciling_legacy_records_writes_back_only_those_it_decided(
+        self, state_file, monkeypatch
+    ):
+        """A PID sweep is about legacy records, and must not touch the rest.
+
+        ``_pid_is_alive`` is the seam for the same reason ``_redact`` is: it
+        runs between the load and the write-back, so a record that appears
+        there is one the sweep never read.
+        """
+        records.save([{"id": "old", "status": "running", "pid": 4242}])
+
+        def probe_and_race(_pid):
+            records.upsert({"id": "new", "status": "running", "runtime": "native"})
+            return False
+
+        monkeypatch.setattr(records, "_pid_is_alive", probe_and_race)
+
+        assert [r["id"] for r in records.list_legacy()] == ["old"]
+
+        assert records.get("old")["status"] == "stopped"
+        assert records.get("new") is not None, "a native deployment was purged"
 
 
 # ── Startup refuses on an unreadable state file ──────────────────────────────

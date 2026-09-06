@@ -20,10 +20,13 @@ from __future__ import annotations
 import importlib
 import json
 import sys
+import threading
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from filelock import FileLock
+from sqlalchemy import event
 
 import spark_pulse.tools as tools_pkg
 
@@ -97,13 +100,41 @@ def store(tmp_path, monkeypatch):
 
 
 def _seed(path, records: list[dict]) -> None:
-    """Write records straight to the store and drop the in-memory cache."""
-    path.write_text(json.dumps(records))
+    """Put records straight into the store and drop the in-memory cache."""
+    del path  # kept so callers still scope state to their fixture
+    benchmarking._save(records)
     benchmarking._reset_cache()
 
 
 def _on_disk(path) -> list[dict]:
-    return json.loads(path.read_text())
+    del path  # kept so callers still scope state to their fixture
+    return benchmarking._load()
+
+
+@contextmanager
+def _rows_written():
+    """Collect the INSERT/UPDATE/DELETE statements the block sends to ``benchmarks``.
+
+    The difference between a whole-set save and a per-row write is invisible in
+    the data — both leave the store correct — and visible only in how much of
+    the table was rewritten to get there. Counting statements is the only way
+    to assert the property the per-row path exists for.
+    """
+    from spark_pulse.db import engine
+
+    statements: list[str] = []
+
+    def _watch(conn, cursor, statement, parameters, context, executemany):
+        head = statement.strip().split(maxsplit=1)[0].upper()
+        if head in ("INSERT", "UPDATE", "DELETE") and "benchmarks" in statement:
+            statements.append(statement)
+
+    live = engine()
+    event.listen(live, "before_cursor_execute", _watch)
+    try:
+        yield statements
+    finally:
+        event.remove(live, "before_cursor_execute", _watch)
 
 
 class _FakeBenchy:
@@ -159,15 +190,21 @@ class TestCreateBenchmark:
 
         assert _on_disk(store) == [record]
 
-    def test_generates_a_unique_id_and_appends_to_existing_records(self, store):
+    def test_generates_a_unique_id_and_adds_to_the_existing_records(self, store):
+        """As a set: row order is not part of what the store promises.
+
+        ``_load`` orders by id so both backends answer the same way, which is
+        not insertion order and was never guaranteed to be. What ordering
+        callers see is ``list_benchmarks``', and that sorts by ``started_at``.
+        """
         _seed(store, [_record("old-1")])
 
         first = benchmarking.create_benchmark("dep-1")
         second = benchmarking.create_benchmark("dep-2")
 
         assert first["benchmark_id"] != second["benchmark_id"]
-        ids = [b["benchmark_id"] for b in _on_disk(store)]
-        assert ids == ["old-1", first["benchmark_id"], second["benchmark_id"]]
+        ids = {b["benchmark_id"] for b in _on_disk(store)}
+        assert ids == {"old-1", first["benchmark_id"], second["benchmark_id"]}
 
     def test_defaults_params_to_an_empty_dict(self, store):
         assert benchmarking.create_benchmark("dep-1")["params"] == {}
@@ -630,12 +667,18 @@ class TestBaselineComparison:
 
 
 class TestPersistence:
-    def test_saves_through_a_temp_file_and_leaves_none_behind(self, store):
-        benchmarking.create_benchmark("dep-1")
+    def test_a_created_benchmark_is_readable_again(self, store):
+        """Was: the temp file was renamed and left none behind.
 
-        assert store.exists()
-        assert not store.with_suffix(".tmp").exists()
-        assert isinstance(_on_disk(store), list)
+        Storage is the database now, so the property worth pinning is the one
+        the file mechanics existed to provide — a create is durable and reads
+        back — rather than how it reached the disk.
+        """
+        created = benchmarking.create_benchmark("dep-1")
+
+        stored = _on_disk(store)
+        assert isinstance(stored, list)
+        assert [b["benchmark_id"] for b in stored] == [created["benchmark_id"]]
 
     def test_a_failed_write_leaves_the_previous_contents_intact(self, store):
         _seed(store, [_record("keep")])
@@ -647,12 +690,165 @@ class TestPersistence:
 
         assert [b["benchmark_id"] for b in _on_disk(store)] == ["keep"]
 
-    def test_reset_cache_forces_a_reload_from_disk(self, store):
+    def test_reset_cache_forces_a_reload_from_the_store(self, store):
         _seed(store, [_record("first")])
         assert benchmarking.get_benchmark("first") is not None
 
-        store.write_text(json.dumps([_record("second")]))
+        benchmarking._save([_record("second")])
         assert benchmarking.get_benchmark("second") is None  # still cached
 
         benchmarking._reset_cache()
         assert benchmarking.get_benchmark("second") is not None
+
+
+# ── Per-row writes ───────────────────────────────────────────────────────────
+
+
+class TestPerRowWrites:
+    """One benchmark changing must cost one row, not the whole history."""
+
+    def test_creating_a_benchmark_writes_only_its_own_row(self, store):
+        _seed(store, [_record("a"), _record("b"), _record("c")])
+
+        with _rows_written() as statements:
+            benchmarking.create_benchmark("dep-1")
+
+        assert len(statements) == 1
+
+    def test_finishing_a_benchmark_writes_only_its_own_row(self, store, benchy):
+        benchy()
+        _seed(store, [_record("a"), _record("b")])
+        record = benchmarking.create_benchmark("dep-1")
+
+        with _rows_written() as statements:
+            benchmarking.execute_benchmark(record["benchmark_id"])
+
+        assert len(statements) == 1
+
+    def test_the_whole_set_save_writes_only_the_records_that_changed(self, store):
+        """The kept API, no longer paying for the rows it was handed unchanged."""
+        _seed(store, [_record("a"), _record("b"), _record("c")])
+
+        with _rows_written() as statements:
+            benchmarking._save(
+                [
+                    _record("a"),
+                    _record("b", status="error", results={"error": "boom"}),
+                    _record("c"),
+                ]
+            )
+
+        assert len(statements) == 1
+        assert benchmarking._get_row("b")["status"] == "error"
+
+    def test_the_whole_set_save_still_removes_records_absent_from_the_set(self, store):
+        """The one thing a per-row write must not quietly take away."""
+        _seed(store, [_record("gone"), _record("kept")])
+
+        benchmarking._save([_record("kept")])
+
+        assert [b["benchmark_id"] for b in _on_disk(store)] == ["kept"]
+
+    def test_a_record_with_no_id_is_refused_rather_than_written_nowhere(self, store):
+        """The whole-set save skips these as noise; one on its own is a caller bug."""
+        with pytest.raises(ValueError):
+            benchmarking._upsert_row({"deployment_id": "dep-1"})
+
+    def test_a_create_waits_for_a_whole_set_save_already_in_flight(self, store):
+        """The lost update the whole-set path was serialised to prevent.
+
+        A whole-set save deletes every row absent from the list it loaded, so a
+        create that landed while one was in flight would be deleted by it. The
+        per-row write takes the same mutex, so it waits instead.
+        """
+        _seed(store, [_record("existing")])
+        holding = threading.Event()
+        release = threading.Event()
+        created: list[dict] = []
+
+        def whole_set_save():
+            with benchmarking._atomic_benchmarks() as data:
+                holding.set()
+                release.wait(5)
+                data.append(_record("from-the-whole-set"))
+
+        def create():
+            created.append(benchmarking.create_benchmark("dep-1"))
+
+        writer = threading.Thread(target=whole_set_save)
+        writer.start()
+        assert holding.wait(5)
+        creator = threading.Thread(target=create)
+        creator.start()
+        creator.join(0.3)
+        assert creator.is_alive(), "the create did not wait for the mutex"
+
+        release.set()
+        writer.join(5)
+        creator.join(5)
+
+        assert {b["benchmark_id"] for b in _on_disk(store)} == {
+            "existing",
+            "from-the-whole-set",
+            created[0]["benchmark_id"],
+        }
+
+
+# ── Retention ────────────────────────────────────────────────────────────────
+
+
+class TestRetention:
+    def test_expired_records_are_deleted_from_the_store_not_merely_hidden(self, store):
+        """The purge used to filter the answer and leave the rows.
+
+        It logged "Purged N expired benchmark records" every time it ran, on a
+        store that never lost one — so retention was a claim in the log and the
+        table grew without bound.
+        """
+        _seed(
+            store,
+            [
+                _record("fresh", started_at=YESTERDAY),
+                _record("stale", started_at=EXPIRED),
+            ],
+        )
+
+        benchmarking.list_benchmarks()
+
+        assert [b["benchmark_id"] for b in _on_disk(store)] == ["fresh"]
+
+    def test_purging_the_last_record_does_not_re_import_the_json_file(self, store):
+        """The import is keyed on the ``meta`` table, never on an empty table.
+
+        Emptying the store by retention is exactly the state a "is the table
+        empty" check would mistake for a fresh install — and it would import
+        the ninety-day-old records straight back.
+        """
+        store.write_text(json.dumps([_record("stale", started_at=EXPIRED)]))
+        benchmarking._reset_cache()
+
+        assert benchmarking.list_benchmarks() == []
+        assert benchmarking.list_benchmarks() == []
+        assert _on_disk(store) == []
+
+    def test_a_point_read_triggers_the_one_time_json_import(self, store, benchy):
+        """``execute_benchmark`` reads one row now, so the import must happen there."""
+        store.write_text(
+            json.dumps(
+                [
+                    _record(
+                        "from-json",
+                        status="running",
+                        completed_at=None,
+                        results=None,
+                        params={"port": 8000},
+                    )
+                ]
+            )
+        )
+        benchmarking._reset_cache()
+        benchy(result={"throughput": 12.0})
+
+        benchmarking.execute_benchmark("from-json")
+
+        assert benchmarking.get_benchmark("from-json")["status"] == "completed"

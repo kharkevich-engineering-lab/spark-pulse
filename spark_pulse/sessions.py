@@ -100,16 +100,26 @@ def create(
     """
     session_id = token or secrets.token_urlsafe(_TOKEN_BYTES)
     with session_scope() as db:
-        db.merge(
-            Session(
-                token=session_id,
-                access_token=access_token,
-                refresh_token=refresh_token,
-                expires_at=float(expires_at or 0.0),
-                created_at=created_at,
-                user=user or {},
+        # Not ``merge`` — see the house rule in ``db``: it chooses UPDATE from
+        # its own load and then matches nothing on PostgreSQL.
+        row = db.get(Session, session_id)
+        if row is None:
+            db.add(
+                Session(
+                    token=session_id,
+                    access_token=access_token,
+                    refresh_token=refresh_token,
+                    expires_at=float(expires_at or 0.0),
+                    created_at=created_at,
+                    user=user or {},
+                )
             )
-        )
+        else:
+            row.access_token = access_token
+            row.refresh_token = refresh_token
+            row.expires_at = float(expires_at or 0.0)
+            row.created_at = created_at
+            row.user = user or {}
     return session_id
 
 
