@@ -187,7 +187,9 @@ jobs:
           binary=spark_pulse/agent/bin/spark-pulse-agent-aarch64-unknown-linux-musl
           file "$binary"
           file "$binary" | grep -q "ARM aarch64"
-          file "$binary" | grep -q "statically linked"
+          # "static-pie linked" is the other spelling `file` uses for a static
+          # ELF; see the same check in release.yml.
+          file "$binary" | grep -qE "statically linked|static-pie linked"
       - name: Upload
         uses: actions/upload-artifact@v4
         with:

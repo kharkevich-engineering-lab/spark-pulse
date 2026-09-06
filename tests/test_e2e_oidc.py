@@ -163,7 +163,7 @@ class TestOidcLoginFlow:
         """
         from spark_pulse import auth
 
-        state = auth._issue_state()
+        state, _nonce = auth._issue_state()
         resp = app_client.get(
             f"/auth/callback?code=invalid-code&state={state}",
             follow_redirects=False,

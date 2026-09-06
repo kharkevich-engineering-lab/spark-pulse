@@ -335,19 +335,27 @@ class TestOidcState:
     """
 
     def test_a_state_is_single_use(self):
-        state = auth._issue_state()
+        state, nonce = auth._issue_state()
 
-        assert auth._consume_state(state) is True
-        assert auth._consume_state(state) is False, "a replayed state is refused"
+        assert auth._consume_state(state) == nonce
+        assert auth._consume_state(state) is None, "a replayed state is refused"
 
     def test_a_state_we_never_issued_is_refused(self):
-        assert auth._consume_state("not-one-of-ours") is False
+        assert auth._consume_state("not-one-of-ours") is None
 
     def test_a_state_expires(self, monkeypatch):
-        state = auth._issue_state()
-        auth._pending_states[state] -= auth._STATE_TTL_SECONDS + 1
+        state, _nonce = auth._issue_state()
+        minted, nonce = auth._pending_states[state]
+        auth._pending_states[state] = (minted - auth._STATE_TTL_SECONDS - 1, nonce)
 
-        assert auth._consume_state(state) is False
+        assert auth._consume_state(state) is None
+
+    def test_each_login_gets_its_own_nonce(self):
+        """The nonce ties the ID token to *this* login, so it cannot be shared."""
+        _first, first_nonce = auth._issue_state()
+        _second, second_nonce = auth._issue_state()
+
+        assert first_nonce != second_nonce
 
     def test_the_callback_refuses_an_unknown_state(self, tmp_path, monkeypatch):
         from fastapi.testclient import TestClient
