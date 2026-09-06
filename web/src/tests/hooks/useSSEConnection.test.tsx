@@ -337,6 +337,56 @@ describe("useSSEConnection, live", () => {
     expect(latest().url).toBe("/sse/logs/two");
   });
 
+  /** A browser closes an SSE stream itself, and does not retry, when the
+   *  response is one it cannot use: a 401 after the session expires, a proxy
+   *  error page, the wrong content-type. A dropped connection is different —
+   *  it stays CONNECTING and the browser retries on its own. Treating the two
+   *  the same left the indicator on "Connecting..." for the life of the page. */
+  it("says the server closed the stream rather than sitting on 'connecting'", () => {
+    const { result } = renderHook(() => useSSEConnection("/sse/deployments", vi.fn()));
+
+    act(() => {
+      const es = latest();
+      es.readyState = FakeEventSource.CLOSED;
+      es.onerror?.();
+    });
+
+    expect(result.current.state).toBe(SSEConnectionState.DISCONNECTED);
+    expect(result.current.error).toMatch(/refused by the server/i);
+  });
+
+  it("names when the stream last worked if it ever did", () => {
+    const { result } = renderHook(() => useSSEConnection("/sse/deployments", vi.fn()));
+
+    act(() => void latest().onopen?.());
+    act(() => {
+      const es = latest();
+      es.readyState = FakeEventSource.CLOSED;
+      es.onerror?.();
+    });
+
+    expect(result.current.state).toBe(SSEConnectionState.DISCONNECTED);
+    expect(result.current.error).toMatch(/closed by the server/i);
+    expect(result.current.error).toMatch(/Last update:/);
+  });
+
+  it("does not report a stream this hook closed itself as server-closed", () => {
+    // Switching streams closes the old one, which fires `onerror` with a
+    // CLOSED readyState. That is our own doing and must not be reported as
+    // the server hanging up.
+    const { rerender } = renderHook(
+      ({ url }: { url: string }) => useSSEConnection(url, vi.fn()),
+      { initialProps: { url: "/sse/logs/one" } },
+    );
+    const first = FakeEventSource.instances[0];
+
+    rerender({ url: "/sse/logs/two" });
+    act(() => void first.onerror?.());
+
+    const status = useSSEStore.getState().getConnection("/sse/logs/two");
+    expect(status?.state).not.toBe(SSEConnectionState.DISCONNECTED);
+  });
+
   /** The heartbeat exists to notice a browser that slept through a drop. It
    *  must not promote a stream that never opened to "seen just now". */
   it("does not claim a fresh update when the heartbeat fires on a dead stream", () => {

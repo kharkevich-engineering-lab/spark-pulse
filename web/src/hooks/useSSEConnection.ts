@@ -49,6 +49,8 @@ export function useSSEConnection(
   const retryCountRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const heartbeatRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Whether the most recent close was ours rather than the server's. */
+  const intentionalCloseRef = useRef(false);
   const isMountedRef = useRef(true);
   const lastConnectedRef = useRef<string | undefined>(undefined);
 
@@ -93,13 +95,16 @@ export function useSSEConnection(
   const connect = useCallback(() => {
     if (!isMountedRef.current) return;
 
-    // Close existing connection
+    // Close existing connection. Flagged, so the `onerror` this provokes is
+    // not mistaken for the server hanging up on us.
     if (esRef.current) {
+      intentionalCloseRef.current = true;
       esRef.current.close();
     }
 
     const es = new EventSource(url);
     esRef.current = es;
+    intentionalCloseRef.current = false;
 
     updateConnection(url, {
       state: SSEConnectionState.RECONNECTING,
@@ -166,7 +171,22 @@ export function useSSEConnection(
       if (!isMountedRef.current) return;
 
       if (es.readyState === EventSource.CLOSED) {
-        // Explicitly closed
+        if (intentionalCloseRef.current) return;
+        // The browser closed the stream itself and will not retry. That is
+        // what it does for a response it cannot use — a 401 once the session
+        // expires, a proxy error page, the wrong content-type — as opposed to
+        // a dropped connection, which leaves it CONNECTING and retrying.
+        //
+        // Returning here treated the two as the same thing, so the indicator
+        // sat on "Connecting..." for the rest of the page's life and the
+        // operator watched a spinner instead of being told the stream was
+        // dead.
+        updateConnection(url, {
+          state: SSEConnectionState.DISCONNECTED,
+          error: lastConnectedRef.current
+            ? `Connection closed by the server. Last update: ${new Date(lastConnectedRef.current).toLocaleTimeString()}`
+            : "Connection refused by the server.",
+        });
         return;
       }
 
@@ -199,6 +219,7 @@ export function useSSEConnection(
     return () => {
       isMountedRef.current = false;
       if (esRef.current) {
+        intentionalCloseRef.current = true;
         esRef.current.close();
         esRef.current = null;
       }
