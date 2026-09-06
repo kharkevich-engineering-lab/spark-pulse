@@ -828,3 +828,88 @@ describe("useSSHErrorStore", () => {
     expect(useSSHErrorStore.getState().getErrors()).toEqual([]);
   });
 });
+
+describe("a terminal operation is actually terminal", () => {
+  beforeEach(() => {
+    useOperationStore.setState({ operations: new Map() });
+  });
+
+  const running = (id: string) => ({
+    operation_id: id,
+    resource: "dep-1",
+    resource_type: "deployment" as const,
+    state: OperationState.RUNNING,
+    started_at: new Date().toISOString(),
+  });
+
+  it("does not report a cancelled operation as succeeded", () => {
+    // The documented usage in `useOperation` is exactly this shape:
+    //   const id = startOperation(...)
+    //   try { await work(); completeOperation(id, true) } catch { ... }
+    // The operator cancels; the request they cancelled still resolves.
+    act(() => {
+      useOperationStore.getState().addOperation(running("op-1"));
+      useOperationStore.getState().cancelOperation("op-1");
+      useOperationStore.getState().completeOperation("op-1", true);
+    });
+
+    expect(useOperationStore.getState().getOperation("op-1")!.state).toBe(
+      OperationState.CANCELLED,
+    );
+  });
+
+  it("does not report a cancelled operation as failed either", () => {
+    act(() => {
+      useOperationStore.getState().addOperation(running("op-2"));
+      useOperationStore.getState().cancelOperation("op-2");
+      useOperationStore.getState().completeOperation("op-2", false, "boom");
+    });
+
+    const op = useOperationStore.getState().getOperation("op-2")!;
+    expect(op.state).toBe(OperationState.CANCELLED);
+    expect(op.error).toBeUndefined();
+  });
+
+  it("does not let a succeeded operation be completed twice", () => {
+    act(() => {
+      useOperationStore.getState().addOperation(running("op-3"));
+      useOperationStore.getState().completeOperation("op-3", true);
+    });
+    const first = useOperationStore.getState().getOperation("op-3")!.completed_at;
+
+    act(() => {
+      useOperationStore.getState().completeOperation("op-3", false, "late failure");
+    });
+
+    const op = useOperationStore.getState().getOperation("op-3")!;
+    expect(op.state).toBe(OperationState.SUCCESS);
+    expect(op.completed_at).toBe(first);
+  });
+
+  it("stops counting progress once the operation is over", () => {
+    act(() => {
+      useOperationStore.getState().addOperation(running("op-4"));
+      useOperationStore.getState().updateProgress("op-4", 40, "pulling");
+      useOperationStore.getState().cancelOperation("op-4");
+      useOperationStore.getState().updateProgress("op-4", 90, "still pulling");
+    });
+
+    const op = useOperationStore.getState().getOperation("op-4")!;
+    expect(op.progress).toBe(40);
+    expect(op.current_step).toBe("pulling");
+  });
+
+  it("still completes an operation that is genuinely running", () => {
+    // The guard must not break the path every deploy takes.
+    act(() => {
+      useOperationStore.getState().addOperation(running("op-5"));
+      useOperationStore.getState().updateProgress("op-5", 50, "starting");
+      useOperationStore.getState().completeOperation("op-5", true);
+    });
+
+    const op = useOperationStore.getState().getOperation("op-5")!;
+    expect(op.state).toBe(OperationState.SUCCESS);
+    expect(op.progress).toBe(50);
+    expect(op.completed_at).toBeDefined();
+  });
+});
