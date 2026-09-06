@@ -12,9 +12,13 @@ from __future__ import annotations
 import os
 from urllib.parse import parse_qs, urlparse
 
+import time
+
 import httpx
 import pytest
 import oidc_provider_mock
+
+from spark_pulse import sessions
 
 from spark_pulse.app import create_app
 from spark_pulse.config import config
@@ -181,13 +185,12 @@ class TestTokenManagement:
 
     def test_logout_invalidates_token(self):
         """Logout should invalidate the current token."""
-        from spark_pulse import auth
 
         # Manually insert a valid token
-        valid_token = "test-token-logout"
-        auth._active_tokens[valid_token] = {
-            "user": {"name": "Alice", "email": "alice@example.com"},
-        }
+        valid_token = sessions.create(
+            user={"name": "Alice", "email": "alice@example.com"},
+            expires_at=time.time() + 3600,
+        )
 
         # Verify token is valid
         from fastapi.testclient import TestClient
@@ -249,13 +252,12 @@ class TestAuthMiddleware:
 
     def test_protected_path_accessible_with_valid_cookie(self):
         """Protected API paths should be accessible with a valid cookie."""
-        from spark_pulse import auth
 
         # Manually insert a valid token
-        valid_token = "test-token-protected"
-        auth._active_tokens[valid_token] = {
-            "user": {"name": "Bob", "email": "bob@example.com"},
-        }
+        valid_token = sessions.create(
+            user={"name": "Bob", "email": "bob@example.com"},
+            expires_at=time.time() + 3600,
+        )
 
         from fastapi.testclient import TestClient
 

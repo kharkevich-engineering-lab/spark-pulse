@@ -32,7 +32,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from spark_pulse import auth
+from spark_pulse import auth, sessions
 from spark_pulse.app import create_app
 from spark_pulse.config import config
 
@@ -94,11 +94,11 @@ def client(discovery_front, monkeypatch):
     monkeypatch.setitem(config._data, "oidc_provider_url", discovery_front)
     monkeypatch.setitem(config._data, "oidc_client_id", "spark-pulse-test")
     monkeypatch.setitem(config._data, "oidc_client_secret", "test-secret")
-    auth._active_tokens.clear()
+    sessions.clear()
     auth._pending_states.clear()
     with TestClient(create_app(), raise_server_exceptions=False) as test_client:
         yield test_client
-    auth._active_tokens.clear()
+    sessions.clear()
     auth._pending_states.clear()
 
 

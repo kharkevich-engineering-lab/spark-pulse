@@ -22,6 +22,10 @@ dependencies = [
     "authlib>=1.3.0",
     "httpx>=0.28.0",
     "filelock>=3.12.0",
+    # The state store (docs/cluster-agent-plan.md §3.3). SQLAlchemy rather than
+    # the sqlite3 driver so the schema and every query are written once and
+    # emitted for either backend: moving to PostgreSQL is a URL, not a rewrite.
+    "sqlalchemy>=2.0",
     "oras>=0.2.0",
     "docker>=7.0.0",
     "huggingface_hub>=0.26.0",
@@ -49,6 +53,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# The scale case: one control plane becomes several and they need shared
+# state. Nothing else changes — set SPARK_PULSE_DATABASE_URL to a
+# postgresql+psycopg:// URL and the schema is created there instead.
+postgres = ["psycopg[binary]>=3.1"]
 dev = [
     "black>=24.8.0",
     "pytest>=8.0",

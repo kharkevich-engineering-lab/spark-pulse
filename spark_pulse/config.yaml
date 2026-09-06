@@ -33,6 +33,11 @@ oidc_client_secret: ""
 oidc_provider_url: ""
 spark_vllm_path: /tmp/spark-vllm-docker
 webui_port: 8100
+# Where structured state lives (deployments, nodes, the enrollment ledger,
+# sessions). Empty means SQLite under ~/.config/spark-pulse. A SQLAlchemy URL,
+# so the scale case is a URL change: postgresql+psycopg://user@host/spark_pulse
+# — install the driver with `pip install spark-pulse[postgres]`.
+database_url: ""
 # Browser origins allowed to call this API cross-origin. Empty means "the
 # defaults": this port on localhost, plus the Vite dev server. Never "*" —
 # Starlette reflects the caller's own origin back when the wildcard is combined

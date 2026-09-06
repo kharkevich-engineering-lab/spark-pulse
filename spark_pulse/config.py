@@ -139,6 +139,18 @@ class _Config:
         return int(self._data.get("webui_port", 8100))
 
     @property
+    def database_url(self) -> str:
+        """Where structured state lives. Empty means the SQLite default.
+
+        A SQLAlchemy URL, so the scale case — one control plane becoming
+        several that need shared state — is
+        ``postgresql+psycopg://user@host/spark_pulse`` here and nothing else
+        anywhere. ``SPARK_PULSE_DATABASE_URL`` overrides it, which is how a
+        systemd unit or a test points the process somewhere private.
+        """
+        return str(self._data.get("database_url", ""))
+
+    @property
     def external_url(self) -> str:
         """The address browsers reach this control plane at, if it is fixed.
 

@@ -17,6 +17,25 @@ if str(REPO_ROOT) not in sys.path:
 
 
 @pytest.fixture(autouse=True)
+def isolate_the_database(tmp_path, monkeypatch):
+    """A private database per test.
+
+    The default URL points at the package's gitignored ``data/`` directory in
+    simulation, which every test would otherwise share — so state would leak
+    between tests in whatever order they happened to run. A file rather than
+    ``:memory:`` on purpose: the file path is what production uses, including
+    the WAL pragmas and the 0600, and a store only exercised in memory is a
+    store whose real configuration nothing tests.
+    """
+    from spark_pulse import db
+
+    monkeypatch.setenv("SPARK_PULSE_DATABASE_URL", f"sqlite:///{tmp_path / 'test.db'}")
+    db.configure(f"sqlite:///{tmp_path / 'test.db'}")
+    yield
+    db.dispose()
+
+
+@pytest.fixture(autouse=True)
 def isolate_imported_recipes(tmp_path, monkeypatch):
     """Keep recipe listing away from the developer's real ~/.config import dir.
 
