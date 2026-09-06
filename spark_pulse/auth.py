@@ -33,31 +33,51 @@ _active_tokens: dict[str, dict] = {}
 #: browser redirect to the provider and back; ten minutes is generous.
 _STATE_TTL_SECONDS = 600
 
-#: Issued ``state`` values, mapped to when they were minted. Verified and
+#: Issued ``state`` values, mapped to ``(minted_at, nonce)``. Verified and
 #: consumed on the callback — without this the callback accepts a code from
 #: anyone, which is login CSRF: an attacker can complete the flow in the
 #: victim's browser and land them in the attacker's session.
-_pending_states: dict[str, float] = {}
+#:
+#: The nonce travels with the state because it is the *same* round trip: the
+#: state ties the callback to a login we started, and the nonce ties the ID
+#: token to it. Keeping them in one entry means neither can be checked against
+#: a login the other did not come from.
+_pending_states: dict[str, tuple[float, str]] = {}
+
+#: How long a discovery document is reused before it is fetched again. The
+#: provider's endpoints change about as often as the provider does, and
+#: fetching them on every login turns each one into two round trips.
+_DISCOVERY_TTL_SECONDS = 3600
+
+#: ``provider_url`` → ``(fetched_at, document)``.
+_discovery_cache: dict[str, tuple[float, dict]] = {}
 
 
 def _sweep_states(now: float | None = None) -> None:
     now = time.time() if now is None else now
-    for state, minted in list(_pending_states.items()):
+    for state, (minted, _nonce) in list(_pending_states.items()):
         if now - minted > _STATE_TTL_SECONDS:
             _pending_states.pop(state, None)
 
 
-def _issue_state() -> str:
+def _issue_state() -> tuple[str, str]:
+    """A fresh ``(state, nonce)`` pair, remembered until the callback."""
     state = secrets.token_urlsafe(24)
+    nonce = secrets.token_urlsafe(24)
     _sweep_states()
-    _pending_states[state] = time.time()
-    return state
+    _pending_states[state] = (time.time(), nonce)
+    return state, nonce
 
 
-def _consume_state(state: str) -> bool:
-    """Whether ``state`` was one we issued, and has not been used yet."""
+def _consume_state(state: str) -> str | None:
+    """The nonce issued with ``state``, or None if we did not issue it.
+
+    Single-use: a state redeemed twice is a replayed callback, and the second
+    attempt gets None.
+    """
     _sweep_states()
-    return _pending_states.pop(state, None) is not None
+    entry = _pending_states.pop(state, None)
+    return None if entry is None else entry[1]
 
 
 def _session_expired(user: dict, now: float | None = None) -> bool:
@@ -79,6 +99,101 @@ def _sweep_sessions() -> None:
             _active_tokens.pop(key, None)
 
 
+async def discover(provider_url: str, *, refresh: bool = False) -> dict:
+    """The provider's OpenID configuration, cached.
+
+    **Every endpoint comes from here.** The callback used to append
+    ``/oauth2/token`` and ``/userinfo`` to the provider URL while ``/login``
+    discovered its authorization endpoint properly — so login worked against a
+    provider that happened to lay its endpoints out that way and failed
+    against every provider that does not. Keycloak, which this module's own
+    docstring uses as its example, serves ``/protocol/openid-connect/token``;
+    a realm URL configured exactly as documented could not log anybody in.
+
+    Raises :class:`HTTPException` rather than returning a partial document: a
+    provider we cannot describe is one we must not start a flow with.
+    """
+    import httpx
+
+    cached = _discovery_cache.get(provider_url)
+    if cached and not refresh and time.time() - cached[0] < _DISCOVERY_TTL_SECONDS:
+        return cached[1]
+
+    url = f"{provider_url.rstrip('/')}/.well-known/openid-configuration"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.get(url)
+        if response.status_code != 200:
+            raise HTTPException(status_code=502, detail="OIDC provider unreachable")
+        document = response.json()
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=502, detail="Failed to discover OIDC provider")
+
+    if not isinstance(document, dict) or not document.get("authorization_endpoint"):
+        raise HTTPException(
+            status_code=500, detail="OIDC discovery document is unusable"
+        )
+    _discovery_cache[provider_url] = (time.time(), document)
+    return document
+
+
+async def _verify_id_token(id_token: str, document: dict, nonce: str) -> dict:
+    """Verify the ID token's signature and claims, and return them.
+
+    The token was never looked at: the flow trusted the token endpoint's
+    response because it had been fetched over TLS with the client secret.
+    That is *an* argument, but it leaves the assertion itself unchecked, and
+    it leaves the nonce — the only thing tying this token to the login that
+    asked for it — unverified, so an ID token captured from one login could be
+    replayed into another.
+
+    ``authlib`` has been a declared dependency of this project since the
+    beginning and was imported nowhere. This is what it was for.
+    """
+    import httpx
+    from authlib.jose import JsonWebKey, JsonWebToken
+    from authlib.jose.errors import JoseError
+
+    jwks_uri = document.get("jwks_uri")
+    if not jwks_uri:
+        raise HTTPException(
+            status_code=502, detail="OIDC provider publishes no JWKS endpoint"
+        )
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            jwks_response = await client.get(jwks_uri)
+        key_set = JsonWebKey.import_key_set(jwks_response.json())
+    except Exception:
+        raise HTTPException(
+            status_code=502, detail="Could not fetch the OIDC signing keys"
+        )
+
+    algorithms = document.get("id_token_signing_alg_values_supported") or ["RS256"]
+    # "none" would let anyone mint an ID token; it is removed whatever the
+    # provider advertises.
+    algorithms = [alg for alg in algorithms if str(alg).lower() != "none"]
+    try:
+        claims = JsonWebToken(algorithms).decode(
+            id_token,
+            key_set,
+            claims_options={
+                "iss": {"essential": True, "values": [document.get("issuer")]},
+                "aud": {"essential": True, "values": [config.oidc_client_id]},
+            },
+        )
+        claims.validate(leeway=60)
+    except JoseError as exc:
+        raise HTTPException(status_code=401, detail=f"Invalid ID token: {exc}")
+
+    if nonce and claims.get("nonce") != nonce:
+        raise HTTPException(
+            status_code=401, detail="ID token was issued for a different login"
+        )
+    return dict(claims)
+
+
 def _oidc_configured() -> bool:
     """Check if OIDC is configured and enabled."""
     return bool(
@@ -91,6 +206,29 @@ def _oidc_configured() -> bool:
 
 #: Methods that cannot change anything, and so need no cross-origin defence.
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
+
+#: The path the identity provider sends the browser back to.
+CALLBACK_PATH = "/auth/callback"
+
+
+def callback_url(request: Request) -> str:
+    """Where the provider should return the browser to.
+
+    ``config.external_url`` when the operator has stated it, and only
+    otherwise the request's own URL — whose host is the ``Host`` header, which
+    the *client* chooses. An attacker who can set that header picks the
+    ``redirect_uri`` we hand the provider, and a provider with a loose
+    redirect allowlist then sends the authorization code wherever they asked.
+
+    The same function serves ``/auth/login`` and ``/auth/callback`` because
+    the two values must be byte-identical: the token endpoint compares the
+    ``redirect_uri`` of the exchange against the one the code was issued for,
+    and computes them separately is how they drift apart.
+    """
+    external = config.external_url
+    if external:
+        return f"{external}{CALLBACK_PATH}"
+    return str(request.url.replace(path=CALLBACK_PATH, query=""))
 
 
 def _same_origin(request: Request, origin: str) -> bool:
@@ -200,29 +338,15 @@ async def login(request: Request):
     if not _oidc_configured():
         return {"message": "Authentication is not configured"}
 
-    # Build auth URL
-    provider_url = config.oidc_provider_url
-    # Discover well-known config
-    try:
-        import httpx
-
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"{provider_url}/.well-known/openid-configuration")
-            if resp.status_code == 200:
-                config_data = resp.json()
-                auth_url = config_data.get("authorization_endpoint", "")
-            else:
-                raise HTTPException(status_code=502, detail="OIDC provider unreachable")
-    except Exception:
-        raise HTTPException(status_code=502, detail="Failed to discover OIDC provider")
-
+    document = await discover(config.oidc_provider_url)
+    auth_url = document.get("authorization_endpoint", "")
     if not auth_url:
         raise HTTPException(
             status_code=500, detail="Missing authorization_endpoint in OIDC config"
         )
 
-    state = _issue_state()
-    redirect_uri = str(request.url.replace(path="/auth/callback", query=""))
+    state, nonce = _issue_state()
+    redirect_uri = callback_url(request)
 
     params = {
         "response_type": "code",
@@ -230,6 +354,9 @@ async def login(request: Request):
         "redirect_uri": redirect_uri,
         "scope": "openid profile email",
         "state": state,
+        # Bound to the state above and checked against the ID token, so a
+        # token minted for one login cannot be replayed into another.
+        "nonce": nonce,
     }
     # urlencode, not a hand-rolled join: ``redirect_uri`` carries "://" and
     # "/", and a client id may carry anything at all. Joining raw values
@@ -247,20 +374,29 @@ async def callback(request: Request, code: str, state: str):
     # this the callback accepts an authorization code from anybody — which is
     # login CSRF: an attacker completes the flow in the victim's browser and
     # the victim ends up working inside the attacker's account.
-    if not _consume_state(state):
+    nonce = _consume_state(state)
+    if nonce is None:
         raise HTTPException(
             status_code=400, detail="Invalid or expired authentication state"
+        )
+
+    document = await discover(config.oidc_provider_url)
+    token_endpoint = document.get("token_endpoint")
+    if not token_endpoint:
+        raise HTTPException(
+            status_code=500, detail="Missing token_endpoint in OIDC config"
         )
 
     try:
         import httpx
 
-        provider_url = config.oidc_provider_url
-        redirect_uri = str(request.url.replace(query=""))
+        # The same value /auth/login sent, computed the same way: the token
+        # endpoint compares it against the one the code was issued for.
+        redirect_uri = callback_url(request)
 
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
-                f"{provider_url}/oauth2/token",
+                token_endpoint,
                 data={
                     "grant_type": "authorization_code",
                     "code": code,
@@ -277,12 +413,34 @@ async def callback(request: Request, code: str, state: str):
             refresh_token = token_data.get("refresh_token", "")
             expires_in = token_data.get("expires_in", 3600)
 
-            # Get user info
-            user_resp = await client.get(
-                f"{provider_url}/userinfo",
-                headers={"Authorization": f"Bearer {access_token}"},
-            )
-            user_info = user_resp.json() if user_resp.status_code == 200 else {}
+            # The assertion itself, checked. We asked for the ``openid``
+            # scope, so a provider that returns no ID token has not answered
+            # the question we asked and is refused rather than trusted.
+            id_token = token_data.get("id_token", "")
+            if not id_token:
+                raise HTTPException(
+                    status_code=401, detail="OIDC provider returned no ID token"
+                )
+            claims = await _verify_id_token(id_token, document, nonce)
+
+            # Get user info from the endpoint the provider advertises. The
+            # verified ID token is the fallback *and* the floor: it already
+            # carries a trustworthy subject, so a userinfo call that fails
+            # degrades to a smaller session rather than an anonymous one.
+            user_info: dict = {"sub": claims.get("sub", "")}
+            userinfo_endpoint = document.get("userinfo_endpoint")
+            if userinfo_endpoint:
+                user_resp = await client.get(
+                    userinfo_endpoint,
+                    headers={"Authorization": f"Bearer {access_token}"},
+                )
+                if user_resp.status_code == 200:
+                    published = user_resp.json()
+                    if isinstance(published, dict):
+                        # The subject stays the verified one: userinfo is
+                        # fetched with a bearer token and must not be able to
+                        # rename the principal the ID token established.
+                        user_info = {**published, "sub": claims.get("sub", "")}
 
             # Store token, dropping anything that has already expired so the
             # store stays bounded by the number of live sessions.
@@ -305,6 +463,11 @@ async def callback(request: Request, code: str, state: str):
                 samesite="lax",
                 path="/",
                 max_age=expires_in,
+                # Set whenever the flow itself ran over TLS. Hardcoding it on
+                # would break the ordinary http://localhost install; hardcoding
+                # it off — which is what it was — sends the session cookie in
+                # clear the moment anyone puts this behind HTTPS.
+                secure=request.url.scheme == "https",
             )
             return response
 

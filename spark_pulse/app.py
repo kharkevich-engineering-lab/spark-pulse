@@ -1,6 +1,7 @@
 """FastAPI application factory for Spark Pulse."""
 
 import os
+import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -345,6 +346,28 @@ def create_app() -> FastAPI:
 
         @app.post(f"/{MCP_PATH}")
         async def mcp_endpoint(request: Request):
+            # `mcp_api_token` was declared in config.yaml and read by nothing,
+            # so an operator who set one got no protection and no sign that
+            # they had not. When it is set it is now required — which is the
+            # only way an MCP client running as a *program* can authenticate,
+            # since it cannot complete an OIDC redirect. Unset keeps the
+            # previous behaviour exactly: the session cookie governs, as it
+            # does for every other route.
+            expected = config.mcp_api_token
+            if expected:
+                offered = request.headers.get("authorization", "")
+                scheme, _, presented = offered.partition(" ")
+                if scheme.lower() != "bearer" or not secrets.compare_digest(
+                    presented.strip(), expected
+                ):
+                    return JSONResponse(
+                        {
+                            "jsonrpc": "2.0",
+                            "error": {"code": -32001, "message": "Unauthorized"},
+                            "id": None,
+                        },
+                        status_code=401,
+                    )
             try:
                 body = await request.json()
             except Exception:
@@ -366,6 +389,17 @@ def create_app() -> FastAPI:
         "/{filename:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"]
     )
     async def serve_static(request: Request, filename: str):
+        # An unmatched API path is a 404, not the SPA.
+        #
+        # This route exists to hand index.html to a *browser* asking for a
+        # client-side route, and it answers every method, so a mistyped or
+        # removed endpoint answered `POST /api/deployment` with 200 and a page
+        # of HTML. A client cannot tell that from success, and the one that
+        # suffers most is the one least able to complain: an MCP tool call, or
+        # a script, parsing HTML as though it were the JSON it asked for.
+        # Browsers never request these prefixes for a client-side route.
+        if filename.startswith(("api/", "auth/", "sse/")):
+            return JSONResponse({"detail": f"Not Found: /{filename}"}, status_code=404)
         return _serve_spa(filename)
 
     return app

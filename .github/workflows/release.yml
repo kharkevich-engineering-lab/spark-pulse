@@ -44,7 +44,14 @@ jobs:
           set -euo pipefail
           binary="spark_pulse/agent/bin/spark-pulse-agent-${{ matrix.target }}"
           file "$binary"
-          file "$binary" | grep -q "statically linked"
+          # Two spellings, one property. `file` says "statically linked" for a
+          # plain static ELF and "static-pie linked" for a static
+          # position-independent one, and which of the two a musl target
+          # produces is the toolchain's choice: aarch64 comes out static,
+          # x86_64 comes out static-pie. Both are equally free of a dynamic
+          # loader, which is the only thing being asserted here, so accept
+          # either rather than pinning the target to one of them.
+          file "$binary" | grep -qE "statically linked|static-pie linked"
           # It must run nowhere but on its target, so this only asserts the
           # architecture the name claims.
           case "${{ matrix.target }}" in
