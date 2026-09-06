@@ -8,7 +8,6 @@ list, never as a chart of nothing.
 
 from __future__ import annotations
 
-import json
 
 import pytest
 from fastapi.testclient import TestClient
@@ -40,7 +39,14 @@ def client(store, sampler):
 
 
 def write(store, *records):
-    store.write_text(json.dumps(list(records)))
+    """Set the deployment set to exactly ``records``.
+
+    Through the store rather than by writing the JSON file: state lives in the
+    database, and the file is only its one-time migration source — so writing
+    it a second time changes nothing.
+    """
+    del store  # kept so the fixture still scopes the state to this test
+    tools.deployment_records.save(list(records))
 
 
 def record(**overrides):

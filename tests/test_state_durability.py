@@ -43,6 +43,28 @@ def _temp_leftovers(directory: Path) -> list[Path]:
 
 
 @contextlib.contextmanager
+def crashing_commit():
+    """Fail every database commit for the duration of the block.
+
+    The successor to :func:`crashing_replace`: what used to be a torn rename
+    is now a transaction that does not commit, and the property under test —
+    the previous state survives — is the same one.
+    """
+    from sqlalchemy.orm import Session as SaSession
+
+    original = SaSession.commit
+
+    def boom(self):
+        raise OSError("simulated crash before the transaction committed")
+
+    SaSession.commit = boom
+    try:
+        yield
+    finally:
+        SaSession.commit = original
+
+
+@contextlib.contextmanager
 def crashing_replace():
     """Fail every ``os.replace`` for the duration of the block.
 
@@ -240,10 +262,18 @@ class TestDeploymentStateFile:
         assert len(list(state_file.parent.glob("deployments.json.corrupt.*"))) == 1
         assert str(exc.value.quarantine_path) in str(exc.value)
 
-    def test_crash_before_replace_keeps_the_previous_deployments(self, state_file):
+    def test_a_crash_mid_write_keeps_the_previous_deployments(self, state_file):
+        """The property survives the move from a JSON file to the database.
+
+        It used to be the atomic rename that gave it: a torn write left the
+        old file in place. Now it is the transaction — ``session_scope``
+        rolls back — and the guarantee an operator depends on is unchanged:
+        a write that fails leaves the previous set of deployments intact,
+        never half of it.
+        """
         records.save(SAMPLE)
 
-        with crashing_replace():
+        with crashing_commit():
             with pytest.raises(OSError):
                 records.save([])
 
@@ -261,13 +291,15 @@ class TestDeploymentStateFile:
             records.check_state_file()
 
     def test_native_runtime_records_share_the_durable_path(self, state_file):
+        """One store, reached the same way from both modules."""
         nr = importlib.import_module("spark_pulse.tools.native_runtime")
         nr._save_records(SAMPLE)
 
-        assert json.loads(state_file.read_text()) == SAMPLE
-        assert _temp_leftovers(state_file.parent) == []
         assert nr._load_records() == SAMPLE
+        assert records.load() == SAMPLE
 
+        # And an unreadable *legacy* file is still refused rather than read as
+        # an empty cluster, because that file is the migration source.
         state_file.write_text("[[[")
         with pytest.raises(StateFileError):
             nr._load_records()

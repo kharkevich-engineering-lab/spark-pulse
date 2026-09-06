@@ -40,7 +40,14 @@ from typing import Any, Iterator
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine, make_url
-from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+from sqlalchemy import String
+from sqlalchemy.orm import (
+    DeclarativeBase,
+    Mapped,
+    Session,
+    mapped_column,
+    sessionmaker,
+)
 from sqlalchemy.pool import StaticPool
 
 __all__ = [
@@ -50,12 +57,43 @@ __all__ = [
     "default_database_url",
     "dispose",
     "engine",
+    "is_done",
+    "mark_done",
     "session_scope",
 ]
 
 
 class Base(DeclarativeBase):
     """The declarative base every table in this program inherits from."""
+
+
+class Meta(Base):
+    """Bookkeeping that has to outlive the rows it describes.
+
+    A one-time import cannot key off "is the table empty" — deleting the last
+    deployment would make it empty again and the import would run a second
+    time, resurrecting everything the operator had removed. It keys off a row
+    here instead, which no amount of deleting deployments touches.
+    """
+
+    __tablename__ = "meta"
+
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    value: Mapped[str] = mapped_column(String(1024), default="")
+
+
+def mark_done(key: str, value: str = "1") -> bool:
+    """Record that ``key`` has happened. False if it already had."""
+    with session_scope() as db:
+        if db.get(Meta, key) is not None:
+            return False
+        db.add(Meta(key=key, value=value))
+        return True
+
+
+def is_done(key: str) -> bool:
+    with session_scope() as db:
+        return db.get(Meta, key) is not None
 
 
 def default_database_url() -> str:

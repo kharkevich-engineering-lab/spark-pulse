@@ -21,6 +21,7 @@ can create one.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import signal
@@ -30,12 +31,17 @@ import threading
 from contextlib import AbstractContextManager
 from typing import Any
 
+from sqlalchemy import JSON, String, select
+from sqlalchemy.orm import Mapped, mapped_column
+
 from spark_pulse.config import RUNTIME_NATIVE, config
+from spark_pulse.db import Base, engine, is_done, mark_done, session_scope
 from spark_pulse.tools.atomic_json import (
     StateFileError as StateFileError,
     read_state_file,
-    write_json_atomic,
 )
+
+logger = logging.getLogger(__name__)
 
 #: Where the records live. Simulation writes to the gitignored package copy so
 #: an e2e run cannot overwrite the deployments of the machine it runs on.
@@ -59,6 +65,75 @@ def _redact(cmd: str) -> str:
     return _SENSITIVE_ENV_RE.sub(r"\1[REDACTED]", cmd)
 
 
+# ── The table ────────────────────────────────────────────────────────────────
+
+
+class DeploymentRow(Base):
+    """One deployment, as a row.
+
+    The identifying and queryable fields are columns; the rest of the record
+    is a JSON document. That split is deliberate rather than lazy: the record
+    shape belongs to :mod:`spark_pulse.tools.native_runtime` and is still
+    moving — ranks, orphans, warnings, engine details — while ``id``,
+    ``status`` and ``runtime`` are what everything else filters on and what a
+    future index would be built over. Normalising a shape that is still
+    changing would make every change to it a migration.
+    """
+
+    __tablename__ = "deployments"
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    status: Mapped[str] = mapped_column(String(32), default="", index=True)
+    runtime: Mapped[str] = mapped_column(String(32), default="", index=True)
+    created_at: Mapped[str] = mapped_column(String(64), default="")
+    record: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+def _row_of(record: dict[str, Any]) -> DeploymentRow:
+    return DeploymentRow(
+        id=str(record.get("id") or ""),
+        status=str(record.get("status") or ""),
+        runtime=str(record.get("runtime") or ""),
+        created_at=str(record.get("created_at") or ""),
+        record=record,
+    )
+
+
+#: Recorded once the legacy file has been imported. Keyed in ``meta`` rather
+#: than inferred from an empty table: deleting the last deployment empties the
+#: table, and an import that re-ran then would resurrect everything.
+_IMPORT_KEY = "deployments.imported_from_json"
+
+
+def _migrate_from_json() -> None:
+    """Import ``deployments.json`` once, if there is one and the table is empty.
+
+    An upgrade must not look like an empty cluster. The file is left where it
+    is rather than deleted — a downgrade should find it, and an operator
+    should be able to see what was imported.
+    """
+    if is_done(_IMPORT_KEY):
+        return
+    data = read_state_file(RECORDS_FILE, expect=list)
+    if data is None:
+        # No file to import, and nothing to remember: a fresh install must not
+        # record an import it never did, or a file restored later is ignored.
+        return
+    if not mark_done(_IMPORT_KEY, RECORDS_FILE.name):
+        return  # another thread got there first
+    with session_scope() as db:
+        for record in data:
+            if isinstance(record, dict) and record.get("id"):
+                db.merge(_row_of(record))
+    if not data:
+        return
+    logger.info(
+        "imported %d deployment record(s) from %s into the state database",
+        len(data),
+        RECORDS_FILE,
+    )
+
+
 # ── The file ─────────────────────────────────────────────────────────────────
 
 
@@ -70,9 +145,10 @@ def load() -> list[dict[str, Any]]:
     unreadable state file is not an empty cluster, and swallowing the error
     here is what lets a control plane tear down running work.
     """
-    data = read_state_file(RECORDS_FILE, expect=list)
-    if data is None:
-        return []
+    _migrate_from_json()
+    with session_scope() as db:
+        rows = list(db.execute(select(DeploymentRow)).scalars())
+    data = [dict(row.record) for row in rows]
     changed = False
     for record in data:
         command = record.get("launch_command") if isinstance(record, dict) else None
@@ -116,8 +192,23 @@ def transaction() -> AbstractContextManager[None]:
 
 
 def save(records: list[dict[str, Any]]) -> None:
-    """Persist the records: temp file, fsync, replace, directory fsync."""
-    write_json_atomic(RECORDS_FILE, records, indent=2, default=str)
+    """Persist the whole record set, replacing what is stored.
+
+    Whole-set rather than per-row because that is the shape every caller
+    already has — ``native_runtime`` loads the list, changes it and saves it
+    back — and changing that shape and the storage in one step would make
+    neither reviewable. The replacement happens in one transaction, so a
+    reader sees the previous set or the new one.
+    """
+    wanted = {
+        str(r.get("id")): r for r in records if isinstance(r, dict) and r.get("id")
+    }
+    with session_scope() as db:
+        for row in list(db.execute(select(DeploymentRow)).scalars()):
+            if row.id not in wanted:
+                db.delete(row)
+        for record in wanted.values():
+            db.merge(_row_of(record))
 
 
 def check_state_file() -> None:
@@ -126,22 +217,31 @@ def check_state_file() -> None:
     Startup calls this so the control plane refuses to come up with an empty
     view of the world while containers are still running.
     """
+    # The JSON file is only consulted while it still exists, to import it.
+    # Once state lives in the database, an unreadable *database* is what
+    # engine() raises on, and it raises for the same reason: an unreadable
+    # state store is not an empty cluster.
     read_state_file(RECORDS_FILE, expect=list)
+    engine()
 
 
 def get(deployment_id: str) -> dict[str, Any] | None:
     """One record by id, exactly as stored."""
-    return next((r for r in load() if r.get("id") == deployment_id), None)
+    _migrate_from_json()
+    with session_scope() as db:
+        row = db.get(DeploymentRow, deployment_id)
+        return dict(row.record) if row is not None else None
 
 
 def delete(deployment_id: str) -> bool:
     """Drop a record. ``False`` when there was nothing to drop."""
     with transaction():
-        records = load()
-        remaining = [r for r in records if r.get("id") != deployment_id]
-        if len(remaining) == len(records):
-            return False
-        save(remaining)
+        _migrate_from_json()
+        with session_scope() as db:
+            row = db.get(DeploymentRow, deployment_id)
+            if row is None:
+                return False
+            db.delete(row)
         return True
 
 

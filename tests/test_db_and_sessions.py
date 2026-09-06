@@ -230,3 +230,76 @@ def test_two_engines_on_one_file_see_each_others_writes(tmp_path):
     db.configure(f"sqlite:///{path}")
 
     assert sessions.get(token) is not None
+
+
+# ── The one-time import ─────────────────────────────────────────────────────
+
+
+class TestTheLegacyImportRunsOnce:
+    """A JSON file is imported once, and "once" cannot mean "whenever empty".
+
+    Keying the import off an empty table is the obvious implementation and is
+    wrong in a way that only shows up later: deleting the last deployment
+    empties the table, so the next read re-imports the file and resurrects
+    every deployment the operator had removed. It is the same shape as the
+    zombie record fixed in #40, arriving by a different route.
+    """
+
+    def _seed(self, path, records):
+        import json
+
+        path.write_text(json.dumps(records))
+
+    def test_records_are_imported_from_the_legacy_file(self, tmp_path, monkeypatch):
+        from spark_pulse.tools import deployment_records as store
+
+        db.configure(f"sqlite:///{tmp_path / 'state.db'}")
+        legacy = tmp_path / "deployments.json"
+        self._seed(legacy, [{"id": "dep-1", "status": "running", "runtime": "native"}])
+        monkeypatch.setattr(store, "RECORDS_FILE", legacy)
+
+        assert [r["id"] for r in store.load()] == ["dep-1"]
+
+    def test_deleting_the_last_record_does_not_resurrect_the_file(
+        self, tmp_path, monkeypatch
+    ):
+        from spark_pulse.tools import deployment_records as store
+
+        db.configure(f"sqlite:///{tmp_path / 'state.db'}")
+        legacy = tmp_path / "deployments.json"
+        self._seed(legacy, [{"id": "dep-1", "status": "running", "runtime": "native"}])
+        monkeypatch.setattr(store, "RECORDS_FILE", legacy)
+        assert len(store.load()) == 1
+
+        assert store.delete("dep-1") is True
+
+        assert store.load() == [], "the legacy file was imported a second time"
+        assert legacy.exists(), "the operator's file is left where it was"
+
+    def test_saving_an_empty_set_stays_empty(self, tmp_path, monkeypatch):
+        from spark_pulse.tools import deployment_records as store
+
+        db.configure(f"sqlite:///{tmp_path / 'state.db'}")
+        legacy = tmp_path / "deployments.json"
+        self._seed(legacy, [{"id": "dep-1", "status": "running", "runtime": "native"}])
+        monkeypatch.setattr(store, "RECORDS_FILE", legacy)
+        store.load()
+
+        store.save([])
+
+        assert store.load() == []
+
+    def test_a_file_restored_after_a_fresh_start_is_still_imported(
+        self, tmp_path, monkeypatch
+    ):
+        """A fresh install must not record an import it never performed."""
+        from spark_pulse.tools import deployment_records as store
+
+        db.configure(f"sqlite:///{tmp_path / 'state.db'}")
+        legacy = tmp_path / "deployments.json"
+        monkeypatch.setattr(store, "RECORDS_FILE", legacy)
+        assert store.load() == []  # nothing to import yet
+
+        self._seed(legacy, [{"id": "dep-1", "status": "running", "runtime": "native"}])
+
+        assert [r["id"] for r in store.load()] == ["dep-1"]

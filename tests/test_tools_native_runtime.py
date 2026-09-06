@@ -439,7 +439,10 @@ class TestStart:
         plan = native.plan("qwen3-8b")
         native.start(plan, docker=docker, wait=True)
 
-        saved = json.loads(records.read_text())
+        # Read back through the store rather than off the file: state lives
+        # in the database now, and what this asserts is that the record
+        # persisted, not where it landed.
+        saved = tools.deployment_records.load()
         assert [d["id"] for d in saved] == [plan.deployment_id]
         assert saved[0]["runtime"] == "native"
 
@@ -724,7 +727,7 @@ class TestLifecycle:
         plan = self._running(native, docker)
 
         assert native.delete_deployment(plan.deployment_id, docker=docker) is True
-        assert json.loads(records.read_text()) == []
+        assert tools.deployment_records.load() == []
 
     def test_delete_of_an_unknown_deployment_is_false(self, native, docker):
         assert native.delete_deployment("nope", docker=docker) is False
@@ -762,7 +765,7 @@ class TestLifecycle:
     def test_list_adopts_an_unknown_labelled_container(self, native, docker, records):
         """Reconciliation: a managed container with no record is adopted."""
         plan = self._running(native, docker)
-        records.write_text(json.dumps([]))
+        tools.deployment_records.save([])  # the container outlives its record
 
         listed = native.list_deployments(docker=docker)
 
