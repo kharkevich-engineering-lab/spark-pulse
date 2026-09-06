@@ -85,3 +85,76 @@ class TestLockManager:
         result2 = manager.acquire(LockType.CLUSTER_STOP, "test-cluster")
         assert result1.success is True
         assert result2.success is True
+
+
+class TestCleanupDoesNotStealALiveLock:
+    """``cleanup_expired`` scanned outside the mutex and deleted by key.
+
+    A resource whose lock had expired could be legitimately re-acquired
+    between the scan and the delete — and the delete then removed the new
+    holder's *live* lock, leaving it believing it held exclusion it did not.
+    Iterating a dict another thread is mutating is the other half, and raises
+    outright.
+    """
+
+    def _interleaving_lock(self, manager, action):
+        """A mutex that runs ``action`` once, at the moment it is first taken.
+
+        Deterministic rather than timing-based: the window is a few
+        microseconds wide, so racing threads reproduce it only by luck.
+        """
+        real = manager._lock
+
+        class Interleave:
+            done = False
+
+            def __enter__(self):
+                real.acquire()
+                if not Interleave.done:
+                    Interleave.done = True
+                    real.release()
+                    action()
+                    real.acquire()
+                return real
+
+            def __exit__(self, *_exc):
+                real.release()
+
+        return Interleave(), real
+
+    def test_a_lock_reacquired_mid_cleanup_is_not_deleted(self, tmp_path):
+        from spark_pulse.tools.locking import LockManager, LockType
+
+        manager = LockManager(lock_dir=str(tmp_path))
+        manager.acquire(LockType.DEPLOYMENT_START, "dep-1", owner="first", timeout=0)
+
+        def reacquire():
+            granted = manager.acquire(
+                LockType.DEPLOYMENT_START, "dep-1", owner="second", timeout=600
+            )
+            assert granted.success, "the expired lock should be re-acquirable"
+
+        shim, real = self._interleaving_lock(manager, reacquire)
+        manager._lock = shim
+        manager.cleanup_expired()
+        manager._lock = real
+
+        assert manager.is_locked(
+            LockType.DEPLOYMENT_START, "dep-1"
+        ), "cleanup deleted a live lock it had only seen as expired"
+
+    def test_an_actually_expired_lock_is_still_cleaned(self, tmp_path):
+        """And the fix must not stop cleanup doing its job."""
+        from spark_pulse.tools.locking import LockManager, LockType
+
+        manager = LockManager(lock_dir=str(tmp_path))
+        manager.acquire(LockType.DEPLOYMENT_START, "gone", owner="first", timeout=0)
+
+        assert manager.cleanup_expired() == 1
+        assert not manager.is_locked(LockType.DEPLOYMENT_START, "gone")
+
+    def test_the_lock_file_is_not_under_a_world_writable_directory(self):
+        """A fixed path under /tmp is one any local user can create first."""
+        from spark_pulse.tools.locking import default_lock_dir
+
+        assert not default_lock_dir().startswith("/tmp/")

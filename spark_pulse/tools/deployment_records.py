@@ -26,6 +26,8 @@ import re
 import signal
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import threading
+from contextlib import AbstractContextManager
 from typing import Any
 
 from spark_pulse.config import RUNTIME_NATIVE, config
@@ -82,6 +84,37 @@ def load() -> list[dict[str, Any]]:
     return data
 
 
+#: Held across every read-modify-write of the record file.
+#:
+#: Each individual write is already atomic, which is a different guarantee and
+#: not the one that was missing: a reader never sees a torn file, but two
+#: threads that each *load, change, save* will still lose one of the changes,
+#: because the second writes back a list it read before the first landed.
+#:
+#: That is not theoretical here. A deploy runs its pull on a background thread
+#: which updates the record as it goes, while the API thread can delete the
+#: same deployment at any moment. The interleaving is:
+#:
+#:     pull thread   records = load()          # the deployment is in this list
+#:     API thread    delete_deployment(...)    # filters it out, saves. Gone.
+#:     pull thread   save(records)             # writes the deleted one back
+#:
+#: and it leaves a record with no container behind it — holding its port,
+#: listed in the UI, and deletable only by someone who notices. Reentrant
+#: because the mutating helpers call one another.
+_MUTATION_LOCK = threading.RLock()
+
+
+def transaction() -> AbstractContextManager[None]:
+    """Serialise a read-modify-write of the record file.
+
+    Every caller that loads records, changes them and saves them back must
+    hold this for the whole sequence — not merely around the save, which is
+    where the atomicity already is.
+    """
+    return _MUTATION_LOCK
+
+
 def save(records: list[dict[str, Any]]) -> None:
     """Persist the records: temp file, fsync, replace, directory fsync."""
     write_json_atomic(RECORDS_FILE, records, indent=2, default=str)
@@ -103,12 +136,13 @@ def get(deployment_id: str) -> dict[str, Any] | None:
 
 def delete(deployment_id: str) -> bool:
     """Drop a record. ``False`` when there was nothing to drop."""
-    records = load()
-    remaining = [r for r in records if r.get("id") != deployment_id]
-    if len(remaining) == len(records):
-        return False
-    save(remaining)
-    return True
+    with transaction():
+        records = load()
+        remaining = [r for r in records if r.get("id") != deployment_id]
+        if len(remaining) == len(records):
+            return False
+        save(remaining)
+        return True
 
 
 def purge_expired(records: list[dict[str, Any]]) -> list[dict[str, Any]]:

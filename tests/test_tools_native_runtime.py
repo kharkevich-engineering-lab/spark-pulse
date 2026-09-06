@@ -1524,3 +1524,64 @@ class TestPerRankReads:
         listed = native.list_deployments(docker=docker)
 
         assert [d["status"] for d in listed if d["id"] == "dep1"] == ["running"]
+
+
+class TestADeletedDeploymentStaysDeleted:
+    """A record must not come back after a successful delete.
+
+    Every write to the record file is atomic, which is a different guarantee
+    from the one that was missing. Two threads that each *load, change, save*
+    still lose one of the changes, because the second writes back a list it
+    read before the first landed — and a deploy runs its pull on a background
+    thread that updates the record while the API thread can delete it.
+
+    The zombie that leaves has no container behind it, holds its port, and is
+    listed in the UI until somebody notices and deletes it a second time.
+    """
+
+    def test_an_update_racing_a_delete_does_not_resurrect_the_record(
+        self, native, docker, records
+    ):
+        plan_obj = native.plan("qwen3-8b")
+        dep_id = plan_obj.deployment_id
+        nr.persist_planned_record(plan_obj, "pulling")
+        assert nr.get_deployment(dep_id) is not None
+
+        loaded = threading.Event()
+        delete_began = threading.Event()
+        writer: list[threading.Thread] = []
+        real_save = nr._save_records
+
+        def save_pausing_only_the_writer(records_to_save):
+            """Hold the writer between its load and its save, nobody else.
+
+            That gap is the whole bug: in the real path it is however long it
+            takes to format a status update while an image downloads.
+            """
+            if writer and threading.current_thread() is writer[0]:
+                loaded.set()
+                delete_began.wait(timeout=5)
+                time.sleep(0.2)
+            real_save(records_to_save)
+
+        with patch.object(
+            nr, "_save_records", side_effect=save_pausing_only_the_writer
+        ):
+            thread = threading.Thread(
+                target=lambda: nr._update_record(dep_id, status="pulling"),
+                name="stale-writer",
+                daemon=True,
+            )
+            writer.append(thread)
+            thread.start()
+
+            assert loaded.wait(timeout=5), "the writer never reached its save"
+            delete_began.set()
+            removed = nr.delete_deployment(dep_id, docker=docker)
+            thread.join(timeout=5)
+
+        assert removed is True
+        assert nr.get_deployment(dep_id) is None, (
+            "a record deleted while a background thread held a stale copy came "
+            "back from the dead"
+        )

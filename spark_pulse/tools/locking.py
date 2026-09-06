@@ -16,6 +16,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from spark_pulse.tools.atomic_json import write_json_atomic
+
 logger = logging.getLogger(__name__)
 
 
@@ -60,21 +62,44 @@ class LockInfo:
         }
 
 
+def default_lock_dir() -> str:
+    """Where the lock file lives.
+
+    Under the user's own data directory, with everything else this program
+    persists — not ``/tmp/spark-pulse/locks``, which it used to be. A fixed
+    path under a world-writable directory is one any local user can create
+    first and then own: they choose the permissions, and they can replace
+    ``locks.json`` with a symlink to somewhere this process can write.
+    """
+    return str(Path.home() / ".local" / "share" / "spark-pulse" / "locks")
+
+
 class LockManager:
     """In-memory lock manager for cluster/deployment operations.
 
-    Prevents concurrent operations on the same resource.
-    Uses file-based locks for cross-process safety (systemd service).
+    Prevents concurrent operations on the same resource **within one
+    process**. The lock file beside it is a crash-recovery record, not a
+    cross-process mutex: it is read once at construction and written on every
+    change, so a second process picks up what the first left behind but the
+    two do not exclude each other while both are running. The docstring here
+    used to claim cross-process safety, which is not what this does — two
+    processes each hold their own dictionary and never re-read the file.
+
+    Nothing in the control plane constructs one today; the orchestrator that
+    did was removed. It is kept because the deployment paths that would need
+    it are still being built, and because a lock manager that quietly does
+    something other than what it says is worse than no lock manager at all.
     """
 
     DEFAULT_TIMEOUT_SECONDS = 30
 
-    def __init__(self, lock_dir: str = "/tmp/spark-pulse/locks"):
+    def __init__(self, lock_dir: str | None = None):
         """Initialize lock manager.
 
         Args:
             lock_dir: Directory for file-based lock persistence.
         """
+        lock_dir = lock_dir if lock_dir is not None else default_lock_dir()
         self._locks: dict[str, LockInfo] = {}
         self._lock_dir = Path(lock_dir)
         self._lock_dir.mkdir(parents=True, exist_ok=True)
@@ -189,17 +214,30 @@ class LockManager:
     def cleanup_expired(self) -> int:
         """Remove expired locks.
 
+        The scan happens **inside** the mutex, and each candidate is checked
+        again at the moment it is deleted. Both matter, and the second is the
+        one that bites: the scan used to run outside the lock, so a resource
+        whose lock had expired could be legitimately re-acquired by another
+        caller before the delete ran — and the delete then removed that
+        caller's *live* lock by key, leaving it believing it held exclusion it
+        no longer had. Iterating a dict another thread is mutating is the
+        other half, and raises outright.
+
         Returns:
             Number of locks cleaned up.
         """
-        now = datetime.now(timezone.utc)
-        expired_keys = [
-            key for key, info in self._locks.items() if now >= info.expires_at
-        ]
-
         with self._lock:
+            now = datetime.now(timezone.utc)
+            expired_keys = [
+                key for key, info in self._locks.items() if now >= info.expires_at
+            ]
             for key in expired_keys:
-                del self._locks[key]
+                info = self._locks.get(key)
+                # Re-checked, not assumed: between building the list and this
+                # line nothing can have changed *now* — but keeping the two
+                # together is what makes that true rather than incidental.
+                if info is not None and now >= info.expires_at:
+                    del self._locks[key]
             if expired_keys:
                 self._save_file_locks()
 
@@ -234,10 +272,11 @@ class LockManager:
                 }
                 for key, info in self._locks.items()
             }
-            tmp = self._lock_file.with_suffix(".tmp")
-            with open(tmp, "w") as f:
-                json.dump(locks_data, f, indent=2)
-            tmp.rename(self._lock_file)
+            # The same durable write every other persisted file here uses:
+            # fsync the content, rename, fsync the directory. The hand-rolled
+            # version fsynced nothing, so the rename could land before the
+            # bytes did and a power loss left an empty file.
+            write_json_atomic(self._lock_file, locks_data)
         except OSError as e:
             logger.warning(f"Failed to save locks to file: {e}")
 

@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 
 from spark_pulse.tools.locking import (
     LockInfo,
     LockResult,
     LockType,
 )
+
+
+def default_lock_dir() -> str:
+    """Mirrors the real module's name. Simulation never writes a lock file,
+    but ``test_mock_contract`` requires every public name to have a twin."""
+    return str(Path.home() / ".local" / "share" / "spark-pulse" / "locks")
 
 
 class LockManager:
