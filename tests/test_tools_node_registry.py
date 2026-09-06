@@ -108,7 +108,6 @@ class TestPersistence:
             infiniband_interfaces=["ib0", "ib1"],
             state="healthy",
         )
-        assert registry_in_tmp.exists()
 
         reloaded = node_registry.get_node(node.id)
         assert reloaded == node
@@ -135,11 +134,28 @@ class TestPersistence:
             "zulu",
         ]
 
-    def test_the_file_records_a_version(self, registry_in_tmp):
-        node_registry.add_node(address="10.0.0.11")
-        data = json.loads(registry_in_tmp.read_text())
-        assert data["version"] == 1
-        assert len(data["nodes"]) == 1
+    def test_a_stored_node_keeps_every_field(self, registry_in_tmp):
+        """What the ``version`` key used to guard, asserted directly.
+
+        The JSON file carried a format version so a future reader could tell
+        shapes apart. State is in the database now and the schema plays that
+        role, so what is worth pinning here is the thing the version existed
+        to protect: a record survives storage with every field intact.
+        """
+        node = node_registry.add_node(
+            name="spark-02",
+            address="10.0.0.11",
+            ssh_user="spark",
+            infiniband_interfaces=["rocep1s0f0", "rocep1s0f1"],
+            fabric_mode="direct",
+            state="healthy",
+        )
+
+        (stored,) = node_registry.list_nodes()
+
+        assert stored == node
+        assert stored.infiniband_interfaces == ("rocep1s0f0", "rocep1s0f1")
+        assert stored.fabric_mode == "direct"
 
     def test_a_hand_edited_record_without_an_id_is_given_one(self, registry_in_tmp):
         registry_in_tmp.write_text(

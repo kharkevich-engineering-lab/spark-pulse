@@ -33,7 +33,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from spark_pulse.tools.atomic_json import read_state_file, write_json_atomic
+from sqlalchemy import JSON, Boolean, String, select
+from sqlalchemy.orm import Mapped, mapped_column
+
+from spark_pulse.db import Base, is_done, mark_done, session_scope
+from spark_pulse.tools.atomic_json import read_state_file
 
 logger = logging.getLogger(__name__)
 
@@ -207,6 +211,64 @@ class Finding:
 # ── Persistence ──────────────────────────────────────────────────────────────
 
 
+# ── The table ────────────────────────────────────────────────────────────────
+
+#: Recorded once ``nodes.json`` has been imported. In ``meta`` rather than
+#: inferred from an empty table: removing the last node empties the table, and
+#: an import that re-ran then would resurrect a node the operator forgot.
+_IMPORT_KEY = "nodes.imported_from_json"
+
+
+class _NodeRow(Base):
+    """One machine, as a row.
+
+    ``id`` and ``address`` are columns because identity and reachability are
+    what everything looks a node up by; the rest travels as a document, for
+    the same reason the deployment record does — the shape is still growing.
+    """
+
+    __tablename__ = "nodes"
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    address: Mapped[str] = mapped_column(String(255), default="", index=True)
+    is_control_plane: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    record: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+def _migrate_from_json() -> None:
+    """Import ``nodes.json`` once, if there is one. See §3.3."""
+    if is_done(_IMPORT_KEY):
+        return
+    data = read_state_file(registry_path(), expect=dict)
+    if data is None:
+        return
+    if not mark_done(_IMPORT_KEY, registry_path().name):
+        return
+    raw = data.get("nodes")
+    if not isinstance(raw, list):
+        return
+    # Through ``NodeRecord.from_dict`` rather than straight off the dict: a
+    # hand-edited nodes.json is a supported thing to have, and an entry
+    # without an id is given one there. Importing the raw dict would have
+    # silently dropped exactly the records an operator wrote by hand.
+    with session_scope() as db:
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            node = NodeRecord.from_dict(item)
+            db.merge(
+                _NodeRow(
+                    id=node.id,
+                    address=node.address,
+                    is_control_plane=node.is_control_plane,
+                    record=node.to_dict(),
+                )
+            )
+    logger.info(
+        "imported %d node(s) from %s into the state database", len(raw), registry_path()
+    )
+
+
 def list_nodes() -> list[NodeRecord]:
     """Every node in the registry, control plane first, then by name.
 
@@ -214,13 +276,10 @@ def list_nodes() -> list[NodeRecord]:
         StateFileError: The file exists but could not be read or parsed. A
             registry we cannot read is not an empty cluster.
     """
-    data = read_state_file(registry_path(), expect=dict)
-    if not data:
-        return []
-    raw = data.get("nodes")
-    if not isinstance(raw, list):
-        return []
-    nodes = [NodeRecord.from_dict(item) for item in raw if isinstance(item, dict)]
+    _migrate_from_json()
+    with session_scope() as db:
+        rows = list(db.execute(select(_NodeRow)).scalars())
+    nodes = [NodeRecord.from_dict(dict(row.record)) for row in rows]
     return _sorted(nodes)
 
 
@@ -229,10 +288,27 @@ def _sorted(nodes: Iterable[NodeRecord]) -> list[NodeRecord]:
 
 
 def _save(nodes: Iterable[NodeRecord]) -> None:
-    write_json_atomic(
-        registry_path(),
-        {"version": 1, "nodes": [node.to_dict() for node in _sorted(nodes)]},
-    )
+    """Replace the whole registry, in one transaction.
+
+    Whole-set because that is the shape every caller has — add, update and
+    remove each rebuild the list — and one transaction so a reader sees the
+    previous registry or the new one, never half of either.
+    """
+    wanted = {node.id: node for node in nodes}
+    with session_scope() as db:
+        for row in list(db.execute(select(_NodeRow)).scalars()):
+            if row.id not in wanted:
+                db.delete(row)
+        for node in wanted.values():
+            record = node.to_dict()
+            db.merge(
+                _NodeRow(
+                    id=node.id,
+                    address=node.address,
+                    is_control_plane=node.is_control_plane,
+                    record=record,
+                )
+            )
 
 
 def get_node(node_id: str) -> NodeRecord | None:
