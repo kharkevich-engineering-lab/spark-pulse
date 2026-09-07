@@ -16,7 +16,6 @@ import { useQuery } from "@/hooks/useQuery";
 import { useSSEConnection } from "@/hooks/useSSEConnection";
 import { SSEConnectionState } from "@/lib/operations";
 import { formatSize } from "@/lib/utils";
-import { setRefresh } from "@/lib/refresh";
 import { AlertModal, ConfirmModal } from "@/components/Modal";
 import type { ModelDownloadJob, ModelEntry, ModelSource, ScheduledDeploy } from "@/lib/types";
 
@@ -132,7 +131,6 @@ export default function ModelsPage() {
   const [alert, setAlert] = useState<{ title: string; message: string } | null>(null);
   const [scheduled, setScheduled] = useState<ScheduledDeploy[]>([]);
 
-  useEffect(() => { setRefresh(refetch); }, [refetch]);
 
   const reloadJobs = useCallback(() => {
     fetchModelDownloads().then(setJobs).catch(() => { });

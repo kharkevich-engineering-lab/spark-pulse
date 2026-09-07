@@ -1,10 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { fetchCache, cleanCache } from "@/lib/api";
 import { useQuery } from "@/hooks/useQuery";
 import { formatSize } from "@/lib/utils";
 import { Database, Trash2, Loader2, AlertCircle, FolderOpen, FileStack } from "lucide-react";
 import { ConfirmModal, AlertModal } from "@/components/Modal";
-import { setRefresh } from "@/lib/refresh";
 
 export default function CachePage() {
   const { data: cacheData, loading, error, refetch } = useQuery(fetchCache);
@@ -12,7 +11,6 @@ export default function CachePage() {
   const [cleanTarget, setCleanTarget] = useState<string | null>(null);
   const [alertModal, setAlertModal] = useState<{ title: string; message: string } | null>(null);
 
-  useEffect(() => { setRefresh(refetch); }, [refetch]);
 
   const doClean = async (name: string) => {
     setCleaning(name);

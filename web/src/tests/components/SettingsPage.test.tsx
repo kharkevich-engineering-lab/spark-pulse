@@ -617,6 +617,70 @@ describe("SettingsPage environment tab", () => {
   });
 });
 
+// ── Preferences ─────────────────────────────────────────────────────────────
+
+/** The theme used to be one unlabelled button in the header that stepped
+ *  dark → light → system, so the only way to find out what a click would do
+ *  was to click it. It is three named choices here, and it is a *preference* —
+ *  per browser, never sent to the server. */
+describe("SettingsPage preferences tab", () => {
+  beforeEach(() => {
+    seedApi();
+    document.documentElement.className = "";
+  });
+
+  it("says which theme is on", async () => {
+    localStorage.setItem("spark-pulse-theme", "dark");
+    render(<SettingsPage />);
+    await openTab(/preferences/i);
+
+    expect(await screen.findByRole("button", { name: "Dark" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "System" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  });
+
+  it("defaults to following the operating system", async () => {
+    render(<SettingsPage />);
+    await openTab(/preferences/i);
+
+    expect(await screen.findByRole("button", { name: "System" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("applies the choice and remembers it", async () => {
+    const user = userEvent.setup();
+    render(<SettingsPage />);
+    await openTab(/preferences/i);
+
+    await user.click(await screen.findByRole("button", { name: "Light" }));
+
+    expect(localStorage.getItem("spark-pulse-theme")).toBe("light");
+    expect(document.documentElement).toHaveClass("light");
+    expect(document.documentElement).not.toHaveClass("dark");
+  });
+
+  /** It is the operator's preference, not the control plane's setting: a save
+   *  button here would imply it reached the server, and a second browser would
+   *  then be expected to follow it. */
+  it("needs no save, and offers none", async () => {
+    const user = userEvent.setup();
+    render(<SettingsPage />);
+    await openTab(/preferences/i);
+
+    await user.click(await screen.findByRole("button", { name: "Dark" }));
+
+    expect(screen.queryByRole("button", { name: /save settings/i })).toBeNull();
+    expect(updateSettings).not.toHaveBeenCalled();
+  });
+});
+
 // ── Secrets ─────────────────────────────────────────────────────────────────
 
 /** The HuggingFace token is written to a 0600 file and passed as `HF_TOKEN` to

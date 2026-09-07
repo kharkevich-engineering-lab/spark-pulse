@@ -19,7 +19,8 @@ import os
 # in simulation as in production, so there is one store and not two); and
 # ``recipe_schema``/``recipe_sources``, which both the real and the mock
 # ``recipes`` import (they are not listed below for exactly that reason — the
-# switch must not see them); and ``scheduled_deploys``, which is a database
+# switch must not see them), along with ``recipe_import``, which is now only a
+# reader of what an older build imported and has nothing left to simulate; and ``scheduled_deploys``, which is a database
 # table and reaches everything it acts on *through* the switch, so it is the
 # same code in both modes.  Everything else must exist in both packages.
 from spark_pulse.tools import atomic_json as atomic_json
@@ -28,6 +29,7 @@ from spark_pulse.tools import custom_recipes as custom_recipes
 from spark_pulse.tools import deployment_records as deployment_records
 from spark_pulse.tools import hub_cache as hub_cache
 from spark_pulse.tools import labels as labels
+from spark_pulse.tools import recipe_import as recipe_import
 from spark_pulse.tools import recipe_schema as recipe_schema
 from spark_pulse.tools import recipe_sources as recipe_sources
 from spark_pulse.tools import scheduled_deploys as scheduled_deploys
@@ -39,7 +41,6 @@ if _sim_mode:
         system as system,
         cache as cache,
         recipes as recipes,
-        recipe_import as recipe_import,
         benchmarking as benchmarking,
         mods as mods,
         docker as docker,
@@ -52,7 +53,6 @@ if _sim_mode:
         launch_script as launch_script,
         engine_metrics as engine_metrics,
         reconciliation as reconciliation,
-        locking as locking,
         events as events,
         native_runtime as native_runtime,
         deploy_dispatch as deploy_dispatch,
@@ -65,7 +65,6 @@ else:
         system as system,
         cache as cache,
         recipes as recipes,
-        recipe_import as recipe_import,
         benchmarking as benchmarking,
         mods as mods,
         docker as docker,
@@ -78,7 +77,6 @@ else:
         launch_script as launch_script,
         engine_metrics as engine_metrics,
         reconciliation as reconciliation,
-        locking as locking,
         events as events,
         native_runtime as native_runtime,
         deploy_dispatch as deploy_dispatch,

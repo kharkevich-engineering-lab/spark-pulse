@@ -12,6 +12,7 @@ import ImagesPage from "@/pages/ImagesPage";
 import MCPPage from "@/pages/MCPPage";
 import SettingsPage from "@/pages/SettingsPage";
 import LoginPage from "@/pages/LoginPage";
+import NotFoundPage from "@/pages/NotFoundPage";
 import OciRegistryPage from "@/pages/OciRegistryPage";
 import ClusterPage from "@/pages/ClusterPage";
 import { ErrorBoundary, DefaultErrorFallback } from "@/components/ErrorBoundary";
@@ -27,10 +28,38 @@ function BenchmarkingRoute() {
   return enabled ? <BenchmarkingPage /> : <Navigate to="/" replace />;
 }
 
-// Inner component that conditionally renders Layout based on route
+/** The application's pages, as data.
+ *
+ * One list, so "which paths exist" cannot drift from "which paths render".
+ * The not-found page needs that question answered — without it an unknown
+ * path matched no route and left an empty shell inside the sidebar, which
+ * reads as a broken page rather than as a wrong address — and a second,
+ * hand-maintained list of paths would have gone stale the first time somebody
+ * added a page.
+ */
+const PAGES: { path: string; element: React.ReactNode }[] = [
+  { path: "/", element: <RecipesPage /> },
+  { path: "/jobs", element: <InferencePage /> },
+  { path: "/cluster", element: <ClusterPage /> },
+  { path: "/benchmarking", element: <BenchmarkingRoute /> },
+  { path: "/monitoring", element: <MemoryPage /> },
+  { path: "/models", element: <ModelsPage /> },
+  { path: "/images", element: <ImagesPage /> },
+  { path: "/cache", element: <CachePage /> },
+  { path: "/mcp", element: <MCPPage /> },
+  { path: "/oci", element: <OciRegistryPage /> },
+  { path: "/settings", element: <SettingsPage /> },
+];
+
+/** Every address this application answers, login included. */
+export const KNOWN_PATHS = ["/login", ...PAGES.map((p) => p.path)];
+
 function AppRoutes() {
   const location = useLocation();
   const isLoginPage = location.pathname === "/login";
+  // Rendered outside Layout: a not-found page framed by the application's own
+  // navigation invites the reader to believe the page half loaded.
+  if (!KNOWN_PATHS.includes(location.pathname)) return <NotFoundPage />;
 
   return (
     <>
@@ -42,17 +71,9 @@ function AppRoutes() {
       {!isLoginPage && (
         <Layout>
           <Routes>
-            <Route path="/" element={<RecipesPage />} />
-            <Route path="/jobs" element={<InferencePage />} />
-            <Route path="/cluster" element={<ClusterPage />} />
-            <Route path="/benchmarking" element={<BenchmarkingRoute />} />
-            <Route path="/monitoring" element={<MemoryPage />} />
-            <Route path="/models" element={<ModelsPage />} />
-            <Route path="/images" element={<ImagesPage />} />
-            <Route path="/cache" element={<CachePage />} />
-            <Route path="/mcp" element={<MCPPage />} />
-            <Route path="/oci" element={<OciRegistryPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
+            {PAGES.map(({ path, element }) => (
+              <Route key={path} path={path} element={element} />
+            ))}
           </Routes>
         </Layout>
       )}

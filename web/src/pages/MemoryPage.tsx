@@ -3,7 +3,6 @@ import { connectMetricsStream, fetchMemory, killGpuProcess } from "@/lib/api";
 import { useQuery } from "@/hooks/useQuery";
 import { Activity, Cpu, HardDrive, Loader2, AlertCircle, Zap, Workflow, OctagonX } from "lucide-react";
 import type { GPUProcess, MemoryResponse } from "@/lib/types";
-import { setRefresh } from "@/lib/refresh";
 import { AlertModal, ConfirmModal } from "@/components/Modal";
 import { HealthHistoryChart, type HealthSeries } from "@/components/HealthBadge";
 
@@ -49,7 +48,6 @@ export default function MemoryPage() {
   const [history, setHistory] = useState<Record<string, GPUSample[]>>({});
   const d = sse || memory;
 
-  useEffect(() => { setRefresh(refetch); }, [refetch]);
   useEffect(() => {
     const stop = connectMetricsStream((event, data) => { if (event === "metrics") setSse(data as MemoryResponse); });
     return stop;

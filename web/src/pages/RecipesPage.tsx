@@ -13,9 +13,7 @@ import CustomRecipeDrawer from "@/components/CustomRecipeDrawer";
 import CustomModDrawer from "@/components/CustomModDrawer";
 import NewRecipeModal from "@/components/NewRecipeModal";
 import NewModModal from "@/components/NewModModal";
-import RecipeImportPanel from "@/components/RecipeImportPanel";
 import type { DeployOptionsValue } from "@/components/DeployOptions";
-import { setRefresh } from "@/lib/refresh";
 
 /** What a blocked create is waiting on: the deploy the operator asked for,
  *  and the pre-flight report that stopped it — kept together so "Deploy
@@ -237,7 +235,6 @@ export default function RecipesPage() {
     return { available: avail, unavailable: unavail };
   }, [recipes, clusterEnabled]);
 
-  useEffect(() => { setRefresh(refetch); }, [refetch]);
 
   const loadCustomData = async () => {
     setCustomLoading(true);
@@ -546,8 +543,6 @@ export default function RecipesPage() {
             </>
           ) : (
             <>
-              <RecipeImportPanel onImported={refetch} />
-
               {recipes && recipes.length > 0 && (
                 <>
                   <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">

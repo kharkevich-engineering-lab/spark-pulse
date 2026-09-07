@@ -46,19 +46,6 @@ const CASES: Case[] = [
     path: "/api/recipes/bundled/qwen3-8b",
     method: "GET",
   },
-  {
-    name: "importRecipes",
-    call: () => api.importRecipes({ url: "https://example.invalid/repo.git", ref: "main" }),
-    path: "/api/recipes/import",
-    method: "POST",
-    body: { url: "https://example.invalid/repo.git", ref: "main" },
-  },
-  {
-    name: "fetchRecipeImportStatus",
-    call: () => api.fetchRecipeImportStatus(),
-    path: "/api/recipes/import/status",
-    method: "GET",
-  },
 
   // ── Deployments ───────────────────────────────────────────────────────────
   { name: "fetchDeployments", call: () => api.fetchDeployments(), path: "/api/deployments", method: "GET" },

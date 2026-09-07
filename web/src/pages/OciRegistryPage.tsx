@@ -32,7 +32,6 @@ import { AlertModal } from "@/components/Modal";
 import SlideDrawer from "@/components/SlideDrawer";
 import RegistryCard from "@/components/RegistryCard";
 import CollectionCard from "@/components/CollectionCard";
-import { setRefresh } from "@/lib/refresh";
 
 type Tab = "browse" | "installed" | "settings";
 
@@ -70,7 +69,6 @@ export default function OciRegistryPage() {
   const { data: autoSettings, loading: autoLoading, refetch: refetchAuto } = useQuery(fetchOciAutoUpdateSettings);
   const { data: updates, loading: updatesLoading, refetch: refetchUpdates } = useQuery(fetchUpdates);
 
-  useEffect(() => { setRefresh(refetchCols); }, [refetchCols]);
 
   // Fetch versions for each registry when they change
   useEffect(() => {
