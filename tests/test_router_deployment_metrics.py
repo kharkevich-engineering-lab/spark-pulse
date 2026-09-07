@@ -44,10 +44,13 @@ def client(store, sampler):
     outlive one interval and CI is the slow machine.
 
     The sampler *object* is kept, so snapshots taken through the API still see
-    what the test recorded; only the thread goes.
+    what the test recorded; only the thread goes. The reconciler goes for the
+    same reason: it converges records on its own schedule, and a test that
+    asserts what a sweep did needs to be the one that ran it.
     """
     with TestClient(create_app()) as test_client:
         sampler.stop()
+        tools.reconciler.stop_reconciler()
         yield test_client
 
 
@@ -166,12 +169,22 @@ class TestEndpoint:
         assert body["samples"] == []
 
     def test_deleting_a_deployment_drops_its_window(self, client, store, sampler):
+        """The window goes with the record, not with the request.
+
+        The request only records the intent now; it is the sweep that removes
+        the record, and the window has to go at the same moment — a snapshot
+        of a deployment nobody can name any more is a leak.
+        """
         write(store, record(status="stopped"))
         sampler._set_status("dep-1", tools.engine_metrics.AVAILABLE)
         sampler._ring("dep-1").append(tools.engine_metrics.Reading(t=1.0, running=1.0))
 
-        assert client.delete("/api/deployments/dep-1").json()["deleted"] is True
+        assert client.delete("/api/deployments/dep-1").json()["sync"] == "deleting"
+        assert sampler.snapshot("dep-1")["samples"] != []
 
+        tools.reconciler.Reconciler().sweep()
+
+        assert tools.deployment_records.get("dep-1") is None
         assert sampler.snapshot("dep-1")["samples"] == []
 
 

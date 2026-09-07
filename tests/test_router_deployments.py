@@ -101,8 +101,17 @@ def _join_deploy_threads(timeout: float = 5.0) -> None:
 
 @pytest.fixture
 def client(env):
+    """The app, with its reconciler stopped so sweeps are explicit.
+
+    `lifespan` starts a background thread that converges deleted deployments.
+    Left running it races every assertion about the state *between* the
+    request and the convergence — which is exactly what these tests are about
+    — so they sweep by hand instead. The thread itself is tested in
+    `test_tools_reconciler.py`.
+    """
     app = create_app()
     with TestClient(app) as test_client:
+        tools.reconciler.stop_reconciler()
         yield test_client
 
 
@@ -332,23 +341,71 @@ class TestLifecycleEndpoints:
         assert response.status_code == 200
         assert created["container_name"] in response.json()["logs"]
 
-    def test_delete_stops_a_running_deployment(self, client, env):
+    def test_delete_answers_before_any_node_has_been_asked(self, client, env):
+        """The decision is made when the request arrives; the work is not.
+
+        Tearing every rank down on the request's thread made a delete as slow
+        as the slowest node, and on a node that had stopped answering, as slow
+        as the transport timeout. What the browser waited on was somebody
+        else's timeout, over a decision already taken.
+        """
         created = self._create(client)
+
         response = client.delete(f"/api/deployments/{created['id']}")
 
         assert response.status_code == 200
-        assert response.json()["status"] == "stopped"
-        assert created["container_name"] not in [
-            c.name for c in env["docker"].list_managed_containers()
+        body = response.json()
+        assert body["accepted"] is True
+        assert body["sync"] == "in_progress"
+        assert body["intent"] == "stop"
+        # Still listed, still running, and now marked: nothing has been torn
+        # down yet, and saying "stopped" here is what makes a UI report a
+        # container that still holds its GPU as gone.
+        listed = client.get("/api/deployments").json()
+        assert [(d["status"], d["sync"]) for d in listed] == [
+            ("running", "in_progress")
         ]
 
-    def test_delete_of_a_stopped_deployment_removes_it(self, client):
+    def test_the_sweep_is_what_stops_the_container(self, client, env):
         created = self._create(client)
         client.delete(f"/api/deployments/{created['id']}")
 
-        response = client.delete(f"/api/deployments/{created['id']}")
-        assert response.json() == {"deleted": True, "id": created["id"]}
+        tools.reconciler.Reconciler().sweep()
+
+        assert created["container_name"] not in [
+            c.name for c in env["docker"].list_managed_containers()
+        ]
+        listed = client.get("/api/deployments").json()
+        assert [(d["status"], d["sync"]) for d in listed] == [("stopped", "in_sync")]
+
+    def test_a_stop_is_not_a_removal(self, client, env):
+        """Two operations that share a verb in the UI and a method here.
+
+        Stopping a live deployment ends the containers; the record stays,
+        because a finished run is history an operator reads. Clearing that
+        record is a second, separate decision.
+        """
+        created = self._create(client)
+        client.delete(f"/api/deployments/{created['id']}")
+        tools.reconciler.Reconciler().sweep()
+        assert client.get("/api/deployments").json() != []
+
+        second = client.delete(f"/api/deployments/{created['id']}")
+
+        assert second.json()["sync"] == "deleting"
+        assert second.json()["intent"] == "delete"
+        tools.reconciler.Reconciler().sweep()
         assert client.get("/api/deployments").json() == []
+
+    def test_deleting_twice_is_not_an_error(self, client):
+        """An operator clicking again, or a retry, must not 500."""
+        created = self._create(client)
+        client.delete(f"/api/deployments/{created['id']}")
+
+        second = client.delete(f"/api/deployments/{created['id']}")
+
+        assert second.status_code == 200
+        assert second.json()["sync"] == "in_progress"
 
     def test_list_shows_the_native_deployment(self, client):
         created = self._create(client)
@@ -401,13 +458,13 @@ class TestLegacyRecords:
         ):
             response = client.delete("/api/deployments/legacy")
 
-        assert response.status_code == 200
-        assert response.json()["status"] == "stopped"
+            assert response.status_code == 200
+            assert response.json()["sync"] == "in_progress"
+            # The signal is sent by the sweep, not by the request.
+            tools.reconciler.Reconciler().sweep()
+
         getpgid.assert_called_once_with(4242)
         assert killpg.call_args[0] == (4242, signal.SIGTERM)
-        # Through the store: state lives in the database now, and the seeded
-        # JSON file is only its migration source.
-        assert tools.deployment_records.load()[0]["status"] == "stopped"
 
     def test_a_process_that_is_already_gone_still_marks_the_record(self, client, env):
         self._seed(env)
@@ -416,8 +473,12 @@ class TestLegacyRecords:
             patch.object(records.os, "getpgid", side_effect=ProcessLookupError),
         ):
             response = client.delete("/api/deployments/legacy")
+            assert response.json()["sync"] == "in_progress"
+            tools.reconciler.Reconciler().sweep()
 
-        assert response.json()["status"] == "stopped"
+        record = tools.deployment_records.get("legacy")
+        assert record["status"] == "stopped"
+        assert record["sync"] == "in_sync"
 
     def test_a_dead_process_reconciles_the_record_to_stopped(self, client, env):
         self._seed(env)
@@ -428,9 +489,11 @@ class TestLegacyRecords:
 
     def test_deleting_a_stopped_one_drops_the_record(self, client, env):
         self._seed(env, status="stopped", stopped_at=self.RECENTLY)
+
         response = client.delete("/api/deployments/legacy")
 
-        assert response.json() == {"deleted": True, "id": "legacy"}
+        assert response.json()["sync"] == "deleting"
+        tools.reconciler.Reconciler().sweep()
         assert tools.deployment_records.load() == []
 
     def test_deleting_one_stops_it_first(self, env):

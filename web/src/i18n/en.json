@@ -180,6 +180,7 @@
   "inference": {
     "title": "Inference",
     "subtitle": "Live model inference workloads and their logs",
+    "settling": "Waiting for the nodes to catch up",
     "removeFromHistory": "Remove from history",
     "runBenchmark": "Run Benchmark",
     "engine": "Engine",

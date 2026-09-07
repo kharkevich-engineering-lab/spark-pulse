@@ -865,3 +865,139 @@ describe("InferencePage engine metrics", () => {
     expect(other.queryByText("Queued")).toBeNull();
   });
 });
+
+/** Since a delete records an intent and returns, the row survives the request
+ *  that asked for it to go. What the operator sees while the reconciler works
+ *  is the whole point of the change: the record still says what it is, plus
+ *  what has been asked of it, and the buttons that would ask again are shut. */
+describe("InferencePage convergence", () => {
+  const SETTLED = deployment({ id: "ok1", name: "settled job", status: "running", sync: "in_sync" });
+  /** A live deployment the operator has asked to stop. It is still running:
+   *  the containers are gone only when a node says so. */
+  const GOING = deployment({
+    id: "go1",
+    name: "going job",
+    status: "running",
+    sync: "in_progress",
+    sync_reason: "waiting on a node",
+  });
+  /** A finished run whose record is being cleared out of history. */
+  const CLEARING = deployment({ id: "hist1", name: "cleared job", status: "stopped", sync: "deleting" });
+
+  class CapturingEventSource {
+    static instances: CapturingEventSource[] = [];
+    url: string;
+    readyState = 1;
+    onmessage: ((e: MessageEvent) => void) | null = null;
+    onopen: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+
+    constructor(url: string) {
+      this.url = url;
+      CapturingEventSource.instances.push(this);
+    }
+    addEventListener() {}
+    removeEventListener() {}
+    close() {
+      this.readyState = 2;
+    }
+    emit(payload: unknown) {
+      this.onmessage?.({ data: JSON.stringify(payload) } as MessageEvent);
+    }
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    CapturingEventSource.instances = [];
+    vi.stubGlobal("EventSource", CapturingEventSource);
+    vi.mocked(connectLogStream).mockReturnValue(() => {});
+    vi.mocked(fetchDeployments).mockResolvedValue([SETTLED, GOING, CLEARING]);
+    vi.mocked(stopDeployment).mockResolvedValue(undefined);
+  });
+
+  it("says a running deployment is still running while it is being stopped", async () => {
+    render(<InferencePage />);
+
+    const row = within(await screen.findByTestId("deployment-go1"));
+    // Not "stopped": the container may still be holding its GPU.
+    expect(row.getByText("Running")).toBeInTheDocument();
+    expect(row.getByTestId("sync-in_progress")).toHaveAttribute("title", "waiting on a node");
+  });
+
+  it("shuts the stop button while the stop is in flight", async () => {
+    render(<InferencePage />);
+
+    const row = within(await screen.findByTestId("deployment-go1"));
+
+    expect(row.getByTitle("Waiting for the nodes to catch up")).toBeDisabled();
+  });
+
+  it("shuts the remove-from-history button too, so the record is not asked twice", async () => {
+    render(<InferencePage />);
+
+    const row = within(await screen.findByTestId("deployment-hist1"));
+
+    expect(row.getByTitle("Waiting for the nodes to catch up")).toBeDisabled();
+    expect(row.queryByTitle("Remove from history")).toBeNull();
+  });
+
+  it("leaves a settled deployment's actions alone", async () => {
+    render(<InferencePage />);
+
+    const row = within(await screen.findByTestId("deployment-ok1"));
+
+    expect(row.getByTitle("Stop")).toBeEnabled();
+    expect(row.queryByTestId("sync-in_sync")).toBeNull();
+  });
+
+  /** Convergence changed the record, so the row on screen is stale. Waiting
+   *  for the ten-second poll is what made a delete look like nothing had
+   *  happened. */
+  it("re-reads the list when the reconciler says a record changed", async () => {
+    render(<InferencePage />);
+    await screen.findByTestId("deployment-go1");
+    await waitFor(() =>
+      expect(CapturingEventSource.instances.find((s) => s.url === "/sse/deployments")).toBeDefined(),
+    );
+    const stream = CapturingEventSource.instances.find((s) => s.url === "/sse/deployments")!;
+    const before = vi.mocked(fetchDeployments).mock.calls.length;
+
+    act(() =>
+      stream.emit({
+        type: "deployment_sync",
+        event_id: "e1",
+        timestamp: "2026-01-01T00:00:00Z",
+        message: "removal requested",
+        resource: "go1",
+        resource_type: "deployment",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(vi.mocked(fetchDeployments).mock.calls.length).toBeGreaterThan(before),
+    );
+  });
+
+  it("does not re-read the list for an ordinary log event", async () => {
+    render(<InferencePage />);
+    await screen.findByTestId("deployment-go1");
+    await waitFor(() =>
+      expect(CapturingEventSource.instances.find((s) => s.url === "/sse/deployments")).toBeDefined(),
+    );
+    const stream = CapturingEventSource.instances.find((s) => s.url === "/sse/deployments")!;
+    const before = vi.mocked(fetchDeployments).mock.calls.length;
+
+    act(() =>
+      stream.emit({
+        type: "deployment.started",
+        event_id: "e2",
+        timestamp: "2026-01-01T00:00:00Z",
+        message: "rank 0 is serving",
+        resource: "go1",
+        resource_type: "deployment",
+      }),
+    );
+
+    expect(vi.mocked(fetchDeployments).mock.calls.length).toBe(before);
+  });
+});

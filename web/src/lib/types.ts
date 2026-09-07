@@ -143,6 +143,15 @@ export interface Deployment {
   stopped_at: string | null;
   error_message: string | null;
   launch_command?: string;
+  /** Convergence, as distinct from `status`.
+   *
+   * `status` says what the deployment is — running, pulling, stopped. This
+   * says whether what was asked for has happened yet: `in_sync`,
+   * `in_progress`, `deleting`, or `unknown` when a node could not be asked.
+   * Records written before this existed carry nothing and are settled. */
+  sync?: string;
+  /** Why it is not settled, in the operator's words. */
+  sync_reason?: string;
   /** "native" when the deployment runs as a container we drive ourselves;
    *  absent or "upstream" when it was launched via run-recipe.sh. */
   runtime?: string;

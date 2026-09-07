@@ -180,6 +180,7 @@
   "inference": {
     "title": "Inférence",
     "subtitle": "Charges d'inférence en cours et leurs journaux",
+    "settling": "En attente de la convergence des nœuds",
     "removeFromHistory": "Retirer de l'historique",
     "runBenchmark": "Lancer l'analyse comparative",
     "engine": "Moteur",

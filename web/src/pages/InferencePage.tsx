@@ -10,7 +10,7 @@ import {
 } from "@/lib/api";
 import { useQuery } from "@/hooks/useQuery";
 import { useSSEConnection } from "@/hooks/useSSEConnection";
-import StatusBadge from "@/components/StatusBadge";
+import StatusBadge, { isSettling } from "@/components/StatusBadge";
 import HealthBadge from "@/components/HealthBadge";
 import EventStreamViewer from "@/components/EventStreamViewer";
 import RankList from "@/components/RankList";
@@ -75,8 +75,14 @@ export default function InferencePage() {
         },
         ...prev,
       ].slice(0, 100));
+      // Convergence changed the record itself, so the row on screen is now
+      // stale. Waiting for the ten-second poll is what made a delete look
+      // like nothing happened.
+      if (evt.type === "deployment_sync" || evt.type === "deployment_deleted") {
+        refetch();
+      }
     }
-  }, []);
+  }, [refetch]);
   useSSEConnection("/sse/deployments", handleDeploymentEvent);
 
   const handleBenchmark = async () => {
@@ -270,12 +276,12 @@ export default function InferencePage() {
                 )}
                 {dep.port && <span className="text-sm font-mono text-text-muted shrink-0">:{dep.port}</span>}
                 <HealthBadge status={dep.status === "running" ? "healthy" as any : dep.status === "error" ? "unhealthy" as any : "unknown" as any} size="sm" />
-                <StatusBadge status={dep.status} />
+                <StatusBadge status={dep.status} sync={dep.sync} syncReason={dep.sync_reason} />
                 {dep.pid && <span className="text-xs font-mono text-text-muted shrink-0">PID: {dep.pid}</span>}
                 <span className="text-xs text-text-muted shrink-0">{new Date(dep.created_at).toLocaleString()}</span>
                 {["stopped", "error"].includes(dep.status)
-                  ? <button onClick={(e) => { e.stopPropagation(); setStopTarget({ id: dep.id, name: dep.name }); }} className="p-2 rounded-lg hover:bg-danger/10 text-text-muted hover:text-danger transition-colors shrink-0" title={t("inference.removeFromHistory")}><Trash2 size={14} /></button>
-                  : <button onClick={(e) => { e.stopPropagation(); setStopTarget({ id: dep.id, name: dep.name }); }} disabled={dep.status !== "running" && dep.status !== "pending"} className="p-2 rounded-lg hover:bg-danger/10 text-text-muted hover:text-danger transition-colors disabled:opacity-30 shrink-0" title={dep.status === "pending" ? t("inference.cancel") : t("inference.stop")}>{dep.status === "pending" ? <X size={14} /> : <Square size={14} />}</button>}
+                  ? <button onClick={(e) => { e.stopPropagation(); setStopTarget({ id: dep.id, name: dep.name }); }} disabled={isSettling(dep.sync)} className="p-2 rounded-lg hover:bg-danger/10 text-text-muted hover:text-danger transition-colors disabled:opacity-30 shrink-0" title={isSettling(dep.sync) ? t("inference.settling") : t("inference.removeFromHistory")}><Trash2 size={14} /></button>
+                  : <button onClick={(e) => { e.stopPropagation(); setStopTarget({ id: dep.id, name: dep.name }); }} disabled={isSettling(dep.sync) || (dep.status !== "running" && dep.status !== "pending")} className="p-2 rounded-lg hover:bg-danger/10 text-text-muted hover:text-danger transition-colors disabled:opacity-30 shrink-0" title={isSettling(dep.sync) ? t("inference.settling") : dep.status === "pending" ? t("inference.cancel") : t("inference.stop")}>{dep.status === "pending" ? <X size={14} /> : <Square size={14} />}</button>}
                 {dep.status === "running" && (
                   <button onClick={(e) => { e.stopPropagation(); setBenchmarkModal({ id: dep.id, name: dep.name, recipeId: dep.recipe_id, recipeName: dep.recipe_id }); }} className="p-2 rounded-lg hover:bg-primary/10 text-text-muted hover:text-primary transition-colors shrink-0" title={t("inference.runBenchmark")}><Flame size={14} /></button>
                 )}

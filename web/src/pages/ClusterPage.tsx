@@ -128,7 +128,11 @@ export default function ClusterPage() {
                       {deployment.engine ? `${deployment.engine}/${deployment.variant ?? "default"}` : "—"}
                     </td>
                     <td className="py-2">
-                      <StatusBadge status={deployment.status} />
+                      <StatusBadge
+                        status={deployment.status}
+                        sync={deployment.sync}
+                        syncReason={deployment.sync_reason}
+                      />
                     </td>
                   </tr>
                 ))}

@@ -276,6 +276,18 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"Warning: could not start the engine metrics sampler: {e}")
 
+    # The reconciler, which is what makes a delete answer immediately: the
+    # request records the intent, this thread converges the nodes. Started
+    # after `reconcile_all` so its first sweep sees a settled store.
+    try:
+        tools.reconciler.start_reconciler()
+        print(
+            "Reconciler started (sweeping every "
+            f"{tools.reconciler.SWEEP_INTERVAL_SECONDS:.0f}s)"
+        )
+    except Exception as e:
+        print(f"Warning: could not start the reconciler: {e}")
+
     yield
 
     # Cleanup on shutdown
@@ -288,8 +300,9 @@ async def lifespan(app: FastAPI):
 
     try:
         tools.engine_metrics.stop_sampler()
+        tools.reconciler.stop_reconciler()
     except Exception as e:  # pragma: no cover — shutdown is best effort
-        print(f"Warning: could not stop the engine metrics sampler: {e}")
+        print(f"Warning: could not stop a background thread: {e}")
 
     # Withdraw the mDNS record rather than letting it time out, so a peer
     # browsing right after a restart does not see a node that is not there.
