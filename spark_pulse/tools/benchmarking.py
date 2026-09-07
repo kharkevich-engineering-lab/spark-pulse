@@ -19,7 +19,9 @@ from filelock import FileLock
 from sqlalchemy import JSON, String, select
 from sqlalchemy.orm import Mapped, mapped_column
 
-from spark_pulse.db import Base, is_done, mark_done, session_scope
+from sqlalchemy.exc import IntegrityError
+
+from spark_pulse.db import Base, is_done, mark_done_within, session_scope
 
 logger = logging.getLogger(__name__)
 
@@ -79,16 +81,30 @@ def _migrate_from_json() -> None:
             data = json.load(handle)
     except (json.JSONDecodeError, OSError):
         return
-    if not isinstance(data, list) or not mark_done(_IMPORT_KEY):
+    if not isinstance(data, list):
         return
-    with session_scope() as db:
-        for record in data:
-            if isinstance(record, dict) and record.get("benchmark_id"):
-                db.merge(
-                    _BenchmarkRow(
-                        benchmark_id=str(record["benchmark_id"]), record=record
-                    )
-                )
+    # Marker and rows in one transaction, and ``get``-then-write rather than
+    # ``merge`` (see the house rule in :mod:`spark_pulse.db`). Marking in its
+    # own transaction leaves a window in which the marker says the file was
+    # taken while none of it was — and the marker is what stops it being
+    # retried, so the file would be discarded for good.
+    try:
+        with session_scope() as db:
+            if not mark_done_within(db, _IMPORT_KEY):
+                return
+            for record in data:
+                if not (isinstance(record, dict) and record.get("benchmark_id")):
+                    continue
+                key = str(record["benchmark_id"])
+                row = db.get(_BenchmarkRow, key)
+                if row is None:
+                    db.add(_BenchmarkRow(benchmark_id=key, record=record))
+                else:
+                    _apply(row, record)
+    except IntegrityError:
+        # Another instance claimed the import between our read and our insert.
+        # Our whole transaction rolled back; theirs stands.
+        return
 
 
 def _apply(row: _BenchmarkRow, record: dict) -> bool:

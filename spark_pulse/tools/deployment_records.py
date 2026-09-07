@@ -37,7 +37,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, mapped_column
 
 from spark_pulse.config import RUNTIME_NATIVE, config
-from spark_pulse.db import Base, engine, is_done, mark_done, session_scope
+from spark_pulse.db import Base, engine, is_done, mark_done_within, session_scope
 from spark_pulse.tools.atomic_json import (
     StateFileError as StateFileError,
     read_state_file,
@@ -138,6 +138,20 @@ _IMPORT_KEY = "deployments.imported_from_json"
 _IMPORT_LOCK = threading.Lock()
 
 
+def _write_row(db, record: dict[str, Any]) -> None:
+    """Store one record inside the caller's transaction.
+
+    Get-then-write, not ``merge``: see the house rule in :mod:`spark_pulse.db`
+    — merge chooses UPDATE from a load it performs itself and then matches
+    nothing on PostgreSQL.
+    """
+    row = db.get(DeploymentRow, str(record.get("id") or ""))
+    if row is None:
+        db.add(_row_of(record))
+    else:
+        _apply(row, record)
+
+
 def _migrate_from_json() -> None:
     """Import ``deployments.json`` once, if there is one and the table is empty.
 
@@ -156,27 +170,27 @@ def _migrate_from_json() -> None:
             # not record an import it never did, or a file restored later is
             # ignored.
             return
+        # Marker and rows in one transaction. Claiming first and writing
+        # afterwards leaves a window in which the marker says the file was
+        # taken while none of it was — and the marker is what stops it being
+        # retried, so the records would be gone for good.
         try:
-            claimed = mark_done(_IMPORT_KEY, RECORDS_FILE.name)
+            with session_scope() as db:
+                if not mark_done_within(db, _IMPORT_KEY, RECORDS_FILE.name):
+                    return
+                for record in data:
+                    if isinstance(record, dict) and record.get("id"):
+                        _write_row(db, record)
         except IntegrityError:
             # A second control plane against the same PostgreSQL claimed it
-            # between the read and the insert. The lock above cannot reach
-            # that one, and the outcome is the one that matters: somebody
-            # imported the file, and it was not this process.
+            # between the read and the insert. Our whole transaction rolled
+            # back — marker and rows together — and theirs stands.
             return
-        if not claimed:
-            return
-        with session_scope() as db:
-            for record in data:
-                if isinstance(record, dict) and record.get("id"):
-                    db.merge(_row_of(record))
-        if not data:
-            return
-        logger.info(
-            "imported %d deployment record(s) from %s into the state database",
-            len(data),
-            RECORDS_FILE,
-        )
+    logger.info(
+        "imported %d deployment record(s) from %s into the state database",
+        len(data),
+        RECORDS_FILE,
+    )
 
 
 # ── The file ─────────────────────────────────────────────────────────────────

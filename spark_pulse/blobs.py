@@ -75,7 +75,11 @@ class Blob(Base):
     #: Path relative to the scope's root. Never absolute, never containing
     #: ``..`` — checked on the way in, because the far end of this is a
     #: filesystem and eventually a container.
-    path: Mapped[str] = mapped_column(String(1024), primary_key=True)
+    #: ``String(1024)`` would be a cap only PostgreSQL enforces; a deep mod
+    #: tree is a real path. It stays a ``String`` because it is a primary key
+    #: and PostgreSQL will not index an unbounded ``Text`` beyond ~2704 bytes
+    #: — 2048 is well inside that and well past any real relative path.
+    path: Mapped[str] = mapped_column(String(2048), primary_key=True)
     content: Mapped[bytes] = mapped_column(LargeBinary, default=b"")
     #: The executable bit matters: a mod's ``run.sh`` is executed.
     mode: Mapped[int] = mapped_column(Integer, default=0o644)

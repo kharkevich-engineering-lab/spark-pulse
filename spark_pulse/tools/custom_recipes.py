@@ -31,7 +31,9 @@ from pathlib import Path
 from sqlalchemy import JSON, String, select
 from sqlalchemy.orm import Mapped, mapped_column
 
-from spark_pulse.db import Base, is_done, mark_done, session_scope
+from sqlalchemy.exc import IntegrityError
+
+from spark_pulse.db import Base, is_done, mark_done_within, session_scope
 
 _CUSTOM_PATH = Path.home() / ".config" / "spark-pulse" / "custom-recipes.json"
 
@@ -69,14 +71,28 @@ def _migrate_from_json() -> None:
             data = json.load(handle)
     except (json.JSONDecodeError, OSError):
         return
-    if not isinstance(data, dict) or not mark_done(_IMPORT_KEY):
+    if not isinstance(data, dict):
         return
-    with session_scope() as db:
-        for recipe_id, overrides in data.items():
-            if isinstance(overrides, dict):
-                db.merge(
-                    _CustomizationRow(recipe_id=str(recipe_id), overrides=overrides)
-                )
+    # Marker and rows in one transaction, and ``get``-then-write rather than
+    # ``merge`` (see the house rule in :mod:`spark_pulse.db`). Marking in its
+    # own transaction leaves a window in which the marker says the file was
+    # taken while none of it was — and the marker is what stops it being
+    # retried, so the file would be discarded for good.
+    try:
+        with session_scope() as db:
+            if not mark_done_within(db, _IMPORT_KEY):
+                return
+            for recipe_id, overrides in data.items():
+                if not isinstance(overrides, dict):
+                    continue
+                key = str(recipe_id)
+                row = db.get(_CustomizationRow, key)
+                if row is None:
+                    db.add(_CustomizationRow(recipe_id=key, overrides=overrides))
+                else:
+                    row.overrides = overrides
+    except IntegrityError:
+        return
 
 
 def _apply(row: _CustomizationRow, overrides: dict) -> bool:

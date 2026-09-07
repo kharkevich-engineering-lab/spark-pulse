@@ -47,7 +47,7 @@ from typing import Any, Iterable
 from sqlalchemy import JSON, Boolean, String, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
-from spark_pulse.db import Base, is_done, mark_done, session_scope
+from spark_pulse.db import Base, is_done, mark_done_within, session_scope
 from spark_pulse.tools.atomic_json import read_state_file
 
 logger = logging.getLogger(__name__)
@@ -295,8 +295,20 @@ def _upsert(db: Session, node: NodeRecord) -> None:
     This is the point of the per-row layer: marking a single peer ``dead`` used
     to rewrite every node in the registry, which on PostgreSQL means taking a
     row lock on each one for a change that concerns exactly one.
+
+    ``get``-then-write rather than ``merge``: see the house rule in
+    :mod:`spark_pulse.db` — merge chooses UPDATE from a load it performs
+    itself and then matches nothing on PostgreSQL, which surfaces as a
+    ``StaleDataError`` out of ``update_node`` instead of the ``KeyError`` a
+    caller expects.
     """
-    db.merge(_row_of(node))
+    row = db.get(_NodeRow, node.id)
+    if row is None:
+        db.add(_row_of(node))
+    else:
+        row.address = node.address
+        row.is_control_plane = node.is_control_plane
+        row.record = node.to_dict()
 
 
 def _delete(db: Session, node_id: str) -> bool:
@@ -347,16 +359,27 @@ def _migrate_from_json() -> None:
     data = read_state_file(registry_path(), expect=dict)
     if data is None:
         return
-    if not mark_done(_IMPORT_KEY, registry_path().name):
-        return
     raw = data.get("nodes")
     if not isinstance(raw, list):
+        # Checked *before* the marker: a file whose shape we do not understand
+        # must not be recorded as imported, or a hand-edited registry is
+        # discarded permanently and silently.
+        logger.error(
+            "%s has no usable 'nodes' list; not importing it, and not "
+            "recording it as imported",
+            registry_path(),
+        )
         return
-    # Through ``NodeRecord.from_dict`` rather than straight off the dict: a
-    # hand-edited nodes.json is a supported thing to have, and an entry
-    # without an id is given one there. Importing the raw dict would have
-    # silently dropped exactly the records an operator wrote by hand.
+    # The marker and the rows commit together. Marking first and writing
+    # afterwards leaves a window in which the marker says the file was taken
+    # while none of it was — and the marker is what stops it being tried
+    # again, so the registry would be empty for good.
     with session_scope() as db:
+        if not mark_done_within(db, _IMPORT_KEY, registry_path().name):
+            return
+        # Through ``NodeRecord.from_dict`` rather than straight off the dict:
+        # a hand-edited nodes.json is a supported thing to have, and an entry
+        # without an id is given one there.
         for item in raw:
             if not isinstance(item, dict):
                 continue

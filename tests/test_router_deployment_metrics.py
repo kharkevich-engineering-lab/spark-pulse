@@ -34,7 +34,20 @@ def sampler():
 
 @pytest.fixture
 def client(store, sampler):
+    """The API, with the *background* sampler stopped.
+
+    ``create_app``'s lifespan starts the sampler thread, and that thread
+    sweeps once immediately and then every interval. These tests drive
+    ``sample_once`` themselves and count the readings it produces, so a thread
+    sampling alongside them adds ticks nobody asked for — which showed up in
+    CI as ``assert 3 == 2`` and never locally, because it needs the test to
+    outlive one interval and CI is the slow machine.
+
+    The sampler *object* is kept, so snapshots taken through the API still see
+    what the test recorded; only the thread goes.
+    """
     with TestClient(create_app()) as test_client:
+        sampler.stop()
         yield test_client
 
 

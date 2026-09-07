@@ -52,7 +52,9 @@ from spark_pulse.agent.identity import mint_node_id
 from sqlalchemy import JSON, String, select
 from sqlalchemy.orm import Mapped, mapped_column
 
-from spark_pulse.db import Base, is_done, mark_done, session_scope
+from sqlalchemy.exc import IntegrityError
+
+from spark_pulse.db import Base, is_done, mark_done_within, session_scope
 from spark_pulse.tools.atomic_json import read_state_file
 
 logger = logging.getLogger(__name__)
@@ -217,6 +219,28 @@ class _State:
     tokens: dict[str, TokenGrant] = field(default_factory=dict)
 
 
+def _put_node(db, entry: LedgerEntry) -> None:
+    """Write one ledger row inside the caller's transaction, without ``merge``.
+
+    See the house rule in :mod:`spark_pulse.db`: merge picks UPDATE from its
+    own load and then matches nothing on PostgreSQL.
+    """
+    row = db.get(_LedgerNodeRow, entry.node_id)
+    if row is None:
+        db.add(_node_row(entry))
+    else:
+        row.state = entry.state
+        row.entry = entry.to_dict()
+
+
+def _put_token(db, grant: TokenGrant) -> None:
+    row = db.get(_LedgerTokenRow, grant.token_hash)
+    if row is None:
+        db.add(_token_row(grant))
+    else:
+        row.grant = grant.to_dict()
+
+
 class EnrollmentLedger:
     """Who may connect, and with which key.
 
@@ -268,20 +292,30 @@ class EnrollmentLedger:
         data = read_state_file(self.path, expect=dict)
         if data is None:
             return
-        if not mark_done(self._import_key(), str(self.path)):
+        # Marker and rows in one transaction. Marking first leaves a window in
+        # which the marker says the ledger was imported while none of it was —
+        # and for a *membership list* that is the worst of the stores to lose:
+        # every enrolled node becomes unknown and is refused on its next
+        # connection.
+        try:
+            with session_scope() as db:
+                if not mark_done_within(db, self._import_key(), str(self.path)):
+                    return
+                for node_id, raw in (data.get("nodes") or {}).items():
+                    entry = LedgerEntry.from_dict(raw)
+                    # The key wins over the payload: every later write
+                    # addresses a row by ``entry.node_id``, so a file whose two
+                    # disagreed would leave a row nothing could update again.
+                    entry.node_id = node_id
+                    _put_node(db, entry)
+                for token_hash, raw in (data.get("tokens") or {}).items():
+                    grant = TokenGrant.from_dict(raw)
+                    grant.token_hash = token_hash
+                    _put_token(db, grant)
+        except IntegrityError:
+            # Another control plane claimed the import between our read and
+            # our insert; our whole transaction rolled back and theirs stands.
             return
-        with session_scope() as db:
-            for node_id, raw in (data.get("nodes") or {}).items():
-                entry = LedgerEntry.from_dict(raw)
-                # The key wins over the payload: every later write addresses a
-                # row by ``entry.node_id``, so a file whose two disagreed would
-                # leave a row that nothing could ever update again.
-                entry.node_id = node_id
-                db.merge(_node_row(entry))
-            for token_hash, raw in (data.get("tokens") or {}).items():
-                grant = TokenGrant.from_dict(raw)
-                grant.token_hash = token_hash
-                db.merge(_token_row(grant))
 
     def _load(self) -> _State:
         self._migrate_from_json()
@@ -331,9 +365,9 @@ class EnrollmentLedger:
                 if token_row is not None:
                     db.delete(token_row)
             for entry in nodes:
-                db.merge(_node_row(entry))
+                _put_node(db, entry)
             for grant in tokens:
-                db.merge(_token_row(grant))
+                _put_token(db, grant)
 
     def _stored_node(self, node_id: str) -> LedgerEntry | None:
         """One node's row as the database has it, not as this copy has it.
@@ -365,12 +399,12 @@ class EnrollmentLedger:
                 if row.node_id not in self._state.nodes:
                     db.delete(row)
             for entry in self._state.nodes.values():
-                db.merge(_node_row(entry))
+                _put_node(db, entry)
             for row in list(db.execute(select(_LedgerTokenRow)).scalars()):
                 if row.token_hash not in self._state.tokens:
                     db.delete(row)
             for grant in self._state.tokens.values():
-                db.merge(_token_row(grant))
+                _put_token(db, grant)
 
     # ── Tokens ───────────────────────────────────────────────────────────
 

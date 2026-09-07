@@ -55,7 +55,7 @@ from typing import Any, Iterator
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine, make_url
-from sqlalchemy import String
+from sqlalchemy import String, Text
 from sqlalchemy.orm import (
     DeclarativeBase,
     Mapped,
@@ -74,6 +74,7 @@ __all__ = [
     "engine",
     "is_done",
     "mark_done",
+    "mark_done_within",
     "session_scope",
 ]
 
@@ -94,16 +95,41 @@ class Meta(Base):
     __tablename__ = "meta"
 
     key: Mapped[str] = mapped_column(String(128), primary_key=True)
-    value: Mapped[str] = mapped_column(String(1024), default="")
+    #: ``Text``: the enrolment ledger stores a full filesystem path here, and
+    #: a declared length is one only PostgreSQL enforces — the exact shape of
+    #: the bug that made the ledger's own key a hash instead of a path.
+    value: Mapped[str] = mapped_column(Text, default="")
 
 
 def mark_done(key: str, value: str = "1") -> bool:
-    """Record that ``key`` has happened. False if it already had."""
+    """Record that ``key`` has happened. False if it already had.
+
+    Prefer :func:`mark_done_within` for a one-time import: this commits on its
+    own, so a caller that marks here and writes rows afterwards has two
+    transactions and a window between them.
+    """
     with session_scope() as db:
-        if db.get(Meta, key) is not None:
-            return False
-        db.add(Meta(key=key, value=value))
-        return True
+        return mark_done_within(db, key, value)
+
+
+def mark_done_within(db: Session, key: str, value: str = "1") -> bool:
+    """Record ``key`` inside the caller's transaction. False if already done.
+
+    This exists because the marker and the work it describes have to land
+    together. A one-time import that commits "imported" first and then writes
+    the rows has a window: die in it, and the marker says the file was taken
+    while none of it was — permanently, because the marker is what stops it
+    being tried again. The file is then silently discarded, which is the
+    "empty cluster" every state module here refuses by name.
+
+    ``IntegrityError`` on commit is the other instance racing us; the loser's
+    whole transaction rolls back, marker and rows together, and the winner's
+    import stands.
+    """
+    if db.get(Meta, key) is not None:
+        return False
+    db.add(Meta(key=key, value=value))
+    return True
 
 
 def is_done(key: str) -> bool:

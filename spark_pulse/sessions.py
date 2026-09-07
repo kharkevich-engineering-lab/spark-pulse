@@ -33,7 +33,7 @@ import secrets
 import time
 from typing import Any
 
-from sqlalchemy import JSON, Float, String, delete, select
+from sqlalchemy import JSON, Float, String, Text, delete, select
 from sqlalchemy.orm import Mapped, mapped_column
 
 from spark_pulse.db import Base, session_scope
@@ -59,8 +59,15 @@ class Session(Base):
     #: authenticated request is an index hit rather than a scan.
     token: Mapped[str] = mapped_column(String(128), primary_key=True)
     #: The provider's own tokens, which never reach the browser.
-    access_token: Mapped[str] = mapped_column(String(4096), default="")
-    refresh_token: Mapped[str] = mapped_column(String(4096), default="")
+    #:
+    #: ``Text``, not ``String(n)``. SQLite ignores a declared length and
+    #: PostgreSQL enforces it, so any cap here is a cap that only exists on the
+    #: backend this whole seam was built to enable. Azure AD and Okta routinely
+    #: issue access tokens past 4 KB once group claims are included: with a
+    #: length, login succeeds on SQLite and returns 500 from ``/auth/callback``
+    #: on PostgreSQL, which is the worst possible place to discover it.
+    access_token: Mapped[str] = mapped_column(Text, default="")
+    refresh_token: Mapped[str] = mapped_column(Text, default="")
     #: Unix seconds. Indexed because the sweep orders by it.
     expires_at: Mapped[float] = mapped_column(Float, default=0.0, index=True)
     created_at: Mapped[str] = mapped_column(String(64), default="")
