@@ -50,13 +50,29 @@ def rust_agent() -> Path:
     all — never when the build fails, because a build failure is the finding.
     """
     cargo = _cargo()
-    if cargo is None:
+    # protoc as well as cargo: build.rs regenerates the protocol types, so a
+    # machine with cargo and no protoc cannot build this crate at all. That is
+    # "no toolchain here", not "the agent is broken" — and the difference
+    # matters, because GitHub's ubuntu runner ships cargo and not protoc, so
+    # every job that did not install protoc reported 27 build failures as
+    # findings about the agent.
+    missing = [
+        name
+        for name, found in (("cargo", cargo), ("protoc", shutil.which("protoc")))
+        if not found
+    ]
+    if missing:
         # A skip here is how a cross-language suite quietly stops running. The
-        # CI job that *does* have a toolchain sets this, so a missing cargo
+        # CI job that *does* have a toolchain sets this, so a missing tool
         # there is a broken job rather than a machine without Rust.
         if os.environ.get("SPARK_PULSE_REQUIRE_RUST"):
-            pytest.fail("SPARK_PULSE_REQUIRE_RUST is set but there is no cargo on PATH")
-        pytest.skip("no cargo on PATH; the Rust agent cannot be built here")
+            pytest.fail(
+                "SPARK_PULSE_REQUIRE_RUST is set but "
+                f"{' and '.join(missing)} is not on PATH"
+            )
+        pytest.skip(
+            f"no {' or '.join(missing)} on PATH; the Rust agent cannot be built here"
+        )
     build = subprocess.run(
         [cargo, "build", "--quiet"],
         cwd=CRATE,

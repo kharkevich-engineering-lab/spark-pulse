@@ -528,7 +528,7 @@ async def test_without_ssh_only_the_control_plane_and_agent_checks_run(
 
 
 async def test_the_control_node_is_diagnosed_by_the_same_function(
-    agent_server, tmp_path
+    agent_server, tmp_path, a_runnable_agent_binary
 ):
     """No special case. The control node's own agent, through ``diagnose``."""
     local = await start_local_agent(

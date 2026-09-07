@@ -321,6 +321,24 @@ async def agent_node(join_agent):
     return await join_agent("spark-a")
 
 
+@pytest.fixture
+def a_runnable_agent_binary():
+    """Skip unless this machine has an agent binary it can execute.
+
+    ``host_binary`` finds a packaged binary for this triple or a local cargo
+    build, and on a runner with neither it raises. Tests that only need the
+    *bundle* already skip through ``agent_bundle``; these are the ones that
+    reach for the binary directly, and without this they reported "no agent
+    binary" as a failure of the code under test rather than of the machine.
+    """
+    from spark_pulse.agent.bundle import MissingAgentBinary, host_binary
+
+    try:
+        return host_binary()
+    except MissingAgentBinary as exc:
+        pytest.skip(str(exc))
+
+
 @pytest.fixture(scope="session")
 def agent_bundle():
     """The bundle the installer ships: one static binary.
