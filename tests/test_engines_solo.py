@@ -188,12 +188,12 @@ def test_the_recipes_own_env_and_args_still_reach_the_launch():
 
 
 def test_an_unpublished_engine_says_so_rather_than_offering_a_403():
-    """llama-cpp is defined but not built, and tokenary has no image anywhere.
-    `available` is what keeps them out of the deploy options until they do:
-    pulling an unpublished reference answers 403, not an image."""
+    """tokenary has no image in any registry we can reach. `available` is what
+    keeps it out of the deploy options until one exists: pulling an
+    unpublished reference answers 403, not an image."""
     specs = {s.engine: s for s in load_bundled_specs()}
 
-    assert specs["llama-cpp"].available is False
     assert specs["tokenary"].available is False
+    assert specs["llama-cpp"].available is True
     assert specs["atlas"].available is True
     assert specs["trtllm"].available is True

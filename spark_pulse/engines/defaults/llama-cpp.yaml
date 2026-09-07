@@ -5,12 +5,6 @@ description: llama.cpp's llama-server, built from source with CUDA 13 kernels fo
 image: ghcr.io/kharkevich-engineering-lab/spark-pulse-engine/llama-cpp
 version: 0.1.0
 legacy_tags: []
-# Not built yet: the image is defined in spark-pulse-engine and CI has not
-# published it. `available: false` is what keeps it out of the deploy options
-# until it has, because pulling an unpublished reference answers 403 rather
-# than an image. The engine index carries the same answer, resolved from the
-# registry rather than written by hand.
-available: false
 arch: [linux/arm64]
 gpu_arch: ["12.1a"]
 
