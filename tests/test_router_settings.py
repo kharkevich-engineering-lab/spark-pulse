@@ -49,8 +49,6 @@ class TestGetSettings:
 
         assert set(body) == {
             "spark_vllm_path",
-            "default_container",
-            "default_gpu_mem_util",
             "default_port_range_start",
             "default_port_range_end",
             "webui_port",
@@ -87,20 +85,20 @@ class TestUpdateSettings:
     def test_a_saved_setting_is_persisted_and_read_back(
         self, client, private_config_files
     ):
-        body = client.put("/api/settings", json={"default_container": "my-node"}).json()
+        body = client.put("/api/settings", json={"job_retention_days": 21}).json()
 
-        assert body["default_container"] == "my-node"
+        assert body["job_retention_days"] == 21
         assert json.loads(private_config_files["settings"].read_text()) == {
-            "default_container": "my-node"
+            "job_retention_days": 21
         }
-        assert client.get("/api/settings").json()["default_container"] == "my-node"
+        assert client.get("/api/settings").json()["job_retention_days"] == 21
 
     def test_a_null_leaves_the_current_value_alone(self, client):
-        client.put("/api/settings", json={"default_container": "my-node"})
+        client.put("/api/settings", json={"job_retention_days": 21})
 
-        body = client.put("/api/settings", json={"default_container": None}).json()
+        body = client.put("/api/settings", json={"job_retention_days": None}).json()
 
-        assert body["default_container"] == "my-node"
+        assert body["job_retention_days"] == 21
 
     def test_env_managed_is_never_written_back(self, client, private_config_files):
         client.put("/api/settings", json={"env_managed": ["webui_port"]})

@@ -1,10 +1,10 @@
 auth_enabled: false
-benchmarking_enabled: false
+# Offers recipes marked `cluster_only`. The recipes page reads it.
 cluster_enabled: false
+benchmarking_enabled: false
 # Multi-node orchestration has never been exercised on real hardware, so the UI
 # labels it experimental. Flip this once a two-node bring-up has been verified.
 cluster_experimental: true
-default_container: vllm-node
 job_retention_days: 7
 # Deployment runtime. "native" — Spark Pulse drives Docker from Python via the
 # engine registry — is the only one left; the upstream run-recipe.sh path was
@@ -17,7 +17,6 @@ deploy_ready_timeout_seconds: 900
 docker_pull_stall_timeout_seconds: 300
 # Worker threads for sync request handlers (anyio's default limiter).
 thread_pool_size: 40
-default_gpu_mem_util: 0.8
 default_port_range_end: 9100
 default_port_range_start: 9000
 model_sources:

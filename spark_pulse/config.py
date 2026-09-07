@@ -119,14 +119,6 @@ class _Config:
         return path if path.is_dir() else None
 
     @property
-    def default_container(self) -> str:
-        return str(self._data.get("default_container", "vllm-node"))
-
-    @property
-    def default_gpu_mem_util(self) -> float:
-        return float(self._data.get("default_gpu_mem_util", 0.8))
-
-    @property
     def default_port_range_start(self) -> int:
         return int(self._data.get("default_port_range_start", 9000))
 
@@ -212,6 +204,13 @@ class _Config:
 
     @property
     def cluster_enabled(self) -> bool:
+        """Whether cluster-only recipes are offered.
+
+        Read by the recipes page: a recipe marked ``cluster_only`` is listed as
+        unavailable until this is on. It is served by ``/api/settings`` and by
+        nothing else — ``/api/config`` carried a second copy that no component
+        ever read, which is exactly how a setting comes to look inert.
+        """
         return bool(self._data.get("cluster_enabled", False))
 
     @property
