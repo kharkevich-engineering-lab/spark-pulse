@@ -175,6 +175,9 @@ message Command {
     PullImage pull_image = 24;
     RemoveImage remove_image = 25;
     GetFacts get_facts = 26;
+    GetNodeStats get_node_stats = 27;
+    ListSnapshot list_snapshot = 28;
+    RemoveSnapshot remove_snapshot = 29;
   }
 }
 
@@ -196,6 +199,9 @@ message CommandResult {
     ImageList images = 11;
     PullOutcome pull = 12;
     NodeFacts facts = 13;
+    NodeStats stats = 14;
+    SnapshotListing snapshot = 15;
+    SnapshotRemoval removal = 16;
   }
 }
 
@@ -319,6 +325,39 @@ message RemoveImage {
 
 message GetFacts {}
 
+// What this node is doing right now, as opposed to what it is.
+//
+// `GetFacts` is inventory — how many GPUs, how much memory, which kernel —
+// and it is answered once at enrolment. This is the live half: utilisation,
+// temperature, free memory, the processes holding it. The monitoring page
+// asks every node the same question, and asking the machine the control
+// plane happens to run on is not a different operation.
+message GetNodeStats {}
+
+// The files of one HuggingFace snapshot, as they are on this node.
+//
+// Names and sizes only. The control plane owns what they *mean*: it holds the
+// manifest, it knows which revision was asked for, and `hub_cache` already
+// decides verified-vs-partial-vs-absent from exactly this input. Answering
+// that question here would be a second implementation of the verifier, which
+// is the mistake `tools/models.py` made by shipping the first one over SSH.
+message ListSnapshot {
+  // Absolute path of the repository directory in the hub cache.
+  string repo_path = 1;
+  // Snapshot to list. Empty lists whatever the repository's HEAD points at.
+  string revision = 2;
+  // Also return a sha256 per file. Reads every byte on the node; the hashes
+  // travel, the bytes do not.
+  bool deep = 3;
+}
+
+// Delete one snapshot, or the whole repository, from this node's hub cache.
+message RemoveSnapshot {
+  string repo_path = 1;
+  // Empty removes the repository and every revision in it.
+  string revision = 2;
+}
+
 // ── Shared shapes ───────────────────────────────────────────────────────────
 
 message Cmd {
@@ -429,6 +468,87 @@ message PullOutcome {
 }
 
 // ── Node facts ──────────────────────────────────────────────────────────────
+
+// One GPU, as this node sees it right now.
+//
+// Every measurement is optional because a DGX Spark reports `[N/A]` for GPU
+// memory — the pool is unified — and a field that is absent has to stay
+// absent rather than become a zero that reads as "full".
+message GpuStat {
+  uint32 index = 1;
+  string name = 2;
+  string uuid = 3;
+  optional uint64 memory_total_bytes = 4;
+  optional uint64 memory_used_bytes = 5;
+  optional uint64 memory_free_bytes = 6;
+  optional double utilization_percent = 7;
+  optional double temperature_celsius = 8;
+  optional double power_watts = 9;
+}
+
+// A process holding GPU memory on this node.
+message GpuProcess {
+  uint32 pid = 1;
+  string name = 2;
+  optional uint64 used_memory_bytes = 3;
+  // The container it runs in, when the node can tell. The control plane
+  // decides whether that container is one of its own — it is the only side
+  // that knows what it started.
+  string container_id = 4;
+}
+
+message MemoryStat {
+  uint64 total_bytes = 1;
+  uint64 used_bytes = 2;
+  uint64 available_bytes = 3;
+}
+
+message DiskStat {
+  string mount = 1;
+  uint64 total_bytes = 2;
+  uint64 used_bytes = 3;
+  uint64 free_bytes = 4;
+}
+
+message NodeStats {
+  repeated GpuStat gpus = 1;
+  MemoryStat memory = 2;
+  repeated DiskStat disks = 3;
+  repeated GpuProcess processes = 4;
+  uint32 cpu_count = 5;
+  double load_average_1m = 6;
+  // Why a section is empty, when it is empty for a reason worth reporting —
+  // no nvidia-smi on the node, an unreadable /proc. Empty means "nothing to
+  // say", never "we did not look".
+  repeated string unavailable = 7;
+}
+
+// One file of a snapshot.
+message SnapshotFile {
+  // Path relative to the snapshot directory.
+  string path = 1;
+  uint64 size_bytes = 2;
+  // Set only when the request asked for hashes.
+  string sha256 = 3;
+  // A hub snapshot is symlinks into `blobs/`; a copy that lost them is a
+  // different thing on disk and the control plane wants to know.
+  bool is_symlink = 4;
+}
+
+message SnapshotListing {
+  // What the node found, or "" when the directory is not there at all.
+  string revision = 1;
+  bool present = 2;
+  repeated SnapshotFile files = 3;
+  uint64 bytes_present = 4;
+}
+
+message SnapshotRemoval {
+  bool removed = 1;
+  uint64 freed_bytes = 2;
+  // What was removed, for a log the operator can read afterwards.
+  repeated string paths = 3;
+}
 
 message NodeFacts {
   string hostname = 1;

@@ -452,12 +452,93 @@ def list_mock_containers() -> list[dict[str, Any]]:
 
 
 class MockDockerService(DockerService):
-    """DockerService backed by the in-memory MockDockerClient."""
+    """DockerService backed by the in-memory MockDockerClient.
+
+    In simulation this also stands in for the *node* service, which is more
+    than a container service: an agent answers for its machine's hardware and
+    its disk as well. Those three methods are here rather than on a separate
+    simulated class because that is where the resolver already points, and a
+    second class would only exist to be assembled with this one.
+    """
 
     def __init__(self, client: Any | None = None):
         super().__init__(client or _get_mock_client())
         #: Bind-mount sources a real run would have created here.
         self.ensured: list[str] = []
+        #: Snapshots this simulated node holds: repo path -> revision -> files.
+        self.snapshots: dict[str, dict[str, list[tuple[str, int]]]] = {}
+
+    # ── Beyond containers: what the agent answers about its machine ──────
+
+    def get_node_stats(self) -> Any:
+        """This simulated node's live stats, in the protocol's own shape.
+
+        The numbers are a DGX Spark's: one GB10 reporting ``[N/A]`` for GPU
+        memory, which is the case the real one has to keep absent rather than
+        turn into a zero.
+        """
+        from spark_pulse.agent import agent_pb2 as pb
+
+        stats = pb.NodeStats(
+            cpu_count=20,
+            load_average_1m=1.5,
+            memory=pb.MemoryStat(
+                total_bytes=130_000_000_000,
+                used_bytes=26_000_000_000,
+                available_bytes=104_000_000_000,
+            ),
+        )
+        gpu = stats.gpus.add()
+        gpu.index = 0
+        gpu.name = "NVIDIA GB10"
+        gpu.uuid = "GPU-00000000-0000-0000-0000-000000000000"
+        gpu.utilization_percent = 12.0
+        gpu.temperature_celsius = 41.0
+        disk = stats.disks.add()
+        disk.mount = "/"
+        disk.total_bytes = 3_800_000_000_000
+        disk.used_bytes = 1_900_000_000_000
+        disk.free_bytes = 1_900_000_000_000
+        return stats
+
+    def list_snapshot(
+        self, repo_path: str, revision: str = "", deep: bool = False
+    ) -> Any:
+        """What this simulated node holds for one model snapshot."""
+        from spark_pulse.agent import agent_pb2 as pb
+
+        revisions = self.snapshots.get(repo_path) or {}
+        resolved = revision or next(iter(revisions), "")
+        files = revisions.get(resolved)
+        listing = pb.SnapshotListing(revision=resolved, present=files is not None)
+        for name, size in files or []:
+            entry = listing.files.add()
+            entry.path = name
+            entry.size_bytes = size
+            entry.is_symlink = True
+            if deep:
+                entry.sha256 = f"sha256-of-{name}"
+            listing.bytes_present += size
+        return listing
+
+    def remove_snapshot(self, repo_path: str, revision: str = "") -> Any:
+        """Delete one revision, or the whole repository."""
+        from spark_pulse.agent import agent_pb2 as pb
+
+        revisions = self.snapshots.get(repo_path)
+        if not revisions:
+            return pb.SnapshotRemoval(removed=False)
+        if revision:
+            files = revisions.pop(revision, None)
+            if files is None:
+                return pb.SnapshotRemoval(removed=False)
+            freed = sum(size for _name, size in files)
+            paths = [f"{repo_path}/snapshots/{revision}"]
+        else:
+            freed = sum(size for files in revisions.values() for _name, size in files)
+            paths = [repo_path]
+            self.snapshots.pop(repo_path, None)
+        return pb.SnapshotRemoval(removed=True, freed_bytes=freed, paths=paths)
 
     def copy_to_container(
         self,

@@ -377,9 +377,47 @@ class NodeOperations:
         command = self.hub.new_command(remove_image=message)
         return (await self._call(command, "boolean")).value
 
-    # ── Facts ────────────────────────────────────────────────────────────
+    # ── Facts and stats ──────────────────────────────────────────────────
 
     async def get_facts(self) -> pb.NodeFacts:
         """Ask the node to describe itself, now, rather than reading a cache."""
         command = self.hub.new_command(get_facts=pb.GetFacts())
         return await self._call(command, "facts")
+
+    async def get_node_stats(self) -> pb.NodeStats:
+        """What the node is doing: utilisation, memory, disks, GPU processes.
+
+        The live half of ``get_facts``. Every node answers the same question,
+        including the one this process runs on — the monitoring page asks all
+        of them the same way.
+        """
+        command = self.hub.new_command(get_node_stats=pb.GetNodeStats())
+        return await self._call(command, "stats")
+
+    # ── Model snapshots ──────────────────────────────────────────────────
+
+    async def list_snapshot(
+        self, repo_path: str, revision: str = "", deep: bool = False
+    ) -> pb.SnapshotListing:
+        """The files of one snapshot on the node, with sizes.
+
+        Names and sizes, not a verdict. ``hub_cache`` decides what they mean
+        here, from the manifest it already holds — the node does not carry a
+        second copy of the verifier, which is what shipping ``hub_cache.py``
+        over SSH amounted to.
+        """
+        command = self.hub.new_command(
+            list_snapshot=pb.ListSnapshot(
+                repo_path=repo_path, revision=revision, deep=deep
+            )
+        )
+        return await self._call(command, "snapshot")
+
+    async def remove_snapshot(
+        self, repo_path: str, revision: str = ""
+    ) -> pb.SnapshotRemoval:
+        """Delete a snapshot, or the whole repository when no revision is given."""
+        command = self.hub.new_command(
+            remove_snapshot=pb.RemoveSnapshot(repo_path=repo_path, revision=revision)
+        )
+        return await self._call(command, "removal")

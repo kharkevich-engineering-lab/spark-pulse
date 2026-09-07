@@ -20,6 +20,8 @@ pub mod containers;
 pub mod copy;
 pub mod images;
 pub mod labels;
+pub mod snapshots;
+pub mod stats;
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -279,8 +281,23 @@ impl Executor {
                 // `get_facts` is the one thing a node with no daemon can still
                 // answer, and it is how an operator finds out *why* the node
                 // is useless. Answering it needs no daemon, so it is answered.
-                if matches!(op, Op::GetFacts(_)) {
-                    return ok!(Outcome::Facts(self.collect_facts().await));
+                match &op {
+                    Op::GetFacts(_) => {
+                        return ok!(Outcome::Facts(self.collect_facts().await));
+                    }
+                    // Hardware and disk are readable without a daemon, and a
+                    // node whose Docker is down is exactly when an operator
+                    // wants to see its GPU and its free space.
+                    Op::GetNodeStats(_) => return ok!(Outcome::Stats(stats::collect())),
+                    Op::ListSnapshot(req) => {
+                        let listing = attempt!(snapshots::list(req));
+                        return ok!(Outcome::Snapshot(listing));
+                    }
+                    Op::RemoveSnapshot(req) => {
+                        let removal = attempt!(snapshots::remove(req));
+                        return ok!(Outcome::Removal(removal));
+                    }
+                    _ => {}
                 }
                 return failure(id, &error.kind, error.message);
             }
@@ -288,6 +305,21 @@ impl Executor {
 
         match op {
             Op::GetFacts(_) => ok!(Outcome::Facts(self.collect_facts().await)),
+
+            // Three operations that need no Docker daemon: they read this
+            // machine's own hardware and its own disk. They are reached above
+            // only when a daemon *is* present, which is the wrong gate for
+            // them — see the `docker` binding, which lets `GetFacts` through
+            // for exactly this reason.
+            Op::GetNodeStats(_) => ok!(Outcome::Stats(stats::collect())),
+            Op::ListSnapshot(req) => {
+                let listing = attempt!(snapshots::list(&req));
+                ok!(Outcome::Snapshot(listing))
+            }
+            Op::RemoveSnapshot(req) => {
+                let removal = attempt!(snapshots::remove(&req));
+                ok!(Outcome::Removal(removal))
+            }
 
             Op::RunContainer(req) => {
                 let info = attempt!(containers::run_container(docker, req).await);
