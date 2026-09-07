@@ -104,5 +104,3 @@ engines:
     enabled: true
   atlas:
     enabled: true
-  tokenary:
-    enabled: true

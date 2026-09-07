@@ -26,7 +26,7 @@ const NAV: { href: string; labelKey: string; icon: NavIcon; experimental?: boole
   { href: "/benchmarking", labelKey: "nav.benchmarking", icon: Flame },
   { href: "/monitoring", labelKey: "nav.monitoring", icon: Activity },
   { href: "/models", labelKey: "nav.models", icon: Boxes },
-  { href: "/images", labelKey: "nav.images", icon: Layers },
+  { href: "/engines", labelKey: "nav.engines", icon: Layers },
   { href: "/cache", labelKey: "nav.cache", icon: Database },
   { href: "/mcp", labelKey: "nav.mcp", icon: Bot },
   { href: "/oci", labelKey: "nav.oci", icon: Package },

@@ -310,8 +310,6 @@ export interface RecipeFormRef {
 
 export interface Settings {
   spark_vllm_path: string;
-  default_container: string;
-  default_gpu_mem_util: number;
   default_port_range_start: number;
   default_port_range_end: number;
   webui_port: number;
@@ -989,10 +987,21 @@ export interface ImagePresence {
   nodes: { node: string; present: boolean; image_id: string; matches: boolean; error: string | null }[];
 }
 
+export interface ImageNodeRemoval {
+  node: string;
+  removed: boolean;
+  /** The references actually removed there — a node holds what it pulled, not
+   *  necessarily the name this host uses. */
+  refs?: string[];
+  error: string | null;
+}
+
 export interface ImageDeleteResult {
   deleted: string;
   image_id: string;
   freed_bytes: number;
+  /** Present only when nodes were named in the request. */
+  nodes?: ImageNodeRemoval[];
 }
 
 // ── Node registry ────────────────────────────────────────────────────────────

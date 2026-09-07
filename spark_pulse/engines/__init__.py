@@ -33,7 +33,6 @@ from spark_pulse.engines.solo import (
     LlamaCppEngine,
     ModularMaxEngine,
     SoloEngine,
-    TokenaryEngine,
     TrtllmEngine,
 )
 from spark_pulse.engines.vllm import VllmEngine
@@ -59,7 +58,6 @@ __all__ = [
     "NodeInfo",
     "SglangEngine",
     "SoloEngine",
-    "TokenaryEngine",
     "Topology",
     "TrtllmEngine",
     "VllmEngine",

@@ -16,7 +16,6 @@ from spark_pulse.engines import (
     ModularMaxEngine,
     NodeInfo,
     SoloEngine,
-    TokenaryEngine,
     Topology,
     TrtllmEngine,
 )
@@ -60,11 +59,6 @@ CASES = {
         AtlasEngine,
         f"spark serve {MODEL} --host 0.0.0.0 --port 9000 "
         "--max-seq-len 8192 --max-num-seqs 4",
-    ),
-    "tokenary": (
-        TokenaryEngine,
-        f"tokenary --server --model {MODEL} --host 0.0.0.0 --port 9000 "
-        "--max-model-len 8192 --max-num-seqs 4",
     ),
 }
 
@@ -110,7 +104,7 @@ def test_more_than_one_node_is_refused_with_what_to_do_instead():
     rejected before rendering. If it ever reached the renderer, a command for
     one node would be the worse answer."""
     with pytest.raises(EngineError, match="one node"):
-        engine_for("tokenary").render(RECIPE, topology=TWO_NODES)
+        engine_for("trtllm").render(RECIPE, topology=TWO_NODES)
 
 
 def test_a_rank_above_zero_is_refused():
@@ -187,13 +181,13 @@ def test_the_recipes_own_env_and_args_still_reach_the_launch():
     assert "export ATLAS_LOG=" in result.script
 
 
-def test_an_unpublished_engine_says_so_rather_than_offering_a_403():
-    """tokenary has no image in any registry we can reach. `available` is what
-    keeps it out of the deploy options until one exists: pulling an
-    unpublished reference answers 403, not an image."""
+def test_every_bundled_engine_declares_a_published_image():
+    """`available` is what keeps an engine with no image out of the deploy
+    options: pulling an unpublished reference answers 403, not an image. Every
+    one bundled today has one — the engine that did not was removed rather
+    than left as a definition nobody could run."""
     specs = {s.engine: s for s in load_bundled_specs()}
 
-    assert specs["tokenary"].available is False
     assert specs["llama-cpp"].available is True
     assert specs["atlas"].available is True
     assert specs["trtllm"].available is True

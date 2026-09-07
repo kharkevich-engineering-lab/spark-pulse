@@ -1,12 +1,11 @@
 import { useState, useEffect } from "react";
-import { fetchSettings, updateSettings, fetchSecrets, saveSecrets, deleteSecret, fetchEngines, refreshEngines } from "@/lib/api";
+import { fetchSettings, updateSettings, fetchSecrets, saveSecrets, deleteSecret } from "@/lib/api";
 import type { DockerSettings } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
-import { Settings as SettingsIcon, Loader2, AlertCircle, Check, KeyRound, Eye, EyeOff, Trash2, Lock, Server, Box, Cpu, RefreshCw, Info, ShieldCheck, Palette, Sun, Moon, Languages, ToggleRight, FlaskConical, Bot, Network } from "lucide-react";
+import { Settings as SettingsIcon, Loader2, AlertCircle, Check, KeyRound, Eye, EyeOff, Trash2, Lock, Server, Box, Info, ShieldCheck, Palette, Sun, Moon, Languages, ToggleRight, FlaskConical, Bot, Network } from "lucide-react";
 import { SunMoonIcon } from "@/components/BrandIcons";
 import { type ThemeMode, getTheme, setTheme } from "@/lib/theme";
 import { LANGUAGES, useI18n } from "@/lib/i18n";
-import { EngineList } from "@/components/EngineBadge";
 import { AlertModal } from "@/components/Modal";
 
 /** The tabs, in the order an operator meets them.
@@ -22,6 +21,10 @@ import { AlertModal } from "@/components/Modal";
  * that tab described the machines, which are managed on the Cluster page, and
  * network discovery moved there with them.
  *
+ * There is no Engines tab either: an engine is its image, and the page that
+ * lists images now lists both, with the registry settings that govern where
+ * engines come from at the bottom of it.
+ *
  * `features` holds the switches that change the *shape* of the app rather than
  * the behaviour of a deployment: turning benchmarking off removes a route and
  * a sidebar entry. That is a different kind of decision from a timeout, which
@@ -31,7 +34,6 @@ const TABS = [
   { id: "deployment", labelKey: "settings.tabDeployment", icon: Server },
   { id: "containers", labelKey: "settings.tabContainers", icon: Box },
   { id: "features", labelKey: "settings.tabFeatures", icon: ToggleRight },
-  { id: "engines", labelKey: "settings.tabEngines", icon: Cpu },
   { id: "preferences", labelKey: "settings.tabPreferences", icon: Palette },
   { id: "secrets", labelKey: "settings.tabSecrets", icon: KeyRound },
   { id: "environment", labelKey: "settings.tabEnvironment", icon: Info },
@@ -239,10 +241,6 @@ export default function SettingsPage() {
   const [savingToken, setSavingToken] = useState(false);
   const [savedToken, setSavedToken] = useState(false);
 
-  // Engine registry state
-  const { data: engineData, refetch: refetchEngines, loading: enginesLoading } = useQuery(fetchEngines);
-  const [refreshingEngines, setRefreshingEngines] = useState(false);
-
   const isDirty = settings != null && Object.keys(form).some(
     (k) => JSON.stringify(form[k]) !== JSON.stringify((settings as unknown as Record<string, unknown>)[k])
   );
@@ -285,18 +283,6 @@ export default function SettingsPage() {
       refetchSecrets();
     } catch (e) {
       setAlertModal({ title: t("common.error"), message: e instanceof Error ? e.message : t("settings.tokenClearFailed") });
-    }
-  };
-
-  const handleRefreshEngines = async () => {
-    setRefreshingEngines(true);
-    try {
-      await refreshEngines();
-      await refetchEngines();
-    } catch (e) {
-      setAlertModal({ title: t("common.error"), message: e instanceof Error ? e.message : t("settings.refreshFailed") });
-    } finally {
-      setRefreshingEngines(false);
     }
   };
 
@@ -549,65 +535,6 @@ export default function SettingsPage() {
               {environment?.mcp_enabled
                 ? <Code>{environment.mcp_path}</Code>
                 : <span className="text-xs text-text-muted">{t("common.disabled")}</span>}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Engines ──────────────────────────────────────────────────────── */}
-      {tab === "engines" && (
-        <div className={sectionCls}>
-          <div className={cardCls}>
-            <div className="flex items-center justify-between pb-3 border-b border-border">
-              <div className="flex items-center gap-2">
-                <Cpu size={16} className="text-primary" />
-                <h3 className="font-semibold">{t("settings.engines")}</h3>
-              </div>
-              <button onClick={handleRefreshEngines} disabled={refreshingEngines} className="px-2.5 py-1 rounded-lg border border-border hover:border-primary/50 text-text-muted hover:text-text text-xs transition-colors flex items-center gap-1.5 disabled:opacity-50" title={t("settings.refreshTitle")}>
-                <RefreshCw size={13} className={refreshingEngines ? "animate-spin" : ""} />
-                {t("settings.refresh")}
-              </button>
-            </div>
-
-            {enginesLoading && !engineData ? (
-              <div className="flex justify-center py-4"><Loader2 className="animate-spin text-primary" size={20} /></div>
-            ) : (
-              <EngineList engines={engineData?.engines ?? []} defaultEngine={engineData?.default_engine ?? ""} />
-            )}
-          </div>
-
-          <div className={cardCls}>
-            <div className="flex items-center gap-2 pb-3 border-b border-border">
-              <SettingsIcon size={16} className="text-primary" />
-              <h3 className="font-semibold">{t("settings.engineRegistry")}</h3>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1">{t("settings.defaultEngine")}</label>
-              <input type="text" value={String(form.default_engine ?? "vllm")} onChange={(e) => setForm({ ...form, default_engine: e.target.value })} className={inputCls} placeholder="vllm" />
-              <p className="text-xs text-text-muted mt-1">{t("settings.defaultEngineHelp")}</p>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1">{t("settings.indexes")}</label>
-              <textarea
-                aria-label={t("settings.indexesLabel")}
-                rows={3}
-                value={((form.engine_indexes ?? []) as string[]).join("\n")}
-                onChange={(e) => setForm({ ...form, engine_indexes: e.target.value.split("\n").map((l) => l.trim()).filter(Boolean) })}
-                className={`${inputCls} resize-y`}
-                placeholder="https://…/engines.json"
-              />
-              <p className="text-xs text-text-muted mt-1">{t("settings.indexesHelp")}</p>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1">{t("settings.indexTtl")}</label>
-              <div className="flex items-center gap-2">
-                <input type="number" min="0" value={Number(form.engine_index_cache_ttl_seconds ?? 3600)} onChange={(e) => setForm({ ...form, engine_index_cache_ttl_seconds: parseInt(e.target.value) || 0 })} className="w-28 px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm" />
-                <span className="text-sm text-text-muted">seconds</span>
-              </div>
-              <p className="text-xs text-text-muted mt-1">{t("settings.indexTtlHelp")}</p>
             </div>
           </div>
         </div>

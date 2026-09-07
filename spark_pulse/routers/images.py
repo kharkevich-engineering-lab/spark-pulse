@@ -144,14 +144,27 @@ def list_images():
 @router.delete("")
 def delete_image(
     ref: str = Query("", description="Image reference"),
+    nodes: str = Query("", description="Comma-separated node list"),
     req: dict | None = Body(None),
 ):
-    """Delete a local image. The ref may come as a query param or in the body."""
-    target = (ref or str((req or {}).get("ref") or "")).strip()
+    """Delete an image here, and on any nodes named.
+
+    The ref may come as a query param or in the body; ``nodes`` takes the same
+    two forms. Without it this removes the image from the control node alone,
+    which is what it has always done.
+    """
+    body = req or {}
+    target = (ref or str(body.get("ref") or "")).strip()
     if not target:
         raise HTTPException(status_code=400, detail="ref is required")
+    raw_nodes = nodes or body.get("nodes") or ""
+    node_list = (
+        [str(n).strip() for n in raw_nodes if str(n).strip()]
+        if isinstance(raw_nodes, list)
+        else [n.strip() for n in str(raw_nodes).split(",") if n.strip()]
+    )
     try:
-        return tools.images.delete_image(target)
+        return tools.images.delete_image(target, nodes=node_list)
     except ValueError as exc:
         message = str(exc)
         status = 409 if "in use" in message else 404

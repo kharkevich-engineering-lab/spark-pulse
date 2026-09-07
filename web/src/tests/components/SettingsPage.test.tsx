@@ -17,7 +17,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import SettingsPage from "@/pages/SettingsPage";
-import type { EngineSummary, Settings } from "@/lib/types";
+import type { Settings } from "@/lib/types";
 
 vi.mock("@/lib/api", () => ({
   fetchSettings: vi.fn(),
@@ -25,16 +25,12 @@ vi.mock("@/lib/api", () => ({
   fetchSecrets: vi.fn(),
   saveSecrets: vi.fn(),
   deleteSecret: vi.fn(),
-  fetchEngines: vi.fn(),
-  refreshEngines: vi.fn(),
 }));
 
 import {
   deleteSecret,
-  fetchEngines,
   fetchSecrets,
   fetchSettings,
-  refreshEngines,
   saveSecrets,
   updateSettings,
 } from "@/lib/api";
@@ -93,7 +89,6 @@ function seedApi() {
   localStorage.clear();
   vi.mocked(fetchSettings).mockResolvedValue(SETTINGS);
   vi.mocked(fetchSecrets).mockResolvedValue({ hf_token: "" });
-  vi.mocked(fetchEngines).mockResolvedValue({ default_engine: "vllm", engines: [] });
   vi.mocked(updateSettings).mockResolvedValue(SETTINGS);
 }
 
@@ -126,13 +121,13 @@ describe("SettingsPage tabs", () => {
   it("comes back to the tab the operator was last on", async () => {
     const { unmount } = render(<SettingsPage />);
     await screen.findByRole("heading", { name: "Deployment Defaults" });
-    await openTab(/engines/i);
-    await screen.findByRole("heading", { name: "Engine Registry" });
+    await openTab(/features/i);
+    await screen.findByRole("heading", { name: "Optional features" });
     unmount();
 
     render(<SettingsPage />);
 
-    expect(await screen.findByRole("heading", { name: "Engine Registry" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Optional features" })).toBeInTheDocument();
   });
 
   it("still renders when the browser refuses to remember anything", async () => {
@@ -690,92 +685,8 @@ describe("SettingsPage secrets", () => {
 
 // ── Engines, and the states before settings arrive ──────────────────────────
 
-describe("SettingsPage engines and loading", () => {
-  const ENGINE: EngineSummary = {
-    engine: "vllm",
-    variant: "default",
-    key: "vllm/default",
-    description: "",
-    image: "ghcr.io/acme/engine/vllm",
-    image_ref: "ghcr.io/acme/engine/vllm:0.1.0",
-    version: "0.1.0",
-    tag: "0.1.0",
-    digest: null,
-    legacy_tags: [],
-    capabilities: { mods: true, solo: true, cluster: true },
-    verified: [],
-    ports: { api: 8000, rendezvous: 29500 },
-    readiness: "/v1/models",
-    models_endpoint: "/v1/models",
-    metrics: null,
-    source: "bundled",
-    enabled: true,
-  };
-
-  beforeEach(() => {
-    seedApi();
-    vi.mocked(refreshEngines).mockResolvedValue({ refreshed: true, engines: 1, indexes: [] });
-  });
-
-  it("re-reads the engine indexes on request", async () => {
-    const user = userEvent.setup();
-    render(<SettingsPage />);
-    await openTab(/engines/i);
-    await screen.findByRole("heading", { name: "Engines" });
-
-    await user.click(screen.getByRole("button", { name: /refresh/i }));
-
-    await waitFor(() => expect(refreshEngines).toHaveBeenCalled());
-    // Refreshing an index is pointless unless the list is re-read after it.
-    await waitFor(() => expect(vi.mocked(fetchEngines).mock.calls.length).toBeGreaterThan(1));
-  });
-
-  it("says why an index refresh failed", async () => {
-    const user = userEvent.setup();
-    vi.mocked(refreshEngines).mockRejectedValue(new Error("API 502: ghcr.io unreachable"));
-    render(<SettingsPage />);
-    await openTab(/engines/i);
-
-    await user.click(await screen.findByRole("button", { name: /refresh/i }));
-
-    expect(await screen.findByText("API 502: ghcr.io unreachable")).toBeInTheDocument();
-  });
-
-  it("lists the engines the registry holds, with the default marked", async () => {
-    vi.mocked(fetchEngines).mockResolvedValue({ default_engine: "vllm", engines: [ENGINE] });
-    render(<SettingsPage />);
-    await openTab(/engines/i);
-
-    expect(await screen.findByText("vllm")).toBeInTheDocument();
-    expect(screen.getByText("default")).toBeInTheDocument();
-    expect(screen.getByText("v0.1.0")).toBeInTheDocument();
-  });
-
-  it("says the registry is empty rather than showing a blank panel", async () => {
-    render(<SettingsPage />);
-    await openTab(/engines/i);
-
-    expect(await screen.findByText("No engines available.")).toBeInTheDocument();
-  });
-
-  it("edits the indexes as a list, one URL per line", async () => {
-    const user = userEvent.setup();
-    render(<SettingsPage />);
-    await openTab(/engines/i);
-    const indexes = await screen.findByLabelText("Engine indexes");
-    expect(indexes).toHaveValue("https://acme.test/engines.json");
-
-    fireEvent.change(indexes, { target: { value: "https://a.test/e.json\nhttps://b.test/e.json" } });
-    await user.click(screen.getByRole("button", { name: /save settings/i }));
-
-    await waitFor(() =>
-      expect(updateSettings).toHaveBeenCalledWith(
-        expect.objectContaining({
-          engine_indexes: ["https://a.test/e.json", "https://b.test/e.json"],
-        }),
-      ),
-    );
-  });
+describe("SettingsPage loading", () => {
+  beforeEach(seedApi);
 
   it("shows nothing but a spinner until the settings arrive", () => {
     vi.mocked(fetchSettings).mockReturnValue(new Promise(() => {}));

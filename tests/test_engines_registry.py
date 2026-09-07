@@ -86,7 +86,6 @@ BUNDLED = {
     "trtllm/default",
     "modular-max/default",
     "atlas/default",
-    "tokenary/default",
 }
 
 

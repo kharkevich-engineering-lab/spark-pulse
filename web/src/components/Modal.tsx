@@ -13,7 +13,11 @@ interface BaseModalProps {
   icon?: React.ReactNode;
 }
 
-function BaseModal({ open, onClose, title, children, actions, icon }: BaseModalProps) {
+/** The dialog frame, exported so a page can put its own controls inside one.
+ *
+ * `ConfirmModal` covers "are you sure"; a dialog that asks *which nodes* is a
+ * form, and a form needs the frame rather than another fixed shape. */
+export function Modal({ open, onClose, title, children, actions, icon }: BaseModalProps) {
   const t = useT();
   const modalRef = useRef<HTMLDivElement>(null);
 
@@ -124,7 +128,7 @@ export function ConfirmModal({ open, onClose, onConfirm, title, message, confirm
 
   return (
     <div data-confirm-modal="true">
-      <BaseModal
+      <Modal
         open={open}
         onClose={() => !confirming && onClose()}
         title={title}
@@ -153,7 +157,7 @@ export function ConfirmModal({ open, onClose, onConfirm, title, message, confirm
       }
     >
       <p className="text-text-muted">{message}</p>
-    </BaseModal>
+    </Modal>
     </div>
   );
 }
@@ -169,7 +173,7 @@ interface AlertModalProps {
 
 export function AlertModal({ open, onClose, title, message }: AlertModalProps) {
   return (
-    <BaseModal
+    <Modal
       open={open}
       onClose={onClose}
       title={title}
@@ -184,6 +188,6 @@ export function AlertModal({ open, onClose, title, message }: AlertModalProps) {
       }
     >
       <p className="text-text-muted whitespace-pre-wrap">{message}</p>
-    </BaseModal>
+    </Modal>
   );
 }

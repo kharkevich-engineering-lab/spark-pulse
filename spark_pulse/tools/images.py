@@ -573,8 +573,29 @@ def images_in_use() -> dict[str, list[str]]:
     return in_use
 
 
-def delete_image(ref: str, force: bool = False) -> dict[str, Any]:
-    """Delete a local image, refusing when something running references it."""
+def delete_image(
+    ref: str,
+    force: bool = False,
+    nodes: list[str] | None = None,
+    ssh_user: str | None = None,
+    services: Any | None = None,
+) -> dict[str, Any]:
+    """Delete an image here, and on the nodes named.
+
+    ``sync`` pushes an image out to every peer; until this took a node list
+    there was no way to take one back, so a four-node cluster could be filled
+    from here and cleaned only here. The agent already exposes the operation
+    (``RemoveImage``), so the control plane's job is to decide *where* and to
+    report what each node said — not to run docker on anything but itself.
+
+    The in-use check runs once, on the deployment records, because those are
+    cluster-wide: a deployment on any node holding this image refuses the
+    delete everywhere rather than leaving one rank without its image.
+
+    A node that cannot be reached is an error on its row, never a silent
+    success: the caller is deleting to reclaim disk, and "we could not ask" is
+    not "it is gone".
+    """
     ref = (ref or "").strip()
     if not ref:
         raise ValueError("ref is required")
@@ -584,19 +605,148 @@ def delete_image(ref: str, force: bool = False) -> dict[str, Any]:
             f"Image {ref} is in use by running deployment(s) or cluster(s): "
             f"{', '.join(users)}"
         )
+
+    peers = [str(n).strip() for n in (nodes or []) if str(n).strip()]
+    rows = _delete_on_nodes(ref, peers, force, ssh_user, services) if peers else []
+
     docker = _docker()
     info = docker.image_info(ref)
     if info is None:
+        # Locally absent is only a failure when the caller asked for nothing
+        # else. Removing it from three peers and reporting "not present here"
+        # would throw away three real results.
+        if rows:
+            return _delete_result(ref, "", 0, rows)
         raise ValueError(f"Image not present locally: {ref}")
     if not docker.remove_image(ref, force=force):
         raise ValueError(f"Image not present locally: {ref}")
-    result = {
-        "deleted": ref,
-        "image_id": info.get("id", ""),
-        "freed_bytes": int(info.get("size_bytes") or 0),
-    }
+
+    result = _delete_result(
+        ref, str(info.get("id", "")), int(info.get("size_bytes") or 0), rows
+    )
     publish_event(EVENT_DELETED, ref, result)
     return result
+
+
+def _same_repository(service: Any, ref: str) -> list[str]:
+    """References on a node for the same repository as ``ref``.
+
+    Only consulted when a removal found nothing, to tell "it was already gone"
+    apart from "it is there under a name we did not try".
+    """
+    repository, _ = split_ref(ref)
+    try:
+        held = service.list_images() or []
+    except Exception:  # pragma: no cover — an agent that cannot list
+        return []
+    # `list_images` answers in `image_info` shape: tags and digests, both of
+    # which name the same content.
+    name = repository.split("/")[-1]
+    names: list[str] = []
+    for image in held:
+        for candidate in list(image.get("repo_tags") or []) + list(
+            image.get("repo_digests") or []
+        ):
+            text = str(candidate)
+            if text and split_ref(text)[0].endswith(name):
+                names.append(text)
+    return sorted(set(names))
+
+
+def _seeded_reference(ref: str) -> str:
+    """What a node pulled when this image was synced from here, if anything.
+
+    Composed rather than looked up: the registry may be stopped by the time
+    somebody reclaims disk, and the reference is a pure function of the image
+    location and this node's registry address.
+    """
+    from spark_pulse import tools
+
+    try:
+        base = registry_base()
+        if not base:
+            return ""
+        # The digest is what makes the reference: without one, `location_fields`
+        # composes nothing and hands the original ref back. Local image first,
+        # then what the index advertises — the second matters precisely when
+        # the image has already been deleted here and only the nodes still
+        # carry it.
+        repository, _ = split_ref(ref)
+        info = _docker().image_info(ref)
+        digest = local_digest(info, repository) if info else ""
+        if not digest:
+            digest = str(tools.registry.location_for(ref).digest or "")
+        if not digest:
+            return ""
+        return str(location_fields(ref, digest, base).get("pull_ref") or "")
+    except Exception:  # pragma: no cover — no registry configured
+        return ""
+
+
+def _delete_result(
+    ref: str, image_id: str, freed: int, rows: list[dict[str, Any]]
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "deleted": ref,
+        "image_id": image_id,
+        "freed_bytes": freed,
+    }
+    if rows:
+        result["nodes"] = rows
+    return result
+
+
+def _delete_on_nodes(
+    ref: str,
+    nodes: list[str],
+    force: bool,
+    ssh_user: str | None,
+    services: Any | None,
+) -> list[dict[str, Any]]:
+    """Ask each node to remove the image, in parallel, and report per node."""
+    resolve = _node_services(services)
+
+    # A node rarely holds the image under the reference this host calls it.
+    # `sync_to_nodes` seeds the control node's registry and has each node pull
+    # `<control>:5000/owner/repo@sha256:D`, so removing `ghcr.io/owner/repo:tag`
+    # there would report success and free nothing. Both names are tried, and a
+    # node that carries neither is already in the state the caller wanted.
+    candidates = [ref]
+    seeded = _seeded_reference(ref)
+    if seeded and seeded != ref:
+        candidates.append(seeded)
+
+    def _one(address: str) -> dict[str, Any]:
+        from spark_pulse import tools
+
+        try:
+            node = tools.node_service.node_for(address, ssh_user=ssh_user or "")
+            service = resolve(node)
+            removed = [c for c in candidates if service.remove_image(c, force=force)]
+            leftovers = [] if removed else _same_repository(service, ref)
+        except Exception as exc:  # noqa: BLE001 — every transport failure alike
+            return {"node": address, "removed": False, "error": str(exc)[:500]}
+        # Nothing removed and nothing of this repository left is the state the
+        # caller asked for. Nothing removed while the node still holds other
+        # references for the same repository is not: it means the name this
+        # host knows the image by is not the name the node has it under, and
+        # reporting that as done would be a lie about reclaimed disk.
+        error = None
+        if leftovers:
+            error = (
+                f"could not identify {ref} on {address}: it holds "
+                f"{len(leftovers)} other reference(s) for this repository "
+                f"({', '.join(leftovers[:3])})"
+            )
+        return {
+            "node": address,
+            "removed": bool(removed),
+            "refs": removed,
+            "error": error,
+        }
+
+    with ThreadPoolExecutor(max_workers=max(1, len(nodes))) as pool:
+        return list(pool.map(_one, nodes))
 
 
 # ── Distribution ─────────────────────────────────────────────────────────────

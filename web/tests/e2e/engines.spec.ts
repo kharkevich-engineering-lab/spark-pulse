@@ -1,8 +1,10 @@
-/** Engine images: what this host has, and what a deploy would have to pull.
+/** Engines: what this cluster can run, and what a deploy would have to pull.
  *
  * The page exists to separate two states that both mean "you will wait": an
  * image that was never pulled, and one whose version was republished under a
- * new digest. The spec asserts the page tells them apart.
+ * new digest. The spec asserts the page tells them apart — and, since the
+ * Images page and the Engines settings tab became one, that an engine's own
+ * facts are on the same row as its image's size.
  */
 
 import { expect, test } from "@playwright/test";
@@ -33,16 +35,19 @@ test("lists every engine image the backend knows about", async ({ page, request 
   const { images } = (await response.json()) as { images: ImageEntry[] };
   expect(images.length, "simulation mode should serve an image catalogue").toBeGreaterThan(0);
 
-  await gotoPage(page, "/images");
-  await expect(page.getByRole("heading", { name: "Engine images", exact: true })).toBeVisible();
+  await gotoPage(page, "/engines");
+  await expect(page.getByRole("heading", { name: "Engines", exact: true })).toBeVisible();
 
   for (const image of images) {
-    const row = page.getByTestId(`image-${image.ref}`);
+    const row = page.getByTestId(`engine-${image.ref}`);
     await expect(row).toBeVisible();
     await expect(row).toContainText(image.repository);
     await expect(row).toContainText(`:${image.tag}`);
     await expect(row).toContainText(image.engine);
-    await expect(row).toContainText(image.variant);
+    // "default" is the absence of a variant, so the badge leaves it unsaid —
+    // the rule `EngineBadge` has always applied, now that the badge is what
+    // this page renders.
+    if (image.variant !== "default") await expect(row).toContainText(image.variant);
   }
   await expectNoCrash(page);
 });
@@ -56,10 +61,10 @@ test("distinguishes a missing image from a republished digest", async ({ page, r
   expect(missing.length, "simulation should include an image this host lacks").toBeGreaterThan(0);
   expect(drifted.length, "simulation should include an image with digest drift").toBeGreaterThan(0);
 
-  await gotoPage(page, "/images");
+  await gotoPage(page, "/engines");
 
   for (const image of missing) {
-    const row = page.getByTestId(`image-${image.ref}`);
+    const row = page.getByTestId(`engine-${image.ref}`);
     await expect(row).toContainText("not pulled");
     await expect(row.getByRole("button", { name: `Pull ${image.ref}` })).toBeVisible();
     // Nothing to delete, and no size to report, for an image that is not here.
@@ -67,7 +72,7 @@ test("distinguishes a missing image from a republished digest", async ({ page, r
   }
 
   for (const image of drifted) {
-    const row = page.getByTestId(`image-${image.ref}`);
+    const row = page.getByTestId(`engine-${image.ref}`);
     await expect(row.getByText("present", { exact: true })).toBeVisible();
     await expect(row.getByText("newer digest published", { exact: true })).toBeVisible();
     // The digest column shows local → index, so the two can be compared by eye.

@@ -74,7 +74,7 @@ test("shows the configuration the backend is running with", async ({ page, reque
   await gotoPage(page, "/settings");
 
   // Every tab renders, and each is reached by name.
-  for (const tab of ["Deployment", "Containers", "Cluster", "Engines", "Secrets", "Environment"]) {
+  for (const tab of ["Deployment", "Containers", "Features", "Engines", "Secrets", "Environment"]) {
     await expect(page.getByRole("tab", { name: tab, exact: true })).toBeVisible();
   }
 
@@ -88,8 +88,6 @@ test("shows the configuration the backend is running with", async ({ page, reque
   await expect(page.getByRole("heading", { name: "Deployment Defaults", exact: true })).toBeVisible();
   const deployment = await valuesOnScreen();
   expect(deployment).toContain(settings.spark_vllm_path);
-  expect(deployment).toContain(settings.default_container);
-  expect(deployment).toContain(String(settings.default_gpu_mem_util));
   expect(deployment).toContain(String(settings.default_port_range_start));
   expect(deployment).toContain(String(settings.default_port_range_end));
 
