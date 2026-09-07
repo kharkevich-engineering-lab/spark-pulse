@@ -380,7 +380,7 @@ class EnrollmentLedger:
             row = db.get(_LedgerNodeRow, node_id)
             return _entry_of(row) if row is not None else None
 
-    def _save(self) -> None:
+    def _save(self) -> None:  # noqa: D401 — see the warning in the docstring
         """Write the whole ledger, in one transaction.
 
         Both tables together, because a node accepted without the token that

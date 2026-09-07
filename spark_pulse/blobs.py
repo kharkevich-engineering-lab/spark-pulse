@@ -102,6 +102,11 @@ def _checked(path: str) -> str:
         raise UnsafeBlobPath(f"{path!r} is not a relative path")
     if any(part in ("..", "") for part in candidate.parts):
         raise UnsafeBlobPath(f"{path!r} escapes its scope")
+    # ``Path(".").parts`` is empty, so the check above passes it. It names the
+    # scope root, and materialising it would call ``write_bytes`` on a
+    # directory.
+    if candidate.as_posix() in (".", ""):
+        raise UnsafeBlobPath(f"{path!r} names the scope root, not a file in it")
     return candidate.as_posix()
 
 
@@ -180,10 +185,25 @@ def materialize(scope: str, destination: Path) -> Path:
             wanted[row.path] = (row.digest, row.mode)
             target = destination / row.path
             if target.is_file() and digest_of(target.read_bytes()) == row.digest:
+                # Content is current; the mode may not be. A ``put`` that only
+                # changes permissions leaves the digest alone, and skipping
+                # outright meant a mod's ``run.sh`` promoted to 0755 stayed
+                # non-executable in the cache — the one case the column's own
+                # docstring calls out.
+                if target.stat().st_mode & 0o777 != row.mode:
+                    os.chmod(target, row.mode)
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(bytes(row.content))
             os.chmod(target, row.mode)
+
+    if not wanted:
+        # Nothing is stored under this scope, so there is nothing to reconcile
+        # the directory against. Sweeping here would delete every file in
+        # ``destination`` — and the caller chose that path, so a typo or a
+        # scope that does not exist yet would erase an operator's mod
+        # directory rather than produce an empty cache.
+        return destination
 
     for existing in sorted(destination.rglob("*"), reverse=True):
         if existing.is_file():

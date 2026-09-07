@@ -47,6 +47,7 @@ one backend, or a SQLite-only pragma outside :func:`_configure_sqlite`.
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
 from contextlib import contextmanager
@@ -64,6 +65,8 @@ from sqlalchemy.orm import (
     sessionmaker,
 )
 from sqlalchemy.pool import StaticPool
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "Base",
@@ -210,17 +213,32 @@ def _create_engine(url: str) -> Engine:
     if _is_sqlite(url):
         path = Path(make_url(url).database or "")
         path.parent.mkdir(parents=True, exist_ok=True)
-        created = create_engine(url, connect_args={"check_same_thread": False})
-        _configure_sqlite(created)
-        # 0600 the moment it exists: this file holds OIDC access and refresh
-        # tokens, and on a shared machine the default 0644 hands them to
-        # every local user.
-        with created.connect():
-            pass
+        # 0600 *before* the first connection, not after. Connecting runs
+        # `PRAGMA journal_mode=WAL`, and SQLite copies the database file's mode
+        # onto the `-wal` and `-shm` sidecars at the moment it creates them —
+        # so a chmod afterwards secured the database and left the sidecars at
+        # the umask default. Those sidecars hold the rows most recently
+        # written, which on a first run is every session token this process has
+        # ever minted. The exposure this comment claims to prevent was real for
+        # exactly the run that matters most.
         try:
+            path.touch(mode=0o600, exist_ok=True)
             path.chmod(0o600)
         except OSError:  # pragma: no cover — a filesystem without modes
             pass
+        created = create_engine(url, connect_args={"check_same_thread": False})
+        _configure_sqlite(created)
+        with created.connect():
+            pass
+        for sidecar in (
+            path.with_name(path.name + "-wal"),
+            path.with_name(path.name + "-shm"),
+        ):
+            try:
+                if sidecar.exists():
+                    sidecar.chmod(0o600)
+            except OSError:  # pragma: no cover
+                pass
         return created
     return create_engine(url, pool_pre_ping=True)
 
@@ -247,8 +265,19 @@ def _load_models() -> None:
     for name in _MODEL_MODULES:
         try:
             importlib.import_module(name)
-        except Exception:  # pragma: no cover - a stripped install
-            pass
+        except ModuleNotFoundError as exc:
+            # A stripped install genuinely may not carry every module. Anything
+            # else — an ImportError from a bad dependency, a SyntaxError — must
+            # not be swallowed: the schema would then be emitted *without* that
+            # table and the failure would surface much later as "no such table"
+            # at whichever call site got there first, which is precisely what
+            # importing them all up front exists to prevent.
+            logger.warning(
+                "no model module %s (%s); its table will be absent", name, exc
+            )
+        except Exception:
+            logger.exception("model module %s failed to import", name)
+            raise
 
 
 def _create_schema(engine: Engine) -> None:
@@ -282,6 +311,15 @@ def _create_schema(engine: Engine) -> None:
     # Something other than a race: create_all again so the real error is the
     # one that reaches the caller, rather than a stale one from the retry.
     Base.metadata.create_all(engine)
+
+
+def _session_factory() -> "sessionmaker[Session]":
+    """The session factory, built if needed, read under the lock that builds it."""
+    engine()
+    with _lock:
+        if _sessionmaker is None:  # pragma: no cover — configure() raced us
+            raise RuntimeError("the database was reconfigured mid-transaction")
+        return _sessionmaker
 
 
 def engine() -> Engine:
@@ -333,9 +371,12 @@ def session_scope() -> Iterator[Session]:
     the whole reason the JSON files were written atomically, expressed once
     instead of at each call site.
     """
-    engine()
-    assert _sessionmaker is not None  # engine() builds it
-    session = _sessionmaker()
+    # The factory is captured under the same lock that builds it. Reading the
+    # global afterwards left a window in which ``configure()`` could null it,
+    # and the guard was an ``assert`` — stripped under ``python -O``, where it
+    # becomes ``TypeError: 'NoneType' object is not callable``.
+    factory = _session_factory()
+    session = factory()
     try:
         yield session
         session.commit()

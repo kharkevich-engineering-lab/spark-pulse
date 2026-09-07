@@ -47,6 +47,8 @@ from typing import Any, Iterable
 from sqlalchemy import JSON, Boolean, String, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
+from sqlalchemy.exc import IntegrityError
+
 from spark_pulse.db import Base, is_done, mark_done_within, session_scope
 from spark_pulse.tools.atomic_json import read_state_file
 
@@ -374,16 +376,24 @@ def _migrate_from_json() -> None:
     # afterwards leaves a window in which the marker says the file was taken
     # while none of it was — and the marker is what stops it being tried
     # again, so the registry would be empty for good.
-    with session_scope() as db:
-        if not mark_done_within(db, _IMPORT_KEY, registry_path().name):
-            return
-        # Through ``NodeRecord.from_dict`` rather than straight off the dict:
-        # a hand-edited nodes.json is a supported thing to have, and an entry
-        # without an id is given one there.
-        for item in raw:
-            if not isinstance(item, dict):
-                continue
-            _upsert(db, NodeRecord.from_dict(item))
+    try:
+        with session_scope() as db:
+            if not mark_done_within(db, _IMPORT_KEY, registry_path().name):
+                return
+            # Through ``NodeRecord.from_dict`` rather than straight off the dict:
+            # a hand-edited nodes.json is a supported thing to have, and an entry
+            # without an id is given one there.
+            for item in raw:
+                if not isinstance(item, dict):
+                    continue
+                _upsert(db, NodeRecord.from_dict(item))
+    except IntegrityError:
+        # Another reader claimed the import between our check and our insert.
+        # This runs from plain reads (`list_nodes`, `self_node`) and outside
+        # the mutation mutex, so two concurrent first reads on an upgrade —
+        # the lifespan's `register_self` beside reconciliation — really do
+        # race. Our whole transaction rolled back; theirs stands.
+        return
     logger.info(
         "imported %d node(s) from %s into the state database", len(raw), registry_path()
     )

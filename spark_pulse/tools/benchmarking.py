@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from filelock import FileLock
+from filelock import Timeout as FileLockTimeout
 from sqlalchemy import JSON, String, select
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -122,7 +123,7 @@ def _apply(row: _BenchmarkRow, record: dict) -> bool:
     return True
 
 
-def _transaction() -> AbstractContextManager[Any]:
+def _transaction(*, timeout: float | None = None) -> AbstractContextManager[Any]:
     """Serialise a read-modify-write of the benchmark set.
 
     Every caller that reads records, changes them and writes them back holds
@@ -141,8 +142,14 @@ def _transaction() -> AbstractContextManager[Any]:
     server — writes the same database. ``filelock`` counts acquisitions per
     thread, so it is reentrant for the helpers that call one another and still
     exclusive between threads.
+
+    ``timeout`` overrides the lock's own for one acquisition; ``0`` means
+    "take it or raise", which is how a read path declines to wait behind a
+    running benchmark.
     """
-    return _BENCHMARKS_LOCK
+    if timeout is None:
+        return _BENCHMARKS_LOCK
+    return _BENCHMARKS_LOCK.acquire(timeout=timeout)
 
 
 # ── The whole set ────────────────────────────────────────────────────────────
@@ -250,14 +257,18 @@ def _upsert_row(record: dict) -> None:
                 _apply(row, record)
 
 
-def _delete_row(benchmark_id: str) -> bool:
+def _delete_row(benchmark_id: str, *, timeout: float | None = None) -> bool:
     """Drop one record. ``False`` when there was nothing to drop.
 
     Naming the row is what lets retention express "delete this expired one"
     instead of "the set is now these other forty", which would also delete
     whatever was created while it was deciding.
+
+    ``timeout=0`` asks for the lock without waiting, and raises
+    ``filelock.Timeout`` rather than blocking — which is what a *read* path
+    wants, since the write mutex is held for the length of a benchmark run.
     """
-    with _transaction():
+    with _transaction(timeout=timeout):
         _migrate_from_json()
         with session_scope() as db:
             row = db.get(_BenchmarkRow, benchmark_id)
@@ -406,18 +417,28 @@ def list_benchmarks() -> list[dict]:
             reverse=True,
         )
 
-    # Outside the cache lock, because deleting takes the mutex and the write
-    # paths take the mutex *before* the cache lock; holding them in both orders
-    # is a deadlock. Expired records used to be filtered out of the answer and
-    # left in the store, so a log line claimed a purge that never happened and
-    # the table grew for ever. Deleting them by name rather than saving the
-    # surviving set keeps the purge from also removing whatever was created
-    # while this list was being assembled.
+    # The purge is *offered*, never waited for. `_delete_row` takes the file
+    # mutex, and `execute_benchmark` holds that mutex for the whole length of a
+    # benchmark run — minutes. Blocking here meant that listing benchmarks
+    # while one was running waited 30 seconds and then raised
+    # `filelock.Timeout`, i.e. a 500 on a read-only endpoint for the duration
+    # of every run. Reading is not the moment to insist on housekeeping: the
+    # expired records are already absent from the answer, and the next attempt
+    # will take them.
     if len(kept) != len(records):
         surviving = {b["benchmark_id"] for b in kept}
         for record in records:
-            if record["benchmark_id"] not in surviving:
-                _delete_row(record["benchmark_id"])
+            if record["benchmark_id"] in surviving:
+                continue
+            try:
+                _delete_row(record["benchmark_id"], timeout=0)
+            except FileLockTimeout:
+                logger.debug(
+                    "benchmark %s is past retention but the store is busy; "
+                    "leaving it for the next sweep",
+                    record["benchmark_id"],
+                )
+                break
 
     return listed
 

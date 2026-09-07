@@ -387,3 +387,43 @@ def test_schema_creation_is_idempotent(tmp_path):
     db._create_schema(engine)
 
     assert sessions.count() == 0
+
+
+def test_the_wal_sidecars_are_not_world_readable(tmp_path):
+    """The `-wal` file holds the rows most recently written.
+
+    SQLite copies the database file's mode onto the `-wal` and `-shm`
+    sidecars at the moment it creates them, and connecting is what creates
+    them. Chmodding the database *after* the first connection therefore
+    secured the database and left the sidecars at the umask default — on a
+    first run, containing every session token the process had just minted.
+    """
+    path = tmp_path / "state.db"
+    db.configure(f"sqlite:///{path}")
+    sessions.create(user={"sub": "alice"}, expires_at=time.time() + 60)
+
+    wal = path.with_name(path.name + "-wal")
+    assert wal.exists(), "WAL mode should have produced a -wal sidecar"
+    for created in (path, wal):
+        assert (
+            created.stat().st_mode & 0o077 == 0
+        ), f"{created.name} is readable by others"
+
+
+def test_a_model_module_that_cannot_import_is_not_swallowed(monkeypatch):
+    """Hiding it emits a schema without that table, and the failure then
+    surfaces as "no such table" at whichever call site got there first —
+    which is what importing them all up front exists to prevent."""
+    import importlib
+
+    real = importlib.import_module
+
+    def explode(name, *args, **kwargs):
+        if name == "spark_pulse.sessions":
+            raise ImportError("a dependency of this module is broken")
+        return real(name, *args, **kwargs)
+
+    monkeypatch.setattr(importlib, "import_module", explode)
+
+    with pytest.raises(ImportError):
+        db._load_models()

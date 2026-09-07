@@ -174,3 +174,43 @@ def test_a_directory_survives_the_round_trip(tmp_path):
     assert (root / "run.sh").read_bytes() == b"#!/bin/sh\necho hi\n"
     assert (root / "run.sh").stat().st_mode & 0o777 == 0o755
     assert (root / "nested" / "t.jinja").read_bytes() == b"tmpl"
+
+
+def test_a_mode_only_change_reaches_the_cache(tmp_path):
+    """Content unchanged, permissions changed — the cache must follow.
+
+    ``materialize`` skips a file whose digest already matches, and the chmod
+    used to live only on the write branch. A mod's ``run.sh`` promoted to
+    0755 therefore stayed non-executable in the cache: the exact case the
+    column's docstring says the mode is stored for.
+    """
+    blobs.put("mod:demo", "run.sh", b"#!/bin/sh\n", mode=0o644)
+    root = blobs.materialize("mod:demo", tmp_path / "cache")
+    assert (root / "run.sh").stat().st_mode & 0o777 == 0o644
+
+    blobs.put("mod:demo", "run.sh", b"#!/bin/sh\n", mode=0o755)
+    blobs.materialize("mod:demo", root)
+
+    assert (root / "run.sh").stat().st_mode & 0o777 == 0o755
+
+
+def test_materializing_an_unknown_scope_does_not_erase_the_destination(tmp_path):
+    """The sweep reconciles a directory against a scope. With no scope there
+    is nothing to reconcile against, and deleting everything is not the
+    answer — the caller chose that path, so a typo would take an operator's
+    mod directory with it."""
+    destination = tmp_path / "not-a-cache"
+    destination.mkdir()
+    (destination / "precious.txt").write_bytes(b"do not delete me")
+
+    blobs.materialize("mod:never-stored", destination)
+
+    assert (destination / "precious.txt").read_bytes() == b"do not delete me"
+
+
+def test_the_scope_root_is_not_a_file_in_it(tmp_path):
+    """``Path(".").parts`` is empty, so the traversal guard passed it through
+    and ``materialize`` then called ``write_bytes`` on a directory."""
+    for root_ish in (".", "./"):
+        with pytest.raises(blobs.UnsafeBlobPath):
+            blobs.put("mod:demo", root_ish, b"x")
