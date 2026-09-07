@@ -1,10 +1,94 @@
 import { useState, useEffect } from "react";
 import { fetchSettings, updateSettings, fetchSecrets, saveSecrets, deleteSecret, runDiscovery, fetchEngines, refreshEngines, type DiscoveryResult, type ValidationResult } from "@/lib/api";
+import type { DockerSettings } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
-import { Settings as SettingsIcon, Loader2, AlertCircle, Check, KeyRound, Eye, EyeOff, Trash2, Lock, Server, Clock, Network, Radio, Wifi, WifiOff, Cpu, RefreshCw } from "lucide-react";
+import { Settings as SettingsIcon, Loader2, AlertCircle, Check, KeyRound, Eye, EyeOff, Trash2, Lock, Server, Box, Network, Radio, Wifi, WifiOff, Cpu, RefreshCw, Info, ShieldCheck } from "lucide-react";
 import { EngineList } from "@/components/EngineBadge";
 import { AlertModal } from "@/components/Modal";
 import { setRefresh } from "@/lib/refresh";
+
+/** The tabs, in the order an operator meets them.
+ *
+ * Six cards on one scrolling page put "how much VRAM per deployment" beside
+ * "which origins may call this API", which are not the same kind of decision
+ * and are never made at the same time. Grouping by *when you go looking* is
+ * what the tabs are for.
+ */
+const TABS = [
+  { id: "deployment", label: "Deployment", icon: Server },
+  { id: "containers", label: "Containers", icon: Box },
+  { id: "cluster", label: "Cluster", icon: Network },
+  { id: "engines", label: "Engines", icon: Cpu },
+  { id: "secrets", label: "Secrets", icon: KeyRound },
+  { id: "environment", label: "Environment", icon: Info },
+] as const;
+
+type TabId = (typeof TABS)[number]["id"];
+
+/** Where the operator was last looking, so a save does not send them back to
+ *  the first tab. Per-browser and disposable — a lost value costs one click. */
+const TAB_STORAGE_KEY = "spark-pulse:settings-tab";
+
+function storedTab(): TabId {
+  try {
+    const saved = localStorage.getItem(TAB_STORAGE_KEY);
+    if (TABS.some((t) => t.id === saved)) return saved as TabId;
+  } catch {
+    // A private window, or site data turned off. The default is fine.
+  }
+  return "deployment";
+}
+
+const inputCls = "w-full px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm";
+const cardCls = "rounded-xl bg-surface border border-border p-5 space-y-4";
+
+/** Defined here rather than inside the page.
+ *
+ * A component declared in a render body is a new component type on every
+ * render, so React unmounts and remounts its subtree each time — which throws
+ * away focus and any state it holds. These have neither today, and a switch
+ * that loses focus mid-keyboard-navigation is the bug that would appear the
+ * moment one of them grew some. */
+function Toggle({ on, onClick, label }: { on: boolean; onClick: () => void; label: string }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
+      onClick={onClick}
+      className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${on ? "bg-primary" : "bg-border"}`}
+    >
+      <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${on ? "translate-x-5" : "translate-x-0"}`} />
+    </button>
+  );
+}
+
+/** One read-only fact about how this process is configured. */
+function Fact({ label, value, hint }: { label: string; value: React.ReactNode; hint?: string }) {
+  return (
+    <div className="flex items-start justify-between gap-4 py-2 border-b border-border last:border-0">
+      <div className="min-w-0">
+        <p className="text-sm font-medium">{label}</p>
+        {hint && <p className="text-xs text-text-muted mt-0.5">{hint}</p>}
+      </div>
+      <div className="text-right shrink-0 max-w-[55%]">{value}</div>
+    </div>
+  );
+}
+
+function Code({ children }: { children: React.ReactNode }) {
+  return <code className="px-2 py-0.5 rounded bg-bg font-mono text-xs break-all">{children}</code>;
+}
+
+/** The field the environment owns, marked as such. */
+function EnvBadge() {
+  return (
+    <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-warning/15 text-warning font-normal ml-1.5">
+      <Lock size={10} />env
+    </span>
+  );
+}
 
 export default function SettingsPage() {
   const { data: settings, loading, error, refetch } = useQuery(fetchSettings);
@@ -13,21 +97,27 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [alertModal, setAlertModal] = useState<{ title: string; message: string } | null>(null);
+  const [tab, setTab] = useState<TabId>(storedTab);
+
+  const selectTab = (id: TabId) => {
+    setTab(id);
+    try { localStorage.setItem(TAB_STORAGE_KEY, id); } catch { /* not worth reporting */ }
+  };
 
   const envManaged = (settings?.env_managed ?? []) as string[];
   const isEnvManaged = (field: string) => envManaged.includes(field);
-  const EnvBadge = () => (
-    <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-warning/15 text-warning font-normal ml-1.5">
-      <Lock size={10} />env
-    </span>
-  );
+  // ── The docker: block ──────────────────────────────────────────────────
+  //
+  // Read from the form, which is seeded from the server — not from literals
+  // in the markup. A field showing 110 GB because the JSX says 110 tells the
+  // operator nothing about what this machine will actually do, and that is
+  // exactly what this page used to show.
+  const dockerCfg = (form.docker ?? {}) as DockerSettings;
+  const setDocker = <K extends keyof DockerSettings>(key: K, val: DockerSettings[K]) =>
+    setForm({ ...form, docker: { ...dockerCfg, [key]: val } });
 
-  // ── Docker helpers ─────────────────────────────────────────────────────
-  const dockerCfg = form.docker as Record<string, unknown> | undefined;
-  const getDocker = <K extends keyof NonNullable<typeof dockerCfg>>(key: K, def: NonNullable<typeof dockerCfg>[K]) =>
-    (dockerCfg?.[key] ?? def) as NonNullable<typeof dockerCfg>[K];
-  const setDocker = <K extends keyof NonNullable<typeof dockerCfg>>(key: K, val: NonNullable<typeof dockerCfg>[K]) =>
-    setForm({ ...form, docker: { ...(dockerCfg ?? {}), [key]: val } });
+  const modCfg = (form.mod ?? {}) as { network_policy?: string };
+  const environment = settings?.environment;
 
   // HF Token state
   const [hfToken, setHfToken] = useState("");
@@ -39,12 +129,10 @@ export default function SettingsPage() {
   const { data: engineData, refetch: refetchEngines, loading: enginesLoading } = useQuery(fetchEngines);
   const [refreshingEngines, setRefreshingEngines] = useState(false);
 
-
   // Network discovery state
   const [discoveryResult, setDiscoveryResult] = useState<DiscoveryResult | null>(null);
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
   const [discoveryLoading, setDiscoveryLoading] = useState(false);
-
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
 
   const isDirty = settings != null && Object.keys(form).some(
@@ -119,8 +207,6 @@ export default function SettingsPage() {
     }
   };
 
-  const inputCls = "w-full px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm";
-
   if (loading) return <div className="flex justify-center py-20"><Loader2 className="animate-spin text-primary" size={32} /></div>;
   if (error) return <div className="p-4 rounded-lg bg-danger/10 border border-danger/30 text-danger flex items-center gap-3"><AlertCircle size={20} /><span>{error}</span></div>;
 
@@ -128,102 +214,252 @@ export default function SettingsPage() {
     <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-bold">Settings</h2>
-        <p className="text-text-muted mt-1">Configure Spark Manager and spark-vllm-docker integration</p>
+        <p className="text-text-muted mt-1">
+          What every deployment inherits, and how this control plane is configured.
+        </p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+      {/* ── Tabs ─────────────────────────────────────────────────────────── */}
+      <div className="flex gap-1 border-b border-border overflow-x-auto" role="tablist">
+        {TABS.map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            role="tab"
+            aria-selected={tab === id}
+            onClick={() => selectTab(id)}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
+              tab === id ? "border-primary text-primary" : "border-transparent text-text-muted hover:text-text"
+            }`}
+          >
+            <span className="flex items-center gap-1.5"><Icon size={16} />{label}</span>
+          </button>
+        ))}
+      </div>
 
-        {/* ── Left: Deployment Defaults ── */}
-        <div className="rounded-xl bg-surface border border-border p-5 space-y-4">
-          <div className="flex items-center gap-2 pb-3 border-b border-border">
-            <Server size={16} className="text-primary" />
-            <h3 className="font-semibold">Deployment Defaults</h3>
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="text-sm font-medium">spark-vllm-docker path</label>
-              {isEnvManaged("spark_vllm_path") && <EnvBadge />}
+      {/* ── Deployment ───────────────────────────────────────────────────── */}
+      {tab === "deployment" && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+          <div className={cardCls}>
+            <div className="flex items-center gap-2 pb-3 border-b border-border">
+              <Server size={16} className="text-primary" />
+              <h3 className="font-semibold">Deployment Defaults</h3>
             </div>
-            <input type="text" value={String(form.spark_vllm_path ?? "")} onChange={(e) => setForm({ ...form, spark_vllm_path: e.target.value })} disabled={isEnvManaged("spark_vllm_path")} className={`${inputCls} disabled:opacity-40 disabled:cursor-not-allowed`} placeholder="/path/to/spark-vllm-docker" />
-            <p className="text-xs text-text-muted mt-1">{isEnvManaged("spark_vllm_path") ? "Controlled by SPARK_VLLM_PATH environment variable." : "Absolute path to the spark-vllm-docker installation."}</p>
-          </div>
 
-          <div>
-            <label className="block text-sm font-medium mb-1">Default container</label>
-            <input type="text" value={String(form.default_container ?? "vllm-node")} onChange={(e) => setForm({ ...form, default_container: e.target.value })} className={inputCls} />
-          </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Default container</label>
+              <input type="text" value={String(form.default_container ?? "vllm-node")} onChange={(e) => setForm({ ...form, default_container: e.target.value })} className={inputCls} />
+              <p className="text-xs text-text-muted mt-1">Legacy recipes name a container tag rather than an engine; this is the one used when they do not.</p>
+            </div>
 
-          <div>
-            <label className="block text-sm font-medium mb-1">GPU memory utilization</label>
-            <input type="number" step="0.05" min="0.1" max="1.0" value={Number(form.default_gpu_mem_util ?? 0.8)} onChange={(e) => setForm({ ...form, default_gpu_mem_util: parseFloat(e.target.value) || 0.8 })} className={inputCls} />
-            <p className="text-xs text-text-muted mt-1">Fraction of GPU VRAM allocated per deployment (0.1 – 1.0).</p>
-          </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">GPU memory utilization</label>
+              <input type="number" step="0.05" min="0.1" max="1.0" value={Number(form.default_gpu_mem_util ?? 0.8)} onChange={(e) => setForm({ ...form, default_gpu_mem_util: parseFloat(e.target.value) || 0.8 })} className={inputCls} />
+              <p className="text-xs text-text-muted mt-1">Fraction of GPU VRAM allocated per deployment (0.1 – 1.0).</p>
+            </div>
 
-          <div>
-            <label className="block text-sm font-medium mb-1">Port range</label>
-            <div className="flex items-center gap-2">
-              <input type="number" value={Number(form.default_port_range_start ?? 9000)} onChange={(e) => setForm({ ...form, default_port_range_start: parseInt(e.target.value) || 9000 })} className={inputCls} placeholder="9000" />
-              <span className="text-text-muted shrink-0 text-sm">–</span>
-              <input type="number" value={Number(form.default_port_range_end ?? 9100)} onChange={(e) => setForm({ ...form, default_port_range_end: parseInt(e.target.value) || 9100 })} className={inputCls} placeholder="9100" />
+            <div>
+              <label className="block text-sm font-medium mb-1">Port range</label>
+              <div className="flex items-center gap-2">
+                <input aria-label="Port range start" type="number" value={Number(form.default_port_range_start ?? 9000)} onChange={(e) => setForm({ ...form, default_port_range_start: parseInt(e.target.value) || 9000 })} className={inputCls} placeholder="9000" />
+                <span className="text-text-muted shrink-0 text-sm">–</span>
+                <input aria-label="Port range end" type="number" value={Number(form.default_port_range_end ?? 9100)} onChange={(e) => setForm({ ...form, default_port_range_end: parseInt(e.target.value) || 9100 })} className={inputCls} placeholder="9100" />
+              </div>
+              <p className="text-xs text-text-muted mt-1">A deployment that does not ask for a port is given a free one from this range.</p>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-sm font-medium">spark-vllm-docker path</label>
+                {isEnvManaged("spark_vllm_path") && <EnvBadge />}
+              </div>
+              <input type="text" value={String(form.spark_vllm_path ?? "")} onChange={(e) => setForm({ ...form, spark_vllm_path: e.target.value })} disabled={isEnvManaged("spark_vllm_path")} className={`${inputCls} disabled:opacity-40 disabled:cursor-not-allowed`} placeholder="/path/to/spark-vllm-docker" />
+              <p className="text-xs text-text-muted mt-1">{isEnvManaged("spark_vllm_path") ? "Controlled by SPARK_VLLM_PATH environment variable." : "Optional. Recipes are served from the bundled set and the OCI registry whether or not this is set."}</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3 pt-4 border-t border-border">
-            <button onClick={handleSave} disabled={saving || !isDirty} className="px-4 py-2 rounded-lg bg-primary hover:bg-primary-hover disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium text-sm transition-colors flex items-center gap-2">
-              {saving ? <Loader2 className="animate-spin" size={14} /> : saved ? <Check size={14} /> : <SettingsIcon size={14} />}
-              {saving ? "Saving…" : saved ? "Saved!" : "Save settings"}
-            </button>
-            {saved && <span className="text-xs text-success">Saved to <code className="font-mono">~/.config/spark-pulse/settings.json</code></span>}
+          <div className={cardCls}>
+            <div className="flex items-center gap-2 pb-3 border-b border-border">
+              <SettingsIcon size={16} className="text-primary" />
+              <h3 className="font-semibold">Timeouts and History</h3>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Readiness timeout</label>
+              <div className="flex items-center gap-2">
+                <input type="number" min="30" max="7200" value={Number(form.deploy_ready_timeout_seconds ?? 600)} onChange={(e) => setForm({ ...form, deploy_ready_timeout_seconds: parseInt(e.target.value) || 600 })} className="w-28 px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm" />
+                <span className="text-sm text-text-muted">seconds</span>
+              </div>
+              <p className="text-xs text-text-muted mt-1">How long a deployment may take to answer its readiness probe before it is called failed. A large model loading from cold disk is slow.</p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Image pull stall timeout</label>
+              <div className="flex items-center gap-2">
+                <input type="number" min="30" max="3600" value={Number(form.docker_pull_stall_timeout_seconds ?? 300)} onChange={(e) => setForm({ ...form, docker_pull_stall_timeout_seconds: parseInt(e.target.value) || 300 })} className="w-28 px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm" />
+                <span className="text-sm text-text-muted">seconds</span>
+              </div>
+              <p className="text-xs text-text-muted mt-1">A pull making no progress for this long is abandoned rather than left hanging. Measured from the last byte, not from the start.</p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Deployment history retention</label>
+              <div className="flex items-center gap-2">
+                <input type="number" min="0" max="365" value={Number(form.job_retention_days ?? 7)} onChange={(e) => setForm({ ...form, job_retention_days: parseInt(e.target.value) || 0 })} className="w-24 px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm" />
+                <span className="text-sm text-text-muted">days</span>
+              </div>
+              <p className="text-xs text-text-muted mt-1">Stopped and failed deployments older than this are removed automatically. 0 = keep forever.</p>
+            </div>
+
+            <div className="flex items-center justify-between pt-4 border-t border-border">
+              <div>
+                <p className="text-sm font-medium">Benchmarking</p>
+                <p className="text-xs text-text-muted mt-0.5">Show the Benchmarking page and its API.</p>
+              </div>
+              <Toggle on={!!form.benchmarking_enabled} onClick={() => setForm({ ...form, benchmarking_enabled: !form.benchmarking_enabled })} label="Benchmarking" />
+            </div>
           </div>
         </div>
+      )}
 
-        {/* ── Docker Config ── */}
-        <div className="rounded-xl bg-surface border border-border p-5 space-y-4">
-          <div className="flex items-center gap-2 pb-3 border-b border-border">
-            <Server size={16} className="text-primary" />
-            <h3 className="font-semibold">Docker</h3>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium">Privileged mode</p>
-              <p className="text-xs text-text-muted mt-0.5">Grant full host access (needed for GPU devices). Less secure but simpler.</p>
+      {/* ── Containers ───────────────────────────────────────────────────── */}
+      {tab === "containers" && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+          <div className={cardCls}>
+            <div className="flex items-center gap-2 pb-3 border-b border-border">
+              <Box size={16} className="text-primary" />
+              <h3 className="font-semibold">Container Limits</h3>
             </div>
-            <button type="button" onClick={() => setDocker("privileged", !getDocker("privileged", true) as boolean)} className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${getDocker("privileged", true) ? "bg-primary" : "bg-border"}`}>
-              <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${getDocker("privileged", true) ? "translate-x-5" : "translate-x-0"}`} />
-            </button>
-          </div>
+            <p className="text-xs text-text-muted -mt-2">
+              Applied on top of the engine's own profile, so a value here overrides what the
+              engine asked for. Leave a limit empty to let the engine decide.
+            </p>
 
-          <div>
-            <label className="block text-sm font-medium mb-1">Memory limit (GB)</label>
-            <input type="number" min="1" step="1" value={Number(getDocker("memory_limit_gb", 110))} onChange={(e) => setDocker("memory_limit_gb", parseInt(e.target.value) || 110)} className={inputCls} placeholder="110" />
-            <p className="text-xs text-text-muted mt-1">Container memory limit. Set to 0 to disable.</p>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-1">SHM size (GB)</label>
-            <input type="number" min="1" step="1" value={Number(getDocker("shm_size_gb", 64))} onChange={(e) => setDocker("shm_size_gb", parseInt(e.target.value) || 64)} className={inputCls} placeholder="64" />
-            <p className="text-xs text-text-muted mt-1">/dev/shm size for shared memory.</p>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-1">PID limit</label>
-            <input type="number" min="64" step="64" value={Number(getDocker("pids_limit", 4096))} onChange={(e) => setDocker("pids_limit", parseInt(e.target.value) || 4096)} className={inputCls} placeholder="4096" />
-          </div>
-
-          {/* A "Health Monitoring" toggle stood here. It switched a piece of
-              React state and nothing else — there was no monitor behind it to
-              turn on, and the switch reset itself on every reload. Engine
-              metrics are collected for every running deployment with no
-              setting to forget, and are shown on the Inference page. */}
-
-          {/* ── Network Discovery ── */}
-          <div className="pt-4 border-t border-border space-y-3">
             <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium">Privileged mode</p>
+                <p className="text-xs text-text-muted mt-0.5">Full host access. The GPU devices need it; nothing else here does.</p>
+              </div>
+              <Toggle on={dockerCfg.privileged !== false} onClick={() => setDocker("privileged", dockerCfg.privileged === false)} label="Privileged mode" />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Memory limit (GB)</label>
+              <input type="number" min="0" step="1" value={dockerCfg.memory_limit_gb ?? ""} onChange={(e) => setDocker("memory_limit_gb", e.target.value === "" ? null : parseFloat(e.target.value))} className={inputCls} placeholder="no limit" />
+              <p className="text-xs text-text-muted mt-1">Empty means no limit — which is not the same as a limit of zero.</p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Memory + swap limit (GB)</label>
+              <input type="number" min="0" step="1" value={dockerCfg.memory_swap_limit_gb ?? ""} onChange={(e) => setDocker("memory_swap_limit_gb", e.target.value === "" ? null : parseFloat(e.target.value))} className={inputCls} placeholder="no limit" />
+              <p className="text-xs text-text-muted mt-1">Total of memory and swap. Set it equal to the memory limit to forbid swapping.</p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Shared memory (GB)</label>
+              <input type="number" min="1" step="1" value={Number(dockerCfg.shm_size_gb ?? 64)} onChange={(e) => setDocker("shm_size_gb", parseInt(e.target.value) || 64)} className={inputCls} placeholder="64" />
+              <p className="text-xs text-text-muted mt-1"><code className="font-mono">/dev/shm</code>. Tensor-parallel workers pass tensors through it; too small shows up as a hang, not an error.</p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Process limit</label>
+              <input type="number" min="64" step="64" value={Number(dockerCfg.pids_limit ?? 4096)} onChange={(e) => setDocker("pids_limit", parseInt(e.target.value) || 4096)} className={inputCls} placeholder="4096" />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Open file limit</label>
+              <input type="number" min="1024" step="1024" value={Number(dockerCfg.nofile_limit ?? 1048576)} onChange={(e) => setDocker("nofile_limit", parseInt(e.target.value) || 1048576)} className={inputCls} placeholder="1048576" />
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className={cardCls}>
+              <div className="flex items-center gap-2 pb-3 border-b border-border">
+                <Box size={16} className="text-primary" />
+                <h3 className="font-semibold">Caches and Entrypoint</h3>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1">Cache directories</label>
+                <textarea
+                  aria-label="Cache directories"
+                  rows={4}
+                  value={(dockerCfg.cache_dirs ?? []).join("\n")}
+                  onChange={(e) => setDocker("cache_dirs", e.target.value.split("\n").map((l) => l.trim()).filter(Boolean))}
+                  className={`${inputCls} resize-y`}
+                  placeholder="~/.cache/vllm"
+                />
+                <p className="text-xs text-text-muted mt-1">One per line. Mounted into every container, so a compiled kernel survives the container that built it — the difference between a warm start and several minutes of recompilation.</p>
+              </div>
+
+              <div className="flex items-center justify-between pt-4 border-t border-border">
+                <div>
+                  <p className="text-sm font-medium">Keep the image entrypoint</p>
+                  <p className="text-xs text-text-muted mt-0.5">Off means the launch script runs as PID 1, which is what puts the engine's output in the deployment log.</p>
+                </div>
+                <Toggle on={!!dockerCfg.keep_entrypoint} onClick={() => setDocker("keep_entrypoint", !dockerCfg.keep_entrypoint)} label="Keep the image entrypoint" />
+              </div>
+            </div>
+
+            <div className={cardCls}>
+              <div className="flex items-center gap-2 pb-3 border-b border-border">
+                <ShieldCheck size={16} className="text-primary" />
+                <h3 className="font-semibold">Mods</h3>
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Network access policy</label>
+                <select
+                  aria-label="Mod network access policy"
+                  value={String(modCfg.network_policy ?? "warn")}
+                  onChange={(e) => setForm({ ...form, mod: { ...modCfg, network_policy: e.target.value } })}
+                  className="w-full px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none text-sm"
+                >
+                  <option value="allow">Allow — mods may reach the network</option>
+                  <option value="warn">Warn — allowed, but reported</option>
+                  <option value="deny">Deny — refuse a mod that reaches out</option>
+                </select>
+                <p className="text-xs text-text-muted mt-1">A mod is a shell script that runs inside the container before the engine starts. One that downloads something is installing code nobody reviewed.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Cluster ──────────────────────────────────────────────────────── */}
+      {tab === "cluster" && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+          <div className={cardCls}>
+            <div className="flex items-center gap-2 pb-3 border-b border-border">
+              <Network size={16} className="text-primary" />
+              <h3 className="font-semibold">Multi-node</h3>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium">Cluster mode</p>
+                <p className="text-xs text-text-muted mt-0.5">Allow recipes that need more than one node.</p>
+              </div>
+              <Toggle on={!!form.cluster_enabled} onClick={() => setForm({ ...form, cluster_enabled: !form.cluster_enabled })} label="Cluster mode" />
+            </div>
+
+            {environment?.cluster_experimental && (
+              <p className="text-xs text-warning flex items-start gap-1.5 pt-3 border-t border-border">
+                <AlertCircle size={13} className="shrink-0 mt-0.5" />
+                <span>Multi-node is marked experimental in this build. It is implemented against the upstream reference but has not been proven on real hardware here.</span>
+              </p>
+            )}
+
+            <p className="text-xs text-text-muted pt-3 border-t border-border">
+              Nodes are enrolled and inspected on the Cluster page. There is nothing per-node to
+              set here: interface pinning and node addresses belong to the node, not to this
+              control plane.
+            </p>
+          </div>
+
+          <div className={cardCls}>
+            <div className="flex items-center justify-between pb-3 border-b border-border">
               <div className="flex items-center gap-2">
-                <Network size={16} className="text-primary" />
-                <h4 className="font-semibold text-sm">Network Discovery</h4>
+                <Radio size={16} className="text-primary" />
+                <h3 className="font-semibold">Network Discovery</h3>
               </div>
               <button
                 type="button"
@@ -245,23 +481,16 @@ export default function SettingsPage() {
 
             {discoveryResult && (
               <div className="space-y-3">
-                {/* Local IP */}
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-text-muted">Local IP</span>
-                  <code className="px-2 py-0.5 rounded bg-bg font-mono text-xs">
-                    {discoveryResult.local_ip || <span className="text-text-muted">not detected</span>}
-                  </code>
+                  <Code>{discoveryResult.local_ip || "not detected"}</Code>
                 </div>
 
-                {/* Ethernet interface */}
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-text-muted">Ethernet</span>
-                  <code className="px-2 py-0.5 rounded bg-bg font-mono text-xs">
-                    {discoveryResult.ethernet_if || <span className="text-text-muted">not detected</span>}
-                  </code>
+                  <Code>{discoveryResult.ethernet_if || "not detected"}</Code>
                 </div>
 
-                {/* InfiniBand */}
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-text-muted">InfiniBand</span>
                   <span className="flex items-center gap-1 text-xs">
@@ -279,7 +508,6 @@ export default function SettingsPage() {
                   </span>
                 </div>
 
-                {/* IB devices detail */}
                 {discoveryResult.infiniband_present && discoveryResult.infiniband_devices.length > 0 && (
                   <div className="text-xs text-text-muted space-y-0.5 pl-1">
                     {discoveryResult.infiniband_devices.map((dev) => (
@@ -294,18 +522,15 @@ export default function SettingsPage() {
                   </div>
                 )}
 
-                {/* NCCL defaults */}
                 {discoveryResult.nccl_defaults && (
                   <div className="pt-2 border-t border-border space-y-1.5">
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-text-muted">NCCL socket</span>
-                      <code className="px-2 py-0.5 rounded bg-bg font-mono text-xs">{discoveryResult.nccl_defaults.socket_ifname}</code>
+                      <Code>{discoveryResult.nccl_defaults.socket_ifname}</Code>
                     </div>
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-text-muted">NCCL IB HCA</span>
-                      <code className="px-2 py-0.5 rounded bg-bg font-mono text-xs">
-                        {discoveryResult.nccl_defaults.ib_hca || "none"}
-                      </code>
+                      <Code>{discoveryResult.nccl_defaults.ib_hca || "none"}</Code>
                     </div>
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-text-muted">NCCL IB disabled</span>
@@ -321,108 +546,30 @@ export default function SettingsPage() {
                   </div>
                 )}
 
-                {/* Validation */}
                 {validationResult && (
                   <div className={`pt-2 border-t border-border text-xs space-y-1 ${!validationResult.healthy ? "text-danger" : validationResult.warnings.length > 0 ? "text-warning" : "text-success"}`}>
                     <div className="flex items-center gap-1.5 font-medium">
                       {validationResult.healthy ? <Check size={12} /> : <AlertCircle size={12} />}
                       Network: {validationResult.healthy ? "Healthy" : "Issues found"}
                     </div>
-                    {validationResult.warnings.length > 0 && (
-                      <div className="pl-3.5 space-y-0.5">
-                        {validationResult.warnings.map((w, i) => (
-                          <div key={i}>⚠ {w}</div>
-                        ))}
-                      </div>
-                    )}
-                    {validationResult.errors.length > 0 && (
-                      <div className="pl-3.5 space-y-0.5">
-                        {validationResult.errors.map((e, i) => (
-                          <div key={i}>✕ {e}</div>
-                        ))}
-                      </div>
-                    )}
+                    {validationResult.warnings.map((w, i) => <div key={`w${i}`} className="pl-3.5">⚠ {w}</div>)}
+                    {validationResult.errors.map((e, i) => <div key={`e${i}`} className="pl-3.5">✕ {e}</div>)}
                   </div>
                 )}
               </div>
             )}
 
             {!discoveryResult && !discoveryLoading && (
-              <p className="text-xs text-text-muted">Click "Discover" to detect network interfaces and generate NCCL defaults.</p>
+              <p className="text-xs text-text-muted">Detects this machine's interfaces and the NCCL defaults they imply. Reports only — nothing is saved.</p>
             )}
           </div>
         </div>
+      )}
 
-        {/* ── Right column ── */}
-        <div className="space-y-4">
-
-          {/* Job History */}
-          <div className="rounded-xl bg-surface border border-border p-5 space-y-4">
-            <div className="flex items-center gap-2 pb-3 border-b border-border">
-              <Clock size={16} className="text-primary" />
-              <h3 className="font-semibold">Job History</h3>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1">Retention</label>
-              <div className="flex items-center gap-2">
-                <input type="number" min="0" max="365" value={Number(form.job_retention_days ?? 7)} onChange={(e) => setForm({ ...form, job_retention_days: parseInt(e.target.value) || 0 })} className="w-24 px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm" />
-                <span className="text-sm text-text-muted">days</span>
-              </div>
-              <p className="text-xs text-text-muted mt-1">Stopped and failed deployments older than this are removed automatically. 0 = keep forever.</p>
-            </div>
-
-            <div className="flex items-center justify-between pt-4 border-t border-border">
-              <div>
-                <p className="text-sm font-medium">Cluster mode</p>
-                <p className="text-xs text-text-muted mt-0.5">Allow launching cluster-only recipes.</p>
-              </div>
-              <button type="button" onClick={() => setForm({ ...form, cluster_enabled: !form.cluster_enabled })} className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${form.cluster_enabled ? "bg-primary" : "bg-border"}`}>
-                <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${form.cluster_enabled ? "translate-x-5" : "translate-x-0"}`} />
-              </button>
-            </div>
-          </div>
-
-          {/* Cluster Config */}
-          <div className="rounded-xl bg-surface border border-border p-5 space-y-4">
-            <div className="flex items-center gap-2 pb-3 border-b border-border">
-              <Server size={16} className="text-primary" />
-              <h3 className="font-semibold">Cluster Orchestration</h3>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1">Default cluster image</label>
-              <input type="text" value={String(getDocker("cluster_image", "eugr/spark-vllm-docker:latest"))} onChange={(e) => setDocker("cluster_image", e.target.value)} className={inputCls} placeholder="eugr/spark-vllm-docker:latest" />
-              <p className="text-xs text-text-muted mt-1">Docker image used for cluster nodes.</p>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1">Ray head port</label>
-              <input type="number" min="1024" max="65535" value={Number(getDocker("ray_port", 29501))} onChange={(e) => setDocker("ray_port", parseInt(e.target.value) || 29501)} className={inputCls} placeholder="29501" />
-              <p className="text-xs text-text-muted mt-1">Port for Ray head communication.</p>
-            </div>
-
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium">Default GPU count per node</p>
-                <p className="text-xs text-text-muted mt-0.5">Used for cluster capacity validation.</p>
-              </div>
-              <input type="number" min="1" max="8" value={Number(getDocker("gpu_count", 8))} onChange={(e) => setDocker("gpu_count", parseInt(e.target.value) || 8)} className="w-20 px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm text-center" />
-            </div>
-
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium">Enable cluster mode</p>
-                <p className="text-xs text-text-muted mt-0.5">Allow multi-node cluster deployments.</p>
-              </div>
-              <button type="button" onClick={() => setDocker("cluster_enabled", !getDocker("cluster_enabled", false) as boolean)} className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${getDocker("cluster_enabled", false) ? "bg-primary" : "bg-border"}`}>
-                <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${getDocker("cluster_enabled", false) ? "translate-x-5" : "translate-x-0"}`} />
-              </button>
-            </div>
-          </div>
-
-          {/* Engines */}
-          <div className="rounded-xl bg-surface border border-border p-5 space-y-4">
+      {/* ── Engines ──────────────────────────────────────────────────────── */}
+      {tab === "engines" && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+          <div className={cardCls}>
             <div className="flex items-center justify-between pb-3 border-b border-border">
               <div className="flex items-center gap-2">
                 <Cpu size={16} className="text-primary" />
@@ -439,16 +586,49 @@ export default function SettingsPage() {
             ) : (
               <EngineList engines={engineData?.engines ?? []} defaultEngine={engineData?.default_engine ?? ""} />
             )}
-
-            <div className="pt-3 border-t border-border">
-              <label className="block text-sm font-medium mb-1">Default engine</label>
-              <input type="text" value={String(form.default_engine ?? "vllm")} onChange={(e) => setForm({ ...form, default_engine: e.target.value })} className={inputCls} placeholder="vllm" />
-              <p className="text-xs text-text-muted mt-1">Used when neither the deploy request nor the recipe names an engine.</p>
-            </div>
           </div>
 
-          {/* Secrets */}
-          <div className="rounded-xl bg-surface border border-border p-5 space-y-4">
+          <div className={cardCls}>
+            <div className="flex items-center gap-2 pb-3 border-b border-border">
+              <SettingsIcon size={16} className="text-primary" />
+              <h3 className="font-semibold">Engine Registry</h3>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Default engine</label>
+              <input type="text" value={String(form.default_engine ?? "vllm")} onChange={(e) => setForm({ ...form, default_engine: e.target.value })} className={inputCls} placeholder="vllm" />
+              <p className="text-xs text-text-muted mt-1">Used when neither the deploy request nor the recipe names one.</p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Indexes</label>
+              <textarea
+                aria-label="Engine indexes"
+                rows={3}
+                value={((form.engine_indexes ?? []) as string[]).join("\n")}
+                onChange={(e) => setForm({ ...form, engine_indexes: e.target.value.split("\n").map((l) => l.trim()).filter(Boolean) })}
+                className={`${inputCls} resize-y`}
+                placeholder="https://…/engines.json"
+              />
+              <p className="text-xs text-text-muted mt-1">One URL per line. Where the engine list and its pinned image digests come from.</p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Index cache lifetime</label>
+              <div className="flex items-center gap-2">
+                <input type="number" min="0" value={Number(form.engine_index_cache_ttl_seconds ?? 3600)} onChange={(e) => setForm({ ...form, engine_index_cache_ttl_seconds: parseInt(e.target.value) || 0 })} className="w-28 px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm" />
+                <span className="text-sm text-text-muted">seconds</span>
+              </div>
+              <p className="text-xs text-text-muted mt-1">How long a fetched index is reused before it is fetched again. Refresh above ignores it.</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Secrets ──────────────────────────────────────────────────────── */}
+      {tab === "secrets" && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+          <div className={cardCls}>
             <div className="flex items-center justify-between pb-3 border-b border-border">
               <div className="flex items-center gap-2">
                 <KeyRound size={16} className="text-primary" />
@@ -459,13 +639,13 @@ export default function SettingsPage() {
 
             <div>
               <div className="flex items-center justify-between mb-1">
-                <label className="text-sm font-medium">HuggingFace Token</label>
+                <label className="text-sm font-medium">HuggingFace token</label>
                 {secrets?.hf_token && <span className="text-xs text-success font-mono">Active ···{secrets.hf_token.slice(-4)}</span>}
               </div>
               <div className="flex gap-2">
                 <div className="relative flex-1">
-                  <input type={showToken ? "text" : "password"} value={hfToken} onChange={(e) => setHfToken(e.target.value)} placeholder={secrets?.hf_token ? "Enter new token to replace…" : "hf_…"} className={`${inputCls} pr-9`} autoComplete="off" />
-                  <button type="button" onClick={() => setShowToken(v => !v)} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-muted hover:text-text transition-colors">
+                  <input type={showToken ? "text" : "password"} value={hfToken} onChange={(e) => setHfToken(e.target.value)} placeholder={secrets?.hf_token ? "Enter new token to replace…" : "hf_…"} className={`${inputCls} pr-9`} autoComplete="off" aria-label="HuggingFace token" />
+                  <button type="button" onClick={() => setShowToken(v => !v)} aria-label={showToken ? "Hide token" : "Show token"} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-muted hover:text-text transition-colors">
                     {showToken ? <EyeOff size={15} /> : <Eye size={15} />}
                   </button>
                 </div>
@@ -474,17 +654,109 @@ export default function SettingsPage() {
                   {savedToken ? "Saved!" : "Save"}
                 </button>
                 {secrets?.hf_token && (
-                  <button onClick={handleClearToken} className="px-3 py-2 rounded-lg border border-border hover:border-danger/50 hover:text-danger text-text-muted transition-colors" title="Clear token">
+                  <button onClick={handleClearToken} className="px-3 py-2 rounded-lg border border-border hover:border-danger/50 hover:text-danger text-text-muted transition-colors" title="Clear token" aria-label="Clear token">
                     <Trash2 size={15} />
                   </button>
                 )}
               </div>
-              <p className="text-xs text-text-muted mt-1.5">Passed as <code className="font-mono">HF_TOKEN</code> when launching deployments. Set env var to override.</p>
+              <p className="text-xs text-text-muted mt-1.5">
+                Passed as <code className="font-mono">HF_TOKEN</code> when launching a deployment and used to fetch gated models. Stored in
+                <code className="font-mono"> ~/.config/spark-pulse/secrets.json</code>; it is never sent back to this page.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Environment ──────────────────────────────────────────────────── */}
+      {tab === "environment" && environment && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+          <div className={cardCls}>
+            <div className="flex items-center gap-2 pb-3 border-b border-border">
+              <Info size={16} className="text-primary" />
+              <h3 className="font-semibold">Runtime</h3>
+            </div>
+            <p className="text-xs text-text-muted -mt-2">
+              How this process is configured. Read-only here on purpose: these are set in
+              <code className="font-mono"> settings.json</code> or the environment, and a browser that
+              could change them would be a way past every other check.
+            </p>
+
+            <div>
+              <Fact label="State store" hint="Deployments, nodes, sessions and the enrolment ledger." value={<Code>{environment.database_url || `${environment.database_backend} (default path)`}</Code>} />
+              <Fact label="Runtime" hint="How deployments are launched." value={<Code>{String(form.runtime ?? "native")}</Code>} />
+              <Fact label="Web UI port" value={<Code>{String(form.webui_port ?? "")}</Code>} />
+              <Fact label="Worker threads" hint="Blocking work is offloaded here rather than run on the event loop." value={<Code>{environment.thread_pool_size}</Code>} />
+              {environment.image_registry?.mode && (
+                <Fact
+                  label="Image registry"
+                  hint={environment.image_registry.mode === "proxy"
+                    ? `Pull-through cache of ${environment.image_registry.upstream || "the upstream"}. Worker nodes pull from here rather than from the internet.`
+                    : "A full registry on this node. Worker nodes pull from here rather than from the internet."}
+                  value={<Code>{`${environment.image_registry.mode} · ${environment.image_registry.address}:${environment.image_registry.port}`}</Code>}
+                />
+              )}
             </div>
           </div>
 
+          <div className={cardCls}>
+            <div className="flex items-center gap-2 pb-3 border-b border-border">
+              <ShieldCheck size={16} className="text-primary" />
+              <h3 className="font-semibold">Access</h3>
+            </div>
+
+            <div>
+              <Fact
+                label="Authentication"
+                hint={environment.auth_enabled ? "OIDC sign-in is required." : "This API answers every caller that can reach it. The browser boundary is the origin check."}
+                value={
+                  <span className={`text-xs font-medium ${environment.auth_enabled ? "text-success" : "text-warning"}`}>
+                    {environment.auth_enabled ? "enabled" : "disabled"}
+                  </span>
+                }
+              />
+              {environment.auth_enabled && environment.oidc_provider_url && (
+                <Fact label="Identity provider" value={<Code>{environment.oidc_provider_url}</Code>} />
+              )}
+              <Fact
+                label="External URL"
+                hint="Pins the OIDC redirect. Empty means it is worked out from the request, which trusts the Host header."
+                value={<Code>{environment.external_url || "not pinned"}</Code>}
+              />
+              <Fact
+                label="Allowed origins"
+                hint="Browser origins that may call this API. Never a wildcard."
+                value={
+                  <div className="space-y-0.5">
+                    {environment.cors_allowed_origins.map((o) => <div key={o}><Code>{o}</Code></div>)}
+                  </div>
+                }
+              />
+              <Fact
+                label="MCP endpoint"
+                hint="Model Context Protocol, on this same app and behind the same auth."
+                value={environment.mcp_enabled ? <Code>{environment.mcp_path}</Code> : <span className="text-xs text-text-muted">disabled</span>}
+              />
+            </div>
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* ── Save ─────────────────────────────────────────────────────────── */}
+      {tab !== "secrets" && tab !== "environment" && (
+        <div className="flex items-center gap-3">
+          <button onClick={handleSave} disabled={saving || !isDirty} className="px-4 py-2 rounded-lg bg-primary hover:bg-primary-hover disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium text-sm transition-colors flex items-center gap-2">
+            {saving ? <Loader2 className="animate-spin" size={14} /> : saved ? <Check size={14} /> : <SettingsIcon size={14} />}
+            {saving ? "Saving…" : saved ? "Saved!" : "Save settings"}
+          </button>
+          {/* One form across every tab, so this saves edits made on any of
+              them — including a tab the operator has since navigated away
+              from. Saying so beats a button that silently does more than it
+              appears to. */}
+          {isDirty && !saved && <span className="text-xs text-text-muted">Unsaved changes on this page.</span>}
+          {saved && <span className="text-xs text-success">Saved to <code className="font-mono">~/.config/spark-pulse/settings.json</code></span>}
+        </div>
+      )}
 
       {alertModal && <AlertModal open={!!alertModal} onClose={() => setAlertModal(null)} title={alertModal.title} message={alertModal.message} />}
     </div>

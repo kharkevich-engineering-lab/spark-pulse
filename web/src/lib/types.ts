@@ -325,7 +325,52 @@ export interface Settings {
   engine_indexes?: string[];
   engine_index_cache_ttl_seconds?: number;
   engines?: Record<string, { enabled?: boolean }>;
+  docker_pull_stall_timeout_seconds?: number;
+  /** The `docker:` block: what every deployment's container is built with. */
+  docker?: DockerSettings;
+  /** The `mod:` block. */
+  mod?: { network_policy?: "allow" | "warn" | "deny" };
+  /** Fields the environment owns; the form shows them but cannot write them. */
   env_managed?: string[];
+  /** How this process is configured. Reported, never written from the UI. */
+  environment?: EnvironmentReport;
+}
+
+/** The container knobs every deployment inherits.
+ *
+ * Nullable numbers mean "not set" rather than zero — `memory_limit_gb: null`
+ * is no limit, which is not the same as a limit of nothing. */
+export interface DockerSettings {
+  privileged?: boolean;
+  memory_limit_gb?: number | null;
+  memory_swap_limit_gb?: number | null;
+  shm_size_gb?: number;
+  pids_limit?: number;
+  nofile_limit?: number;
+  cache_dirs?: string[];
+  keep_entrypoint?: boolean;
+}
+
+/** Configuration an operator needs to see and must not change from a browser.
+ *
+ * `database_url` arrives with any password already removed — the host and
+ * database answer "which database am I on" without putting a credential on a
+ * page someone can read over a shoulder. */
+export interface EnvironmentReport {
+  database_url: string;
+  database_backend: string;
+  external_url: string;
+  cors_allowed_origins: string[];
+  auth_enabled: boolean;
+  oidc_provider_url: string;
+  mcp_enabled: boolean;
+  mcp_path: string;
+  cluster_experimental: boolean;
+  thread_pool_size: number;
+  /** The control node's own image registry: how a worker node gets an engine
+   *  image without every node pulling from the internet. Empty when it could
+   *  not be resolved. */
+  image_registry?: { mode?: string; address?: string; port?: number; upstream?: string };
 }
 
 export interface BenchmarkResult {
