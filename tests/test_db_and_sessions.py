@@ -352,30 +352,115 @@ def test_concurrent_schema_creation_does_not_fail(tmp_path):
     immediately while this branch was being written.
 
     The loser's answer is to look again, not to fail.
+
+    **Started on a barrier, and repeated.** Six threads merely *launched*
+    together mostly do not collide — the first one through finishes the whole
+    schema while the rest are still starting, so the race the test is named
+    for never happens. Left that way it caught the original bug about one run
+    in eight, which is not a guard but a coin that lands green often enough to
+    look like a pass. The barrier holds every thread until all six are ready
+    so they enter ``create_all`` at once, and the rounds repeat because even
+    then the interleaving is the operating system's to choose.
+
+    It is still a probability, not a proof — measured at roughly half of runs
+    catching the single-retry bug, against one run in eight without the
+    barrier. :func:`test_the_retry_is_a_loop_not_one_more_attempt` is the
+    deterministic half; this one is the backstop that exercises real threads
+    against a real file.
     """
     import threading
 
     from sqlalchemy import create_engine
 
-    url = f"sqlite:///{tmp_path / 'race.db'}"
     db._load_models()
-    failures = []
+    failures: list[Exception] = []
+    rounds = 8
+    starters = 6
 
-    def build():
+    def build(url: str, gate: threading.Barrier) -> None:
         try:
             engine = create_engine(url)
+            gate.wait()
             db._create_schema(engine)
             engine.dispose()
         except Exception as exc:  # noqa: BLE001 — the point is to catch any
             failures.append(exc)
 
-    threads = [threading.Thread(target=build) for _ in range(6)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
+    for round_number in range(rounds):
+        # A new file each round: the race only exists while tables are
+        # missing, so reusing one database would test an empty no-op after
+        # the first pass.
+        url = f"sqlite:///{tmp_path / f'race-{round_number}.db'}"
+        gate = threading.Barrier(starters)
+        threads = [
+            threading.Thread(target=build, args=(url, gate)) for _ in range(starters)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
 
     assert failures == []
+
+
+def test_the_retry_is_a_loop_not_one_more_attempt(tmp_path, monkeypatch):
+    """Losing one race says nothing about the next table.
+
+    ``create_all`` emits one statement per table, so a starter that loses on
+    ``blobs``, re-inspects, and finds ``scheduled_deploys`` still missing can
+    lose that one too — to the very instance it was already racing. The
+    original code retried exactly once, which made that second loss fatal, and
+    it grew likelier with every table added.
+
+    Driven here rather than raced: ``create_all`` is made to fail twice before
+    succeeding, which is the case a single retry cannot survive and which no
+    amount of thread scheduling makes certain.
+    """
+    from sqlalchemy import create_engine
+    from sqlalchemy.exc import OperationalError
+
+    db._load_models()
+    engine = create_engine(f"sqlite:///{tmp_path / 'retry.db'}")
+    real_create_all = db.Base.metadata.create_all
+    attempts = {"n": 0}
+
+    def flaky(*args, **kwargs):
+        attempts["n"] += 1
+        if attempts["n"] <= 2:
+            raise OperationalError(
+                "CREATE TABLE scheduled_deploys",
+                {},
+                Exception("table scheduled_deploys already exists"),
+            )
+        return real_create_all(*args, **kwargs)
+
+    monkeypatch.setattr(db.Base.metadata, "create_all", flaky)
+
+    db._create_schema(engine)  # must not raise
+
+    assert attempts["n"] == 3, "gave up before the schema was actually created"
+
+
+def test_a_real_error_still_reaches_the_caller(tmp_path, monkeypatch):
+    """The loop must not turn a genuine failure into a silent give-up.
+
+    No permission, a bad column type: those never resolve however many times
+    they are retried, and the caller has to see the error itself rather than a
+    database that quietly has no tables.
+    """
+    from sqlalchemy import create_engine
+    from sqlalchemy.exc import OperationalError
+
+    db._load_models()
+    engine = create_engine(f"sqlite:///{tmp_path / 'broken.db'}")
+
+    def always_fails(*_args, **_kwargs):
+        raise OperationalError("CREATE TABLE x", {}, Exception("permission denied"))
+
+    monkeypatch.setattr(db.Base.metadata, "create_all", always_fails)
+
+    with pytest.raises(OperationalError, match="permission denied"):
+        db._create_schema(engine)
 
 
 def test_schema_creation_is_idempotent(tmp_path):
