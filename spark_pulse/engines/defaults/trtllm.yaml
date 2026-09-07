@@ -1,0 +1,55 @@
+schema_version: "1"
+engine: trtllm
+variant: default
+description: TensorRT-LLM from NVIDIA's own DGX Spark release image, single GPU.
+# NVIDIA builds this one; `build.external` below. It is also 21 GB compressed
+# across 95 layers, which is not something a hosted 4-core arm64 runner should
+# be asked to pull, wrap and push for the sake of adding a label to it.
+image: nvcr.io/nvidia/tensorrt-llm/release
+# The tag is NVIDIA's, and it is not semver: `version` is this definition's.
+tag: spark-single-gpu-dev
+version: 0.1.0
+arch: [linux/arm64]
+gpu_arch: ["12.1a"]
+build: {external: true}
+
+sources:
+  tensorrt_llm:
+    image: nvcr.io/nvidia/tensorrt-llm/release@sha256:4342a40dd7bdb4be9eeadd541aa3e739cd6d72c5441f36844c5345d07ec629da
+
+runtime:
+  workdir: /workspace
+  serve: trtllm-serve
+  model_arg: positional
+  readiness: /health
+  models_endpoint: /v1/models
+  # TensorRT-LLM does serve /metrics, but it answers with JSON iteration stats
+  # rather than Prometheus text. Declaring it would buy a permanent "the body
+  # was not recognised" in the metrics panel, so it is declared absent instead.
+  metrics: null
+  ports: {api: 8000}
+  cache_mounts: [~/.cache/huggingface]
+  env:
+    HF_HOME: /root/.cache/huggingface
+  container:
+    privileged: false
+    ipc_host: true
+    network_host: true
+    ulimits: {memlock: "-1", stack: "67108864"}
+    keepalive: sleep infinity
+  # Multi-node TensorRT-LLM is an MPI job: mpirun across the ranks, with an rsh
+  # agent that hops host SSH into each container. Neither of the rendezvous
+  # styles here is that, and this image says single-gpu in its own tag.
+  multi_node:
+    style: none
+  param_flags:
+    port: --port
+    host: --host
+    tensor_parallel: --tp_size
+    pipeline_parallel: --pp_size
+    max_model_len: --max_seq_len
+    max_num_seqs: --max_batch_size
+    max_num_batched_tokens: --max_num_tokens
+
+capabilities: {mods: false, pr_mods: false, solo: true, cluster: false, mesh: false}
+verified: []

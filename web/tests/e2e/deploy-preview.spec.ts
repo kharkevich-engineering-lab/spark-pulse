@@ -29,14 +29,29 @@ async function openDeployOptions(page: import("@playwright/test").Page) {
   await page.getByRole("button", { name: "Deploy options" }).click();
 }
 
-test("offers every engine that can run the recipe", async ({ page, request }) => {
+test("offers every engine that can run the recipe, and says why about the rest", async ({
+  page,
+  request,
+}) => {
+  // The picker's list is the API's verdict, not "every engine that exists":
+  // a recipe declares the engines it was written for, and an engine with no
+  // published image cannot run anything at all. Both belong under the picker
+  // with their reason rather than missing from it, so both are asserted here.
   const response = await request.get("/api/engines");
   expect(response.ok()).toBeTruthy();
   const { engines } = (await response.json()) as {
-    engines: { engine: string; version: string; enabled: boolean }[];
+    engines: { engine: string; version: string; enabled: boolean; available: boolean }[];
   };
-  const enabled = engines.filter((e) => e.enabled);
-  expect(enabled.length, "simulation mode should enable at least one engine").toBeGreaterThan(0);
+  const detail = await request.get(`/api/recipes/${RECIPE_ID}`);
+  expect(detail.ok()).toBeTruthy();
+  const { engine_support: support } = (await detail.json()) as {
+    engine_support: { engine: string; supported: boolean }[];
+  };
+  const runs = new Set(support.filter((e) => e.supported).map((e) => e.engine));
+
+  const offered = engines.filter((e) => e.enabled && e.available && runs.has(e.engine));
+  const refused = engines.filter((e) => e.enabled && !(e.available && runs.has(e.engine)));
+  expect(offered.length, "simulation should offer at least one engine").toBeGreaterThan(0);
 
   await openDeployOptions(page);
 
@@ -44,8 +59,18 @@ test("offers every engine that can run the recipe", async ({ page, request }) =>
   await expect(picker).toBeVisible();
   const options = await picker.locator("option").allInnerTexts();
   expect(options[0]).toBe("Recipe default");
-  for (const engine of enabled) {
+  for (const engine of offered) {
     expect(options).toContain(`${engine.engine} · ${engine.version}`);
+  }
+  for (const engine of refused) {
+    expect(options).not.toContain(`${engine.engine} · ${engine.version}`);
+  }
+
+  if (refused.length > 0) {
+    const listed = await page.getByTestId("engines-unavailable").innerText();
+    for (const engine of refused) {
+      expect(listed).toContain(engine.engine);
+    }
   }
 });
 

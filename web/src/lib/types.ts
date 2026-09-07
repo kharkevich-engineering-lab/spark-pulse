@@ -632,6 +632,11 @@ export interface EngineSummary {
   metrics: string | null;
   source: string;
   enabled: boolean;
+  /** False when no image has been published for this engine: pulling it
+   * answers 403 rather than an image. Older payloads omit both fields. */
+  available?: boolean;
+  /** `available` and `enabled` together — whether a deploy could use it. */
+  usable?: boolean;
 }
 
 export interface EngineDetail extends EngineSummary {

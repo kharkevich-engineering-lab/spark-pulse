@@ -19,6 +19,7 @@ from __future__ import annotations
 from typing import Any
 
 from spark_pulse.tools.engine_metrics import (
+    ALL_METRICS as ALL_METRICS,
     AVAILABLE as AVAILABLE,
     REASON_DETAIL as REASON_DETAIL,
     REASON_NOT_ENABLED as REASON_NOT_ENABLED,
@@ -29,6 +30,7 @@ from spark_pulse.tools.engine_metrics import (
     RING_SIZE as RING_SIZE,
     SAMPLE_INTERVAL_SECONDS as SAMPLE_INTERVAL_SECONDS,
     SCRAPE_TIMEOUT_SECONDS as SCRAPE_TIMEOUT_SECONDS,
+    LLAMA_CPP_METRICS as LLAMA_CPP_METRICS,
     SGLANG_METRICS as SGLANG_METRICS,
     VLLM_METRICS as VLLM_METRICS,
     Availability as Availability,

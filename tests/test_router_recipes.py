@@ -34,12 +34,13 @@ class TestListRecipes:
         assert bundled[BUNDLED_ID]["engines"] == ["vllm", "sglang"]
 
     def test_every_entry_carries_a_source_and_support_table(self, client):
+        """One verdict per engine the registry carries. An engine missing from
+        the table is one the picker cannot show a reason for."""
+        engines = {e["engine"] for e in client.get("/api/engines").json()["engines"]}
+
         for entry in client.get("/api/recipes").json():
             assert entry["source"]
-            assert {e["engine"] for e in entry["engine_support"]} == {
-                "sglang",
-                "vllm",
-            }
+            assert {e["engine"] for e in entry["engine_support"]} == engines
 
 
 class TestGetRecipe:

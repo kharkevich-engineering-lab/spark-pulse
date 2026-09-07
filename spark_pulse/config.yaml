@@ -93,3 +93,17 @@ engines:
     enabled: true
   sglang:
     enabled: true
+  # Single-node engines. Listed rather than left to the "unknown engines are
+  # enabled" default so the settings page has a row for each and an operator
+  # can see what exists before deciding. An engine whose image has not been
+  # published is still not offered: `available` is a separate gate.
+  llama-cpp:
+    enabled: true
+  trtllm:
+    enabled: true
+  modular-max:
+    enabled: true
+  atlas:
+    enabled: true
+  tokenary:
+    enabled: true

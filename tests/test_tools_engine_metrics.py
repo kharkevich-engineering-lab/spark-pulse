@@ -143,13 +143,38 @@ class TestNames:
         assert em.names_for("vllm")[0] is em.VLLM_METRICS
         assert em.names_for("sglang")[0] is em.SGLANG_METRICS
 
-    def test_the_other_engine_is_still_tried(self):
+    def test_the_other_engines_are_still_tried(self):
         """An engine name is what the recipe called the image, not a promise."""
-        assert set(em.names_for("vllm")) == {em.VLLM_METRICS, em.SGLANG_METRICS}
+        assert set(em.names_for("vllm")) == set(em.ALL_METRICS)
 
     @pytest.mark.parametrize("engine", [None, "", "llamacpp"])
-    def test_an_unknown_engine_falls_back_to_trying_both(self, engine):
-        assert set(em.names_for(engine)) == {em.VLLM_METRICS, em.SGLANG_METRICS}
+    def test_an_unknown_engine_falls_back_to_trying_all_of_them(self, engine):
+        """ "llamacpp" is not the engine name: the spec calls it llama-cpp, and
+        a name we do not have a map for is not a reason to give up on the
+        body."""
+        assert set(em.names_for(engine)) == set(em.ALL_METRICS)
+
+    def test_llama_cpp_is_tried_first_for_llama_cpp(self):
+        assert em.names_for("llama-cpp")[0] is em.LLAMA_CPP_METRICS
+
+    def test_a_llama_cpp_body_becomes_the_numbers_it_publishes(self):
+        """Four of the six. llama-server has no KV-usage gauge and does not
+        preempt, and those stay None rather than being read off a metric that
+        means something else."""
+        text = (
+            "llamacpp:requests_processing 3\n"
+            "llamacpp:requests_deferred 2\n"
+            "llamacpp:prompt_tokens_total 1200\n"
+            "llamacpp:tokens_predicted_total 800\n"
+        )
+
+        reading = em.read_families(em.parse_prometheus_text(text), "llama-cpp")
+
+        assert (reading.running, reading.waiting) == (3.0, 2.0)
+        assert reading.prompt_tokens_total == 1200.0
+        assert reading.generation_tokens_total == 800.0
+        assert reading.kv_fraction is None
+        assert reading.preemptions_total is None
 
     def test_an_engine_name_is_matched_case_insensitively(self):
         assert em.names_for("VLLM")[0] is em.VLLM_METRICS

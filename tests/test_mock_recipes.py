@@ -148,7 +148,10 @@ class TestListRecipes:
             assert entry["params"] == entry["defaults"]
             assert entry["source"] == recipe_sources.SOURCE_UPSTREAM
             assert entry["is_customized"] is False
-            assert {s["engine"] for s in entry["engine_support"]} == {"vllm", "sglang"}
+            assert {s["engine"] for s in entry["engine_support"]} >= {
+                "vllm",
+                "sglang",
+            }
 
     def test_an_empty_checkout_lists_only_what_is_on_disk(self, tmp_path, no_sources):
         # A checkout that exists but holds no recipes is not "no source at all":

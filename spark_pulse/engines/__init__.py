@@ -28,11 +28,20 @@ from spark_pulse.engines.registry import (
     reset_registry,
 )
 from spark_pulse.engines.sglang import SglangEngine
+from spark_pulse.engines.solo import (
+    AtlasEngine,
+    LlamaCppEngine,
+    ModularMaxEngine,
+    SoloEngine,
+    TokenaryEngine,
+    TrtllmEngine,
+)
 from spark_pulse.engines.vllm import VllmEngine
 
 __all__ = [
     "ENGINE_CLASSES",
     "MAX_CLUSTER_NODES",
+    "AtlasEngine",
     "Engine",
     "EngineCapabilities",
     "EngineContainer",
@@ -45,9 +54,14 @@ __all__ = [
     "EngineSpec",
     "EngineVerification",
     "LaunchScript",
+    "LlamaCppEngine",
+    "ModularMaxEngine",
     "NodeInfo",
     "SglangEngine",
+    "SoloEngine",
+    "TokenaryEngine",
     "Topology",
+    "TrtllmEngine",
     "VllmEngine",
     "get_registry",
     "reset_registry",

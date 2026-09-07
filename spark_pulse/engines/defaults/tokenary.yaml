@@ -1,0 +1,70 @@
+schema_version: "1"
+engine: tokenary
+variant: default
+description: tokenary, an experimental Rust engine with its own NCCL multi-node bootstrap. No public image yet.
+# There is no image anyone outside can pull. `scitrera/tokenary` is the
+# reference sparkrun's runtime plugin carries, and Docker Hub answers "object
+# not found" for it; there is no public source repository either. So this file
+# is the contract and nothing else: `resolve_digests.py` will find no digest,
+# and the published index will carry the engine as unavailable, which is the
+# honest state and the one that stops Spark Pulse offering it. When an image
+# does appear, this becomes a digest and a date.
+image: docker.io/scitrera/tokenary
+tag: latest
+version: 0.1.0
+# There is no published image anywhere: `scitrera/tokenary` is the reference
+# tokenary's own tooling carries, and no registry serves it. This spec records
+# the contract so the day one appears is a one-line change; until then
+# `available: false` keeps it out of the deploy options.
+available: false
+arch: [linux/arm64]
+gpu_arch: ["12.1a"]
+build: {external: true}
+
+sources:
+  # Deliberately not digest-pinned: there is nothing published to take a digest
+  # from. `validate.py --strict` warns about exactly this, and the warning is
+  # the truth about the engine rather than a defect in the file.
+  tokenary:
+    image: docker.io/scitrera/tokenary:latest
+
+runtime:
+  workdir: /workspace
+  # `--server` is what makes rank 0 bind HTTP at all; without it the process
+  # joins the NCCL world and serves nothing. It belongs in every launch, so it
+  # is part of the serve command rather than a flag a recipe has to remember.
+  serve: tokenary --server
+  model_arg: --model
+  # Unverified: tokenary is OpenAI-compatible, so /v1/models is the endpoint we
+  # know it must answer. Nothing here has probed a running instance.
+  readiness: /v1/models
+  models_endpoint: /v1/models
+  metrics: null
+  ports: {api: 8000, rendezvous: 27101}
+  cache_mounts: [~/.cache/huggingface]
+  env:
+    HF_HOME: /root/.cache/huggingface
+    # tokenary reads NCCL tuning straight from the environment.
+    NCCL_CUMEM_ENABLE: "0"
+  container:
+    privileged: false
+    ipc_host: true
+    network_host: true
+    devices: [/dev/infiniband]
+    ulimits: {memlock: "-1", stack: "67108864"}
+    keepalive: sleep infinity
+  # Native NCCL bootstrap over --rank/--world-size/--master-addr/--master-port,
+  # like Atlas and unlike either style Spark Pulse renders. Single-node until
+  # something here speaks that dialect.
+  multi_node:
+    style: none
+  param_flags:
+    port: --port
+    host: --host
+    tensor_parallel: --tp-size
+    gpu_memory_utilization: --gpu-memory-utilization
+    max_model_len: --max-model-len
+    max_num_seqs: --max-num-seqs
+
+capabilities: {mods: false, pr_mods: false, solo: true, cluster: false, mesh: false}
+verified: []

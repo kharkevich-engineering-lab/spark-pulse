@@ -8,6 +8,12 @@ from fastapi.testclient import TestClient
 from spark_pulse.app import create_app
 from spark_pulse.config import config
 from spark_pulse.engines import EngineRegistry, reset_registry
+from spark_pulse.engines.registry import load_bundled_specs
+
+#: Whatever ships in ``engines/defaults``. Named rather than listed: which
+#: engines are bundled is that directory's business, and a router test that
+#: repeats the list only fails when somebody adds one.
+BUNDLED_KEYS = {s.key for s in load_bundled_specs()}
 
 V1_RECIPE = {
     "id": "qwen3-8b",
@@ -64,7 +70,7 @@ class TestListEngines:
         data = response.json()
         assert data["default_engine"] == "vllm"
         keys = {e["key"] for e in data["engines"]}
-        assert keys == {"vllm/default", "sglang/default"}
+        assert keys == BUNDLED_KEYS
 
     def test_list_carries_capabilities_image_and_verification(self, client):
         engines = client.get("/api/engines").json()["engines"]
@@ -103,7 +109,7 @@ class TestRefresh:
         data = response.json()
         assert data["refreshed"] is False
         assert "simulation" in data["reason"]
-        assert data["engines"] == 2
+        assert data["engines"] == len(BUNDLED_KEYS)
 
     def test_refresh_reports_per_index_status(self, client, monkeypatch):
         monkeypatch.setattr(
@@ -114,7 +120,7 @@ class TestRefresh:
         data = response.json()
         assert data["refreshed"] is True
         assert data["indexes"] == []
-        assert data["engines"] == 2
+        assert data["engines"] == len(BUNDLED_KEYS)
 
 
 class TestRender:
@@ -210,7 +216,7 @@ class TestRender:
 
     def test_render_unknown_engine_is_404(self, client):
         response = client.post(
-            "/api/engines/render", json={"recipe_id": "qwen3-8b", "engine": "trtllm"}
+            "/api/engines/render", json={"recipe_id": "qwen3-8b", "engine": "nonesuch"}
         )
         assert response.status_code == 404
 

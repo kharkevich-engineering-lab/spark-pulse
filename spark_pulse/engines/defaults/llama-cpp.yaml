@@ -1,0 +1,67 @@
+schema_version: "1"
+engine: llama-cpp
+variant: default
+description: llama.cpp's llama-server, built from source with CUDA 13 kernels for sm_121 only.
+image: ghcr.io/kharkevich-engineering-lab/spark-pulse-engine/llama-cpp
+version: 0.1.0
+legacy_tags: []
+arch: [linux/arm64]
+gpu_arch: ["12.1a"]
+
+sources:
+  base: {image: nvidia/cuda:13.0.2-devel-ubuntu24.04}
+  runtime: {image: nvidia/cuda:13.0.2-runtime-ubuntu24.04}
+  # Tag b10840. llama.cpp tags every build, and those names ("b10840") are not
+  # versions, so the pin is the commit and the tag lives in this comment.
+  llama_cpp:
+    repo: https://github.com/ggml-org/llama.cpp.git
+    ref: 73ab7599b553c03f6f5d2db24a18ad76f2eb36a3
+
+build_args:
+  CUDA_DOCKER_ARCH: 121
+  GCC_VERSION: 14
+
+runtime:
+  workdir: /workspace
+  # `--metrics` is what makes llama-server serve /metrics at all. It is part of
+  # the launch rather than something a recipe has to remember, because a
+  # metrics path declared below and not served is a panel that says "the engine
+  # publishes nothing" forever.
+  serve: llama-server --metrics
+  # llama.cpp reads GGUF, and `-hf` resolves a GGUF from a HuggingFace repo.
+  # So the model this engine is given must be a GGUF repository (…-GGUF), not
+  # the safetensors repository the other engines take.
+  model_arg: -hf
+  readiness: /health
+  models_endpoint: /v1/models
+  metrics: /metrics
+  ports: {api: 8080}
+  # llama-server downloads what `-hf` resolves into LLAMA_CACHE, not into the
+  # HuggingFace cache, so both are mounted.
+  cache_mounts: [~/.cache/huggingface, ~/.cache/llama.cpp]
+  env:
+    LLAMA_ARG_HOST: 0.0.0.0
+    LLAMA_CACHE: /root/.cache/llama.cpp
+    HF_HOME: /root/.cache/huggingface
+  container:
+    privileged: false
+    ipc_host: true
+    network_host: true
+    keepalive: sleep infinity
+  # llama.cpp can spread across machines with its RPC backend, which upstream
+  # still calls experimental and which is neither of the rendezvous styles
+  # here. One node.
+  multi_node:
+    style: none
+  # llama.cpp has no tensor or pipeline parallelism to map, and nothing that
+  # means gpu_memory_utilization: it allocates what the layers and the context
+  # need. Mapping a parameter onto a flag that means something else would be
+  # worse than leaving it unmapped, where it is simply dropped.
+  param_flags:
+    port: --port
+    host: --host
+    max_model_len: --ctx-size
+    max_num_seqs: --parallel
+
+capabilities: {mods: false, pr_mods: false, solo: true, cluster: false, mesh: false}
+verified: []

@@ -195,6 +195,17 @@ export function engineChoices(engines: EngineSummary[], recipe: RecipeDetail): E
   return engines
     .filter((e) => e.enabled)
     .map((engine) => {
+      // An engine with no published image cannot run anything, whatever it
+      // says about the recipe: pulling it answers 403. It stays in the list
+      // as an unavailable row rather than vanishing, because "the engine I
+      // read about is missing" is the harder question to answer.
+      if (engine.available === false) {
+        return {
+          engine,
+          supported: false,
+          reason: "no image has been published for this engine yet",
+        };
+      }
       const reported = support.get(engine.engine);
       if (reported) {
         return { engine, supported: reported.supported, reason: reported.reason };

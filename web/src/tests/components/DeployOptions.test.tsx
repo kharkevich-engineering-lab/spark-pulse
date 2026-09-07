@@ -255,6 +255,27 @@ describe("eligibleEngines", () => {
     expect(refused?.reason).toContain("engine-specific command");
   });
 
+  it("keeps an engine with no published image, and says that is why", () => {
+    // Not hidden: "the engine I read about is missing from the list" is the
+    // harder question to answer than "here it is, and here is why not".
+    const engines = [engine("vllm"), engine("llama-cpp", { available: false })];
+    const shown = engineChoices(engines, V2_RECIPE).find(
+      (c) => c.engine.engine === "llama-cpp",
+    );
+
+    expect(shown?.supported).toBe(false);
+    expect(shown?.reason).toContain("no image has been published");
+  });
+
+  it("does not second-guess an older payload that reports no availability", () => {
+    const engines = [engine("vllm"), engine("sglang")];
+
+    expect(eligibleEngines(engines, V2_RECIPE).map((e) => e.engine)).toEqual([
+      "vllm",
+      "sglang",
+    ]);
+  });
+
   it("falls back to the command heuristic when no verdict is reported", () => {
     const engines = [engine("vllm"), engine("sglang")];
     const refused = engineChoices(engines, V1_RECIPE).find((c) => c.engine.engine === "sglang");

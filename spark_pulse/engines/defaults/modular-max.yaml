@@ -1,0 +1,46 @@
+schema_version: "1"
+engine: modular-max
+variant: default
+description: Modular MAX, the OpenAI-compatible `max serve`, from Modular's own multi-arch image.
+# Modular builds it; `build.external` below.
+image: docker.io/modular/max-nvidia-full
+tag: 26.5.0
+version: 0.1.0
+arch: [linux/arm64]
+gpu_arch: ["12.1a"]
+build: {external: true}
+
+sources:
+  max:
+    image: docker.io/modular/max-nvidia-full@sha256:58d6d31d7e43516d4503959cf2d1e3b77f84d657789056204276d141307d52e7
+
+runtime:
+  workdir: /workspace
+  serve: max serve
+  model_arg: --model
+  # MAX answers readiness under /v1, not at the root.
+  readiness: /v1/health
+  models_endpoint: /v1/models
+  metrics: /metrics
+  ports: {api: 8000}
+  cache_mounts: [~/.cache/huggingface]
+  env:
+    HF_HOME: /root/.cache/huggingface
+  container:
+    privileged: false
+    ipc_host: true
+    network_host: true
+    keepalive: sleep infinity
+  # MAX has no distributed tensor parallelism at all: it is one process on one
+  # host, and spreads across *local* GPUs with --devices. On a Spark, which has
+  # one, that means one.
+  multi_node:
+    style: none
+  param_flags:
+    port: --port
+    host: --host
+    max_model_len: --max-length
+    max_num_seqs: --max-batch-size
+
+capabilities: {mods: false, pr_mods: false, solo: true, cluster: false, mesh: false}
+verified: []
