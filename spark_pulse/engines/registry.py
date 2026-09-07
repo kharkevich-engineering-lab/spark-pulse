@@ -43,6 +43,13 @@ from pydantic import ValidationError
 from spark_pulse.config import config
 from spark_pulse.engines.base import Engine, EngineError, EngineSpec
 from spark_pulse.engines.sglang import SglangEngine
+from spark_pulse.engines.solo import (
+    AtlasEngine,
+    LlamaCppEngine,
+    ModularMaxEngine,
+    TokenaryEngine,
+    TrtllmEngine,
+)
 from spark_pulse.engines.vllm import VllmEngine
 
 logger = logging.getLogger(__name__)
@@ -53,6 +60,13 @@ CACHE_DIR = Path.home() / ".cache" / "spark-pulse" / "engines"
 ENGINE_CLASSES: dict[str, type[Engine]] = {
     "vllm": VllmEngine,
     "sglang": SglangEngine,
+    # Single-node engines, all rendered by the same class: see
+    # ``spark_pulse.engines.solo`` for why one is enough for the five.
+    "llama-cpp": LlamaCppEngine,
+    "trtllm": TrtllmEngine,
+    "modular-max": ModularMaxEngine,
+    "atlas": AtlasEngine,
+    "tokenary": TokenaryEngine,
 }
 
 INDEX_API_VERSION = "spark-pulse.io/v1"

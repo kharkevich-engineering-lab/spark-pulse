@@ -79,9 +79,20 @@ def registry(tmp_path):
 # ── Bundled defaults ─────────────────────────────────────────────────────────
 
 
+BUNDLED = {
+    "vllm/default",
+    "sglang/default",
+    "llama-cpp/default",
+    "trtllm/default",
+    "modular-max/default",
+    "atlas/default",
+    "tokenary/default",
+}
+
+
 def test_bundled_defaults_are_parsed():
     specs = {s.key: s for s in load_bundled_specs()}
-    assert set(specs) == {"vllm/default", "sglang/default"}
+    assert set(specs) == BUNDLED
     vllm = specs["vllm/default"]
     assert vllm.runtime.serve == "vllm serve"
     assert vllm.runtime.ports.api == 8000
@@ -92,7 +103,8 @@ def test_bundled_defaults_are_parsed():
 
 
 def test_registry_lists_bundled_engines(registry):
-    assert [s.key for s in registry.list()] == ["sglang/default", "vllm/default"]
+    assert set(s.key for s in registry.list()) == BUNDLED
+    assert [s.key for s in registry.list()] == sorted(BUNDLED), "listed in order"
 
 
 def test_get_and_has(registry):

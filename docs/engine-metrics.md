@@ -21,14 +21,22 @@ per deployment, tens of kilobytes.
 Each reading carries only what the engine published directly, plus rates
 differenced from its counters:
 
-| Reading field | vLLM | SGLang |
-|---|---|---|
-| `running` | `vllm:num_requests_running` | `sglang:num_running_reqs` |
-| `waiting` | `vllm:num_requests_waiting` | `sglang:num_queue_reqs` |
-| `kv_fraction` (0–1) | `vllm:kv_cache_usage_perc` (`gpu_cache_usage_perc` before v0.12.0) | `sglang:token_usage` |
-| `prompt_tokens_total` | `vllm:prompt_tokens_total` | `sglang:prompt_tokens_total` |
-| `generation_tokens_total` | `vllm:generation_tokens_total` | `sglang:generation_tokens_total` |
-| `preemptions_total` | `vllm:num_preemptions_total` | `sglang:num_retracted_reqs` |
+| Reading field | vLLM | SGLang | llama.cpp |
+|---|---|---|---|
+| `running` | `vllm:num_requests_running` | `sglang:num_running_reqs` | `llamacpp:requests_processing` |
+| `waiting` | `vllm:num_requests_waiting` | `sglang:num_queue_reqs` | `llamacpp:requests_deferred` |
+| `kv_fraction` (0–1) | `vllm:kv_cache_usage_perc` (`gpu_cache_usage_perc` before v0.12.0) | `sglang:token_usage` | — |
+| `prompt_tokens_total` | `vllm:prompt_tokens_total` | `sglang:prompt_tokens_total` | `llamacpp:prompt_tokens_total` |
+| `generation_tokens_total` | `vllm:generation_tokens_total` | `sglang:generation_tokens_total` | `llamacpp:tokens_predicted_total` |
+| `preemptions_total` | `vllm:num_preemptions_total` | `sglang:num_retracted_reqs` | — |
+
+llama-server publishes no KV-usage gauge and does not preempt, so two of the
+six have no name to map. They stay `None` rather than being read off a metric
+that means something else, and the panel shows a gap. The other engines added
+alongside it publish either nothing (TensorRT-LLM's `/metrics` is JSON
+iteration stats, not Prometheus text) or names nobody here has read off a
+running instance, so they have no map: an unknown engine is tried against
+every map in turn, and a body in one of these dialects still charts.
 
 `GET /api/deployments/{id}/metrics` returns the window. The Inference page
 shows the newest reading as a row of gauges and the window behind them as

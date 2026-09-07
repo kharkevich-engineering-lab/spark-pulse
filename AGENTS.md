@@ -21,7 +21,7 @@ spark_pulse/
 ├── mcp_server.py       # MCP stdio transport for AI assistants
 ├── mcp_http.py         # Shared MCP RPC handler (tool definitions + dispatch)
 ├── sse.py              # SSE event broadcasting for log streaming
-├── engines/            # Engine plugins (vllm, sglang) and the engine registry
+├── engines/            # Engine plugins (vllm, sglang, five single-node ones) and the registry
 ├── routers/            # FastAPI route modules (cache, config, custom_files, custom_recipes, deployments, engines, images, memory, models, mods, nodes, preflight, recipes, settings)
 ├── tools/              # Shared business logic (cache, custom_files, deployment_records, deploy_dispatch, images, models, mods, native_runtime, recipes, system, ...)
 ├── mock/               # Mock providers for simulation/testing; one per switched module in tools/

@@ -212,7 +212,10 @@ TOOLS = [
                 "recipe_id": {"type": "string", "description": "Recipe id or name"},
                 "engine": {
                     "type": "string",
-                    "description": "Engine override (vllm, sglang)",
+                    "description": (
+                        "Engine override by name; list_engines says which "
+                        "this control plane has"
+                    ),
                 },
                 "variant": {"type": "string", "description": "Engine variant"},
                 "model": {"type": "string", "description": "Model override"},
@@ -247,7 +250,10 @@ TOOLS = [
                 "recipe_id": {"type": "string", "description": "Recipe id or name"},
                 "engine": {
                     "type": "string",
-                    "description": "Engine override (vllm, sglang)",
+                    "description": (
+                        "Engine override by name; list_engines says which "
+                        "this control plane has"
+                    ),
                 },
                 "variant": {"type": "string", "description": "Engine variant"},
                 "model": {"type": "string", "description": "Model override"},

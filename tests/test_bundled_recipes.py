@@ -12,11 +12,16 @@ import pytest
 import yaml
 
 from spark_pulse.engines import EngineRegistry, Topology
+from spark_pulse.engines.registry import load_bundled_specs
 from spark_pulse.tools import recipe_schema, recipe_sources
 
 # `recipes` is the mock under SIMULATION_MODE=1, which is what the API serves
 # in simulation; discovery is shared with the real tools via recipe_sources.
 from spark_pulse.tools import recipes
+
+#: Every engine the bundled registry carries, by name. Not a list repeated
+#: here: which engines are bundled is that directory's business.
+REGISTERED_ENGINES = {spec.engine for spec in load_bundled_specs()}
 
 BUNDLED_IDS = [
     "bundled/qwen2.5-0.5b-instruct",
@@ -154,12 +159,25 @@ def test_every_bundled_recipe_renders_on_both_engines(registry, recipe_id, engin
 
 
 @pytest.mark.parametrize("recipe_id", BUNDLED_IDS)
-def test_engine_support_reports_both_engines_usable(recipe_id):
+def test_engine_support_answers_for_every_engine_the_registry_carries(recipe_id):
+    """A verdict per engine, not per declared engine.
+
+    A bundled recipe declares vLLM and SGLang, and those two run it. The rest
+    are in the table too, each with the reason it is not offered — an engine
+    simply missing from the table reads to the picker as an engine that does
+    not exist, which is a different and more confusing answer than "this
+    recipe was not written for it".
+    """
     payload = recipes.get_recipe(recipe_id, spark_path=NO_CHECKOUT)
     support = {e["engine"]: e for e in payload["engine_support"]}
-    assert set(support) == {"sglang", "vllm"}
-    assert all(e["supported"] for e in support.values())
-    assert all(e["reason"] == "" for e in support.values())
+
+    assert set(support) == REGISTERED_ENGINES
+    for name in ("vllm", "sglang"):
+        assert support[name]["supported"] is True
+        assert support[name]["reason"] == ""
+    for name in REGISTERED_ENGINES - {"vllm", "sglang"}:
+        assert support[name]["supported"] is False
+        assert "only declares engines" in support[name]["reason"]
 
 
 def test_a_v1_recipe_reports_sglang_as_unsupported_with_a_reason(tmp_path):

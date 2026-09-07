@@ -1,0 +1,60 @@
+schema_version: "1"
+engine: atlas
+variant: default
+description: Atlas, a pure-Rust inference server, from the image its own quick-start publishes for GB10.
+# Built by the Atlas project, not here: `build.external` below. The image is
+# pinned by digest under `sources`, and the index re-resolves `latest` to a
+# digest every time it is published, because `latest` is the only tag Atlas
+# publishes and a moving tag is not a pin.
+image: docker.io/azeezish/atlas-gb10
+tag: latest
+version: 0.1.0
+arch: [linux/arm64]
+gpu_arch: ["12.1a"]
+build: {external: true}
+
+sources:
+  atlas:
+    image: docker.io/azeezish/atlas-gb10@sha256:faa6e5820c42dd86d0ae9e12cbaf2a2e9f32d0f7a9ab348a75ee54d4253929a6
+
+runtime:
+  workdir: /workspace
+  # The image's own ENTRYPOINT is the `spark` binary and its quick-start passes
+  # `serve <model> …` as the command. Spark Pulse clears the entrypoint of
+  # every engine image, so the binary has to be named here.
+  serve: spark serve
+  model_arg: positional
+  readiness: /health
+  models_endpoint: /v1/models
+  # Atlas gates /metrics behind a build feature, so an image may serve nothing
+  # there. Declared anyway: the metrics sampler reports "the engine publishes
+  # nothing" with a reason, which is more use than never looking.
+  metrics: /metrics
+  ports: {api: 8888}
+  cache_mounts: [~/.cache/huggingface]
+  env:
+    HF_HOME: /root/.cache/huggingface
+  container:
+    privileged: false
+    ipc_host: true
+    network_host: true
+    keepalive: sleep infinity
+  # Atlas bootstraps multi-rank deployments itself over NCCL, with
+  # --rank/--world-size/--master-addr/--master-port. That is a fourth
+  # rendezvous dialect and nothing in Spark Pulse renders it yet, so this
+  # engine is declared single-node rather than claimed and then refused.
+  multi_node:
+    style: none
+  param_flags:
+    port: --port
+    host: --host
+    tensor_parallel: --tp-size
+    gpu_memory_utilization: --gpu-memory-utilization
+    max_model_len: --max-seq-len
+    max_num_seqs: --max-num-seqs
+    max_num_batched_tokens: --max-prefill-tokens
+
+capabilities: {mods: false, pr_mods: false, solo: true, cluster: false, mesh: false}
+# Nothing here has been run on hardware by this project. The Atlas quick-start
+# reports its own numbers on a GB10; that is their evidence, not ours.
+verified: []

@@ -294,21 +294,44 @@ SGLANG_METRICS = MetricNames(
     preemptions=("sglang:num_retracted_reqs",),
 )
 
+#: llama.cpp, which publishes under ``llamacpp:`` and counts different things.
+#: Two of the six have no equivalent at all: llama-server exposes no KV-usage
+#: gauge, and it does not preempt — a request either has a slot or is deferred,
+#: which is what ``requests_deferred`` counts and is already the waiting queue.
+#: Empty tuples rather than a wrong name: a metric mapped onto something that
+#: means something else is worse than a gap the panel can show as a gap.
+LLAMA_CPP_METRICS = MetricNames(
+    running=("llamacpp:requests_processing",),
+    waiting=("llamacpp:requests_deferred",),
+    kv_fraction=(),
+    prompt_tokens=("llamacpp:prompt_tokens_total",),
+    generation_tokens=("llamacpp:tokens_predicted_total",),
+    preemptions=(),
+)
+
 METRIC_NAMES: dict[str, MetricNames] = {
     "vllm": VLLM_METRICS,
     "sglang": SGLANG_METRICS,
+    "llama-cpp": LLAMA_CPP_METRICS,
 }
+
+#: Every map, in the order an unknown engine is tried against them.
+ALL_METRICS: tuple[MetricNames, ...] = (
+    VLLM_METRICS,
+    SGLANG_METRICS,
+    LLAMA_CPP_METRICS,
+)
 
 
 def names_for(engine: str | None) -> tuple[MetricNames, ...]:
     """The name maps to try, most likely first.
 
-    An engine we have a map for is tried first and the other is still tried
+    An engine we have a map for is tried first and the others are still tried
     after it, because an engine name is what the recipe called the image, not
     proof of what the image serves.
     """
     known = METRIC_NAMES.get((engine or "").lower())
-    rest = tuple(m for m in (VLLM_METRICS, SGLANG_METRICS) if m is not known)
+    rest = tuple(m for m in ALL_METRICS if m is not known)
     return ((known,) + rest) if known is not None else rest
 
 
