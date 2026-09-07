@@ -78,6 +78,10 @@ def env(tmp_path):
             return_value=EngineRegistry(cache_dir=tmp_path / "engine-cache"),
         ),
         patch.object(nr, "_docker_service", return_value=docker),
+        # Container work goes through the node resolver now, for rank zero of a
+        # solo deployment exactly as for a rank on a peer, so the fixture pins
+        # the resolver rather than only the process's own service.
+        patch.object(nr, "rank_services", return_value=lambda _address: docker),
     ):
         yield {"records": records, "docker": docker}
         # A deploy that had to pull runs on a background thread. Left running,
