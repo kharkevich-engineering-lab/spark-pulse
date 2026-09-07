@@ -358,22 +358,46 @@ class TestTheEnvironmentReport:
         assert key in response.json()["detail"]
         assert not private_config_files["settings"].exists()
 
-    def test_a_database_password_is_not_put_on_the_page(self, client):
+    def test_a_database_password_is_not_put_on_the_page(self, client, monkeypatch):
         """The host and database answer "which database am I on". The password
         is a credential, and this page is readable over a shoulder."""
-        config._data["database_url"] = "postgresql+psycopg://pulse:hunter2@db/pulse"
+        monkeypatch.setenv(
+            "SPARK_PULSE_DATABASE_URL", "postgresql+psycopg://pulse:hunter2@db/pulse"
+        )
 
         reported = client.get("/api/settings").json()["environment"]["database_url"]
 
         assert "hunter2" not in reported
         assert "db/pulse" in reported
 
-    def test_a_url_with_no_password_is_left_alone(self, client):
-        config._data["database_url"] = "sqlite:////var/lib/spark-pulse/db.sqlite"
+    def test_a_url_with_no_password_is_left_alone(self, client, monkeypatch):
+        monkeypatch.setenv(
+            "SPARK_PULSE_DATABASE_URL", "sqlite:////var/lib/spark-pulse/db.sqlite"
+        )
 
         reported = client.get("/api/settings").json()["environment"]["database_url"]
 
         assert reported == "sqlite:////var/lib/spark-pulse/db.sqlite"
+
+    def test_the_environment_wins_over_settings_json(self, client, monkeypatch):
+        """The bug the e2e backend check caught.
+
+        ``config.database_url`` reads settings.json alone; the engine resolves
+        ``SPARK_PULSE_DATABASE_URL`` first. Reporting config's view meant a
+        process told to use PostgreSQL by its environment — how a systemd unit
+        or a container sets it — showed "sqlite" on the page an operator opens
+        to find out which database they are on, while every table sat in
+        PostgreSQL.
+        """
+        config._data["database_url"] = "sqlite:////wrong/answer.db"
+        monkeypatch.setenv(
+            "SPARK_PULSE_DATABASE_URL", "postgresql+psycopg://pulse@db/spark_pulse"
+        )
+
+        environment = client.get("/api/settings").json()["environment"]
+
+        assert environment["database_backend"] == "postgresql+psycopg"
+        assert "wrong/answer.db" not in environment["database_url"]
 
     def test_the_image_registry_is_reported(self, client):
         """How a worker node gets an engine image without every node pulling

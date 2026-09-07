@@ -183,12 +183,51 @@ jobs:
         working-directory: web
         run: npm run test:run
 
+  # The browser suite, once per storage backend.
+  #
+  # The unit suite already runs every router test against a real PostgreSQL,
+  # so what a second browser run adds is not "do the queries work" — it is the
+  # part a TestClient never reaches: the application's *startup* against a
+  # server (lifespan, schema creation, `reconcile_all`, the scheduled-deploy
+  # reconcile) and its behaviour under a real connection pool serving
+  # concurrent requests from a browser. Those are exactly the paths that fail
+  # on the day somebody first sets SPARK_PULSE_DATABASE_URL, and until now
+  # nothing exercised them.
   e2e-tests:
-    name: Run E2E tests
+    name: Run E2E tests (${{ matrix.backend }})
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
+    strategy:
+      # Both legs always run: a failure on one backend and not the other is
+      # the single most useful thing this job can tell us, and fail-fast would
+      # throw exactly that away.
+      fail-fast: false
+      matrix:
+        include:
+          - backend: sqlite
+            database_url: ""
+          - backend: postgresql
+            database_url: postgresql+psycopg://pulse:pulse@127.0.0.1:5432/spark_pulse
+    services:
+      # Started for both legs — a service cannot be declared per-matrix-value.
+      # postgres:16-alpine costs a few seconds to pull and the SQLite leg
+      # simply never connects to it, which is cheaper than splitting this into
+      # two near-identical jobs that then drift apart.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: pulse
+          POSTGRES_PASSWORD: pulse
+          POSTGRES_DB: spark_pulse
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pulse -d spark_pulse"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -207,7 +246,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install -e ".[dev,postgres]"
       - name: Install frontend dependencies
         working-directory: web
         run: npm ci
@@ -223,12 +262,35 @@ jobs:
         working-directory: web
         run: npx playwright install --with-deps chromium
       - name: Start mock backend for Playwright
+        env:
+          # Empty on the SQLite leg, which is what `config.database_url`
+          # already treats as "use the default file".
+          SPARK_PULSE_DATABASE_URL: ${{ matrix.database_url }}
         run: |
-          SIMULATION_MODE=1 uvicorn spark_pulse.app:app --host 0.0.0.0 --port 8100 --workers 1 &
-          for i in $(seq 1 30); do curl -sf http://localhost:8100/health && break; sleep 1; done || exit 1
+          SIMULATION_MODE=1 uvicorn spark_pulse.app:app --host 0.0.0.0 --port 8100 --workers 1 \
+            > /tmp/backend.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://localhost:8100/health && break; sleep 1; done || {
+            echo "::error::the backend never became healthy on ${{ matrix.backend }}"
+            cat /tmp/backend.log
+            exit 1
+          }
+      - name: Confirm the backend is on the backend this leg is named for
+        run: |
+          # Without this the PostgreSQL leg would pass by silently falling back
+          # to SQLite, which is the failure mode the job exists to rule out.
+          reported=$(curl -sf http://localhost:8100/api/settings \
+            | python -c 'import json,sys; print(json.load(sys.stdin)["environment"]["database_backend"])')
+          echo "backend reports: $reported"
+          case "${{ matrix.backend }}" in
+            sqlite) [ "$reported" = "sqlite" ] ;;
+            postgresql) [ "$reported" = "postgresql+psycopg" ] ;;
+          esac || { echo "::error::expected ${{ matrix.backend }}, got $reported"; exit 1; }
       - name: Run Playwright e2e tests
         working-directory: web
         run: npm run test:e2e
+      - name: Backend log
+        if: failure()
+        run: cat /tmp/backend.log
   rust-agent:
     name: Run node agent tests
     runs-on: ubuntu-latest
