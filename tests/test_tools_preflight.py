@@ -169,6 +169,7 @@ def run(
     probes: dict[str, Probe] | None = None,
     services: dict[str, FakeService] | None = None,
     presence: Any = None,
+    config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The real pre-flight over fakes, with healthy defaults everywhere."""
     targets = targets if targets is not None else [CONTROL]
@@ -185,6 +186,7 @@ def run(
         probe_factory=lambda target: probes[target.id],
         services=lambda node: services[node.id],
         model_presence=presence or model_presence_factory(),
+        model_config=lambda _model: config,
     )
 
 
@@ -1109,6 +1111,147 @@ def test_a_model_of_unknown_size_is_reported_rather_than_guessed():
     assert check["status"] == STATUS_WARN
     assert "how big" in check["observed"]
     assert check["remedy"]
+
+
+# ── GPU memory: will it fit ──────────────────────────────────────────────────
+
+
+#: A 32-layer grouped-query model, as its own ``config.json`` carries it. The
+#: arithmetic itself is exercised in ``test_tools_vram.py``; what is tested
+#: here is that the pre-flight feeds it the right node's numbers and reports
+#: the answer in a way an operator can act on.
+CONFIG_8B = {
+    "model_type": "llama",
+    "num_hidden_layers": 32,
+    "num_attention_heads": 32,
+    "num_key_value_heads": 8,
+    "hidden_size": 4096,
+    "torch_dtype": "bfloat16",
+    "max_position_embeddings": 131072,
+}
+
+
+def test_a_model_that_fits_passes_and_says_what_the_cache_costs():
+    report = run(plan=make_plan(params={"max_model_len": 8192}), config=CONFIG_8B)
+    check = check_of(report, preflight.CHECK_VRAM)
+
+    assert check["status"] == STATUS_PASS
+    assert "8,192 tokens" in check["observed"], "the context length is the variable"
+    assert check["detail"]["fits"] is True
+    assert check["detail"]["kv_bytes"] == 2 * 32 * 8 * 128 * 2 * 8192
+    assert check["detail"]["weight_bytes"] == MODEL_BYTES
+
+
+def test_the_context_length_alone_can_be_what_does_not_fit():
+    """The failure this check exists to catch.
+
+    Same node, same weights, same everything — only ``max_model_len`` moves,
+    and the deploy goes from comfortable to impossible. Nothing on disk says
+    so, which is why an operator cannot see it coming.
+    """
+    fits = run(plan=make_plan(params={"max_model_len": 8192}), config=CONFIG_8B)
+    assert check_of(fits, preflight.CHECK_VRAM)["detail"]["fits"] is True
+
+    report = run(
+        plan=make_plan(params={"max_model_len": 131072, "max_num_seqs": 8}),
+        config=CONFIG_8B,
+    )
+    check = check_of(report, preflight.CHECK_VRAM)
+
+    assert check["status"] == STATUS_WARN
+    assert "spark-01" in check["observed"], "a warning has to name the node"
+    assert "max_model_len" in check["remedy"], "and say which knob moves it"
+    assert check["detail"]["fits"] is False
+
+
+def test_it_warns_rather_than_blocks_the_deploy():
+    """The estimate cannot know what the engine will do with
+    ``gpu_memory_utilization`` or a quantised cache. A check that refused a
+    deploy on arithmetic this soft would be wrong often enough to be turned
+    off, and off is worse than advisory."""
+    report = run(
+        plan=make_plan(params={"max_model_len": 131072, "max_num_seqs": 8}),
+        config=CONFIG_8B,
+    )
+
+    assert report["can_proceed"] is True
+    assert report["verdict"] == VERDICT_READY
+    assert preflight.CHECK_VRAM in [c["id"] for c in report["advisories"]]
+
+
+def test_each_node_is_sized_against_its_own_free_memory():
+    """Two machines, one plan: the one with a gigabyte free is the one that
+    cannot take it, and the report has to say which."""
+    tight = ProbeResult(
+        reachable=True,
+        returncode=0,
+        stdout="MemTotal: 133000000 kB\nMemAvailable:   1000000 kB\n",
+    )
+    report = run(
+        targets=[CONTROL, PEER],
+        plan=make_plan(
+            nodes=[CONTROL.address, PEER.address],
+            node_count=2,
+            params={"max_model_len": 8192},
+        ),
+        probes={
+            CONTROL.id: Probe(CONTROL.address),
+            PEER.id: Probe(PEER.address, overrides={"cat /proc/meminfo": tight}),
+        },
+        services={
+            CONTROL.id: FakeService(image_present()),
+            PEER.id: FakeService(image_present()),
+        },
+        config=CONFIG_8B,
+    )
+
+    assert check_of(report, preflight.CHECK_VRAM, "spark-01")["status"] == STATUS_PASS
+    crowded = check_of(report, preflight.CHECK_VRAM, "spark-02")
+    assert crowded["status"] == STATUS_WARN
+    assert "spark-02" in crowded["observed"]
+
+
+def test_an_unknown_fit_is_not_an_amber_light():
+    """A model nobody has downloaded yet has no measured weights and usually
+    no cached config either. An advisory there would fire on most pre-flights
+    an operator ever runs, and the one that means something would be skimmed
+    past with the rest. It still says what it could not work out."""
+    report = run(plan=make_plan(params={"max_model_len": 8192}), config=None)
+    check = check_of(report, preflight.CHECK_VRAM)
+
+    assert check["status"] == STATUS_PASS
+    assert "could not work out" in check["observed"]
+    assert "attention" in check["observed"], "and why — the config said nothing"
+    assert check["detail"]["fits"] is None
+    assert report["verdict"] == VERDICT_READY
+
+
+def test_a_node_that_reported_no_free_memory_is_only_complained_about_once():
+    """The GPU check already carries that complaint. Saying it twice is how a
+    report becomes something nobody reads to the end."""
+    no_meminfo = ProbeResult(reachable=True, returncode=1, stderr="No such file")
+    report = run(
+        plan=make_plan(params={"max_model_len": 8192}),
+        probes={
+            CONTROL.id: Probe(
+                CONTROL.address, overrides={"cat /proc/meminfo": no_meminfo}
+            )
+        },
+        config=CONFIG_8B,
+    )
+    check = check_of(report, preflight.CHECK_VRAM)
+
+    assert check["status"] == STATUS_PASS
+    assert check["detail"]["total_bytes"] is not None, "the need is still reported"
+    assert check["detail"]["available_bytes"] is None
+    assert [c["id"] for c in report["advisories"]] == [preflight.CHECK_GPU]
+
+
+def test_a_recipe_with_no_model_of_its_own_has_nothing_to_size():
+    check = check_of(run(plan=make_plan(model="")), preflight.CHECK_VRAM)
+
+    assert check["status"] == STATUS_PASS
+    assert "nothing to size" in check["observed"]
 
 
 # ── The verdict ──────────────────────────────────────────────────────────────

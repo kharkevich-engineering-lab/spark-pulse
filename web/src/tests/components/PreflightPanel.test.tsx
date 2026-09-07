@@ -3,7 +3,11 @@
 
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
-import PreflightPanel, { checksToShow, describeCost } from "@/components/PreflightPanel";
+import PreflightPanel, {
+  checksToShow,
+  describeCost,
+  memoryLine,
+} from "@/components/PreflightPanel";
 import type { PreflightCheck, PreflightReport } from "@/lib/types";
 
 const check = (over: Partial<PreflightCheck> = {}): PreflightCheck => ({
@@ -166,5 +170,44 @@ describe("PreflightPanel", () => {
     const rows = screen.getByTestId("preflight-checks");
     expect(rows).toHaveTextContent("spark-02");
     expect(rows).toHaveTextContent("spark-01");
+  });
+});
+
+describe("memoryLine", () => {
+  const fits = check({
+    id: "vram",
+    title: "GPU memory",
+    node: "spark-01",
+    node_id: "c",
+    status: "pass",
+    observed:
+      "Qwen/Qwen3-8B needs about 19.0 GB on spark-01 " +
+      "(16.0 GB of that is KV cache at 8,192 tokens) and 96.7 GB is free",
+    remedy: "",
+    delay_bytes: 0,
+    costs_time: false,
+    detail: { total_bytes: 20_401_094_656, fits: true },
+  });
+
+  it("shows the headroom on a deploy where nothing is wrong", () => {
+    render(<PreflightPanel report={report({ checks: [fits] })} />);
+
+    expect(screen.getByTestId("preflight-memory").textContent).toContain("96.7 GB is free");
+  });
+
+  it("says nothing when the fit could not be worked out", () => {
+    const unknown = check({
+      ...fits,
+      observed: "could not work out whether Qwen/Qwen3-8B fits on spark-01",
+      detail: { total_bytes: null, fits: null },
+    });
+
+    expect(memoryLine(report({ checks: [unknown] }))).toBe("");
+  });
+
+  it("does not repeat a warning that already has its own row", () => {
+    const tight = check({ ...fits, status: "warn", detail: { total_bytes: 9e10 } });
+
+    expect(memoryLine(report({ checks: [tight], advisories: [tight] }))).toBe("");
   });
 });
