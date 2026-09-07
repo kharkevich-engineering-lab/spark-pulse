@@ -8,6 +8,7 @@ live immediately, with no checkout and nothing to sync.
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 
+from spark_pulse.tools import recipe_schema
 from spark_pulse.tools.custom_files import (
     discover_custom_recipes,
     discover_custom_mods,
@@ -30,35 +31,41 @@ router = APIRouter(prefix="/api/custom-files", tags=["custom-files"])
 def validate_recipe_endpoint(content: dict):
     """Validate a recipe YAML without saving it.
 
-    Content: {"content": "name: ...\\nmodel: ..."}
+    Content: ``{"content": "name: ...\\nmodel: ..."}``
+
+    Answers through :mod:`spark_pulse.tools.recipe_schema`, which is the same
+    parser a deploy uses. It used to check three fields of its own —
+    ``name``, ``model`` and ``container`` — and ``container`` is a *v1* field.
+    A valid v2 recipe names an ``engine`` and has no container, so the editor
+    refused every one of them with "container is required", which is not a
+    thing wrong with the recipe.
+
+    Errors come back per field rather than as one sentence, because the point
+    of validating before saving is to be told *where* to look.
     """
     yaml_content = content.get("content", "")
     if not yaml_content.strip():
         raise HTTPException(status_code=400, detail="YAML content cannot be empty")
-    import yaml
 
     try:
-        data = yaml.safe_load(yaml_content)
-        if not isinstance(data, dict):
-            raise ValueError("YAML must be a mapping")
+        recipe = recipe_schema.parse_recipe(yaml_content)
+    except recipe_schema.RecipeValidationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": str(exc),
+                "errors": [e.model_dump() for e in exc.errors],
+            },
+        ) from exc
 
-        # Check required fields
-        errors = []
-        if not data.get("name"):
-            errors.append("name is required")
-        if not data.get("model"):
-            errors.append("model is required")
-        if not data.get("container"):
-            errors.append("container is required")
-
-        if errors:
-            raise ValueError("; ".join(errors))
-
-        return {"valid": True, "name": data.get("name", "")}
-    except HTTPException:
-        raise
-    except (yaml.YAMLError, ValueError) as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    return {
+        "valid": True,
+        "name": recipe.name,
+        "recipe_version": recipe_schema.detect_version(
+            {"recipe_version": getattr(recipe, "recipe_version", "1")}
+        ),
+        "model": getattr(recipe, "model", "") or "",
+    }
 
 
 # ── Custom Recipes ────────────────────────────────────────────────────────

@@ -506,38 +506,44 @@ export default function RecipesPage() {
         <div className="space-y-6">
           {showCustom ? (
             <>
-              {customRecipes.length > 0 && (
-                <>
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm text-text-muted">
-                      {customRecipes.length} custom recipe{customRecipes.length > 1 ? "s" : ""}
-                    </p>
-                    <button
-                      onClick={() => setShowNewRecipe(true)}
-                      className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium flex items-center gap-1.5 transition-colors"
-                    >
-                      <Plus size={14} />
-                      New Recipe
-                    </button>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                    {customRecipes.map((r) => (
-                      <BaseCard
-                        key={r.id}
-                        icon={<FileText size={16} className="shrink-0 text-primary" />}
-                        title={r.name}
-                        subtitle={r.filename}
-                        onClick={() => handleOpenCustomRecipe(r)}
-                      />
-                    ))}
-                  </div>
-                </>
-              )}
-              {customRecipes.length === 0 && (
+              {/* The create button sits outside the "we already have some"
+                  branch. It used to be inside it, so the state everybody
+                  starts in — no custom recipes — offered no way to make the
+                  first one: an empty page saying "create a new recipe to get
+                  started" beside no button that would. */}
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-text-muted">
+                  {customRecipes.length === 0
+                    ? "No custom recipes yet"
+                    : `${customRecipes.length} custom recipe${customRecipes.length > 1 ? "s" : ""}`}
+                </p>
+                <button
+                  onClick={() => setShowNewRecipe(true)}
+                  className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium flex items-center gap-1.5 transition-colors"
+                >
+                  <Plus size={14} />
+                  New Recipe
+                </button>
+              </div>
+              {customRecipes.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                  {customRecipes.map((r) => (
+                    <BaseCard
+                      key={r.id}
+                      icon={<FileText size={16} className="shrink-0 text-primary" />}
+                      title={r.name}
+                      subtitle={r.filename}
+                      onClick={() => handleOpenCustomRecipe(r)}
+                    />
+                  ))}
+                </div>
+              ) : (
                 <div className="text-center py-20 text-text-muted">
                   <FileText size={48} className="mx-auto mb-4 opacity-30" />
                   <p className="text-lg font-medium">No custom recipes</p>
-                  <p className="text-sm mt-1">Upload a YAML file or create a new recipe.</p>
+                  <p className="text-sm mt-1">
+                    Upload a YAML file, or write one here — v1 and v2 recipes are both accepted.
+                  </p>
                 </div>
               )}
             </>
@@ -602,28 +608,35 @@ export default function RecipesPage() {
         <div className="space-y-4">
           {showCustom ? (
             <>
+              {/* Same as the recipes tab: the button that makes the first one
+                  cannot live inside the branch that needs one to exist. */}
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-text-muted">
+                  {customMods.length === 0
+                    ? "No custom mods yet"
+                    : `${customMods.length} custom mod${customMods.length > 1 ? "s" : ""}`}
+                </p>
+                <button
+                  onClick={() => setShowNewMod(true)}
+                  className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium flex items-center gap-1.5 transition-colors"
+                >
+                  <Plus size={14} />
+                  New Mod
+                </button>
+              </div>
               {customMods.length === 0 && (
                 <div className="py-20 text-center text-text-muted">
                   <Wrench size={48} className="mx-auto mb-4 opacity-30" />
                   <p className="text-lg font-medium">No custom mods</p>
-                  <p className="text-sm mt-1 opacity-70">Create a new mod to get started.</p>
+                  <p className="text-sm mt-1 opacity-70">
+                    A mod is a <code className="font-mono">run.sh</code> that runs inside the
+                    container before the engine starts.
+                  </p>
                 </div>
               )}
 
               {customMods.length > 0 && (
                 <>
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm text-text-muted">
-                      {customMods.length} custom mod{customMods.length > 1 ? "s" : ""}
-                    </p>
-                    <button
-                      onClick={() => setShowNewMod(true)}
-                      className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium flex items-center gap-1.5 transition-colors"
-                    >
-                      <Plus size={14} />
-                      New Mod
-                    </button>
-                  </div>
                   <div className="grid gap-3 sm:grid-cols-1 lg:grid-cols-2">
                     {customMods.map((m) => (
                       <BaseCard

@@ -233,3 +233,115 @@ class TestUploadMod:
         assert data["id"] == "custom/stub-mod"
         assert data["name"] == "stub-mod"
         assert data["saved"] is True
+
+
+# ── Validation ──────────────────────────────────────────────────────────────
+
+
+V1_RECIPE = """
+name: A v1 Recipe
+model: org/model-name
+container: vllm-node
+command: vllm serve org/model-name --port {port}
+defaults:
+  port: 8000
+""".strip()
+
+V2_RECIPE = """
+recipe_version: "2"
+name: A v2 Recipe
+model: org/model-name
+engine: vllm
+params:
+  port: 8000
+engines:
+  vllm:
+    args: --enable-prefix-caching
+""".strip()
+
+
+class TestValidateRecipe:
+    """``POST /api/custom-files/recipes/validate``.
+
+    The endpoint used to check three fields of its own — ``name``, ``model``
+    and ``container`` — and ``container`` is a *v1* field. A v2 recipe names an
+    ``engine`` and has no container, so the editor refused every valid one with
+    "container is required", which is not a thing wrong with the recipe. It
+    answers through the same parser a deploy uses now.
+    """
+
+    def test_a_v1_recipe_is_accepted(self, app_client):
+        response = app_client.post(
+            "/api/custom-files/recipes/validate", json={"content": V1_RECIPE}
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json() == {
+            "valid": True,
+            "name": "A v1 Recipe",
+            "recipe_version": "1",
+            "model": "org/model-name",
+        }
+
+    def test_a_v2_recipe_is_accepted(self, app_client):
+        """The bug this endpoint had: a valid v2 recipe was refused outright."""
+        response = app_client.post(
+            "/api/custom-files/recipes/validate", json={"content": V2_RECIPE}
+        )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["valid"] is True
+        assert body["recipe_version"] == "2"
+        assert body["name"] == "A v2 Recipe"
+
+    def test_a_v2_recipe_is_not_asked_for_a_container(self, app_client):
+        response = app_client.post(
+            "/api/custom-files/recipes/validate", json={"content": V2_RECIPE}
+        )
+
+        assert "container" not in response.text
+
+    def test_each_problem_is_reported_against_its_own_field(self, app_client):
+        """One sentence tells you something is wrong; a field tells you where."""
+        response = app_client.post(
+            "/api/custom-files/recipes/validate", json={"content": "name: Only a name"}
+        )
+
+        assert response.status_code == 400
+        detail = response.json()["detail"]
+        paths = {e["path"] for e in detail["errors"]}
+        assert "container" in paths
+        assert "command" in paths
+        assert detail["message"]
+
+    def test_a_version_nothing_implements_is_refused_by_name(self, app_client):
+        response = app_client.post(
+            "/api/custom-files/recipes/validate",
+            json={"content": 'recipe_version: "9"\nname: Future\n'},
+        )
+
+        assert response.status_code == 400
+        assert "recipe_version" in str(response.json()["detail"])
+
+    def test_yaml_that_is_not_a_mapping_is_refused(self, app_client):
+        response = app_client.post(
+            "/api/custom-files/recipes/validate", json={"content": "- just\n- a list\n"}
+        )
+
+        assert response.status_code == 400
+
+    def test_broken_yaml_is_refused_rather_than_raised(self, app_client):
+        response = app_client.post(
+            "/api/custom-files/recipes/validate", json={"content": "name: [unclosed\n"}
+        )
+
+        assert response.status_code == 400
+
+    def test_empty_content_says_so(self, app_client):
+        response = app_client.post(
+            "/api/custom-files/recipes/validate", json={"content": "   "}
+        )
+
+        assert response.status_code == 400
+        assert "empty" in str(response.json()["detail"]).lower()
