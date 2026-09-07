@@ -12,7 +12,11 @@ spark_pulse.egg-info/
 spark_pulse/data/deployments.json
 
 # Frontend
-web/node_modules/
+# Any node_modules, not only the web app's: running vitest from the repo root
+# (`npx --prefix web …`) creates one here for its cache, and a build artefact
+# that only appears under an unusual invocation is exactly the kind that gets
+# swept in by `git add -A`. One of them reached main that way.
+node_modules/
 web/dist/
 spark_pulse/ui/
 
