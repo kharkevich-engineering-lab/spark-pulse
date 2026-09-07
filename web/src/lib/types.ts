@@ -697,6 +697,9 @@ export interface DeployPlan {
   image_present: boolean;
   /** Size of the local copy when there is one; null when it must be pulled. */
   image_size_bytes: number | null;
+  /** Whether the model is in the local catalogue. A plan permits a missing
+   *  model — this is how the preview can say so before the deploy refuses. */
+  model_present: boolean;
   warnings: string[];
   runtime: string;
   created_at: string;
@@ -1007,4 +1010,32 @@ export interface AddNodeRequest {
   ssh_key_path?: string;
   ethernet_interface?: string;
   infiniband_interfaces?: string[];
+}
+
+// ── Deployments waiting on a model download ─────────────────────────────────
+
+/** A deployment recorded to run once the model it needs has been downloaded.
+ *
+ *  Server-side state, not a promise held by the page: a 20 GB download
+ *  outlives the tab, and the Models page — where the operator watches the
+ *  progress — is not the page the deploy was asked for on. */
+export interface ScheduledDeploy {
+  id: string;
+  /** The model being waited on. */
+  model: string;
+  /** The download this is behind; several schedules can share one. */
+  download_job_id: string;
+  status: "waiting" | "deploying" | "done" | "failed" | "cancelled";
+  /** What the deployment will be called. */
+  name: string;
+  recipe_id: string;
+  /** The create body, verbatim, to be re-issued when the model lands. */
+  request: Record<string, unknown>;
+  /** Set once the deployment exists. */
+  deployment_id: string;
+  error: string;
+  created_at: string;
+  finished_at: string;
+  /** The download job, on the response that created this. */
+  download?: ModelDownloadJob;
 }

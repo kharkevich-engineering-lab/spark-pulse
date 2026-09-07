@@ -15,6 +15,7 @@ from spark_pulse.routers import (
     recipes,
     recipe_import as recipe_import_router,
     deployments,
+    scheduled_deploys as scheduled_deploys_router,
     memory,
     cache,
     models as models_router,
@@ -249,6 +250,18 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"Warning: reconciliation failed: {e}")
 
+    # Deployments queued behind a model download: hook up the trigger, then
+    # settle whatever was waiting when this process last stopped. Both, in
+    # that order — the hook only fires for downloads this process runs, and a
+    # model that arrived while it was down would otherwise wait for ever.
+    try:
+        tools.models.add_finish_listener(tools.scheduled_deploys.on_download_finished)
+        settled = tools.scheduled_deploys.reconcile()
+        if settled:
+            print(f"Settled {settled} deployment(s) that were waiting on a model")
+    except Exception as e:
+        print(f"Warning: could not reconcile scheduled deployments: {e}")
+
     # Start the engine-metrics sampler. It discovers its own subjects on every
     # sweep — every running deployment — so nothing has to remember to register
     # a deployment when it is created or forget it when it is deleted. That is
@@ -338,6 +351,7 @@ def create_app() -> FastAPI:
     app.include_router(launch_script_router.router)
     app.include_router(engines_router.router)
     app.include_router(preflight_router.router)
+    app.include_router(scheduled_deploys_router.router)
     app.include_router(auth_router)
     app.include_router(sse_router)
 

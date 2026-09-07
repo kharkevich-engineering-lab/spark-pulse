@@ -197,7 +197,12 @@ class TestTheDeployGate:
             "/api/deployments", json={"recipe_id": RECIPE, "model": ABSENT_MODEL}
         )
         assert response.status_code == 400
-        assert "not in the local catalogue" in response.json()["detail"]
+        detail = response.json()["detail"]
+        # The missing model is the one create failure the UI acts on rather
+        # than displays, so it answers structured — the prose is still there
+        # under ``message``.
+        assert "not in the local catalogue" in detail["message"]
+        assert detail["missing_model"]["model"] == ABSENT_MODEL
 
     def test_a_pre_flight_that_itself_breaks_does_not_block_the_deploy(
         self, client, monkeypatch

@@ -388,6 +388,25 @@ describe("InferencePage expanded detail", () => {
     );
   });
 
+  /** The server sends `end` once there will be nothing more, and the client
+   *  closes the connection on it — otherwise `EventSource` reconnects by
+   *  itself and replays the whole log every few seconds. The badge has to
+   *  follow, or the row claims to be streaming a stream that is shut. */
+  it("stops claiming to stream once the server has ended it", async () => {
+    let push: ((event: string, data: unknown) => void) | undefined;
+    vi.mocked(connectLogStream).mockImplementation((_id, onMessage) => {
+      push = onMessage;
+      return () => {};
+    });
+    render(<InferencePage />);
+    await expand("native job");
+    expect(screen.getByText("Streaming")).toBeInTheDocument();
+
+    act(() => push!("end", {}));
+
+    expect(screen.queryByText("Streaming")).toBeNull();
+  });
+
   it("says there is nothing to show rather than rendering an empty list", async () => {
     vi.mocked(fetchDeployments).mockResolvedValue([]);
     render(<InferencePage />);

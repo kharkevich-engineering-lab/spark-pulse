@@ -1,4 +1,4 @@
-import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntry, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, CustomRecipeInfo, CustomModInfo, ModFileMap, BenchmarkResult, OciRegistry, OciCollection, OciCollectionRecipe, OciRecipeMeta, OciUpdateCheck, OciUpdateApply, OciUpdateResult, OciAutoUpdateSettings, EngineListResponse, EngineDetail, EngineIndexRefreshResult, RenderRequest, RenderResult, ModelEntry, ModelSource, ModelDownloadJob, ModelSyncResult, ModelPresence, ModelDeleteResult, ImageEntry, ImagePullJob, ImageSyncResult, ImagePresence, ImageDeleteResult, RecipeImportResult, RecipeImportStatus, DeployPlan, DeployPlanRequest, PreflightReport, EngineMetricsWindow } from "@/lib/types";
+import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntry, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, CustomRecipeInfo, CustomModInfo, ModFileMap, BenchmarkResult, OciRegistry, OciCollection, OciCollectionRecipe, OciRecipeMeta, OciUpdateCheck, OciUpdateApply, OciUpdateResult, OciAutoUpdateSettings, EngineListResponse, EngineDetail, EngineIndexRefreshResult, RenderRequest, RenderResult, ModelEntry, ModelSource, ModelDownloadJob, ModelSyncResult, ModelPresence, ModelDeleteResult, ImageEntry, ImagePullJob, ImageSyncResult, ImagePresence, ImageDeleteResult, RecipeImportResult, RecipeImportStatus, DeployPlan, DeployPlanRequest, PreflightReport, EngineMetricsWindow, ScheduledDeploy } from "@/lib/types";
 
 const API = "/api";
 
@@ -102,6 +102,23 @@ export async function fetchDeployment(id: string): Promise<Deployment> { return 
 export async function runPreflight(body: DeployPlanRequest): Promise<PreflightReport> { return json<PreflightReport>("/preflight/run", { method: "POST", body: JSON.stringify(body) }); }
 
 export async function stopDeployment(id: string): Promise<void> { await json(`/deployments/${id}`, { method: "DELETE" }); }
+
+// ── Deployments waiting on a model download ─────────────────────────────────
+
+/** Every deployment queued behind a download; `activeOnly` drops the settled. */
+export async function fetchScheduledDeploys(activeOnly = false): Promise<ScheduledDeploy[]> {
+  return json<ScheduledDeploy[]>(`/scheduled-deploys${activeOnly ? "?active_only=true" : ""}`);
+}
+/** Start the model download and record this deployment to run when it lands.
+ *  Takes the same body as `createDeployment` — the one that just came back
+ *  with a missing model — so nothing has to be reassembled. */
+export async function scheduleDeploy(body: { recipe_id: string; name: string; params: Record<string, unknown>; nodes?: string[]; engine?: string; variant?: string; model?: string; extra_args?: string[] }): Promise<ScheduledDeploy> {
+  return json<ScheduledDeploy>("/scheduled-deploys", { method: "POST", body: JSON.stringify(body) });
+}
+/** Call it off. The download goes too unless `keepDownload` says otherwise. */
+export async function cancelScheduledDeploy(id: string, keepDownload = false): Promise<ScheduledDeploy> {
+  return json<ScheduledDeploy>(`/scheduled-deploys/${id}?cancel_download=${keepDownload ? "false" : "true"}`, { method: "DELETE" });
+}
 export async function fetchLogs(id: string, n = 200): Promise<{ logs: string }> { return json(`/deployments/${id}/logs?lines=${n}`); }
 /** The engine's own metrics window for one deployment. Empty with a stated
  *  reason whenever the engine publishes nothing — see `EngineMetricsWindow`. */
@@ -147,6 +164,12 @@ export function connectLogStream(deploymentId: string, onMessage: (event: string
   es.addEventListener("log", (e: MessageEvent) => { const d = parse(e.data); if (d !== null) onMessage("log", d); });
   es.addEventListener("status", (e: MessageEvent) => { const d = parse(e.data); if (d !== null) onMessage("status", d); });
   es.addEventListener("error", (e: MessageEvent) => { const d = parse(e.data); if (d !== null) onMessage("error", d); });
+  // The server has said there will be nothing more. Closing here is not
+  // tidiness: `EventSource` reconnects by itself whenever the connection ends,
+  // and the reconnected stream replays the log from the top — which appended
+  // the same lines again every few seconds, for ever, on any deployment that
+  // had stopped.
+  es.addEventListener("end", () => { es.close(); onMessage("end", {}); });
   return () => es.close();
 }
 

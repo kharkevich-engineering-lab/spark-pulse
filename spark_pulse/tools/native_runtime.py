@@ -148,6 +148,27 @@ class NativeRuntimeError(RuntimeError):
     """A native deployment could not be planned or started."""
 
 
+class MissingModelError(NativeRuntimeError):
+    """The model a deployment needs is not in the local catalogue.
+
+    A subclass, and not just a message, because this is the one planning
+    failure with an obvious next step: fetch the model. Callers that can offer
+    that need the model id as a value — parsing it back out of the sentence
+    would be a contract nobody wrote down and the first reworded message would
+    break it.
+    """
+
+    def __init__(self, model: str, message: str = "") -> None:
+        self.model = model
+        super().__init__(
+            message
+            or (
+                f"model '{model}' is not in the local catalogue; "
+                "download it first or deploy with allow_missing_model"
+            )
+        )
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -288,6 +309,10 @@ class DeployPlan:
     generation: int = 1
     image_present: bool = True
     image_size_bytes: int | None = None
+    #: Whether :attr:`model` is in the local catalogue. A plan permits a
+    #: missing model; this is how the preview says so before the deploy
+    #: that would not.
+    model_present: bool = True
     workdir: str = ""
     warnings: list[str] = field(default_factory=list)
     runtime: str = RUNTIME_NAME
@@ -632,24 +657,37 @@ def _resolve_model(
     model: str | None,
     allow_missing_model: bool,
     warnings: list[str],
-) -> str:
+) -> tuple[str, bool]:
+    """Resolve the model and say whether it is on this machine.
+
+    The presence check runs even when ``allow_missing_model`` is set, because
+    the two questions are different: *may* this proceed without the model, and
+    *is* the model here. A plan is a dry run and always permits a missing
+    model, which meant the preview could not tell the operator what the deploy
+    was about to refuse — they found out from a 400 after pressing Deploy.
+    The answer now travels on the plan as ``model_present``.
+    """
     resolved = str(model or recipe.get("model") or "").strip()
     if not resolved or resolved == "unknown":
         # v1 recipes embed the model in the command template; nothing to check.
-        return ""
-    if allow_missing_model:
-        return resolved
+        return "", True
     try:
         entry = tools.models.get_model(resolved)
     except Exception as exc:  # pragma: no cover - catalogue is best effort
         warnings.append(f"model catalogue unavailable: {exc}")
-        return resolved
+        # Unknown, not absent. Reported as present so an unreachable catalogue
+        # cannot invent a missing model and offer to download one that is
+        # already here.
+        return resolved, True
     if entry is None:
-        raise NativeRuntimeError(
-            f"model '{resolved}' is not in the local catalogue; "
-            "download it first or deploy with allow_missing_model"
+        if not allow_missing_model:
+            raise MissingModelError(resolved)
+        warnings.append(
+            f"model '{resolved}' is not in the local catalogue and would have "
+            "to be downloaded before this can run"
         )
-    return resolved
+        return resolved, False
+    return resolved, True
 
 
 def _container_profile(engine_obj: Engine) -> dict[str, Any]:
@@ -979,7 +1017,9 @@ def plan(
     if version_reason:
         warnings.append(version_reason)
 
-    resolved_model = _resolve_model(recipe, model, allow_missing_model, warnings)
+    resolved_model, model_present = _resolve_model(
+        recipe, model, allow_missing_model, warnings
+    )
 
     mods = engine_obj.block_mods(recipe)
     if mods and not engine_obj.supports_mods():
@@ -1134,6 +1174,7 @@ def plan(
         generation=generation,
         image_present=image_present,
         image_size_bytes=image_size,
+        model_present=model_present,
         warnings=warnings,
     )
 
@@ -1462,11 +1503,42 @@ def _orphan(entry: dict[str, Any], reason: str) -> dict[str, Any]:
     }
 
 
+#: How much of a dying container's output to keep on the record.
+FINAL_LOG_LINES = 500
+
+
+def _final_logs(docker: Any, name: str) -> str:
+    """The container's output, read while there is still a container.
+
+    Teardown removes the container, and ``docker logs`` on a removed container
+    is not "empty", it is ``No such container``. So a deployment that failed
+    lost the only explanation of *why* the moment it was cleaned up, and the
+    operator was left with a stopped card and a log pane repeating "Container
+    ... not found" — which says nothing about the failure and is the one
+    question they came to the page with.
+    """
+    try:
+        text = docker.get_logs(name, tail=FINAL_LOG_LINES)
+    except Exception as exc:  # pragma: no cover - best effort by definition
+        logger.debug("could not read the final logs of %s: %s", name, exc)
+        return ""
+    text = str(text or "")
+    # The service reports a missing container in-band; that is not a log.
+    if text.startswith(f"Container '{name}' not found"):
+        return ""
+    return text
+
+
 def _teardown_entry(docker: Any, entry: dict[str, Any]) -> dict[str, Any] | None:
-    """Stop one rank. Returns an orphan record when it cannot be confirmed."""
+    """Stop one rank. Returns an orphan record when it cannot be confirmed.
+
+    ``entry`` is updated in place with ``final_logs`` — read before the stop,
+    because after it there is nothing left to read.
+    """
     name = str(entry.get("container_name") or "")
     if not name:
         return None
+    entry["final_logs"] = _final_logs(docker, name)
     try:
         docker.stop_container(name)
     except Exception as exc:
@@ -1807,7 +1879,11 @@ def start(
         },
     )
 
-    def _fail(message: str, orphans: list[dict[str, Any]] | None = None) -> dict:
+    def _fail(
+        message: str,
+        orphans: list[dict[str, Any]] | None = None,
+        final_logs: dict[str, str] | None = None,
+    ) -> dict:
         publish_event(EventType.DEPLOYMENT_ERROR, dep_id, message)
         updated = _update_record(
             dep_id,
@@ -1815,6 +1891,7 @@ def start(
             error_message=message,
             stopped_at=_now(),
             orphans=orphans or [],
+            final_logs=final_logs or {},
         )
         return updated or {**record, "status": "error", "error_message": message}
 
@@ -1852,12 +1929,22 @@ def start(
         # The rank that failed may itself have a container: run_container can
         # succeed and a mod or the script copy fail after it.
         pending = [*touched] if rank_plan in touched else [*touched, rank_plan]
-        orphans = _teardown_entries(services, [_rank_record(r) for r in pending])
+        entries = [_rank_record(r) for r in pending]
+        orphans = _teardown_entries(services, entries)
+        # The engine's own last words, kept before the teardown removed the
+        # container holding them. This is the failure an operator most needs
+        # to read — "no such model", a CUDA error, an OOM — and until now it
+        # was destroyed by the cleanup that followed it.
         return _fail(
             f"rank {rank_plan.rank} of {plan_obj.node_count} on "
             f"{rank_plan.node or 'this machine'} failed to {phase}, so the "
             f"whole deployment was torn down: {exc}",
             orphans,
+            {
+                str(e.get("rank", 0)): e["final_logs"]
+                for e in entries
+                if e.get("final_logs")
+            },
         )
 
     for rank_plan in plan_obj.teardown_order():
@@ -2013,7 +2100,15 @@ def stop_deployment(
     names = ", ".join(str(e.get("container_name") or "") for e in entries)
     publish_event(EventType.DEPLOYMENT_STOPPED, deployment_id, f"stopped {names}")
     return _update_record(
-        deployment_id, status="stopped", stopped_at=_now(), orphans=orphans
+        deployment_id,
+        status="stopped",
+        stopped_at=_now(),
+        orphans=orphans,
+        final_logs={
+            str(e.get("rank", 0)): e["final_logs"]
+            for e in entries
+            if e.get("final_logs")
+        },
     )
 
 
@@ -2070,11 +2165,21 @@ def get_logs(
     if entry is None:
         return f"Deployment has no rank {rank}"
     name = str(entry.get("container_name") or container_name_for(deployment_id))
+    kept = str((record.get("final_logs") or {}).get(str(rank)) or "")
     try:
         service = services(str(entry.get("node") or ""))
     except Exception as exc:
+        if kept:
+            return kept
         return f"Failed to reach {entry.get('node') or 'this machine'}: {exc}"
-    return logs_for_container(service, name, lines) or "(empty log)"
+    live = logs_for_container(service, name, lines)
+    # A removed container answers "not found", which is not what the operator
+    # asked. What they asked is what this deployment said before it stopped,
+    # and that was kept at teardown precisely because the container would not
+    # survive to be asked.
+    if kept and (not live or live.startswith(f"Container '{name}' not found")):
+        return kept
+    return live or "(empty log)"
 
 
 def _rank_status(

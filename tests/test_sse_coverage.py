@@ -367,6 +367,43 @@ class TestFileLogStream:
         assert len(frames) == 1
         assert parse(frames[0]) == ("error", {"message": "Deployment not found"})
 
+    @pytest.mark.parametrize(
+        "deployment,records",
+        [
+            ("ghost", []),
+            ("d1", [{"id": "d1", "status": "running"}]),
+            ("d1", [{"id": "d1", "status": "stopped", "log_path": ""}]),
+        ],
+    )
+    async def test_every_way_out_ends_with_the_end_marker(
+        self, sleeps, dispatch, deployment, records
+    ):
+        """``EventSource`` reconnects whenever the server closes the stream and
+        cannot be told not to. A stopped deployment was therefore re-streamed
+        from the top every few seconds — the same lines appended again and
+        again, which an operator reads as a repeating log. The marker is what
+        lets the client close it, so an exit path that forgets it is the bug.
+        """
+        dispatch["deployments"] = records
+
+        frames = await drain(sse._terminated_log_generator(deployment))
+
+        assert parse(frames[-1]) == ("end", {})
+
+    async def test_a_finished_stream_ends_after_its_last_line(
+        self, sleeps, dispatch, tmp_path
+    ):
+        log = tmp_path / "d1.log"
+        log.write_text("boot\n")
+        dispatch["deployments"] = [
+            {"id": "d1", "status": "stopped", "log_path": str(log)}
+        ]
+
+        frames = [parse(f) for f in await drain(sse._terminated_log_generator("d1"))]
+
+        assert frames[0] == ("log", {"text": "boot"})
+        assert frames[-1] == ("end", {})
+
     async def test_a_deployment_without_a_log_file_says_so(self, sleeps, dispatch):
         dispatch["deployments"] = [{"id": "d1", "status": "running"}]
 

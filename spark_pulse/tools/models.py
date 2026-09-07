@@ -398,8 +398,48 @@ _jobs_lock = threading.Lock()
 _cancelled: set[str] = set()
 
 
+#: Called once per download job when it reaches a terminal state.
+#:
+#: A hook and not an event subscription, deliberately. The event stream is
+#: async — ``publish_event`` hands work to an ``asyncio`` loop for SSE
+#: subscribers — while a download runs on a plain daemon thread, and something
+#: that must act on completion (deploy the thing that was waiting for it)
+#: cannot be left to whether a loop is registered and running. This fires on
+#: the download thread, synchronously, whether or not anybody is watching.
+_finish_hooks: list[Callable[[dict[str, Any]], None]] = []
+
+#: Jobs whose hooks have already run. Several code paths can publish the same
+#: terminal state for one job — a queued job cancelled by the API is settled
+#: by ``cancel_download`` and again by the thread that picks it up — and a
+#: hook that starts a deployment must not run twice.
+_notified: set[str] = set()
+
+
+def add_finish_listener(hook: Callable[[dict[str, Any]], None]) -> None:
+    """Register ``hook`` to be called when any download job finishes."""
+    if hook not in _finish_hooks:
+        _finish_hooks.append(hook)
+
+
+def _notify_finished(job: dict[str, Any]) -> None:
+    job_id = str(job.get("id") or "")
+    if not job_id:
+        return
+    with _jobs_lock:
+        if job_id in _notified:
+            return
+        _notified.add(job_id)
+    for hook in list(_finish_hooks):
+        try:
+            hook(dict(job))
+        except Exception:  # noqa: BLE001 — a bad listener must not lose the job
+            logger.exception("download finish listener failed for job %s", job_id)
+
+
 def _publish_job(event: EventType, job: dict[str, Any]) -> None:
     publish_event(event, str(job.get("id", "")), dict(job))
+    if job.get("status") in TERMINAL_STATES:
+        _notify_finished(job)
 
 
 def _set_job(job_id: str, **fields: Any) -> dict[str, Any] | None:
@@ -471,6 +511,31 @@ def check_disk_space(estimated_bytes: int, target: Path | None = None) -> None:
         )
 
 
+#: A job in one of these has not finished and is still writing to the cache.
+_ACTIVE_DOWNLOAD_STATES = ("queued", "running")
+
+
+def _active_download_for(
+    model: str, source: str | None, revision: str | None
+) -> dict[str, Any] | None:
+    """An unfinished job for this exact model, source and revision, if any.
+
+    Keyed on all three because they are what decides *what lands on disk*: the
+    same name from a different mirror, or a different revision, is a different
+    download and must not be collapsed into one.
+    """
+    with _jobs_lock:
+        for job in _jobs.values():
+            if (
+                job.get("status") in _ACTIVE_DOWNLOAD_STATES
+                and job.get("model") == model
+                and job.get("source") == source
+                and (job.get("revision") or None) == (revision or None)
+            ):
+                return dict(job)
+    return None
+
+
 def start_download(
     model: str,
     source: str | None = None,
@@ -486,6 +551,29 @@ def start_download(
         raise ValueError(
             f"Source '{src.get('name')}' is a local path — nothing to download"
         )
+
+    # Already downloading? Hand back the job that is doing it.
+    #
+    # Two jobs for one model are not two downloads: `snapshot_download` writes
+    # into the same HuggingFace cache directory, so both fetch the same files,
+    # both report the size of that shared directory as their own progress, and
+    # cancelling one leaves the other running. What an operator sees is the
+    # same model listed twice at identical byte counts, which is exactly as
+    # confusing as it sounds.
+    #
+    # It matters more than a double click: a deploy that offers to fetch a
+    # missing model has to be safe to retry, and without this every retry
+    # starts another copy.
+    existing = _active_download_for(model, src.get("name"), revision)
+    if existing is not None:
+        logger.info(
+            "download of %s is already %s (job %s); returning it rather than "
+            "starting a second",
+            model,
+            existing.get("status"),
+            existing.get("id"),
+        )
+        return existing
 
     estimated = estimate_size(model, src, revision, allow_patterns)
     check_disk_space(estimated)
@@ -630,6 +718,7 @@ def clear_finished_downloads() -> int:
         stale = [k for k, v in _jobs.items() if v.get("status") in TERMINAL_STATES]
         for k in stale:
             _jobs.pop(k, None)
+            _notified.discard(k)
     return len(stale)
 
 

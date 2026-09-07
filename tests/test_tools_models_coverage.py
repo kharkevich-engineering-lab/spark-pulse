@@ -1151,3 +1151,61 @@ class TestModelsInUse:
 
         with pytest.raises(ValueError, match="in use by running deployment"):
             models_tool.delete_model("acme/plain-7b")
+
+
+class TestOneDownloadPerModel:
+    """Starting the same download twice returns the job already doing it.
+
+    Two jobs for one model are not two downloads: ``snapshot_download`` writes
+    into the same HuggingFace cache directory, so both fetch the same files
+    and both report that shared directory's size as their own progress. What
+    an operator sees is one model listed twice at identical byte counts.
+    """
+
+    @staticmethod
+    def _real_models():
+        """The real module, not the simulation twin.
+
+        ``import spark_pulse.tools.models`` reads an attribute off
+        ``spark_pulse.tools``, which under SIMULATION_MODE is the mock — and
+        the mock has no download thread to stub.
+        """
+        import importlib
+
+        return importlib.import_module("spark_pulse.tools.models")
+
+    def _stub(self, monkeypatch, models):
+        monkeypatch.setattr(models, "estimate_size", lambda *a, **k: 1_000)
+        monkeypatch.setattr(models, "check_disk_space", lambda *a, **k: None)
+        # Never actually run the download thread.
+        monkeypatch.setattr(models, "_run_download", lambda *a, **k: None)
+
+    def test_a_second_start_returns_the_first_job(self, monkeypatch):
+        models = self._real_models()
+        self._stub(monkeypatch, models)
+        first = models.start_download("org/model")
+        second = models.start_download("org/model")
+
+        assert second["id"] == first["id"]
+        active = [j for j in models.list_downloads() if j["model"] == "org/model"]
+        assert len(active) == 1, "a second job was created for the same model"
+
+    def test_a_different_revision_is_a_different_download(self, monkeypatch):
+        """Same name, different revision, different bytes on disk."""
+        models = self._real_models()
+        self._stub(monkeypatch, models)
+        first = models.start_download("org/model", revision="v1")
+        second = models.start_download("org/model", revision="v2")
+
+        assert second["id"] != first["id"]
+
+    def test_a_finished_download_does_not_block_a_new_one(self, monkeypatch):
+        """Re-downloading after a failure has to be possible."""
+        models = self._real_models()
+        self._stub(monkeypatch, models)
+        first = models.start_download("org/model")
+        models._set_job(first["id"], status="failed")
+
+        second = models.start_download("org/model")
+
+        assert second["id"] != first["id"]

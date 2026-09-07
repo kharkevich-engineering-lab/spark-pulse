@@ -40,6 +40,7 @@ vi.mock("@/lib/api", async () => {
     fetchRecipe: vi.fn(),
     fetchDeployments: vi.fn(),
     createDeployment: vi.fn(),
+    scheduleDeploy: vi.fn(),
     fetchSettings: vi.fn(),
     fetchRecipeCustomization: vi.fn(),
     saveRecipeCustomization: vi.fn(),
@@ -77,6 +78,7 @@ vi.mock("@/components/LazyCodeEditor", () => ({
 import {
   ApiError,
   createDeployment,
+  scheduleDeploy,
   deleteCustomMod,
   deleteCustomRecipe,
   deleteRecipeCustomization,
@@ -208,6 +210,15 @@ const blockedReport = (): PreflightReport => ({
 const gateError = (report: PreflightReport) =>
   new ApiError(409, "API 409: docker is missing on spark-02", {
     detail: { message: "docker is missing on spark-02", preflight: report },
+  });
+
+/** The 400 a create returns when the model has not been downloaded. */
+const missingModelError = (model = "unsloth/Qwen3-27B-NVFP4") =>
+  new ApiError(400, `API 400: model '${model}' is not in the local catalogue`, {
+    detail: {
+      message: `model '${model}' is not in the local catalogue; download it first or deploy with allow_missing_model`,
+      missing_model: { model, recipe_id: "bundled/qwen3-8b", name: "qwen3-8b" },
+    },
   });
 
 const openDeployDrawer = async (name = "Qwen3 8B") => {
@@ -527,6 +538,100 @@ describe("RecipesPage", () => {
 
       expect(await screen.findByText("API 409: conflict")).toBeInTheDocument();
       expect(screen.queryByTestId("preflight-block-modal")).not.toBeInTheDocument();
+    });
+
+    /** The failure this whole path exists for. An operator who is told
+     *  "download it first" has to leave the page, find the Models page, and
+     *  retype an id they can only read off an error message — and then come
+     *  back later and remember what they were doing. */
+    it("offers to download the model instead of reporting the 400", async () => {
+      vi.mocked(createDeployment).mockRejectedValue(missingModelError());
+      render(<RecipesPage />);
+      await openDeployDrawer();
+
+      await userEvent.click(screen.getByRole("button", { name: "Deploy" }));
+
+      const modal = await screen.findByTestId("missing-model-modal");
+      expect(within(modal).getByText("unsloth/Qwen3-27B-NVFP4")).toBeInTheDocument();
+      // The raw error is not what they see.
+      expect(screen.queryByText(/allow_missing_model/)).not.toBeInTheDocument();
+    });
+
+    it("schedules the identical deploy behind the download", async () => {
+      vi.mocked(createDeployment).mockRejectedValue(missingModelError());
+      vi.mocked(scheduleDeploy).mockResolvedValue({
+        id: "s-1",
+        model: "unsloth/Qwen3-27B-NVFP4",
+        status: "waiting",
+      } as never);
+      render(<RecipesPage />);
+      await openDeployDrawer();
+      await userEvent.click(screen.getByRole("button", { name: "Deploy" }));
+      await screen.findByTestId("missing-model-modal");
+
+      await userEvent.click(screen.getByRole("button", { name: /Download and deploy/ }));
+
+      await waitFor(() => expect(scheduleDeploy).toHaveBeenCalled());
+      const create = vi.mocked(createDeployment).mock.calls[0][0];
+      const scheduled = vi.mocked(scheduleDeploy).mock.calls[0][0];
+      // The deploy that eventually runs must be the one they asked for, and
+      // the model is filled in from the error when the form left it implicit.
+      expect(scheduled).toEqual({ ...create, model: "unsloth/Qwen3-27B-NVFP4" });
+    });
+
+    it("says the deploy will happen on its own", async () => {
+      vi.mocked(createDeployment).mockRejectedValue(missingModelError());
+      vi.mocked(scheduleDeploy).mockResolvedValue({ id: "s-1" } as never);
+      render(<RecipesPage />);
+      await openDeployDrawer();
+      await userEvent.click(screen.getByRole("button", { name: "Deploy" }));
+      await screen.findByTestId("missing-model-modal");
+
+      await userEvent.click(screen.getByRole("button", { name: /Download and deploy/ }));
+
+      expect(await screen.findByText(/will deploy on its own/)).toBeInTheDocument();
+    });
+
+    it("lets the operator decline the download", async () => {
+      vi.mocked(createDeployment).mockRejectedValue(missingModelError());
+      render(<RecipesPage />);
+      await openDeployDrawer();
+      await userEvent.click(screen.getByRole("button", { name: "Deploy" }));
+      await screen.findByTestId("missing-model-modal");
+
+      await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+      expect(screen.queryByTestId("missing-model-modal")).not.toBeInTheDocument();
+      expect(scheduleDeploy).not.toHaveBeenCalled();
+    });
+
+    it("reports a download that could not even be started", async () => {
+      vi.mocked(createDeployment).mockRejectedValue(missingModelError());
+      vi.mocked(scheduleDeploy).mockRejectedValue(new Error("API 502: hub unreachable"));
+      render(<RecipesPage />);
+      await openDeployDrawer();
+      await userEvent.click(screen.getByRole("button", { name: "Deploy" }));
+      await screen.findByTestId("missing-model-modal");
+
+      await userEvent.click(screen.getByRole("button", { name: /Download and deploy/ }));
+
+      expect(await screen.findByText(/hub unreachable/)).toBeInTheDocument();
+      expect(screen.queryByTestId("missing-model-modal")).not.toBeInTheDocument();
+    });
+
+    /** A 400 that is not about a model is still just an error; treating it as
+     *  the offer would prompt to download nothing at all. */
+    it("treats a 400 without a model as an ordinary failure", async () => {
+      vi.mocked(createDeployment).mockRejectedValue(
+        new ApiError(400, "API 400: port 9000 is already bound", { detail: { message: "port taken" } }),
+      );
+      render(<RecipesPage />);
+      await openDeployDrawer();
+
+      await userEvent.click(screen.getByRole("button", { name: "Deploy" }));
+
+      expect(await screen.findByText("API 400: port 9000 is already bound")).toBeInTheDocument();
+      expect(screen.queryByTestId("missing-model-modal")).not.toBeInTheDocument();
     });
 
     it("says so when the recipe itself could not be opened", async () => {

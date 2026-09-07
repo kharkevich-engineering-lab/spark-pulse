@@ -220,6 +220,18 @@ export function describeImagePresence(plan: Pick<DeployPlan, "image_present" | "
   return `image not pulled, ${size} will download first`;
 }
 
+/** What the plan says about the model being on this host, in one line.
+ *
+ * The same reason as the image above, but sharper: an absent image costs a
+ * wait, an absent model is a create that will be refused outright. The plan
+ * permits a missing model — it is a dry run — so this used to be the one
+ * blocking condition the preview stayed silent about, and the operator met it
+ * as a 400 after pressing Deploy.
+ */
+export function describeModelPresence(plan: Pick<DeployPlan, "model_present">): string {
+  return plan.model_present ? "downloaded" : "not downloaded — Deploy will offer to fetch it";
+}
+
 /** Engines that may actually run this recipe. */
 export function eligibleEngines(engines: EngineSummary[], recipe: RecipeDetail): EngineSummary[] {
   return engineChoices(engines, recipe)
@@ -594,6 +606,17 @@ export default function DeployOptions({
                 </dd>
                 <dt className="text-text-muted">Model</dt>
                 <dd className="font-mono truncate">{plan.model || "(from the command)"}</dd>
+                {plan.model && (
+                  <>
+                    <dt className="text-text-muted">In the catalogue</dt>
+                    <dd
+                      className={plan.model_present ? "font-mono" : "font-mono text-warning"}
+                      data-testid="deploy-plan-model-presence"
+                    >
+                      {describeModelPresence(plan)}
+                    </dd>
+                  </>
+                )}
                 <dt className="text-text-muted">Port</dt>
                 <dd className="font-mono">{plan.port}</dd>
                 {plan.mods.length > 0 && (

@@ -33,6 +33,9 @@ from spark_pulse.tools.models import (  # noqa: F401 — shared constants/helper
     OFFLINE_ENV,
     TERMINAL_STATES,
     TOKEN_ENV_KEYS,
+    _notified,
+    _notify_finished,
+    add_finish_listener,
     publish_event,
     register_event_loop,
     repo_dir_name,
@@ -206,6 +209,11 @@ _CATALOGUE: list[dict[str, Any]] = [
 ]
 
 _deleted: set[str] = set()
+#: Models a simulated download has fetched, listed alongside the canned
+#: catalogue. Simulation has to model the *consequence* of a download and not
+#: just its progress bar: something waiting for the model to arrive — a deploy
+#: scheduled behind it — is only exercised if the model actually turns up.
+_downloaded: list[dict[str, Any]] = []
 _jobs: dict[str, dict[str, Any]] = {}
 _jobs_lock = threading.Lock()
 _cancelled: set[str] = set()
@@ -301,7 +309,7 @@ def _recipe_index() -> dict[str, list[str]]:
 def list_models() -> list[dict[str, Any]]:
     index = _recipe_index()
     out = []
-    for entry in _CATALOGUE:
+    for entry in [*_CATALOGUE, *_downloaded]:
         if entry["id"] in _deleted:
             continue
         item = dict(entry)
@@ -355,17 +363,51 @@ def _set_job(job_id: str, **fields: Any) -> dict[str, Any] | None:
         return dict(job)
 
 
+def _publish_job(event, job: dict[str, Any]) -> None:
+    """Publish, and fire the finish hooks on a terminal state.
+
+    The same two lines as the real module, and shared state with it: the hook
+    registry lives there, so whatever registered a listener through
+    ``tools.models`` is called in simulation too. Without this the auto-deploy
+    behind a download would simply not happen under ``SIMULATION_MODE``, which
+    is where the e2e tests and every dev server run.
+    """
+    publish_event(event, str(job.get("id", "")), dict(job))
+    if job.get("status") in TERMINAL_STATES:
+        _notify_finished(job)
+
+
+def _record_downloaded(model_id: str, size_bytes: int) -> None:
+    """Put a freshly downloaded model into the simulated catalogue."""
+    _deleted.discard(model_id)
+    if any(e["id"] == model_id for e in [*_CATALOGUE, *_downloaded]):
+        return
+    _downloaded.append(
+        _entry(
+            model_id,
+            revision="simulated",
+            size_bytes=size_bytes,
+            days_ago=0,
+            architectures=["LlamaForCausalLM"],
+            model_type="llama",
+        )
+    )
+
+
 def _simulate(job_id: str) -> None:
-    total = get_download(job_id)["bytes_total"]  # type: ignore[index]
+    queued = get_download(job_id)
+    if queued is None:
+        return
+    total = queued["bytes_total"]
     started = _set_job(job_id, status="running", started_at=_now())
     if started:
-        publish_event(EVENT_STARTED, started["id"], started)
+        _publish_job(EVENT_STARTED, started)
     for tick in range(1, _TICKS + 1):
         time.sleep(_TICK_SECONDS)
         if job_id in _cancelled:
             finished = _set_job(job_id, status="cancelled", finished_at=_now())
             if finished:
-                publish_event(EVENT_CANCELLED, finished["id"], finished)
+                _publish_job(EVENT_CANCELLED, finished)
             return
         progressed = _set_job(
             job_id,
@@ -373,18 +415,39 @@ def _simulate(job_id: str) -> None:
             current_file=f"model-{tick:05d}-of-{_TICKS:05d}.safetensors",
         )
         if progressed:
-            publish_event(EVENT_PROGRESS, progressed["id"], progressed)
+            _publish_job(EVENT_PROGRESS, progressed)
     job = get_download(job_id)
+    if job is None:
+        # The job was cleared out from under this thread (a test tidying up, a
+        # ``clear_finished_downloads`` racing the last tick). There is nothing
+        # left to complete.
+        return
+    _record_downloaded(str(job["model"]), total)
     finished = _set_job(
         job_id,
         status="completed",
         bytes_done=total,
         current_file=None,
-        path=f"{hub_dir()}/{repo_dir_name(job['model'])}/snapshots/simulated",  # type: ignore[index]
+        path=f"{hub_dir()}/{repo_dir_name(job['model'])}/snapshots/simulated",
         finished_at=_now(),
     )
     if finished:
-        publish_event(EVENT_COMPLETED, finished["id"], finished)
+        _publish_job(EVENT_COMPLETED, finished)
+
+
+def _active_download_for(
+    model: str, source: str | None, revision: str | None
+) -> dict[str, Any] | None:
+    with _jobs_lock:
+        for job in _jobs.values():
+            if (
+                job.get("status") in ("queued", "running")
+                and job.get("model") == model
+                and job.get("source") == source
+                and (job.get("revision") or None) == (revision or None)
+            ):
+                return dict(job)
+    return None
 
 
 def start_download(
@@ -401,6 +464,12 @@ def start_download(
         raise ValueError(
             f"Source '{src.get('name')}' is a local path — nothing to download"
         )
+    # Same rule as production: one active job per model+source+revision. See
+    # ``tools.models.start_download`` for why two are never two downloads.
+    existing = _active_download_for(model, src.get("name"), revision)
+    if existing is not None:
+        return existing
+
     estimated = estimate_size(model, src, revision, allow_patterns)
     check_disk_space(estimated)
 
@@ -425,7 +494,7 @@ def start_download(
     with _jobs_lock:
         _jobs[job_id] = job
         snapshot = dict(job)
-    publish_event(EVENT_QUEUED, snapshot["id"], snapshot)
+    _publish_job(EVENT_QUEUED, snapshot)
     threading.Thread(
         target=_simulate, args=(job_id,), name=f"mock-dl-{job_id}", daemon=True
     ).start()
@@ -442,7 +511,7 @@ def cancel_download(job_id: str) -> dict[str, Any] | None:
     if job.get("status") == "queued":
         finished = _set_job(job_id, status="cancelled", finished_at=_now())
         if finished:
-            publish_event(EVENT_CANCELLED, finished["id"], finished)
+            _publish_job(EVENT_CANCELLED, finished)
         return finished
     return _set_job(job_id, cancel_requested=True)
 
@@ -452,6 +521,7 @@ def clear_finished_downloads() -> int:
         stale = [k for k, v in _jobs.items() if v.get("status") in TERMINAL_STATES]
         for k in stale:
             _jobs.pop(k, None)
+            _notified.discard(k)
     return len(stale)
 
 

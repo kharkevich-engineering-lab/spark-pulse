@@ -91,8 +91,23 @@ async def _native_log_generator(deployment_id: str) -> AsyncGenerator[str, None]
         await asyncio.sleep(2)
 
 
+#: Sent once, last, when there will be nothing further on this stream.
+#:
+#: ``EventSource`` reconnects on its own whenever the server closes the
+#: connection, and it has no way to be told not to. So a deployment that had
+#: stopped — the generator's own exit condition — was re-streamed from the top
+#: every few seconds for ever: the same lines appended again and again, which
+#: an operator reads as a repeating log rather than as a reconnect. The client
+#: closes the stream itself when it sees this.
+END_EVENT = "event: end\ndata: {}\n\n"
+
+
 async def log_generator(deployment_id: str) -> AsyncGenerator[str, None]:
-    """Emit existing log lines then tail for new ones until deployment stops."""
+    """Emit existing log lines then tail for new ones until deployment stops.
+
+    Always ends with :data:`END_EVENT`; see there for why silence is not
+    enough.
+    """
     dep = next(
         (
             d
@@ -164,11 +179,29 @@ async def log_generator(deployment_id: str) -> AsyncGenerator[str, None]:
             break
 
 
+async def _terminated_log_generator(deployment_id: str) -> AsyncGenerator[str, None]:
+    """``log_generator`` with the end marker guaranteed on every exit path.
+
+    A wrapper rather than a ``yield`` before each ``return``: the generator has
+    five ways out and the one that gets forgotten is the one that leaves a
+    client reconnecting for ever.
+
+    ``else``, not ``finally``: a client that has already gone away closes this
+    generator by throwing ``GeneratorExit`` into it, and yielding from a
+    ``finally`` at that point is the "async generator ignored GeneratorExit"
+    error. Only an orderly end gets the marker, which is the only case anyone
+    is still listening for it.
+    """
+    async for chunk in log_generator(deployment_id):
+        yield chunk
+    yield END_EVENT
+
+
 @router.get("/logs/{deployment_id}")
 async def sse_logs(deployment_id: str):
     """Stream deployment logs via SSE."""
     return StreamingResponse(
-        log_generator(deployment_id),
+        _terminated_log_generator(deployment_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

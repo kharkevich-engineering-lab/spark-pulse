@@ -1,10 +1,10 @@
 import { useState, useEffect, useMemo } from "react";
-import { fetchRecipes, fetchRecipe, fetchDeployments, createDeployment, fetchSettings, fetchRecipeCustomization, saveRecipeCustomization, deleteRecipeCustomization, fetchMods, fetchMod, listCustomRecipes, saveCustomRecipe, deleteCustomRecipe, listCustomMods, getCustomModFiles, saveCustomModFiles, deleteCustomMod, ApiError } from "@/lib/api";
+import { fetchRecipes, fetchRecipe, fetchDeployments, createDeployment, scheduleDeploy, fetchSettings, fetchRecipeCustomization, saveRecipeCustomization, deleteRecipeCustomization, fetchMods, fetchMod, listCustomRecipes, saveCustomRecipe, deleteCustomRecipe, listCustomMods, getCustomModFiles, saveCustomModFiles, deleteCustomMod, ApiError } from "@/lib/api";
 import type { RecipeDetail, RecipeCustomization, RecipeSummary, ModSummary, ModDetail, CustomRecipeInfo, CustomModInfo, ModFileMap, PreflightReport } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
 import { AlertModal, ConfirmModal } from "@/components/Modal";
 import PreflightPanel from "@/components/PreflightPanel";
-import { Loader2, AlertCircle, ChevronDown, X, Copy, Check, Wrench, Zap, FileCode2, FileText, FileCode, Plus } from "lucide-react";
+import { Loader2, AlertCircle, ChevronDown, X, Copy, Check, Wrench, Zap, FileCode2, FileText, FileCode, Plus, Download } from "lucide-react";
 import RecipeCard from "@/components/RecipeCard";
 import RecipeDrawer from "@/components/RecipeDrawer";
 import SlideDrawer from "@/components/SlideDrawer";
@@ -30,6 +30,29 @@ interface BlockedDeploy {
   params: Record<string, unknown>;
   options?: DeployOptionsValue;
   preflight: PreflightReport;
+}
+
+/** A deploy the model has to arrive for first: what the operator asked for,
+ *  plus the model that is not here yet. Kept together so accepting the offer
+ *  re-issues the very same deploy rather than an approximation of it. */
+interface MissingModelDeploy {
+  recipeId: string;
+  name: string;
+  params: Record<string, unknown>;
+  options?: DeployOptionsValue;
+  model: string;
+}
+
+/** The missing model from a 400's `detail.missing_model`, or null when the
+ *  create failed for one of the many other reasons. */
+function missingModel(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const detail = (payload as { detail?: unknown }).detail;
+  if (!detail || typeof detail !== "object") return null;
+  const missing = (detail as { missing_model?: unknown }).missing_model;
+  if (!missing || typeof missing !== "object") return null;
+  const model = (missing as { model?: unknown }).model;
+  return typeof model === "string" && model ? model : null;
 }
 
 /** The pre-flight report from a 409's `detail.preflight`, or null when the
@@ -180,6 +203,8 @@ export default function RecipesPage() {
   const [selected, setSelected] = useState<{ recipe: RecipeDetail; customization: RecipeCustomization } | null>(null);
   const [alertModal, setAlertModal] = useState<{ title: string; message: string } | null>(null);
   const [blockedDeploy, setBlockedDeploy] = useState<BlockedDeploy | null>(null);
+  const [missingModelDeploy, setMissingModelDeploy] = useState<MissingModelDeploy | null>(null);
+  const [scheduling, setScheduling] = useState(false);
   const [showUnavailable, setShowUnavailable] = useState(false);
   const [activeModId, setActiveModId] = useState<string | null>(null);
 
@@ -312,7 +337,44 @@ export default function RecipesPage() {
         setBlockedDeploy({ recipeId: selected.recipe.id, name, params, options, preflight });
         return;
       }
+      // "The model is not here" is the one deploy failure with an obvious
+      // next step, and telling the operator to go and download it themselves
+      // — on another page, matching the id by eye — is a worse answer than
+      // offering to do it.
+      const model = e instanceof ApiError && e.status === 400 ? missingModel(e.payload) : null;
+      if (model) {
+        setMissingModelDeploy({ recipeId: selected.recipe.id, name, params, options, model });
+        return;
+      }
       setAlertModal({ title: "Error", message: e instanceof Error ? e.message : "Failed to deploy" });
+    }
+  };
+
+  const handleDownloadAndDeploy = async () => {
+    if (!missingModelDeploy) return;
+    const { recipeId, name, params, options, model } = missingModelDeploy;
+    setScheduling(true);
+    try {
+      await scheduleDeploy({
+        recipe_id: recipeId,
+        name,
+        params,
+        nodes: options?.nodes?.length ? options.nodes : undefined,
+        engine: options?.engine,
+        model: options?.model || model,
+        extra_args: options?.extra_args?.length ? options.extra_args : undefined,
+      });
+      setMissingModelDeploy(null);
+      setSelected(null);
+      setAlertModal({
+        title: "Download started",
+        message: `${model} is downloading. "${name}" will deploy on its own when it finishes — follow the progress on the Models page, where you can also call it off.`,
+      });
+    } catch (e) {
+      setMissingModelDeploy(null);
+      setAlertModal({ title: "Error", message: e instanceof Error ? e.message : "Could not start the download" });
+    } finally {
+      setScheduling(false);
     }
   };
 
@@ -721,6 +783,56 @@ export default function RecipesPage() {
                 className="px-4 py-2 rounded-lg bg-danger hover:bg-danger/80 text-white font-medium transition-colors"
               >
                 Deploy anyway
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {missingModelDeploy && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" role="dialog" aria-modal="true">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setMissingModelDeploy(null)} />
+          <div
+            className="relative w-full max-w-lg rounded-xl bg-surface border border-border shadow-2xl p-5 space-y-4"
+            data-testid="missing-model-modal"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <h3 className="text-lg font-bold">This model is not downloaded yet</h3>
+              <button
+                type="button"
+                onClick={() => setMissingModelDeploy(null)}
+                className="p-1 rounded-lg hover:bg-surface-hover transition-colors"
+                title="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="space-y-3 text-sm">
+              <p className="text-text-secondary">
+                <span className="font-mono text-text break-all">{missingModelDeploy.model}</span> is not in the
+                local catalogue, so <span className="font-medium text-text">{missingModelDeploy.name}</span> cannot start.
+              </p>
+              <p className="text-text-secondary">
+                Downloading it can take a while. You do not have to wait here — the deployment is recorded and
+                starts on its own when the model lands, and you can cancel it from the Models page at any point.
+              </p>
+            </div>
+            <div className="flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setMissingModelDeploy(null)}
+                className="px-4 py-2 rounded-lg border border-border hover:border-border-hover transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDownloadAndDeploy}
+                disabled={scheduling}
+                className="px-4 py-2 rounded-lg bg-primary hover:bg-primary/80 text-white font-medium transition-colors disabled:opacity-50 inline-flex items-center gap-2"
+              >
+                {scheduling ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                Download and deploy
               </button>
             </div>
           </div>

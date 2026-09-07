@@ -18,7 +18,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from spark_pulse import tools
-from spark_pulse.tools.native_runtime import NativeRuntimeError
+from spark_pulse.tools.native_runtime import MissingModelError, NativeRuntimeError
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +137,22 @@ def create_deployment(req: dict):
             extra_args=req.get("extra_args") or [],
             allow_missing_model=bool(req.get("allow_missing_model", False)),
         )
+    except MissingModelError as exc:
+        # Structured, because there is something to *do* about this one and
+        # the client needs the model id as a value to do it: offer the
+        # download and queue this same request behind it. The prose stays for
+        # any caller that only reads ``message``.
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": str(exc),
+                "missing_model": {
+                    "model": exc.model,
+                    "recipe_id": recipe_id,
+                    "name": name,
+                },
+            },
+        ) from exc
     except NativeRuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

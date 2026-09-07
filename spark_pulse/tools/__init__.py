@@ -19,7 +19,9 @@ import os
 # in simulation as in production, so there is one store and not two); and
 # ``recipe_schema``/``recipe_sources``, which both the real and the mock
 # ``recipes`` import (they are not listed below for exactly that reason — the
-# switch must not see them). Everything else must exist in both packages.
+# switch must not see them); and ``scheduled_deploys``, which is a database
+# table and reaches everything it acts on *through* the switch, so it is the
+# same code in both modes.  Everything else must exist in both packages.
 from spark_pulse.tools import atomic_json as atomic_json
 from spark_pulse.tools import custom_files as custom_files
 from spark_pulse.tools import custom_recipes as custom_recipes
@@ -28,6 +30,7 @@ from spark_pulse.tools import hub_cache as hub_cache
 from spark_pulse.tools import labels as labels
 from spark_pulse.tools import recipe_schema as recipe_schema
 from spark_pulse.tools import recipe_sources as recipe_sources
+from spark_pulse.tools import scheduled_deploys as scheduled_deploys
 
 _sim_mode = os.environ.get("SIMULATION_MODE", "0") == "1"
 
