@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, useLocation, Navigate } from "react-route
 import Layout from "@/components/Layout";
 import { AuthProvider } from "@/lib/auth";
 import { ConfigProvider, useConfig } from "@/lib/config";
+import { I18nProvider } from "@/lib/i18n";
 import RecipesPage from "@/pages/RecipesPage";
 import InferencePage from "@/pages/InferencePage";
 import BenchmarkingPage from "@/pages/BenchmarkingPage";
@@ -84,13 +85,15 @@ function AppRoutes() {
 export default function App() {
   return (
     <BrowserRouter>
-      <AuthProvider>
-        <ConfigProvider>
-          <ErrorBoundary fallback={<DefaultErrorFallback />}>
-            <AppRoutes />
-          </ErrorBoundary>
-        </ConfigProvider>
-      </AuthProvider>
+      <I18nProvider>
+        <AuthProvider>
+          <ConfigProvider>
+            <ErrorBoundary fallback={<DefaultErrorFallback />}>
+              <AppRoutes />
+            </ErrorBoundary>
+          </ConfigProvider>
+        </AuthProvider>
+      </I18nProvider>
     </BrowserRouter>
   );
 }

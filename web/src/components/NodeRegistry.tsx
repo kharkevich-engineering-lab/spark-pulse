@@ -21,6 +21,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { useI18n } from "@/lib/i18n";
 import {
   addNode,
   discoverNodes,
@@ -120,6 +121,7 @@ interface AddNodeDialogProps {
 }
 
 function AddNodeDialog({ onClose, onAdded }: AddNodeDialogProps) {
+  const { t } = useI18n();
   const [name, setName] = useState("");
   const [address, setAddress] = useState("");
   const [sshUser, setSshUser] = useState("");
@@ -170,17 +172,17 @@ function AddNodeDialog({ onClose, onAdded }: AddNodeDialogProps) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div
         role="dialog"
-        aria-label="Add node"
+        aria-label={t("nodes.addNode")}
         className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-surface p-6 shadow-2xl"
       >
         <div className="mb-6 flex items-center justify-between">
           <h3 className="flex items-center gap-2 text-lg font-bold">
             <Server size={20} className="text-primary" />
-            Add node
+            {t("nodes.addNode")}
           </h3>
           <button
             onClick={onClose}
-            aria-label="Close"
+            aria-label={t("common.close")}
             className="rounded-lg p-1 hover:bg-surface-hover"
           >
             <X size={18} />
@@ -193,7 +195,7 @@ function AddNodeDialog({ onClose, onAdded }: AddNodeDialogProps) {
               htmlFor="node-address"
               className="mb-1 block text-sm font-medium text-text-muted"
             >
-              Address *
+              {t("nodes.address")}
             </label>
             <input
               id="node-address"
@@ -201,7 +203,7 @@ function AddNodeDialog({ onClose, onAdded }: AddNodeDialogProps) {
               autoFocus
               value={address}
               onChange={(e) => setAddress(e.target.value)}
-              placeholder="10.0.0.11"
+              placeholder={t("nodes.addressPlaceholder")}
               className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-text focus:outline-none focus:ring-2 focus:ring-primary/50"
             />
           </div>
@@ -211,14 +213,14 @@ function AddNodeDialog({ onClose, onAdded }: AddNodeDialogProps) {
               htmlFor="node-name"
               className="mb-1 block text-sm font-medium text-text-muted"
             >
-              Name
+              {t("nodes.name")}
             </label>
             <input
               id="node-name"
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Defaults to the address"
+              placeholder={t("nodes.namePlaceholder")}
               className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-text focus:outline-none focus:ring-2 focus:ring-primary/50"
             />
           </div>
@@ -229,14 +231,14 @@ function AddNodeDialog({ onClose, onAdded }: AddNodeDialogProps) {
                 htmlFor="node-ssh-user"
                 className="mb-1 block text-sm font-medium text-text-muted"
               >
-                SSH user
+                {t("nodes.sshUser")}
               </label>
               <input
                 id="node-ssh-user"
                 type="text"
                 value={sshUser}
                 onChange={(e) => setSshUser(e.target.value)}
-                placeholder="Leave blank for ssh_config"
+                placeholder={t("nodes.sshUserPlaceholder")}
                 className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-text focus:outline-none focus:ring-2 focus:ring-primary/50"
               />
             </div>
@@ -245,14 +247,14 @@ function AddNodeDialog({ onClose, onAdded }: AddNodeDialogProps) {
                 htmlFor="node-ssh-key"
                 className="mb-1 block text-sm font-medium text-text-muted"
               >
-                SSH key path
+                {t("nodes.sshKey")}
               </label>
               <input
                 id="node-ssh-key"
                 type="text"
                 value={sshKeyPath}
                 onChange={(e) => setSshKeyPath(e.target.value)}
-                placeholder="~/.ssh/id_ed25519"
+                placeholder={t("nodes.sshKeyPlaceholder")}
                 className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-text focus:outline-none focus:ring-2 focus:ring-primary/50"
               />
             </div>
@@ -265,7 +267,7 @@ function AddNodeDialog({ onClose, onAdded }: AddNodeDialogProps) {
           {/* Discovery is an aid, never a gate: the address field above always works. */}
           <div className="rounded-lg border border-border p-3">
             <div className="flex items-center justify-between gap-3">
-              <p className="text-sm font-medium">Find nodes on the network</p>
+              <p className="text-sm font-medium">{t("nodes.find")}</p>
               <button
                 onClick={scan}
                 disabled={scanning}
@@ -276,19 +278,18 @@ function AddNodeDialog({ onClose, onAdded }: AddNodeDialogProps) {
                 ) : (
                   <Radar size={14} />
                 )}
-                Scan
+                {t("nodes.scan")}
               </button>
             </div>
 
             {peers !== null && !mdnsAvailable && (
               <p className="mt-2 text-sm text-text-muted">
-                mDNS is unavailable here, so nothing can be discovered. Type the address
-                above instead — that always works.
+                {t("nodes.mdnsUnavailable")}
               </p>
             )}
             {peers !== null && mdnsAvailable && peers.length === 0 && (
               <p className="mt-2 text-sm text-text-muted">
-                No responders answered. Type the address above instead.
+                {t("nodes.noResponders")}
               </p>
             )}
             {peers !== null && peers.length > 0 && (
@@ -354,6 +355,7 @@ function AddNodeDialog({ onClose, onAdded }: AddNodeDialogProps) {
 }
 
 export default function NodeRegistry() {
+  const { t } = useI18n();
   const { data: nodes, loading, error, refetch } = useQuery<ClusterNode[]>(fetchNodes);
   const [findings, setFindings] = useState<NodeFinding[]>([]);
   const [showAdd, setShowAdd] = useState(false);
@@ -384,11 +386,10 @@ export default function NodeRegistry() {
         <div>
           <h3 className="flex items-center gap-2 text-lg font-bold">
             <Network size={18} className="text-primary" />
-            Nodes
+            {t("nodes.heading")}
           </h3>
           <p className="mt-0.5 text-sm text-text-muted">
-            The machines this control plane knows about. Each keeps a minted identity,
-            so renaming or re-addressing one does not re-enroll it.
+            {t("nodes.subtitle")}
           </p>
         </div>
         <button
@@ -443,13 +444,13 @@ export default function NodeRegistry() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs uppercase tracking-wider text-text-muted">
-                <th scope="col" className="py-2 pr-4 font-semibold">Name</th>
-                <th scope="col" className="py-2 pr-4 font-semibold">Address</th>
-                <th scope="col" className="py-2 pr-4 font-semibold">Interfaces</th>
-                <th scope="col" className="py-2 pr-4 font-semibold">Role</th>
-                <th scope="col" className="py-2 pr-4 font-semibold">State</th>
+                <th scope="col" className="py-2 pr-4 font-semibold">{t("nodes.colName")}</th>
+                <th scope="col" className="py-2 pr-4 font-semibold">{t("nodes.colAddress")}</th>
+                <th scope="col" className="py-2 pr-4 font-semibold">{t("nodes.colInterfaces")}</th>
+                <th scope="col" className="py-2 pr-4 font-semibold">{t("nodes.colRole")}</th>
+                <th scope="col" className="py-2 pr-4 font-semibold">{t("nodes.colState")}</th>
                 <th scope="col" className="py-2 font-semibold">
-                  <span className="sr-only">Actions</span>
+                  <span className="sr-only">{t("nodes.colActions")}</span>
                 </th>
               </tr>
             </thead>
@@ -467,7 +468,7 @@ export default function NodeRegistry() {
                         Control plane
                       </span>
                     ) : (
-                      <span className="text-text-muted">Peer</span>
+                      <span className="text-text-muted">{t("nodes.peer")}</span>
                     )}
                   </td>
                   <td className="py-2.5 pr-4">
@@ -481,7 +482,7 @@ export default function NodeRegistry() {
                           setForgetting(node);
                         }}
                         aria-label={`Forget ${node.name}`}
-                        title="Forget this node"
+                        title={t("nodes.forget")}
                         className="rounded-lg p-1.5 text-text-muted transition-colors hover:bg-danger/10 hover:text-danger"
                       >
                         <Trash2 size={14} />
@@ -503,9 +504,9 @@ export default function NodeRegistry() {
         <ConfirmModal
           open
           onClose={() => setForgetting(null)}
-          title="Forget node"
-          message={`Forget "${forgetting.name}"? This drops what we know about the machine. It does not touch the machine itself — uninstalling an agent and wiping a node's identity are separate actions.`}
-          confirmLabel="Forget"
+          title={t("nodes.forgetTitle")}
+          message={t("nodes.forgetBody", { name: forgetting.name })}
+          confirmLabel={t("nodes.forgetConfirm")}
           confirmVariant="danger"
           onConfirm={async () => {
             try {

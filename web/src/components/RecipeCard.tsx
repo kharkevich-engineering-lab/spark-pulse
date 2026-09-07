@@ -1,6 +1,7 @@
 /** Recipe card — uses BaseCard with recipe-specific badges and actions. */
 
 import { Box, Cpu, Layers, Network, Package, RotateCcw, Zap } from "lucide-react";
+import { useI18n } from "@/lib/i18n";
 import BaseCard from "./BaseCard";
 import type { RecipeSummary } from "@/lib/types";
 
@@ -19,6 +20,7 @@ export default function RecipeCard({ r, isRunning, clusterBlocked, onSelect, onR
   onSelect: () => void;
   onReset?: () => void;
 }) {
+  const { t } = useI18n();
   const engines = usableEngines(r);
   const badges = (
     <>
@@ -37,17 +39,17 @@ export default function RecipeCard({ r, isRunning, clusterBlocked, onSelect, onR
       )}
       {(r.solo_only || (!r.solo_only && !r.cluster_only)) && (
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-primary/20 text-primary">
-          <Cpu size={11} />Solo
+          <Cpu size={11} />{t("recipeCard.solo")}
         </span>
       )}
       {(r.cluster_only || (!r.solo_only && !r.cluster_only)) && (
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-warning/20 text-warning">
-          <Network size={11} />Cluster
+          <Network size={11} />{t("recipeCard.cluster")}
         </span>
       )}
       {r.is_customized && (
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-amber/20 text-amber">
-          <Zap size={11} />Custom
+          <Zap size={11} />{t("recipeCard.custom")}
         </span>
       )}
     </>
@@ -56,10 +58,10 @@ export default function RecipeCard({ r, isRunning, clusterBlocked, onSelect, onR
   const icon = (
     <div className="flex items-center gap-2 shrink-0">
       <Zap size={16} className={isRunning ? "text-success" : "text-primary"} />
-      {isRunning && <span className="flex items-center gap-1 text-xs text-success font-medium"><span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />Running</span>}
-      {clusterBlocked && <span className="text-xs text-text-muted">Cluster only</span>}
+      {isRunning && <span className="flex items-center gap-1 text-xs text-success font-medium"><span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />{t("recipeCard.running")}</span>}
+      {clusterBlocked && <span className="text-xs text-text-muted">{t("recipeCard.clusterOnly")}</span>}
       {r.is_customized && onReset && (
-        <button onClick={(e) => { e.stopPropagation(); onReset(); }} className="p-1 rounded hover:bg-warning/15 text-warning transition-colors" title="Reset to original">
+        <button onClick={(e) => { e.stopPropagation(); onReset(); }} className="p-1 rounded hover:bg-warning/15 text-warning transition-colors" title={t("recipeCard.resetToOriginal")}>
           <RotateCcw size={14} />
         </button>
       )}

@@ -1,4 +1,5 @@
 import type { EngineSummary } from "@/lib/types";
+import { useT } from "@/lib/i18n";
 
 interface EngineBadgeProps {
   engine: string;
@@ -32,8 +33,9 @@ interface EngineListProps {
 
 /** Read-only list of the engines the registry knows about. */
 export function EngineList({ engines, defaultEngine }: EngineListProps) {
+  const t = useT();
   if (engines.length === 0) {
-    return <p className="text-sm text-text-muted">No engines available.</p>;
+    return <p className="text-sm text-text-muted">{t("engines.none")}</p>;
   }
   return (
     <ul className="space-y-3">

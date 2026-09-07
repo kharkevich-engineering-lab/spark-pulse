@@ -3,12 +3,14 @@
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/lib/auth";
+import { useT } from "@/lib/i18n";
 import { PulseIcon } from "@/components/BrandIcons";
 import { BrandFooter } from "@/components/BrandFooter";
 
 export default function LoginPage() {
   const { isAuthenticated, login } = useAuth();
   const navigate = useNavigate();
+  const t = useT();
 
   useEffect(() => {
     // If already authenticated, redirect to home
@@ -24,15 +26,15 @@ export default function LoginPage() {
           <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
             <PulseIcon className="text-primary" size={32} />
           </div>
-          <div className="mb-2 text-2xl font-bold text-foreground">Spark Pulse</div>
-          <div className="mb-6 text-sm text-text-muted">Sign in to continue</div>
+          <div className="mb-2 text-2xl font-bold text-foreground">{t("brand.product")}</div>
+          <div className="mb-6 text-sm text-text-muted">{t("login.prompt")}</div>
 
           <button
             onClick={login}
             className="px-6 py-2.5 rounded-lg bg-primary hover:bg-primary-hover text-white font-medium transition-colors"
             type="button"
           >
-            Sign In
+            {t("login.signIn")}
           </button>
         </div>
       </div>

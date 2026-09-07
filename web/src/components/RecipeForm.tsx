@@ -9,6 +9,7 @@ Props:
 */
 
 import { useState, useEffect, useImperativeHandle, forwardRef, useRef } from "react";
+import { useI18n } from "@/lib/i18n";
 import type { RecipeDetail, RecipeCustomization, RecipeFormRef } from "@/lib/types";
 import { X, Code2 } from "lucide-react";
 import LazyCodeEditor from "./LazyCodeEditor";
@@ -26,6 +27,7 @@ const RecipeForm = forwardRef<RecipeFormRef, {
   onSaveCustomization,
   isEditing,
 }, ref) {
+  const { t } = useI18n();
   const [editAsYaml, setEditAsYaml] = useState(false);
   const [rawYaml, setRawYaml] = useState("");
   const [yamlError, setYamlError] = useState<string | null>(null);
@@ -172,19 +174,19 @@ const RecipeForm = forwardRef<RecipeFormRef, {
   const renderFormFields = () => (
     <div className="space-y-5">
       <div>
-        <label className="block text-sm font-medium mb-1">Recipe Name</label>
+        <label className="block text-sm font-medium mb-1">{t("recipeForm.name")}</label>
         <input type="text" value={name} onChange={(e) => { setName(e.target.value); watchFormChanges(); }}
           disabled={!isEditing}
           className="w-full px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm disabled:opacity-60" />
       </div>
       <div>
-        <label className="block text-sm font-medium mb-1">Model</label>
+        <label className="block text-sm font-medium mb-1">{t("recipeForm.model")}</label>
         <input type="text" value={model} onChange={(e) => { setModel(e.target.value); watchFormChanges(); }}
-          disabled={!isEditing} placeholder="e.g. Intel/Qwen3.5-397B-INT4"
+          disabled={!isEditing} placeholder={t("recipeForm.modelPlaceholder")}
           className="w-full px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm text-text-muted disabled:opacity-60" />
       </div>
       <div>
-        <label className="block text-sm font-medium mb-1">Container</label>
+        <label className="block text-sm font-medium mb-1">{t("recipeForm.container")}</label>
         <input type="text" value={container} onChange={(e) => { setContainer(e.target.value); watchFormChanges(); }}
           disabled={!isEditing}
           className="w-full px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm disabled:opacity-60" />
@@ -192,7 +194,7 @@ const RecipeForm = forwardRef<RecipeFormRef, {
       {command && (
         <div>
           <label className="block text-sm font-medium mb-1">Command Template
-            {isEditing && <span className="text-xs text-text-muted ml-2 font-normal">Use &#123;model&#125; tokens</span>}
+            {isEditing && <span className="text-xs text-text-muted ml-2 font-normal">{t("recipeForm.useTokens")}</span>}
           </label>
           <textarea value={command} onChange={(e) => { setCommand(e.target.value); watchFormChanges(); }}
             disabled={!isEditing} rows={3}
@@ -202,8 +204,8 @@ const RecipeForm = forwardRef<RecipeFormRef, {
       {Object.keys(recipe.defaults).length > 0 && (
         <div>
           <div className="flex items-center justify-between mb-2">
-            <p className="text-sm font-medium">Default Parameters</p>
-            {isEditing && <span className="text-xs text-text-muted">Edit values below</span>}
+            <p className="text-sm font-medium">{t("recipeForm.defaults")}</p>
+            {isEditing && <span className="text-xs text-text-muted">{t("recipeForm.editValues")}</span>}
           </div>
           <div className="space-y-1">
             {Object.entries(editDefaults).map(([k, v]) => (
@@ -222,14 +224,14 @@ const RecipeForm = forwardRef<RecipeFormRef, {
       )}
       <div>
         <div className="flex items-center justify-between mb-2">
-          <p className="text-sm font-medium">Environment Variables</p>
+          <p className="text-sm font-medium">{t("recipeForm.env")}</p>
           {isEditing && (
             <div className="flex items-center gap-2">
-              <input type="text" placeholder="KEY" value={newEnvKey} onChange={(e) => setNewEnvKey(e.target.value)}
+              <input type="text" placeholder={t("recipeForm.envKey")} value={newEnvKey} onChange={(e) => setNewEnvKey(e.target.value)}
                 className="w-24 px-2 py-0.5 rounded border border-border focus:border-primary focus:outline-none font-mono text-xs" />
-              <input type="text" placeholder="VALUE" value={newEnvValue} onChange={(e) => setNewEnvValue(e.target.value)}
+              <input type="text" placeholder={t("recipeForm.envValue")} value={newEnvValue} onChange={(e) => setNewEnvValue(e.target.value)}
                 className="w-24 px-2 py-0.5 rounded border border-border focus:border-primary focus:outline-none font-mono text-xs" />
-              <button onClick={addEnv} className="text-xs px-2 py-0.5 rounded bg-primary/20 text-primary hover:bg-primary/30">Add</button>
+              <button onClick={addEnv} className="text-xs px-2 py-0.5 rounded bg-primary/20 text-primary hover:bg-primary/30">{t("recipeForm.add")}</button>
             </div>
           )}
         </div>
@@ -243,16 +245,16 @@ const RecipeForm = forwardRef<RecipeFormRef, {
               </div>
             ))}
           </div>
-        ) : !isEditing && (<p className="text-xs text-text-muted italic">No environment variables</p>)}
+        ) : !isEditing && (<p className="text-xs text-text-muted italic">{t("recipeForm.noEnv")}</p>)}
       </div>
       <div>
         <div className="flex items-center justify-between mb-2">
-          <p className="text-sm font-medium">Build Args</p>
+          <p className="text-sm font-medium">{t("recipeForm.buildArgs")}</p>
           {isEditing && (
             <div className="flex items-center gap-2">
-              <input type="text" placeholder="--build-arg X=1" value={newBuildArg} onChange={(e) => setNewBuildArg(e.target.value)}
+              <input type="text" placeholder={t("recipeForm.buildArgPlaceholder")} value={newBuildArg} onChange={(e) => setNewBuildArg(e.target.value)}
                 className="w-48 px-2 py-0.5 rounded border border-border focus:border-primary focus:outline-none font-mono text-xs" />
-              <button onClick={addBuildArg} className="text-xs px-2 py-0.5 rounded bg-primary/20 text-primary hover:bg-primary/30">Add</button>
+              <button onClick={addBuildArg} className="text-xs px-2 py-0.5 rounded bg-primary/20 text-primary hover:bg-primary/30">{t("recipeForm.add")}</button>
             </div>
           )}
         </div>
@@ -265,17 +267,17 @@ const RecipeForm = forwardRef<RecipeFormRef, {
               </span>
             ))}
           </div>
-        ) : !isEditing && (<p className="text-xs text-text-muted italic">No build args</p>)}
+        ) : !isEditing && (<p className="text-xs text-text-muted italic">{t("recipeForm.noBuildArgs")}</p>)}
       </div>
       <div>
         <div className="flex items-center justify-between mb-2">
-          <p className="text-sm font-medium">Mods</p>
+          <p className="text-sm font-medium">{t("recipeForm.mods")}</p>
           {isEditing && (
             <div className="flex items-center gap-2">
-              <input type="text" placeholder="mod-name" value={newMod} onChange={(e) => setNewMod(e.target.value)}
+              <input type="text" placeholder={t("recipeForm.modPlaceholder")} value={newMod} onChange={(e) => setNewMod(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addMod())}
                 className="w-40 px-2 py-0.5 rounded border border-border focus:border-primary focus:outline-none font-mono text-xs" />
-              <button onClick={addMod} className="text-xs px-2 py-0.5 rounded bg-primary/20 text-primary hover:bg-primary/30">Add</button>
+              <button onClick={addMod} className="text-xs px-2 py-0.5 rounded bg-primary/20 text-primary hover:bg-primary/30">{t("recipeForm.add")}</button>
             </div>
           )}
         </div>
@@ -288,7 +290,7 @@ const RecipeForm = forwardRef<RecipeFormRef, {
               </span>
             ))}
           </div>
-        ) : (<p className="text-xs text-text-muted italic">No mods</p>)}
+        ) : (<p className="text-xs text-text-muted italic">{t("recipeForm.noMods")}</p>)}
       </div>
     </div>
   );
@@ -297,7 +299,7 @@ const RecipeForm = forwardRef<RecipeFormRef, {
   const renderYamlEditor = () => (
     <div className="flex-1 flex flex-col min-h-0">
       <div className="flex items-center justify-between mb-2">
-        <label className="text-sm font-medium">Recipe YAML</label>
+        <label className="text-sm font-medium">{t("recipeForm.yaml")}</label>
         {yamlError && (<span className="text-xs text-danger">{yamlError}</span>)}
       </div>
       <LazyCodeEditor
@@ -309,7 +311,7 @@ const RecipeForm = forwardRef<RecipeFormRef, {
         className="flex-1 min-h-[300px] font-mono text-sm"
         spellCheck={false}
       />
-      <p className="text-xs text-text-muted mt-2">Edit the YAML directly. Changes are saved when you click Save.</p>
+      <p className="text-xs text-text-muted mt-2">{t("recipeForm.yamlNote")}</p>
     </div>
   );
 

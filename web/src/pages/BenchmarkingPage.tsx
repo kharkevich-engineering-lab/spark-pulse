@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useI18n } from "@/lib/i18n";
 import {
   fetchBenchmarks,
   fetchLatestByRecipe,
@@ -18,6 +19,7 @@ import type { BenchmarkResult } from "@/lib/types";
 type Tab = "history" | "summary";
 
 export default function BenchmarkingPage() {
+  const { t } = useI18n();
   const [activeTab, setActiveTab] = useState<Tab>("history");
   const { data: benchmarks, loading, error, refetch } = useQuery(fetchBenchmarks);
   const { data: latestByRecipe, loading: latestLoading } = useQuery(fetchLatestByRecipe);
@@ -61,7 +63,7 @@ export default function BenchmarkingPage() {
     } catch (e) {
       setAlertModal({
         title: "Error",
-        message: e instanceof Error ? e.message : "Failed to run benchmark",
+        message: e instanceof Error ? e.message : t("benchmarking.runFailed"),
       });
     } finally {
       setIsRunning(false);
@@ -81,7 +83,7 @@ export default function BenchmarkingPage() {
       setComparisonResult(result);
       setShowComparison(true);
     } catch {
-      setAlertModal({ title: "Error", message: "Failed to compare benchmarks" });
+      setAlertModal({ title: t("common.error"), message: t("benchmarking.compareFailed") });
     }
   };
 
@@ -157,8 +159,8 @@ export default function BenchmarkingPage() {
       {benchmarks && benchmarks.length === 0 && !loading && !error && (
         <div className="text-center py-20 text-text-muted">
           <Flame size={40} className="mx-auto mb-4 opacity-50" />
-          <p>No benchmarks run yet.</p>
-          <p className="text-sm mt-1">Click "Run Benchmark" to analyze a running deployment.</p>
+          <p>{t("benchmarking.empty")}</p>
+          <p className="text-sm mt-1">{t("benchmarking.emptyHint")}</p>
         </div>
       )}
     </div>
@@ -172,15 +174,15 @@ export default function BenchmarkingPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border">
-                <th className="text-left py-3 px-4 font-medium text-text-muted">Model</th>
-                <th className="text-left py-3 px-4 font-medium text-text-muted">Throughput</th>
-                <th className="text-left py-3 px-4 font-medium text-text-muted">Latency</th>
-                <th className="text-left py-3 px-4 font-medium text-text-muted">Decode Latency</th>
-                <th className="text-left py-3 px-4 font-medium text-text-muted">GPU Memory</th>
-                <th className="text-left py-3 px-4 font-medium text-text-muted">GPU Util</th>
-                <th className="text-left py-3 px-4 font-medium text-text-muted">Pre-fill Speed</th>
-                <th className="text-left py-3 px-4 font-medium text-text-muted">Benchmarked</th>
-                <th className="text-left py-3 px-4 font-medium text-text-muted">Status</th>
+                <th className="text-left py-3 px-4 font-medium text-text-muted">{t("benchmarking.colModel")}</th>
+                <th className="text-left py-3 px-4 font-medium text-text-muted">{t("benchmarking.colThroughput")}</th>
+                <th className="text-left py-3 px-4 font-medium text-text-muted">{t("benchmarking.colLatency")}</th>
+                <th className="text-left py-3 px-4 font-medium text-text-muted">{t("benchmarking.colDecode")}</th>
+                <th className="text-left py-3 px-4 font-medium text-text-muted">{t("benchmarking.colGpuMemory")}</th>
+                <th className="text-left py-3 px-4 font-medium text-text-muted">{t("benchmarking.colGpuUtil")}</th>
+                <th className="text-left py-3 px-4 font-medium text-text-muted">{t("benchmarking.colPrefill")}</th>
+                <th className="text-left py-3 px-4 font-medium text-text-muted">{t("benchmarking.colBenchmarked")}</th>
+                <th className="text-left py-3 px-4 font-medium text-text-muted">{t("benchmarking.colStatus")}</th>
               </tr>
             </thead>
             <tbody>
@@ -225,8 +227,8 @@ export default function BenchmarkingPage() {
       {latestByRecipe && Object.keys(latestByRecipe).length === 0 && !latestLoading && (
         <div className="text-center py-20 text-text-muted">
           <TableIcon size={40} className="mx-auto mb-4 opacity-50" />
-          <p>No benchmark data yet.</p>
-          <p className="text-sm mt-1">Run benchmarks to see model comparison here.</p>
+          <p>{t("benchmarking.noData")}</p>
+          <p className="text-sm mt-1">{t("benchmarking.noDataHint")}</p>
         </div>
       )}
     </div>
@@ -238,15 +240,15 @@ export default function BenchmarkingPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold">Benchmarking</h2>
-          <p className="text-text-muted mt-1">Model performance analysis and comparison</p>
+          <h2 className="text-2xl font-bold">{t("benchmarking.title")}</h2>
+          <p className="text-text-muted mt-1">{t("benchmarking.subtitle")}</p>
         </div>
         <button
           onClick={() => setShowRunModal(true)}
           className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-colors"
         >
           <Play size={16} />
-          Run Benchmark
+          {t("benchmarking.run")}
         </button>
       </div>
 
@@ -262,7 +264,7 @@ export default function BenchmarkingPage() {
         >
           <span className="flex items-center gap-1.5">
             <Flame size={16} />
-            History
+            {t("benchmarking.history")}
             {benchmarks && <span className="text-xs opacity-60">({benchmarks.length})</span>}
           </span>
         </button>
@@ -276,7 +278,7 @@ export default function BenchmarkingPage() {
         >
           <span className="flex items-center gap-1.5">
             <TableIcon size={16} />
-            Summary
+            {t("benchmarking.summary")}
             {latestByRecipe && <span className="text-xs opacity-60">({Object.keys(latestByRecipe).length})</span>}
           </span>
         </button>
@@ -290,7 +292,7 @@ export default function BenchmarkingPage() {
         >
           <span className="flex items-center gap-1.5">
             <BarChart3 size={16} />
-            Comparison
+            {t("benchmarking.comparison")}
           </span>
         </button>
       </div>
@@ -316,7 +318,7 @@ export default function BenchmarkingPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border">
-                  <th className="text-left py-3 px-4 font-medium text-text-muted">Metric</th>
+                  <th className="text-left py-3 px-4 font-medium text-text-muted">{t("benchmarking.colMetric")}</th>
                   {comparisonResult.run_ids.map((rid) => (
                     <th key={rid} className="text-left py-3 px-4 font-medium text-text-muted min-w-[150px]">
                       {comparisonResult.runs[rid]?.recipe_name || rid.slice(0, 8)}
@@ -367,19 +369,19 @@ export default function BenchmarkingPage() {
               </button>
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">Target Deployment *</label>
-              <input type="text" value={runTarget} onChange={(e) => setRunTarget(e.target.value)} placeholder="deployment-id" className="w-full px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm" />
+              <label className="block text-sm font-medium mb-1">{t("benchmarking.target")}</label>
+              <input type="text" value={runTarget} onChange={(e) => setRunTarget(e.target.value)} placeholder={t("benchmarking.targetPlaceholder")} className="w-full px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm" />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">Recipe/Model ID</label>
-              <input type="text" value={runRecipeId} onChange={(e) => setRunRecipeId(e.target.value)} placeholder="qwen3.5-397b-int4" className="w-full px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm" />
+              <label className="block text-sm font-medium mb-1">{t("benchmarking.recipeId")}</label>
+              <input type="text" value={runRecipeId} onChange={(e) => setRunRecipeId(e.target.value)} placeholder={t("benchmarking.recipeIdPlaceholder")} className="w-full px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm" />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">Baseline (optional)</label>
-              <input type="text" value={runBaseline} onChange={(e) => setRunBaseline(e.target.value)} placeholder="benchmark-id" className="w-full px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm" />
+              <label className="block text-sm font-medium mb-1">{t("benchmarking.baseline")}</label>
+              <input type="text" value={runBaseline} onChange={(e) => setRunBaseline(e.target.value)} placeholder={t("benchmarking.baselinePlaceholder")} className="w-full px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm" />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">Benchmark Types</label>
+              <label className="block text-sm font-medium mb-1">{t("benchmarking.types")}</label>
               <div className="flex flex-wrap gap-2">
                 {["throughput", "latency", "gpu_memory", "gpu_utilization", "prefill_speed"].map((type) => (
                   <label key={type} className="flex items-center gap-1.5 text-sm cursor-pointer">
@@ -394,11 +396,11 @@ export default function BenchmarkingPage() {
               </div>
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">Context Length</label>
+              <label className="block text-sm font-medium mb-1">{t("benchmarking.contextLength")}</label>
               <input type="number" value={Number(runParams.context_length) || 4096} onChange={(e) => setRunParams({ ...runParams, context_length: parseInt(e.target.value) || 4096 })} className="w-32 px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm" />
             </div>
             <div className="flex justify-end gap-2 pt-2">
-              <button onClick={() => setShowRunModal(false)} className="px-4 py-2 rounded-lg border border-border text-sm hover:bg-surface-hover transition-colors">Cancel</button>
+              <button onClick={() => setShowRunModal(false)} className="px-4 py-2 rounded-lg border border-border text-sm hover:bg-surface-hover transition-colors">{t("common.cancel")}</button>
               <button onClick={handleRun} disabled={!runTarget || isRunning} className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-colors disabled:opacity-50">
                 {isRunning && <Loader2 size={16} className="animate-spin" />}
                 {isRunning ? "Running..." : "Run"}

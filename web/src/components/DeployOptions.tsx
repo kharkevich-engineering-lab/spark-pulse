@@ -9,6 +9,7 @@ recipe carries a vLLM `command` template and therefore pins itself to vLLM.
 */
 
 import { useEffect, useMemo, useState } from "react";
+import { useI18n } from "@/lib/i18n";
 import { fetchEngines, fetchModels, fetchNodes, planDeployment, runPreflight } from "@/lib/api";
 import type { ClusterNode, DeployPlan, EngineSummary, PreflightReport, RecipeDetail } from "@/lib/types";
 import { AlertCircle, ChevronDown, Eye, Loader2 } from "lucide-react";
@@ -248,6 +249,7 @@ export default function DeployOptions({
   value: DeployOptionsValue;
   onChange: (next: DeployOptionsValue) => void;
 }) {
+  const { t } = useI18n();
   const [engines, setEngines] = useState<EngineSummary[]>([]);
   const [models, setModels] = useState<string[]>([]);
   const [nodes, setNodes] = useState<ClusterNode[]>([]);
@@ -415,7 +417,7 @@ export default function DeployOptions({
               onChange={(e) => onChange({ ...value, engine: e.target.value || undefined })}
               className="w-full px-3 py-2 rounded-lg bg-surface border border-border focus:border-primary focus:outline-none font-mono text-sm"
             >
-              <option value="">Recipe default</option>
+              <option value="">{t("deployOptions.recipeDefault")}</option>
               {available.map(({ engine }) => (
                 <option key={engine.key} value={engine.key}>
                   {engineLabel(engine)}
@@ -469,18 +471,18 @@ export default function DeployOptions({
               id="deploy-extra-args"
               type="text"
               value={extraArgsText}
-              placeholder="--enable-prefix-caching --max-num-seqs 16"
+              placeholder={t("deployOptions.extraArgsPlaceholder")}
               onChange={(e) => {
                 setExtraArgsText(e.target.value);
                 onChange({ ...value, extra_args: parseExtraArgs(e.target.value) });
               }}
               className="w-full px-3 py-2 rounded-lg bg-surface border border-border focus:border-primary focus:outline-none font-mono text-sm"
             />
-            <p className="text-xs text-text-muted mt-1">Appended to the engine command, quoted.</p>
+            <p className="text-xs text-text-muted mt-1">{t("deployOptions.extraArgsNote")}</p>
           </div>
 
           <div data-testid="deploy-parallelism">
-            <span className="block text-sm font-medium mb-1">Parallelism</span>
+            <span className="block text-sm font-medium mb-1">{t("deployOptions.parallelism")}</span>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label
@@ -594,21 +596,21 @@ export default function DeployOptions({
           {plan && (
             <div className="space-y-3 text-sm" data-testid="deploy-plan">
               <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1">
-                <dt className="text-text-muted">Engine</dt>
+                <dt className="text-text-muted">{t("deployOptions.engine")}</dt>
                 <dd className="font-mono truncate">
                   {plan.engine}/{plan.variant}
                 </dd>
-                <dt className="text-text-muted">Image</dt>
+                <dt className="text-text-muted">{t("deployOptions.image")}</dt>
                 <dd className="font-mono truncate">{plan.image_ref}</dd>
-                <dt className="text-text-muted">On this host</dt>
+                <dt className="text-text-muted">{t("deployOptions.onThisHost")}</dt>
                 <dd className={plan.image_present ? "font-mono" : "font-mono text-warning"}>
                   {describeImagePresence(plan)}
                 </dd>
-                <dt className="text-text-muted">Model</dt>
+                <dt className="text-text-muted">{t("deployOptions.model")}</dt>
                 <dd className="font-mono truncate">{plan.model || "(from the command)"}</dd>
                 {plan.model && (
                   <>
-                    <dt className="text-text-muted">In the catalogue</dt>
+                    <dt className="text-text-muted">{t("deployOptions.inCatalogue")}</dt>
                     <dd
                       className={plan.model_present ? "font-mono" : "font-mono text-warning"}
                       data-testid="deploy-plan-model-presence"
@@ -617,11 +619,11 @@ export default function DeployOptions({
                     </dd>
                   </>
                 )}
-                <dt className="text-text-muted">Port</dt>
+                <dt className="text-text-muted">{t("deployOptions.port")}</dt>
                 <dd className="font-mono">{plan.port}</dd>
                 {plan.mods.length > 0 && (
                   <>
-                    <dt className="text-text-muted">Mods</dt>
+                    <dt className="text-text-muted">{t("deployOptions.mods")}</dt>
                     <dd className="font-mono truncate">{plan.mods.join(", ")}</dd>
                   </>
                 )}
@@ -636,14 +638,14 @@ export default function DeployOptions({
               {preflight && <PreflightPanel report={preflight} />}
 
               <div>
-                <p className="text-xs uppercase tracking-wide text-text-muted mb-1">Command</p>
+                <p className="text-xs uppercase tracking-wide text-text-muted mb-1">{t("deployOptions.command")}</p>
                 <pre className="p-3 rounded-lg bg-surface border border-border text-xs font-mono overflow-x-auto whitespace-pre-wrap">
                   {plan.launch_command}
                 </pre>
               </div>
 
               <div>
-                <p className="text-xs uppercase tracking-wide text-text-muted mb-1">Container</p>
+                <p className="text-xs uppercase tracking-wide text-text-muted mb-1">{t("deployOptions.container")}</p>
                 <p className="font-mono text-xs text-text-muted">
                   {plan.container.privileged ? "privileged" : "unprivileged"}
                   {plan.container.network_host ? " · network host" : ""}

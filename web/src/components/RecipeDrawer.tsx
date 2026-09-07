@@ -1,6 +1,7 @@
 /** Recipe drawer — uses SlideDrawer for layout, RecipeForm for content. */
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useI18n } from "@/lib/i18n";
 import RecipeForm from "./RecipeForm";
 import DeployOptions, { deployParams, type DeployOptionsValue } from "./DeployOptions";
 import { ConfirmModal } from "@/components/Modal";
@@ -19,6 +20,7 @@ export default function RecipeDrawer({ recipe, customization, isRunning, cluster
   onSaveCustomization?: (fields: Partial<RecipeCustomization>) => void;
   onReset?: () => void | Promise<void>;
 }) {
+  const { t } = useI18n();
   const formRef = useRef<RecipeFormRef>(null);
   const [deployOptions, setDeployOptions] = useState<DeployOptionsValue>({});
   const clusterBlocked = recipe.cluster_only && !clusterEnabled;
@@ -66,7 +68,7 @@ export default function RecipeDrawer({ recipe, customization, isRunning, cluster
         <div>
           <div className="flex items-center gap-2">
             <h3 className="text-xl font-bold truncate">{recipe.name}</h3>
-            {isRunning && <span className="flex items-center gap-1.5 text-xs text-success font-medium px-2 py-0.5 rounded-full bg-success/15 shrink-0"><span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />Running</span>}
+            {isRunning && <span className="flex items-center gap-1.5 text-xs text-success font-medium px-2 py-0.5 rounded-full bg-success/15 shrink-0"><span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />{t("recipeCard.running")}</span>}
           </div>
           <p className="text-sm text-text-muted mt-1 truncate">{recipe.model}</p>
         </div>
@@ -138,7 +140,7 @@ export default function RecipeDrawer({ recipe, customization, isRunning, cluster
       {clusterBlocked && (
         <div className="px-6 py-3 border-b border-border">
           <div className="flex items-start gap-3 p-3 rounded-lg bg-warning/10 border border-warning/30">
-            <p className="text-sm text-warning">This recipe requires cluster mode.</p>
+            <p className="text-sm text-warning">{t("recipeCard.clusterRequired")}</p>
           </div>
         </div>
       )}
@@ -167,9 +169,9 @@ export default function RecipeDrawer({ recipe, customization, isRunning, cluster
                 void handleReset();
                 setResetConfirm(false);
               }}
-              title="Reset Customization"
-              message={`Reset "${recipe.name}" to its original recipe? Any customizations you made will be lost.`}
-              confirmLabel="Reset"
+              title={t("recipes.resetTitle")}
+              message={t("recipes.resetBody", { name: recipe.name })}
+              confirmLabel={t("recipes.reset")}
               confirmVariant="danger"
             />
           </div>

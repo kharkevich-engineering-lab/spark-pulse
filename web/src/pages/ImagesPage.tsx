@@ -8,6 +8,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useI18n } from "@/lib/i18n";
 import { Link } from "react-router-dom";
 import { AlertCircle, ArrowDownToLine, Download, Layers, Loader2, RefreshCw, Trash2, X } from "lucide-react";
 import {
@@ -53,6 +54,7 @@ export function progressPercent(job: ImagePullJob): number {
 }
 
 export default function ImagesPage() {
+  const { t } = useI18n();
   const { data: images, loading, error, refetch } = useQuery(fetchImages);
   const [jobs, setJobs] = useState<ImagePullJob[]>([]);
   const [pulling, setPulling] = useState<string | null>(null);
@@ -137,16 +139,16 @@ export default function ImagesPage() {
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h2 className="text-2xl font-bold">Engine images</h2>
+          <h2 className="text-2xl font-bold">{t("images.title")}</h2>
           <p className="text-text-muted mt-1">
-            What this host can deploy without waiting for a download.{" "}
+            {t("images.subtitle")}{" "}
             <Link to="/models" className="text-primary hover:underline">
-              Models
+              {t("images.modelsLink")}
             </Link>
           </p>
         </div>
         <div className="text-right">
-          <p className="text-xs text-text-muted uppercase tracking-wide">On disk</p>
+          <p className="text-xs text-text-muted uppercase tracking-wide">{t("images.onDisk")}</p>
           <p className="text-2xl font-bold">{formatSize(onDisk)}</p>
           {needsAttention > 0 && (
             <p className="text-xs text-warning mt-1">{needsAttention} need attention</p>
@@ -164,12 +166,12 @@ export default function ImagesPage() {
       >
         <h3 className="font-semibold flex items-center gap-2">
           <Download size={16} className="text-primary" />
-          Pull image
+          {t("images.pullTitle")}
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
           <input
-            aria-label="Image reference"
-            placeholder="ghcr.io/org/engine:0.1.0 or repo@sha256:…"
+            aria-label={t("images.refLabel")}
+            placeholder={t("images.refPlaceholder")}
             value={ref}
             onChange={(e) => setRef(e.target.value)}
             className="px-3 py-2 rounded-lg bg-bg border border-border font-mono text-sm"
@@ -180,7 +182,7 @@ export default function ImagesPage() {
             className="px-4 py-2 rounded-lg bg-primary/10 text-primary border border-primary/30 hover:bg-primary/20 disabled:opacity-50 flex items-center gap-2"
           >
             {pulling ? <Loader2 className="animate-spin" size={16} /> : <ArrowDownToLine size={16} />}
-            Pull
+            {t("images.pull")}
           </button>
         </div>
       </form>
@@ -188,13 +190,13 @@ export default function ImagesPage() {
       {/* Pull jobs */}
       <section className="space-y-2">
         <div className="flex items-center gap-2">
-          <h3 className="font-semibold">Pulls</h3>
+          <h3 className="font-semibold">{t("images.pulls")}</h3>
           <span className={connected ? "text-xs text-success" : "text-xs text-text-muted"}>
             {connected ? "live" : "polling"}
           </span>
         </div>
         {active.length === 0 && recent.length === 0 && (
-          <p className="text-sm text-text-muted">No pulls yet.</p>
+          <p className="text-sm text-text-muted">{t("images.noPulls")}</p>
         )}
         {[...active, ...recent].map((job) => (
           <div key={job.id} data-testid={`pull-${job.id}`} className="p-4 rounded-xl bg-surface border border-border">
@@ -252,12 +254,12 @@ export default function ImagesPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-text-muted border-b border-border">
-                <th className="p-3 font-medium">Image</th>
-                <th className="p-3 font-medium">Engine</th>
-                <th className="p-3 font-medium">Status</th>
-                <th className="p-3 font-medium">Size</th>
-                <th className="p-3 font-medium">Digest</th>
-                <th className="p-3 font-medium sr-only">Actions</th>
+                <th className="p-3 font-medium">{t("images.colImage")}</th>
+                <th className="p-3 font-medium">{t("images.colEngine")}</th>
+                <th className="p-3 font-medium">{t("images.colStatus")}</th>
+                <th className="p-3 font-medium">{t("images.colSize")}</th>
+                <th className="p-3 font-medium">{t("images.colDigest")}</th>
+                <th className="p-3 font-medium sr-only">{t("images.colActions")}</th>
               </tr>
             </thead>
             <tbody>
@@ -326,7 +328,7 @@ export default function ImagesPage() {
       {images && images.length === 0 && !loading && (
         <div className="text-center py-16 text-text-muted">
           <Layers size={40} className="mx-auto mb-4 opacity-50" />
-          <p>No engine images known yet.</p>
+          <p>{t("images.empty")}</p>
         </div>
       )}
 
@@ -338,9 +340,9 @@ export default function ImagesPage() {
             doDelete(deleteTarget);
             setDeleteTarget(null);
           }}
-          title="Delete image"
-          message={`Delete "${deleteTarget}" from this host? Re-pulling it can take tens of minutes.`}
-          confirmLabel="Delete"
+          title={t("images.deleteTitle")}
+          message={t("images.deleteBody", { ref: deleteTarget })}
+          confirmLabel={t("common.delete")}
           confirmVariant="danger"
         />
       )}

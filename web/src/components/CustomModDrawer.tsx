@@ -1,6 +1,7 @@
 /** Drawer for editing a custom mod's files — uses SlideDrawer. */
 
 import { useState, useEffect, useCallback } from "react";
+import { useI18n } from "@/lib/i18n";
 import { Save, Trash2, X } from "lucide-react";
 import { ConfirmModal } from "@/components/Modal";
 import type { CustomModInfo, ModFileMap } from "@/lib/types";
@@ -23,6 +24,7 @@ export default function CustomModDrawer({
   onDelete: (modId: string) => Promise<void>;
   onError: (msg: string) => void;
 }) {
+  const { t } = useI18n();
   const [fileMap, setFileMap] = useState<ModFileMap>({});
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -90,7 +92,7 @@ export default function CustomModDrawer({
         <div className="flex flex-1 min-h-0">
           {/* File list sidebar */}
           <div className="w-44 border-r border-border p-4 overflow-auto shrink-0">
-            <h4 className="text-xs font-medium text-text-muted mb-2 uppercase">Files</h4>
+            <h4 className="text-xs font-medium text-text-muted mb-2 uppercase">{t("customFiles.files")}</h4>
             {allFiles.length > 0 ? (
               <ul className="space-y-1">
                 {allFiles.map((f) => (
@@ -105,7 +107,7 @@ export default function CustomModDrawer({
                 ))}
               </ul>
             ) : (
-              <p className="text-xs text-text-muted italic">No files</p>
+              <p className="text-xs text-text-muted italic">{t("customFiles.noFiles")}</p>
             )}
           </div>
 
@@ -118,7 +120,7 @@ export default function CustomModDrawer({
                   onChange={(e) => handleFileChange(e.target.value)}
                   className="w-full h-full px-4 py-3 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm resize-none"
                   spellCheck={false}
-                  placeholder="#!/bin/bash&#10;..."
+                  placeholder={t("customFiles.scriptPlaceholder")}
                 />
               ) : (
                 <div className="flex items-center justify-center h-full text-text-muted text-sm">
@@ -138,9 +140,9 @@ export default function CustomModDrawer({
               open={showDelete}
               onClose={() => setShowDelete(false)}
               onConfirm={handleDeleteConfirm}
-              title="Delete Mod"
-              message={`Delete "${mod.name}"? This cannot be undone.`}
-              confirmLabel="Delete"
+              title={t("customFiles.deleteMod")}
+              message={t("customFiles.deleteBody", { name: mod.name })}
+              confirmLabel={t("common.delete")}
               confirmVariant="danger"
             />
           </div>

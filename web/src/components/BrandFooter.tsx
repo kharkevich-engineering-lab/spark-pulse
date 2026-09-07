@@ -1,6 +1,7 @@
 import { Copyright } from "lucide-react";
 import { SiGithub, SiPypi } from "@icons-pack/react-simple-icons";
 import logoUrl from "@/assets/kharkevich-logo.svg";
+import { useT } from "@/lib/i18n";
 
 /** Who made this, on the two pages that stand outside the application.
  *
@@ -10,6 +11,7 @@ import logoUrl from "@/assets/kharkevich-logo.svg";
  * one place a visitor has no other way to tell whose software this is.
  */
 export function BrandFooter() {
+  const t = useT();
   return (
     <footer className="p-6 text-center text-xs text-text-muted space-y-3">
       <a
@@ -20,14 +22,14 @@ export function BrandFooter() {
       >
         <img
           src={logoUrl}
-          alt="Kharkevich Engineering Lab"
+          alt={t("brand.company")}
           className="h-10 w-10 opacity-80"
           width={40}
           height={40}
         />
         <span className="inline-flex items-center gap-1.5">
           <Copyright size={12} />
-          {new Date().getFullYear()} Kharkevich Engineering Lab
+          {new Date().getFullYear()} {t("brand.company")}
         </span>
       </a>
       <div className="flex items-center justify-center gap-4">
@@ -38,7 +40,7 @@ export function BrandFooter() {
           className="inline-flex items-center gap-1.5 hover:text-text transition-colors"
         >
           <SiGithub size={12} />
-          GitHub
+          {t("brand.github")}
         </a>
         <a
           href="https://pypi.org/project/spark-pulse/"
@@ -47,7 +49,7 @@ export function BrandFooter() {
           className="inline-flex items-center gap-1.5 hover:text-text transition-colors"
         >
           <SiPypi size={12} />
-          PyPI
+          {t("brand.pypi")}
         </a>
       </div>
     </footer>

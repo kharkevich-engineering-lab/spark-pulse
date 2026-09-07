@@ -1,6 +1,7 @@
 /** Drawer for editing a custom recipe's YAML content — uses SlideDrawer. */
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useI18n } from "@/lib/i18n";
 import { Save, Upload, Trash2, X } from "lucide-react";
 import { ConfirmModal } from "@/components/Modal";
 import type { CustomRecipeInfo } from "@/lib/types";
@@ -23,6 +24,7 @@ export default function CustomRecipeDrawer({
   onDelete: (id: string) => Promise<void>;
   onError: (msg: string) => void;
 }) {
+  const { t } = useI18n();
   const [content, setContent] = useState("");
   const [loadingContent, setLoadingContent] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -118,12 +120,12 @@ export default function CustomRecipeDrawer({
       }
     >
       <div className="px-6 py-5 flex flex-col min-h-0">
-        <label className="block text-sm font-medium mb-1">Recipe YAML</label>
+        <label className="block text-sm font-medium mb-1">{t("customFiles.recipeYaml")}</label>
         <LazyCodeEditor
           value={content}
           language="yaml"
           onChange={(evn: React.ChangeEvent<HTMLTextAreaElement>) => setContent(evn.target.value)}
-          placeholder="name: My Recipe&#10;model: ..."
+          placeholder={t("customFiles.yamlPlaceholder")}
           padding={16}
           disabled={loadingContent}
           className="flex-1 min-h-[300px] font-mono text-sm"
@@ -139,9 +141,9 @@ export default function CustomRecipeDrawer({
               open={showDelete}
               onClose={() => setShowDelete(false)}
               onConfirm={handleDeleteConfirm}
-              title="Delete Recipe"
-              message={`Delete "${recipe.name}"? This cannot be undone.`}
-              confirmLabel="Delete"
+              title={t("customFiles.deleteRecipe")}
+              message={t("customFiles.deleteBody", { name: recipe.name })}
+              confirmLabel={t("common.delete")}
               confirmVariant="danger"
             />
           </div>

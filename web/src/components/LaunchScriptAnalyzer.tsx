@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { useI18n } from "@/lib/i18n";
 import {
   resolveLaunchScript,
   analyzeLaunchScript,
@@ -28,6 +29,7 @@ export default function LaunchScriptAnalyzer({
   onAnalysisComplete,
   className = "",
 }: LaunchScriptAnalyzerProps) {
+  const { t } = useI18n();
   const [scriptPath, setScriptPath] = useState("");
   const [resolving, setResolving] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
@@ -82,7 +84,7 @@ export default function LaunchScriptAnalyzer({
       {/* Header */}
       <div className="flex items-center gap-2">
         <FileText size={20} className="text-primary" />
-        <h3 className="text-lg font-semibold">Launch Script Analysis</h3>
+        <h3 className="text-lg font-semibold">{t("launchScript.title")}</h3>
       </div>
 
       {/* Script Path Input */}
@@ -91,7 +93,7 @@ export default function LaunchScriptAnalyzer({
           type="text"
           value={scriptPath}
           onChange={(e) => setScriptPath(e.target.value)}
-          placeholder="Path to launch script (e.g., /opt/spark-vllm-docker/examples/launch_vllm.sh)"
+          placeholder={t("launchScript.pathPlaceholder")}
           className="flex-1 px-3 py-2 rounded-lg border border-border bg-surface text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/50"
         />
         <button
@@ -120,7 +122,7 @@ export default function LaunchScriptAnalyzer({
             <span className="text-sm font-medium">{resolveResult.path}</span>
           </div>
           {!resolveResult.exists && (
-            <p className="text-sm text-danger mt-1">Script not found at resolved path</p>
+            <p className="text-sm text-danger mt-1">{t("launchScript.notFound")}</p>
           )}
         </div>
       )}
@@ -151,7 +153,7 @@ export default function LaunchScriptAnalyzer({
           {/* Command Line */}
           {analysis.command_line && (
             <div>
-              <h4 className="text-sm font-semibold text-text-muted uppercase tracking-wider mb-1">Command</h4>
+              <h4 className="text-sm font-semibold text-text-muted uppercase tracking-wider mb-1">{t("launchScript.command")}</h4>
               <code className="block p-3 rounded-lg bg-surface-hover text-sm font-mono break-all">
                 {analysis.command_line}
               </code>
@@ -160,7 +162,7 @@ export default function LaunchScriptAnalyzer({
 
           {/* Parallelism */}
           <div>
-            <h4 className="text-sm font-semibold text-text-muted uppercase tracking-wider mb-1">Parallelism</h4>
+            <h4 className="text-sm font-semibold text-text-muted uppercase tracking-wider mb-1">{t("launchScript.parallelism")}</h4>
             <div className="flex gap-4">
               <div className="px-3 py-2 rounded-lg bg-surface-hover">
                 <span className="text-xs text-text-muted">TP</span>
@@ -180,7 +182,7 @@ export default function LaunchScriptAnalyzer({
           {/* Backend */}
           {analysis.backend && (
             <div>
-              <h4 className="text-sm font-semibold text-text-muted uppercase tracking-wider mb-1">Backend</h4>
+              <h4 className="text-sm font-semibold text-text-muted uppercase tracking-wider mb-1">{t("launchScript.backend")}</h4>
               <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-surface-hover text-sm">
                 {analysis.backend}
               </span>
@@ -189,7 +191,7 @@ export default function LaunchScriptAnalyzer({
 
           {/* Model Flag */}
           <div>
-            <h4 className="text-sm font-semibold text-text-muted uppercase tracking-wider mb-1">Model Flag</h4>
+            <h4 className="text-sm font-semibold text-text-muted uppercase tracking-wider mb-1">{t("launchScript.modelFlag")}</h4>
             <div className="flex items-center gap-2">
               {analysis.has_model_flag ? (
                 <>
@@ -199,7 +201,7 @@ export default function LaunchScriptAnalyzer({
               ) : (
                 <>
                   <AlertCircle size={16} className="text-warning" />
-                  <span className="text-sm text-warning">Missing --model flag</span>
+                  <span className="text-sm text-warning">{t("launchScript.missingModelFlag")}</span>
                 </>
               )}
             </div>
@@ -224,7 +226,7 @@ export default function LaunchScriptAnalyzer({
           {/* Errors */}
           {validation.errors && validation.errors.length > 0 && (
             <div className="space-y-1 mb-3">
-              <p className="text-sm font-semibold text-danger">Errors:</p>
+              <p className="text-sm font-semibold text-danger">{t("launchScript.errors")}</p>
               {validation.errors.map((err, i) => (
                 <p key={i} className="text-sm text-danger pl-4">• {err}</p>
               ))}
@@ -234,7 +236,7 @@ export default function LaunchScriptAnalyzer({
           {/* Warnings */}
           {validation.warnings && validation.warnings.length > 0 && (
             <div className="space-y-1">
-              <p className="text-sm font-semibold text-warning">Warnings:</p>
+              <p className="text-sm font-semibold text-warning">{t("launchScript.warnings")}</p>
               {validation.warnings.map((warn, i) => (
                 <p key={i} className="text-sm text-warning pl-4">• {warn}</p>
               ))}

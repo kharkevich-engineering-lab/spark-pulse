@@ -1,6 +1,7 @@
 /** Modal for uploading or manually creating a custom recipe. */
 
 import { useState, useCallback, useRef } from "react";
+import { useI18n } from "@/lib/i18n";
 import { Save, Upload, X, AlertCircle, FileCode } from "lucide-react";
 import { AlertModal } from "@/components/Modal";
 
@@ -85,6 +86,7 @@ export default function NewRecipeModal({
   onSave: (id: string, name: string, content: string) => Promise<void>;
   onError: (msg: string) => void;
 }) {
+  const { t } = useI18n();
   const [mode, setMode] = useState<EntryMode>("upload");
   const [content, setContent] = useState("");
   const [filename, setFilename] = useState("");
@@ -349,7 +351,7 @@ export default function NewRecipeModal({
                       <div className="flex items-start gap-3">
                         <AlertCircle size={16} className="text-danger mt-0.5 shrink-0" />
                         <div>
-                          <p className="text-sm font-medium text-danger">Validation failed</p>
+                          <p className="text-sm font-medium text-danger">{t("newRecipe.validationFailed")}</p>
                           <ul className="text-xs text-danger mt-1 space-y-0.5">
                             {validationErrors.map((err, i) => (
                               <li key={i}>{err.message}</li>
@@ -430,7 +432,7 @@ export default function NewRecipeModal({
             <div className="p-6">
               {/* Name */}
               <div className="mb-3">
-                <label className="block text-sm font-medium mb-1">Recipe Name</label>
+                <label className="block text-sm font-medium mb-1">{t("newRecipe.name")}</label>
                 <input
                   type="text"
                   value={recipeName}
@@ -450,7 +452,7 @@ export default function NewRecipeModal({
                   <div className="flex items-start gap-3">
                     <AlertCircle size={16} className="text-danger mt-0.5 shrink-0" />
                     <div>
-                      <p className="text-sm font-medium text-danger">Validation failed</p>
+                      <p className="text-sm font-medium text-danger">{t("newRecipe.validationFailed")}</p>
                       <ul className="text-xs text-danger mt-1 space-y-0.5">
                         {validationErrors.map((err, i) => (
                           <li key={i}>{err.message}</li>
@@ -463,7 +465,7 @@ export default function NewRecipeModal({
 
               {/* YAML Preview */}
               <div>
-                <label className="block text-sm font-medium mb-1">YAML Content</label>
+                <label className="block text-sm font-medium mb-1">{t("newRecipe.yamlContent")}</label>
                 <textarea
                   value={content}
                   readOnly
@@ -511,7 +513,7 @@ export default function NewRecipeModal({
         <AlertModal
           open={!!errorModal}
           onClose={() => setErrorModal(null)}
-          title="Error"
+          title={t("common.error")}
           message={errorModal}
         />
       )}
