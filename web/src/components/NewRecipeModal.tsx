@@ -11,6 +11,69 @@ interface ValidationIssue {
   message: string;
 }
 
+/** The recipe starters, one per format.
+ *
+ * v2 is the default because it is the format the engines are described in —
+ * v1 puts the whole launch into one vLLM-specific command template, and a
+ * recipe written that way can only ever run on vLLM. v1 stays offered because
+ * it stays valid forever and there are plenty of them about.
+ */
+const TEMPLATES: Record<"2" | "1", string> = {
+  "2": `recipe_version: "2"
+
+# What this recipe is called in the list.
+name: My Custom Recipe
+
+# The model to serve. It has to be in the local catalogue, or the deploy will
+# offer to download it.
+model: org/model-name
+
+# Which engine runs it, and the per-engine flags.
+engine: vllm
+params:
+  port: 8000
+  tensor_parallel: 1
+engines:
+  vllm:
+    args: --enable-prefix-caching
+`,
+  "1": `# The original format: one vLLM command template, filled in from defaults.
+name: My Custom Recipe
+model: org/model-name
+container: vllm-node
+command: vllm serve org/model-name --port {port}
+defaults:
+  port: 8000
+`,
+};
+
+/** Unpack whatever the validator said into per-field issues.
+ *
+ * It answers `{message, errors: [{path, message}]}` — the point of validating
+ * before saving is to be told *where* to look, not to be handed one sentence.
+ * A plain-string detail is still handled: not every failure on this path comes
+ * from the schema.
+ */
+function readValidationErrors(payload: unknown): ValidationIssue[] {
+  const detail = (payload as { detail?: unknown })?.detail;
+  if (typeof detail === "string") return [{ field: "yaml", message: detail }];
+  if (detail && typeof detail === "object") {
+    const errors = (detail as { errors?: unknown }).errors;
+    if (Array.isArray(errors) && errors.length) {
+      return errors.map((e) => {
+        const { path, message } = e as { path?: string; message?: string };
+        return {
+          field: path || "yaml",
+          message: path ? `${path}: ${message ?? ""}` : (message ?? "invalid"),
+        };
+      });
+    }
+    const message = (detail as { message?: string }).message;
+    if (message) return [{ field: "yaml", message }];
+  }
+  return [{ field: "yaml", message: "Validation failed" }];
+}
+
 export default function NewRecipeModal({
   open,
   onClose,
@@ -31,6 +94,7 @@ export default function NewRecipeModal({
   const [errorModal, setErrorModal] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [step, setStep] = useState<"upload" | "preview">("upload");
+  const [format, setFormat] = useState<"2" | "1">("2");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const processFile = useCallback(async (file: File) => {
@@ -52,9 +116,7 @@ export default function NewRecipeModal({
       });
 
       if (!validateResp.ok) {
-        const errData = await validateResp.json().catch(() => ({}));
-        const msg = errData.detail || "Invalid YAML";
-        setValidationErrors([{ field: "yaml", message: msg }]);
+        setValidationErrors(readValidationErrors(await validateResp.json().catch(() => ({}))));
         return;
       }
 
@@ -100,8 +162,7 @@ export default function NewRecipeModal({
     setStep("upload");
     setFilename("");
     setValidationErrors([]);
-    // Set a default YAML template
-    setContent("# Name of the recipe\nname: My Custom Recipe\n\n# Model identifier\nmodel: <model-id>\n\n# Container image\ncontainer: vllm-node");
+    setContent(TEMPLATES[format]);
     setRecipeName("My Custom Recipe");
   };
 
@@ -120,13 +181,15 @@ export default function NewRecipeModal({
       });
 
       if (!validateResp.ok) {
-        const errData = await validateResp.json().catch(() => ({}));
-        setValidationErrors([{ field: "yaml", message: errData.detail || "Validation failed" }]);
+        setValidationErrors(readValidationErrors(await validateResp.json().catch(() => ({}))));
         return;
       }
 
-      const nameMatch = content.match(/^name:\s*(.+)$/m);
-      setRecipeName(nameMatch?.[1].trim() || recipeName);
+      // The name comes from the parser rather than from a regex over the
+      // source: quoting, an anchor, a folded scalar — the YAML is already
+      // parsed on the other side, so asking it is both shorter and right.
+      const parsed = await validateResp.json().catch(() => ({}));
+      setRecipeName(String(parsed.name || recipeName));
     } catch (e) {
       setValidationErrors([{ field: "yaml", message: e instanceof Error ? e.message : "Validation failed" }]);
     }
@@ -138,7 +201,10 @@ export default function NewRecipeModal({
       const slug = recipeName.trim().toLowerCase().replace(/\s+/g, "-");
       const recipeId = `custom/${slug}`;
 
-      // Backend validates again on save
+      // The write itself only requires the YAML to parse. That is deliberate
+      // on the backend's side — listing is lenient too, so a half-written
+      // recipe an operator means to come back to still appears — which is why
+      // "Validate recipe" above is the step that actually checks the schema.
       const saveResp = await fetch(`/api/custom-files/recipes/${recipeId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -147,8 +213,8 @@ export default function NewRecipeModal({
       });
 
       if (!saveResp.ok) {
-        const errData = await saveResp.json().catch(() => ({}));
-        setErrorModal(errData.detail || "Failed to save recipe");
+        const issues = readValidationErrors(await saveResp.json().catch(() => ({})));
+        setErrorModal(issues.map((i) => i.message).join("\n"));
         return;
       }
 
@@ -297,30 +363,65 @@ export default function NewRecipeModal({
               )}
               {mode === "manual" && (
                 <>
-                  {/* Manual YAML Editor */}
+                  {/* Manual YAML editor */}
                   <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <label className="text-sm font-medium">YAML Content</label>
-                      <button
-                        onClick={handleSaveManual}
-                        disabled={!content.trim()}
-                        className="px-3 py-1 rounded-lg bg-primary/20 text-primary hover:bg-primary/30 text-sm font-medium transition-colors disabled:opacity-50"
-                      >
-                        Validate & Preview
-                      </button>
+                    <div className="flex items-center justify-between mb-2 gap-3 flex-wrap">
+                      <label className="text-sm font-medium" htmlFor="recipe-yaml">
+                        Recipe YAML
+                      </label>
+                      <div className="flex items-center gap-2">
+                        {/* Both formats validate; v2 is the one the engines
+                            are described in. Switching only replaces an
+                            untouched starter — nobody's edits are thrown away
+                            by a click on a format button. */}
+                        <div className="flex items-center rounded-lg border border-border overflow-hidden text-xs">
+                          {(["2", "1"] as const).map((v) => (
+                            <button
+                              key={v}
+                              type="button"
+                              aria-pressed={format === v}
+                              onClick={() => {
+                                setFormat(v);
+                                const untouched = Object.values(TEMPLATES).includes(content);
+                                if (untouched) setContent(TEMPLATES[v]);
+                              }}
+                              className={`px-2.5 py-1 transition-colors ${
+                                format === v
+                                  ? "bg-primary/15 text-primary font-medium"
+                                  : "text-text-muted hover:text-text"
+                              }`}
+                            >
+                              v{v}
+                            </button>
+                          ))}
+                        </div>
+                        <button
+                          onClick={handleSaveManual}
+                          disabled={!content.trim()}
+                          className="px-3 py-1 rounded-lg bg-primary/20 text-primary hover:bg-primary/30 text-sm font-medium transition-colors disabled:opacity-50"
+                        >
+                          Validate recipe
+                        </button>
+                      </div>
                     </div>
                     <textarea
+                      id="recipe-yaml"
                       value={content}
                       onChange={(e) => {
                         setContent(e.target.value);
-                        // Auto-update name from YAML
+                        // A cheap read for the header while typing; the
+                        // authoritative name comes from the parser on validate.
                         const nameMatch = e.target.value.match(/^name:\s*(.+)$/m);
                         if (nameMatch) setRecipeName(nameMatch[1].trim());
                       }}
                       className="w-full h-[400px] px-4 py-3 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm resize-y"
                       spellCheck={false}
-                      placeholder="name: My Recipe&#10;model: <model-id>&#10;container: vllm-node"
+                      placeholder={TEMPLATES["2"]}
                     />
+                    <p className="text-xs text-text-muted mt-1.5">
+                      Both recipe formats are accepted. Validation reports each problem against
+                      the field it belongs to.
+                    </p>
                   </div>
                 </>
               )}

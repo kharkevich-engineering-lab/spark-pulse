@@ -753,6 +753,45 @@ describe("RecipesPage", () => {
       expect(screen.getByText("No custom mods")).toBeInTheDocument();
     });
 
+    /** The dead end this fixes: the "New Recipe" button used to be rendered
+     *  inside `{customRecipes.length > 0 && …}`, so the state everybody starts
+     *  in offered no way to create the first one — an empty page saying
+     *  "create a new recipe to get started" beside no button that would. */
+    it("offers to create the first recipe when there are none", async () => {
+      vi.mocked(listCustomRecipes).mockResolvedValue([]);
+      vi.mocked(listCustomMods).mockResolvedValue([]);
+      render(<RecipesPage />);
+      await screen.findByText("Qwen3 8B");
+
+      await enterCustomMode();
+
+      await screen.findByText("No custom recipes");
+      expect(screen.getByRole("button", { name: /New Recipe/ })).toBeInTheDocument();
+    });
+
+    it("offers to create the first mod when there are none", async () => {
+      vi.mocked(listCustomRecipes).mockResolvedValue([]);
+      vi.mocked(listCustomMods).mockResolvedValue([]);
+      render(<RecipesPage />);
+      await screen.findByText("Qwen3 8B");
+      await enterCustomMode();
+
+      await userEvent.click(screen.getByRole("button", { name: /Mods \(0\)/ }));
+
+      expect(screen.getByText("No custom mods")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /New Mod/ })).toBeInTheDocument();
+    });
+
+    it("still offers to create one when some already exist", async () => {
+      render(<RecipesPage />);
+      await screen.findByText("Qwen3 8B");
+
+      await enterCustomMode();
+
+      await screen.findByText("Mine");
+      expect(screen.getByRole("button", { name: /New Recipe/ })).toBeInTheDocument();
+    });
+
     it("surfaces a custom directory it could not read", async () => {
       vi.mocked(listCustomRecipes).mockRejectedValue(new Error("config dir missing"));
       render(<RecipesPage />);

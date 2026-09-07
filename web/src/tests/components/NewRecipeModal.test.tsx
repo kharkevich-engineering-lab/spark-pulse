@@ -184,7 +184,7 @@ describe("NewRecipeModal", () => {
       const editor = screen.getByRole("textbox");
       await userEvent.clear(editor);
       await userEvent.type(editor, "name: Typed Recipe");
-      await userEvent.click(screen.getByRole("button", { name: "Validate & Preview" }));
+      await userEvent.click(screen.getByRole("button", { name: "Validate recipe" }));
 
       expect(await screen.findByDisplayValue("Typed Recipe")).toBeInTheDocument();
     });
@@ -194,7 +194,7 @@ describe("NewRecipeModal", () => {
 
       await userEvent.click(screen.getByRole("button", { name: "Enter YAML manually" }));
       fetchMock().mockReturnValue(rejected("model is required"));
-      await userEvent.click(screen.getByRole("button", { name: "Validate & Preview" }));
+      await userEvent.click(screen.getByRole("button", { name: "Validate recipe" }));
 
       expect(await screen.findByText("model is required")).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: /Save Recipe/ })).not.toBeInTheDocument();
@@ -205,7 +205,7 @@ describe("NewRecipeModal", () => {
 
       await userEvent.click(screen.getByRole("button", { name: "Enter YAML manually" }));
       fetchMock().mockRejectedValue(new Error("validator offline"));
-      await userEvent.click(screen.getByRole("button", { name: "Validate & Preview" }));
+      await userEvent.click(screen.getByRole("button", { name: "Validate recipe" }));
 
       expect(await screen.findByText("validator offline")).toBeInTheDocument();
     });
@@ -216,7 +216,7 @@ describe("NewRecipeModal", () => {
       const { onClose } = renderModal();
 
       await userEvent.click(screen.getByRole("button", { name: "Enter YAML manually" }));
-      await userEvent.click(screen.getByRole("button", { name: "Validate & Preview" }));
+      await userEvent.click(screen.getByRole("button", { name: "Validate recipe" }));
       await screen.findByRole("heading", { name: "Preview Recipe" });
 
       await userEvent.click(screen.getByRole("button", { name: "Back" }));
@@ -225,13 +225,92 @@ describe("NewRecipeModal", () => {
       expect(onClose).not.toHaveBeenCalled();
     });
 
+    /** v2 is the format the engines are described in; v1 puts the whole
+     *  launch into one vLLM-specific command template, so a recipe written
+     *  that way can only ever run on vLLM. */
+    it("starts from the v2 template", async () => {
+      renderModal();
+
+      await userEvent.click(screen.getByRole("button", { name: "Enter YAML manually" }));
+
+      const editor = screen.getByRole("textbox") as HTMLTextAreaElement;
+      expect(editor.value).toContain('recipe_version: "2"');
+      expect(editor.value).toContain("engine: vllm");
+      expect(screen.getByRole("button", { name: "v2" })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+    });
+
+    it("offers v1 for the recipes that are still written that way", async () => {
+      renderModal();
+      await userEvent.click(screen.getByRole("button", { name: "Enter YAML manually" }));
+
+      await userEvent.click(screen.getByRole("button", { name: "v1" }));
+
+      const editor = screen.getByRole("textbox") as HTMLTextAreaElement;
+      expect(editor.value).toContain("container: vllm-node");
+      expect(editor.value).not.toContain('recipe_version: "2"');
+    });
+
+    /** Switching format replaces an untouched starter and nothing else: a
+     *  click on a format button must not throw away what somebody wrote. */
+    it("does not overwrite YAML the operator has edited", async () => {
+      renderModal();
+      await userEvent.click(screen.getByRole("button", { name: "Enter YAML manually" }));
+      const editor = screen.getByRole("textbox");
+      await userEvent.clear(editor);
+      await userEvent.type(editor, "name: Mine");
+
+      await userEvent.click(screen.getByRole("button", { name: "v1" }));
+
+      expect((editor as HTMLTextAreaElement).value).toBe("name: Mine");
+    });
+
+    /** One sentence tells you something is wrong; a field tells you where. */
+    it("reports each problem against the field it belongs to", async () => {
+      renderModal();
+      await userEvent.click(screen.getByRole("button", { name: "Enter YAML manually" }));
+      fetchMock().mockReturnValue(
+        Promise.resolve({
+          ok: false,
+          status: 400,
+          json: () =>
+            Promise.resolve({
+              detail: {
+                message: "Invalid recipe",
+                errors: [
+                  { path: "model", message: "field required" },
+                  { path: "engines.vllm", message: "unknown engine" },
+                ],
+              },
+            }),
+        } as Response),
+      );
+
+      await userEvent.click(screen.getByRole("button", { name: "Validate recipe" }));
+
+      expect(await screen.findByText("model: field required")).toBeInTheDocument();
+      expect(screen.getByText("engines.vllm: unknown engine")).toBeInTheDocument();
+    });
+
+    it("still reads a plain-string reason", async () => {
+      renderModal();
+      await userEvent.click(screen.getByRole("button", { name: "Enter YAML manually" }));
+      fetchMock().mockReturnValue(rejected("YAML content cannot be empty"));
+
+      await userEvent.click(screen.getByRole("button", { name: "Validate recipe" }));
+
+      expect(await screen.findByText("YAML content cannot be empty")).toBeInTheDocument();
+    });
+
     it("cannot be previewed while the editor is empty", async () => {
       renderModal();
 
       await userEvent.click(screen.getByRole("button", { name: "Manual" }));
       await userEvent.clear(screen.getByRole("textbox"));
 
-      expect(screen.getByRole("button", { name: "Validate & Preview" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Validate recipe" })).toBeDisabled();
     });
   });
 
