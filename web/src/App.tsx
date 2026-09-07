@@ -9,7 +9,7 @@ import BenchmarkingPage from "@/pages/BenchmarkingPage";
 import MemoryPage from "@/pages/MemoryPage";
 import CachePage from "@/pages/CachePage";
 import ModelsPage from "@/pages/ModelsPage";
-import ImagesPage from "@/pages/ImagesPage";
+import EnginesPage from "@/pages/EnginesPage";
 import MCPPage from "@/pages/MCPPage";
 import SettingsPage from "@/pages/SettingsPage";
 import LoginPage from "@/pages/LoginPage";
@@ -45,7 +45,7 @@ const PAGES: { path: string; element: React.ReactNode }[] = [
   { path: "/benchmarking", element: <BenchmarkingRoute /> },
   { path: "/monitoring", element: <MemoryPage /> },
   { path: "/models", element: <ModelsPage /> },
-  { path: "/images", element: <ImagesPage /> },
+  { path: "/engines", element: <EnginesPage /> },
   { path: "/cache", element: <CachePage /> },
   { path: "/mcp", element: <MCPPage /> },
   { path: "/oci", element: <OciRegistryPage /> },

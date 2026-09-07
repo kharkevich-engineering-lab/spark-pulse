@@ -33,7 +33,7 @@ export const NAV_ITEMS = [
   { href: "/benchmarking", label: "Benchmarking", heading: "Benchmarking" },
   { href: "/monitoring", label: "Monitoring", heading: "Monitoring" },
   { href: "/models", label: "Models", heading: "Models" },
-  { href: "/images", label: "Images", heading: "Engine images" },
+  { href: "/engines", label: "Engines", heading: "Engines" },
   { href: "/cache", label: "Cache", heading: "Cache Manager" },
   { href: "/mcp", label: "MCP", heading: "MCP Server" },
   { href: "/oci", label: "OCI Registry", heading: "OCI Recipe Registry" },

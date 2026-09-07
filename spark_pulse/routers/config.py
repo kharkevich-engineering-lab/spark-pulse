@@ -23,7 +23,6 @@ def get_config():
     return {
         "auth_enabled": config.auth_enabled,
         "mcp_enabled": config.mcp_enabled,
-        "cluster_enabled": config.cluster_enabled,
         "cluster_experimental": config.cluster_experimental,
         "runtime": config.runtime,
         "benchmarking_enabled": config.benchmarking_enabled,

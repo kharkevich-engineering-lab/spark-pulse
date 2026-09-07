@@ -602,8 +602,15 @@ export async function cancelImagePull(jobId: string): Promise<ImagePullJob> {
   return json<ImagePullJob>(`/images/pulls/${jobId}/cancel`, { method: "POST" });
 }
 
-export async function deleteImage(ref: string): Promise<ImageDeleteResult> {
-  return json<ImageDeleteResult>(`/images?ref=${encodeURIComponent(ref)}`, { method: "DELETE" });
+/** Remove an image here, and from any nodes named.
+ *
+ * `syncImageToNodes` fills every machine in the cluster; without a node list
+ * here, only this one could ever be cleaned.
+ */
+export async function deleteImage(ref: string, nodes: string[] = []): Promise<ImageDeleteResult> {
+  const query = new URLSearchParams({ ref });
+  if (nodes.length > 0) query.set("nodes", nodes.join(","));
+  return json<ImageDeleteResult>(`/images?${query}`, { method: "DELETE" });
 }
 
 export async function syncImageToNodes(ref: string, nodes: string[], sshUser?: string): Promise<ImageSyncResult> {

@@ -1,12 +1,11 @@
 import { useState, useEffect } from "react";
-import { fetchSettings, updateSettings, fetchSecrets, saveSecrets, deleteSecret, runDiscovery, fetchEngines, refreshEngines, type DiscoveryResult, type ValidationResult } from "@/lib/api";
+import { fetchSettings, updateSettings, fetchSecrets, saveSecrets, deleteSecret } from "@/lib/api";
 import type { DockerSettings } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
-import { Settings as SettingsIcon, Loader2, AlertCircle, Check, KeyRound, Eye, EyeOff, Trash2, Lock, Server, Box, Network, Radio, Wifi, WifiOff, Cpu, RefreshCw, Info, ShieldCheck, Palette, Sun, Moon, Languages } from "lucide-react";
+import { Settings as SettingsIcon, Loader2, AlertCircle, Check, KeyRound, Eye, EyeOff, Trash2, Lock, Server, Box, Info, ShieldCheck, Palette, Sun, Moon, Languages, ToggleRight, FlaskConical, Bot, Network } from "lucide-react";
 import { SunMoonIcon } from "@/components/BrandIcons";
 import { type ThemeMode, getTheme, setTheme } from "@/lib/theme";
 import { LANGUAGES, useI18n } from "@/lib/i18n";
-import { EngineList } from "@/components/EngineBadge";
 import { AlertModal } from "@/components/Modal";
 
 /** The tabs, in the order an operator meets them.
@@ -15,12 +14,26 @@ import { AlertModal } from "@/components/Modal";
  * "which origins may call this API", which are not the same kind of decision
  * and are never made at the same time. Grouping by *when you go looking* is
  * what the tabs are for.
+ *
+ * There is deliberately no Cluster tab. Its switch survives — `cluster_enabled`
+ * is what the recipes page reads to decide whether a `cluster_only` recipe is
+ * offered — but it is a feature switch, so it sits with the others. The rest of
+ * that tab described the machines, which are managed on the Cluster page, and
+ * network discovery moved there with them.
+ *
+ * There is no Engines tab either: an engine is its image, and the page that
+ * lists images now lists both, with the registry settings that govern where
+ * engines come from at the bottom of it.
+ *
+ * `features` holds the switches that change the *shape* of the app rather than
+ * the behaviour of a deployment: turning benchmarking off removes a route and
+ * a sidebar entry. That is a different kind of decision from a timeout, which
+ * is where it used to sit.
  */
 const TABS = [
   { id: "deployment", labelKey: "settings.tabDeployment", icon: Server },
   { id: "containers", labelKey: "settings.tabContainers", icon: Box },
-  { id: "cluster", labelKey: "settings.tabCluster", icon: Network },
-  { id: "engines", labelKey: "settings.tabEngines", icon: Cpu },
+  { id: "features", labelKey: "settings.tabFeatures", icon: ToggleRight },
   { id: "preferences", labelKey: "settings.tabPreferences", icon: Palette },
   { id: "secrets", labelKey: "settings.tabSecrets", icon: KeyRound },
   { id: "environment", labelKey: "settings.tabEnvironment", icon: Info },
@@ -44,6 +57,16 @@ function storedTab(): TabId {
 
 const inputCls = "w-full px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm";
 const cardCls = "rounded-xl bg-surface border border-border p-5 space-y-4";
+/** One card per row, at a measure a form is read at.
+ *
+ * Every tab used to be `lg:grid-cols-2`, which existed so tabs holding two
+ * small cards did not look empty. A settings form is read one field at a time,
+ * in order, and a second column doubles the eye travel for every field. The one
+ * tab that is a reference table rather than a form — Environment — keeps two
+ * columns, because it is scanned rather than filled in.
+ */
+const sectionCls = "space-y-4 max-w-3xl";
+const referenceCls = "grid grid-cols-1 lg:grid-cols-2 gap-4 items-start";
 
 /** Defined here rather than inside the page.
  *
@@ -218,16 +241,6 @@ export default function SettingsPage() {
   const [savingToken, setSavingToken] = useState(false);
   const [savedToken, setSavedToken] = useState(false);
 
-  // Engine registry state
-  const { data: engineData, refetch: refetchEngines, loading: enginesLoading } = useQuery(fetchEngines);
-  const [refreshingEngines, setRefreshingEngines] = useState(false);
-
-  // Network discovery state
-  const [discoveryResult, setDiscoveryResult] = useState<DiscoveryResult | null>(null);
-  const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
-  const [discoveryLoading, setDiscoveryLoading] = useState(false);
-  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
-
   const isDirty = settings != null && Object.keys(form).some(
     (k) => JSON.stringify(form[k]) !== JSON.stringify((settings as unknown as Record<string, unknown>)[k])
   );
@@ -273,32 +286,6 @@ export default function SettingsPage() {
     }
   };
 
-  const handleDiscover = async () => {
-    setDiscoveryError(null);
-    setDiscoveryLoading(true);
-    try {
-      const response = await runDiscovery();
-      setDiscoveryResult(response.detected);
-      setValidationResult(response.validation);
-    } catch (e) {
-      setDiscoveryError(e instanceof Error ? e.message : "Discovery failed");
-    } finally {
-      setDiscoveryLoading(false);
-    }
-  };
-
-  const handleRefreshEngines = async () => {
-    setRefreshingEngines(true);
-    try {
-      await refreshEngines();
-      await refetchEngines();
-    } catch (e) {
-      setAlertModal({ title: t("common.error"), message: e instanceof Error ? e.message : t("settings.refreshFailed") });
-    } finally {
-      setRefreshingEngines(false);
-    }
-  };
-
   if (loading) return <div className="flex justify-center py-20"><Loader2 className="animate-spin text-primary" size={32} /></div>;
   if (error) return <div className="p-4 rounded-lg bg-danger/10 border border-danger/30 text-danger flex items-center gap-3"><AlertCircle size={20} /><span>{error}</span></div>;
 
@@ -328,23 +315,11 @@ export default function SettingsPage() {
 
       {/* ── Deployment ───────────────────────────────────────────────────── */}
       {tab === "deployment" && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+        <div className={sectionCls}>
           <div className={cardCls}>
             <div className="flex items-center gap-2 pb-3 border-b border-border">
               <Server size={16} className="text-primary" />
               <h3 className="font-semibold">{t("settings.defaults")}</h3>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1">{t("settings.defaultContainer")}</label>
-              <input type="text" value={String(form.default_container ?? "vllm-node")} onChange={(e) => setForm({ ...form, default_container: e.target.value })} className={inputCls} />
-              <p className="text-xs text-text-muted mt-1">{t("settings.defaultContainerHelp")}</p>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1">{t("settings.gpuMem")}</label>
-              <input type="number" step="0.05" min="0.1" max="1.0" value={Number(form.default_gpu_mem_util ?? 0.8)} onChange={(e) => setForm({ ...form, default_gpu_mem_util: parseFloat(e.target.value) || 0.8 })} className={inputCls} />
-              <p className="text-xs text-text-muted mt-1">{t("settings.gpuMemHelp")}</p>
             </div>
 
             <div>
@@ -399,21 +374,13 @@ export default function SettingsPage() {
               </div>
               <p className="text-xs text-text-muted mt-1">{t("settings.retentionHelp")}</p>
             </div>
-
-            <div className="flex items-center justify-between pt-4 border-t border-border">
-              <div>
-                <p className="text-sm font-medium">{t("settings.benchmarking")}</p>
-                <p className="text-xs text-text-muted mt-0.5">{t("settings.benchmarkingHelp")}</p>
-              </div>
-              <Toggle on={!!form.benchmarking_enabled} onClick={() => setForm({ ...form, benchmarking_enabled: !form.benchmarking_enabled })} label={t("settings.benchmarking")} />
-            </div>
           </div>
         </div>
       )}
 
       {/* ── Containers ───────────────────────────────────────────────────── */}
       {tab === "containers" && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+        <div className={sectionCls}>
           <div className={cardCls}>
             <div className="flex items-center gap-2 pb-3 border-b border-border">
               <Box size={16} className="text-primary" />
@@ -511,199 +478,63 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {/* ── Cluster ──────────────────────────────────────────────────────── */}
-      {tab === "cluster" && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+
+      {/* ── Features ─────────────────────────────────────────────────────── */}
+      {tab === "features" && (
+        <div className={sectionCls}>
           <div className={cardCls}>
             <div className="flex items-center gap-2 pb-3 border-b border-border">
-              <Network size={16} className="text-primary" />
-              <h3 className="font-semibold">{t("settings.multiNode")}</h3>
+              <ToggleRight size={16} className="text-primary" />
+              <h3 className="font-semibold">{t("settings.features")}</h3>
             </div>
+            <p className="text-xs text-text-muted -mt-2">{t("settings.featuresHelp")}</p>
 
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium">{t("settings.clusterMode")}</p>
+                <p className="text-sm font-medium flex items-center gap-1.5">
+                  <FlaskConical size={14} className="text-text-muted" />
+                  {t("settings.benchmarking")}
+                </p>
+                <p className="text-xs text-text-muted mt-0.5">{t("settings.benchmarkingHelp")}</p>
+              </div>
+              <Toggle on={!!form.benchmarking_enabled} onClick={() => setForm({ ...form, benchmarking_enabled: !form.benchmarking_enabled })} label={t("settings.benchmarking")} />
+            </div>
+
+            {/* Cluster mode decides whether recipes marked `cluster_only` are
+                offered at all, which is the same kind of decision as
+                benchmarking: it changes what the operator is shown, not how a
+                deployment behaves. The machines themselves are on /cluster. */}
+            <div className="flex items-center justify-between pt-4 border-t border-border">
+              <div>
+                <p className="text-sm font-medium flex items-center gap-1.5">
+                  <Network size={14} className="text-text-muted" />
+                  {t("settings.clusterMode")}
+                </p>
                 <p className="text-xs text-text-muted mt-0.5">{t("settings.clusterModeHelp")}</p>
+                {environment?.cluster_experimental && (
+                  <p className="text-xs text-warning mt-1 flex items-start gap-1.5">
+                    <AlertCircle size={12} className="shrink-0 mt-0.5" />
+                    <span>{t("settings.clusterExperimental")}</span>
+                  </p>
+                )}
               </div>
               <Toggle on={!!form.cluster_enabled} onClick={() => setForm({ ...form, cluster_enabled: !form.cluster_enabled })} label={t("settings.clusterMode")} />
             </div>
 
-            {environment?.cluster_experimental && (
-              <p className="text-xs text-warning flex items-start gap-1.5 pt-3 border-t border-border">
-                <AlertCircle size={13} className="shrink-0 mt-0.5" />
-                <span>{t("settings.clusterExperimental")}</span>
-              </p>
-            )}
-
-            <p className="text-xs text-text-muted pt-3 border-t border-border">
-              {t("settings.clusterNote")}
-            </p>
-          </div>
-
-          <div className={cardCls}>
-            <div className="flex items-center justify-between pb-3 border-b border-border">
-              <div className="flex items-center gap-2">
-                <Radio size={16} className="text-primary" />
-                <h3 className="font-semibold">{t("settings.discovery")}</h3>
+            {/* MCP is env-managed, so it is reported rather than switched. It
+                belongs beside benchmarking anyway: both decide whether a way
+                in exists at all. */}
+            <div className="flex items-center justify-between pt-4 border-t border-border">
+              <div>
+                <p className="text-sm font-medium flex items-center gap-1.5">
+                  <Bot size={14} className="text-text-muted" />
+                  {t("settings.mcpEndpoint")}
+                </p>
+                <p className="text-xs text-text-muted mt-0.5">{t("settings.mcpFeatureHelp")}</p>
               </div>
-              <button
-                type="button"
-                onClick={handleDiscover}
-                disabled={discoveryLoading}
-                className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover disabled:opacity-50 text-white font-medium text-xs transition-colors flex items-center gap-1.5"
-              >
-                {discoveryLoading ? <Loader2 className="animate-spin" size={12} /> : <Radio size={12} />}
-                {t("settings.discover")}
-              </button>
-            </div>
-
-            {discoveryError && (
-              <div className="text-xs text-danger flex items-center gap-1.5">
-                <AlertCircle size={12} />
-                <span>{discoveryError}</span>
-              </div>
-            )}
-
-            {discoveryResult && (
-              <div className="space-y-3">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-text-muted">{t("settings.localIp")}</span>
-                  <Code>{discoveryResult.local_ip || t("common.notDetected")}</Code>
-                </div>
-
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-text-muted">{t("settings.ethernet")}</span>
-                  <Code>{discoveryResult.ethernet_if || t("common.notDetected")}</Code>
-                </div>
-
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-text-muted">{t("settings.infiniband")}</span>
-                  <span className="flex items-center gap-1 text-xs">
-                    {discoveryResult.infiniband_present ? (
-                      <>
-                        <Wifi size={12} className="text-success" />
-                        <span className="text-success">{discoveryResult.infiniband_devices.length} HCA{discoveryResult.infiniband_devices.length > 1 ? "s" : ""}</span>
-                      </>
-                    ) : (
-                      <>
-                        <WifiOff size={12} className="text-text-muted" />
-                        <span className="text-text-muted">{t("common.notPresent")}</span>
-                      </>
-                    )}
-                  </span>
-                </div>
-
-                {discoveryResult.infiniband_present && discoveryResult.infiniband_devices.length > 0 && (
-                  <div className="text-xs text-text-muted space-y-0.5 pl-1">
-                    {discoveryResult.infiniband_devices.map((dev) => (
-                      <div key={dev.hca} className="flex items-center gap-1.5">
-                        <span className="font-mono">{dev.hca}</span>
-                        <span className={`px-1.5 py-0.5 rounded ${dev.state === "ACTIVE" ? "bg-success/15 text-success" : "bg-warning/15 text-warning"}`}>
-                          {dev.state}
-                        </span>
-                        {dev.ports.length > 0 && <span>ports: {dev.ports.join(",")}</span>}
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {discoveryResult.nccl_defaults && (
-                  <div className="pt-2 border-t border-border space-y-1.5">
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-text-muted">{t("settings.ncclSocket")}</span>
-                      <Code>{discoveryResult.nccl_defaults.socket_ifname}</Code>
-                    </div>
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-text-muted">{t("settings.ncclHca")}</span>
-                      <Code>{discoveryResult.nccl_defaults.ib_hca || t("common.none")}</Code>
-                    </div>
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-text-muted">{t("settings.ncclDisabled")}</span>
-                      <span className={`text-xs font-medium ${discoveryResult.nccl_defaults.ib_disable ? "text-warning" : "text-success"}`}>
-                        {discoveryResult.nccl_defaults.ib_disable ? t("common.yes") : t("common.no")}
-                      </span>
-                    </div>
-
-                    <p className="text-xs text-text-muted pt-1">
-                      {t("settings.ncclNote")}
-                    </p>
-                  </div>
-                )}
-
-                {validationResult && (
-                  <div className={`pt-2 border-t border-border text-xs space-y-1 ${!validationResult.healthy ? "text-danger" : validationResult.warnings.length > 0 ? "text-warning" : "text-success"}`}>
-                    <div className="flex items-center gap-1.5 font-medium">
-                      {validationResult.healthy ? <Check size={12} /> : <AlertCircle size={12} />}
-                      {validationResult.healthy ? t("settings.networkHealthy") : t("settings.networkIssues")}
-                    </div>
-                    {validationResult.warnings.map((w, i) => <div key={`w${i}`} className="pl-3.5">⚠ {w}</div>)}
-                    {validationResult.errors.map((e, i) => <div key={`e${i}`} className="pl-3.5">✕ {e}</div>)}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {!discoveryResult && !discoveryLoading && (
-              <p className="text-xs text-text-muted">{t("settings.discoveryIdle")}</p>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* ── Engines ──────────────────────────────────────────────────────── */}
-      {tab === "engines" && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
-          <div className={cardCls}>
-            <div className="flex items-center justify-between pb-3 border-b border-border">
-              <div className="flex items-center gap-2">
-                <Cpu size={16} className="text-primary" />
-                <h3 className="font-semibold">{t("settings.engines")}</h3>
-              </div>
-              <button onClick={handleRefreshEngines} disabled={refreshingEngines} className="px-2.5 py-1 rounded-lg border border-border hover:border-primary/50 text-text-muted hover:text-text text-xs transition-colors flex items-center gap-1.5 disabled:opacity-50" title={t("settings.refreshTitle")}>
-                <RefreshCw size={13} className={refreshingEngines ? "animate-spin" : ""} />
-                {t("settings.refresh")}
-              </button>
-            </div>
-
-            {enginesLoading && !engineData ? (
-              <div className="flex justify-center py-4"><Loader2 className="animate-spin text-primary" size={20} /></div>
-            ) : (
-              <EngineList engines={engineData?.engines ?? []} defaultEngine={engineData?.default_engine ?? ""} />
-            )}
-          </div>
-
-          <div className={cardCls}>
-            <div className="flex items-center gap-2 pb-3 border-b border-border">
-              <SettingsIcon size={16} className="text-primary" />
-              <h3 className="font-semibold">{t("settings.engineRegistry")}</h3>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1">{t("settings.defaultEngine")}</label>
-              <input type="text" value={String(form.default_engine ?? "vllm")} onChange={(e) => setForm({ ...form, default_engine: e.target.value })} className={inputCls} placeholder="vllm" />
-              <p className="text-xs text-text-muted mt-1">{t("settings.defaultEngineHelp")}</p>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1">{t("settings.indexes")}</label>
-              <textarea
-                aria-label={t("settings.indexesLabel")}
-                rows={3}
-                value={((form.engine_indexes ?? []) as string[]).join("\n")}
-                onChange={(e) => setForm({ ...form, engine_indexes: e.target.value.split("\n").map((l) => l.trim()).filter(Boolean) })}
-                className={`${inputCls} resize-y`}
-                placeholder="https://…/engines.json"
-              />
-              <p className="text-xs text-text-muted mt-1">{t("settings.indexesHelp")}</p>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1">{t("settings.indexTtl")}</label>
-              <div className="flex items-center gap-2">
-                <input type="number" min="0" value={Number(form.engine_index_cache_ttl_seconds ?? 3600)} onChange={(e) => setForm({ ...form, engine_index_cache_ttl_seconds: parseInt(e.target.value) || 0 })} className="w-28 px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm" />
-                <span className="text-sm text-text-muted">seconds</span>
-              </div>
-              <p className="text-xs text-text-muted mt-1">{t("settings.indexTtlHelp")}</p>
+              {environment?.mcp_enabled
+                ? <Code>{environment.mcp_path}</Code>
+                : <span className="text-xs text-text-muted">{t("common.disabled")}</span>}
             </div>
           </div>
         </div>
@@ -711,7 +542,7 @@ export default function SettingsPage() {
 
       {/* ── Preferences ──────────────────────────────────────────────────── */}
       {tab === "preferences" && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+        <div className={sectionCls}>
           <div className={cardCls}>
             <div className="flex items-center gap-2 pb-3 border-b border-border">
               <Palette size={16} className="text-primary" />
@@ -742,7 +573,7 @@ export default function SettingsPage() {
 
       {/* ── Secrets ──────────────────────────────────────────────────────── */}
       {tab === "secrets" && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+        <div className={sectionCls}>
           <div className={cardCls}>
             <div className="flex items-center justify-between pb-3 border-b border-border">
               <div className="flex items-center gap-2">
@@ -785,7 +616,7 @@ export default function SettingsPage() {
 
       {/* ── Environment ──────────────────────────────────────────────────── */}
       {tab === "environment" && environment && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+        <div className={referenceCls}>
           <div className={cardCls}>
             <div className="flex items-center gap-2 pb-3 border-b border-border">
               <Info size={16} className="text-primary" />

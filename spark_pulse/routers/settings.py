@@ -38,8 +38,6 @@ _ALLOWED_SECRET_KEYS = {"hf_token"}
 _ALLOWED_SETTING_KEYS = frozenset(
     {
         "spark_vllm_path",
-        "default_container",
-        "default_gpu_mem_util",
         "default_port_range_start",
         "default_port_range_end",
         "webui_port",
@@ -188,8 +186,6 @@ def _image_registry() -> dict:
 def _settings_response() -> dict:
     return {
         "spark_vllm_path": config.spark_vllm_path,
-        "default_container": config.default_container,
-        "default_gpu_mem_util": config.default_gpu_mem_util,
         "default_port_range_start": config.default_port_range_start,
         "default_port_range_end": config.default_port_range_end,
         "webui_port": config.webui_port,

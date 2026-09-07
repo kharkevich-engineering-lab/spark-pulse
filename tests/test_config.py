@@ -13,7 +13,7 @@ def test_config_loads_yaml_when_present(tmp_path, monkeypatch):
             {
                 "spark_vllm_path": "/opt/spark",
                 "webui_port": 8200,
-                "default_gpu_mem_util": 0.9,
+                "default_port_range_start": 9500,
             }
         ),
         encoding="utf-8",
@@ -27,7 +27,7 @@ def test_config_loads_yaml_when_present(tmp_path, monkeypatch):
 
     assert cfg.spark_vllm_path == "/opt/spark"
     assert cfg.webui_port == 8200
-    assert cfg.default_gpu_mem_util == 0.9
+    assert cfg.default_port_range_start == 9500
 
 
 def test_config_uses_defaults_when_file_missing(tmp_path, monkeypatch):
@@ -225,18 +225,14 @@ def test_mcp_enabled_from_yaml(tmp_path, monkeypatch):
 
 
 def test_cluster_enabled_defaults_to_false(monkeypatch):
-    """Cluster mode should be disabled by default."""
+    """Read by the recipes page, which hides `cluster_only` recipes without it."""
     cfg = config_module._Config()
     assert cfg.cluster_enabled is False
 
 
 def test_cluster_enabled_from_yaml(tmp_path, monkeypatch):
-    """Cluster mode should be enabled when set in YAML."""
     config_file = tmp_path / "config.yaml"
-    config_file.write_text(
-        yaml.safe_dump({"cluster_enabled": True}),
-        encoding="utf-8",
-    )
+    config_file.write_text(yaml.safe_dump({"cluster_enabled": True}), encoding="utf-8")
     monkeypatch.setattr(config_module, "_CONFIG_PATH", config_file)
 
     cfg = config_module._Config()
@@ -246,16 +242,19 @@ def test_cluster_enabled_from_yaml(tmp_path, monkeypatch):
 # ── Default values tests ────────────────────────────────────────────────────
 
 
-def test_default_container(monkeypatch):
-    """Default container should be vllm-node."""
-    cfg = config_module._Config()
-    assert cfg.default_container == "vllm-node"
+def test_the_v1_container_and_gpu_defaults_are_gone(monkeypatch):
+    """Two settings the form offered that never reached a launch.
 
-
-def test_default_gpu_mem_util(monkeypatch):
-    """Default GPU memory utilization should be 0.8."""
+    ``default_container`` named a v1 image (``vllm-node``) and engines replaced
+    it; ``default_gpu_mem_util`` was superseded by the recipe's own
+    ``gpu_memory_utilization``. Neither had a reader anywhere in the backend,
+    which is the same defect ``docker.cluster_image`` and ``ray_port`` were
+    removed for.
+    """
     cfg = config_module._Config()
-    assert cfg.default_gpu_mem_util == 0.8
+
+    assert not hasattr(cfg, "default_container")
+    assert not hasattr(cfg, "default_gpu_mem_util")
 
 
 def test_default_port_range(tmp_path, monkeypatch):

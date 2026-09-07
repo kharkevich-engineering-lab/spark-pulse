@@ -49,7 +49,6 @@ describe("the dictionaries", () => {
    *  French borrowed unchanged. */
   const IDENTICAL_ON_PURPOSE = new Set([
     "nav.mcp",
-    "nav.images",
     "nav.cache",
     "common.ok",
     "engines.none",
@@ -57,17 +56,18 @@ describe("the dictionaries", () => {
     // "MCP" are initialisms.
     "cluster.colPlacement",
     "inference.image",
-    "images.colImage",
+    "engines.colImage",
     "monitoring.pid",
     "monitoring.ram",
-    "images.colActions",
+    "engines.colActions",
     // "Mods" is the term of art the recipes themselves use, in both languages.
     "recipes.tabMods",
     "eventStream.info",
     "nodes.colInterfaces",
     "nodes.colActions",
-    // Placeholders that are literal examples — an address, a key path — not
-    // prose. Translating them would make them wrong.
+    // Placeholders that are literal examples — an address, a key path, an
+    // image reference — not prose. Translating them would make them wrong.
+    "engines.refPlaceholder",
     "nodes.addressPlaceholder",
     "nodes.sshKeyPlaceholder",
     "recipeForm.buildArgPlaceholder",

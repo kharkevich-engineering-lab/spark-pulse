@@ -46,7 +46,7 @@ vi.mock("@/pages/ClusterPage", () => ({ default: () => <div>cluster page</div> }
 vi.mock("@/pages/BenchmarkingPage", () => ({ default: () => <div>benchmarking page</div> }));
 vi.mock("@/pages/MemoryPage", () => ({ default: () => <div>monitoring page</div> }));
 vi.mock("@/pages/ModelsPage", () => ({ default: () => <div>models page</div> }));
-vi.mock("@/pages/ImagesPage", () => ({ default: () => <div>images page</div> }));
+vi.mock("@/pages/EnginesPage", () => ({ default: () => <div>engines page</div> }));
 vi.mock("@/pages/CachePage", () => ({ default: () => <div>cache page</div> }));
 vi.mock("@/pages/MCPPage", () => ({ default: () => <div>mcp page</div> }));
 vi.mock("@/pages/OciRegistryPage", () => ({ default: () => <div>oci page</div> }));
@@ -64,7 +64,7 @@ const ROUTES: [string, string][] = [
   ["/cluster", "cluster page"],
   ["/monitoring", "monitoring page"],
   ["/models", "models page"],
-  ["/images", "images page"],
+  ["/engines", "engines page"],
   ["/cache", "cache page"],
   ["/mcp", "mcp page"],
   ["/oci", "oci page"],

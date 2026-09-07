@@ -39,19 +39,19 @@ class TestApiConfigEndpoint:
         data = resp.json()
         assert data["mcp_enabled"] is True
 
-    def test_config_returns_cluster_enabled(self, monkeypatch):
-        """Config should report cluster_enabled status."""
-        monkeypatch.setitem(config._data, "cluster_enabled", True)
+    def test_config_no_longer_carries_a_second_cluster_enabled(self):
+        """The setting itself is real and lives in `/api/settings`.
 
+        This payload carried a second copy of it that no component read. Two
+        sources for one switch is how a live setting comes to look inert: a
+        reader picks the wrong one and sees a value that never changes.
+        """
         app = create_app()
         from fastapi.testclient import TestClient
 
         client = TestClient(app)
 
-        resp = client.get("/api/config")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["cluster_enabled"] is True
+        assert "cluster_enabled" not in client.get("/api/config").json()
 
     def test_config_reports_cluster_as_experimental_by_default(self):
         """Multi-node has never run on hardware, so the UI must say so.

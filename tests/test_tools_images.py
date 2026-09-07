@@ -332,6 +332,93 @@ class TestDeletion:
         assert "dep-1" in str(exc.value)
         assert catalogue.image_exists(VLLM_REF) is True
 
+    def test_removes_it_from_the_nodes_named_as_well(self, catalogue, nodes):
+        """`sync` fills N machines; until this, delete cleaned one.
+
+        The removal happens through each node's own service — the agent's
+        RemoveImage — so the control plane decides where and reports what came
+        back, rather than running docker anywhere but here.
+        """
+        synced = images.sync_to_nodes(VLLM_REF, ["n1", "n2"], services=nodes.services)
+        # A node holds what it pulled: the registry-hosted, digest-pinned
+        # reference, not the ghcr.io tag this host calls the image.
+        pull_ref = synced["pull_ref"]
+        assert nodes.docker("n1").image_exists(pull_ref) is True
+
+        result = images.delete_image(
+            VLLM_REF, nodes=["n1", "n2"], services=nodes.services
+        )
+
+        assert result["deleted"] == VLLM_REF
+        assert [row["node"] for row in result["nodes"]] == ["n1", "n2"]
+        assert all(row["removed"] for row in result["nodes"])
+        assert nodes.docker("n1").image_exists(pull_ref) is False
+        assert nodes.docker("n2").image_exists(pull_ref) is False
+        assert catalogue.image_exists(VLLM_REF) is False
+
+    def test_a_node_that_could_not_be_asked_is_an_error_not_a_success(
+        self, catalogue, nodes
+    ):
+        """The caller is reclaiming disk. "We could not ask" is not "it is gone"."""
+
+        images.sync_to_nodes(VLLM_REF, ["n1", "n2"], services=nodes.services)
+
+        def refuse(node, **_kwargs):
+            if (node.address or node.id) == "n2":
+                raise RuntimeError("agent unreachable")
+            return nodes.docker(node.address or node.id)
+
+        from spark_pulse.tools.node_service import NodeServices
+
+        result = images.delete_image(
+            VLLM_REF, nodes=["n1", "n2"], services=NodeServices(resolver=refuse)
+        )
+
+        rows = {row["node"]: row for row in result["nodes"]}
+        assert rows["n1"]["removed"] is True
+        assert rows["n2"]["removed"] is False
+        assert "unreachable" in rows["n2"]["error"]
+
+    def test_an_image_absent_here_still_reports_what_the_nodes_said(
+        self, catalogue, nodes
+    ):
+        """Removing it from three peers and then refusing because the control
+        node no longer has it would throw away three real results."""
+        images.sync_to_nodes(VLLM_REF, ["n1"], services=nodes.services)
+        images.delete_image(VLLM_REF)  # gone locally, still on n1
+
+        result = images.delete_image(VLLM_REF, nodes=["n1"], services=nodes.services)
+
+        assert result["freed_bytes"] == 0
+        assert result["nodes"][0]["node"] == "n1"
+
+    def test_a_name_the_node_does_not_use_is_reported_rather_than_claimed(
+        self, catalogue, nodes
+    ):
+        """A node holds what it pulled — the registry's digest-pinned
+        reference — and once the image is gone from here there may be no way
+        left to compose that name. Saying "removed" then would be a lie about
+        reclaimed disk, so the row names what the node still holds instead.
+        """
+        images.sync_to_nodes(VLLM_REF, ["n1"], services=nodes.services)
+        images.delete_image(VLLM_REF)
+
+        row = images.delete_image(VLLM_REF, nodes=["n1"], services=nodes.services)[
+            "nodes"
+        ][0]
+
+        assert row["removed"] is False
+        assert "could not identify" in (row["error"] or "")
+        assert "spark-pulse-engine/vllm" in row["error"]
+
+    def test_a_deployment_anywhere_refuses_the_delete_everywhere(
+        self, catalogue, nodes
+    ):
+        """A rank left without its image is worse than a full disk."""
+        with patch.object(images, "images_in_use", return_value={VLLM_REF: ["dep-1"]}):
+            with pytest.raises(ValueError, match="in use"):
+                images.delete_image(VLLM_REF, nodes=["n1"], services=nodes.services)
+
     def test_refuses_an_image_that_is_not_here(self, catalogue):
         with pytest.raises(ValueError) as exc:
             images.delete_image("ghcr.io/example/never-pulled:1")

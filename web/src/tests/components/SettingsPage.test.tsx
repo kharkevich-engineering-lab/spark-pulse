@@ -17,8 +17,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import SettingsPage from "@/pages/SettingsPage";
-import type { DiscoveryResponse } from "@/lib/api";
-import type { EngineSummary, Settings } from "@/lib/types";
+import type { Settings } from "@/lib/types";
 
 vi.mock("@/lib/api", () => ({
   fetchSettings: vi.fn(),
@@ -26,26 +25,18 @@ vi.mock("@/lib/api", () => ({
   fetchSecrets: vi.fn(),
   saveSecrets: vi.fn(),
   deleteSecret: vi.fn(),
-  runDiscovery: vi.fn(),
-  fetchEngines: vi.fn(),
-  refreshEngines: vi.fn(),
 }));
 
 import {
   deleteSecret,
-  fetchEngines,
   fetchSecrets,
   fetchSettings,
-  refreshEngines,
-  runDiscovery,
   saveSecrets,
   updateSettings,
 } from "@/lib/api";
 
 const SETTINGS: Settings = {
   spark_vllm_path: "/opt/spark-vllm-docker",
-  default_container: "vllm-node",
-  default_gpu_mem_util: 0.8,
   default_port_range_start: 9000,
   default_port_range_end: 9100,
   webui_port: 8100,
@@ -86,19 +77,6 @@ const SETTINGS: Settings = {
   },
 };
 
-const DISCOVERY: DiscoveryResponse = {
-  detected: {
-    local_ip: "10.0.0.10",
-    ethernet_if: "enp1s0",
-    infiniband_present: true,
-    infiniband_devices: [{ hca: "mlx5_0", ports: [1], net_devices: ["ib0"], state: "ACTIVE" }],
-    interfaces: [],
-    nccl_defaults: { socket_ifname: "enp1s0", ib_hca: "mlx5_0", ib_disable: false },
-    validation_errors: [],
-  },
-  validation: { healthy: true, warnings: [], errors: [] },
-};
-
 /** Open one tab. The page remembers the last one per browser, so every test
  *  that needs a particular tab has to say so rather than assume the default. */
 async function openTab(name: RegExp | string) {
@@ -106,19 +84,11 @@ async function openTab(name: RegExp | string) {
   await user.click(await screen.findByRole("tab", { name }));
 }
 
-async function discover() {
-  await openTab(/cluster/i);
-  const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: /discover/i }));
-}
-
 function seedApi() {
   vi.clearAllMocks();
   localStorage.clear();
   vi.mocked(fetchSettings).mockResolvedValue(SETTINGS);
   vi.mocked(fetchSecrets).mockResolvedValue({ hf_token: "" });
-  vi.mocked(fetchEngines).mockResolvedValue({ default_engine: "vllm", engines: [] });
-  vi.mocked(runDiscovery).mockResolvedValue(DISCOVERY);
   vi.mocked(updateSettings).mockResolvedValue(SETTINGS);
 }
 
@@ -151,13 +121,13 @@ describe("SettingsPage tabs", () => {
   it("comes back to the tab the operator was last on", async () => {
     const { unmount } = render(<SettingsPage />);
     await screen.findByRole("heading", { name: "Deployment Defaults" });
-    await openTab(/engines/i);
-    await screen.findByRole("heading", { name: "Engine Registry" });
+    await openTab(/features/i);
+    await screen.findByRole("heading", { name: "Optional features" });
     unmount();
 
     render(<SettingsPage />);
 
-    expect(await screen.findByRole("heading", { name: "Engine Registry" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Optional features" })).toBeInTheDocument();
   });
 
   it("still renders when the browser refuses to remember anything", async () => {
@@ -182,8 +152,7 @@ describe("SettingsPage deployment tab", () => {
     render(<SettingsPage />);
 
     expect(await screen.findByDisplayValue("/opt/spark-vllm-docker")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("vllm-node")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("0.8")).toBeInTheDocument();
+    expect(screen.getByLabelText("Port range start")).toHaveValue(9000);
     expect(screen.getByDisplayValue("600")).toBeInTheDocument();
     expect(screen.getByDisplayValue("300")).toBeInTheDocument();
   });
@@ -208,7 +177,6 @@ describe("SettingsPage deployment tab", () => {
     // has no usable text selection, so "select all and type" appends to the
     // old value. What is asserted here is the wiring, not the keystrokes.
     const replace = (el: HTMLElement, value: string) => fireEvent.change(el, { target: { value } });
-    replace(screen.getByDisplayValue("0.8"), "0.55");
     replace(screen.getByLabelText("Port range start"), "9500");
     replace(screen.getByLabelText("Port range end"), "9600");
     replace(screen.getByDisplayValue("600"), "900");
@@ -220,7 +188,6 @@ describe("SettingsPage deployment tab", () => {
     await waitFor(() =>
       expect(updateSettings).toHaveBeenCalledWith(
         expect.objectContaining({
-          default_gpu_mem_util: 0.55,
           default_port_range_start: 9500,
           default_port_range_end: 9600,
           deploy_ready_timeout_seconds: 900,
@@ -231,12 +198,32 @@ describe("SettingsPage deployment tab", () => {
     );
   });
 
-  it("carries the benchmarking switch into the saved form", async () => {
-    const user = userEvent.setup();
+  /** Two fields on this tab reached no launch: `default_container` named a v1
+   *  image that engines replaced, and `default_gpu_mem_util` was superseded by
+   *  the recipe's own value. Neither had a reader in the backend. */
+  it("no longer offers the v1 container name or a global VRAM share", async () => {
     render(<SettingsPage />);
     await screen.findByDisplayValue("/opt/spark-vllm-docker");
 
-    await user.click(screen.getByRole("switch", { name: "Benchmarking" }));
+    expect(screen.queryByDisplayValue("vllm-node")).toBeNull();
+    expect(screen.queryByText(/Default container/i)).toBeNull();
+    expect(screen.queryByText(/GPU memory utilization/i)).toBeNull();
+  });
+});
+
+// ── Features ────────────────────────────────────────────────────────────────
+
+describe("SettingsPage features tab", () => {
+  beforeEach(seedApi);
+
+  /** Benchmarking is not a timeout, which is the card it used to sit in. It
+   *  decides whether a route and a sidebar entry exist at all. */
+  it("carries the benchmarking switch into the saved form", async () => {
+    const user = userEvent.setup();
+    render(<SettingsPage />);
+    await openTab(/features/i);
+
+    await user.click(await screen.findByRole("switch", { name: "Benchmarking" }));
     await user.click(screen.getByRole("button", { name: /save settings/i }));
 
     await waitFor(() =>
@@ -244,6 +231,41 @@ describe("SettingsPage deployment tab", () => {
         expect.objectContaining({ benchmarking_enabled: true }),
       ),
     );
+  });
+
+  it("reports the MCP endpoint rather than offering to switch it", async () => {
+    render(<SettingsPage />);
+    await openTab(/features/i);
+
+    expect(await screen.findByText("/mcp")).toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: /MCP/i })).toBeNull();
+  });
+
+  /** The switch is real — the recipes page reads `cluster_enabled` to decide
+   *  whether a `cluster_only` recipe is offered — but it is a feature switch,
+   *  not a page of its own. What went away is the tab, and the second copy of
+   *  the value in `/api/config` that nothing read. */
+  it("keeps the cluster switch, on this tab, still writing what recipes read", async () => {
+    const user = userEvent.setup();
+    render(<SettingsPage />);
+    await openTab(/features/i);
+
+    expect(screen.queryByRole("tab", { name: /cluster/i })).toBeNull();
+    await user.click(await screen.findByRole("switch", { name: "Cluster mode" }));
+    await user.click(screen.getByRole("button", { name: /save settings/i }));
+
+    await waitFor(() =>
+      expect(updateSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ cluster_enabled: true }),
+      ),
+    );
+  });
+
+  it("says multi-node is experimental when the build says so", async () => {
+    render(<SettingsPage />);
+    await openTab(/features/i);
+
+    expect(await screen.findByText(/marked experimental in this build/)).toBeInTheDocument();
   });
 });
 
@@ -373,107 +395,6 @@ describe("SettingsPage containers tab", () => {
 
 // ── Cluster ─────────────────────────────────────────────────────────────────
 
-describe("SettingsPage cluster tab", () => {
-  beforeEach(seedApi);
-
-  /** There were two cluster toggles that disagreed: one writing the setting
-   *  the backend reads, one writing `docker.cluster_enabled`, which nothing
-   *  read at all. Only one survives, and it is the one that works. */
-  it("has one cluster switch, and it writes the setting the backend reads", async () => {
-    const user = userEvent.setup();
-    render(<SettingsPage />);
-    await openTab(/cluster/i);
-
-    expect(await screen.findAllByRole("switch", { name: "Cluster mode" })).toHaveLength(1);
-    await user.click(screen.getByRole("switch", { name: "Cluster mode" }));
-    await user.click(screen.getByRole("button", { name: /save settings/i }));
-
-    await waitFor(() =>
-      expect(updateSettings).toHaveBeenCalledWith(
-        expect.objectContaining({ cluster_enabled: true }),
-      ),
-    );
-    expect(vi.mocked(updateSettings).mock.calls[0][0]).not.toHaveProperty(
-      "docker.cluster_enabled",
-    );
-  });
-
-  it("says multi-node is experimental when the build says so", async () => {
-    render(<SettingsPage />);
-    await openTab(/cluster/i);
-
-    expect(await screen.findByText(/marked experimental in this build/)).toBeInTheDocument();
-  });
-
-  it("offers no global NCCL fields to edit", async () => {
-    render(<SettingsPage />);
-    await openTab(/cluster/i);
-    await screen.findByRole("heading", { name: "Network Discovery" });
-
-    expect(screen.queryByPlaceholderText("auto-detect")).toBeNull();
-    expect(screen.queryByText(/Leave empty to auto-detect/i)).toBeNull();
-  });
-
-  it("shows what was detected without offering to apply it installation-wide", async () => {
-    render(<SettingsPage />);
-    await discover();
-
-    expect(await screen.findByText("NCCL socket")).toBeInTheDocument();
-    expect(screen.getByText("mlx5_0", { selector: "code" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /apply detected nccl/i })).toBeNull();
-  });
-
-  it("points at the node registry, which is what a deploy actually reads", async () => {
-    render(<SettingsPage />);
-    await discover();
-
-    const pointer = await screen.findByText(/Interface pinning is per node, not global/i);
-    expect(pointer).toHaveTextContent(/registry/i);
-    expect(pointer).toHaveTextContent(/Cluster page/i);
-  });
-
-  it("surfaces a failed discovery instead of pretending nothing was detected", async () => {
-    vi.mocked(runDiscovery).mockRejectedValue(new Error("API 500: no interfaces"));
-    render(<SettingsPage />);
-    await discover();
-
-    expect(await screen.findByText(/no interfaces/)).toBeInTheDocument();
-  });
-
-  it("says nothing has been discovered yet rather than showing an empty panel", async () => {
-    render(<SettingsPage />);
-    await openTab(/cluster/i);
-
-    expect(await screen.findByText(/Reports only — nothing is saved/)).toBeInTheDocument();
-  });
-
-  it("names the interfaces it could not find rather than reporting a clean bill", async () => {
-    vi.mocked(runDiscovery).mockResolvedValue({
-      detected: {
-        ...DISCOVERY.detected,
-        local_ip: "",
-        ethernet_if: "",
-        infiniband_present: false,
-        infiniband_devices: [],
-        nccl_defaults: { socket_ifname: "lo", ib_hca: "", ib_disable: true },
-      },
-      validation: {
-        healthy: false,
-        warnings: ["no InfiniBand HCA in ACTIVE state"],
-        errors: ["no routable ethernet interface"],
-      },
-    });
-    render(<SettingsPage />);
-    await discover();
-
-    expect(await screen.findByText("Network: Issues found")).toBeInTheDocument();
-    expect(screen.getByText(/no routable ethernet interface/)).toBeInTheDocument();
-    expect(screen.getByText(/no InfiniBand HCA in ACTIVE state/)).toBeInTheDocument();
-    expect(screen.getAllByText("not detected").length).toBe(2);
-    expect(screen.getByText("not present")).toBeInTheDocument();
-  });
-});
-
 // ── Saving ──────────────────────────────────────────────────────────────────
 
 describe("SettingsPage saving", () => {
@@ -514,13 +435,13 @@ describe("SettingsPage saving", () => {
     fireEvent.change(await screen.findByDisplayValue("4096"), { target: { value: "8192" } });
 
     await openTab(/deployment/i);
-    fireEvent.change(await screen.findByDisplayValue("0.8"), { target: { value: "0.6" } });
+    fireEvent.change(await screen.findByLabelText("Port range end"), { target: { value: "9600" } });
     await user.click(screen.getByRole("button", { name: /save settings/i }));
 
     await waitFor(() =>
       expect(updateSettings).toHaveBeenCalledWith(
         expect.objectContaining({
-          default_gpu_mem_util: 0.6,
+          default_port_range_end: 9600,
           docker: expect.objectContaining({ pids_limit: 8192 }),
         }),
       ),
@@ -531,9 +452,9 @@ describe("SettingsPage saving", () => {
     const user = userEvent.setup();
     vi.mocked(updateSettings).mockRejectedValue(new Error("API 403: settings are read-only"));
     render(<SettingsPage />);
-    const container = await screen.findByDisplayValue("vllm-node");
+    const path = await screen.findByDisplayValue("/opt/spark-vllm-docker");
 
-    await user.type(container, "-x");
+    await user.type(path, "-x");
     await user.click(screen.getByRole("button", { name: /save settings/i }));
 
     expect(await screen.findByText("API 403: settings are read-only")).toBeInTheDocument();
@@ -764,92 +685,8 @@ describe("SettingsPage secrets", () => {
 
 // ── Engines, and the states before settings arrive ──────────────────────────
 
-describe("SettingsPage engines and loading", () => {
-  const ENGINE: EngineSummary = {
-    engine: "vllm",
-    variant: "default",
-    key: "vllm/default",
-    description: "",
-    image: "ghcr.io/acme/engine/vllm",
-    image_ref: "ghcr.io/acme/engine/vllm:0.1.0",
-    version: "0.1.0",
-    tag: "0.1.0",
-    digest: null,
-    legacy_tags: [],
-    capabilities: { mods: true, solo: true, cluster: true },
-    verified: [],
-    ports: { api: 8000, rendezvous: 29500 },
-    readiness: "/v1/models",
-    models_endpoint: "/v1/models",
-    metrics: null,
-    source: "bundled",
-    enabled: true,
-  };
-
-  beforeEach(() => {
-    seedApi();
-    vi.mocked(refreshEngines).mockResolvedValue({ refreshed: true, engines: 1, indexes: [] });
-  });
-
-  it("re-reads the engine indexes on request", async () => {
-    const user = userEvent.setup();
-    render(<SettingsPage />);
-    await openTab(/engines/i);
-    await screen.findByRole("heading", { name: "Engines" });
-
-    await user.click(screen.getByRole("button", { name: /refresh/i }));
-
-    await waitFor(() => expect(refreshEngines).toHaveBeenCalled());
-    // Refreshing an index is pointless unless the list is re-read after it.
-    await waitFor(() => expect(vi.mocked(fetchEngines).mock.calls.length).toBeGreaterThan(1));
-  });
-
-  it("says why an index refresh failed", async () => {
-    const user = userEvent.setup();
-    vi.mocked(refreshEngines).mockRejectedValue(new Error("API 502: ghcr.io unreachable"));
-    render(<SettingsPage />);
-    await openTab(/engines/i);
-
-    await user.click(await screen.findByRole("button", { name: /refresh/i }));
-
-    expect(await screen.findByText("API 502: ghcr.io unreachable")).toBeInTheDocument();
-  });
-
-  it("lists the engines the registry holds, with the default marked", async () => {
-    vi.mocked(fetchEngines).mockResolvedValue({ default_engine: "vllm", engines: [ENGINE] });
-    render(<SettingsPage />);
-    await openTab(/engines/i);
-
-    expect(await screen.findByText("vllm")).toBeInTheDocument();
-    expect(screen.getByText("default")).toBeInTheDocument();
-    expect(screen.getByText("v0.1.0")).toBeInTheDocument();
-  });
-
-  it("says the registry is empty rather than showing a blank panel", async () => {
-    render(<SettingsPage />);
-    await openTab(/engines/i);
-
-    expect(await screen.findByText("No engines available.")).toBeInTheDocument();
-  });
-
-  it("edits the indexes as a list, one URL per line", async () => {
-    const user = userEvent.setup();
-    render(<SettingsPage />);
-    await openTab(/engines/i);
-    const indexes = await screen.findByLabelText("Engine indexes");
-    expect(indexes).toHaveValue("https://acme.test/engines.json");
-
-    fireEvent.change(indexes, { target: { value: "https://a.test/e.json\nhttps://b.test/e.json" } });
-    await user.click(screen.getByRole("button", { name: /save settings/i }));
-
-    await waitFor(() =>
-      expect(updateSettings).toHaveBeenCalledWith(
-        expect.objectContaining({
-          engine_indexes: ["https://a.test/e.json", "https://b.test/e.json"],
-        }),
-      ),
-    );
-  });
+describe("SettingsPage loading", () => {
+  beforeEach(seedApi);
 
   it("shows nothing but a spinner until the settings arrive", () => {
     vi.mocked(fetchSettings).mockReturnValue(new Promise(() => {}));

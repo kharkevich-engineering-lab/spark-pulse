@@ -14,9 +14,9 @@ for all of them:
   hardware says ``single-gpu`` in its own tag;
 * **Modular MAX** has no distributed tensor parallelism whatsoever — it takes
   more *local* GPUs with ``--devices``, and a Spark has one;
-* **Atlas** and **tokenary** bootstrap their own NCCL world with
-  ``--rank/--world-size/--master-addr/--master-port``, which is a third and
-  fourth dialect that nothing here renders yet.
+* **Atlas** bootstraps its own NCCL world with
+  ``--rank/--world-size/--master-addr/--master-port``, a third dialect that
+  nothing here renders yet.
 
 So the launch is the serve command, the model, and the engine-neutral params
 mapped through ``param_flags`` — all of it read from the engine spec, none of
@@ -166,14 +166,3 @@ class AtlasEngine(SoloEngine):
     """Atlas's ``spark serve``."""
 
     name = "atlas"
-
-
-class TokenaryEngine(SoloEngine):
-    """tokenary.
-
-    ``--server`` is part of the spec's serve command rather than a flag here:
-    without it rank 0 joins the NCCL world and binds no HTTP at all, so it
-    belongs in every launch and not in a recipe's memory.
-    """
-
-    name = "tokenary"

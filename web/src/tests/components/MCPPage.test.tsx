@@ -55,8 +55,6 @@ const BROWSER_PORT = "3000";
 function settings(webui_port: number): Settings {
   return {
     spark_vllm_path: "/opt/spark-vllm-docker",
-    default_container: "vllm-node",
-    default_gpu_mem_util: 0.8,
     default_port_range_start: 9000,
     default_port_range_end: 9100,
     webui_port,

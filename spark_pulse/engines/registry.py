@@ -47,7 +47,6 @@ from spark_pulse.engines.solo import (
     AtlasEngine,
     LlamaCppEngine,
     ModularMaxEngine,
-    TokenaryEngine,
     TrtllmEngine,
 )
 from spark_pulse.engines.vllm import VllmEngine
@@ -66,7 +65,6 @@ ENGINE_CLASSES: dict[str, type[Engine]] = {
     "trtllm": TrtllmEngine,
     "modular-max": ModularMaxEngine,
     "atlas": AtlasEngine,
-    "tokenary": TokenaryEngine,
 }
 
 INDEX_API_VERSION = "spark-pulse.io/v1"

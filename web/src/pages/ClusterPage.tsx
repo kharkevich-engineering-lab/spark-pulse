@@ -19,6 +19,7 @@ import { useQuery } from "@/hooks/useQuery";
 import StatusBadge from "@/components/StatusBadge";
 import LaunchScriptAnalyzer from "@/components/LaunchScriptAnalyzer";
 import NodeRegistry from "@/components/NodeRegistry";
+import NetworkDiscovery from "@/components/NetworkDiscovery";
 import { Server, AlertCircle, Loader2 } from "lucide-react";
 import type { Deployment } from "@/lib/types";
 import { ExperimentalBadge, ExperimentalBanner } from "@/components/Experimental";
@@ -66,6 +67,11 @@ export default function ClusterPage() {
 
       {/* The node registry — what used to be two free-text IP boxes. */}
       <NodeRegistry />
+
+      {/* What this host's fabric actually looks like, and what NCCL will be
+          told about it. It was a card in Settings under a Cluster tab; the
+          machines are here. */}
+      <NetworkDiscovery />
 
       {/* Deployments, which is what "cluster status" became. */}
       <div className="rounded-xl bg-surface border border-border p-4 space-y-3" data-testid="cluster-deployments">

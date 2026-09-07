@@ -8,63 +8,13 @@
 import { expect, test } from "@playwright/test";
 import { expectNoCrash, gotoPage } from "./helpers";
 
-interface EngineSummary {
-  engine: string;
-  variant: string;
-  version: string;
-  image: string;
-  image_ref: string;
-  digest: string | null;
-  enabled: boolean;
-  ports: { api: number; rendezvous?: number | null };
-}
-
 interface Settings {
   spark_vllm_path: string;
-  default_container: string;
-  default_gpu_mem_util: number;
   default_port_range_start: number;
   default_port_range_end: number;
   default_engine: string;
   docker: { shm_size_gb: number; pids_limit: number };
 }
-
-test("shows the engines the registry knows about", async ({ page, request }) => {
-  const response = await request.get("/api/engines");
-  expect(response.ok(), "GET /api/engines should succeed").toBeTruthy();
-  const { engines, default_engine } = (await response.json()) as {
-    engines: EngineSummary[];
-    default_engine: string;
-  };
-  expect(engines.length, "simulation mode should serve an engine registry").toBeGreaterThan(0);
-
-  await gotoPage(page, "/settings");
-  await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
-  // The engine list lives on its own tab now; nothing is asserted about it
-  // until that tab is the one on screen.
-  await page.getByRole("tab", { name: "Engines" }).click();
-  await expect(page.getByRole("heading", { name: "Engines", exact: true })).toBeVisible();
-
-  for (const engine of engines) {
-    const reference = engine.digest
-      ? `${engine.image}@${engine.digest.slice(0, 19)}…`
-      : engine.image_ref;
-    // One list entry per engine; the image reference identifies it uniquely.
-    const item = page.getByRole("listitem").filter({ hasText: reference });
-    await expect(item).toHaveCount(1);
-
-    const label =
-      engine.variant === "default" ? engine.engine : `${engine.engine} · ${engine.variant}`;
-    await expect(item).toContainText(label);
-    await expect(item.getByText(`v${engine.version}`, { exact: true })).toBeVisible();
-    await expect(item).toContainText(`:${engine.ports.api}`);
-
-    // The default engine carries a "default" chip, and only it does.
-    const isDefault = engine.engine === default_engine && engine.variant === "default";
-    await expect(item.getByText("default", { exact: true })).toHaveCount(isDefault ? 1 : 0);
-  }
-  await expectNoCrash(page);
-});
 
 test("shows the configuration the backend is running with", async ({ page, request }) => {
   const response = await request.get("/api/settings");
@@ -74,7 +24,7 @@ test("shows the configuration the backend is running with", async ({ page, reque
   await gotoPage(page, "/settings");
 
   // Every tab renders, and each is reached by name.
-  for (const tab of ["Deployment", "Containers", "Cluster", "Engines", "Secrets", "Environment"]) {
+  for (const tab of ["Deployment", "Containers", "Features", "Secrets", "Environment"]) {
     await expect(page.getByRole("tab", { name: tab, exact: true })).toBeVisible();
   }
 
@@ -88,8 +38,6 @@ test("shows the configuration the backend is running with", async ({ page, reque
   await expect(page.getByRole("heading", { name: "Deployment Defaults", exact: true })).toBeVisible();
   const deployment = await valuesOnScreen();
   expect(deployment).toContain(settings.spark_vllm_path);
-  expect(deployment).toContain(settings.default_container);
-  expect(deployment).toContain(String(settings.default_gpu_mem_util));
   expect(deployment).toContain(String(settings.default_port_range_start));
   expect(deployment).toContain(String(settings.default_port_range_end));
 
@@ -100,9 +48,6 @@ test("shows the configuration the backend is running with", async ({ page, reque
   const containers = await valuesOnScreen();
   expect(containers).toContain(String(settings.docker.shm_size_gb));
   expect(containers).toContain(String(settings.docker.pids_limit));
-
-  await page.getByRole("tab", { name: "Engines" }).click();
-  expect(await valuesOnScreen()).toContain(settings.default_engine);
 
   // Read-only by design: what this tab reports is exactly what a browser must
   // not be able to change.
