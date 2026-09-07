@@ -18,67 +18,6 @@ def _cgroup_container_id(pid: int) -> str | None:
         return None
 
 
-def _proc_children() -> dict[int, list[int]]:
-    """Scan /proc and return a map of pid → direct child pids."""
-    children: dict[int, list[int]] = {}
-    for entry in Path("/proc").iterdir():
-        if not entry.name.isdigit():
-            continue
-        try:
-            for line in (entry / "status").read_text().splitlines():
-                if line.startswith("PPid:"):
-                    ppid = int(line.split()[1])
-                    children.setdefault(ppid, []).append(int(entry.name))
-                    break
-        except OSError:
-            pass
-    return children
-
-
-def _descendants(
-    root: int, children: dict[int, list[int]], max_depth: int = 6
-) -> list[int]:
-    result: list[int] = []
-    queue = [(root, 0)]
-    seen = {root}
-    while queue:
-        pid, d = queue.pop()
-        if d >= max_depth:
-            continue
-        for c in children.get(pid, []):
-            if c not in seen:
-                seen.add(c)
-                result.append(c)
-                queue.append((c, d + 1))
-    return result
-
-
-def _docker_container_name(pid: int) -> str | None:
-    """If pid is a `docker exec|run|start` process, return the target container name."""
-    try:
-        parts = (
-            Path(f"/proc/{pid}/cmdline")
-            .read_text()
-            .replace("\x00", " ")
-            .strip()
-            .split()
-        )
-    except OSError:
-        return None
-    if not parts or "docker" not in parts[0]:
-        return None
-    for i, p in enumerate(parts):
-        if p == "--name" and i + 1 < len(parts):
-            return parts[i + 1]
-        if p in ("exec", "start", "attach") and i + 1 < len(parts):
-            j = i + 1
-            while j < len(parts) and parts[j].startswith("-"):
-                j += 1
-            if j < len(parts):
-                return parts[j]
-    return None
-
-
 def _resolve_container_name(name: str) -> str | None:
     """Resolve a Docker container name to a short 12-char container ID."""
     try:
@@ -101,31 +40,37 @@ def enrich_gpu_process_tracking(
 ) -> None:
     """Set ``is_tracked`` on each GPU process dict in-place.
 
-    Tracked means the process belongs to a Docker container started/exec'd
-    by a known running deployment, or its PID directly matches a deployment.
+    Tracked means the process belongs to a container this control plane knows
+    it started. That is decided from the container *names* the deployment
+    records carry, not from a process tree.
+
+    It used to walk ``/proc`` from each record's ``pid`` down to a ``docker
+    run|exec`` child and read the container name off its command line. Two
+    things killed that. Native deployments talk to the Docker API rather than
+    spawning a client, so there is no such child and ``pid`` is ``None`` on
+    every record written since; and a PID belongs to the process that recorded
+    it, so restarting the service — an upgrade, a reboot — orphans every one
+    that remains. Both end the same way: no container ids collected, every GPU
+    process reported untracked, while the deployments page reads the same
+    containers and correctly says Running. An operator sees a machine full of
+    processes nothing claims.
+
+    A container name survives both, because it is what the deployment *is*:
+    reconciliation finds its containers by that name after any restart.
     """
-    dep_pids = {dep["pid"] for dep in running_deployments if dep.get("pid")}
     if not processes:
         return
 
     tracked_container_ids: set[str] = set()
-    try:
-        children = _proc_children()
-        container_names: set[str] = set()
-        for dep in running_deployments:
-            pid = dep.get("pid")
-            if not pid:
-                continue
-            for child_pid in _descendants(int(pid), children):
-                name = _docker_container_name(child_pid)
-                if name:
-                    container_names.add(name)
-        for name in container_names:
-            cid = _resolve_container_name(name)
-            if cid:
-                tracked_container_ids.add(cid)
-    except Exception:
-        pass
+    for name in _deployment_container_names(running_deployments):
+        cid = _resolve_container_name(name)
+        if cid:
+            tracked_container_ids.add(cid)
+
+    # Records written by the removed upstream runner still carry the pid of a
+    # `run-recipe.sh` this process started. Kept as a fallback so a deployment
+    # from before the native runtime is not reported untracked.
+    dep_pids = {dep["pid"] for dep in running_deployments if dep.get("pid")}
 
     for proc in processes:
         cid = _cgroup_container_id(proc["pid"])
@@ -133,6 +78,28 @@ def enrich_gpu_process_tracking(
             proc["is_tracked"] = cid in tracked_container_ids
         else:
             proc["is_tracked"] = proc["pid"] in dep_pids
+
+
+def _deployment_container_names(deployments: list[dict[str, Any]]) -> set[str]:
+    """Every container name the given deployments own on this machine.
+
+    A multi-rank deployment carries one name per rank; only the ranks placed
+    here can appear in this machine's GPU process list, but naming all of them
+    costs one failed ``docker inspect`` and keeps the rule simple.
+    """
+    names: set[str] = set()
+    for dep in deployments:
+        scalar = str(dep.get("container_name") or "").strip()
+        if scalar:
+            names.add(scalar)
+        ranks = dep.get("ranks")
+        if isinstance(ranks, list):
+            for entry in ranks:
+                if isinstance(entry, dict):
+                    name = str(entry.get("container_name") or "").strip()
+                    if name:
+                        names.add(name)
+    return names
 
 
 def get_gpu_stats() -> list[dict[str, Any]]:

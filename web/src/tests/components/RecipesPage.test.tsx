@@ -826,10 +826,39 @@ describe("RecipesPage", () => {
 
       await userEvent.click(await screen.findByText("Mine"));
       await screen.findByLabelText("Recipe YAML");
-      await userEvent.click(screen.getByRole("button", { name: /Delete/ }));
+      // The drawer's own control, not the card's — the card names what it
+      // deletes ("Delete Mine"), this one sits beside Save.
+      await userEvent.click(screen.getByRole("button", { name: /^Delete$/ }));
       await userEvent.click(screen.getAllByRole("button", { name: "Delete" }).at(-1)!);
 
       await waitFor(() => expect(deleteCustomRecipe).toHaveBeenCalledWith("custom/mine"));
+    });
+
+    /** The editor drawer has had a delete since custom recipes existed, but it
+     *  is two clicks and a scroll from the card, so the list looked as though
+     *  what it created could not be removed. */
+    it("deletes a custom recipe from its card, after confirming", async () => {
+      render(<RecipesPage />);
+      await screen.findByText("Qwen3 8B");
+      await enterCustomMode();
+
+      await userEvent.click(await screen.findByRole("button", { name: "Delete Mine" }));
+      expect(deleteCustomRecipe).not.toHaveBeenCalled();
+      await userEvent.click(screen.getAllByRole("button", { name: "Delete" }).at(-1)!);
+
+      await waitFor(() => expect(deleteCustomRecipe).toHaveBeenCalledWith("custom/mine"));
+    });
+
+    it("says why a delete from the card failed", async () => {
+      vi.mocked(deleteCustomRecipe).mockRejectedValueOnce(new Error("permission denied"));
+      render(<RecipesPage />);
+      await screen.findByText("Qwen3 8B");
+      await enterCustomMode();
+
+      await userEvent.click(await screen.findByRole("button", { name: "Delete Mine" }));
+      await userEvent.click(screen.getAllByRole("button", { name: "Delete" }).at(-1)!);
+
+      expect(await screen.findByText("permission denied")).toBeInTheDocument();
     });
 
     it("opens a custom mod with the files it holds and saves them together", async () => {
@@ -873,7 +902,8 @@ describe("RecipesPage", () => {
       await userEvent.click(await screen.findByText("My Mod"));
       await screen.findByRole("textbox");
 
-      await userEvent.click(screen.getByRole("button", { name: /Delete/ }));
+      // The drawer's control; the card's is named for what it removes.
+      await userEvent.click(screen.getByRole("button", { name: /^Delete$/ }));
       await userEvent.click(screen.getAllByRole("button", { name: "Delete" }).at(-1)!);
 
       await waitFor(() => expect(deleteCustomMod).toHaveBeenCalledWith("custom/my-mod"));

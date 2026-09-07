@@ -93,87 +93,11 @@ class TestCgroupContainerId:
         assert system._cgroup_container_id(999999) is None
 
 
-class TestProcChildren:
-    def test_maps_parents_to_direct_children(self, fake_proc):
-        fake_proc(1, ppid=0)
-        fake_proc(100, ppid=1)
-        fake_proc(101, ppid=1)
-        fake_proc(200, ppid=100)
+def _stdout(text):
+    def fake_run(cmd, **_kwargs):
+        return subprocess.CompletedProcess(cmd, 0, stdout=text, stderr="")
 
-        children = system._proc_children()
-
-        assert sorted(children[1]) == [100, 101]
-        assert children[100] == [200]
-        assert 200 not in children
-
-    def test_ignores_non_pid_entries_and_unreadable_processes(self, fake_proc):
-        fake_proc(100, ppid=1)
-        (fake_proc.root / "proc" / "self").mkdir()
-        (fake_proc.root / "proc" / "meminfo").write_text("MemTotal: 1 kB\n")
-        fake_proc(101)  # a pid directory with no status file (exited mid-scan)
-
-        assert system._proc_children() == {1: [100]}
-
-
-class TestDescendants:
-    def test_walks_the_whole_subtree(self):
-        children = {1: [2, 3], 2: [4], 4: [5]}
-
-        assert sorted(system._descendants(1, children)) == [2, 3, 4, 5]
-
-    def test_stops_at_max_depth(self):
-        children = {1: [2], 2: [3], 3: [4]}
-
-        assert sorted(system._descendants(1, children, max_depth=2)) == [2, 3]
-
-    def test_tolerates_cycles_and_leaf_roots(self):
-        assert system._descendants(1, {1: [2], 2: [1]}) == [2]
-        assert system._descendants(7, {}) == []
-
-
-class TestDockerContainerName:
-    def test_reads_the_name_flag_of_a_docker_run(self, fake_proc):
-        fake_proc(
-            500,
-            cmdline=[
-                "/usr/bin/docker",
-                "run",
-                "--rm",
-                "--name",
-                "vllm-qwen",
-                "img:tag",
-            ],
-        )
-
-        assert system._docker_container_name(500) == "vllm-qwen"
-
-    def test_reads_the_target_of_a_docker_exec_skipping_flags(self, fake_proc):
-        fake_proc(501, cmdline=["docker", "exec", "-it", "vllm-qwen", "bash"])
-
-        assert system._docker_container_name(501) == "vllm-qwen"
-
-    def test_reads_the_target_of_docker_start(self, fake_proc):
-        fake_proc(502, cmdline=["docker", "start", "vllm-qwen"])
-
-        assert system._docker_container_name(502) == "vllm-qwen"
-
-    def test_returns_none_for_a_non_docker_process(self, fake_proc):
-        fake_proc(503, cmdline=["/usr/bin/python3", "-m", "vllm.entrypoints"])
-
-        assert system._docker_container_name(503) is None
-
-    def test_returns_none_for_a_docker_command_naming_no_container(self, fake_proc):
-        fake_proc(504, cmdline=["docker", "ps", "-a"])
-        fake_proc(505, cmdline=["docker", "exec"])  # truncated
-
-        assert system._docker_container_name(504) is None
-        assert system._docker_container_name(505) is None
-
-    def test_returns_none_for_an_empty_or_missing_cmdline(self, fake_proc):
-        fake_proc(506, cmdline=[])
-
-        assert system._docker_container_name(506) is None
-        assert system._docker_container_name(999999) is None
+    return fake_run
 
 
 class TestResolveContainerName:
@@ -209,20 +133,24 @@ class TestResolveContainerName:
 
 
 class TestEnrichGpuProcessTracking:
-    def test_tracks_processes_in_a_container_launched_by_a_deployment(
+    """Tracked means "a container this control plane started", decided from the
+    container names the records carry.
+
+    The old rule walked /proc from each record's pid to a `docker run|exec`
+    child. Native deployments never spawn one — they call the Docker API — so
+    `pid` is None on every record written since, and a pid is meaningless
+    across a service restart anyway. Both produced the same wrong answer: every
+    GPU process untracked while the deployments page said Running.
+    """
+
+    def test_tracks_a_process_in_a_container_the_record_names(
         self, fake_proc, monkeypatch
     ):
-        # deployment pid 100 → child 150 runs `docker exec vllm-qwen ...`
-        fake_proc(100, ppid=1)
-        fake_proc(150, ppid=100, cmdline=["docker", "exec", "vllm-qwen", "python"])
-        # the GPU process itself lives inside that container
         fake_proc(900, cgroup=CGROUP_DOCKER)
-        # ...and this one belongs to somebody else's container
         fake_proc(
             901,
             cgroup="0::/system.slice/docker-aaaabbbbcccc0000111122223333.scope\n",
         )
-
         monkeypatch.setattr(
             subprocess,
             "run",
@@ -235,12 +163,72 @@ class TestEnrichGpuProcessTracking:
         )
 
         processes = [{"pid": 900}, {"pid": 901}]
-        system.enrich_gpu_process_tracking(processes, [{"pid": 100}])
+        system.enrich_gpu_process_tracking(
+            processes, [{"container_name": "spark-pulse-abc123-r0-g1"}]
+        )
 
         assert processes[0]["is_tracked"] is True
         assert processes[1]["is_tracked"] is False
 
+    def test_a_record_with_no_pid_is_still_tracked(self, fake_proc, monkeypatch):
+        """The case from the machine: a native deployment records no pid at
+        all, and every GPU process was reported untracked because of it."""
+        fake_proc(900, cgroup=CGROUP_DOCKER)
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda cmd, **_k: subprocess.CompletedProcess(
+                cmd,
+                0,
+                "3f1c9a2b4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8\n",
+                "",
+            ),
+        )
+
+        processes = [{"pid": 900}]
+        system.enrich_gpu_process_tracking(
+            processes,
+            [{"pid": None, "container_name": "spark-pulse-1e1bddecd3ad-r0-g1"}],
+        )
+
+        assert processes[0]["is_tracked"] is True
+
+    def test_every_rank_of_a_multi_node_deployment_counts(self, fake_proc, monkeypatch):
+        """A record carries one container name per rank; the one placed here is
+        what this machine's GPU list can show."""
+        fake_proc(900, cgroup=CGROUP_DOCKER)
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda cmd, **_k: (
+                subprocess.CompletedProcess(
+                    cmd,
+                    0,
+                    "3f1c9a2b4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8\n",
+                    "",
+                )
+                if "spark-pulse-abc-r1-g1" in cmd
+                else subprocess.CompletedProcess(cmd, 1, "", "no such container")
+            ),
+        )
+
+        processes = [{"pid": 900}]
+        system.enrich_gpu_process_tracking(
+            processes,
+            [
+                {
+                    "ranks": [
+                        {"rank": 0, "container_name": "spark-pulse-abc-r0-g1"},
+                        {"rank": 1, "container_name": "spark-pulse-abc-r1-g1"},
+                    ]
+                }
+            ],
+        )
+
+        assert processes[0]["is_tracked"] is True
+
     def test_falls_back_to_direct_pid_matching_outside_containers(self, fake_proc):
+        """Records from the removed upstream runner still carry a real pid."""
         fake_proc(900, cgroup=CGROUP_HOST)
         fake_proc(901, cgroup=CGROUP_HOST)
 
@@ -253,32 +241,26 @@ class TestEnrichGpuProcessTracking:
     def test_is_a_no_op_without_gpu_processes(self, fake_proc):
         processes: list[dict] = []
 
-        system.enrich_gpu_process_tracking(processes, [{"pid": 100}])
+        system.enrich_gpu_process_tracking(processes, [{"container_name": "x"}])
 
         assert processes == []
 
-    def test_still_falls_back_when_proc_scanning_blows_up(self, fake_proc, monkeypatch):
-        fake_proc(900, cgroup=CGROUP_HOST)
-
-        def boom():
-            raise PermissionError("/proc")
-
-        monkeypatch.setattr(system, "_proc_children", boom)
+    def test_a_container_that_cannot_be_resolved_is_not_tracked(
+        self, fake_proc, monkeypatch
+    ):
+        """`docker inspect` failing means we do not know, and claiming the
+        process is ours would be worse than admitting it."""
+        fake_proc(900, cgroup=CGROUP_DOCKER)
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda cmd, **_k: subprocess.CompletedProcess(cmd, 1, "", "no such object"),
+        )
 
         processes = [{"pid": 900}]
-        system.enrich_gpu_process_tracking(processes, [{"pid": 900}])
+        system.enrich_gpu_process_tracking(processes, [{"container_name": "gone"}])
 
-        assert processes[0]["is_tracked"] is True
-
-
-# ── nvidia-smi parsing edge cases ────────────────────────────────────────────
-
-
-def _stdout(text):
-    def fake_run(cmd, **_kwargs):
-        return subprocess.CompletedProcess(cmd, 0, stdout=text, stderr="")
-
-    return fake_run
+        assert processes[0]["is_tracked"] is False
 
 
 class TestGpuStatsEdgeCases:
