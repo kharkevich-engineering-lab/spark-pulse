@@ -64,7 +64,13 @@ Import gotcha under pytest (SIMULATION_MODE=1): `from spark_pulse.tools import r
 
 **Frontend structure**: `pages/` map 1:1 to routes in `App.tsx` (`/` recipes, `/jobs`, `/cluster`, `/benchmarking`, `/monitoring`, `/cache`, `/mcp`, `/oci`, `/settings`, `/login` outside `Layout`). Data fetching uses `hooks/useQuery.ts`; imports use the `@/` alias to `web/src`. Unit tests live in `web/src/tests/{components,hooks,lib}` with global mocks in `setupTests.ts`; vitest coverage thresholds are 95% lines, 93% statements, 90% functions, 85% branches, measured over every file under `src/` whether or not a test imports it — they are a ratchet, never to be lowered to make a build green.
 
-**Persistence in real mode** goes under `~/.config/spark-pulse/` (deployments.json, logs/, registries.yaml override). In simulation mode, mock deployments write to `spark_pulse/data/deployments.json` (gitignored).
+**Persistence.** Structured state lives in one SQLAlchemy-backed database (`spark_pulse/db.py`): deployments, nodes, the enrollment ledger, benchmark results, recipe customizations and browser sessions. SQLite in WAL mode by default — `~/.config/spark-pulse/spark-pulse.db`, 0600 because it holds OIDC tokens; `spark_pulse/data/spark-pulse.db` (gitignored) in simulation. `docs/cluster-agent-plan.md` §3.3 chose it, and SQLAlchemy is there so the scale case is a URL: set `database_url` (or `SPARK_PULSE_DATABASE_URL`) to `postgresql+psycopg://…` and `pip install spark-pulse[postgres]`. `tests/test_db_and_sessions.py` compiles every table for the PostgreSQL dialect, so a SQLite-only column type fails in CI rather than in front of an operator.
+
+Each store imports its old JSON file **once**, on first read, recorded in the `meta` table — not inferred from an empty table, because deleting the last row would re-import and resurrect what an operator removed. The legacy files are left where they are.
+
+Still files on purpose: the CA key and node certificates (`~/.config/spark-pulse/agent/`, 0600, read by tooling), user-editable recipe and mod directories, `settings.json`/`secrets.json` (config, layered with env vars), `registries.yaml`, and the caches under `~/.cache/spark-pulse/`.
+
+Tests get a database per test via an autouse fixture in `tests/conftest.py`, which also points every JSON migration source at `tmp_path` — without that a test would import the developer's real deployments.
 
 **CLI** (`cli.py`, Click): `start`, `install/uninstall/status/start-service/stop-service [--user]` (systemd via `service.py`), `mcp`, plus `recipes` and `oci` groups for OCI-registry recipe collections (`tools/oci_registry.py`, defaults in `spark_pulse/registries.yaml`).
 

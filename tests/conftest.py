@@ -8,12 +8,127 @@ different working tree.
 import sys
 from pathlib import Path
 
+import os
+
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+
+
+#: The backend the suite runs against, read once. Empty, or a SQLite URL,
+#: means "a private SQLite file per test". Anything else — a PostgreSQL URL in
+#: CI — means "that server, cleaned between tests".
+#:
+#: Read at import and *removed from the environment*, because the per-test
+#: fixture sets the variable itself. Leaving it would make the fixture
+#: override the very URL an operator asked for, which is how a PostgreSQL job
+#: silently runs on SQLite and reports success for a backend it never touched.
+_BASE_DATABASE_URL = os.environ.pop("SPARK_PULSE_DATABASE_URL", "")
+_EXTERNAL_DATABASE = bool(_BASE_DATABASE_URL) and not _BASE_DATABASE_URL.startswith(
+    "sqlite"
+)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _external_database_once():
+    """Build the engine for a server backend exactly once for the whole run.
+
+    Reconfiguring per test disposes and rebuilds the connection pool every
+    time, which against PostgreSQL means thousands of pools over a run and
+    connection exhaustion long before the end of it. SQLite pays nothing for
+    a fresh engine — a server does.
+    """
+    if not _EXTERNAL_DATABASE:
+        yield
+        return
+    from spark_pulse import db
+
+    db.configure(_BASE_DATABASE_URL)
+    db.engine()  # create the schema once
+    yield
+    db.dispose()
+
+
+@pytest.fixture(autouse=True)
+def isolate_the_database(tmp_path, monkeypatch, _external_database_once):
+    """A clean database per test, on whichever backend is configured.
+
+    On SQLite that is a private file — a file rather than ``:memory:``,
+    because the file path is what production uses, WAL pragmas and mode bits
+    included, and a store only exercised in memory is a store whose real
+    configuration nothing tests.
+
+    On a server backend there is one database, built once, and every row is
+    deleted between tests. Truncating rather than recreating is deliberate: it
+    is what makes a CI run against PostgreSQL exercise the same tables,
+    indexes and constraints the product will actually have.
+    """
+    from spark_pulse import db
+
+    if _EXTERNAL_DATABASE:
+        monkeypatch.setenv("SPARK_PULSE_DATABASE_URL", _BASE_DATABASE_URL)
+        _empty_every_table(db)
+        yield
+        return
+
+    url = f"sqlite:///{tmp_path / 'test.db'}"
+    monkeypatch.setenv("SPARK_PULSE_DATABASE_URL", url)
+    db.configure(url)
+    yield
+    db.dispose()
+
+
+def _empty_every_table(db) -> None:
+    """Delete every row, leaving the schema alone.
+
+    Every table SQLAlchemy knows about, which is every table whose module has
+    been imported — ``db.engine()`` imports them all up front for exactly this
+    reason, so a store imported late in the run cannot keep its rows across
+    tests and have the leak look like flakiness.
+    """
+    from sqlalchemy import delete as sa_delete
+
+    # The schema is created once, by the session fixture. Creating it again
+    # here raced with itself and failed on a duplicate type name; all this
+    # needs to do is empty what is already there.
+    with db.session_scope() as session:
+        for table in reversed(db.Base.metadata.sorted_tables):
+            session.execute(sa_delete(table))
+
+
+@pytest.fixture(autouse=True)
+def isolate_the_legacy_import_sources(tmp_path, monkeypatch):
+    """Point every JSON migration source at tmp_path.
+
+    Each store imports its old JSON file once, on first read. Those paths
+    default to the operator's own ``~/.config/spark-pulse``, so without this a
+    test would import — and a test asserting a fresh store would see — the
+    real deployments, nodes and customizations of the machine running the
+    suite.
+    """
+    # ``importlib.import_module`` by full name gets the real submodule.
+    # ``from spark_pulse.tools import x`` — and ``import spark_pulse.tools.x
+    # as x``, which reads the same attribute — get the *mock* under
+    # SIMULATION_MODE, and the mock has no file to point anywhere. The paths
+    # being isolated belong to the real modules.
+    import importlib
+
+    benchmarking = importlib.import_module("spark_pulse.tools.benchmarking")
+    custom_recipes = importlib.import_module("spark_pulse.tools.custom_recipes")
+    deployment_records = importlib.import_module("spark_pulse.tools.deployment_records")
+    node_registry = importlib.import_module("spark_pulse.tools.node_registry")
+
+    monkeypatch.setattr(
+        deployment_records, "RECORDS_FILE", tmp_path / "deployments.json"
+    )
+    monkeypatch.setattr(node_registry, "_REGISTRY_PATH", tmp_path / "nodes.json")
+    monkeypatch.setattr(
+        custom_recipes, "_CUSTOM_PATH", tmp_path / "custom-recipes.json"
+    )
+    monkeypatch.setattr(benchmarking, "_BENCHMARKS_PATH", tmp_path / "benchmarks.json")
 
 
 @pytest.fixture(autouse=True)
@@ -204,6 +319,24 @@ async def join_agent(agent_server, tmp_path):
 async def agent_node(join_agent):
     """One enrolled, connected stub node."""
     return await join_agent("spark-a")
+
+
+@pytest.fixture
+def a_runnable_agent_binary():
+    """Skip unless this machine has an agent binary it can execute.
+
+    ``host_binary`` finds a packaged binary for this triple or a local cargo
+    build, and on a runner with neither it raises. Tests that only need the
+    *bundle* already skip through ``agent_bundle``; these are the ones that
+    reach for the binary directly, and without this they reported "no agent
+    binary" as a failure of the code under test rather than of the machine.
+    """
+    from spark_pulse.agent.bundle import MissingAgentBinary, host_binary
+
+    try:
+        return host_binary()
+    except MissingAgentBinary as exc:
+        pytest.skip(str(exc))
 
 
 @pytest.fixture(scope="session")

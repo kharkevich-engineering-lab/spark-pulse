@@ -8,7 +8,6 @@ list, never as a chart of nothing.
 
 from __future__ import annotations
 
-import json
 
 import pytest
 from fastapi.testclient import TestClient
@@ -35,12 +34,32 @@ def sampler():
 
 @pytest.fixture
 def client(store, sampler):
+    """The API, with the *background* sampler stopped.
+
+    ``create_app``'s lifespan starts the sampler thread, and that thread
+    sweeps once immediately and then every interval. These tests drive
+    ``sample_once`` themselves and count the readings it produces, so a thread
+    sampling alongside them adds ticks nobody asked for — which showed up in
+    CI as ``assert 3 == 2`` and never locally, because it needs the test to
+    outlive one interval and CI is the slow machine.
+
+    The sampler *object* is kept, so snapshots taken through the API still see
+    what the test recorded; only the thread goes.
+    """
     with TestClient(create_app()) as test_client:
+        sampler.stop()
         yield test_client
 
 
 def write(store, *records):
-    store.write_text(json.dumps(list(records)))
+    """Set the deployment set to exactly ``records``.
+
+    Through the store rather than by writing the JSON file: state lives in the
+    database, and the file is only its one-time migration source — so writing
+    it a second time changes nothing.
+    """
+    del store  # kept so the fixture still scopes the state to this test
+    tools.deployment_records.save(list(records))
 
 
 def record(**overrides):

@@ -4,7 +4,9 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from spark_pulse import auth
+import time
+
+from spark_pulse import auth, sessions
 
 
 class DummyRequest:
@@ -213,8 +215,9 @@ class TestAuthMiddleware:
         monkeypatch.setitem(auth.config._data, "oidc_client_id", "client-id")
         monkeypatch.setitem(auth.config._data, "oidc_client_secret", "secret")
         mw = auth.AuthMiddleware(None)
-        valid_token = "valid-token-123"
-        auth._active_tokens[valid_token] = {"user": {"name": "Alice"}}
+        valid_token = sessions.create(
+            user={"name": "Alice"}, expires_at=time.time() + 3600
+        )
 
         request = self._make_request("/api/recipes", cookie_token=valid_token)
         call_next_called = []
@@ -225,8 +228,12 @@ class TestAuthMiddleware:
 
         _result = asyncio.run(mw.dispatch(request, call_next))
         assert len(call_next_called) == 1
-        # Middleware attaches the full token data (including "user" key)
-        assert request.state.user == {"user": {"name": "Alice"}}
+        # The middleware attaches the whole session. The claims are the part
+        # a handler reads; the rest is the provider's tokens and timestamps,
+        # which are present in production too — the old assertion only held
+        # because the test inserted a partial dict the real flow never writes.
+        assert request.state.user["user"] == {"name": "Alice"}
+        assert "expires_at" in request.state.user
 
 
 # ── Auth routes tests ───────────────────────────────────────────────────────
@@ -305,10 +312,10 @@ class TestAuthRoutes:
         client = TestClient(app)
 
         # Insert a valid token
-        valid_token = "test-token-456"
-        auth._active_tokens[valid_token] = {
-            "user": {"name": "Bob", "email": "bob@example.com"},
-        }
+        valid_token = sessions.create(
+            user={"name": "Bob", "email": "bob@example.com"},
+            expires_at=time.time() + 3600,
+        )
 
         resp = client.get(
             "/auth/me",
@@ -380,8 +387,7 @@ class TestSessionExpiry:
     """``expires_at`` was recorded at login and then never read.
 
     A session therefore outlived the provider's own token for as long as the
-    process ran, and ``_active_tokens`` grew for every login that ever
-    happened. The cookie's ``max-age`` governs only the browser; a client that
+    process ran, and the store grew for every login that ever happened. The cookie's ``max-age`` governs only the browser; a client that
     keeps sending an expired cookie was honoured indefinitely.
     """
 
@@ -398,17 +404,14 @@ class TestSessionExpiry:
         assert auth._session_expired({}) is False
 
     def test_sweeping_drops_only_the_expired(self):
-        import time
+        sessions.clear()
+        old = sessions.create(expires_at=1.0)
+        live = sessions.create(expires_at=time.time() + 3600)
 
-        auth._active_tokens.clear()
-        auth._active_tokens["old"] = {"expires_at": 1.0}
-        auth._active_tokens["new"] = {"expires_at": time.time() + 3600}
+        assert sessions.sweep() == 1
 
-        auth._sweep_sessions()
-
-        assert "old" not in auth._active_tokens
-        assert "new" in auth._active_tokens
-        auth._active_tokens.clear()
+        assert sessions.get(old) is None
+        assert sessions.get(live) is not None
 
     def test_get_me_refuses_an_expired_session(self, monkeypatch):
         from fastapi.testclient import TestClient
@@ -422,9 +425,9 @@ class TestSessionExpiry:
         monkeypatch.setitem(auth.config._data, "oidc_client_id", "client-id")
         monkeypatch.setitem(auth.config._data, "oidc_client_secret", "secret")
 
-        auth._active_tokens["stale"] = {"user": {"name": "Bob"}, "expires_at": 1.0}
+        stale = sessions.create(user={"name": "Bob"}, expires_at=1.0)
         with TestClient(create_app()) as client:
-            resp = client.get("/auth/me", cookies={"token": "stale"})
+            resp = client.get("/auth/me", cookies={"token": stale})
 
         assert resp.status_code == 401
-        assert "stale" not in auth._active_tokens, "an expired session is dropped"
+        assert sessions.count() == 0, "an expired session is dropped as it is read"

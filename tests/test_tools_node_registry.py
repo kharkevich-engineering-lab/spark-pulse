@@ -11,8 +11,11 @@ from __future__ import annotations
 import json
 import sys
 import types
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 
 import pytest
+from sqlalchemy import event
 
 import spark_pulse.tools  # noqa: F401 — ensures the package is loaded
 import spark_pulse.tools.node_registry  # noqa: F401 — the real submodule
@@ -55,6 +58,30 @@ def registry_in_tmp(tmp_path, monkeypatch):
     path = tmp_path / "nodes.json"
     monkeypatch.setattr(node_registry, "_REGISTRY_PATH", path)
     return path
+
+
+@contextmanager
+def statements_against_the_nodes_table():
+    """Every SQL statement the block sends that names the ``nodes`` table.
+
+    Counted at the driver rather than by patching the registry, so what is
+    asserted is what the database is actually asked to do — on either backend,
+    whose SQL differs in spelling but not in how many statements it takes.
+    """
+    from spark_pulse import db
+
+    engine = db.engine()
+    seen: list[str] = []
+
+    def capture(_conn, _cursor, statement, _params, _context, _many):
+        if "nodes" in statement:
+            seen.append(statement)
+
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        yield seen
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
 
 
 class TestIdentity:
@@ -108,7 +135,6 @@ class TestPersistence:
             infiniband_interfaces=["ib0", "ib1"],
             state="healthy",
         )
-        assert registry_in_tmp.exists()
 
         reloaded = node_registry.get_node(node.id)
         assert reloaded == node
@@ -135,11 +161,28 @@ class TestPersistence:
             "zulu",
         ]
 
-    def test_the_file_records_a_version(self, registry_in_tmp):
-        node_registry.add_node(address="10.0.0.11")
-        data = json.loads(registry_in_tmp.read_text())
-        assert data["version"] == 1
-        assert len(data["nodes"]) == 1
+    def test_a_stored_node_keeps_every_field(self, registry_in_tmp):
+        """What the ``version`` key used to guard, asserted directly.
+
+        The JSON file carried a format version so a future reader could tell
+        shapes apart. State is in the database now and the schema plays that
+        role, so what is worth pinning here is the thing the version existed
+        to protect: a record survives storage with every field intact.
+        """
+        node = node_registry.add_node(
+            name="spark-02",
+            address="10.0.0.11",
+            ssh_user="spark",
+            infiniband_interfaces=["rocep1s0f0", "rocep1s0f1"],
+            fabric_mode="direct",
+            state="healthy",
+        )
+
+        (stored,) = node_registry.list_nodes()
+
+        assert stored == node
+        assert stored.infiniband_interfaces == ("rocep1s0f0", "rocep1s0f1")
+        assert stored.fabric_mode == "direct"
 
     def test_a_hand_edited_record_without_an_id_is_given_one(self, registry_in_tmp):
         registry_in_tmp.write_text(
@@ -148,6 +191,234 @@ class TestPersistence:
         (node,) = node_registry.list_nodes()
         assert len(node.id) == 32
         assert node.address == "10.0.0.11"
+
+
+class TestPerRowWrites:
+    """One change is one row.
+
+    The first cut of the database store rewrote the whole registry on every
+    write: renaming one peer read every node and merged every node back. That
+    is a cost that grows with the cluster, and — worse — it makes a write
+    depend on a set that was read before it, which is how a concurrent add is
+    silently deleted. These pin the shape that replaced it.
+    """
+
+    @staticmethod
+    def _writes(statements):
+        return [
+            statement
+            for statement in statements
+            if statement.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE"))
+        ]
+
+    def test_changing_one_node_costs_the_same_in_a_registry_of_three_and_of_forty(
+        self,
+    ):
+        """The whole point: the price of an edit is the edit, not the cluster."""
+        small = [node_registry.add_node(address=f"10.0.1.{i}") for i in range(1, 4)]
+        with statements_against_the_nodes_table() as in_a_small_registry:
+            node_registry.update_node(small[0].id, name="renamed")
+
+        for i in range(1, 38):
+            node_registry.add_node(address=f"10.0.2.{i}")
+        with statements_against_the_nodes_table() as in_a_large_registry:
+            node_registry.update_node(small[1].id, name="renamed-too")
+
+        assert len(in_a_large_registry) == len(in_a_small_registry)
+        assert len(self._writes(in_a_large_registry)) == 1
+
+    def test_reading_one_node_costs_the_same_in_a_registry_of_three_and_of_forty(self):
+        small = [node_registry.add_node(address=f"10.0.1.{i}") for i in range(1, 4)]
+        with statements_against_the_nodes_table() as in_a_small_registry:
+            assert node_registry.get_node(small[0].id) is not None
+
+        for i in range(1, 38):
+            node_registry.add_node(address=f"10.0.2.{i}")
+        with statements_against_the_nodes_table() as in_a_large_registry:
+            assert node_registry.get_node(small[1].id) is not None
+
+        assert len(in_a_large_registry) == len(in_a_small_registry) == 1
+
+    def test_forgetting_one_node_deletes_that_row_and_writes_no_other(self):
+        """A whole-set save spelled "forget one" as "replace all but one"."""
+        doomed = node_registry.add_node(address="10.0.0.11")
+        node_registry.add_node(address="10.0.0.12")
+        node_registry.add_node(address="10.0.0.13")
+
+        with statements_against_the_nodes_table() as statements:
+            node_registry.remove_node(doomed.id)
+
+        (write,) = self._writes(statements)
+        assert write.lstrip().upper().startswith("DELETE")
+        assert len(node_registry.list_nodes()) == 2
+
+    def test_nodes_added_from_several_threads_at_once_all_survive(self):
+        """The lost update the whole-set save made possible, run for real.
+
+        Each thread read the registry, appended its node and wrote the whole
+        list back, so whichever thread wrote last erased every node registered
+        while it was thinking. A cluster brought up by a script that enrolls
+        its peers in parallel would end up with one of them.
+        """
+        addresses = [f"10.0.0.{i}" for i in range(2, 22)]
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            minted = {
+                node.id
+                for node in pool.map(
+                    lambda address: node_registry.add_node(address=address), addresses
+                )
+            }
+
+        assert len(minted) == len(addresses)
+        assert {node.id for node in node_registry.list_nodes()} == minted
+
+    def test_edits_to_different_nodes_from_different_threads_all_stick(self):
+        nodes = [node_registry.add_node(address=f"10.0.0.{i}") for i in range(2, 12)]
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            list(
+                pool.map(
+                    lambda node: node_registry.update_node(
+                        node.id, name=f"renamed-{node.address}"
+                    ),
+                    nodes,
+                )
+            )
+
+        assert {node.name for node in node_registry.list_nodes()} == {
+            f"renamed-{node.address}" for node in nodes
+        }
+
+    def test_two_threads_racing_for_one_address_produce_one_node_not_two(self):
+        """Per-row writes stop deleting the loser, so the check has to hold.
+
+        Uniqueness used to be enforced by an accident: both threads inserted,
+        and the second one's whole-set save deleted the first. Now that a write
+        touches one row, "is this address free?" and the insert have to be one
+        indivisible step or the registry ends up with two nodes at one address
+        and pre-flight resolves it to whichever the query happened to return.
+        """
+        outcomes = []
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            for future in [
+                pool.submit(node_registry.add_node, address="10.0.0.11")
+                for _ in range(8)
+            ]:
+                try:
+                    outcomes.append(future.result())
+                except ValueError as exc:
+                    assert "already registered" in str(exc)
+
+        assert len(outcomes) == 1
+        assert [node.address for node in node_registry.list_nodes()] == ["10.0.0.11"]
+
+    def test_two_threads_racing_to_register_the_control_plane_agree_on_one(self):
+        """Two startups — the lifespan hook and a re-enrolling agent — racing."""
+        outcomes = []
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            for future in [
+                pool.submit(
+                    node_registry.add_node, name="control", is_control_plane=True
+                )
+                for _ in range(4)
+            ]:
+                try:
+                    outcomes.append(future.result())
+                except ValueError as exc:
+                    assert "already registered" in str(exc)
+
+        assert len(outcomes) == 1
+        assert len([n for n in node_registry.list_nodes() if n.is_control_plane]) == 1
+
+
+class TestWholeSetSave:
+    """The bulk path is still there, and still means *replace*.
+
+    Per-row writes are what a single change uses; a caller holding an entire
+    registry — a reconciliation against an external source of truth, a restore
+    — still needs "make the stored set be exactly this", including the
+    deletions that implies.
+    """
+
+    def test_saving_a_set_deletes_the_nodes_absent_from_it(self):
+        kept = node_registry.add_node(address="10.0.0.11")
+        node_registry.add_node(address="10.0.0.12")
+
+        node_registry._save([kept])
+
+        assert [node.id for node in node_registry.list_nodes()] == [kept.id]
+
+    def test_saving_a_set_inserts_and_updates_in_the_same_call(self):
+        existing = node_registry.add_node(address="10.0.0.11", name="old")
+        arriving = node_registry.NodeRecord(
+            id=node_registry.mint_node_id(), name="new", address="10.0.0.12"
+        )
+
+        from dataclasses import replace as dataclass_replace
+
+        node_registry._save([dataclass_replace(existing, name="renamed"), arriving])
+
+        by_id = {node.id: node for node in node_registry.list_nodes()}
+        assert by_id[existing.id].name == "renamed"
+        assert by_id[arriving.id].name == "new"
+
+
+class TestTheOneTimeImport:
+    """``nodes.json`` is imported once, and "once" is a fact in ``meta``.
+
+    Now that every entry point — including the writes — imports before it
+    touches the table, the guard against a second import matters at more call
+    sites than it did when only :func:`list_nodes` could trigger one.
+    """
+
+    def test_forgetting_the_last_node_does_not_resurrect_it_from_the_file(
+        self, registry_in_tmp
+    ):
+        """The reason the key lives in ``meta`` and not in ``SELECT count(*)``.
+
+        The file is deliberately left on disk after the import, so an import
+        that keyed on an empty table would run again the moment an operator
+        forgot the last node — and hand it straight back.
+        """
+        registry_in_tmp.write_text(
+            json.dumps({"version": 1, "nodes": [{"address": "10.0.0.11"}]})
+        )
+        (imported,) = node_registry.list_nodes()
+
+        node_registry.remove_node(imported.id)
+
+        assert registry_in_tmp.exists()
+        assert node_registry.list_nodes() == []
+        assert node_registry.get_node(imported.id) is None
+
+    def test_a_write_that_arrives_first_imports_the_file_before_it_checks(
+        self, registry_in_tmp
+    ):
+        """Otherwise the import lands on top of the write it should have blocked.
+
+        ``add_node`` refuses an address the registry already holds. If the
+        first call after a restart were a write and it checked before the
+        import, the file's node would not be there to collide with — and the
+        import would then arrive and leave two nodes at 10.0.0.11.
+        """
+        registry_in_tmp.write_text(
+            json.dumps({"version": 1, "nodes": [{"address": "10.0.0.11"}]})
+        )
+
+        with pytest.raises(ValueError, match="already registered"):
+            node_registry.add_node(address="10.0.0.11")
+
+        assert [node.address for node in node_registry.list_nodes()] == ["10.0.0.11"]
+
+    def test_an_edit_made_after_the_import_is_not_undone_by_a_later_read(
+        self, registry_in_tmp
+    ):
+        registry_in_tmp.write_text(
+            json.dumps({"version": 1, "nodes": [{"address": "10.0.0.11"}]})
+        )
+        (imported,) = node_registry.list_nodes()
+        node_registry.update_node(imported.id, address="192.168.50.4")
+
+        assert [node.address for node in node_registry.list_nodes()] == ["192.168.50.4"]
 
 
 class TestValidation:

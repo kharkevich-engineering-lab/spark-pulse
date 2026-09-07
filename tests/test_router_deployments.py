@@ -401,7 +401,9 @@ class TestLegacyRecords:
         assert response.json()["status"] == "stopped"
         getpgid.assert_called_once_with(4242)
         assert killpg.call_args[0] == (4242, signal.SIGTERM)
-        assert json.loads(env["records"].read_text())[0]["status"] == "stopped"
+        # Through the store: state lives in the database now, and the seeded
+        # JSON file is only its migration source.
+        assert tools.deployment_records.load()[0]["status"] == "stopped"
 
     def test_a_process_that_is_already_gone_still_marks_the_record(self, client, env):
         self._seed(env)
@@ -425,7 +427,7 @@ class TestLegacyRecords:
         response = client.delete("/api/deployments/legacy")
 
         assert response.json() == {"deleted": True, "id": "legacy"}
-        assert json.loads(env["records"].read_text()) == []
+        assert tools.deployment_records.load() == []
 
     def test_deleting_one_stops_it_first(self, env):
         """Forgetting a deployment is not the same as ending it."""
@@ -534,7 +536,7 @@ class TestUnreadableRecordFile:
         )
 
         assert response.status_code == 200
-        assert json.loads(env["records"].read_text())[0]["id"] == response.json()["id"]
+        assert tools.deployment_records.load()[0]["id"] == response.json()["id"]
         leftovers = [
             p for p in env["records"].parent.iterdir() if p.name.endswith(".tmp")
         ]

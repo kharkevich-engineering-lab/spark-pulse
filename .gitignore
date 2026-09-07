@@ -49,3 +49,4 @@ agent/agent-aarch64*
 # Built agent binaries and their build cache
 spark_pulse/agent/bin/
 .agent-build-cache/
+spark_pulse/data/*.db*

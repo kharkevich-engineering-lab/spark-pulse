@@ -439,7 +439,10 @@ class TestStart:
         plan = native.plan("qwen3-8b")
         native.start(plan, docker=docker, wait=True)
 
-        saved = json.loads(records.read_text())
+        # Read back through the store rather than off the file: state lives
+        # in the database now, and what this asserts is that the record
+        # persisted, not where it landed.
+        saved = tools.deployment_records.load()
         assert [d["id"] for d in saved] == [plan.deployment_id]
         assert saved[0]["runtime"] == "native"
 
@@ -703,6 +706,57 @@ class TestMods:
         assert plan.workdir == "/workspace/vllm"
 
 
+class TestRecordWrites:
+    """``native_runtime`` still hands the store the whole list.
+
+    That shape is not changing — it is what every caller here has — and it is
+    no longer what gets written. The store diffs the set it is given, so a
+    status change on one deployment costs one row rather than an UPDATE for
+    every deployment on the machine.
+    """
+
+    def _seed(self, count):
+        tools.deployment_records.save(
+            [
+                {"id": f"dep-{i}", "status": "running", "runtime": "native"}
+                for i in range(count)
+            ]
+        )
+
+    def test_updating_one_record_writes_only_that_row(self, records):
+        store = importlib.import_module("spark_pulse.tools.deployment_records")
+        self._seed(3)
+        written: list[str] = []
+        apply_record = store._apply
+
+        def spy(row, record):
+            changed = apply_record(row, record)
+            if changed:
+                written.append(row.id)
+            return changed
+
+        with patch.object(store, "_apply", spy):
+            updated = nr._update_record("dep-1", status="stopped")
+
+        assert updated["status"] == "stopped"
+        assert written == ["dep-1"]
+
+    def test_updating_one_record_leaves_the_others_as_they_were(self, records):
+        self._seed(3)
+
+        nr._update_record("dep-1", status="stopped")
+
+        assert {r["id"]: r["status"] for r in tools.deployment_records.load()} == {
+            "dep-0": "running",
+            "dep-1": "stopped",
+            "dep-2": "running",
+        }
+
+    def test_updating_a_record_that_is_gone_answers_none(self, records):
+        self._seed(1)
+        assert nr._update_record("dep-9", status="stopped") is None
+
+
 class TestLifecycle:
     def _running(self, native, docker):
         plan = native.plan("qwen3-8b")
@@ -724,7 +778,7 @@ class TestLifecycle:
         plan = self._running(native, docker)
 
         assert native.delete_deployment(plan.deployment_id, docker=docker) is True
-        assert json.loads(records.read_text()) == []
+        assert tools.deployment_records.load() == []
 
     def test_delete_of_an_unknown_deployment_is_false(self, native, docker):
         assert native.delete_deployment("nope", docker=docker) is False
@@ -762,7 +816,7 @@ class TestLifecycle:
     def test_list_adopts_an_unknown_labelled_container(self, native, docker, records):
         """Reconciliation: a managed container with no record is adopted."""
         plan = self._running(native, docker)
-        records.write_text(json.dumps([]))
+        tools.deployment_records.save([])  # the container outlives its record
 
         listed = native.list_deployments(docker=docker)
 

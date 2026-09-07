@@ -520,8 +520,9 @@ def _load_records() -> list[dict[str, Any]]:
 def _save_records(records: list[dict[str, Any]]) -> None:
     """Persist the deployment records.
 
-    Delegates to ``deployment_records.save``, which writes through
-    ``atomic_json.write_json_atomic`` — temp file, fsync, replace, dir fsync.
+    Delegates to ``deployment_records.save``, which replaces the whole set in
+    one database transaction — so a reader sees the previous set or the new
+    one, never half of either.
     """
     tools.deployment_records.save(records)
 

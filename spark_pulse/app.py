@@ -37,6 +37,8 @@ from spark_pulse.auth import AuthMiddleware, CsrfMiddleware, router as auth_rout
 from spark_pulse.sse import router as sse_router
 from spark_pulse import tools
 from spark_pulse.tools import is_simulation
+from sqlalchemy.exc import OperationalError
+
 from spark_pulse.tools.atomic_json import StateFileError
 from spark_pulse.tools.oci_registry import (
     start_background_updater,
@@ -131,6 +133,14 @@ async def lifespan(app: FastAPI):
     # still running is what lets a control plane tear down live work.
     try:
         tools.deployment_records.check_state_file()
+    except OperationalError as e:
+        # `check_state_file` now also opens the database, and an unreachable
+        # one raises from SQLAlchemy rather than as a StateFileError. Without
+        # this the operator got a raw traceback instead of the sentence below,
+        # which is the whole point of catching anything here.
+        print(f"FATAL: cannot open the state database: {e}")
+        print("FATAL: refusing to start with an empty view of running deployments.")
+        raise
     except StateFileError as e:
         print(f"FATAL: cannot read deployment state file {e.path}: {e.reason}")
         if e.quarantine_path is not None:

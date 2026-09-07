@@ -117,7 +117,7 @@ def test_the_verify_command_is_what_the_installer_runs():
     assert VERIFY_COMMAND == "--help"
 
 
-def test_the_cache_returns_the_same_bytes_or_nothing(tmp_path):
+def test_the_cache_returns_the_same_bytes_or_nothing(tmp_path, a_runnable_agent_binary):
     bundle = build_bundle(
         target=host_target(), binary=host_binary(), cache_dir=tmp_path
     )
@@ -132,7 +132,7 @@ def test_pruning_keeps_the_newest(tmp_path):
     assert len(list(tmp_path.glob("*.tar.gz"))) == 2
 
 
-def test_a_binary_is_located_by_triple_never_searched_for():
+def test_a_binary_is_located_by_triple_never_searched_for(a_runnable_agent_binary):
     """A bundle assembled from whatever happened to be on the path is the
     failure mode this design removed: the old one vendored the control plane's
     own site-packages and shipped whatever it found there.

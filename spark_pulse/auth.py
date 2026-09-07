@@ -20,14 +20,13 @@ from urllib.parse import urlencode
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from spark_pulse import sessions
 from spark_pulse.config import config
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-
-# In-memory token store (replace with Redis in production)
-_active_tokens: dict[str, dict] = {}
 
 #: How long an unredeemed OIDC ``state`` stays valid. The round trip is one
 #: browser redirect to the provider and back; ten minutes is generous.
@@ -83,9 +82,9 @@ def _consume_state(state: str) -> str | None:
 def _session_expired(user: dict, now: float | None = None) -> bool:
     """Whether a stored session has passed the expiry it was created with.
 
-    ``expires_at`` was recorded at login and then never read, so a session
-    outlived the provider's own token for as long as the process ran and the
-    store grew without bound. Both are fixed by consulting it.
+    Kept as a pure predicate even though the store now enforces expiry on
+    read: a caller holding a session dict can still ask, and the answer must
+    not depend on a round trip.
     """
     expires_at = user.get("expires_at")
     if not expires_at:
@@ -93,10 +92,14 @@ def _session_expired(user: dict, now: float | None = None) -> bool:
     return (time.time() if now is None else now) >= float(expires_at)
 
 
-def _sweep_sessions() -> None:
-    for key, user in list(_active_tokens.items()):
-        if _session_expired(user):
-            _active_tokens.pop(key, None)
+async def _load_session(token: str) -> dict | None:
+    """The session behind a cookie, read off the event loop.
+
+    ``run_in_threadpool`` because the store is synchronous — which is §3.3's
+    "all access off the event loop", and which is what keeps this correct when
+    the URL points at PostgreSQL across a network rather than at a local file.
+    """
+    return await run_in_threadpool(sessions.get, token)
 
 
 async def discover(provider_url: str, *, refresh: bool = False) -> dict:
@@ -313,16 +316,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 status_code=401, content={"detail": "Not authenticated"}
             )
 
-        user = _active_tokens.get(token)
+        # The store drops an expired row as it reads it, so "expired" and
+        # "never existed" arrive here as the same answer — which is all this
+        # needs to know, and is one round trip rather than two.
+        user = await _load_session(token)
         if not user:
-            return JSONResponse(status_code=401, content={"detail": "Invalid token"})
-        if _session_expired(user):
-            # The provider's own token has expired, so ours has too. Dropped
-            # here rather than left to accumulate: the cookie's max-age only
-            # governs the browser, and a client that keeps sending an expired
-            # cookie was otherwise honoured for the life of the process.
-            _active_tokens.pop(token, None)
-            return JSONResponse(status_code=401, content={"detail": "Session expired"})
+            return JSONResponse(
+                status_code=401, content={"detail": "Not authenticated"}
+            )
 
         # Attach user to request state
         request.state.user = user
@@ -444,15 +445,16 @@ async def callback(request: Request, code: str, state: str):
 
             # Store token, dropping anything that has already expired so the
             # store stays bounded by the number of live sessions.
-            _sweep_sessions()
-            token_key = secrets.token_urlsafe(32)
-            _active_tokens[token_key] = {
-                "access_token": access_token,
-                "refresh_token": refresh_token,
-                "expires_at": datetime.now(timezone.utc).timestamp() + expires_in,
-                "user": user_info,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            }
+            await run_in_threadpool(sessions.sweep)
+            token_key = await run_in_threadpool(
+                lambda: sessions.create(
+                    access_token=access_token,
+                    refresh_token=refresh_token,
+                    expires_at=datetime.now(timezone.utc).timestamp() + expires_in,
+                    user=user_info,
+                    created_at=datetime.now(timezone.utc).isoformat(),
+                )
+            )
 
             # Set session cookie and redirect to home
             response = RedirectResponse(url="/", status_code=302)
@@ -482,7 +484,7 @@ async def logout(request: Request):
     """Invalidate current token and clear cookie."""
     token = request.cookies.get("token")
     if token:
-        _active_tokens.pop(token, None)
+        await run_in_threadpool(sessions.remove, token)
     response = {"message": "Logged out"}
     resp = JSONResponse(content=response)
     resp.delete_cookie(key="token", path="/")
@@ -496,12 +498,9 @@ async def get_me(request: Request):
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
-    user_data = _active_tokens.get(token)
+    user_data = await _load_session(token)
     if not user_data:
-        raise HTTPException(status_code=401, detail="Invalid token")
-    if _session_expired(user_data):
-        _active_tokens.pop(token, None)
-        raise HTTPException(status_code=401, detail="Session expired")
+        raise HTTPException(status_code=401, detail="Not authenticated")
 
     return {
         "authenticated": True,
