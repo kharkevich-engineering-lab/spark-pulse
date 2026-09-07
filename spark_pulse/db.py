@@ -295,23 +295,38 @@ def _create_schema(engine: Engine) -> None:
     The loser's answer is not to fail. It is to look again: if the table it
     was told it could not create now exists, the schema is what it needed to
     be and somebody else did the work.
+
+    **The retry has to be a loop, not a second attempt.** Losing once says
+    nothing about the next table: ``create_all`` emits one statement per
+    table, so a starter that loses the race on ``blobs`` can re-inspect, still
+    find ``scheduled_deploys`` missing, and lose that one too — to the very
+    instance it was already racing. A single retry made that second loss fatal
+    and it grew likelier with every table added; six starters and nine tables
+    hit it about one run in eight, which is exactly the shape of flake that
+    reads as "CI is unreliable" rather than as a bug.
+
+    The loop ends when nothing is missing — the only condition that means the
+    schema is ready — and the last attempt is deliberately unguarded so a real
+    error (no permission, bad column type) reaches the caller as itself rather
+    than as "gave up after N tries".
     """
     from sqlalchemy import inspect as sa_inspect
     from sqlalchemy.exc import DBAPIError, IntegrityError, ProgrammingError
 
-    try:
-        Base.metadata.create_all(engine)
-        return
-    except (IntegrityError, ProgrammingError, DBAPIError):
-        pass
+    #: Enough that a starter losing a race on every table still finishes,
+    #: bounded so a genuine failure cannot spin.
+    attempts = len(Base.metadata.tables) + 1
 
-    existing = set(sa_inspect(engine).get_table_names())
-    missing = [name for name in Base.metadata.tables if name not in existing]
-    if not missing:
-        return  # another instance created them while we were looking
-    # Something other than a race: create_all again so the real error is the
-    # one that reaches the caller, rather than a stale one from the retry.
-    Base.metadata.create_all(engine)
+    for remaining in range(attempts, 0, -1):
+        try:
+            Base.metadata.create_all(engine)
+            return
+        except (IntegrityError, ProgrammingError, DBAPIError):
+            existing = set(sa_inspect(engine).get_table_names())
+            if all(name in existing for name in Base.metadata.tables):
+                return  # another instance created them while we were looking
+            if remaining == 1:
+                raise
 
 
 def _session_factory() -> "sessionmaker[Session]":
