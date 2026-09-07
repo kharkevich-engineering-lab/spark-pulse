@@ -23,7 +23,6 @@ import {
 } from "@/lib/experimental";
 import { ConfirmModal, AlertModal } from "@/components/Modal";
 import { Square, X, Trash2, Loader2, AlertCircle, Terminal, Flame } from "lucide-react";
-import { setRefresh } from "@/lib/refresh";
 import type { DeploymentEvent } from "@/lib/operations";
 import type { Deployment, EngineMetricsWindow } from "@/lib/types";
 
@@ -100,7 +99,6 @@ export default function InferencePage() {
     }
   };
 
-  useEffect(() => { setRefresh(refetch); }, [refetch]);
   useEffect(() => { const i = setInterval(refetch, 10000); return () => clearInterval(i); }, [refetch]);
 
   /** Read one deployment's live per-rank container state.

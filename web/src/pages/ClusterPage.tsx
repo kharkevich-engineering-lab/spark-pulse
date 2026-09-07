@@ -19,7 +19,6 @@ import StatusBadge from "@/components/StatusBadge";
 import LaunchScriptAnalyzer from "@/components/LaunchScriptAnalyzer";
 import NodeRegistry from "@/components/NodeRegistry";
 import { Server, AlertCircle, Loader2 } from "lucide-react";
-import { setRefresh } from "@/lib/refresh";
 import type { Deployment } from "@/lib/types";
 import { ExperimentalBadge, ExperimentalBanner } from "@/components/Experimental";
 import {
@@ -43,7 +42,6 @@ export default function ClusterPage() {
   const { config } = useConfig();
   const experimental = config?.cluster_experimental ?? true;
 
-  useEffect(() => { setRefresh(refetch); }, [refetch]);
   useEffect(() => { const i = setInterval(refetch, 15000); return () => clearInterval(i); }, [refetch]);
 
   const live = (deployments ?? []).filter((d) => d.status !== "stopped" && d.status !== "error");

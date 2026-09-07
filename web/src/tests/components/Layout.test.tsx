@@ -7,7 +7,6 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import Layout from "@/components/Layout";
 import { MULTI_NODE_BADGE_TITLE } from "@/lib/experimental";
-import { setRefresh } from "@/lib/refresh";
 import type { AppConfig } from "@/lib/config";
 
 let config: AppConfig | null = null;
@@ -173,8 +172,10 @@ describe("Layout nav", () => {
   });
 });
 
-/** The header controls: the theme cycle, the refresh button and, when the
- *  installation has auth on, who is signed in and how they sign out. */
+/** The header: who you are, and the way out.
+ *
+ *  When the installation has auth on, it names the signed-in user and offers
+ *  the way to sign out. When it does not, it renders nothing at all. */
 describe("Layout header", () => {
   beforeEach(() => {
     config = null;
@@ -195,47 +196,18 @@ describe("Layout header", () => {
     expect(await screen.findByText("1.2.3")).toBeInTheDocument();
   });
 
-  /** Three modes cycled by one button: dark, light, and "whatever the OS
-   *  says". A cycle that skipped `system` would strand anyone who had chosen
-   *  it, since no other control sets it. */
-  it("cycles the theme through system, dark and light, and remembers the choice", async () => {
-    const user = userEvent.setup();
+  /** The header carried a red/green SSE dot, a refresh button and a theme
+   *  cycler. The dot reported a connection nothing on the page depended on and
+   *  read as an error indicator; refresh is what the browser's own reload
+   *  does; and the theme is a preference, which now lives with the other
+   *  preferences on the Settings page instead of one unlabelled click away
+   *  from everywhere. What is left is who you are and the way out. */
+  it("carries no theme cycler, refresh button or connection dot", () => {
     renderLayout();
 
-    const toggle = () => screen.getByTitle(/^Theme: /);
-    expect(toggle()).toHaveAttribute("title", "Theme: system");
-
-    await user.click(toggle());
-    expect(toggle()).toHaveAttribute("title", "Theme: dark");
-    expect(window.localStorage.getItem("spark-pulse-theme")).toBe("dark");
-    expect(document.documentElement).toHaveClass("dark");
-
-    await user.click(toggle());
-    expect(toggle()).toHaveAttribute("title", "Theme: light");
-    expect(document.documentElement).toHaveClass("light");
-    expect(document.documentElement).not.toHaveClass("dark");
-
-    await user.click(toggle());
-    expect(toggle()).toHaveAttribute("title", "Theme: system");
-    expect(window.localStorage.getItem("spark-pulse-theme")).toBe("system");
-  });
-
-  it("starts from the theme already stored, rather than resetting it", () => {
-    window.localStorage.setItem("spark-pulse-theme", "light");
-    renderLayout();
-    expect(screen.getByTitle(/^Theme: /)).toHaveAttribute("title", "Theme: light");
-  });
-
-  /** Refresh is the one control every page shares: each page registers its own
-   *  refetch on mount, and this button is what calls it. */
-  it("refreshes the page that registered itself", async () => {
-    const user = userEvent.setup();
-    const refetch = vi.fn();
-    setRefresh(refetch);
-    renderLayout();
-
-    await user.click(screen.getByTitle("Refresh"));
-    expect(refetch).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTitle(/^Theme: /)).toBeNull();
+    expect(screen.queryByTitle("Refresh")).toBeNull();
+    expect(screen.queryByTitle(/SSE (Connected|Disconnected)/)).toBeNull();
   });
 
   it("says nothing about a user when the installation has no auth", () => {

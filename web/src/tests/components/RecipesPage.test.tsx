@@ -56,7 +56,6 @@ vi.mock("@/lib/api", async () => {
     deleteCustomMod: vi.fn(),
     getCustomRecipeContent: vi.fn(),
     importRecipes: vi.fn(),
-    fetchRecipeImportStatus: vi.fn(),
     fetchEngines: vi.fn(),
     fetchModels: vi.fn(),
     fetchNodes: vi.fn(),
@@ -90,7 +89,6 @@ import {
   fetchNodes,
   fetchRecipe,
   fetchRecipeCustomization,
-  fetchRecipeImportStatus,
   fetchRecipes,
   fetchSettings,
   getCustomModFiles,
@@ -235,10 +233,6 @@ describe("RecipesPage", () => {
     vi.mocked(fetchMods).mockResolvedValue([MOD]);
     vi.mocked(fetchRecipe).mockResolvedValue(detail());
     vi.mocked(fetchRecipeCustomization).mockResolvedValue({});
-    vi.mocked(fetchRecipeImportStatus).mockResolvedValue({
-      imported: false,
-      imported_at: null,
-    } as never);
     vi.mocked(listCustomRecipes).mockResolvedValue([CUSTOM_RECIPE]);
     vi.mocked(listCustomMods).mockResolvedValue([CUSTOM_MOD]);
     vi.mocked(getCustomModFiles).mockResolvedValue({

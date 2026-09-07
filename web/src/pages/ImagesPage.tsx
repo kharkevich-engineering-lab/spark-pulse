@@ -21,7 +21,6 @@ import { useQuery } from "@/hooks/useQuery";
 import { useSSEConnection } from "@/hooks/useSSEConnection";
 import { SSEConnectionState } from "@/lib/operations";
 import { formatSize } from "@/lib/utils";
-import { setRefresh } from "@/lib/refresh";
 import { AlertModal, ConfirmModal } from "@/components/Modal";
 import type { ImageEntry, ImagePullJob } from "@/lib/types";
 
@@ -60,10 +59,6 @@ export default function ImagesPage() {
   const [ref, setRef] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [alert, setAlert] = useState<{ title: string; message: string } | null>(null);
-
-  useEffect(() => {
-    setRefresh(refetch);
-  }, [refetch]);
 
   const reloadJobs = useCallback(() => {
     fetchImagePulls().then(setJobs).catch(() => {});

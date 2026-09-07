@@ -2,10 +2,11 @@ import { useState, useEffect } from "react";
 import { fetchSettings, updateSettings, fetchSecrets, saveSecrets, deleteSecret, runDiscovery, fetchEngines, refreshEngines, type DiscoveryResult, type ValidationResult } from "@/lib/api";
 import type { DockerSettings } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
-import { Settings as SettingsIcon, Loader2, AlertCircle, Check, KeyRound, Eye, EyeOff, Trash2, Lock, Server, Box, Network, Radio, Wifi, WifiOff, Cpu, RefreshCw, Info, ShieldCheck } from "lucide-react";
+import { Settings as SettingsIcon, Loader2, AlertCircle, Check, KeyRound, Eye, EyeOff, Trash2, Lock, Server, Box, Network, Radio, Wifi, WifiOff, Cpu, RefreshCw, Info, ShieldCheck, Palette, Sun, Moon } from "lucide-react";
+import { SunMoonIcon } from "@/components/BrandIcons";
+import { type ThemeMode, getTheme, setTheme } from "@/lib/theme";
 import { EngineList } from "@/components/EngineBadge";
 import { AlertModal } from "@/components/Modal";
-import { setRefresh } from "@/lib/refresh";
 
 /** The tabs, in the order an operator meets them.
  *
@@ -19,6 +20,7 @@ const TABS = [
   { id: "containers", label: "Containers", icon: Box },
   { id: "cluster", label: "Cluster", icon: Network },
   { id: "engines", label: "Engines", icon: Cpu },
+  { id: "preferences", label: "Preferences", icon: Palette },
   { id: "secrets", label: "Secrets", icon: KeyRound },
   { id: "environment", label: "Environment", icon: Info },
 ] as const;
@@ -81,6 +83,57 @@ function Code({ children }: { children: React.ReactNode }) {
   return <code className="px-2 py-0.5 rounded bg-bg font-mono text-xs break-all">{children}</code>;
 }
 
+/** The colour theme, as three explicit choices rather than a cycler.
+ *
+ * It used to be one unlabelled button in the header that stepped
+ * dark → light → system, so the only way to find out what a click would do
+ * was to click it. Three buttons say what each is, and which is on.
+ *
+ * "System" is the default and follows the operating system, which is why it
+ * gets the half-sun-half-moon mark rather than a third unrelated symbol.
+ */
+const THEMES: { id: ThemeMode; label: string; hint: string }[] = [
+  { id: "system", label: "System", hint: "Follow the operating system" },
+  { id: "light", label: "Light", hint: "Always light" },
+  { id: "dark", label: "Dark", hint: "Always dark" },
+];
+
+function ThemePicker() {
+  const [mode, setMode] = useState<ThemeMode>(getTheme);
+
+  const choose = (next: ThemeMode) => {
+    setMode(next);
+    // Persisted to localStorage — a per-browser preference, not something the
+    // control plane has an opinion about.
+    setTheme(next);
+  };
+
+  return (
+    <div className="grid grid-cols-3 gap-2">
+      {THEMES.map(({ id, label, hint }) => {
+        const active = mode === id;
+        return (
+          <button
+            key={id}
+            type="button"
+            onClick={() => choose(id)}
+            aria-pressed={active}
+            title={hint}
+            className={`flex flex-col items-center gap-2 px-3 py-4 rounded-lg border transition-colors ${
+              active
+                ? "border-primary bg-primary/10 text-primary"
+                : "border-border text-text-muted hover:text-text hover:border-border-hover"
+            }`}
+          >
+            {id === "system" ? <SunMoonIcon size={20} /> : id === "light" ? <Sun size={20} /> : <Moon size={20} />}
+            <span className="text-sm font-medium">{label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 /** The field the environment owns, marked as such. */
 function EnvBadge() {
   return (
@@ -139,7 +192,6 @@ export default function SettingsPage() {
     (k) => JSON.stringify(form[k]) !== JSON.stringify((settings as unknown as Record<string, unknown>)[k])
   );
 
-  useEffect(() => { setRefresh(refetch); }, [refetch]);
   useEffect(() => { if (settings) setForm({ ...settings }); }, [settings]);
 
   const handleSave = async () => {
@@ -625,6 +677,27 @@ export default function SettingsPage() {
         </div>
       )}
 
+      {/* ── Preferences ──────────────────────────────────────────────────── */}
+      {tab === "preferences" && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+          <div className={cardCls}>
+            <div className="flex items-center gap-2 pb-3 border-b border-border">
+              <Palette size={16} className="text-primary" />
+              <h3 className="font-semibold">Appearance</h3>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-2">Colour theme</label>
+              <ThemePicker />
+              <p className="text-xs text-text-muted mt-2">
+                Remembered in this browser. It is a preference of yours, not a setting of the
+                control plane's — nothing here is sent to the server or shared with anyone else
+                signing in.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Secrets ──────────────────────────────────────────────────────── */}
       {tab === "secrets" && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
@@ -743,7 +816,7 @@ export default function SettingsPage() {
       )}
 
       {/* ── Save ─────────────────────────────────────────────────────────── */}
-      {tab !== "secrets" && tab !== "environment" && (
+      {tab !== "secrets" && tab !== "environment" && tab !== "preferences" && (
         <div className="flex items-center gap-3">
           <button onClick={handleSave} disabled={saving || !isDirty} className="px-4 py-2 rounded-lg bg-primary hover:bg-primary-hover disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium text-sm transition-colors flex items-center gap-2">
             {saving ? <Loader2 className="animate-spin" size={14} /> : saved ? <Check size={14} /> : <SettingsIcon size={14} />}

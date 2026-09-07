@@ -3,8 +3,8 @@
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/lib/auth";
-import { Copyright, Zap } from "lucide-react";
-import { SiGithub, SiPypi } from "@icons-pack/react-simple-icons";
+import { PulseIcon } from "@/components/BrandIcons";
+import { BrandFooter } from "@/components/BrandFooter";
 
 export default function LoginPage() {
   const { isAuthenticated, login } = useAuth();
@@ -22,7 +22,7 @@ export default function LoginPage() {
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center">
           <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
-            <Zap className="h-8 w-8 text-primary" />
+            <PulseIcon className="text-primary" size={32} />
           </div>
           <div className="mb-2 text-2xl font-bold text-foreground">Spark Pulse</div>
           <div className="mb-6 text-sm text-text-muted">Sign in to continue</div>
@@ -36,37 +36,7 @@ export default function LoginPage() {
           </button>
         </div>
       </div>
-      <footer className="p-6 text-center text-xs text-text-muted space-y-2">
-        <a
-          href="https://kharkevich.com"
-          target="_blank"
-          rel="noopener"
-          className="inline-flex items-center gap-1.5 hover:text-text transition-colors"
-        >
-          <Copyright size={12} />
-          {new Date().getFullYear()} Kharkevich Engineering Lab
-        </a>
-        <div className="flex items-center justify-center gap-4">
-          <a
-            href="https://github.com/kharkevich-engineering-lab/spark-pulse"
-            target="_blank"
-            rel="noopener"
-            className="inline-flex items-center gap-1.5 hover:text-text transition-colors"
-          >
-            <SiGithub size={12} />
-            GitHub
-          </a>
-          <a
-            href="https://pypi.org/project/spark-pulse/"
-            target="_blank"
-            rel="noopener"
-            className="inline-flex items-center gap-1.5 hover:text-text transition-colors"
-          >
-            <SiPypi size={12} />
-            PyPI
-          </a>
-        </div>
-      </footer>
+      <BrandFooter />
     </div>
   );
 }

@@ -1,48 +1,21 @@
 import { useAuth } from "@/lib/auth";
-import { doRefresh } from "@/lib/refresh";
-import { type ThemeMode, getTheme, setTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import { ExperimentalBadge } from "@/components/Experimental";
 import { MULTI_NODE_BADGE_TITLE } from "@/lib/experimental";
 import { useConfig } from "@/lib/config";
-import { Activity, Bot, Boxes, Copyright, Database, Flame, Layers, ListChecks, LogOut, Menu, Moon, MoonStar, Package, RotateCw, Settings, Sun, User, X, Zap, Server } from "lucide-react";
+import { Activity, Bot, Boxes, Copyright, Database, Flame, Layers, ListChecks, LogOut, Menu, Package, Settings, User, X, Server } from "lucide-react";
+import { PulseIcon } from "@/components/BrandIcons";
 import { SiGithub, SiPypi } from "@icons-pack/react-simple-icons";
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { useSSEConnection } from "@/hooks/useSSEConnection";
-import { SSEConnectionState } from "@/lib/operations";
-import { useSSEStore } from "@/lib/operationStore";
 
-// ── SSE Connection Indicator ─────────────────────────────────────────────────
+/** Anything that draws itself at a size: our own marks and lucide's alike.
+ *  `typeof PulseIcon` is too narrow — lucide exports forwardRef components,
+ *  whose return type is `ReactNode` rather than `Element`. */
+type NavIcon = React.ComponentType<{ size?: number; className?: string }>;
 
-function SSEConnectionIndicator() {
-  // Call hook at top level — manages the EventSource connection
-  const emptyCallback = useCallback(() => {}, []);
-  useSSEConnection("/sse/health", emptyCallback, {
-    maxRetries: 3,
-    retryDelayMs: 5000,
-  });
-
-  // Subscribe to store for real-time status updates — read directly, no local state
-  const connection = useSSEStore((s) => s.connections.get("/sse/health"));
-  const isConnected = connection?.state === SSEConnectionState.CONNECTED;
-
-  return (
-    <div
-      className="p-2 rounded-lg transition-colors"
-      title={isConnected ? "SSE Connected" : "SSE Disconnected"}
-    >
-      <div
-        className={`w-2 h-2 rounded-full ${
-          isConnected ? "bg-success" : "bg-danger"
-        }`}
-      />
-    </div>
-  );
-}
-
-const NAV: { href: string; label: string; icon: typeof Zap; experimental?: boolean }[] = [
-  { href: "/", label: "Recipes & Mods", icon: Zap },
+const NAV: { href: string; label: string; icon: NavIcon; experimental?: boolean }[] = [
+  { href: "/", label: "Recipes & Mods", icon: PulseIcon },
   { href: "/jobs", label: "Inference", icon: ListChecks },
   { href: "/cluster", label: "Cluster", icon: Server, experimental: true },
   { href: "/benchmarking", label: "Benchmarking", icon: Flame },
@@ -55,65 +28,31 @@ const NAV: { href: string; label: string; icon: typeof Zap; experimental?: boole
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
-// Internal header component with refresh + theme + auth
+/** The header: who you are, and the way out.
+ *
+ * It used to carry a red/green SSE dot, a refresh button and a theme cycler.
+ * The dot reported a connection nothing on the page depended on and read as
+ * an error indicator; refresh is what the browser's own reload does; and the
+ * theme is a preference, which belongs with the other preferences rather than
+ * one unlabelled click away from every page. See the Settings page.
+ */
 function HeaderInner() {
   const { isAuthenticated, user, logout } = useAuth();
   const { config } = useConfig();
-  const [themeKey, setThemeKey] = useState(0);
-
-  useEffect(() => {
-    window.addEventListener("storage", () => { setTheme(getTheme()); setThemeKey(k => k + 1); });
-  }, []);
-
   const authEnabled = config?.auth_enabled ?? false;
-  // themeKey is used to force re-render on storage event
-  void themeKey;
+
+  if (!authEnabled || !isAuthenticated) return null;
 
   return (
-    <div className="hidden lg:flex fixed top-4 right-4 z-50 items-center gap-1.5">
-      <SSEConnectionIndicator />
-      <button
-        onClick={doRefresh}
-        className="p-2 rounded-lg hover:bg-surface-hover transition-colors"
-        title="Refresh"
-      >
-        <RotateCw size={16} />
+    <div className="hidden lg:flex fixed top-4 right-4 z-50 items-center gap-2">
+      <span className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-surface-hover text-sm">
+        <User size={14} />
+        {user?.name || user?.email || "User"}
+      </span>
+      <button onClick={logout} className="p-2 rounded-lg hover:bg-surface-hover transition-colors" title="Logout">
+        <LogOut size={18} />
       </button>
-      <ThemeToggle />
-      {authEnabled && isAuthenticated ? (
-        <div className="flex items-center gap-2 ml-1">
-          <span className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-surface-hover text-sm">
-            <User size={14} />
-            {user?.name || user?.email || "User"}
-          </span>
-          <button onClick={logout} className="p-2 rounded-lg hover:bg-surface-hover transition-colors" title="Logout">
-            <LogOut size={18} />
-          </button>
-        </div>
-      ) : null}
     </div>
-  );
-}
-
-function ThemeToggle() {
-  const [mode, setMode] = useState<ThemeMode>(getTheme());
-
-  const cycle = () => {
-    const next: ThemeMode = mode === "dark" ? "light" : mode === "light" ? "system" : "dark";
-    setMode(next);
-    setTheme(next);
-  };
-
-  const icon = mode === "dark" ? <Moon size={18} /> : mode === "light" ? <Sun size={18} /> : <MoonStar size={18} />;
-
-  return (
-    <button
-      onClick={cycle}
-      className="p-2 rounded-lg hover:bg-surface-hover transition-colors"
-      title={`Theme: ${mode}`}
-    >
-      {icon}
-    </button>
   );
 }
 
@@ -163,7 +102,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         {/* Logo */}
         <div className="p-6 border-b border-border">
           <div className="flex items-center gap-3">
-            <Zap className="text-primary" size={28} />
+            <PulseIcon className="text-primary" size={28} />
             <div>
               <h1 className="font-bold text-lg leading-tight">Spark Pulse</h1>
               <p className="text-xs text-text-muted">{version}</p>

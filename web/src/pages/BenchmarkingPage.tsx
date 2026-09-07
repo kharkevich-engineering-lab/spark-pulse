@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   fetchBenchmarks,
   fetchLatestByRecipe,
@@ -13,7 +13,6 @@ import {
   TrendingDown,
   X, Play, BarChart3, Table as TableIcon,
 } from "lucide-react";
-import { setRefresh } from "@/lib/refresh";
 import type { BenchmarkResult } from "@/lib/types";
 
 type Tab = "history" | "summary";
@@ -42,7 +41,6 @@ export default function BenchmarkingPage() {
   } | null>(null);
   const [showComparison, setShowComparison] = useState(false);
 
-  useEffect(() => { setRefresh(refetch); }, [refetch]);
 
   const handleRun = async () => {
     if (!runTarget) return;

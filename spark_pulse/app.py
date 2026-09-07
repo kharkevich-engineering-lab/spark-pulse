@@ -13,7 +13,6 @@ from spark_pulse.agent import runtime as agent_runtime
 from spark_pulse.config import config
 from spark_pulse.routers import (
     recipes,
-    recipe_import as recipe_import_router,
     deployments,
     scheduled_deploys as scheduled_deploys_router,
     memory,
@@ -333,7 +332,6 @@ def create_app() -> FastAPI:
     # API routes
     app.include_router(custom_files_router.router)
     app.include_router(custom_recipes_router.router)
-    app.include_router(recipe_import_router.router)
     app.include_router(recipes.router)
     app.include_router(deployments.router)
     app.include_router(memory.router)
