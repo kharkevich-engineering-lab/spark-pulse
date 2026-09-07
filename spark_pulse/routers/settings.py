@@ -133,16 +133,24 @@ def _docker_block() -> dict:
 
 
 def _environment_block() -> dict:
-    """How this process is configured. Reported, never written from here."""
+    """How this process is configured. Reported, never written from here.
+
+    The database comes from :func:`spark_pulse.db.database_url`, not from
+    ``config.database_url``, because those are two different answers and only
+    one of them is true. ``config`` reads settings.json alone; the *engine*
+    resolves ``SPARK_PULSE_DATABASE_URL`` first, then settings.json, then the
+    default file. Reporting config's view meant a process told to use
+    PostgreSQL by its environment — which is how a systemd unit or a container
+    sets it — displayed "sqlite" on the very page an operator opens to find out
+    which database they are on. Every table was in PostgreSQL while this said
+    otherwise; the e2e job's backend check is what caught it.
+    """
+    from spark_pulse import db
+
+    resolved = db.database_url()
     return {
-        "database_url": _redacted(config.database_url),
-        "database_backend": (
-            (
-                config.database_url.split("://", 1)[0]
-                if config.database_url
-                else "sqlite"
-            )
-        ),
+        "database_url": _redacted(resolved),
+        "database_backend": resolved.split("://", 1)[0] if resolved else "sqlite",
         "external_url": config.external_url,
         "cors_allowed_origins": config.cors_allowed_origins,
         "auth_enabled": config.auth_enabled,
