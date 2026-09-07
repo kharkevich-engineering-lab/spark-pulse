@@ -96,6 +96,38 @@ const CASES: Case[] = [
     method: "DELETE",
   },
   {
+    name: "fetchScheduledDeploys",
+    call: () => api.fetchScheduledDeploys(),
+    path: "/api/scheduled-deploys",
+    method: "GET",
+  },
+  {
+    name: "fetchScheduledDeploys active only",
+    call: () => api.fetchScheduledDeploys(true),
+    path: "/api/scheduled-deploys?active_only=true",
+    method: "GET",
+  },
+  {
+    name: "scheduleDeploy",
+    call: () => api.scheduleDeploy({ recipe_id: "r", name: "n", params: {} }),
+    path: "/api/scheduled-deploys",
+    method: "POST",
+    body: { recipe_id: "r", name: "n", params: {} },
+  },
+  {
+    name: "cancelScheduledDeploy",
+    call: () => api.cancelScheduledDeploy("s-1"),
+    path: "/api/scheduled-deploys/s-1?cancel_download=true",
+    method: "DELETE",
+  },
+  {
+    // "Do not deploy this" and "stop fetching 20 GB" are two separate wishes.
+    name: "cancelScheduledDeploy keeping the download",
+    call: () => api.cancelScheduledDeploy("s-1", true),
+    path: "/api/scheduled-deploys/s-1?cancel_download=false",
+    method: "DELETE",
+  },
+  {
     name: "fetchLogs defaults to the last 200 lines",
     call: () => api.fetchLogs("abc123"),
     path: "/api/deployments/abc123/logs?lines=200",
@@ -1023,7 +1055,7 @@ describe("SSE streams", () => {
 
     const source = created[0];
     expect(source.url).toBe("/sse/logs/abc123");
-    expect(Object.keys(source._listeners).sort()).toEqual(["error", "log", "status"]);
+    expect(Object.keys(source._listeners).sort()).toEqual(["end", "error", "log", "status"]);
 
     emit(source, "log", JSON.stringify({ text: "starting engine" }));
     emit(source, "status", JSON.stringify({ status: "running" }));
@@ -1037,6 +1069,22 @@ describe("SSE streams", () => {
 
     close();
     expect(source.readyState).toBe(2);
+  });
+
+  /** `EventSource` reconnects by itself whenever the connection ends, and it
+   *  cannot be told not to. So a stopped deployment's stream was replayed from
+   *  the top every few seconds — the same lines appended again and again,
+   *  which reads as a repeating log rather than as a reconnect. Closing on the
+   *  server's end marker is what stops it. */
+  it("closes the stream when the server says there is no more", () => {
+    const seen: Array<[string, unknown]> = [];
+    api.connectLogStream("abc123", (event, data) => seen.push([event, data]));
+    const source = created[0];
+
+    emit(source, "end", "{}");
+
+    expect(source.readyState).toBe(2);
+    expect(seen).toEqual([["end", {}]]);
   });
 
   // A truncated frame is a half-written line, not a log line reading "null":

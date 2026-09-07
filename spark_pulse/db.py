@@ -255,6 +255,7 @@ _MODEL_MODULES = (
     "spark_pulse.tools.node_registry",
     "spark_pulse.tools.benchmarking",
     "spark_pulse.tools.custom_recipes",
+    "spark_pulse.tools.scheduled_deploys",
     "spark_pulse.agent.enrollment",
 )
 

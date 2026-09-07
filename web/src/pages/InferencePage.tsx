@@ -209,6 +209,9 @@ export default function InferencePage() {
         });
       }
       else if (event === "status") { refetch(); loadDetail(id); }
+      // The stream is over — the deployment is no longer running, so there is
+      // nothing further to tail. The connection has already closed itself.
+      else if (event === "end") { setStreaming((s) => ({ ...s, [id]: false })); }
     });
   };
 

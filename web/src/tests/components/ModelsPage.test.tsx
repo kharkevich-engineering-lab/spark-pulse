@@ -40,12 +40,16 @@ vi.mock("@/lib/api", () => ({
   fetchModelDownloads: vi.fn(),
   startModelDownload: vi.fn(),
   cancelModelDownload: vi.fn(),
+  cancelScheduledDeploy: vi.fn(),
+  fetchScheduledDeploys: vi.fn(),
   deleteModel: vi.fn(),
   saveModelSources: vi.fn(),
 }));
 
 import {
   cancelModelDownload,
+  cancelScheduledDeploy,
+  fetchScheduledDeploys,
   deleteModel,
   fetchModelDownloads,
   fetchModelSources,
@@ -106,6 +110,7 @@ describe("ModelsPage", () => {
       { name: "mirror", type: "hf_hub", endpoint: "http://mirror.local", token_secret: "" },
     ]);
     vi.mocked(fetchModelDownloads).mockResolvedValue([]);
+    vi.mocked(fetchScheduledDeploys).mockResolvedValue([]);
   });
 
   it("renders the catalogue table", async () => {
@@ -408,5 +413,102 @@ describe("ModelsPage sources editor", () => {
 
     expect(await screen.findByRole("heading", { name: "Save failed" })).toBeInTheDocument();
     expect(screen.getByText("endpoint is not a URL")).toBeInTheDocument();
+  });
+});
+
+// ── Deployments waiting on a download ───────────────────────────────────────
+
+/**
+ * A download started from the deploy page carries a deployment behind it, and
+ * this is the only page the operator watches it on. A progress bar with no
+ * purpose attached is what this exists to stop showing: without it there is no
+ * way to know a deployment is queued on these bytes, and no way to call it off
+ * short of cancelling the download and guessing what that did.
+ */
+describe("ModelsPage — scheduled deploys", () => {
+  const runningJob = {
+    id: "job9", model: "acme/big", source: "hf", revision: null, allow_patterns: null,
+    status: "running", bytes_done: 10, bytes_total: 100, current_file: null, path: null,
+    error: null, created_at: "", started_at: null, finished_at: null,
+  };
+
+  const schedule = (over: Record<string, unknown> = {}) => ({
+    id: "s-1", model: "acme/big", download_job_id: "job9", status: "waiting",
+    name: "big-serve", recipe_id: "r1", request: {}, deployment_id: "", error: "",
+    created_at: "2026-01-01T00:00:00Z", finished_at: "", ...over,
+  });
+
+  beforeEach(() => {
+    CapturingEventSource.instances = [];
+    vi.stubGlobal("EventSource", CapturingEventSource);
+    vi.mocked(fetchModels).mockResolvedValue(models);
+    vi.mocked(fetchModelSources).mockResolvedValue([]);
+    vi.mocked(fetchModelDownloads).mockResolvedValue([runningJob] as never);
+  });
+
+  it("says what a download is for", async () => {
+    vi.mocked(fetchScheduledDeploys).mockResolvedValue([schedule()] as never);
+    renderPage();
+
+    expect(await screen.findByTestId("scheduled-s-1")).toHaveTextContent(
+      /Scheduled to deploy.*big-serve.*when this finishes/,
+    );
+  });
+
+  it("cancels the scheduled deploy in flight", async () => {
+    vi.mocked(fetchScheduledDeploys).mockResolvedValue([schedule()] as never);
+    vi.mocked(cancelScheduledDeploy).mockResolvedValue({} as never);
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByLabelText("Cancel the scheduled deploy of big-serve"));
+
+    expect(cancelScheduledDeploy).toHaveBeenCalledWith("s-1");
+  });
+
+  it("does not offer to cancel one that is already deploying", async () => {
+    vi.mocked(fetchScheduledDeploys).mockResolvedValue([schedule({ status: "deploying" })] as never);
+    renderPage();
+
+    expect(await screen.findByTestId("scheduled-s-1")).toHaveTextContent(/Deploying.*big-serve/);
+    expect(screen.queryByLabelText("Cancel the scheduled deploy of big-serve")).not.toBeInTheDocument();
+  });
+
+  /** The case an operator would otherwise wait on for ever: the bytes landed,
+   *  the progress bar reads 100%, and the deployment quietly did not start. */
+  it("shows a deploy that failed after its download succeeded", async () => {
+    vi.mocked(fetchScheduledDeploys).mockResolvedValue([
+      schedule({ status: "failed", error: "port 8000 is already bound" }),
+    ] as never);
+    renderPage();
+
+    expect(await screen.findByTestId("scheduled-s-1")).toHaveTextContent(
+      /could not be deployed: port 8000 is already bound/,
+    );
+  });
+
+  it("hides one the operator called off themselves", async () => {
+    vi.mocked(fetchScheduledDeploys).mockResolvedValue([schedule({ status: "cancelled" })] as never);
+    renderPage();
+
+    await screen.findByText("acme/big");
+    expect(screen.queryByTestId("scheduled-s-1")).not.toBeInTheDocument();
+  });
+
+  it("re-reads the schedules when a download reaches a terminal state", async () => {
+    vi.mocked(fetchScheduledDeploys).mockResolvedValue([schedule()] as never);
+    renderPage();
+    await screen.findByTestId("scheduled-s-1");
+    vi.mocked(fetchScheduledDeploys).mockClear();
+
+    await act(async () => {
+      CapturingEventSource.instances[0].emit({
+        type: "model.download.completed",
+        resource_type: "model",
+        metadata: { ...runningJob, status: "completed", bytes_done: 100 },
+      });
+    });
+
+    await waitFor(() => expect(fetchScheduledDeploys).toHaveBeenCalled());
   });
 });

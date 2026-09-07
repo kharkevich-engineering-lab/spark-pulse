@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { AlertCircle, Boxes, Download, HardDrive, Loader2, Plus, Save, Trash2, X } from "lucide-react";
+import { AlertCircle, Boxes, Download, HardDrive, Loader2, Plus, Rocket, Save, Trash2, X } from "lucide-react";
 import {
   cancelModelDownload,
+  cancelScheduledDeploy,
   deleteModel,
+  fetchScheduledDeploys,
   fetchModelDownloads,
   fetchModelSources,
   fetchModels,
@@ -16,7 +18,7 @@ import { SSEConnectionState } from "@/lib/operations";
 import { formatSize } from "@/lib/utils";
 import { setRefresh } from "@/lib/refresh";
 import { AlertModal, ConfirmModal } from "@/components/Modal";
-import type { ModelDownloadJob, ModelEntry, ModelSource } from "@/lib/types";
+import type { ModelDownloadJob, ModelEntry, ModelSource, ScheduledDeploy } from "@/lib/types";
 
 const ACTIVE_STATES = ["queued", "running"];
 
@@ -128,6 +130,7 @@ export default function ModelsPage() {
   const [starting, setStarting] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [alert, setAlert] = useState<{ title: string; message: string } | null>(null);
+  const [scheduled, setScheduled] = useState<ScheduledDeploy[]>([]);
 
   useEffect(() => { setRefresh(refetch); }, [refetch]);
 
@@ -135,7 +138,15 @@ export default function ModelsPage() {
     fetchModelDownloads().then(setJobs).catch(() => { });
   }, []);
 
-  useEffect(() => { reloadJobs(); }, [reloadJobs]);
+  // What each download is *for*. A progress bar with no purpose attached is
+  // the thing this feature exists to stop showing: an operator who left the
+  // deploy page has no other way to know a deployment is waiting on these
+  // bytes, or to call it off.
+  const reloadScheduled = useCallback(() => {
+    fetchScheduledDeploys().then(setScheduled).catch(() => { });
+  }, []);
+
+  useEffect(() => { reloadJobs(); reloadScheduled(); }, [reloadJobs, reloadScheduled]);
 
   const onEvent = useCallback((_event: string, data: unknown) => {
     const frame = data as ModelEventFrame;
@@ -148,7 +159,12 @@ export default function ModelsPage() {
         : [job, ...current],
     );
     if (frame.type === "model.download.completed") refetch();
-  }, [refetch]);
+    // Any terminal state settles the deploys queued behind this download —
+    // into "deploying", or into a failure that has to be shown.
+    if (frame.type?.startsWith("model.download.") && !["queued", "running"].includes(job.status)) {
+      reloadScheduled();
+    }
+  }, [refetch, reloadScheduled]);
 
   const sseStatus = useSSEConnection("/sse/models", onEvent);
   const connected = sseStatus.state === SSEConnectionState.CONNECTED;
@@ -189,10 +205,37 @@ export default function ModelsPage() {
     try {
       await cancelModelDownload(jobId);
       reloadJobs();
+      reloadScheduled();
     } catch (err) {
       setAlert({ title: "Cancel failed", message: err instanceof Error ? err.message : "Unknown error" });
     }
   };
+
+  const doCancelScheduled = async (entry: ScheduledDeploy) => {
+    try {
+      // The download goes too. Both wishes usually travel together, and the
+      // server keeps the bytes anyway if another deploy is still waiting on
+      // this same job.
+      await cancelScheduledDeploy(entry.id);
+      reloadScheduled();
+      reloadJobs();
+    } catch (err) {
+      setAlert({ title: "Cancel failed", message: err instanceof Error ? err.message : "Unknown error" });
+    }
+  };
+
+  /** The deploys attached to one download job.
+   *
+   *  Settled ones are shown too, and deliberately: a download that finished
+   *  and a deployment that then failed to start is exactly the case an
+   *  operator would otherwise wait on for ever, watching a completed progress
+   *  bar. Only the ones they called off themselves are hidden — they already
+   *  know. */
+  const waitingOn = useCallback(
+    (jobId: string) =>
+      scheduled.filter((e) => e.download_job_id === jobId && e.status !== "cancelled"),
+    [scheduled],
+  );
 
   const totalSize = models?.reduce((sum, m) => sum + m.size_bytes, 0) ?? 0;
 
@@ -282,6 +325,32 @@ export default function ModelsPage() {
                 style={{ width: `${progressPercent(job)}%` }}
               />
             </div>
+            {waitingOn(job.id).map((entry) => (
+              <div
+                key={entry.id}
+                data-testid={`scheduled-${entry.id}`}
+                className={`mt-2 flex items-center justify-between gap-3 px-3 py-2 rounded-lg border ${entry.status === "failed" ? "bg-danger/5 border-danger/20" : "bg-primary/5 border-primary/20"}`}
+              >
+                <p className="text-xs text-text-secondary flex items-center gap-2 min-w-0">
+                  <Rocket size={13} className={entry.status === "failed" ? "text-danger shrink-0" : "text-primary shrink-0"} />
+                  <span className="truncate">
+                    {entry.status === "waiting" && <>Scheduled to deploy <span className="font-medium text-text">{entry.name}</span> when this finishes</>}
+                    {entry.status === "deploying" && <>Deploying <span className="font-medium text-text">{entry.name}</span> now</>}
+                    {entry.status === "done" && <>Deployed <span className="font-medium text-text">{entry.name}</span></>}
+                    {entry.status === "failed" && <><span className="font-medium text-text">{entry.name}</span> could not be deployed: {entry.error}</>}
+                  </span>
+                </p>
+                {entry.status === "waiting" && (
+                  <button
+                    aria-label={`Cancel the scheduled deploy of ${entry.name}`}
+                    onClick={() => doCancelScheduled(entry)}
+                    className="p-1 rounded text-text-muted hover:text-danger hover:bg-danger/10 shrink-0"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+            ))}
           </div>
         ))}
       </section>

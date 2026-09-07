@@ -325,7 +325,52 @@ export interface Settings {
   engine_indexes?: string[];
   engine_index_cache_ttl_seconds?: number;
   engines?: Record<string, { enabled?: boolean }>;
+  docker_pull_stall_timeout_seconds?: number;
+  /** The `docker:` block: what every deployment's container is built with. */
+  docker?: DockerSettings;
+  /** The `mod:` block. */
+  mod?: { network_policy?: "allow" | "warn" | "deny" };
+  /** Fields the environment owns; the form shows them but cannot write them. */
   env_managed?: string[];
+  /** How this process is configured. Reported, never written from the UI. */
+  environment?: EnvironmentReport;
+}
+
+/** The container knobs every deployment inherits.
+ *
+ * Nullable numbers mean "not set" rather than zero — `memory_limit_gb: null`
+ * is no limit, which is not the same as a limit of nothing. */
+export interface DockerSettings {
+  privileged?: boolean;
+  memory_limit_gb?: number | null;
+  memory_swap_limit_gb?: number | null;
+  shm_size_gb?: number;
+  pids_limit?: number;
+  nofile_limit?: number;
+  cache_dirs?: string[];
+  keep_entrypoint?: boolean;
+}
+
+/** Configuration an operator needs to see and must not change from a browser.
+ *
+ * `database_url` arrives with any password already removed — the host and
+ * database answer "which database am I on" without putting a credential on a
+ * page someone can read over a shoulder. */
+export interface EnvironmentReport {
+  database_url: string;
+  database_backend: string;
+  external_url: string;
+  cors_allowed_origins: string[];
+  auth_enabled: boolean;
+  oidc_provider_url: string;
+  mcp_enabled: boolean;
+  mcp_path: string;
+  cluster_experimental: boolean;
+  thread_pool_size: number;
+  /** The control node's own image registry: how a worker node gets an engine
+   *  image without every node pulling from the internet. Empty when it could
+   *  not be resolved. */
+  image_registry?: { mode?: string; address?: string; port?: number; upstream?: string };
 }
 
 export interface BenchmarkResult {
@@ -697,6 +742,9 @@ export interface DeployPlan {
   image_present: boolean;
   /** Size of the local copy when there is one; null when it must be pulled. */
   image_size_bytes: number | null;
+  /** Whether the model is in the local catalogue. A plan permits a missing
+   *  model — this is how the preview can say so before the deploy refuses. */
+  model_present: boolean;
   warnings: string[];
   runtime: string;
   created_at: string;
@@ -1007,4 +1055,32 @@ export interface AddNodeRequest {
   ssh_key_path?: string;
   ethernet_interface?: string;
   infiniband_interfaces?: string[];
+}
+
+// ── Deployments waiting on a model download ─────────────────────────────────
+
+/** A deployment recorded to run once the model it needs has been downloaded.
+ *
+ *  Server-side state, not a promise held by the page: a 20 GB download
+ *  outlives the tab, and the Models page — where the operator watches the
+ *  progress — is not the page the deploy was asked for on. */
+export interface ScheduledDeploy {
+  id: string;
+  /** The model being waited on. */
+  model: string;
+  /** The download this is behind; several schedules can share one. */
+  download_job_id: string;
+  status: "waiting" | "deploying" | "done" | "failed" | "cancelled";
+  /** What the deployment will be called. */
+  name: string;
+  recipe_id: string;
+  /** The create body, verbatim, to be re-issued when the model lands. */
+  request: Record<string, unknown>;
+  /** Set once the deployment exists. */
+  deployment_id: string;
+  error: string;
+  created_at: string;
+  finished_at: string;
+  /** The download job, on the response that created this. */
+  download?: ModelDownloadJob;
 }

@@ -788,6 +788,42 @@ class TestLifecycle:
         logs = native.get_logs(plan.deployment_id, 100, docker=docker)
         assert plan.container.name in logs
 
+    def test_a_stopped_deployment_still_has_its_logs(self, native, docker):
+        """Teardown removes the container; the logs must not go with it.
+
+        ``docker logs`` on a removed container is not "empty", it is "no such
+        container" — so a deployment that died left an operator with a stopped
+        card and a pane repeating ``Container '...' not found``, which is the
+        one thing they already knew and says nothing about why it stopped.
+        """
+        plan = self._running(native, docker)
+        live = native.get_logs(plan.deployment_id, 100, docker=docker)
+
+        native.stop_deployment(plan.deployment_id, docker=docker)
+
+        after = native.get_logs(plan.deployment_id, 100, docker=docker)
+        assert "not found" not in after
+        assert after == live
+
+    def test_the_kept_logs_are_on_the_record(self, native, docker):
+        """Persisted, so they survive the restart that loses every cache."""
+        plan = self._running(native, docker)
+
+        record = native.stop_deployment(plan.deployment_id, docker=docker)
+
+        assert record["final_logs"]["0"]
+
+    def test_a_live_container_still_wins(self, native, docker):
+        """The kept copy is a fallback, not a replacement.
+
+        A running deployment must read from the container, or the log pane
+        freezes at whatever was captured the last time it stopped.
+        """
+        plan = self._running(native, docker)
+        nr._update_record(plan.deployment_id, final_logs={"0": "stale"})
+
+        assert native.get_logs(plan.deployment_id, 100, docker=docker) != "stale"
+
     def test_logs_for_an_unknown_deployment(self, native, docker):
         assert native.get_logs("nope", docker=docker) == "Deployment not found"
 

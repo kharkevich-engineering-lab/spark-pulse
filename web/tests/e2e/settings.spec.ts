@@ -26,6 +26,7 @@ interface Settings {
   default_port_range_start: number;
   default_port_range_end: number;
   default_engine: string;
+  docker: { shm_size_gb: number; pids_limit: number };
 }
 
 test("shows the engines the registry knows about", async ({ page, request }) => {
@@ -39,6 +40,9 @@ test("shows the engines the registry knows about", async ({ page, request }) => 
 
   await gotoPage(page, "/settings");
   await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
+  // The engine list lives on its own tab now; nothing is asserted about it
+  // until that tab is the one on screen.
+  await page.getByRole("tab", { name: "Engines" }).click();
   await expect(page.getByRole("heading", { name: "Engines", exact: true })).toBeVisible();
 
   for (const engine of engines) {
@@ -68,22 +72,46 @@ test("shows the configuration the backend is running with", async ({ page, reque
   const settings = (await response.json()) as Settings;
 
   await gotoPage(page, "/settings");
-  for (const heading of ["Deployment Defaults", "Docker", "Job History", "Engines", "Secrets"]) {
-    await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
+
+  // Every tab renders, and each is reached by name.
+  for (const tab of ["Deployment", "Containers", "Cluster", "Engines", "Secrets", "Environment"]) {
+    await expect(page.getByRole("tab", { name: tab, exact: true })).toBeVisible();
   }
 
   // The form is populated from /api/settings, so every configured value should
-  // be sitting in one of its fields.
-  const values = await page
-    .locator("input")
-    .evaluateAll((nodes) => nodes.map((node) => (node as HTMLInputElement).value));
+  // be sitting in a field on the tab it belongs to.
+  const valuesOnScreen = async () =>
+    page
+      .locator("input")
+      .evaluateAll((nodes) => nodes.map((node) => (node as HTMLInputElement).value));
 
-  expect(values).toContain(settings.spark_vllm_path);
-  expect(values).toContain(settings.default_container);
-  expect(values).toContain(settings.default_engine);
-  expect(values).toContain(String(settings.default_gpu_mem_util));
-  expect(values).toContain(String(settings.default_port_range_start));
-  expect(values).toContain(String(settings.default_port_range_end));
+  await expect(page.getByRole("heading", { name: "Deployment Defaults", exact: true })).toBeVisible();
+  const deployment = await valuesOnScreen();
+  expect(deployment).toContain(settings.spark_vllm_path);
+  expect(deployment).toContain(settings.default_container);
+  expect(deployment).toContain(String(settings.default_gpu_mem_util));
+  expect(deployment).toContain(String(settings.default_port_range_start));
+  expect(deployment).toContain(String(settings.default_port_range_end));
+
+  // The Docker block used to render its defaults from literals in the page, so
+  // it showed numbers the backend had never heard of. It comes from the API now.
+  await page.getByRole("tab", { name: "Containers" }).click();
+  await expect(page.getByRole("heading", { name: "Container Limits", exact: true })).toBeVisible();
+  const containers = await valuesOnScreen();
+  expect(containers).toContain(String(settings.docker.shm_size_gb));
+  expect(containers).toContain(String(settings.docker.pids_limit));
+
+  await page.getByRole("tab", { name: "Engines" }).click();
+  expect(await valuesOnScreen()).toContain(settings.default_engine);
+
+  // Read-only by design: what this tab reports is exactly what a browser must
+  // not be able to change.
+  await page.getByRole("tab", { name: "Environment" }).click();
+  await expect(page.getByRole("heading", { name: "Access", exact: true })).toBeVisible();
+  expect(await page.locator("input").count()).toBe(0);
+  await expect(page.getByRole("button", { name: /Save settings/ })).toHaveCount(0);
+
+  await page.getByRole("tab", { name: "Deployment" }).click();
 
   // Save is inert until something changes, so this spec cannot write to the
   // settings file of whoever is running it.

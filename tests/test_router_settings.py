@@ -63,7 +63,11 @@ class TestGetSettings:
             "engine_indexes",
             "engine_index_cache_ttl_seconds",
             "engines",
+            "docker_pull_stall_timeout_seconds",
+            "docker",
+            "mod",
             "env_managed",
+            "environment",
         }
 
     def test_a_field_the_environment_owns_is_named_as_such(self, client, monkeypatch):
@@ -222,3 +226,172 @@ class TestSecrets:
 
         assert response.status_code == 400
         assert response.json()["detail"] == "Unknown secret key: aws_secret"
+
+
+# ── The nested blocks, and what must stay unwritable ─────────────────────────
+
+
+class TestTheDockerBlock:
+    """``docker:`` is what every deployment's container is actually built with.
+
+    It was reported by no endpoint and refused by the allowlist, so the page
+    that showed it rendered its defaults from literals in the JSX — values the
+    machine did not have — and posting them back was a 400. The block round
+    trips now, and the keys it may carry are named.
+    """
+
+    def test_it_is_reported_with_the_values_in_force(self, client):
+        block = client.get("/api/settings").json()["docker"]
+
+        assert block["shm_size_gb"] == config.docker_shm_size_gb
+        assert block["privileged"] == config.docker_privileged
+        assert block["cache_dirs"] == config.docker_cache_dirs
+
+    def test_a_saved_value_is_persisted_and_read_back(
+        self, client, private_config_files
+    ):
+        body = client.put("/api/settings", json={"docker": {"shm_size_gb": 8}}).json()
+
+        assert body["docker"]["shm_size_gb"] == 8
+        assert json.loads(private_config_files["settings"].read_text()) == {
+            "docker": {"shm_size_gb": 8}
+        }
+
+    def test_no_limit_is_not_a_limit_of_zero(self, client):
+        """``null`` means "the engine decides"; 0 would cap it at nothing."""
+        body = client.put(
+            "/api/settings", json={"docker": {"memory_limit_gb": None}}
+        ).json()
+
+        assert body["docker"]["memory_limit_gb"] is None
+
+    @pytest.mark.parametrize("dead", ["cluster_image", "ray_port", "gpu_count"])
+    def test_a_setting_nothing_reads_is_refused(
+        self, client, dead, private_config_files
+    ):
+        """These three sat in this block and in the settings form with no
+        reader anywhere in the backend. Refusing them is what keeps them from
+        coming back as configuration that configures nothing."""
+        response = client.put("/api/settings", json={"docker": {dead: 1}})
+
+        assert response.status_code == 400
+        assert dead in response.json()["detail"]
+        assert not private_config_files["settings"].exists()
+
+    def test_a_docker_block_that_is_not_an_object_is_refused(self, client):
+        response = client.put("/api/settings", json={"docker": "privileged"})
+
+        assert response.status_code == 400
+        assert "must be an object" in response.json()["detail"]
+
+    def test_a_stale_key_in_the_file_does_not_break_the_round_trip(
+        self, client, private_config_files
+    ):
+        """An operator upgrading has ``ray_port`` in their settings.json. The
+        GET must not hand back a body its own PUT would then refuse."""
+        private_config_files["settings"].write_text(
+            json.dumps({"docker": {"ray_port": 29501, "shm_size_gb": 16}})
+        )
+        config._load()
+
+        body = client.get("/api/settings").json()
+
+        assert "ray_port" not in body["docker"]
+        assert client.put("/api/settings", json=body).status_code == 200
+
+
+class TestTheModBlock:
+    def test_the_policy_round_trips(self, client):
+        body = client.put(
+            "/api/settings", json={"mod": {"network_policy": "deny"}}
+        ).json()
+
+        assert body["mod"]["network_policy"] == "deny"
+
+    def test_a_policy_nothing_implements_is_refused(self, client):
+        """The three the checker knows are the three it can enforce; anything
+        else would read as configured and behave as ``warn``."""
+        response = client.put("/api/settings", json={"mod": {"network_policy": "off"}})
+
+        assert response.status_code == 400
+        assert "allow, warn, deny" in response.json()["detail"]
+
+    def test_an_unknown_mod_key_is_refused(self, client):
+        response = client.put("/api/settings", json={"mod": {"sandbox": True}})
+
+        assert response.status_code == 400
+        assert "sandbox" in response.json()["detail"]
+
+
+class TestTheEnvironmentReport:
+    """Configuration the operator must see and the browser must not change."""
+
+    def test_it_is_reported(self, client):
+        environment = client.get("/api/settings").json()["environment"]
+
+        assert environment["auth_enabled"] == config.auth_enabled
+        assert environment["cors_allowed_origins"] == config.cors_allowed_origins
+        assert environment["thread_pool_size"] == config.thread_pool_size
+
+    def test_sending_it_back_writes_nothing(self, client, private_config_files):
+        body = client.get("/api/settings").json()
+        body["environment"]["auth_enabled"] = not body["environment"]["auth_enabled"]
+
+        assert client.put("/api/settings", json=body).status_code == 200
+
+        written = json.loads(private_config_files["settings"].read_text())
+        assert "environment" not in written
+        assert "auth_enabled" not in written
+
+    @pytest.mark.parametrize(
+        "key", ["auth_enabled", "oidc_client_secret", "mcp_api_token", "external_url"]
+    )
+    def test_the_dangerous_settings_stay_unwritable(
+        self, client, key, private_config_files
+    ):
+        """``config.update`` writes into settings.json, which is where these
+        are read from. A PUT that could set ``auth_enabled`` would make this
+        endpoint the way past every other check in the system."""
+        response = client.put("/api/settings", json={key: "anything"})
+
+        assert response.status_code == 400
+        assert key in response.json()["detail"]
+        assert not private_config_files["settings"].exists()
+
+    def test_a_database_password_is_not_put_on_the_page(self, client):
+        """The host and database answer "which database am I on". The password
+        is a credential, and this page is readable over a shoulder."""
+        config._data["database_url"] = "postgresql+psycopg://pulse:hunter2@db/pulse"
+
+        reported = client.get("/api/settings").json()["environment"]["database_url"]
+
+        assert "hunter2" not in reported
+        assert "db/pulse" in reported
+
+    def test_a_url_with_no_password_is_left_alone(self, client):
+        config._data["database_url"] = "sqlite:////var/lib/spark-pulse/db.sqlite"
+
+        reported = client.get("/api/settings").json()["environment"]["database_url"]
+
+        assert reported == "sqlite:////var/lib/spark-pulse/db.sqlite"
+
+    def test_the_image_registry_is_reported(self, client):
+        """How a worker node gets an engine image without every node pulling
+        from the internet. It had no UI at all, so "why is this node still
+        pulling" had no answer on any page."""
+        reported = client.get("/api/settings").json()["environment"]["image_registry"]
+
+        assert reported["mode"] in ("local", "proxy")
+        assert reported["port"]
+
+    def test_the_upstream_is_only_reported_for_a_proxy(self, client):
+        """A full registry has no upstream to name; reporting one would say
+        this node caches something it actually serves itself."""
+        config._data["image_registry"] = {"mode": "local"}
+
+        assert (
+            client.get("/api/settings").json()["environment"]["image_registry"][
+                "upstream"
+            ]
+            == ""
+        )

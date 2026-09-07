@@ -15,6 +15,7 @@ from spark_pulse.tools.native_runtime import (
     SCRIPT_PATH as SCRIPT_PATH,
     ContainerSpec as ContainerSpec,
     DeployPlan as DeployPlan,
+    MissingModelError as MissingModelError,
     NativeRuntimeError as NativeRuntimeError,
     RankPlan as RankPlan,
     allocate_port as allocate_port,

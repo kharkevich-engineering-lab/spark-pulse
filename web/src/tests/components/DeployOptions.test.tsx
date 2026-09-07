@@ -4,7 +4,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import DeployOptions, {
   deployParams,
-  describeImagePresence,
+  describeImagePresence, describeModelPresence,
   describeOccupancy,
   eligibleEngines,
   engineChoices,
@@ -400,6 +400,81 @@ describe("describeImagePresence", () => {
     expect(
       describeImagePresence({ image_present: true, image_size_bytes: 26_843_545_600 }),
     ).toBe("pulled · 25.0 GB");
+  });
+});
+
+describe("describeModelPresence", () => {
+  it("says the model has to be fetched, and that Deploy will offer to", () => {
+    expect(describeModelPresence({ model_present: false })).toBe(
+      "not downloaded — Deploy will offer to fetch it",
+    );
+  });
+
+  it("says nothing alarming when the model is here", () => {
+    expect(describeModelPresence({ model_present: true })).toBe("downloaded");
+  });
+});
+
+describe("DeployOptions model presence", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(fetchEngines).mockResolvedValue({ engines: [engine("vllm")] } as never);
+    vi.mocked(fetchModels).mockResolvedValue([] as never);
+    vi.mocked(fetchNodes).mockResolvedValue([CONTROL_NODE]);
+  });
+
+  /** The plan is a dry run and permits a missing model, so this was the one
+   *  blocking condition the preview stayed silent about — the operator met it
+   *  as a 400 after pressing Deploy. */
+  it("warns in the preview when the model is not downloaded", async () => {
+    vi.mocked(planDeployment).mockResolvedValue({
+      ...PLAN,
+      model: "acme/absent-70b",
+      model_present: false,
+    } as never);
+    render(<DeployOptions recipe={V1_RECIPE} value={{ engine: "vllm" }} onChange={vi.fn()} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /deploy options/i }));
+
+    await user.click(screen.getByRole("button", { name: /preview/i }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("deploy-plan-model-presence")).toHaveTextContent(
+        "not downloaded",
+      ),
+    );
+  });
+
+  it("stays quiet when the model is already in the catalogue", async () => {
+    vi.mocked(planDeployment).mockResolvedValue({
+      ...PLAN,
+      model: "acme/here-7b",
+      model_present: true,
+    } as never);
+    render(<DeployOptions recipe={V1_RECIPE} value={{ engine: "vllm" }} onChange={vi.fn()} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /deploy options/i }));
+
+    await user.click(screen.getByRole("button", { name: /preview/i }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("deploy-plan-model-presence")).toHaveTextContent("downloaded"),
+    );
+  });
+
+  /** A v1 recipe embeds the model in the command template; there is no model
+   *  to have an opinion about, and a row saying "not downloaded" would be a
+   *  lie the operator cannot act on. */
+  it("says nothing at all when the plan resolves no model", async () => {
+    vi.mocked(planDeployment).mockResolvedValue({ ...PLAN, model: "", model_present: true } as never);
+    render(<DeployOptions recipe={V1_RECIPE} value={{ engine: "vllm" }} onChange={vi.fn()} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /deploy options/i }));
+
+    await user.click(screen.getByRole("button", { name: /preview/i }));
+
+    await screen.findByTestId("deploy-plan");
+    expect(screen.queryByTestId("deploy-plan-model-presence")).not.toBeInTheDocument();
   });
 });
 
