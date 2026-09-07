@@ -10,6 +10,17 @@
 import { expect, test } from "@playwright/test";
 import { expectNoCrash, gotoPage } from "./helpers";
 
+interface EngineSummary {
+  engine: string;
+  variant: string;
+  version: string;
+  image: string;
+  image_ref: string;
+  digest: string | null;
+  enabled: boolean;
+  ports: { api: number; rendezvous?: number | null };
+}
+
 interface ImageEntry {
   ref: string;
   repository: string;
@@ -28,6 +39,41 @@ function shortDigest(digest: string | null | undefined): string {
   const body = digest.startsWith("sha256:") ? digest.slice(7) : digest;
   return body.slice(0, 12);
 }
+
+test("shows the engines the registry knows about", async ({ page, request }) => {
+  const response = await request.get("/api/engines");
+  expect(response.ok(), "GET /api/engines should succeed").toBeTruthy();
+  const { engines, default_engine } = (await response.json()) as {
+    engines: EngineSummary[];
+    default_engine: string;
+  };
+  expect(engines.length, "simulation mode should serve an engine registry").toBeGreaterThan(0);
+
+  await gotoPage(page, "/engines");
+  await expect(page.getByRole("heading", { name: "Engines", exact: true })).toBeVisible();
+
+  for (const engine of engines) {
+    // The row is keyed by the image reference, which is what the catalogue and
+    // the registry already agree on.
+    const row = page.getByTestId(`engine-${engine.image_ref}`);
+    if ((await row.count()) === 0) continue; // an engine with no catalogue entry
+    const label =
+      engine.variant === "default" ? engine.engine : `${engine.engine} · ${engine.variant}`;
+    await expect(row).toContainText(label);
+    await expect(row).toContainText(`v${engine.version}`);
+
+    // Opening the row is what asks for its capabilities and its ports.
+    await row.getByRole("button", { name: `Details for ${engine.image_ref}` }).click();
+    const detail = page.getByTestId(`presence-${engine.image_ref}`);
+    await expect(detail).toBeVisible();
+    await expect(page.getByText(`:${engine.ports.api}`, { exact: false }).first()).toBeVisible();
+    await row.getByRole("button", { name: `Details for ${engine.image_ref}` }).click();
+  }
+  // Where engines come from is configured on the page they appear on, so the
+  // default engine is a field here rather than a tab in Settings.
+  await expect(page.getByLabel("Default engine")).toHaveValue(default_engine);
+  await expectNoCrash(page);
+});
 
 test("lists every engine image the backend knows about", async ({ page, request }) => {
   const response = await request.get("/api/images");
