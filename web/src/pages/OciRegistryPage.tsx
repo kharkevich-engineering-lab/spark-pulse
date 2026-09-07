@@ -1,6 +1,7 @@
 /** OCI Registry page — browse, install, update recipe collections from OCI registries. */
 
 import { useState, useEffect, useCallback } from "react";
+import { useI18n } from "@/lib/i18n";
 import {
   Package, Settings as SettingsIcon, Download, RefreshCw,
   Plus, AlertCircle, CheckCircle2, Loader2, Clock, XCircle,
@@ -36,6 +37,7 @@ import CollectionCard from "@/components/CollectionCard";
 type Tab = "browse" | "installed" | "settings";
 
 export default function OciRegistryPage() {
+  const { t } = useI18n();
   const [activeTab, setActiveTab] = useState<Tab>("browse");
 
   const [alertModal, setAlertModal] = useState<{ title: string; message: string; open: boolean } | null>(null);
@@ -223,10 +225,10 @@ export default function OciRegistryPage() {
   const handleUninstallRecipe = async (recipeName: string) => {
     try {
       await uninstallOciRecipe(recipeName);
-      setAlertModal({ title: "Success", message: `Uninstalled ${recipeName}`, open: true });
+      setAlertModal({ title: t("oci.success"), message: t("oci.uninstalled", { name: recipeName }), open: true });
       refetchMeta();
     } catch (e) {
-      setAlertModal({ title: "Uninstall Failed", message: e instanceof Error ? e.message : "Unknown error", open: true });
+      setAlertModal({ title: t("oci.uninstallFailed"), message: e instanceof Error ? e.message : t("oci.unknownError"), open: true });
     }
   };
 
@@ -368,8 +370,8 @@ export default function OciRegistryPage() {
           ) : (
             <div className="text-center py-16 text-text-muted">
               <Package size={48} className="mx-auto mb-4 opacity-30" />
-              <p className="text-base font-medium">No collections found</p>
-              <p className="text-sm mt-2">Configure registries in Settings to browse collections</p>
+              <p className="text-base font-medium">{t("oci.noCollections")}</p>
+              <p className="text-sm mt-2">{t("oci.noCollectionsHint")}</p>
             </div>
           )}
         </div>
@@ -384,7 +386,7 @@ export default function OciRegistryPage() {
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
                   <RefreshCw size={16} className="text-warning" />
-                  <h3 className="font-semibold">Available Updates</h3>
+                  <h3 className="font-semibold">{t("oci.availableUpdates")}</h3>
                 </div>
                 <div className="flex items-center gap-2">
                   <button
@@ -427,7 +429,7 @@ export default function OciRegistryPage() {
                         <span className="text-warning">~{u.modified_recipes.length}</span>
                       )}
                       {u.local_changes && (
-                        <span className="text-warning text-xs">Local changes</span>
+                        <span className="text-warning text-xs">{t("oci.localChanges")}</span>
                       )}
                     </div>
                   </div>
@@ -465,12 +467,12 @@ export default function OciRegistryPage() {
                       {new Date(meta.installed_at).toLocaleDateString()}
                     </span>
                     {meta.local_changes && (
-                      <span className="text-warning text-xs">Modified</span>
+                      <span className="text-warning text-xs">{t("oci.modified")}</span>
                     )}
                     <button
                       onClick={() => handleUninstallRecipe(meta.name)}
                       className="p-1.5 rounded-lg hover:bg-danger/10 text-text-muted hover:text-danger transition-colors"
-                      title="Uninstall this recipe"
+                      title={t("oci.uninstallRecipe")}
                     >
                       <Trash2 size={16} />
                     </button>
@@ -481,8 +483,8 @@ export default function OciRegistryPage() {
           ) : (
             <div className="text-center py-16 text-text-muted">
               <Download size={48} className="mx-auto mb-4 opacity-30" />
-              <p className="text-base font-medium">No OCI recipes installed</p>
-              <p className="text-sm mt-2">Browse collections to install recipes</p>
+              <p className="text-base font-medium">{t("oci.noInstalled")}</p>
+              <p className="text-sm mt-2">{t("oci.noInstalledHint")}</p>
             </div>
           )}
         </div>
@@ -496,14 +498,14 @@ export default function OciRegistryPage() {
             <div className="flex items-center justify-between mb-5">
               <div className="flex items-center gap-2">
                 <Package size={16} className="text-primary" />
-                <h3 className="font-semibold">Registries</h3>
+                <h3 className="font-semibold">{t("oci.registries")}</h3>
               </div>
               <button
                 onClick={() => setAddingRegistry(true)}
                 className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm bg-primary text-white hover:bg-primary/90 transition-colors"
               >
                 <Plus size={14} />
-                Add Registry
+                {t("oci.addRegistryButton")}
               </button>
             </div>
             {regsLoading ? (
@@ -529,32 +531,32 @@ export default function OciRegistryPage() {
             ) : (
               <div className="text-center py-12 text-text-muted">
                 <Package size={32} className="mx-auto mb-3 opacity-30" />
-                <p className="text-sm font-medium">No registries configured</p>
+                <p className="text-sm font-medium">{t("oci.noRegistries")}</p>
               </div>
             )}
 
             {/* Add Registry Form */}
             {addingRegistry && (
               <div className="mt-6 p-5 rounded-lg border border-border bg-surface-pressed">
-                <h3 className="font-semibold mb-4">Add New Registry</h3>
+                <h3 className="font-semibold mb-4">{t("oci.addRegistry")}</h3>
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-sm text-text-muted mb-1">Name</label>
+                    <label className="block text-sm text-text-muted mb-1">{t("oci.name")}</label>
                     <input
                       type="text"
                       value={newRegName}
                       onChange={e => setNewRegName(e.target.value)}
-                      placeholder="my-registry"
+                      placeholder={t("oci.namePlaceholder")}
                       className="w-full px-3 py-2 rounded-lg border border-border bg-surface text-sm"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm text-text-muted mb-1">URL</label>
+                    <label className="block text-sm text-text-muted mb-1">{t("oci.url")}</label>
                     <input
                       type="text"
                       value={newRegUrl}
                       onChange={e => setNewRegUrl(e.target.value)}
-                      placeholder="ghcr.io/owner/recipe-repo"
+                      placeholder={t("oci.urlPlaceholder")}
                       className="w-full px-3 py-2 rounded-lg border border-border bg-surface text-sm"
                     />
                   </div>
@@ -582,7 +584,7 @@ export default function OciRegistryPage() {
           <div className="p-6 rounded-xl bg-surface border border-border">
             <div className="flex items-center gap-2 mb-5">
               <Clock size={16} className="text-primary" />
-              <h3 className="font-semibold">Auto-Update</h3>
+              <h3 className="font-semibold">{t("oci.autoUpdate")}</h3>
             </div>
             {autoLoading ? (
               <div className="flex items-center justify-center py-12">
@@ -592,7 +594,7 @@ export default function OciRegistryPage() {
               <div className="space-y-5">
                 <div className="flex items-center justify-between">
                   <div className="space-y-1">
-                    <span className="font-medium">Enable Auto-Update</span>
+                    <span className="font-medium">{t("oci.enableAutoUpdate")}</span>
                     <p className="text-sm text-text-muted">
                       Check for updates on a schedule
                     </p>
@@ -613,7 +615,7 @@ export default function OciRegistryPage() {
 
                 <div className="flex items-center gap-4">
                   <div className="flex-1">
-                    <label className="block text-sm text-text-muted mb-2">Schedule (cron)</label>
+                    <label className="block text-sm text-text-muted mb-2">{t("oci.schedule")}</label>
                     <input
                       type="text"
                       value={autoSettings.schedule}
@@ -665,7 +667,7 @@ export default function OciRegistryPage() {
             {drawerRecipesLoading ? (
               <div className="flex items-center gap-2 py-4 text-text-muted">
                 <Loader2 size={16} className="animate-spin" />
-                <span className="text-sm">Loading recipes...</span>
+                <span className="text-sm">{t("oci.loadingRecipes")}</span>
               </div>
             ) : drawerRecipes.length > 0 ? (
               drawerRecipes.map((recipe, idx) => {
@@ -720,10 +722,10 @@ export default function OciRegistryPage() {
                                 <button
                                   onClick={() => handleUpdateRecipe(recipe.name, drawerCollection!)}
                                   className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs bg-warning text-warning-foreground hover:bg-warning/90 transition-colors font-medium"
-                                  title="Update this recipe"
+                                  title={t("oci.updateRecipe")}
                                 >
                                   <RefreshCw size={12} />
-                                  Update
+                                  {t("oci.update")}
                                 </button>
                                 <button
                                   onClick={() => handleUninstallRecipe(recipe.name)}
@@ -731,17 +733,17 @@ export default function OciRegistryPage() {
                                   title="Uninstall this recipe"
                                 >
                                   <Trash2 size={12} />
-                                  Uninstall
+                                  {t("oci.uninstall")}
                                 </button>
                               </>
                             ) : (
                               <button
                                 onClick={() => handleInstallRecipe(recipe.name, drawerCollection!)}
                                 className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs bg-primary text-white hover:bg-primary/90 transition-colors font-medium"
-                                title="Install this recipe"
+                                title={t("oci.installRecipe")}
                               >
                                 <Download size={12} />
-                                Install
+                                {t("oci.install")}
                               </button>
                             )}
                           </>
@@ -763,7 +765,7 @@ export default function OciRegistryPage() {
             <button
               onClick={() => drawerCollection && handleInstall(drawerCollection)}
               className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-white hover:bg-primary/90 transition-colors font-medium text-sm"
-              title="Install all recipes in this collection"
+              title={t("oci.installAll")}
             >
               <Download size={16} />
               Install All Recipes

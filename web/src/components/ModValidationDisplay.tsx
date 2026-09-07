@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { useI18n } from "@/lib/i18n";
 import { validateMod, applyMod } from "@/lib/api";
 import {
   AlertCircle,
@@ -26,6 +27,7 @@ export default function ModValidationDisplay({
   showApplyButton = true,
   className = "",
 }: ModValidationDisplayProps) {
+  const { t } = useI18n();
   const [validating, setValidating] = useState(false);
   const [applying, setApplying] = useState(false);
   const [result, setResult] = useState<ModValidationResult | null>(null);
@@ -69,7 +71,7 @@ export default function ModValidationDisplay({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <ShieldCheck size={20} className="text-primary" />
-          <h3 className="text-lg font-semibold">Mod Security Validation</h3>
+          <h3 className="text-lg font-semibold">{t("modValidation.title")}</h3>
         </div>
         <button
           onClick={handleValidate}
@@ -116,13 +118,13 @@ export default function ModValidationDisplay({
             {/* File Size Check */}
             <div className="flex items-center gap-2 text-sm">
               <Check size={14} className="text-success shrink-0" />
-              <span>File size within limits (50MB max)</span>
+              <span>{t("modValidation.sizeOk")}</span>
             </div>
 
             {/* Dangerous Patterns */}
             {hasErrors && (
               <div className="space-y-1 mt-3">
-                <p className="text-sm font-semibold text-danger">Security Errors:</p>
+                <p className="text-sm font-semibold text-danger">{t("modValidation.errors")}</p>
                 {result.errors?.map((err, i) => (
                   <p key={i} className="text-sm text-danger pl-4">• {err}</p>
                 ))}
@@ -134,7 +136,7 @@ export default function ModValidationDisplay({
                 both printed every warning twice. */}
             {hasWarnings && !isValid && (
               <div className="space-y-1 mt-3">
-                <p className="text-sm font-semibold text-warning">Security Warnings:</p>
+                <p className="text-sm font-semibold text-warning">{t("modValidation.securityWarnings")}</p>
                 {result.warnings?.map((warn, i) => (
                   <p key={i} className="text-sm text-warning pl-4">• {warn}</p>
                 ))}
@@ -143,7 +145,7 @@ export default function ModValidationDisplay({
 
             {isValid && result.warnings && result.warnings.length > 0 && (
               <div className="space-y-1 mt-2">
-                <p className="text-sm font-semibold text-warning">Warnings (non-blocking):</p>
+                <p className="text-sm font-semibold text-warning">{t("modValidation.warnings")}</p>
                 {result.warnings.map((warn, i) => (
                   <p key={i} className="text-sm text-warning pl-4">• {warn}</p>
                 ))}
@@ -213,7 +215,7 @@ export default function ModValidationDisplay({
       {applying && (
         <div className="p-4 rounded-lg bg-primary/5 border border-primary/30 flex items-center justify-center gap-2">
           <Loader2 size={16} className="animate-spin text-primary" />
-          <span className="text-sm text-primary">Applying mod...</span>
+          <span className="text-sm text-primary">{t("modValidation.applying")}</span>
         </div>
       )}
     </div>

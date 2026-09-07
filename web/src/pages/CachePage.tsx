@@ -4,8 +4,10 @@ import { useQuery } from "@/hooks/useQuery";
 import { formatSize } from "@/lib/utils";
 import { Database, Trash2, Loader2, AlertCircle, FolderOpen, FileStack } from "lucide-react";
 import { ConfirmModal, AlertModal } from "@/components/Modal";
+import { useI18n } from "@/lib/i18n";
 
 export default function CachePage() {
+  const { t, plural } = useI18n();
   const { data: cacheData, loading, error, refetch } = useQuery(fetchCache);
   const [cleaning, setCleaning] = useState<string | null>(null);
   const [cleanTarget, setCleanTarget] = useState<string | null>(null);
@@ -18,7 +20,7 @@ export default function CachePage() {
       await cleanCache([name]);
       refetch();
     } catch (e) {
-      setAlertModal({ title: "Error", message: e instanceof Error ? e.message : "Failed" });
+      setAlertModal({ title: t("common.error"), message: e instanceof Error ? e.message : t("cache.failed") });
     } finally {
       setCleaning(null);
     }
@@ -29,15 +31,15 @@ export default function CachePage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold">Cache Manager</h2>
-        <p className="text-text-muted mt-1">Browse and clean cached models, wheels, and artifacts</p>
+        <h2 className="text-2xl font-bold">{t("cache.title")}</h2>
+        <p className="text-text-muted mt-1">{t("cache.subtitle")}</p>
       </div>
 
       {cacheData && (
         <div className="p-4 rounded-xl bg-surface border border-border flex items-center justify-between">
-          <div className="flex items-center gap-3"><Database size={20} className="text-primary" /><div><p className="font-medium">Total cache</p><p className="text-2xl font-bold">{formatSize(totalSize)}</p></div></div>
+          <div className="flex items-center gap-3"><Database size={20} className="text-primary" /><div><p className="font-medium">{t("cache.total")}</p><p className="text-2xl font-bold">{formatSize(totalSize)}</p></div></div>
           <button onClick={() => setCleanTarget("all")} disabled={!!cleaning} className="px-4 py-2 rounded-lg bg-danger/10 text-danger border border-danger/30 hover:bg-danger/20 disabled:opacity-50 transition-colors flex items-center gap-2">
-            {cleaning === "all" ? <Loader2 className="animate-spin" size={16} /> : <Trash2 size={16} />}Clean All
+            {cleaning === "all" ? <Loader2 className="animate-spin" size={16} /> : <Trash2 size={16} />}{t("cache.cleanAll")}
           </button>
         </div>
       )}
@@ -60,7 +62,7 @@ export default function CachePage() {
                 onClick={() => setCleanTarget(e.name)}
                 disabled={cleaning === e.name}
                 className="p-1.5 rounded-lg text-text-muted hover:text-danger hover:bg-danger/10 transition-colors disabled:opacity-50 shrink-0 ml-2"
-                title="Clean cache"
+                title={t("cache.cleanOne")}
               >
                 {cleaning === e.name ? <Loader2 className="animate-spin" size={15} /> : <Trash2 size={15} />}
               </button>
@@ -70,22 +72,22 @@ export default function CachePage() {
 
             <div className="flex flex-wrap gap-2 mt-auto">
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-tag-bg text-text-muted font-mono font-bold">{formatSize(e.size_bytes)}</span>
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-tag-bg text-text-muted"><FileStack size={11} />{e.file_count} file{e.file_count !== 1 ? "s" : ""}</span>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-tag-bg text-text-muted"><FileStack size={11} />{plural("cache.files", e.file_count)}</span>
             </div>
           </div>
         ))}
       </div>
 
-      {cacheData && cacheData.entries.length === 0 && !loading && <div className="text-center py-20 text-text-muted"><Database size={40} className="mx-auto mb-4 opacity-50" /><p>No cache entries found.</p></div>}
+      {cacheData && cacheData.entries.length === 0 && !loading && <div className="text-center py-20 text-text-muted"><Database size={40} className="mx-auto mb-4 opacity-50" /><p>{t("cache.empty")}</p></div>}
 
       {cleanTarget && (
         <ConfirmModal
           open={!!cleanTarget}
           onClose={() => setCleanTarget(null)}
           onConfirm={() => { doClean(cleanTarget!); setCleanTarget(null); }}
-          title={cleanTarget === "all" ? "Clean All Caches" : "Clean Cache"}
-          message={cleanTarget === "all" ? "This will clean ALL caches. This cannot be undone." : `Clean cache "${cleanTarget}"? This cannot be undone.`}
-          confirmLabel="Clean"
+          title={cleanTarget === "all" ? t("cache.confirmAllTitle") : t("cache.confirmOneTitle")}
+          message={cleanTarget === "all" ? t("cache.confirmAllBody") : t("cache.confirmOneBody", { name: cleanTarget })}
+          confirmLabel={t("cache.clean")}
           confirmVariant="danger"
         />
       )}

@@ -1,6 +1,7 @@
 /** Reusable modal/dialog components to replace browser confirm/alert. */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useT } from "@/lib/i18n";
 import { AlertCircle, AlertTriangle, X } from "lucide-react";
 
 interface BaseModalProps {
@@ -13,6 +14,7 @@ interface BaseModalProps {
 }
 
 function BaseModal({ open, onClose, title, children, actions, icon }: BaseModalProps) {
+  const t = useT();
   const modalRef = useRef<HTMLDivElement>(null);
 
   // Auto-focus when modal opens
@@ -60,7 +62,7 @@ function BaseModal({ open, onClose, title, children, actions, icon }: BaseModalP
             {icon}
             <h3 className="text-lg font-bold">{title}</h3>
           </div>
-          <button onClick={onClose} className="p-1 rounded-lg hover:bg-surface-hover transition-colors" title="Close">
+          <button onClick={onClose} className="p-1 rounded-lg hover:bg-surface-hover transition-colors" title={t("common.close")}>
             <X size={18} />
           </button>
         </div>
@@ -93,8 +95,10 @@ interface ConfirmModalProps {
   confirmVariant?: "danger" | "primary";
 }
 
-export function ConfirmModal({ open, onClose, onConfirm, title, message, confirmLabel = "Confirm", confirmVariant = "primary" }: ConfirmModalProps) {
+export function ConfirmModal({ open, onClose, onConfirm, title, message, confirmLabel, confirmVariant = "primary" }: ConfirmModalProps) {
+  const t = useT();
   const [confirming, setConfirming] = useState(false);
+  const label = confirmLabel ?? t("common.confirm");
 
   const handleConfirm = async () => {
     setConfirming(true);
@@ -132,7 +136,7 @@ export function ConfirmModal({ open, onClose, onConfirm, title, message, confirm
             disabled={confirming}
             className="px-4 py-2 rounded-lg border border-border hover:border-border-hover disabled:opacity-50 transition-colors"
           >
-            Cancel
+            {t("common.cancel")}
           </button>
           <button
             onClick={handleConfirm}
@@ -143,7 +147,7 @@ export function ConfirmModal({ open, onClose, onConfirm, title, message, confirm
                 : "bg-primary hover:bg-primary-hover"
             }`}
           >
-            {confirming ? "..." : confirmLabel}
+            {confirming ? "..." : label}
           </button>
         </>
       }

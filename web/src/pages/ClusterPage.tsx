@@ -13,6 +13,7 @@
  */
 
 import { useEffect } from "react";
+import { useI18n } from "@/lib/i18n";
 import { fetchDeployments } from "@/lib/api";
 import { useQuery } from "@/hooks/useQuery";
 import StatusBadge from "@/components/StatusBadge";
@@ -38,6 +39,7 @@ function placement(deployment: Deployment): string {
 }
 
 export default function ClusterPage() {
+  const { t } = useI18n();
   const { data: deployments, loading, error, refetch } = useQuery<Deployment[]>(fetchDeployments);
   const { config } = useConfig();
   const experimental = config?.cluster_experimental ?? true;
@@ -58,11 +60,8 @@ export default function ClusterPage() {
 
       {/* Header */}
       <div>
-        <h2 className="text-2xl font-bold">Cluster Orchestration</h2>
-        <p className="text-text-muted mt-1">
-          The machines Spark Pulse knows about, and what is running on them. Deploy from the
-          Recipes page — a cluster is a deployment with more than one node.
-        </p>
+        <h2 className="text-2xl font-bold">{t("cluster.title")}</h2>
+        <p className="text-text-muted mt-1">{t("cluster.subtitle")}</p>
       </div>
 
       {/* The node registry — what used to be two free-text IP boxes. */}
@@ -72,7 +71,7 @@ export default function ClusterPage() {
       <div className="rounded-xl bg-surface border border-border p-4 space-y-3" data-testid="cluster-deployments">
         <div className="flex items-center gap-2">
           <Server size={18} className="text-primary" />
-          <h3 className="text-lg font-semibold">Deployments</h3>
+          <h3 className="text-lg font-semibold">{t("cluster.deployments")}</h3>
         </div>
 
         {loading && (
@@ -88,9 +87,7 @@ export default function ClusterPage() {
         )}
 
         {!loading && !error && live.length === 0 && (
-          <p className="text-sm text-text-muted py-6 text-center">
-            Nothing is running. Deploy a recipe to start one.
-          </p>
+          <p className="text-sm text-text-muted py-6 text-center">{t("cluster.nothingRunning")}</p>
         )}
 
         {live.length > 0 && (
@@ -98,11 +95,11 @@ export default function ClusterPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-text-muted">
-                  <th className="py-2 pr-4 font-medium">Deployment</th>
-                  <th className="py-2 pr-4 font-medium">Nodes</th>
-                  <th className="py-2 pr-4 font-medium">Placement</th>
-                  <th className="py-2 pr-4 font-medium">Engine</th>
-                  <th className="py-2 font-medium">Status</th>
+                  <th className="py-2 pr-4 font-medium">{t("cluster.colDeployment")}</th>
+                  <th className="py-2 pr-4 font-medium">{t("cluster.colNodes")}</th>
+                  <th className="py-2 pr-4 font-medium">{t("cluster.colPlacement")}</th>
+                  <th className="py-2 pr-4 font-medium">{t("cluster.colEngine")}</th>
+                  <th className="py-2 font-medium">{t("cluster.colStatus")}</th>
                 </tr>
               </thead>
               <tbody>

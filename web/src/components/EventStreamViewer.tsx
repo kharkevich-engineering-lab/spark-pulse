@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { useI18n } from "@/lib/i18n";
 import {
   EventType,
   type DeploymentEvent,
@@ -127,6 +128,7 @@ export default function EventStreamViewer({
   onClear,
   className = "",
 }: EventStreamViewerProps) {
+  const { t } = useI18n();
   const [filterSeverity, setFilterSeverity] = useState<string>("all");
   const [filterNode, setFilterNode] = useState<string>("all");
 
@@ -149,7 +151,7 @@ export default function EventStreamViewer({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Activity size={20} className="text-primary" />
-          <h3 className="text-lg font-semibold">Event Stream</h3>
+          <h3 className="text-lg font-semibold">{t("eventStream.title")}</h3>
           <span className="text-xs text-text-muted bg-surface-hover px-2 py-0.5 rounded-full">
             {filteredEvents.length} events
           </span>
@@ -172,10 +174,10 @@ export default function EventStreamViewer({
           onChange={(e) => setFilterSeverity(e.target.value)}
           className="px-2 py-1 text-sm rounded-lg border border-border bg-surface focus:outline-none focus:ring-2 focus:ring-primary/50"
         >
-          <option value="all">All Severities</option>
-          <option value="error">Errors</option>
-          <option value="warning">Warnings</option>
-          <option value="info">Info</option>
+          <option value="all">{t("eventStream.allSeverities")}</option>
+          <option value="error">{t("eventStream.errors")}</option>
+          <option value="warning">{t("eventStream.warnings")}</option>
+          <option value="info">{t("eventStream.info")}</option>
         </select>
 
         <select
@@ -183,7 +185,7 @@ export default function EventStreamViewer({
           onChange={(e) => setFilterNode(e.target.value)}
           className="px-2 py-1 text-sm rounded-lg border border-border bg-surface focus:outline-none focus:ring-2 focus:ring-primary/50"
         >
-          <option value="all">All Nodes</option>
+          <option value="all">{t("eventStream.allNodes")}</option>
           {uniqueNodes.map((node) => (
             <option key={node} value={node}>{node}</option>
           ))}

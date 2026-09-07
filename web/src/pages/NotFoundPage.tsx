@@ -10,9 +10,11 @@
 import { Link } from "react-router-dom";
 import { Home } from "lucide-react";
 import { PulseIcon } from "@/components/BrandIcons";
+import { useT } from "@/lib/i18n";
 import { BrandFooter } from "@/components/BrandFooter";
 
 export default function NotFoundPage() {
+  const t = useT();
   return (
     <div className="flex min-h-screen flex-col bg-background">
       <div className="flex-1 flex items-center justify-center px-6">
@@ -21,17 +23,14 @@ export default function NotFoundPage() {
             <PulseIcon className="text-primary" size={32} />
           </div>
           <p className="text-5xl font-bold text-text">404</p>
-          <h1 className="mt-2 text-xl font-semibold">This page does not exist</h1>
-          <p className="mt-2 max-w-md text-sm text-text-muted">
-            Spark Pulse has no page at this address. If you followed a link from somewhere
-            inside the application, the route it pointed at has been renamed or removed.
-          </p>
+          <h1 className="mt-2 text-xl font-semibold">{t("notFound.heading")}</h1>
+          <p className="mt-2 max-w-md text-sm text-text-muted">{t("notFound.body")}</p>
           <Link
             to="/"
             className="mt-6 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary hover:bg-primary-hover text-white font-medium text-sm transition-colors"
           >
             <Home size={16} />
-            Back to Recipes
+            {t("notFound.home")}
           </Link>
         </div>
       </div>

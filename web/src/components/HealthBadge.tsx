@@ -1,4 +1,5 @@
 import { HealthStatus } from "@/lib/operations";
+import { useT } from "@/lib/i18n";
 
 interface HealthBadgeProps {
   status: HealthStatus;
@@ -300,6 +301,7 @@ export function HealthHistoryChart({
   caption,
   className = "",
 }: HealthHistoryChartProps) {
+  const t = useT();
   const drawable = series.filter((s) => s.samples.length >= MIN_SAMPLES);
   const collected = series.reduce((most, s) => Math.max(most, s.samples.length), 0);
 
@@ -312,7 +314,7 @@ export function HealthHistoryChart({
           <path d="M3 3v18h18" strokeLinecap="round" strokeLinejoin="round" />
           <path d="M7 16l4-8 4 4 4-6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
-        <span className="text-sm text-text-muted">Not enough history yet</span>
+        <span className="text-sm text-text-muted">{t("health.notEnoughHistory")}</span>
         <span className="text-xs text-text-muted/70 mt-1">
           {collected === 0
             ? "Nothing has arrived on the stream since this page was opened."

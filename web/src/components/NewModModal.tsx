@@ -1,6 +1,7 @@
 /** Modal for creating or uploading a custom mod. */
 
 import { useState, useCallback } from "react";
+import { useI18n } from "@/lib/i18n";
 import { Save, X } from "lucide-react";
 import { AlertModal } from "@/components/Modal";
 
@@ -20,6 +21,7 @@ export default function NewModModal({
   onSave: (id: string, name: string) => Promise<void>;
   onError: (msg: string) => void;
 }) {
+  const { t } = useI18n();
   const [modName, setModName] = useState("");
   const [files, setFiles] = useState<ModFile[]>([{ name: "run.sh", content: "#!/bin/bash\necho 'Mod: ${modName}'" }]);
   const [saving, setSaving] = useState(false);
@@ -146,7 +148,7 @@ export default function NewModModal({
         <div className="relative w-full max-w-3xl max-h-[90vh] overflow-auto rounded-xl bg-surface border border-border shadow-2xl">
           {/* Header */}
           <div className="sticky top-0 bg-surface border-b border-border px-6 py-4 flex items-center justify-between">
-            <h3 className="text-lg font-bold">New Mod</h3>
+            <h3 className="text-lg font-bold">{t("newMod.title")}</h3>
             <button onClick={handleCancel} className="p-1.5 rounded-lg hover:bg-surface-hover transition-colors">
               <X size={18} />
             </button>
@@ -156,19 +158,19 @@ export default function NewModModal({
           <div className="p-6 space-y-4">
             {/* Name */}
             <div>
-              <label className="block text-sm font-medium mb-1">Mod Name</label>
+              <label className="block text-sm font-medium mb-1">{t("newMod.name")}</label>
               <input
                 type="text"
                 value={modName}
                 onChange={(e) => setModName(e.target.value)}
-                placeholder="my-mod"
+                placeholder={t("newMod.namePlaceholder")}
                 className="w-full px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm"
               />
             </div>
 
             {/* Upload ZIP zone */}
             <div>
-              <label className="block text-sm font-medium mb-1">Or upload ZIP</label>
+              <label className="block text-sm font-medium mb-1">{t("newMod.uploadZip")}</label>
               <div
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
@@ -191,7 +193,7 @@ export default function NewModModal({
             {/* Files */}
             <div>
               <div className="flex items-center justify-between mb-2">
-                <label className="text-sm font-medium">Files</label>
+                <label className="text-sm font-medium">{t("newMod.files")}</label>
                 <button onClick={addFile} className="text-xs px-2 py-1 rounded bg-primary/20 text-primary hover:bg-primary/30">
                   + Add File
                 </button>
@@ -204,7 +206,7 @@ export default function NewModModal({
                         type="text"
                         value={f.name}
                         onChange={(e) => updateFile(i, "name", e.target.value)}
-                        placeholder="filename"
+                        placeholder={t("newMod.filenamePlaceholder")}
                         className="flex-1 px-2 py-1 rounded border border-border focus:border-primary focus:outline-none font-mono text-xs"
                       />
                       <button
@@ -252,7 +254,7 @@ export default function NewModModal({
         <AlertModal
           open={!!errorModal}
           onClose={() => setErrorModal(null)}
-          title="Error"
+          title={t("common.error")}
           message={errorModal}
         />
       )}

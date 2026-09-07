@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from "react";
+import { useI18n } from "@/lib/i18n";
 import {
   fetchDeployment,
   fetchDeployments,
@@ -36,6 +37,7 @@ const RANK_POLL_MS = 10000;
 const METRICS_POLL_MS = 5000;
 
 export default function InferencePage() {
+  const { t } = useI18n();
   const { data: deployments, loading, error, refetch } = useQuery(fetchDeployments);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   /** The open row's live detail. Only ever the one row — see `rankDetail`. */
@@ -227,8 +229,8 @@ export default function InferencePage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold">Inference</h2>
-        <p className="text-text-muted mt-1">Live model inference workloads and their logs</p>
+        <h2 className="text-2xl font-bold">{t("inference.title")}</h2>
+        <p className="text-text-muted mt-1">{t("inference.subtitle")}</p>
       </div>
 
       {loading && <div className="flex justify-center py-20"><Loader2 className="animate-spin text-primary" size={32} /></div>}
@@ -272,10 +274,10 @@ export default function InferencePage() {
                 {dep.pid && <span className="text-xs font-mono text-text-muted shrink-0">PID: {dep.pid}</span>}
                 <span className="text-xs text-text-muted shrink-0">{new Date(dep.created_at).toLocaleString()}</span>
                 {["stopped", "error"].includes(dep.status)
-                  ? <button onClick={(e) => { e.stopPropagation(); setStopTarget({ id: dep.id, name: dep.name }); }} className="p-2 rounded-lg hover:bg-danger/10 text-text-muted hover:text-danger transition-colors shrink-0" title="Remove from history"><Trash2 size={14} /></button>
-                  : <button onClick={(e) => { e.stopPropagation(); setStopTarget({ id: dep.id, name: dep.name }); }} disabled={dep.status !== "running" && dep.status !== "pending"} className="p-2 rounded-lg hover:bg-danger/10 text-text-muted hover:text-danger transition-colors disabled:opacity-30 shrink-0" title={dep.status === "pending" ? "Cancel" : "Stop"}>{dep.status === "pending" ? <X size={14} /> : <Square size={14} />}</button>}
+                  ? <button onClick={(e) => { e.stopPropagation(); setStopTarget({ id: dep.id, name: dep.name }); }} className="p-2 rounded-lg hover:bg-danger/10 text-text-muted hover:text-danger transition-colors shrink-0" title={t("inference.removeFromHistory")}><Trash2 size={14} /></button>
+                  : <button onClick={(e) => { e.stopPropagation(); setStopTarget({ id: dep.id, name: dep.name }); }} disabled={dep.status !== "running" && dep.status !== "pending"} className="p-2 rounded-lg hover:bg-danger/10 text-text-muted hover:text-danger transition-colors disabled:opacity-30 shrink-0" title={dep.status === "pending" ? t("inference.cancel") : t("inference.stop")}>{dep.status === "pending" ? <X size={14} /> : <Square size={14} />}</button>}
                 {dep.status === "running" && (
-                  <button onClick={(e) => { e.stopPropagation(); setBenchmarkModal({ id: dep.id, name: dep.name, recipeId: dep.recipe_id, recipeName: dep.recipe_id }); }} className="p-2 rounded-lg hover:bg-primary/10 text-text-muted hover:text-primary transition-colors shrink-0" title="Run Benchmark"><Flame size={14} /></button>
+                  <button onClick={(e) => { e.stopPropagation(); setBenchmarkModal({ id: dep.id, name: dep.name, recipeId: dep.recipe_id, recipeName: dep.recipe_id }); }} className="p-2 rounded-lg hover:bg-primary/10 text-text-muted hover:text-primary transition-colors shrink-0" title={t("inference.runBenchmark")}><Flame size={14} /></button>
                 )}
               </div>
               {expandedId === dep.id && (
@@ -290,13 +292,13 @@ export default function InferencePage() {
                   )}
                   {dep.runtime === "native" && (
                     <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 px-4 py-3 bg-bg text-xs border-b border-border">
-                      <dt className="text-text-muted">Engine</dt>
+                      <dt className="text-text-muted">{t("inference.engine")}</dt>
                       <dd className="font-mono truncate">{dep.engine}{dep.variant ? `/${dep.variant}` : ""}</dd>
-                      <dt className="text-text-muted">Image</dt>
+                      <dt className="text-text-muted">{t("inference.image")}</dt>
                       <dd className="font-mono truncate">{dep.image_ref}</dd>
-                      <dt className="text-text-muted">Model</dt>
+                      <dt className="text-text-muted">{t("inference.model")}</dt>
                       <dd className="font-mono truncate">{dep.model || "(from the command)"}</dd>
-                      <dt className="text-text-muted">Container</dt>
+                      <dt className="text-text-muted">{t("inference.container")}</dt>
                       <dd className="font-mono truncate">{dep.container_name}</dd>
                     </dl>
                   )}
@@ -311,8 +313,8 @@ export default function InferencePage() {
                     className="px-4 py-3 bg-bg border-b border-border"
                   />
                   <div className="flex items-center gap-2 px-4 py-2 bg-bg text-xs text-text-muted">
-                    {streaming[dep.id] ? <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />Streaming</span> : <span>Stream stopped</span>}
-                    <button onClick={() => toggle(dep.id)} className="ml-auto text-primary hover:underline">Hide</button>
+                    {streaming[dep.id] ? <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />{t("inference.streaming")}</span> : <span>{t("inference.streamStopped")}</span>}
+                    <button onClick={() => toggle(dep.id)} className="ml-auto text-primary hover:underline">{t("inference.hide")}</button>
                   </div>
                   <div ref={(el) => { logRef.current[dep.id] = el; }} onScroll={() => handleLogScroll(dep.id)} className="p-4 bg-bg font-mono text-sm text-text h-[calc(100vh-20rem)] overflow-auto whitespace-pre-wrap">
                     {(logs[dep.id] || ["No logs yet..."]).map((line, i) => <div key={i} className="leading-relaxed text-text-muted last:text-text">{line}</div>)}
@@ -333,21 +335,32 @@ export default function InferencePage() {
       )}
 
       {deployments && deployments.length === 0 && !loading && !error && (
-        <div className="text-center py-20 text-text-muted"><Terminal size={40} className="mx-auto mb-4 opacity-50" /><p>No deployments yet.</p><p className="text-sm mt-1">Launch a recipe from the Recipes page.</p></div>
+        <div className="text-center py-20 text-text-muted"><Terminal size={40} className="mx-auto mb-4 opacity-50" /><p>{t("inference.empty")}</p><p className="text-sm mt-1">{t("inference.emptyHint")}</p></div>
       )}
 
       {/* Stop confirmation */}
-      {stopTarget && (
+      {stopTarget && (() => {
+        // Named once rather than recomputed for the title, the body and the
+        // button: three copies of the same conditional is three chances for
+        // them to disagree about what the button is going to do.
+        const status = deployments?.find((d) => d.id === stopTarget.id)?.status ?? "";
+        const targetState = ["stopped", "error"].includes(status)
+          ? "settled"
+          : status === "pending"
+            ? "pending"
+            : "running";
+        return (
         <ConfirmModal
           open={!!stopTarget}
           onClose={() => setStopTarget(null)}
           onConfirm={() => { doStop(stopTarget.id, stopTarget.name); setStopTarget(null); }}
-          title={["stopped", "error"].includes(deployments?.find(d => d.id === stopTarget.id)?.status ?? "") ? "Remove" : deployments?.find(d => d.id === stopTarget.id)?.status === "pending" ? "Cancel" : "Stop Deployment"}
-          message={["stopped", "error"].includes(deployments?.find(d => d.id === stopTarget.id)?.status ?? "") ? `Remove "${stopTarget.name}" from history?` : deployments?.find(d => d.id === stopTarget.id)?.status === "pending" ? `Cancel "${stopTarget.name}" before it starts?` : `Stop "${stopTarget.name}"? This will terminate the running process.`}
-          confirmLabel={["stopped", "error"].includes(deployments?.find(d => d.id === stopTarget.id)?.status ?? "") ? "Remove" : deployments?.find(d => d.id === stopTarget.id)?.status === "pending" ? "Cancel" : "Stop"}
+          title={targetState === "settled" ? t("inference.remove") : targetState === "pending" ? t("inference.cancel") : t("inference.stopTitle")}
+          message={targetState === "settled" ? t("inference.removeBody", { name: stopTarget.name }) : targetState === "pending" ? t("inference.cancelBody", { name: stopTarget.name }) : t("inference.stopBody", { name: stopTarget.name })}
+          confirmLabel={targetState === "settled" ? t("inference.remove") : targetState === "pending" ? t("inference.cancel") : t("inference.stop")}
           confirmVariant="danger"
         />
-      )}
+        );
+      })()}
 
       {/* Alert modal */}
       {alertModal && (

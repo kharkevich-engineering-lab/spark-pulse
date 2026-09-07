@@ -1,4 +1,5 @@
 import { useAuth } from "@/lib/auth";
+import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { ExperimentalBadge } from "@/components/Experimental";
 import { MULTI_NODE_BADGE_TITLE } from "@/lib/experimental";
@@ -14,18 +15,22 @@ import { Link, useLocation } from "react-router-dom";
  *  whose return type is `ReactNode` rather than `Element`. */
 type NavIcon = React.ComponentType<{ size?: number; className?: string }>;
 
-const NAV: { href: string; label: string; icon: NavIcon; experimental?: boolean }[] = [
-  { href: "/", label: "Recipes & Mods", icon: PulseIcon },
-  { href: "/jobs", label: "Inference", icon: ListChecks },
-  { href: "/cluster", label: "Cluster", icon: Server, experimental: true },
-  { href: "/benchmarking", label: "Benchmarking", icon: Flame },
-  { href: "/monitoring", label: "Monitoring", icon: Activity },
-  { href: "/models", label: "Models", icon: Boxes },
-  { href: "/images", label: "Images", icon: Layers },
-  { href: "/cache", label: "Cache", icon: Database },
-  { href: "/mcp", label: "MCP", icon: Bot },
-  { href: "/oci", label: "OCI Registry", icon: Package },
-  { href: "/settings", label: "Settings", icon: Settings },
+/** The sidebar, by translation key rather than by label.
+ *
+ * The route is the identity; what it is *called* depends on the language, so
+ * the label cannot be baked into this list. */
+const NAV: { href: string; labelKey: string; icon: NavIcon; experimental?: boolean }[] = [
+  { href: "/", labelKey: "nav.recipes", icon: PulseIcon },
+  { href: "/jobs", labelKey: "nav.inference", icon: ListChecks },
+  { href: "/cluster", labelKey: "nav.cluster", icon: Server, experimental: true },
+  { href: "/benchmarking", labelKey: "nav.benchmarking", icon: Flame },
+  { href: "/monitoring", labelKey: "nav.monitoring", icon: Activity },
+  { href: "/models", labelKey: "nav.models", icon: Boxes },
+  { href: "/images", labelKey: "nav.images", icon: Layers },
+  { href: "/cache", labelKey: "nav.cache", icon: Database },
+  { href: "/mcp", labelKey: "nav.mcp", icon: Bot },
+  { href: "/oci", labelKey: "nav.oci", icon: Package },
+  { href: "/settings", labelKey: "nav.settings", icon: Settings },
 ];
 
 /** The header: who you are, and the way out.
@@ -39,6 +44,7 @@ const NAV: { href: string; label: string; icon: NavIcon; experimental?: boolean 
 function HeaderInner() {
   const { isAuthenticated, user, logout } = useAuth();
   const { config } = useConfig();
+  const t = useT();
   const authEnabled = config?.auth_enabled ?? false;
 
   if (!authEnabled || !isAuthenticated) return null;
@@ -49,7 +55,7 @@ function HeaderInner() {
         <User size={14} />
         {user?.name || user?.email || "User"}
       </span>
-      <button onClick={logout} className="p-2 rounded-lg hover:bg-surface-hover transition-colors" title="Logout">
+      <button onClick={logout} className="p-2 rounded-lg hover:bg-surface-hover transition-colors" title={t("a11y.logout")}>
         <LogOut size={18} />
       </button>
     </div>
@@ -57,6 +63,7 @@ function HeaderInner() {
 }
 
 export default function Layout({ children }: { children: React.ReactNode }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const location = useLocation();
   const [version, setVersion] = useState("");
@@ -128,7 +135,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 )}
               >
                 <Icon size={18} />
-                <span className="flex-1">{item.label}</span>
+                <span className="flex-1">{t(item.labelKey)}</span>
                 {item.experimental && clusterExperimental && (
                   <ExperimentalBadge title={MULTI_NODE_BADGE_TITLE} />
                 )}

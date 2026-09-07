@@ -19,6 +19,7 @@
  */
 
 import { AlertTriangle, CheckCircle2, Info, XCircle } from "lucide-react";
+import { useT } from "@/lib/i18n";
 import type { PreflightCheck, PreflightReport, PreflightVerdict } from "@/lib/types";
 import { formatSize } from "@/lib/utils";
 
@@ -73,13 +74,14 @@ const STATUS_TONE = {
 } as const;
 
 export default function PreflightPanel({ report }: { report: PreflightReport }) {
+  const t = useT();
   const rows = checksToShow(report);
   const style = VERDICT_STYLE[report.verdict];
 
   return (
     <div className="space-y-2" data-testid="preflight">
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-xs uppercase tracking-wide text-text-muted">Pre-flight</span>
+        <span className="text-xs uppercase tracking-wide text-text-muted">{t("preflight.label")}</span>
         <span
           className={`px-2 py-0.5 rounded-full border text-xs font-medium ${style.className}`}
           data-testid="preflight-verdict"

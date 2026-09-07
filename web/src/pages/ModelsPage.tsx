@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useI18n } from "@/lib/i18n";
 import { Link } from "react-router-dom";
 import { AlertCircle, Boxes, Download, HardDrive, Loader2, Plus, Rocket, Save, Trash2, X } from "lucide-react";
 import {
@@ -50,6 +51,7 @@ function progressPercent(job: ModelDownloadJob): number {
 // ── Sources editor ───────────────────────────────────────────────────────────
 
 function SourcesEditor({ sources, onSaved, onError }: { sources: ModelSource[]; onSaved: () => void; onError: (m: string) => void }) {
+  const { t } = useI18n();
   const [draft, setDraft] = useState<ModelSource[]>(sources);
   const [saving, setSaving] = useState(false);
 
@@ -64,7 +66,7 @@ function SourcesEditor({ sources, onSaved, onError }: { sources: ModelSource[]; 
       await saveModelSources(draft);
       onSaved();
     } catch (e) {
-      onError(e instanceof Error ? e.message : "Failed to save sources");
+      onError(e instanceof Error ? e.message : t("models.saveSourcesFailed"));
     } finally {
       setSaving(false);
     }
@@ -73,13 +75,13 @@ function SourcesEditor({ sources, onSaved, onError }: { sources: ModelSource[]; 
   return (
     <section className="p-5 rounded-xl bg-surface border border-border space-y-3">
       <div className="flex items-center justify-between">
-        <h3 className="font-semibold flex items-center gap-2"><HardDrive size={16} className="text-primary" />Model sources</h3>
+        <h3 className="font-semibold flex items-center gap-2"><HardDrive size={16} className="text-primary" />{t("models.sources")}</h3>
         <div className="flex gap-2">
           <button
             onClick={() => setDraft((d) => [...d, { name: "", type: "hf_hub", endpoint: "https://huggingface.co", token_secret: "" }])}
             className="px-3 py-1.5 rounded-lg border border-border hover:border-border-hover text-sm flex items-center gap-1.5"
           >
-            <Plus size={14} />Add source
+            <Plus size={14} />{t("models.addSource")}
           </button>
           <button onClick={save} disabled={saving} className="px-3 py-1.5 rounded-lg bg-primary/10 text-primary border border-primary/30 hover:bg-primary/20 disabled:opacity-50 text-sm flex items-center gap-1.5">
             {saving ? <Loader2 className="animate-spin" size={14} /> : <Save size={14} />}Save
@@ -87,24 +89,24 @@ function SourcesEditor({ sources, onSaved, onError }: { sources: ModelSource[]; 
         </div>
       </div>
 
-      {draft.length === 0 && <p className="text-sm text-text-muted">No sources configured.</p>}
+      {draft.length === 0 && <p className="text-sm text-text-muted">{t("models.noSources")}</p>}
 
       <div className="space-y-2">
         {draft.map((s, i) => (
           <div key={i} className="grid grid-cols-1 md:grid-cols-[1fr_140px_1fr_1fr_auto] gap-2 items-center">
-            <input aria-label={`Source ${i + 1} name`} value={s.name} onChange={(e) => update(i, { name: e.target.value })} placeholder="name" className="px-2 py-1.5 rounded-lg bg-bg border border-border text-sm" />
+            <input aria-label={t("models.sourceName", { n: i + 1 })} value={s.name} onChange={(e) => update(i, { name: e.target.value })} placeholder={t("models.namePlaceholder")} className="px-2 py-1.5 rounded-lg bg-bg border border-border text-sm" />
             <select aria-label={`Source ${i + 1} type`} value={s.type} onChange={(e) => update(i, { type: e.target.value as ModelSource["type"] })} className="px-2 py-1.5 rounded-lg bg-bg border border-border text-sm">
               <option value="hf_hub">hf_hub</option>
               <option value="local_path">local_path</option>
             </select>
             {s.type === "hf_hub" ? (
               <>
-                <input aria-label={`Source ${i + 1} endpoint`} value={s.endpoint ?? ""} onChange={(e) => update(i, { endpoint: e.target.value })} placeholder="https://huggingface.co" className="px-2 py-1.5 rounded-lg bg-bg border border-border text-sm font-mono" />
-                <input aria-label={`Source ${i + 1} token secret`} value={s.token_secret ?? ""} onChange={(e) => update(i, { token_secret: e.target.value })} placeholder="token secret key" className="px-2 py-1.5 rounded-lg bg-bg border border-border text-sm font-mono" />
+                <input aria-label={t("models.sourceEndpoint", { n: i + 1 })} value={s.endpoint ?? ""} onChange={(e) => update(i, { endpoint: e.target.value })} placeholder="https://huggingface.co" className="px-2 py-1.5 rounded-lg bg-bg border border-border text-sm font-mono" />
+                <input aria-label={t("models.sourceToken", { n: i + 1 })} value={s.token_secret ?? ""} onChange={(e) => update(i, { token_secret: e.target.value })} placeholder={t("models.tokenPlaceholder")} className="px-2 py-1.5 rounded-lg bg-bg border border-border text-sm font-mono" />
               </>
             ) : (
               <>
-                <input aria-label={`Source ${i + 1} path`} value={s.path ?? ""} onChange={(e) => update(i, { path: e.target.value })} placeholder="/models" className="px-2 py-1.5 rounded-lg bg-bg border border-border text-sm font-mono md:col-span-2" />
+                <input aria-label={t("models.sourcePath", { n: i + 1 })} value={s.path ?? ""} onChange={(e) => update(i, { path: e.target.value })} placeholder="/models" className="px-2 py-1.5 rounded-lg bg-bg border border-border text-sm font-mono md:col-span-2" />
               </>
             )}
             <button aria-label={`Remove source ${i + 1}`} onClick={() => setDraft((d) => d.filter((_, idx) => idx !== i))} className="p-1.5 rounded-lg text-text-muted hover:text-danger hover:bg-danger/10">
@@ -120,6 +122,7 @@ function SourcesEditor({ sources, onSaved, onError }: { sources: ModelSource[]; 
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 export default function ModelsPage() {
+  const { t } = useI18n();
   const { data: models, loading, error, refetch } = useQuery(fetchModels);
   const { data: sources, refetch: refetchSources } = useQuery(fetchModelSources);
   const [jobs, setJobs] = useState<ModelDownloadJob[]>([]);
@@ -184,7 +187,7 @@ export default function ModelsPage() {
       setModelId("");
       setRevision("");
     } catch (err) {
-      setAlert({ title: "Download failed", message: err instanceof Error ? err.message : "Unknown error" });
+      setAlert({ title: t("models.downloadFailed"), message: err instanceof Error ? err.message : t("models.unknownError") });
     } finally {
       setStarting(false);
     }
@@ -195,7 +198,7 @@ export default function ModelsPage() {
       await deleteModel(id);
       refetch();
     } catch (err) {
-      setAlert({ title: "Delete failed", message: err instanceof Error ? err.message : "Unknown error" });
+      setAlert({ title: t("models.deleteFailed"), message: err instanceof Error ? err.message : t("models.unknownError") });
     }
   };
 
@@ -205,7 +208,7 @@ export default function ModelsPage() {
       reloadJobs();
       reloadScheduled();
     } catch (err) {
-      setAlert({ title: "Cancel failed", message: err instanceof Error ? err.message : "Unknown error" });
+      setAlert({ title: t("models.cancelFailed"), message: err instanceof Error ? err.message : t("models.unknownError") });
     }
   };
 
@@ -218,7 +221,7 @@ export default function ModelsPage() {
       reloadScheduled();
       reloadJobs();
     } catch (err) {
-      setAlert({ title: "Cancel failed", message: err instanceof Error ? err.message : "Unknown error" });
+      setAlert({ title: t("models.cancelFailed"), message: err instanceof Error ? err.message : t("models.unknownError") });
     }
   };
 
@@ -241,38 +244,38 @@ export default function ModelsPage() {
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h2 className="text-2xl font-bold">Models</h2>
+          <h2 className="text-2xl font-bold">{t("models.title")}</h2>
           <p className="text-text-muted mt-1">
-            Cached model snapshots, downloads and distribution — independent of recipes.{" "}
-            <Link to="/cache" className="text-primary hover:underline">Cache manager</Link>
+            {t("models.subtitle")}{" "}
+            <Link to="/cache" className="text-primary hover:underline">{t("models.cacheLink")}</Link>
           </p>
         </div>
         <div className="text-right">
-          <p className="text-xs text-text-muted uppercase tracking-wide">Total on disk</p>
+          <p className="text-xs text-text-muted uppercase tracking-wide">{t("models.totalOnDisk")}</p>
           <p className="text-2xl font-bold">{formatSize(totalSize)}</p>
         </div>
       </div>
 
       {/* Download form */}
       <form onSubmit={submit} className="p-5 rounded-xl bg-surface border border-border space-y-3">
-        <h3 className="font-semibold flex items-center gap-2"><Download size={16} className="text-primary" />Download model</h3>
+        <h3 className="font-semibold flex items-center gap-2"><Download size={16} className="text-primary" />{t("models.download")}</h3>
         <div className="grid grid-cols-1 md:grid-cols-[2fr_1fr_1fr_auto] gap-2">
           <input
-            aria-label="Model id"
-            placeholder="org/model-name"
+            aria-label={t("models.modelId")}
+            placeholder={t("models.modelIdPlaceholder")}
             value={modelId}
             onChange={(e) => setModelId(e.target.value)}
             className="px-3 py-2 rounded-lg bg-bg border border-border font-mono text-sm"
           />
-          <select aria-label="Source" value={sourceName} onChange={(e) => setSourceName(e.target.value)} className="px-3 py-2 rounded-lg bg-bg border border-border text-sm">
-            <option value="">Default source</option>
+          <select aria-label={t("models.source")} value={sourceName} onChange={(e) => setSourceName(e.target.value)} className="px-3 py-2 rounded-lg bg-bg border border-border text-sm">
+            <option value="">{t("models.defaultSource")}</option>
             {(sources ?? []).filter((s) => s.type === "hf_hub").map((s) => (
               <option key={s.name} value={s.name}>{s.name}</option>
             ))}
           </select>
           <input
-            aria-label="Revision"
-            placeholder="revision (optional)"
+            aria-label={t("models.revision")}
+            placeholder={t("models.revisionPlaceholder")}
             value={revision}
             onChange={(e) => setRevision(e.target.value)}
             className="px-3 py-2 rounded-lg bg-bg border border-border font-mono text-sm"
@@ -286,12 +289,12 @@ export default function ModelsPage() {
       {/* Active downloads */}
       <section className="space-y-2">
         <div className="flex items-center gap-2">
-          <h3 className="font-semibold">Downloads</h3>
+          <h3 className="font-semibold">{t("models.downloads")}</h3>
           <span className={connected ? "text-xs text-success" : "text-xs text-text-muted"}>
-            {connected ? "live" : "polling"}
+            {connected ? t("models.live") : t("models.polling")}
           </span>
         </div>
-        {active.length === 0 && recent.length === 0 && <p className="text-sm text-text-muted">No downloads yet.</p>}
+        {active.length === 0 && recent.length === 0 && <p className="text-sm text-text-muted">{t("models.noDownloads")}</p>}
         {[...active, ...recent].map((job) => (
           <div key={job.id} data-testid={`job-${job.id}`} className="p-4 rounded-xl bg-surface border border-border">
             <div className="flex items-center justify-between gap-3">
@@ -308,7 +311,7 @@ export default function ModelsPage() {
                   {formatSize(job.bytes_done)} / {job.bytes_total ? formatSize(job.bytes_total) : "?"}
                 </span>
                 {ACTIVE_STATES.includes(job.status) && (
-                  <button aria-label={`Cancel download of ${job.model}`} onClick={() => doCancel(job.id)} className="p-1.5 rounded-lg text-text-muted hover:text-danger hover:bg-danger/10">
+                  <button aria-label={t("models.cancelDownload", { model: job.model })} onClick={() => doCancel(job.id)} className="p-1.5 rounded-lg text-text-muted hover:text-danger hover:bg-danger/10">
                     <X size={15} />
                   </button>
                 )}
@@ -317,7 +320,7 @@ export default function ModelsPage() {
             <div className="mt-2 h-1.5 rounded-full bg-tag-bg overflow-hidden">
               <div
                 role="progressbar"
-                aria-label={`${job.model} progress`}
+                aria-label={t("models.progress", { model: job.model })}
                 aria-valuenow={progressPercent(job)}
                 className="h-full bg-primary transition-all"
                 style={{ width: `${progressPercent(job)}%` }}
@@ -332,15 +335,15 @@ export default function ModelsPage() {
                 <p className="text-xs text-text-secondary flex items-center gap-2 min-w-0">
                   <Rocket size={13} className={entry.status === "failed" ? "text-danger shrink-0" : "text-primary shrink-0"} />
                   <span className="truncate">
-                    {entry.status === "waiting" && <>Scheduled to deploy <span className="font-medium text-text">{entry.name}</span> when this finishes</>}
-                    {entry.status === "deploying" && <>Deploying <span className="font-medium text-text">{entry.name}</span> now</>}
-                    {entry.status === "done" && <>Deployed <span className="font-medium text-text">{entry.name}</span></>}
-                    {entry.status === "failed" && <><span className="font-medium text-text">{entry.name}</span> could not be deployed: {entry.error}</>}
+                    {entry.status === "waiting" && <>{t("models.scheduledTo")} <span className="font-medium text-text">{entry.name}</span> {t("models.whenFinishes")}</>}
+                    {entry.status === "deploying" && <>{t("models.deployingNow")} <span className="font-medium text-text">{entry.name}</span> {t("models.now")}</>}
+                    {entry.status === "done" && <>{t("models.deployed")} <span className="font-medium text-text">{entry.name}</span></>}
+                    {entry.status === "failed" && <><span className="font-medium text-text">{entry.name}</span> {t("models.couldNotDeploy")} {entry.error}</>}
                   </span>
                 </p>
                 {entry.status === "waiting" && (
                   <button
-                    aria-label={`Cancel the scheduled deploy of ${entry.name}`}
+                    aria-label={t("models.cancelScheduled", { name: entry.name })}
                     onClick={() => doCancelScheduled(entry)}
                     className="p-1 rounded text-text-muted hover:text-danger hover:bg-danger/10 shrink-0"
                   >
@@ -362,12 +365,12 @@ export default function ModelsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-text-muted border-b border-border">
-                <th className="p-3 font-medium">Model</th>
-                <th className="p-3 font-medium">Size</th>
-                <th className="p-3 font-medium">Revision</th>
-                <th className="p-3 font-medium">Dtype / quant</th>
-                <th className="p-3 font-medium">Recipes</th>
-                <th className="p-3 font-medium sr-only">Actions</th>
+                <th className="p-3 font-medium">{t("models.colModel")}</th>
+                <th className="p-3 font-medium">{t("models.colSize")}</th>
+                <th className="p-3 font-medium">{t("models.colRevision")}</th>
+                <th className="p-3 font-medium">{t("models.colDtype")}</th>
+                <th className="p-3 font-medium">{t("models.colRecipes")}</th>
+                <th className="p-3 font-medium sr-only">{t("models.colActions")}</th>
               </tr>
             </thead>
             <tbody>
@@ -379,7 +382,7 @@ export default function ModelsPage() {
                   <td className="p-3">{describePrecision(m)}</td>
                   <td className="p-3">{m.referenced_by.length}</td>
                   <td className="p-3 text-right">
-                    <button aria-label={`Delete ${m.id}`} onClick={() => setDeleteTarget(m.id)} className="p-1.5 rounded-lg text-text-muted hover:text-danger hover:bg-danger/10">
+                    <button aria-label={t("models.deleteModel", { model: m.id })} onClick={() => setDeleteTarget(m.id)} className="p-1.5 rounded-lg text-text-muted hover:text-danger hover:bg-danger/10">
                       <Trash2 size={15} />
                     </button>
                   </td>
@@ -391,7 +394,7 @@ export default function ModelsPage() {
       )}
 
       {models && models.length === 0 && !loading && (
-        <div className="text-center py-16 text-text-muted"><Boxes size={40} className="mx-auto mb-4 opacity-50" /><p>No models cached yet.</p></div>
+        <div className="text-center py-16 text-text-muted"><Boxes size={40} className="mx-auto mb-4 opacity-50" /><p>{t("models.empty")}</p></div>
       )}
 
       <SourcesEditor
@@ -405,9 +408,9 @@ export default function ModelsPage() {
           open={!!deleteTarget}
           onClose={() => setDeleteTarget(null)}
           onConfirm={() => { doDelete(deleteTarget); setDeleteTarget(null); }}
-          title="Delete model"
-          message={`Delete the cached snapshot for "${deleteTarget}"? This cannot be undone.`}
-          confirmLabel="Delete"
+          title={t("models.deleteTitle")}
+          message={t("models.deleteBody", { model: deleteTarget })}
+          confirmLabel={t("common.delete")}
           confirmVariant="danger"
         />
       )}

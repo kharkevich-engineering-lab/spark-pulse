@@ -1,4 +1,5 @@
 import React, { Component, ErrorInfo, ReactNode } from "react";
+import { translate, useT } from "@/lib/i18n";
 import { AlertCircle, RefreshCw } from "lucide-react";
 
 interface ErrorBoundaryProps {
@@ -41,16 +42,16 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
         <div className="min-h-[400px] flex items-center justify-center p-8">
           <div className="text-center max-w-md">
             <AlertCircle size={48} className="mx-auto mb-4 text-danger" />
-            <h2 className="text-xl font-bold mb-2">Something went wrong</h2>
+            <h2 className="text-xl font-bold mb-2">{translate("en", "errorBoundary.heading")}</h2>
             <p className="text-text-muted mb-4">
-              {this.state.error?.message || "An unexpected error occurred"}
+              {this.state.error?.message || translate("en", "errorBoundary.unexpected")}
             </p>
             <button
               onClick={this.resetErrorBoundary}
               className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
             >
               <RefreshCw size={16} />
-              Try Again
+              {translate("en", "errorBoundary.tryAgain")}
             </button>
           </div>
         </div>
@@ -63,19 +64,22 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
 // ── Default Fallback UI ──────────────────────────────────────────────────────
 
-export const DefaultErrorFallback: React.FC = () => (
+export const DefaultErrorFallback: React.FC = () => {
+  const t = useT();
+  return (
   <div className="min-h-[400px] flex items-center justify-center p-8">
     <div className="text-center max-w-md">
       <AlertCircle size={48} className="mx-auto mb-4 text-danger" />
-      <h2 className="text-xl font-bold mb-2">Something went wrong</h2>
-      <p className="text-text-muted mb-4">An unexpected error occurred. Please try refreshing the page.</p>
+      <h2 className="text-xl font-bold mb-2">{t("errorBoundary.heading")}</h2>
+      <p className="text-text-muted mb-4">{t("errorBoundary.pageBody")}</p>
       <button
         onClick={() => window.location.reload()}
         className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
       >
         <RefreshCw size={16} />
-        Refresh Page
+        {t("errorBoundary.reload")}
       </button>
     </div>
   </div>
-);
+  );
+};

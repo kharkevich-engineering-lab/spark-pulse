@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { useI18n } from "@/lib/i18n";
 import { fetchRecipes, fetchRecipe, fetchDeployments, createDeployment, scheduleDeploy, fetchSettings, fetchRecipeCustomization, saveRecipeCustomization, deleteRecipeCustomization, fetchMods, fetchMod, listCustomRecipes, saveCustomRecipe, deleteCustomRecipe, listCustomMods, getCustomModFiles, saveCustomModFiles, deleteCustomMod, ApiError } from "@/lib/api";
 import type { RecipeDetail, RecipeCustomization, RecipeSummary, ModSummary, ModDetail, CustomRecipeInfo, CustomModInfo, ModFileMap, PreflightReport } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
@@ -95,6 +96,7 @@ function FileBadge({ name, kind }: { name: string; kind: string }) {
 // ── Mod detail drawer ────────────────────────────────────────────────────────
 
 function ModDrawer({ modId, onClose }: { modId: string; onClose: () => void }) {
+  const { t } = useI18n();
   const [detail, setDetail] = useState<ModDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -156,7 +158,7 @@ function ModDrawer({ modId, onClose }: { modId: string; onClose: () => void }) {
           )}
           {detail.files.length > 0 && (
             <div>
-              <p className="text-sm font-medium mb-2 text-text-muted uppercase tracking-wide text-xs">Assets</p>
+              <p className="text-sm font-medium mb-2 text-text-muted uppercase tracking-wide text-xs">{t("recipes.assets")}</p>
               <div className="flex flex-wrap gap-2">
                 {detail.files.map((f) => (
                   <FileBadge key={f.name} name={f.name} kind={f.kind} />
@@ -188,6 +190,7 @@ function ModDrawer({ modId, onClose }: { modId: string; onClose: () => void }) {
 }
 
 export default function RecipesPage() {
+  const { t, plural } = useI18n();
   const { data: recipes, loading: recipesLoading, error: recipesError, refetch } = useQuery(fetchRecipes);
   const { data: deployments } = useQuery(fetchDeployments);
   const { data: settings } = useQuery(fetchSettings);
@@ -243,7 +246,7 @@ export default function RecipesPage() {
       setCustomRecipes(r);
       setCustomMods(m);
     } catch (e) {
-      setAlertModal({ title: "Error", message: e instanceof Error ? e.message : "Failed to load custom data" });
+      setAlertModal({ title: t("common.error"), message: e instanceof Error ? e.message : "Failed to load custom data" });
     } finally {
       setCustomLoading(false);
     }
@@ -285,7 +288,7 @@ export default function RecipesPage() {
       setModFiles(files);
       setShowModModal(true);
     } catch {
-      setAlertModal({ title: "Error", message: "Failed to load mod" });
+      setAlertModal({ title: t("common.error"), message: "Failed to load mod" });
     }
   };
 
@@ -307,7 +310,7 @@ export default function RecipesPage() {
       ]);
       setSelected({ recipe: detail, customization });
     } catch (e) {
-      setAlertModal({ title: "Error", message: e instanceof Error ? e.message : "Failed to load recipe" });
+      setAlertModal({ title: t("common.error"), message: e instanceof Error ? e.message : "Failed to load recipe" });
     }
   };
 
@@ -343,7 +346,7 @@ export default function RecipesPage() {
         setMissingModelDeploy({ recipeId: selected.recipe.id, name, params, options, model });
         return;
       }
-      setAlertModal({ title: "Error", message: e instanceof Error ? e.message : "Failed to deploy" });
+      setAlertModal({ title: t("common.error"), message: e instanceof Error ? e.message : t("recipes.deployFailed") });
     }
   };
 
@@ -364,12 +367,12 @@ export default function RecipesPage() {
       setMissingModelDeploy(null);
       setSelected(null);
       setAlertModal({
-        title: "Download started",
-        message: `${model} is downloading. "${name}" will deploy on its own when it finishes — follow the progress on the Models page, where you can also call it off.`,
+        title: t("recipes.downloadStarted"),
+        message: t("recipes.downloadStartedBody", { model, name }),
       });
     } catch (e) {
       setMissingModelDeploy(null);
-      setAlertModal({ title: "Error", message: e instanceof Error ? e.message : "Could not start the download" });
+      setAlertModal({ title: t("common.error"), message: e instanceof Error ? e.message : t("recipes.downloadFailed") });
     } finally {
       setScheduling(false);
     }
@@ -393,7 +396,7 @@ export default function RecipesPage() {
       setSelected(null);
     } catch (e) {
       setBlockedDeploy(null);
-      setAlertModal({ title: "Error", message: e instanceof Error ? e.message : "Failed to deploy" });
+      setAlertModal({ title: t("common.error"), message: e instanceof Error ? e.message : t("recipes.deployFailed") });
     }
   };
 
@@ -409,7 +412,7 @@ export default function RecipesPage() {
       ]);
       setSelected({ recipe: detail, customization });
     } catch (e) {
-      setAlertModal({ title: "Error", message: e instanceof Error ? e.message : "Failed to save customization" });
+      setAlertModal({ title: t("common.error"), message: e instanceof Error ? e.message : "Failed to save customization" });
     }
   };
 
@@ -423,7 +426,7 @@ export default function RecipesPage() {
         setSelected({ recipe: detail, customization: {} });
       }
     } catch (e) {
-      setAlertModal({ title: "Error", message: e instanceof Error ? e.message : "Failed to reset customization" });
+      setAlertModal({ title: t("common.error"), message: e instanceof Error ? e.message : "Failed to reset customization" });
     } finally {
       setResetConfirm(null);
     }
@@ -440,9 +443,9 @@ export default function RecipesPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold">Recipes & Mods</h2>
+        <h2 className="text-2xl font-bold">{t("recipes.title")}</h2>
         <p className="text-text-muted mt-1">
-          {showCustom ? "Browse your custom recipes and mods" : "Browse deployment recipes and available modifications"}
+          {showCustom ? t("recipes.subtitleCustom") : t("recipes.subtitleBundled")}
         </p>
       </div>
 
@@ -458,7 +461,7 @@ export default function RecipesPage() {
             }`}
           >
             <Zap size={14} className="inline mr-1.5" />
-            Recipes ({showCustom ? customRecipes.length : (recipes?.length ?? 0)})
+            {t("recipes.tabRecipes")} ({showCustom ? customRecipes.length : (recipes?.length ?? 0)})
           </button>
           <button
             onClick={() => setTab("mods")}
@@ -469,7 +472,7 @@ export default function RecipesPage() {
             }`}
           >
             <Wrench size={14} className="inline mr-1.5" />
-            Mods ({showCustom ? customMods.length : (mods?.length ?? 0)})
+            {t("recipes.tabMods")} ({showCustom ? customMods.length : (mods?.length ?? 0)})
           </button>
         </div>
         {/* Toggle + label */}
@@ -478,12 +481,12 @@ export default function RecipesPage() {
             onClick={handleToggleCustom}
             disabled={customLoading || toggling}
             className={`relative w-11 h-6 rounded-full transition-colors ${showCustom ? "bg-primary" : "bg-border"}`}
-            aria-label="Toggle custom mode"
+            aria-label={t("recipes.toggleCustom")}
           >
             <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${showCustom ? "translate-x-5" : ""}`} />
           </button>
           <span className={`text-sm font-medium ${showCustom ? "text-primary" : "text-text-muted"}`}>
-            Custom mode
+            {t("recipes.customMode")}
           </span>
         </div>
       </div>
@@ -514,15 +517,15 @@ export default function RecipesPage() {
               <div className="flex items-center justify-between">
                 <p className="text-sm text-text-muted">
                   {customRecipes.length === 0
-                    ? "No custom recipes yet"
-                    : `${customRecipes.length} custom recipe${customRecipes.length > 1 ? "s" : ""}`}
+                    ? t("recipes.noCustomRecipesYet")
+                    : plural("recipes.customRecipeCount", customRecipes.length)}
                 </p>
                 <button
                   onClick={() => setShowNewRecipe(true)}
                   className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium flex items-center gap-1.5 transition-colors"
                 >
                   <Plus size={14} />
-                  New Recipe
+                  {t("recipes.newRecipe")}
                 </button>
               </div>
               {customRecipes.length > 0 ? (
@@ -540,9 +543,9 @@ export default function RecipesPage() {
               ) : (
                 <div className="text-center py-20 text-text-muted">
                   <FileText size={48} className="mx-auto mb-4 opacity-30" />
-                  <p className="text-lg font-medium">No custom recipes</p>
+                  <p className="text-lg font-medium">{t("recipes.noCustomRecipes")}</p>
                   <p className="text-sm mt-1">
-                    Upload a YAML file, or write one here — v1 and v2 recipes are both accepted.
+                    {t("recipes.noCustomRecipesHint")}
                   </p>
                 </div>
               )}
@@ -594,8 +597,8 @@ export default function RecipesPage() {
 
               {recipes && recipes.length === 0 && (
                 <div className="text-center py-20 text-text-muted">
-                  <p>No recipes found.</p>
-                  <p className="text-sm mt-1">Check spark-vllm-docker path in Settings.</p>
+                  <p>{t("recipes.noRecipes")}</p>
+                  <p className="text-sm mt-1">{t("recipes.noRecipesHint")}</p>
                 </div>
               )}
             </>
@@ -613,21 +616,21 @@ export default function RecipesPage() {
               <div className="flex items-center justify-between">
                 <p className="text-sm text-text-muted">
                   {customMods.length === 0
-                    ? "No custom mods yet"
-                    : `${customMods.length} custom mod${customMods.length > 1 ? "s" : ""}`}
+                    ? t("recipes.noCustomModsYet")
+                    : plural("recipes.customModCount", customMods.length)}
                 </p>
                 <button
                   onClick={() => setShowNewMod(true)}
                   className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium flex items-center gap-1.5 transition-colors"
                 >
                   <Plus size={14} />
-                  New Mod
+                  {t("recipes.newMod")}
                 </button>
               </div>
               {customMods.length === 0 && (
                 <div className="py-20 text-center text-text-muted">
                   <Wrench size={48} className="mx-auto mb-4 opacity-30" />
-                  <p className="text-lg font-medium">No custom mods</p>
+                  <p className="text-lg font-medium">{t("recipes.noCustomMods")}</p>
                   <p className="text-sm mt-1 opacity-70">
                     A mod is a <code className="font-mono">run.sh</code> that runs inside the
                     container before the engine starts.
@@ -661,9 +664,9 @@ export default function RecipesPage() {
               {mods && mods.length === 0 && (
                 <div className="py-20 text-center text-text-muted">
                   <Wrench size={48} className="mx-auto mb-4 opacity-30" />
-                  <p className="text-lg font-medium">No mods found</p>
+                  <p className="text-lg font-medium">{t("recipes.noMods")}</p>
                   <p className="text-sm mt-1 opacity-70">
-                    Make sure spark_vllm_path is configured correctly in Settings.
+                    {t("recipes.noModsHint")}
                   </p>
                 </div>
               )}
@@ -688,7 +691,7 @@ export default function RecipesPage() {
           isRunning={runningIds.has(selected.recipe.id)}
           clusterEnabled={clusterEnabled}
           onClose={() => setSelected(null)}
-          onError={(msg) => setAlertModal({ title: "Error", message: msg })}
+          onError={(msg) => setAlertModal({ title: t("common.error"), message: msg })}
           onDeploy={handleDeploy}
           onSaveCustomization={handleSaveCustomization}
           onReset={() => {
@@ -711,7 +714,7 @@ export default function RecipesPage() {
           onClose={() => { setShowRecipeModal(false); setSelectedRecipe(null); }}
           onSave={handleSaveCustomRecipe}
           onDelete={handleDeleteCustomRecipe}
-          onError={(msg) => setAlertModal({ title: "Error", message: msg })}
+          onError={(msg) => setAlertModal({ title: t("common.error"), message: msg })}
         />
       )}
 
@@ -724,7 +727,7 @@ export default function RecipesPage() {
           onClose={() => { setShowModModal(false); setSelectedMod(null); }}
           onSave={handleSaveCustomMod}
           onDelete={handleDeleteCustomMod}
-          onError={(msg) => setAlertModal({ title: "Error", message: msg })}
+          onError={(msg) => setAlertModal({ title: t("common.error"), message: msg })}
         />
       )}
 
@@ -737,7 +740,7 @@ export default function RecipesPage() {
             await loadCustomData();
             setShowNewRecipe(false);
           }}
-          onError={(msg) => setAlertModal({ title: "Error", message: msg })}
+          onError={(msg) => setAlertModal({ title: t("common.error"), message: msg })}
         />
       )}
 
@@ -750,7 +753,7 @@ export default function RecipesPage() {
             await loadCustomData();
             setShowNewMod(false);
           }}
-          onError={(msg) => setAlertModal({ title: "Error", message: msg })}
+          onError={(msg) => setAlertModal({ title: t("common.error"), message: msg })}
         />
       )}
 
@@ -766,12 +769,12 @@ export default function RecipesPage() {
             data-testid="preflight-block-modal"
           >
             <div className="flex items-start justify-between gap-3">
-              <h3 className="text-lg font-bold">Pre-flight blocked this deploy</h3>
+              <h3 className="text-lg font-bold">{t("recipes.preflightBlocked")}</h3>
               <button
                 type="button"
                 onClick={() => setBlockedDeploy(null)}
                 className="p-1 rounded-lg hover:bg-surface-hover transition-colors"
-                title="Close"
+                title={t("common.close")}
               >
                 <X size={18} />
               </button>
@@ -790,7 +793,7 @@ export default function RecipesPage() {
                 onClick={handleDeployAnyway}
                 className="px-4 py-2 rounded-lg bg-danger hover:bg-danger/80 text-white font-medium transition-colors"
               >
-                Deploy anyway
+                {t("recipes.deployAnyway")}
               </button>
             </div>
           </div>
@@ -805,12 +808,12 @@ export default function RecipesPage() {
             data-testid="missing-model-modal"
           >
             <div className="flex items-start justify-between gap-3">
-              <h3 className="text-lg font-bold">This model is not downloaded yet</h3>
+              <h3 className="text-lg font-bold">{t("recipes.missingModelTitle")}</h3>
               <button
                 type="button"
                 onClick={() => setMissingModelDeploy(null)}
                 className="p-1 rounded-lg hover:bg-surface-hover transition-colors"
-                title="Close"
+                title={t("common.close")}
               >
                 <X size={18} />
               </button>
@@ -840,7 +843,7 @@ export default function RecipesPage() {
                 className="px-4 py-2 rounded-lg bg-primary hover:bg-primary/80 text-white font-medium transition-colors disabled:opacity-50 inline-flex items-center gap-2"
               >
                 {scheduling ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
-                Download and deploy
+                {t("recipes.downloadAndDeploy")}
               </button>
             </div>
           </div>
@@ -852,9 +855,9 @@ export default function RecipesPage() {
           open={!!resetConfirm}
           onClose={() => setResetConfirm(null)}
           onConfirm={() => resetConfirm && handleReset(resetConfirm.recipeId)}
-          title="Reset Customization"
-          message={`Reset "${resetConfirm.recipeName}" to its original recipe? Any customizations you made will be lost.`}
-          confirmLabel="Reset"
+          title={t("recipes.resetTitle")}
+          message={t("recipes.resetBody", { name: resetConfirm.recipeName })}
+          confirmLabel={t("recipes.reset")}
           confirmVariant="danger"
         />
       )}

@@ -1,4 +1,5 @@
 import { HealthHistoryChart, type HealthSeries } from "@/components/HealthBadge";
+import { useI18n } from "@/lib/i18n";
 import type { EngineMetricsWindow, EngineMetricSample } from "@/lib/types";
 
 /**
@@ -145,13 +146,14 @@ function LiveGauges({ latest }: { latest: EngineMetricSample }) {
 
 /** Why there is nothing to draw — never an empty chart standing in for it. */
 function Unavailable({ window: w }: { window: EngineMetricsWindow }) {
+  const { t } = useI18n();
   return (
     <div
       data-testid="engine-metrics-unavailable"
       className="p-4 rounded-lg border border-dashed border-border text-xs text-text-muted space-y-1"
     >
-      <p className="font-medium text-text">Engine metrics unavailable</p>
-      <p>{w.detail ?? "The engine published nothing this build could read."}</p>
+      <p className="font-medium text-text">{t("engineMetrics.unavailable")}</p>
+      <p>{w.detail ?? t("engineMetrics.unreadable")}</p>
     </div>
   );
 }
@@ -161,10 +163,11 @@ export default function EngineMetricsPanel({
   loading = false,
   className = "",
 }: EngineMetricsPanelProps) {
+  const { t } = useI18n();
   if (!w) {
     return (
       <div className={`text-xs text-text-muted ${className}`}>
-        {loading ? "Reading the engine's metrics…" : "No engine metrics yet."}
+        {loading ? t("engineMetrics.reading") : t("engineMetrics.noneYet")}
       </div>
     );
   }
@@ -184,7 +187,7 @@ export default function EngineMetricsPanel({
   return (
     <div className={`space-y-3 ${className}`}>
       <div className="flex items-baseline justify-between gap-3">
-        <h4 className="text-sm font-semibold">Engine metrics</h4>
+        <h4 className="text-sm font-semibold">{t("engineMetrics.heading")}</h4>
         <span className="text-xs text-text-muted">
           {w.samples.length} sample{w.samples.length === 1 ? "" : "s"}, every{" "}
           {w.sample_interval_seconds}s
@@ -210,7 +213,7 @@ export default function EngineMetricsPanel({
         </p>
       ) : (
         <HealthHistoryChart
-          title="Recent load"
+          title={t("engineMetrics.recentLoad")}
           caption={VOLATILE_CAPTION}
           series={series}
         />

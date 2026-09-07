@@ -1,6 +1,7 @@
 /** Registry card — displays a single OCI registry with status, versions and actions. */
 
 import { useState } from "react";
+import { useI18n } from "@/lib/i18n";
 import { CheckCircle2, XCircle, Loader2, Power, PowerOff, ChevronDown, GitBranch } from "lucide-react";
 import type { OciRegistry } from "@/lib/types";
 
@@ -19,6 +20,7 @@ export default function RegistryCard({
   onRemove: () => void;
   onVersionChange?: (version: string) => void;
 }) {
+  const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const [selectedVersion, setSelectedVersion] = useState<string>("");
 
@@ -70,7 +72,7 @@ export default function RegistryCard({
           <button
             onClick={onTest}
             className="p-1.5 rounded hover:bg-surface-pressed transition-colors"
-            title="Test connection"
+            title={t("registry.testConnection")}
             disabled={reg.connected}
           >
             {reg.connected ? (
@@ -94,7 +96,7 @@ export default function RegistryCard({
             <button
               onClick={onRemove}
               className="p-1.5 rounded hover:bg-destructive/15 transition-colors"
-              title="Remove registry"
+              title={t("registry.remove")}
             >
               <XCircle size={16} className="text-text-muted hover:text-destructive" />
             </button>
@@ -105,7 +107,7 @@ export default function RegistryCard({
       {/* Version dropdown (expanded) */}
       {hasVersions && expanded && (
         <div className="px-4 pb-4 border-t border-border pt-3">
-          <label className="block text-xs text-text-muted mb-2 font-medium">Available Versions</label>
+          <label className="block text-xs text-text-muted mb-2 font-medium">{t("registry.versions")}</label>
           <select
             value={selectedVersion}
             onChange={e => {
@@ -114,7 +116,7 @@ export default function RegistryCard({
             }}
             className="w-full px-3 py-2 rounded-lg border border-border bg-surface text-sm font-mono"
           >
-            <option value="">Select a version...</option>
+            <option value="">{t("registry.selectVersion")}</option>
             {versions?.map(v => (
               <option key={v} value={v}>{v}</option>
             ))}

@@ -1,4 +1,5 @@
 import { Bot, Code2, Copy, Check, Plug, Globe, Key, Lock, Terminal, ChevronDown, PowerOff } from "lucide-react";
+import { useI18n } from "@/lib/i18n";
 import { useState } from "react";
 import { fetchSettings } from "@/lib/api";
 import { useQuery } from "@/hooks/useQuery";
@@ -51,6 +52,7 @@ function SetupSection({ title, children }: { title: string; children: React.Reac
 }
 
 export default function MCPPage() {
+  const { t } = useI18n();
   const { data: settings } = useQuery(fetchSettings);
 
   const port = settings?.webui_port ?? 8100;
@@ -73,8 +75,8 @@ export default function MCPPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold">MCP Server</h2>
-        <p className="text-text-muted mt-1">Model Context Protocol — connect AI assistants to manage deployments</p>
+        <h2 className="text-2xl font-bold">{t("mcp.title")}</h2>
+        <p className="text-text-muted mt-1">{t("mcp.subtitle")}</p>
         {enabled && (
           <p className="text-xs text-text-muted mt-2">
             In the packaged app, the frontend and MCP endpoint are served by the same FastAPI process on port {port}.
@@ -91,18 +93,18 @@ export default function MCPPage() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Bot size={18} className="text-primary" />
-            <span className="font-semibold">Server Status</span>
+            <span className="font-semibold">{t("mcp.status")}</span>
           </div>
           {enabled
-            ? <span className="flex items-center gap-1.5 text-xs text-success font-medium px-2.5 py-1 rounded-full bg-success/15"><span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />Active</span>
-            : <span className="text-xs text-text-muted px-2.5 py-1 rounded-full bg-bg">Disabled</span>}
+            ? <span className="flex items-center gap-1.5 text-xs text-success font-medium px-2.5 py-1 rounded-full bg-success/15"><span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />{t("mcp.active")}</span>
+            : <span className="text-xs text-text-muted px-2.5 py-1 rounded-full bg-bg">{t("mcp.disabled")}</span>}
         </div>
         {!enabled && (
           <div className="space-y-3">
             <div className="flex items-start gap-3 p-3 rounded-lg bg-warning/10 border border-warning/30">
               <PowerOff size={16} className="text-warning shrink-0 mt-0.5" />
               <div className="space-y-1 text-sm">
-                <p className="font-medium">The MCP endpoint is not mounted.</p>
+                <p className="font-medium">{t("mcp.notMounted")}</p>
                 <p className="text-text-muted text-xs">
                   This server started with MCP disabled, so nothing is listening at
                   {" "}<span className="font-mono">{mcpPath}</span> — a client pointed there would be refused.
@@ -111,7 +113,7 @@ export default function MCPPage() {
               </div>
             </div>
             <div className="space-y-2">
-              <p className="text-xs text-text-muted">Turn it on either way, then restart Spark Pulse:</p>
+              <p className="text-xs text-text-muted">{t("mcp.turnOn")}</p>
               <CodeBlock label="environment variable" code={`SPARK_PULSE_MCP_ENABLED=true spark-pulse start`} />
               <CodeBlock label="~/.config/spark-pulse/settings.json" code={`{\n  "mcp_enabled": true\n}`} />
             </div>
@@ -119,20 +121,20 @@ export default function MCPPage() {
         )}
         {enabled && <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
           <div className="flex items-center justify-between p-2.5 rounded-lg bg-bg gap-3">
-            <span className="flex items-center gap-2 text-text-muted shrink-0"><Globe size={13} />Endpoint</span>
+            <span className="flex items-center gap-2 text-text-muted shrink-0"><Globe size={13} />{t("mcp.endpoint")}</span>
             <span className="font-mono text-xs truncate">{endpoint}</span>
           </div>
           <div className="flex items-center justify-between p-2.5 rounded-lg bg-bg gap-3">
-            <span className="flex items-center gap-2 text-text-muted shrink-0"><Plug size={13} />Transport</span>
-            <span className="font-mono text-xs">HTTP (JSON-RPC 2.0)</span>
+            <span className="flex items-center gap-2 text-text-muted shrink-0"><Plug size={13} />{t("mcp.transport")}</span>
+            <span className="font-mono text-xs">{t("mcp.transportValue")}</span>
           </div>
           <div className="flex items-center justify-between p-2.5 rounded-lg bg-bg gap-3">
-            <span className="flex items-center gap-2 text-text-muted shrink-0"><Lock size={13} />Security</span>
-            <span className="font-mono text-xs">Shared with web UI</span>
+            <span className="flex items-center gap-2 text-text-muted shrink-0"><Lock size={13} />{t("mcp.security")}</span>
+            <span className="font-mono text-xs">{t("mcp.securityValue")}</span>
           </div>
           <div className="flex items-center justify-between p-2.5 rounded-lg bg-bg gap-3">
-            <span className="flex items-center gap-2 text-text-muted shrink-0"><Key size={13} />API Token</span>
-            <span className="font-mono text-xs">Optional — set in Settings</span>
+            <span className="flex items-center gap-2 text-text-muted shrink-0"><Key size={13} />{t("mcp.apiToken")}</span>
+            <span className="font-mono text-xs">{t("mcp.apiTokenValue")}</span>
           </div>
         </div>}
       </div>
@@ -140,7 +142,7 @@ export default function MCPPage() {
       {/* Tools grid */}
       <div>
         <h3 className="text-base font-semibold mb-3 flex items-center gap-2"><Code2 size={16} className="text-primary" />Available Tools ({TOOLS.length})</h3>
-        {!enabled && <p className="text-xs text-text-muted mb-3">These are what MCP would expose. None of them can be called while it is disabled.</p>}
+        {!enabled && <p className="text-xs text-text-muted mb-3">{t("mcp.toolsNote")}</p>}
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
           {TOOLS.map((tool) => (
             <div key={tool.name} className="p-4 rounded-xl bg-surface border border-border hover:border-border-hover transition-colors group">
@@ -154,9 +156,9 @@ export default function MCPPage() {
       {/* Setup guides (collapsible) — every snippet embeds the endpoint, so
           there is nothing honest to show while MCP is off. */}
       {enabled && <div>
-        <h3 className="text-base font-semibold mb-3 flex items-center gap-2"><Terminal size={16} className="text-primary" />Setup Guides</h3>
+        <h3 className="text-base font-semibold mb-3 flex items-center gap-2"><Terminal size={16} className="text-primary" />{t("mcp.guides")}</h3>
         <div className="space-y-2">
-          <SetupSection title="Claude Desktop (HTTP transport)">
+          <SetupSection title={t("mcp.claudeDesktop")}>
             <p className="text-xs text-text-muted pt-1">Add to your <code className="font-mono bg-bg px-1 py-0.5 rounded">claude_desktop_config.json</code>:</p>
             <CodeBlock label="claude_desktop_config.json" code={`{
   "mcpServers": {
@@ -175,13 +177,13 @@ export default function MCPPage() {
 }`} />
           </SetupSection>
 
-          <SetupSection title="Cursor / Windsurf (stdio)">
-            <p className="text-xs text-text-muted pt-1">Install and run the stdio server:</p>
+          <SetupSection title={t("mcp.cursor")}>
+            <p className="text-xs text-text-muted pt-1">{t("mcp.cursorBody")}</p>
             <CodeBlock label="install" code={`pip install -e '.[mcp]'`} />
             <CodeBlock label="stdio server" code={`spark-pulse mcp`} />
           </SetupSection>
 
-          <SetupSection title="Python client">
+          <SetupSection title={t("mcp.python")}>
             <CodeBlock label="python" code={`from mcp import Client
 
 async with Client("${endpoint}") as client:
@@ -190,7 +192,7 @@ async with Client("${endpoint}") as client:
         print(t.name)`} />
           </SetupSection>
 
-          <SetupSection title="curl — quick test">
+          <SetupSection title={t("mcp.curl")}>
             <CodeBlock label="list tools" code={`curl -X POST ${endpoint} \\
   -H "Content-Type: application/json" \\
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'`} />
