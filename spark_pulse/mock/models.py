@@ -85,6 +85,11 @@ def _entry(
     source: str = "hf",
     source_type: str = "hf_cache",
     path: str | None = None,
+    num_hidden_layers: int = 32,
+    num_attention_heads: int = 32,
+    num_key_value_heads: int = 8,
+    hidden_size: int = 4096,
+    max_position_embeddings: int = 32768,
 ) -> dict[str, Any]:
     cfg = {
         "architectures": architectures,
@@ -92,6 +97,16 @@ def _entry(
         "torch_dtype": torch_dtype,
         "quantization": quantization or [],
         "quantization_method": quantization_method,
+        # A plausible attention shape, so the VRAM pre-flight has something to
+        # size in simulation. Without it every simulated check reports "the
+        # model config does not describe its attention" — honest, but it means
+        # the e2e run and every demo only ever exercise the unknown path.
+        # Grouped-query, which is what almost every current model is.
+        "num_hidden_layers": num_hidden_layers,
+        "num_attention_heads": num_attention_heads,
+        "num_key_value_heads": num_key_value_heads,
+        "hidden_size": hidden_size,
+        "max_position_embeddings": max_position_embeddings,
     }
     snapshot = (
         path
@@ -655,6 +670,12 @@ def presence(
             "state": VERIFIED if entry is not None else ABSENT,
             "revision": commit if entry is not None else None,
             "evidence": "manifest" if entry is not None else "none",
+            # The byte counts the real verifier reports. Without them the
+            # pre-flight's VRAM check has no weight figure and can only ever
+            # say "the weights have not been measured on this node" in
+            # simulation, which is the one answer that teaches nobody anything.
+            "bytes_expected": bytes_expected,
+            "bytes_present": bytes_expected,
         },
         "nodes": rows,
     }

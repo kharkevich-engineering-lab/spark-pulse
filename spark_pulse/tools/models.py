@@ -242,6 +242,20 @@ def _config_summary(snapshot: Path) -> dict[str, Any] | None:
         "quantization_method": (
             quant.get("quant_method") if isinstance(quant, dict) else None
         ),
+        # The attention shape, for the KV-cache half of the VRAM estimate.
+        # Carried verbatim rather than interpreted: what these fields *mean*
+        # is `tools.vram`'s business, and a catalogue that decided which
+        # attention layout a model used would have to be edited every time a
+        # new one appeared. Absent keys stay absent; the estimator reports an
+        # unknown rather than defaulting.
+        "num_hidden_layers": data.get("num_hidden_layers"),
+        "num_attention_heads": data.get("num_attention_heads"),
+        "num_key_value_heads": data.get("num_key_value_heads"),
+        "hidden_size": data.get("hidden_size"),
+        "head_dim": data.get("head_dim"),
+        "kv_lora_rank": data.get("kv_lora_rank"),
+        "qk_rope_head_dim": data.get("qk_rope_head_dim"),
+        "max_position_embeddings": data.get("max_position_embeddings"),
     }
 
 

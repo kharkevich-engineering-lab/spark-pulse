@@ -61,6 +61,30 @@ export function describeCost(report: PreflightReport): string {
   return `${moved} has to transfer to ${[...nodes].join(", ")} before this starts`;
 }
 
+/** The memory estimate, shown even when it passes.
+ *
+ * Counting passing checks rather than listing them is right for "docker is
+ * installed": there is nothing to read. It is wrong for this one. "19.0 GB
+ * needed, 96.7 GB free, 16.0 GB of it KV cache at 8,192 tokens" is the
+ * sentence an operator wants *before* choosing a context length — and a
+ * check that only ever speaks up in red never teaches anyone what the
+ * headroom was on the deploys that worked.
+ *
+ * Only when there is a figure. The check also passes when it could not work
+ * the fit out at all, and "could not tell" is a line for the API, not for the
+ * panel where the decision is made.
+ */
+export function memoryLine(report: PreflightReport): string {
+  const shown = new Set(checksToShow(report).map((c) => `${c.node_id}-${c.id}`));
+  const estimate = report.checks.find(
+    (c) =>
+      c.id === "vram" &&
+      c.detail?.total_bytes != null &&
+      !shown.has(`${c.node_id}-${c.id}`),
+  );
+  return estimate ? estimate.observed : "";
+}
+
 const STATUS_ICON = {
   fail: XCircle,
   warn: AlertTriangle,
@@ -76,6 +100,7 @@ const STATUS_TONE = {
 export default function PreflightPanel({ report }: { report: PreflightReport }) {
   const t = useT();
   const rows = checksToShow(report);
+  const memory = memoryLine(report);
   const style = VERDICT_STYLE[report.verdict];
 
   return (
@@ -98,6 +123,12 @@ export default function PreflightPanel({ report }: { report: PreflightReport }) 
         {report.nodes.length} node{report.nodes.length === 1 ? "" : "s"}
         {report.nodes.length > 0 ? ` (${report.nodes.map((n) => n.label).join(", ")})` : ""}.
       </p>
+
+      {memory && (
+        <p className="text-xs text-text-muted" data-testid="preflight-memory">
+          {memory}
+        </p>
+      )}
 
       {rows.length === 0 ? (
         <p className="flex items-center gap-1.5 text-xs text-success">

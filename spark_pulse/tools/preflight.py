@@ -61,6 +61,7 @@ from typing import Any, Callable, Iterable, Protocol
 
 from spark_pulse import tools
 from spark_pulse.tools import discovery
+from spark_pulse.tools import vram
 from spark_pulse.tools.ssh import SSHClient, SSHError
 
 logger = logging.getLogger(__name__)
@@ -90,6 +91,7 @@ CHECK_PORTS = "ports"
 CHECK_INTERFACES = "interfaces"
 CHECK_FABRIC = "fabric"
 CHECK_DISK = "disk"
+CHECK_VRAM = "vram"
 
 CHECK_ORDER = (
     CHECK_REACHABILITY,
@@ -102,6 +104,7 @@ CHECK_ORDER = (
     CHECK_INTERFACES,
     CHECK_FABRIC,
     CHECK_DISK,
+    CHECK_VRAM,
 )
 
 #: Headroom demanded beyond the bytes that must actually land, as a multiplier.
@@ -621,6 +624,10 @@ class _Context:
     image_bytes: int
     model_bytes: int
     wanted_digest: str = ""
+    #: The planned model's ``config.json`` summary, or None when the catalogue
+    #: does not have one. Read once rather than per node: it is the same
+    #: document everywhere, and the read is a disk hit.
+    model_config: dict[str, Any] | None = None
 
     @property
     def node_count(self) -> int:
@@ -1647,6 +1654,165 @@ def _model_unsized(target: NodeTarget, ctx: _Context) -> bool:
 
 
 #: The check functions, in report order. Each returns one check or several.
+def _check_vram(target: NodeTarget, ctx: _Context) -> Check:
+    """Will the model and its KV cache fit in what this node has free?
+
+    The failure this exists to catch does not look like a failure until it is
+    far too late: the image pulls, the container starts, the weights load for
+    several minutes and *then* the allocator dies. What the operator reads is
+    a traceback about a failed allocation, not "48 GB of KV cache does not fit
+    in 30 GB", and the context length that caused it is nowhere in the
+    message.
+
+    Two things make this cheap to do here. The weights have already been
+    measured on this node by the hub-cache verifier :func:`_check_model` runs,
+    and the free memory has already been resolved by :func:`_check_gpu` —
+    including the DGX Spark case where ``nvidia-smi`` reports nothing and the
+    figure comes from ``/proc/meminfo``. All that is left is arithmetic.
+
+    Only "will not fit" is amber. It warns rather than fails because the
+    estimate is an estimate — it cannot know what the engine will do with
+    ``gpu_memory_utilization``, whether a quantised cache is in play, or how
+    much the runtime really reserves — and a check that blocked a deploy on
+    arithmetic this soft would be turned off, which is worse than advisory.
+    And "could not tell" is not amber at all: a model that has not been
+    downloaded yet has no measured weights and often no cached config, so an
+    advisory there would appear on the majority of pre-flights and teach
+    operators to skim past the one that means something. It still says, in
+    full, what it could not work out and why — as a passing check whose text
+    is worth reading, not as an alarm.
+    """
+    title = "GPU memory"
+    plan = ctx.plan
+    model = str(plan.get("model") or "")
+
+    if not model:
+        return _check(
+            CHECK_VRAM,
+            title,
+            target,
+            STATUS_PASS,
+            "the recipe names no model of its own, so there is nothing to size",
+        )
+
+    facts = ctx.facts[target.id]
+    row = ctx.model_rows.get(target.id) or {}
+
+    # The weights as they are on this node, not as the catalogue remembers
+    # them: a half-transferred snapshot is exactly the case a fit estimate
+    # must not silently round up into "fits".
+    weight_bytes = _int_or_none(row.get("bytes_expected"))
+
+    config = ctx.model_config
+    shape = vram.shape_from_config(config, weight_bytes=weight_bytes)
+    workload = _workload_from_plan(plan, config)
+    available = _available_bytes(facts)
+
+    estimate = vram.estimate(shape, workload, available_bytes=available)
+    detail = estimate.to_dict()
+    detail["max_model_len"] = workload.max_model_len
+
+    if estimate.fits is None:
+        # Say which half is missing. "Could not estimate" with no reason is a
+        # line an operator cannot act on and will stop reading.
+        why = "; ".join(estimate.unknowns) or (
+            "this node did not report how much memory is free"
+        )
+        return _check(
+            CHECK_VRAM,
+            title,
+            target,
+            STATUS_PASS,
+            f"could not work out whether {model} fits on {target.label}: {why}",
+            **detail,
+        )
+
+    need = _bytes(estimate.total_bytes)
+    have = _bytes(estimate.available_bytes)
+    kv = _bytes(estimate.kv_bytes)
+    context = workload.max_model_len
+
+    if estimate.fits:
+        return _check(
+            CHECK_VRAM,
+            title,
+            target,
+            STATUS_PASS,
+            f"{model} needs about {need} on {target.label} "
+            f"({kv} of that is KV cache at {context:,} tokens) "
+            f"and {have} is free",
+            **detail,
+        )
+
+    return _check(
+        CHECK_VRAM,
+        title,
+        target,
+        STATUS_WARN,
+        f"{model} looks too big for {target.label}: about {need} needed "
+        f"({kv} of it KV cache at {context:,} tokens) against {have} free",
+        "This is an estimate, not a refusal — the engine may still fit it. "
+        "The KV cache is what scales, linearly, with both max_model_len and "
+        "max_num_seqs, so halving either roughly halves that half. Raising "
+        "tensor_parallel shards the weights and the cache across more nodes.",
+        **detail,
+    )
+
+
+def _int_or_none(value: Any) -> int | None:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+
+def _model_config(model: str) -> dict[str, Any] | None:
+    """The model's ``config.json`` summary, from the catalogue."""
+    if not model:
+        return None
+    try:
+        entry = tools.models.get_model(model)
+    except Exception:  # pragma: no cover — the catalogue is best effort
+        return None
+    return (entry or {}).get("config")
+
+
+def _workload_from_plan(
+    plan: dict[str, Any], config: dict[str, Any] | None
+) -> vram.Workload:
+    """What the deploy asks for, falling back to what the model allows.
+
+    A recipe that does not pin ``max_model_len`` gets whatever the engine
+    defaults to, which is the model's own trained maximum — so that is what an
+    estimate has to assume. Assuming a small context instead would make the
+    check pass for exactly the deploys most likely to fail.
+    """
+    params = plan.get("params") or {}
+    length = _int_or_none(params.get("max_model_len"))
+    if length is None and isinstance(config, dict):
+        length = _int_or_none(config.get("max_position_embeddings"))
+    return vram.Workload(
+        max_model_len=length,
+        tensor_parallel=_int_or_none(params.get("tensor_parallel")) or 1,
+        pipeline_parallel=_int_or_none(params.get("pipeline_parallel")) or 1,
+        max_num_seqs=_int_or_none(params.get("max_num_seqs")) or 1,
+    )
+
+
+def _available_bytes(facts: _NodeFacts) -> int | None:
+    """Free memory, by the same rule :func:`_check_gpu` reports it.
+
+    On a DGX Spark ``nvidia-smi`` gives no GPU memory at all because the pool
+    is unified, so ``/proc/meminfo`` is the answer rather than a zero.
+    """
+    reported = [g for g in facts.gpus if g.get("memory_free_mib") is not None]
+    if reported:
+        return sum(int(g["memory_free_mib"] or 0) for g in reported) * 1024 * 1024
+    available = facts.meminfo.get("MemAvailable")
+    return int(available) if available else None
+
+
 _CHECKS: tuple[tuple[str, Callable[[NodeTarget, _Context], Any]], ...] = (
     (CHECK_REACHABILITY, _check_reachability),
     (CHECK_DOCKER, _check_docker),
@@ -1658,6 +1824,7 @@ _CHECKS: tuple[tuple[str, Callable[[NodeTarget, _Context], Any]], ...] = (
     (CHECK_INTERFACES, _check_interfaces),
     (CHECK_FABRIC, _check_fabric),
     (CHECK_DISK, _check_disk),
+    (CHECK_VRAM, _check_vram),
 )
 
 
@@ -1957,6 +2124,7 @@ def run(
     ssh_client: SSHClient | None = None,
     services: Callable[[Any], Any] | None = None,
     model_presence: Callable[..., dict[str, Any]] | None = None,
+    model_config: Callable[[str], dict[str, Any] | None] | None = None,
 ) -> dict[str, Any]:
     """Run every pre-flight check for a deployment and report the verdict.
 
@@ -1974,6 +2142,7 @@ def run(
         ssh_client: SSH transport handed to the default probe factory.
         services: Node-service resolver (simulation, tests).
         model_presence: The model verifier seam (simulation, tests).
+        model_config: The model-config reader seam (tests).
 
     Returns:
         The report: verdict, summary, every check, and the checks split into
@@ -2009,6 +2178,7 @@ def run(
     reachable = [t for t in node_targets if facts[t.id].reachable]
     image_rows, wanted_digest, image_bytes = _image_rows(reachable, plan, services)
     model_rows, model_bytes = _model_rows(reachable, plan, model_presence)
+    read_config = model_config or _model_config
 
     ctx = _Context(
         plan=plan,
@@ -2020,6 +2190,7 @@ def run(
         image_bytes=image_bytes,
         model_bytes=model_bytes,
         wanted_digest=wanted_digest,
+        model_config=read_config(str(plan.get("model") or "")),
     )
 
     checks: list[Check] = []
@@ -2081,6 +2252,7 @@ __all__ = [
     "CHECK_PORTS",
     "CHECK_REACHABILITY",
     "CHECK_TOOLKIT",
+    "CHECK_VRAM",
     "DISK_HEADROOM",
     "DOCKER_COMMAND",
     "GPU_COMMAND",
