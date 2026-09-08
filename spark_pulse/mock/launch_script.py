@@ -37,8 +37,8 @@ from spark_pulse.tools.launch_script import (
 class LaunchScriptDistributor(_RealLaunchScriptDistributor):
     """Records what would have been copied to each node instead of copying it.
 
-    ``deploy_to_cluster`` is inherited, so simulation walks the same head/worker
-    ranks and reports the same ``{rank: ok}`` map as production.
+    Only the copy is overridden, so what is exercised in simulation is the
+    real class with a recording transport under it.
     """
 
     def __init__(self, ssh_client: Any = None, services: Any = None):

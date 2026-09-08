@@ -497,33 +497,15 @@ export async function patchLaunchScript(body: LaunchScriptPatchRequest): Promise
   });
 }
 
-// ── Mod Deployment (Phase 4) ─────────────────────────────────────────────────
+// ── Mods ─────────────────────────────────────────────────────────────────────
 
 import type {
   ModValidationResult,
-  ModDeploymentResult,
-  ModRollbackResult,
   ModValidateRequest,
-  ModApplyRequest,
-  ModRollbackRequest,
 } from "@/lib/types";
 
 export async function validateMod(body: ModValidateRequest): Promise<ModValidationResult> {
   return json<ModValidationResult>("/mods/validate", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-}
-
-export async function applyMod(body: ModApplyRequest): Promise<ModDeploymentResult> {
-  return json<ModDeploymentResult>("/mods/apply", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-}
-
-export async function rollbackMod(body: ModRollbackRequest): Promise<ModRollbackResult> {
-  return json<ModRollbackResult>("/mods/rollback", {
     method: "POST",
     body: JSON.stringify(body),
   });
