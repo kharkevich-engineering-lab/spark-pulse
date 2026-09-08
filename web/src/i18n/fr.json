@@ -609,7 +609,12 @@
     "downloadFailed": "Échec du téléchargement",
     "deleteFailed": "Échec de la suppression",
     "cancelFailed": "Échec de l'annulation",
-    "unknownError": "Erreur inconnue"
+    "unknownError": "Erreur inconnue",
+    "alsoRemoveFrom": "Supprimer également de",
+    "notThere": "absent",
+    "deleteConfirm": "Supprimer partout où c'est coché",
+    "deleteFromNodes": "{count} nœud(s) le détiennent encore",
+    "removedFrom": "Supprimé de {count} nœud(s), libérant {size}"
   },
   "mcp": {
     "title": "Serveur MCP",

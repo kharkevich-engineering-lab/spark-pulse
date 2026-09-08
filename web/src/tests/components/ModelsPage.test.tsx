@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import ModelsPage, { describePrecision, shortRevision } from "@/pages/ModelsPage";
@@ -44,6 +44,11 @@ vi.mock("@/lib/api", () => ({
   fetchScheduledDeploys: vi.fn(),
   deleteModel: vi.fn(),
   saveModelSources: vi.fn(),
+  // The cluster the model might also be sitting on. Inert by default: only
+  // the delete tests care, and a page that asks for nodes must not depend on
+  // there being any.
+  fetchNodes: vi.fn(() => Promise.resolve([])),
+  fetchModelPresence: vi.fn(),
 }));
 
 import {
@@ -52,8 +57,10 @@ import {
   fetchScheduledDeploys,
   deleteModel,
   fetchModelDownloads,
+  fetchModelPresence,
   fetchModelSources,
   fetchModels,
+  fetchNodes,
   saveModelSources,
   startModelDownload,
 } from "@/lib/api";
@@ -203,7 +210,7 @@ describe("ModelsPage", () => {
     expect(deleteModel).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole("button", { name: "Delete" }));
-    await waitFor(() => expect(deleteModel).toHaveBeenCalledWith("acme/plain-7b"));
+    await waitFor(() => expect(deleteModel).toHaveBeenCalledWith("acme/plain-7b", []));
   });
 
   it("shows an empty state when nothing is cached", async () => {
@@ -510,5 +517,144 @@ describe("ModelsPage — scheduled deploys", () => {
     });
 
     await waitFor(() => expect(fetchScheduledDeploys).toHaveBeenCalled());
+  });
+});
+
+/** Deleting a model that is on more than one machine.
+ *
+ * A 26 GB model replicated to four Sparks is on four disks. The dialog used to
+ * delete it from this one and the page then said it was gone, which is how a
+ * cluster fills with copies nobody can see. */
+describe("ModelsPage delete across nodes", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(fetchModels).mockResolvedValue(models);
+    vi.mocked(fetchModelSources).mockResolvedValue([{ name: "hf", type: "hf_hub" }]);
+    vi.mocked(fetchModelDownloads).mockResolvedValue([]);
+    vi.mocked(fetchScheduledDeploys).mockResolvedValue([]);
+    vi.mocked(fetchNodes).mockResolvedValue([
+      { is_control_plane: true, address: "192.168.1.100" },
+      { is_control_plane: false, address: "10.0.0.11" },
+      { is_control_plane: false, address: "10.0.0.12" },
+    ] as never);
+    vi.mocked(fetchModelPresence).mockResolvedValue({
+      model: "acme/plain-7b",
+      local: true,
+      nodes: [
+        { node: "10.0.0.11", present: true, error: null },
+        { node: "10.0.0.12", present: false, error: null },
+      ],
+    });
+    vi.mocked(deleteModel).mockResolvedValue({
+      deleted: "acme/plain-7b",
+      path: "/hub",
+      freed_bytes: 26_000_000_000,
+      nodes: [
+        { node: "", removed: true, freed_bytes: 13_000_000_000, error: null },
+        { node: "10.0.0.11", removed: true, freed_bytes: 13_000_000_000, error: null },
+      ],
+    });
+  });
+
+  it("offers the other machines, and preselects the ones that have a copy", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByLabelText("Delete acme/plain-7b"));
+
+    const dialog = within(screen.getByRole("dialog"));
+    await waitFor(() => expect(dialog.getByText("10.0.0.11")).toBeInTheDocument());
+    // Checked where the model is; offered but unchecked where it is not.
+    expect(dialog.getByRole("checkbox", { name: /10\.0\.0\.11/ })).toBeChecked();
+    expect(dialog.getByRole("checkbox", { name: /10\.0\.0\.12/ })).not.toBeChecked();
+    expect(dialog.getByText("not there")).toBeInTheDocument();
+  });
+
+  it("deletes from the nodes that were ticked", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByLabelText("Delete acme/plain-7b"));
+    const dialog = within(screen.getByRole("dialog"));
+    await waitFor(() => expect(dialog.getByText("10.0.0.11")).toBeInTheDocument());
+    await user.click(dialog.getByRole("button", { name: /Delete everywhere selected/ }));
+
+    await waitFor(() =>
+      expect(deleteModel).toHaveBeenCalledWith("acme/plain-7b", ["10.0.0.11"]),
+    );
+  });
+
+  it("keeps a node the operator ticked when presence answers late", async () => {
+    // The answer arrives after a click; preselecting over it would undo the
+    // operator's own choice.
+    let settle: (value: never) => void = () => {};
+    vi.mocked(fetchModelPresence).mockReturnValue(
+      new Promise((resolve) => {
+        settle = resolve as never;
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByLabelText("Delete acme/plain-7b"));
+    const dialog = within(screen.getByRole("dialog"));
+    await user.click(dialog.getByRole("checkbox", { name: /10\.0\.0\.12/ }));
+    await act(async () => {
+      settle({
+        model: "acme/plain-7b",
+        local: true,
+        nodes: [{ node: "10.0.0.11", present: true, error: null }],
+      } as never);
+    });
+
+    expect(dialog.getByRole("checkbox", { name: /10\.0\.0\.12/ })).toBeChecked();
+  });
+
+  it("reports what was actually freed, and on how many machines", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByLabelText("Delete acme/plain-7b"));
+    const dialog = within(screen.getByRole("dialog"));
+    await waitFor(() => expect(dialog.getByText("10.0.0.11")).toBeInTheDocument());
+    await user.click(dialog.getByRole("button", { name: /Delete everywhere selected/ }));
+
+    expect(await screen.findByText(/Removed from 2 node/)).toBeInTheDocument();
+  });
+
+  it("names the node that refused rather than claiming the model is gone", async () => {
+    vi.mocked(deleteModel).mockResolvedValue({
+      deleted: "acme/plain-7b",
+      path: "/hub",
+      freed_bytes: 13_000_000_000,
+      nodes: [
+        { node: "", removed: true, freed_bytes: 13_000_000_000, error: null },
+        { node: "10.0.0.11", removed: false, freed_bytes: 0, error: "no enrolled agent" },
+      ],
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByLabelText("Delete acme/plain-7b"));
+    const dialog = within(screen.getByRole("dialog"));
+    await waitFor(() => expect(dialog.getByText("10.0.0.11")).toBeInTheDocument());
+    await user.click(dialog.getByRole("button", { name: /Delete everywhere selected/ }));
+
+    expect(await screen.findByRole("heading", { name: "Delete failed" })).toBeInTheDocument();
+    expect(screen.getByText(/10\.0\.0\.11: no enrolled agent/)).toBeInTheDocument();
+  });
+
+  it("asks nothing of a single-machine install", async () => {
+    vi.mocked(fetchNodes).mockResolvedValue([
+      { is_control_plane: true, address: "192.168.1.100" },
+    ] as never);
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByLabelText("Delete acme/plain-7b"));
+
+    expect(fetchModelPresence).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(deleteModel).toHaveBeenCalledWith("acme/plain-7b", []));
   });
 });

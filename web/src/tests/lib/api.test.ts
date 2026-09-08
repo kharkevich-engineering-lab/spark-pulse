@@ -607,8 +607,8 @@ const CASES: Case[] = [
   },
   {
     name: "deleteModel",
-    call: () => api.deleteModel("Qwen--Qwen3-8B"),
-    path: "/api/models/Qwen--Qwen3-8B",
+    call: () => api.deleteModel("Qwen--Qwen3-8B", ["10.0.0.11"]),
+    path: "/api/models/Qwen--Qwen3-8B?nodes=10.0.0.11",
     method: "DELETE",
   },
 

@@ -947,13 +947,15 @@ export interface ModelSyncResult {
 export interface ModelPresence {
   model: string;
   local: boolean;
-  nodes: { node: string; present: boolean; error: string | null }[];
+  nodes: { node: string; present: boolean; state?: string; error: string | null }[];
 }
 
 export interface ModelDeleteResult {
   deleted: string;
   path: string;
   freed_bytes: number;
+  /** One row per node asked: the control node first, then those named. */
+  nodes?: { node: string; removed: boolean; freed_bytes: number; error: string | null }[];
 }
 
 // ── Engine images ──────────────────────────────────────────────────

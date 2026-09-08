@@ -609,7 +609,12 @@
     "downloadFailed": "Download failed",
     "deleteFailed": "Delete failed",
     "cancelFailed": "Cancel failed",
-    "unknownError": "Unknown error"
+    "unknownError": "Unknown error",
+    "alsoRemoveFrom": "Also remove from",
+    "notThere": "not there",
+    "deleteConfirm": "Delete everywhere selected",
+    "deleteFromNodes": "{count} node(s) still hold it",
+    "removedFrom": "Removed from {count} node(s), freeing {size}"
   },
   "mcp": {
     "title": "MCP Server",

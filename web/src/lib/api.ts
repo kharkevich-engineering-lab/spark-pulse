@@ -578,8 +578,13 @@ export async function fetchModelPresence(id: string, nodes: string[]): Promise<M
   return json<ModelPresence>(`/models/${id}/presence?nodes=${encodeURIComponent(nodes.join(","))}`);
 }
 
-export async function deleteModel(id: string): Promise<ModelDeleteResult> {
-  return json<ModelDeleteResult>(`/models/${id}`, { method: "DELETE" });
+export async function deleteModel(id: string, nodes: string[] = []): Promise<ModelDeleteResult> {
+  // A model replicated to four Sparks is on four disks; deleting it from one
+  // of them and saying it is gone is how 26 GB stays where nobody looks.
+  return json<ModelDeleteResult>(
+    `/models/${id}?nodes=${encodeURIComponent(nodes.join(","))}`,
+    { method: "DELETE" },
+  );
 }
 
 // ── Engine images ──────────────────────────────────────────────────
