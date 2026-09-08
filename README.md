@@ -17,25 +17,29 @@ It brings recipe discovery, deployment management, live monitoring, cache cleanu
 - **Settings and auth** - Configure the backend path, defaults, and OIDC authentication.
 - **MCP server** - Expose the same operations to Model Context Protocol clients and automation.
 
+## Documentation
+
+**[kharkevich-engineering-lab.github.io/spark-pulse](https://kharkevich-engineering-lab.github.io/spark-pulse/)** — a tour of every page, how deploys and reconciliation work, the agent protocol, and the configuration, CLI, API and MCP reference.
+
 ## Screenshots
 
-### Recipes
+### Inference
 
-![Recipes view](https://raw.githubusercontent.com/kharkevich-engineering-lab/spark-pulse/main/docs/static/images/recipes.jpeg)
+![Inference](https://raw.githubusercontent.com/kharkevich-engineering-lab/spark-pulse/main/docs/assets/screenshots/jobs.png)
 
-Browse available deployment recipes, inspect model details, and compare supported variants at a glance.
-
-### Jobs
-
-![Jobs view](https://raw.githubusercontent.com/kharkevich-engineering-lab/spark-pulse/main/docs/static/images/jobs.jpeg)
-
-Monitor deployments, stream logs, and manage running jobs without leaving the dashboard.
+What is running, with per-rank state, the engine's own metrics and the log.
 
 ### Monitoring
 
-![Monitoring view](https://raw.githubusercontent.com/kharkevich-engineering-lab/spark-pulse/main/docs/static/images/monitoring.jpeg)
+![Monitoring](https://raw.githubusercontent.com/kharkevich-engineering-lab/spark-pulse/main/docs/assets/screenshots/monitoring.png)
 
-Watch GPU, CPU, and disk usage in real time alongside active GPU processes.
+Every node, asked through its own agent: GPUs, memory, disks, and which deployment holds each GPU process.
+
+### Recipes
+
+![Recipes](https://raw.githubusercontent.com/kharkevich-engineering-lab/spark-pulse/main/docs/assets/screenshots/recipes.png)
+
+A recipe is a model, an engine and its arguments in one file — bundled, your own, or installed from an OCI registry.
 
 ## Installation
 
@@ -81,24 +85,28 @@ Spark Pulse reads settings from `config.yaml` (bundled with the package) and mer
 
 ### config.yaml Reference
 
+The full table lives in the [configuration reference](https://kharkevich-engineering-lab.github.io/spark-pulse/#/reference/configuration). The keys most people touch:
+
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `runtime` | string | `native` | Deployment runtime. `native` (Spark Pulse drives Docker itself via the engine registry) is the only one — there is no upstream runtime any more. |
-| `spark_vllm_path` | string | `/tmp/spark-vllm-docker` | Optional path to a spark-vllm-docker checkout. Nothing is executed out of it; it is only read for importing existing recipes and for read-only mod/launch-script discovery. Unset, missing, or wrong just means those sources are unavailable. |
 | `webui_port` | int | `8100` | TCP port the web UI listens on. |
-| `default_container` | string | `vllm-node` | Default Docker container name for deployments. |
-| `default_gpu_mem_util` | float | `0.8` | Default GPU memory utilization fraction (0.0–1.0). |
-| `default_port_range_start` | int | `9000` | Start of the ephemeral port range for deployments. |
-| `default_port_range_end` | int | `9100` | End of the ephemeral port range for deployments. |
-| `job_retention_days` | int | `7` | Number of days to retain completed job records. |
-| `cluster_enabled` | bool | `false` | Enable multi-node cluster mode. |
-| `mcp_enabled` | bool | `true` | Enable the MCP server endpoint. |
-| `mcp_path` | string | `/mcp` | HTTP path for the MCP server. |
-| `mcp_api_token` | string | *(empty)* | Optional API token to protect MCP requests. |
+| `runtime` | string | `native` | Deployment runtime. `native` — Spark Pulse drives Docker itself through the engine registry — is the only one. |
+| `spark_vllm_path` | string | `/tmp/spark-vllm-docker` | Optional path to a spark-vllm-docker checkout. Nothing is executed out of it; it is read only as a source of recipes and mods. |
+| `default_port_range_start` | int | `9000` | Start of the port range deployments are allocated from. |
+| `default_port_range_end` | int | `9100` | End of that range. |
+| `job_retention_days` | int | `7` | Days to retain finished deployment records. |
+| `default_engine` | string | `vllm` | Engine used when a recipe does not name one. |
+| `cluster_enabled` | bool | `false` | Offers recipes marked `cluster_only`. |
+| `cluster_experimental` | bool | `true` | Marks multi-node as unproven in the UI. |
+| `database_url` | string | *(empty)* | Empty means SQLite under `~/.config/spark-pulse`; any SQLAlchemy URL otherwise. |
+| `cors_allowed_origins` | list | `[]` | Browser origins allowed to call this API. Never `*`. |
+| `mcp_enabled` | bool | `true` | Enable the MCP endpoint. |
+| `mcp_path` | string | `/mcp` | Where it is mounted. |
+| `mcp_api_token` | string | *(empty)* | Optional token protecting MCP requests. |
 | `auth_enabled` | bool | `false` | Enable OIDC authentication. |
-| `oidc_provider_url` | string | *(empty)* | OIDC provider URL (e.g. `https://keycloak.example.com/realms/myrealm`). |
+| `oidc_provider_url` | string | *(empty)* | OIDC provider URL. |
 | `oidc_client_id` | string | *(empty)* | OIDC client ID. |
-| `oidc_client_secret` | string | *(empty)* | OIDC client secret — stored securely in `~/.config/spark-pulse/secrets.json`. |
+| `oidc_client_secret` | string | *(empty)* | Stored in `~/.config/spark-pulse/secrets.json`, never returned by the API. |
 
 ### Environment Variable Overrides
 
@@ -108,6 +116,10 @@ The following environment variables override their corresponding config keys:
 |---|---|---|
 | `SPARK_VLLM_PATH` | `spark_vllm_path` | Override the spark-vllm-docker path. |
 | `WEBUI_PORT` | `webui_port` | Override the web UI port. |
+| `SPARK_PULSE_DATABASE_URL` | `database_url` | Override the database URL. |
+| `SPARK_PULSE_AUTH_ENABLED` | `auth_enabled` | Turn OIDC on or off. |
+| `SPARK_PULSE_MCP_ENABLED` | `mcp_enabled` | Turn the MCP endpoint on or off. |
+| `SIMULATION_MODE` | — | Run everything against a simulated cluster: no Docker, no GPU. |
 
 ### File Locations
 
@@ -187,9 +199,13 @@ pytest
 python -m build
 ```
 
+## Architecture, in one paragraph
+
+One control plane coordinates; one agent per node executes — including on the machine the control plane itself runs on, which it reaches over loopback exactly as it reaches a peer. Nothing in the control plane touches a node's Docker daemon, GPU or model cache directly. See [the architecture](https://kharkevich-engineering-lab.github.io/spark-pulse/#/architecture/overview).
+
 ## API
 
-The app exposes REST endpoints under `/api/*` for recipes, deployments, memory, cache, and settings, plus `/auth/*` routes for OIDC login and session handling.
+REST under `/api/*`, with interactive docs at `/docs` and `/redoc` on the running app, plus `/auth/*` for OIDC login and `/mcp` for Model Context Protocol clients. The [API reference](https://kharkevich-engineering-lab.github.io/spark-pulse/#/reference/api) is the map.
 
 ## License
 

@@ -1,0 +1,87 @@
+/* A few overrides on docsify's vue theme, so the docs and the app agree on
+   what blue means and screenshots do not float on the page. */
+
+:root {
+  --theme-color: #3b82f6;
+  --sp-ink: #0f172a;
+  --sp-muted: #64748b;
+  --sp-border: #e2e8f0;
+  --sp-surface: #f8fafc;
+}
+
+.markdown-section {
+  max-width: 56rem;
+}
+
+.markdown-section h1,
+.markdown-section h2,
+.markdown-section h3 {
+  color: var(--sp-ink);
+  letter-spacing: -0.01em;
+}
+
+.markdown-section h2 {
+  margin-top: 2.4rem;
+  padding-top: 1.4rem;
+  border-top: 1px solid var(--sp-border);
+}
+
+/* Screenshots are of a dark UI; a border and a shadow keep them from bleeding
+   into a light page. */
+.markdown-section img {
+  border-radius: 10px;
+  border: 1px solid var(--sp-border);
+  box-shadow: 0 8px 24px -12px rgba(15, 23, 42, 0.45);
+}
+
+.markdown-section blockquote {
+  border-left: 4px solid var(--theme-color);
+  background: var(--sp-surface);
+  color: var(--sp-ink);
+  border-radius: 0 8px 8px 0;
+}
+
+.markdown-section table {
+  display: table;
+  width: 100%;
+}
+
+.markdown-section th {
+  background: var(--sp-surface);
+  font-weight: 600;
+}
+
+.markdown-section td,
+.markdown-section th {
+  vertical-align: top;
+}
+
+.markdown-section code {
+  color: #0f766e;
+}
+
+.mermaid {
+  display: flex;
+  justify-content: center;
+  margin: 1.6rem 0;
+  padding: 1rem;
+  background: var(--sp-surface);
+  border: 1px solid var(--sp-border);
+  border-radius: 10px;
+  overflow-x: auto;
+}
+
+.mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* The sidebar's section labels, written as bold list items. */
+.sidebar-nav > ul > li > strong {
+  display: block;
+  margin: 1.2rem 0 0.4rem;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--sp-muted);
+}

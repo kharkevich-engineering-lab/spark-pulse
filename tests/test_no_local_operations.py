@@ -41,36 +41,6 @@ TOOLS = Path(__file__).resolve().parents[1] / "spark_pulse" / "tools"
 #: node — the two ends of the seam. Everything else goes through the seam.
 MAY_TOUCH_DOCKER_DIRECTLY = {"docker.py", "node_service.py"}
 
-#: What still answers for the control node only, and what it would take.
-#:
-#: This is the honest half of the ratchet. Everything above says "no node
-#: operation runs locally"; this says which operations are *not yet* node
-#: operations at all, so the list of exceptions cannot be read as a clean bill
-#: of health. Each one is a decision that has not been made rather than a bug
-#: that slipped through, and each names what the change actually needs.
-STILL_SINGLE_NODE = {
-    "preflight.py": (
-        "host facts — GPUs, ports, free disk, interfaces — go through a "
-        "HostProbe: a subprocess here, an SSH command on a peer. The readings "
-        "are what GetNodeStats already answers; a free-port check has no "
-        "command yet, so the split stays until it does"
-    ),
-    "cache.py": (
-        "/api/cache lists and cleans this host's caches, and the page has no "
-        "notion of a node — the same shape the monitoring page had before "
-        "GetNodeStats"
-    ),
-    "models.py": (
-        "replicate_to_nodes is an rsync of the bytes over SSH, and writes the "
-        "completion marker on the node; moving it needs a transfer protocol, "
-        "not a lint rule"
-    ),
-    "discovery.py": (
-        "this host's own interfaces and RoCE devices, read before there is "
-        "any node to ask"
-    ),
-}
-
 #: Modules that legitimately write to *this* machine's filesystem, and why.
 #:
 #: The distinction is whose state it is. The control plane's own config,
@@ -324,7 +294,6 @@ def test_every_exception_is_one_something_actually_needs():
             MAY_SIGNAL_A_PROCESS,
             MAY_USE_SUBPROCESS,
             MAY_TOUCH_DOCKER_DIRECTLY,
-            STILL_SINGLE_NODE,
         )
         for name in group
         if name not in present

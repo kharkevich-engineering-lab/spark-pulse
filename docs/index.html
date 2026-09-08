@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Spark Pulse</title>
+    <meta name="description" content="A control plane for inference engines on NVIDIA DGX Spark." />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/docsify@4/lib/themes/vue.css" />
+    <link rel="stylesheet" href="assets/site.css" />
+  </head>
+  <body>
+    <div id="app">Loading…</div>
+
+    <script>
+      // Mermaid is initialised by hand rather than by a docsify plugin: the
+      // plugin pins its own mermaid version, and the two go out of step the
+      // first time either is bumped. Rendering after each page is nine lines
+      // and cannot drift.
+      window.$docsify = {
+        name: "Spark Pulse",
+        repo: "https://github.com/kharkevich-engineering-lab/spark-pulse",
+        loadSidebar: true,
+        loadNavbar: true,
+        subMaxLevel: 3,
+        auto2top: true,
+        relativePath: true,
+        alias: {
+          // Every page reaches the sidebar; without this a nested page loads
+          // its directory's sidebar, which does not exist.
+          "/.*/_sidebar.md": "/_sidebar.md",
+          "/.*/_navbar.md": "/_navbar.md",
+        },
+        search: {
+          depth: 3,
+          placeholder: "Search",
+          noData: "Nothing found",
+        },
+        copyCode: {
+          buttonText: "Copy",
+          successText: "Copied",
+        },
+        markdown: {
+          renderer: {
+            code: function (code, lang) {
+              if (lang === "mermaid") {
+                return '<div class="mermaid">' + code + "</div>";
+              }
+              return this.origin.code.apply(this, arguments);
+            },
+          },
+        },
+        plugins: [
+          function renderMermaid(hook) {
+            hook.doneEach(function () {
+              var blocks = document.querySelectorAll(".mermaid");
+              if (!blocks.length || !window.mermaid) return;
+              blocks.forEach(function (block) {
+                // A diagram already turned into SVG must not be re-parsed;
+                // mermaid throws on its own output.
+                if (block.dataset.rendered === "true") return;
+                block.dataset.rendered = "true";
+              });
+              window.mermaid.run({ querySelector: ".mermaid:not([data-processed])" });
+            });
+          },
+        ],
+      };
+    </script>
+
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <script>
+      window.mermaid.initialize({
+        startOnLoad: false,
+        theme: "base",
+        themeVariables: {
+          primaryColor: "#eef2ff",
+          primaryBorderColor: "#6366f1",
+          primaryTextColor: "#1f2937",
+          lineColor: "#94a3b8",
+          fontFamily:
+            "ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+        },
+        flowchart: { curve: "basis" },
+        sequence: { useMaxWidth: true },
+      });
+    </script>
+
+    <script src="https://cdn.jsdelivr.net/npm/docsify@4/lib/docsify.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/docsify@4/lib/plugins/search.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/docsify-copy-code@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/prismjs@1/components/prism-bash.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/prismjs@1/components/prism-python.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/prismjs@1/components/prism-yaml.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/prismjs@1/components/prism-json.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/prismjs@1/components/prism-rust.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/prismjs@1/components/prism-protobuf.min.js"></script>
+  </body>
+</html>
