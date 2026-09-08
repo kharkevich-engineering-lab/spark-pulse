@@ -137,8 +137,8 @@ const CASES: Case[] = [
   { name: "fetchMemory", call: () => api.fetchMemory(), path: "/api/memory", method: "GET" },
   {
     name: "killGpuProcess",
-    call: () => api.killGpuProcess(98251),
-    path: "/api/memory/processes/98251",
+    call: () => api.killGpuProcess(98251, "10.0.0.11"),
+    path: "/api/memory/processes/98251?node=10.0.0.11",
     method: "DELETE",
   },
   { name: "fetchCache", call: () => api.fetchCache(), path: "/api/cache", method: "GET" },

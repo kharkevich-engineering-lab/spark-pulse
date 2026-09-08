@@ -421,3 +421,21 @@ class NodeOperations:
             remove_snapshot=pb.RemoveSnapshot(repo_path=repo_path, revision=revision)
         )
         return await self._call(command, "removal")
+
+    # ── Processes ────────────────────────────────────────────────────────
+
+    async def terminate_process(
+        self, pid: int, force: bool = False
+    ) -> pb.ProcessTermination:
+        """Signal one process on the node.
+
+        For the processes the control plane did *not* start. A GPU process
+        inside a container it launched is ended by stopping that container;
+        this is the stray one holding VRAM that no deployment claims, and it
+        is here so that answering "kill it" does not depend on which machine
+        the operator happens to be looking at.
+        """
+        command = self.hub.new_command(
+            terminate_process=pb.TerminateProcess(pid=int(pid), force=bool(force))
+        )
+        return await self._call(command, "termination")

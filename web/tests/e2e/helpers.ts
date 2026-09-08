@@ -149,14 +149,11 @@ export const UNIFIED_MEMORY_GPU = {
 
 /** Serve the Monitoring page's data from a fixture instead of the backend.
  *
- * Two reasons, both structural. Simulation mode delegates GPU stats to the
- * real `nvidia-smi` parsing, so a CI runner or a laptop reports no GPU at all
- * and the interesting rendering never happens. And `GET /api/memory` (like
- * `/sse/metrics`) does `from spark_pulse.tools.deployments import ...`, which
- * rebinds `tools.deployments` to the *real* module for the life of the
- * process — after one such call, simulated deploys shell out to a
- * spark-vllm-docker checkout that does not exist. Stubbing keeps the specs
- * independent of each other's ordering.
+ * Only for the shapes the simulated cluster does not produce — a machine with
+ * no GPU at all, and an answer from a control plane too old to know about
+ * nodes. The simulated agent answers with a GB10 now, so what the page does
+ * with real data is checked against the real backend instead of against a
+ * fixture that can agree with a broken page.
  */
 export async function stubMemoryEndpoints(
   page: Page,

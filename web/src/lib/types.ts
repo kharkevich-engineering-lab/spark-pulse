@@ -232,6 +232,11 @@ export interface GPUProcess {
   process_name: string;
   used_memory: number;
   is_tracked?: boolean;
+  /** The container the node found it in, when it could tell. */
+  container_id?: string;
+  /** The deployment that container belongs to, when it is one of ours. */
+  deployment?: string;
+  container_name?: string;
 }
 
 export interface CPUStats {
@@ -250,11 +255,35 @@ export interface DiskStats {
   usage_percent: number;
 }
 
-export interface MemoryResponse {
+/** One machine's answer.
+ *
+ * `reachable` is the third state this codebase keeps insisting on: a node that
+ * could not be asked has not said it is idle. The row is still here, and it
+ * says why — a missing row and a quiet machine look identical on a page. */
+export interface NodeStats {
+  id: string;
+  name: string;
+  address: string;
+  is_control_plane: boolean;
+  reachable: boolean;
+  error: string | null;
+  /** What the node could not read, in its own words. Empty means nothing. */
+  unavailable: string[];
   gpu: GPUStats[];
   cpu: CPUStats;
   disk: DiskStats[];
   processes: GPUProcess[];
+}
+
+export interface MemoryResponse {
+  /** The control node's own block, kept at the top level for readers written
+   *  before the answer covered a cluster. */
+  gpu: GPUStats[];
+  cpu: CPUStats;
+  disk: DiskStats[];
+  processes: GPUProcess[];
+  /** Every registered node, control plane first. */
+  nodes?: NodeStats[];
 }
 
 export interface CacheEntry {

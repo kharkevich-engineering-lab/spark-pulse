@@ -17,13 +17,13 @@ These tests are the ratchet. They read the source, because the property is
 about which module a call goes to rather than what it returns, and a runtime
 assertion would only fire on the paths a test already covers.
 
-Deliberately *not* covered here: reading this machine's own hardware.
-`tools.system` shells out to `nvidia-smi` and reads `/proc` for the GPU, CPU
-and disk panels, and `tools.preflight` runs its probe commands. Those describe
-the host the process is on and have no node argument to route — making them
-agent calls is a real change with a proto behind it, not a lint rule. The
-monitoring page being single-node is the visible consequence, and it is a
-feature to build rather than a violation to forbid.
+Reading a machine's own hardware used to be the exception here: `tools.system`
+shelled out to `nvidia-smi` and `/proc` for the monitoring panels, and the
+page was single-node as a result. That is gone — `GetNodeStats` is a command
+now, so every node answers for itself and the control node is not a special
+case. What remains outside is `tools.preflight`, whose probes run over the
+probe's own transport, and `tools.discovery`, which enumerates this host's
+interfaces before there is any node to ask.
 """
 
 from __future__ import annotations
@@ -47,7 +47,6 @@ MAY_TOUCH_DOCKER_DIRECTLY = {"docker.py", "node_service.py"}
 #: hardware, its network, its SSH client, its registry daemon. A node-scoped
 #: operation belongs on the agent instead.
 MAY_USE_SUBPROCESS = {
-    "system.py": "nvidia-smi, /proc and docker inspect for this host's panels",
     "discovery.py": "this host's own interfaces and RoCE devices",
     "docker.py": "the Docker client itself",
     "preflight.py": "probe commands, which run over the probe's own transport",

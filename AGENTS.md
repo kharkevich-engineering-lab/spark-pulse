@@ -87,7 +87,7 @@ Tests live in `tests/` (66 test modules) and cover:
 - **Config & Auth:** `test_config.py`, `test_auth.py`, `test_config_router.py`
 - **End-to-end:** `test_e2e_oidc.py`, `test_e2e_custom_recipes.py`
 - **Routers:** `test_router_custom_files.py`, `test_router_custom_recipes.py`
-- **Tools:** `test_tools_cache.py`, `test_tools_custom_files.py`, `test_tools_custom_recipes.py`, `test_tools_native_runtime.py`, `test_tools_recipes.py`, `test_tools_system.py`
+- **Tools:** `test_tools_cache.py`, `test_tools_custom_files.py`, `test_tools_custom_recipes.py`, `test_tools_native_runtime.py`, `test_tools_recipes.py`, `test_tools_node_stats.py`
 - **System:** `test_service.py`, `test_mock_system.py`
 
 ### CI (GitHub Actions)

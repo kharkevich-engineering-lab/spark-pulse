@@ -26,7 +26,7 @@ use crate::proto::{DiskStat, GpuProcess, GpuStat, MemoryStat, NodeStats};
 
 /// Fields asked of `nvidia-smi`, in order.
 const GPU_QUERY: &str = "index,name,uuid,memory.total,memory.used,memory.free,\
-utilization.gpu,temperature.gpu,power.draw";
+utilization.gpu,temperature.gpu,power.draw,power.limit";
 
 const PROCESS_QUERY: &str = "pid,process_name,used_gpu_memory";
 
@@ -134,6 +134,7 @@ fn gpu_from(row: &[String]) -> Option<GpuStat> {
         utilization_percent: number(row.get(6)),
         temperature_celsius: number(row.get(7)),
         power_watts: number(row.get(8)),
+        power_limit_watts: number(row.get(9)),
     })
 }
 
@@ -232,7 +233,7 @@ mod tests {
     #[test]
     fn an_unified_memory_gpu_reports_no_memory_rather_than_zero() {
         // What a DGX Spark's nvidia-smi actually prints.
-        let row: Vec<String> = "0, NVIDIA GB10, GPU-abc, [N/A], [N/A], [N/A], 12, 41, [N/A]"
+        let row: Vec<String> = "0, NVIDIA GB10, GPU-abc, [N/A], [N/A], [N/A], 12, 41, [N/A], [N/A]"
             .split(',')
             .map(|f| f.trim().to_string())
             .collect();
@@ -244,11 +245,12 @@ mod tests {
         assert_eq!(gpu.utilization_percent, Some(12.0));
         assert_eq!(gpu.temperature_celsius, Some(41.0));
         assert_eq!(gpu.power_watts, None);
+        assert_eq!(gpu.power_limit_watts, None);
     }
 
     #[test]
     fn a_gpu_that_reports_memory_reports_it_in_bytes() {
-        let row: Vec<String> = "0, NVIDIA A100, GPU-x, 81920, 1024, 80896, 0, 35, 42.5"
+        let row: Vec<String> = "0, NVIDIA A100, GPU-x, 81920, 1024, 80896, 0, 35, 42.5, 300"
             .split(',')
             .map(|f| f.trim().to_string())
             .collect();
@@ -258,6 +260,7 @@ mod tests {
         assert_eq!(gpu.memory_total_bytes, Some(81920 * 1_048_576));
         assert_eq!(gpu.memory_used_bytes, Some(1024 * 1_048_576));
         assert_eq!(gpu.power_watts, Some(42.5));
+        assert_eq!(gpu.power_limit_watts, Some(300.0));
     }
 
     #[test]

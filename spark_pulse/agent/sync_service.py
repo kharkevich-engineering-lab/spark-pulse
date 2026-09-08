@@ -343,3 +343,7 @@ class AgentNodeService:
     def remove_snapshot(self, repo_path: str, revision: str = "") -> Any:
         """Delete a model snapshot from the node."""
         return self._run(self.ops.remove_snapshot(repo_path, revision))
+
+    def terminate_process(self, pid: int, force: bool = False) -> Any:
+        """Signal one process on the node."""
+        return self._run(self.ops.terminate_process(pid, force))

@@ -228,7 +228,15 @@
     "free": "Libre",
     "avail": "Dispo",
     "usage": "Utilisation",
-    "diskSummary": "{used} utilisés / {total} au total"
+    "diskSummary": "{used} utilisés / {total} au total",
+    "controlPlane": "Plan de contrôle",
+    "unreachable": "Impossible d'interroger ce nœud",
+    "couldNotRead": "Lecture impossible : {what}",
+    "untracked": "non suivi",
+    "heldBy": "occupé par {deployment}",
+    "killOnNode": "Il s'exécute sur {node}.",
+    "noProcesses": "Aucun processus GPU.",
+    "tracked": "démarré ici"
   },
   "recipes": {
     "assets": "Ressources",

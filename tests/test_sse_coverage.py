@@ -166,83 +166,73 @@ def deployment_event(resource: str = "d1") -> DeploymentEvent:
 
 @pytest.fixture
 def metrics_source(monkeypatch):
-    """Canned memory, canned deployment records, and a recording enricher."""
+    """One canned answer for every node, and a count of how often it was asked.
+
+    The stream used to read this machine's own `nvidia-smi` and then mark the
+    processes it recognised. It asks every node through its agent now, and the
+    node says which container each process is in — so what is canned here is
+    the whole cluster's answer rather than one host's.
+    """
     state = {
         "memory": {
-            "system": {"used_gb": 12},
-            "processes": [{"pid": 7, "used_mb": 900}],
+            "gpu": [{"uuid": "GPU-0", "name": "NVIDIA GB10"}],
+            "processes": [{"pid": 7, "used_memory": 900, "deployment": "run-1"}],
+            "nodes": [
+                {"name": "spark-01", "reachable": True},
+                {"name": "spark-02", "reachable": False},
+            ],
         },
-        "records": [
-            {"id": "run-1", "status": "running"},
-            {"id": "pend-1", "status": "pending"},
-            {"id": "stop-1", "status": "stopped"},
-            {"id": "err-1", "status": "error"},
-        ],
-        "enriched": [],
+        "collected": 0,
     }
 
-    def _memory():
+    def _collect():
+        state["collected"] += 1
         if isinstance(state["memory"], Exception):
             raise state["memory"]
         return json.loads(json.dumps(state["memory"]))
 
-    def _enrich(processes, running):
-        state["enriched"].append([d["id"] for d in running])
-        for proc in processes:
-            proc["deployment"] = "run-1"
-
-    monkeypatch.setattr(sse.system, "get_all_memory", _memory)
-    monkeypatch.setattr(sse.system, "enrich_gpu_process_tracking", _enrich)
-    monkeypatch.setattr(
-        tools.deployment_records, "load", lambda: list(state["records"])
-    )
+    monkeypatch.setattr(tools.node_stats, "collect", _collect)
     return state
 
 
 class TestMetricsStream:
     """The stream the monitoring page lives on."""
 
-    async def test_the_first_frame_carries_the_enriched_snapshot(
-        self, sleeps, metrics_source
-    ):
+    async def test_the_first_frame_carries_the_snapshot(self, sleeps, metrics_source):
         agen = sse.metrics_generator()
 
         (frame,) = await take(agen, 1)
         await agen.aclose()
 
-        assert frame == (
-            "event: metrics\n"
-            'data: {"system": {"used_gb": 12}, '
-            '"processes": [{"pid": 7, "used_mb": 900, "deployment": "run-1"}]}'
-            "\n\n"
-        )
         event, payload = parse(frame)
         assert event == "metrics"
         assert payload["processes"][0]["deployment"] == "run-1"
 
-    async def test_only_live_deployments_are_offered_for_gpu_attribution(
+    async def test_every_node_is_in_the_frame_including_one_that_did_not_answer(
         self, sleeps, metrics_source
     ):
-        """A stopped deployment cannot own a GPU process any more."""
+        """A node missing from the frame and an idle node look the same."""
         agen = sse.metrics_generator()
 
-        await take(agen, 1)
+        (frame,) = await take(agen, 1)
         await agen.aclose()
 
-        assert metrics_source["enriched"] == [["run-1", "pend-1"]]
+        _event, payload = parse(frame)
+        assert [n["name"] for n in payload["nodes"]] == ["spark-01", "spark-02"]
+        assert payload["nodes"][1]["reachable"] is False
 
     async def test_collection_happens_off_the_event_loop(
         self, sleeps, metrics_source, monkeypatch
     ):
-        """nvidia-smi and the record store would stall every other stream."""
+        """A gRPC round trip per node would stall every other stream."""
         seen: list[int] = []
-        original = sse.system.get_all_memory
+        original = tools.node_stats.collect
 
         def _record():
             seen.append(threading.get_ident())
             return original()
 
-        monkeypatch.setattr(sse.system, "get_all_memory", _record)
+        monkeypatch.setattr(tools.node_stats, "collect", _record)
 
         agen = sse.metrics_generator()
         await take(agen, 1)
@@ -298,7 +288,7 @@ class TestMetricsStream:
                 raise RuntimeError("transient")
             return json.loads(json.dumps(good))
 
-        monkeypatch.setattr(sse.system, "get_all_memory", _flaky)
+        monkeypatch.setattr(tools.node_stats, "collect", _flaky)
 
         agen = sse.metrics_generator()
         first, second = await take(agen, 2)
@@ -321,11 +311,11 @@ class TestMetricsStream:
         await take(agen, 1)
 
         await agen.aclose()
-        before = len(metrics_source["enriched"])
+        before = metrics_source["collected"]
         with pytest.raises(StopAsyncIteration):
             await agen.__anext__()
 
-        assert len(metrics_source["enriched"]) == before == 1
+        assert metrics_source["collected"] == before == 1
 
 
 # ── /sse/logs/{deployment_id} ────────────────────────────────────────────────

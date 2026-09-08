@@ -467,6 +467,8 @@ class MockDockerService(DockerService):
         self.ensured: list[str] = []
         #: Snapshots this simulated node holds: repo path -> revision -> files.
         self.snapshots: dict[str, dict[str, list[tuple[str, int]]]] = {}
+        #: Processes a caller asked this node to signal.
+        self.terminated: list[tuple[int, bool]] = []
 
     # ── Beyond containers: what the agent answers about its machine ──────
 
@@ -494,12 +496,60 @@ class MockDockerService(DockerService):
         gpu.uuid = "GPU-00000000-0000-0000-0000-000000000000"
         gpu.utilization_percent = 12.0
         gpu.temperature_celsius = 41.0
+        gpu.power_watts = 46.5
+        gpu.power_limit_watts = 140.0
         disk = stats.disks.add()
         disk.mount = "/"
         disk.total_bytes = 3_800_000_000_000
         disk.used_bytes = 1_900_000_000_000
         disk.free_bytes = 1_900_000_000_000
+        for process in self._simulated_gpu_processes():
+            stats.processes.append(process)
         return stats
+
+    def _simulated_gpu_processes(self) -> list[Any]:
+        """One GPU process per running managed container, plus one stray.
+
+        The stray is the point. A machine whose every GPU process belongs to a
+        deployment is the easy case; the one an operator actually opens this
+        page for is the process nothing claims, and simulation that never
+        produces one leaves that half of the page untested.
+        """
+        from spark_pulse.agent import agent_pb2 as pb
+
+        processes = []
+        for offset, container in enumerate(self.list_managed_containers()):
+            processes.append(
+                pb.GpuProcess(
+                    pid=90_000 + offset,
+                    name="VLLM::EngineCore",
+                    used_memory_bytes=83_421 * 1_048_576,
+                    container_id=container.id[:12],
+                )
+            )
+        processes.append(
+            pb.GpuProcess(
+                pid=4242,
+                name="python3",
+                used_memory_bytes=1_024 * 1_048_576,
+            )
+        )
+        return processes
+
+    def terminate_process(self, pid: int, force: bool = False) -> Any:
+        """Signal a simulated process.
+
+        Nothing here holds a process table, so the answer is decided by the
+        pids ``_simulated_gpu_processes`` hands out: one of those is signalled,
+        anything else is already gone.
+        """
+        from spark_pulse.agent import agent_pb2 as pb
+
+        known = {p.pid for p in self._simulated_gpu_processes()}
+        if int(pid) in known:
+            self.terminated.append((int(pid), bool(force)))
+            return pb.ProcessTermination(terminated=True)
+        return pb.ProcessTermination(terminated=False, detail="no such process")
 
     def list_snapshot(
         self, repo_path: str, revision: str = "", deep: bool = False
@@ -516,6 +566,7 @@ class MockDockerService(DockerService):
             entry.path = name
             entry.size_bytes = size
             entry.is_symlink = True
+            entry.resolved = True
             if deep:
                 entry.sha256 = f"sha256-of-{name}"
             listing.bytes_present += size

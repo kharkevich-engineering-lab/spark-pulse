@@ -356,9 +356,9 @@ NODE_SERVICE_METHODS: tuple[str, ...] = (
 #: Kept apart from :data:`NODE_SERVICE_METHODS` because that tuple has a
 #: stricter meaning: every name in it must match ``DockerService``'s signature,
 #: which is what lets a caller hold a service without knowing which
-#: implementation it is. These three have no Docker equivalent — they read the
-#: node's hardware and its model cache — so asserting they match it would be
-#: asserting something false.
+#: implementation it is. These have no Docker equivalent — they read the node's
+#: hardware and its model cache, and signal its processes — so asserting they
+#: match it would be asserting something false.
 #:
 #: They still travel the same transport, are still answered by the same agent,
 #: and are still reached through the same resolver, which is the property that
@@ -367,6 +367,7 @@ NODE_MACHINE_METHODS: tuple[str, ...] = (
     "get_node_stats",
     "list_snapshot",
     "remove_snapshot",
+    "terminate_process",
 )
 
 

@@ -20,6 +20,7 @@ pub mod containers;
 pub mod copy;
 pub mod images;
 pub mod labels;
+pub mod processes;
 pub mod snapshots;
 pub mod stats;
 
@@ -297,6 +298,9 @@ impl Executor {
                         let removal = attempt!(snapshots::remove(req));
                         return ok!(Outcome::Removal(removal));
                     }
+                    Op::TerminateProcess(req) => {
+                        return ok!(Outcome::Termination(processes::terminate(req)));
+                    }
                     _ => {}
                 }
                 return failure(id, &error.kind, error.message);
@@ -306,11 +310,11 @@ impl Executor {
         match op {
             Op::GetFacts(_) => ok!(Outcome::Facts(self.collect_facts().await)),
 
-            // Three operations that need no Docker daemon: they read this
-            // machine's own hardware and its own disk. They are reached above
-            // only when a daemon *is* present, which is the wrong gate for
-            // them — see the `docker` binding, which lets `GetFacts` through
-            // for exactly this reason.
+            // Four operations that need no Docker daemon: they read this
+            // machine's own hardware and its own disk, or signal one of its
+            // processes. They are reached above only when a daemon *is*
+            // present, which is the wrong gate for them — see the `docker`
+            // binding, which lets `GetFacts` through for exactly this reason.
             Op::GetNodeStats(_) => ok!(Outcome::Stats(stats::collect())),
             Op::ListSnapshot(req) => {
                 let listing = attempt!(snapshots::list(&req));
@@ -320,6 +324,7 @@ impl Executor {
                 let removal = attempt!(snapshots::remove(&req));
                 ok!(Outcome::Removal(removal))
             }
+            Op::TerminateProcess(req) => ok!(Outcome::Termination(processes::terminate(&req))),
 
             Op::RunContainer(req) => {
                 let info = attempt!(containers::run_container(docker, req).await);

@@ -252,11 +252,11 @@ a report behind, viewable with `cd web; and npx playwright show-report`.
   state — the deploy journey, a model download — arranges and cleans up after
   itself over the REST API.
 - `web/tests/e2e` is type-checked by `npm run build` via `tsconfig.e2e.json`.
-- The Monitoring page's data is stubbed with `page.route`. Simulation mode
-  delegates GPU stats to the real `nvidia-smi` parsing, so no CI runner or
-  laptop produces a GPU card to assert on; and `GET /api/memory` rebinds
-  `tools.deployments` to the real module for the life of the process, which
-  would break simulated deploys for every spec that ran after it.
+- The Monitoring page runs against the simulated cluster: each node's agent
+  answers `GetNodeStats` with a GB10's numbers, so there is a real path to
+  assert on. `page.route` still stubs the two shapes that cluster cannot
+  produce — a machine with no GPU at all, and a control plane too old to
+  answer per node.
 
 ---
 

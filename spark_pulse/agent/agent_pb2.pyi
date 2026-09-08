@@ -133,7 +133,7 @@ class PullProgress(_message.Message):
     def __init__(self, ref: _Optional[str] = ..., status: _Optional[str] = ..., layers: _Optional[int] = ..., bytes_done: _Optional[int] = ..., bytes_total: _Optional[int] = ..., percent: _Optional[float] = ...) -> None: ...
 
 class Command(_message.Message):
-    __slots__ = ("command_id", "epoch", "timeout_seconds", "run_container", "ensure_directories", "stop_container", "get_container_status", "exec_in_container", "copy_to_container", "copy_dir_to_container", "get_logs", "list_managed_containers", "get_container_by_deployment", "get_container_by_recipe", "image_exists", "image_info", "list_images", "pull_image", "remove_image", "get_facts", "get_node_stats", "list_snapshot", "remove_snapshot")
+    __slots__ = ("command_id", "epoch", "timeout_seconds", "run_container", "ensure_directories", "stop_container", "get_container_status", "exec_in_container", "copy_to_container", "copy_dir_to_container", "get_logs", "list_managed_containers", "get_container_by_deployment", "get_container_by_recipe", "image_exists", "image_info", "list_images", "pull_image", "remove_image", "get_facts", "get_node_stats", "list_snapshot", "remove_snapshot", "terminate_process")
     COMMAND_ID_FIELD_NUMBER: _ClassVar[int]
     EPOCH_FIELD_NUMBER: _ClassVar[int]
     TIMEOUT_SECONDS_FIELD_NUMBER: _ClassVar[int]
@@ -157,6 +157,7 @@ class Command(_message.Message):
     GET_NODE_STATS_FIELD_NUMBER: _ClassVar[int]
     LIST_SNAPSHOT_FIELD_NUMBER: _ClassVar[int]
     REMOVE_SNAPSHOT_FIELD_NUMBER: _ClassVar[int]
+    TERMINATE_PROCESS_FIELD_NUMBER: _ClassVar[int]
     command_id: str
     epoch: int
     timeout_seconds: float
@@ -180,10 +181,11 @@ class Command(_message.Message):
     get_node_stats: GetNodeStats
     list_snapshot: ListSnapshot
     remove_snapshot: RemoveSnapshot
-    def __init__(self, command_id: _Optional[str] = ..., epoch: _Optional[int] = ..., timeout_seconds: _Optional[float] = ..., run_container: _Optional[_Union[RunContainer, _Mapping]] = ..., ensure_directories: _Optional[_Union[EnsureDirectories, _Mapping]] = ..., stop_container: _Optional[_Union[StopContainer, _Mapping]] = ..., get_container_status: _Optional[_Union[GetContainerStatus, _Mapping]] = ..., exec_in_container: _Optional[_Union[ExecInContainer, _Mapping]] = ..., copy_to_container: _Optional[_Union[CopyToContainer, _Mapping]] = ..., copy_dir_to_container: _Optional[_Union[CopyDirToContainer, _Mapping]] = ..., get_logs: _Optional[_Union[GetLogs, _Mapping]] = ..., list_managed_containers: _Optional[_Union[ListManagedContainers, _Mapping]] = ..., get_container_by_deployment: _Optional[_Union[GetContainerByDeployment, _Mapping]] = ..., get_container_by_recipe: _Optional[_Union[GetContainerByRecipe, _Mapping]] = ..., image_exists: _Optional[_Union[ImageExists, _Mapping]] = ..., image_info: _Optional[_Union[ImageInfo, _Mapping]] = ..., list_images: _Optional[_Union[ListImages, _Mapping]] = ..., pull_image: _Optional[_Union[PullImage, _Mapping]] = ..., remove_image: _Optional[_Union[RemoveImage, _Mapping]] = ..., get_facts: _Optional[_Union[GetFacts, _Mapping]] = ..., get_node_stats: _Optional[_Union[GetNodeStats, _Mapping]] = ..., list_snapshot: _Optional[_Union[ListSnapshot, _Mapping]] = ..., remove_snapshot: _Optional[_Union[RemoveSnapshot, _Mapping]] = ...) -> None: ...
+    terminate_process: TerminateProcess
+    def __init__(self, command_id: _Optional[str] = ..., epoch: _Optional[int] = ..., timeout_seconds: _Optional[float] = ..., run_container: _Optional[_Union[RunContainer, _Mapping]] = ..., ensure_directories: _Optional[_Union[EnsureDirectories, _Mapping]] = ..., stop_container: _Optional[_Union[StopContainer, _Mapping]] = ..., get_container_status: _Optional[_Union[GetContainerStatus, _Mapping]] = ..., exec_in_container: _Optional[_Union[ExecInContainer, _Mapping]] = ..., copy_to_container: _Optional[_Union[CopyToContainer, _Mapping]] = ..., copy_dir_to_container: _Optional[_Union[CopyDirToContainer, _Mapping]] = ..., get_logs: _Optional[_Union[GetLogs, _Mapping]] = ..., list_managed_containers: _Optional[_Union[ListManagedContainers, _Mapping]] = ..., get_container_by_deployment: _Optional[_Union[GetContainerByDeployment, _Mapping]] = ..., get_container_by_recipe: _Optional[_Union[GetContainerByRecipe, _Mapping]] = ..., image_exists: _Optional[_Union[ImageExists, _Mapping]] = ..., image_info: _Optional[_Union[ImageInfo, _Mapping]] = ..., list_images: _Optional[_Union[ListImages, _Mapping]] = ..., pull_image: _Optional[_Union[PullImage, _Mapping]] = ..., remove_image: _Optional[_Union[RemoveImage, _Mapping]] = ..., get_facts: _Optional[_Union[GetFacts, _Mapping]] = ..., get_node_stats: _Optional[_Union[GetNodeStats, _Mapping]] = ..., list_snapshot: _Optional[_Union[ListSnapshot, _Mapping]] = ..., remove_snapshot: _Optional[_Union[RemoveSnapshot, _Mapping]] = ..., terminate_process: _Optional[_Union[TerminateProcess, _Mapping]] = ...) -> None: ...
 
 class CommandResult(_message.Message):
-    __slots__ = ("command_id", "failure", "container", "strings", "boolean", "status", "exec", "text", "containers", "image", "images", "pull", "facts", "stats", "snapshot", "removal")
+    __slots__ = ("command_id", "failure", "container", "strings", "boolean", "status", "exec", "text", "containers", "image", "images", "pull", "facts", "stats", "snapshot", "removal", "termination")
     COMMAND_ID_FIELD_NUMBER: _ClassVar[int]
     FAILURE_FIELD_NUMBER: _ClassVar[int]
     CONTAINER_FIELD_NUMBER: _ClassVar[int]
@@ -200,6 +202,7 @@ class CommandResult(_message.Message):
     STATS_FIELD_NUMBER: _ClassVar[int]
     SNAPSHOT_FIELD_NUMBER: _ClassVar[int]
     REMOVAL_FIELD_NUMBER: _ClassVar[int]
+    TERMINATION_FIELD_NUMBER: _ClassVar[int]
     command_id: str
     failure: CommandFailure
     container: ContainerRef
@@ -216,7 +219,8 @@ class CommandResult(_message.Message):
     stats: NodeStats
     snapshot: SnapshotListing
     removal: SnapshotRemoval
-    def __init__(self, command_id: _Optional[str] = ..., failure: _Optional[_Union[CommandFailure, _Mapping]] = ..., container: _Optional[_Union[ContainerRef, _Mapping]] = ..., strings: _Optional[_Union[StringList, _Mapping]] = ..., boolean: _Optional[_Union[BoolValue, _Mapping]] = ..., status: _Optional[_Union[ContainerStatus, _Mapping]] = ..., exec: _Optional[_Union[ExecOutcome, _Mapping]] = ..., text: _Optional[_Union[StringValue, _Mapping]] = ..., containers: _Optional[_Union[ContainerList, _Mapping]] = ..., image: _Optional[_Union[ImageRef, _Mapping]] = ..., images: _Optional[_Union[ImageList, _Mapping]] = ..., pull: _Optional[_Union[PullOutcome, _Mapping]] = ..., facts: _Optional[_Union[NodeFacts, _Mapping]] = ..., stats: _Optional[_Union[NodeStats, _Mapping]] = ..., snapshot: _Optional[_Union[SnapshotListing, _Mapping]] = ..., removal: _Optional[_Union[SnapshotRemoval, _Mapping]] = ...) -> None: ...
+    termination: ProcessTermination
+    def __init__(self, command_id: _Optional[str] = ..., failure: _Optional[_Union[CommandFailure, _Mapping]] = ..., container: _Optional[_Union[ContainerRef, _Mapping]] = ..., strings: _Optional[_Union[StringList, _Mapping]] = ..., boolean: _Optional[_Union[BoolValue, _Mapping]] = ..., status: _Optional[_Union[ContainerStatus, _Mapping]] = ..., exec: _Optional[_Union[ExecOutcome, _Mapping]] = ..., text: _Optional[_Union[StringValue, _Mapping]] = ..., containers: _Optional[_Union[ContainerList, _Mapping]] = ..., image: _Optional[_Union[ImageRef, _Mapping]] = ..., images: _Optional[_Union[ImageList, _Mapping]] = ..., pull: _Optional[_Union[PullOutcome, _Mapping]] = ..., facts: _Optional[_Union[NodeFacts, _Mapping]] = ..., stats: _Optional[_Union[NodeStats, _Mapping]] = ..., snapshot: _Optional[_Union[SnapshotListing, _Mapping]] = ..., removal: _Optional[_Union[SnapshotRemoval, _Mapping]] = ..., termination: _Optional[_Union[ProcessTermination, _Mapping]] = ...) -> None: ...
 
 class CommandFailure(_message.Message):
     __slots__ = ("type", "message")
@@ -628,7 +632,7 @@ class PullOutcome(_message.Message):
     def __init__(self, ref: _Optional[str] = ..., repository: _Optional[str] = ..., tag: _Optional[str] = ..., bytes_done: _Optional[int] = ..., bytes_total: _Optional[int] = ..., percent: _Optional[float] = ..., id: _Optional[str] = ..., size_bytes: _Optional[int] = ...) -> None: ...
 
 class GpuStat(_message.Message):
-    __slots__ = ("index", "name", "uuid", "memory_total_bytes", "memory_used_bytes", "memory_free_bytes", "utilization_percent", "temperature_celsius", "power_watts")
+    __slots__ = ("index", "name", "uuid", "memory_total_bytes", "memory_used_bytes", "memory_free_bytes", "utilization_percent", "temperature_celsius", "power_watts", "power_limit_watts")
     INDEX_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     UUID_FIELD_NUMBER: _ClassVar[int]
@@ -638,6 +642,7 @@ class GpuStat(_message.Message):
     UTILIZATION_PERCENT_FIELD_NUMBER: _ClassVar[int]
     TEMPERATURE_CELSIUS_FIELD_NUMBER: _ClassVar[int]
     POWER_WATTS_FIELD_NUMBER: _ClassVar[int]
+    POWER_LIMIT_WATTS_FIELD_NUMBER: _ClassVar[int]
     index: int
     name: str
     uuid: str
@@ -647,7 +652,8 @@ class GpuStat(_message.Message):
     utilization_percent: float
     temperature_celsius: float
     power_watts: float
-    def __init__(self, index: _Optional[int] = ..., name: _Optional[str] = ..., uuid: _Optional[str] = ..., memory_total_bytes: _Optional[int] = ..., memory_used_bytes: _Optional[int] = ..., memory_free_bytes: _Optional[int] = ..., utilization_percent: _Optional[float] = ..., temperature_celsius: _Optional[float] = ..., power_watts: _Optional[float] = ...) -> None: ...
+    power_limit_watts: float
+    def __init__(self, index: _Optional[int] = ..., name: _Optional[str] = ..., uuid: _Optional[str] = ..., memory_total_bytes: _Optional[int] = ..., memory_used_bytes: _Optional[int] = ..., memory_free_bytes: _Optional[int] = ..., utilization_percent: _Optional[float] = ..., temperature_celsius: _Optional[float] = ..., power_watts: _Optional[float] = ..., power_limit_watts: _Optional[float] = ...) -> None: ...
 
 class GpuProcess(_message.Message):
     __slots__ = ("pid", "name", "used_memory_bytes", "container_id")
@@ -701,17 +707,35 @@ class NodeStats(_message.Message):
     unavailable: _containers.RepeatedScalarFieldContainer[str]
     def __init__(self, gpus: _Optional[_Iterable[_Union[GpuStat, _Mapping]]] = ..., memory: _Optional[_Union[MemoryStat, _Mapping]] = ..., disks: _Optional[_Iterable[_Union[DiskStat, _Mapping]]] = ..., processes: _Optional[_Iterable[_Union[GpuProcess, _Mapping]]] = ..., cpu_count: _Optional[int] = ..., load_average_1m: _Optional[float] = ..., unavailable: _Optional[_Iterable[str]] = ...) -> None: ...
 
+class TerminateProcess(_message.Message):
+    __slots__ = ("pid", "force")
+    PID_FIELD_NUMBER: _ClassVar[int]
+    FORCE_FIELD_NUMBER: _ClassVar[int]
+    pid: int
+    force: bool
+    def __init__(self, pid: _Optional[int] = ..., force: _Optional[bool] = ...) -> None: ...
+
+class ProcessTermination(_message.Message):
+    __slots__ = ("terminated", "detail")
+    TERMINATED_FIELD_NUMBER: _ClassVar[int]
+    DETAIL_FIELD_NUMBER: _ClassVar[int]
+    terminated: bool
+    detail: str
+    def __init__(self, terminated: _Optional[bool] = ..., detail: _Optional[str] = ...) -> None: ...
+
 class SnapshotFile(_message.Message):
-    __slots__ = ("path", "size_bytes", "sha256", "is_symlink")
+    __slots__ = ("path", "size_bytes", "sha256", "is_symlink", "resolved")
     PATH_FIELD_NUMBER: _ClassVar[int]
     SIZE_BYTES_FIELD_NUMBER: _ClassVar[int]
     SHA256_FIELD_NUMBER: _ClassVar[int]
     IS_SYMLINK_FIELD_NUMBER: _ClassVar[int]
+    RESOLVED_FIELD_NUMBER: _ClassVar[int]
     path: str
     size_bytes: int
     sha256: str
     is_symlink: bool
-    def __init__(self, path: _Optional[str] = ..., size_bytes: _Optional[int] = ..., sha256: _Optional[str] = ..., is_symlink: _Optional[bool] = ...) -> None: ...
+    resolved: bool
+    def __init__(self, path: _Optional[str] = ..., size_bytes: _Optional[int] = ..., sha256: _Optional[str] = ..., is_symlink: _Optional[bool] = ..., resolved: _Optional[bool] = ...) -> None: ...
 
 class SnapshotListing(_message.Message):
     __slots__ = ("revision", "present", "files", "bytes_present")

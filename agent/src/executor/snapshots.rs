@@ -96,7 +96,16 @@ fn walk(root: &Path, dir: &Path, deep: bool, files: &mut Vec<SnapshotFile>, byte
             continue;
         }
 
-        let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        // `exists` follows the link. A snapshot copied without its blobs is
+        // a directory of links that lead nowhere, and reporting those as
+        // zero-byte files would hand the control plane a size mismatch to
+        // explain instead of the actual fault.
+        let resolved = path.exists();
+        let size = if resolved {
+            fs::metadata(&path).map(|m| m.len()).unwrap_or(0)
+        } else {
+            0
+        };
         *bytes += size;
         files.push(SnapshotFile {
             path: path
@@ -105,8 +114,13 @@ fn walk(root: &Path, dir: &Path, deep: bool, files: &mut Vec<SnapshotFile>, byte
                 .to_string_lossy()
                 .to_string(),
             size_bytes: size,
-            sha256: if deep { sha256(&path) } else { String::new() },
+            sha256: if deep && resolved {
+                sha256(&path)
+            } else {
+                String::new()
+            },
             is_symlink,
+            resolved,
         });
     }
 }
@@ -250,6 +264,29 @@ mod tests {
 
         assert_eq!(listing.files[0].size_bytes, 4096);
         assert!(listing.files[0].is_symlink);
+        assert!(listing.files[0].resolved);
+    }
+
+    #[test]
+    fn a_symlink_whose_blob_never_arrived_is_reported_unresolved() {
+        // What a copy that took `snapshots/` and left `blobs/` behind looks
+        // like on disk, and the reason `resolved` exists.
+        let tmp = tempfile::tempdir().unwrap();
+        let snapshot = repo(tmp.path(), "abc");
+        unix_fs::symlink(tmp.path().join("blobs").join("gone"), snapshot.join("w.bin")).unwrap();
+
+        let listing = list(&ListSnapshot {
+            repo_path: tmp.path().to_string_lossy().to_string(),
+            revision: "abc".into(),
+            deep: true,
+        })
+        .unwrap();
+
+        let file = &listing.files[0];
+        assert!(file.is_symlink);
+        assert!(!file.resolved, "a dangling link must not read as present");
+        assert_eq!(file.size_bytes, 0);
+        assert_eq!(listing.bytes_present, 0);
     }
 
     #[test]

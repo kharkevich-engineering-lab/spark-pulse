@@ -178,6 +178,7 @@ message Command {
     GetNodeStats get_node_stats = 27;
     ListSnapshot list_snapshot = 28;
     RemoveSnapshot remove_snapshot = 29;
+    TerminateProcess terminate_process = 30;
   }
 }
 
@@ -202,6 +203,7 @@ message CommandResult {
     NodeStats stats = 14;
     SnapshotListing snapshot = 15;
     SnapshotRemoval removal = 16;
+    ProcessTermination termination = 17;
   }
 }
 
@@ -484,6 +486,9 @@ message GpuStat {
   optional double utilization_percent = 7;
   optional double temperature_celsius = 8;
   optional double power_watts = 9;
+  // The ceiling `power_watts` is drawing against. Absent on hardware that
+  // does not publish one, which is not the same as unlimited.
+  optional double power_limit_watts = 10;
 }
 
 // A process holding GPU memory on this node.
@@ -524,6 +529,26 @@ message NodeStats {
 }
 
 // One file of a snapshot.
+// Signal a process on this node.
+//
+// The control plane decides *which* processes are signalled this way: a GPU
+// process inside a container it started is stopped by stopping that container,
+// which is an operation that already exists. This is for the rest — a stray
+// process holding VRAM that no deployment claims — and it exists so that
+// answering "kill it" does not depend on which machine the operator happens to
+// be looking at.
+message TerminateProcess {
+  uint32 pid = 1;
+  // SIGKILL rather than SIGTERM. A second click, not a first one.
+  bool force = 2;
+}
+
+message ProcessTermination {
+  bool terminated = 1;
+  // Why not, when it was not: no such process, not permitted, and so on.
+  string detail = 2;
+}
+
 message SnapshotFile {
   // Path relative to the snapshot directory.
   string path = 1;
@@ -533,6 +558,10 @@ message SnapshotFile {
   // A hub snapshot is symlinks into `blobs/`; a copy that lost them is a
   // different thing on disk and the control plane wants to know.
   bool is_symlink = 4;
+  // Whether the path leads to bytes. A symlink into `blobs/` whose blob never
+  // arrived is the failure mode this whole verification exists for, and it
+  // must not reach the control plane looking like a zero-byte file.
+  bool resolved = 5;
 }
 
 message SnapshotListing {
