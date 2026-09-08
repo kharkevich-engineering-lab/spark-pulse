@@ -273,7 +273,11 @@ mod tests {
         // like on disk, and the reason `resolved` exists.
         let tmp = tempfile::tempdir().unwrap();
         let snapshot = repo(tmp.path(), "abc");
-        unix_fs::symlink(tmp.path().join("blobs").join("gone"), snapshot.join("w.bin")).unwrap();
+        unix_fs::symlink(
+            tmp.path().join("blobs").join("gone"),
+            snapshot.join("w.bin"),
+        )
+        .unwrap();
 
         let listing = list(&ListSnapshot {
             repo_path: tmp.path().to_string_lossy().to_string(),
