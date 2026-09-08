@@ -1320,10 +1320,6 @@ def _remote_verify(
     return _parse_report(result.stdout)
 
 
-#: The old name for the operation. Replication is what it always meant to do.
-sync_to_nodes = replicate_to_nodes
-
-
 def _node_services(services: Any | None = None) -> Callable[[Any], Any]:
     """The resolver every node — including this one — is reached through."""
     if services is not None:
@@ -1446,8 +1442,8 @@ def _presence_entry(
     return {
         "node": node,
         "state": state,
-        # Retained for callers written against the old boolean; it now means
-        # "verified", never "a directory exists".
+        # "Verified", never "a directory exists" — which is what the check
+        # this replaced actually tested.
         "present": state == hub_cache.STATE_VERIFIED,
         "reason": report.get("reason", ""),
         "revision": report.get("revision"),

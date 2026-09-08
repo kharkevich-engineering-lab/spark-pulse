@@ -65,10 +65,6 @@ STILL_SINGLE_NODE = {
         "completion marker on the node; moving it needs a transfer protocol, "
         "not a lint rule"
     ),
-    "deployment_records.py": (
-        "records made by the removed upstream runner carry a pid this process "
-        "recorded itself; nothing can create one of these again"
-    ),
     "discovery.py": (
         "this host's own interfaces and RoCE devices, read before there is "
         "any node to ask"
@@ -93,23 +89,18 @@ MAY_TOUCH_THE_FILESYSTEM = {
     "custom_files.py": "the operator's own recipe and mod directories",
     "hub_cache.py": "a standalone layout/verification module with no node in it",
     "oci_registry.py": "the control plane's own registry cache and recipe files",
-    "recipe_import.py": "the one-time import of an older build's recipe copy",
     "native_runtime.py": "the temp launch script it hands to copy_to_container",
     "registry.py": "the local registry container's data directory",
 }
 
 #: Modules allowed to signal a process, and why.
 #:
-#: There is exactly one, and it is about processes *this build's predecessor*
-#: started here. Everything else goes through `TerminateProcess` on the node
-#: that holds the process, because the same pid on two Sparks is two different
-#: processes and only one of them is on this machine.
-MAY_SIGNAL_A_PROCESS = {
-    "deployment_records.py": (
-        "records from the removed upstream runner, whose pid this process "
-        "recorded itself"
-    ),
-}
+#: Empty, and that is the point. Every process this system ends goes through
+#: `TerminateProcess` on the node that holds it, because the same pid on two
+#: Sparks is two different processes and only one of them is on this machine.
+#: The last exception was the pre-native record teardown, and it went with the
+#: records it was for.
+MAY_SIGNAL_A_PROCESS: dict[str, str] = {}
 
 #: Modules that legitimately shell out, and what for.
 #:

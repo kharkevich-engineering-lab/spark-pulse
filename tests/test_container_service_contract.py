@@ -67,16 +67,15 @@ from spark_pulse.tools.docker import (
     split_ref,
 )
 from spark_pulse.tools.labels import (
-    CLUSTER_LABEL,
     CREATED_AT_LABEL,
     DEPLOYMENT_LABEL,
+    MODE_LABEL,
     GENERATION_LABEL,
     IMAGE_LABEL,
     MANAGED_LABEL,
     NAME_LABEL,
     RANK_LABEL,
     RECIPE_LABEL,
-    ROLE_LABEL,
     WORLD_SIZE_LABEL,
 )
 from spark_pulse.tools.node_service import (
@@ -86,7 +85,6 @@ from spark_pulse.tools.node_service import (
     peer_node,
 )
 from spark_pulse.tools.reconciliation import (
-    _reconcile_clusters_real,
     _reconcile_deployments_real,
 )
 
@@ -555,24 +553,18 @@ class TestContainerServiceContract:
 
     def test_list_managed_filters_by_label(self, service):
         """Label filters select the right containers, and an empty value means any."""
-        _run(
-            service,
-            "contract-head",
-            _metadata("contract-cluster", cluster="contract-cluster", role="head"),
-        )
+        _run(service, "contract-gang", _metadata("contract-gang", mode="gang"))
         _run(service, "contract-solo", _metadata("contract-solo"))
 
-        in_cluster = service.list_managed_containers(
-            {CLUSTER_LABEL: "contract-cluster"}
-        )
-        assert [c.name for c in in_cluster] == ["contract-head"]
-        assert in_cluster[0].metadata.role == "head"
+        gang = service.list_managed_containers({MODE_LABEL: "gang"})
+        assert [c.name for c in gang] == ["contract-gang"]
+        assert gang[0].metadata.mode == "gang"
 
-        any_cluster = service.list_managed_containers({CLUSTER_LABEL: ""})
-        assert [c.name for c in any_cluster] == ["contract-head"]
+        named = service.list_managed_containers({DEPLOYMENT_LABEL: "contract-gang"})
+        assert [c.name for c in named] == ["contract-gang"]
 
-        heads = service.list_managed_containers({ROLE_LABEL: "head"})
-        assert [c.name for c in heads] == ["contract-head"]
+        any_deployment = service.list_managed_containers({DEPLOYMENT_LABEL: ""})
+        assert {"contract-gang", "contract-solo"} <= {c.name for c in any_deployment}
 
     def test_exec_returns_exec_result(self, service):
         """Exec returns an ok/stdout/stderr result, never a bare string."""
@@ -781,33 +773,6 @@ class TestReconciliationContract:
         deployments = _reconcile_deployments_real(docker)
 
         assert [d["id"] for d in deployments] == ["contract-reconcile-mock"]
-
-    def test_reconcile_finds_a_cluster(self):
-        """A cluster container on a peer is reconciled from its labels."""
-        remote = _sdk_service(NODES["peer"])
-        remote.run_container(
-            image=IMAGE,
-            name="contract-cluster-head",
-            env_vars={},
-            metadata=_metadata(
-                "contract-cluster",
-                mode="cluster",
-                cluster="contract-cluster",
-                role="head",
-                head_ip=PEER_ADDRESS,
-                ray_enabled=True,
-            ),
-        )
-
-        # No pinning shim: the service is already bound to that peer, so
-        # reconciliation reads the peer's containers by construction.
-        clusters = _reconcile_clusters_real(remote)
-
-        assert len(clusters) == 1
-        assert clusters[0]["name"] == "contract-cluster"
-        assert clusters[0]["head_ip"] == PEER_ADDRESS
-        assert clusters[0]["ray_enabled"] is True
-        assert clusters[0]["image"] == IMAGE
 
     def test_reconcile_reads_a_ranks_identity_back(self):
         """Rank, generation and world size survive the round trip to Docker.

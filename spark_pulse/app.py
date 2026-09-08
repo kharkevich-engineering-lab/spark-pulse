@@ -151,22 +151,6 @@ async def lifespan(app: FastAPI):
         print("FATAL: refusing to start with an empty view of running deployments.")
         raise
 
-    # Say out loud what is still running on the removed upstream runtime. Such
-    # a deployment cannot be recreated, but its process is real and its GPU is
-    # held; an operator who is not told is an operator who cannot act.
-    try:
-        stranded = tools.deployment_records.live_legacy_ids()
-        if stranded:
-            print(
-                f"WARNING: {len(stranded)} deployment(s) started by the removed "
-                f"upstream runtime are still running: {', '.join(stranded)}. "
-                "They are still listed on the Inference page and can be read, "
-                "stopped and deleted there as usual, but not restarted — "
-                "redeploy them natively."
-            )
-    except Exception as e:  # pragma: no cover - defensive
-        print(f"Warning: could not check for legacy deployments: {e}")
-
     # Put this machine in the node registry, then say so on the LAN.
     #
     # `register_self` is idempotent and fills blanks only, so a restart never
@@ -232,15 +216,12 @@ async def lifespan(app: FastAPI):
     # Start OCI background update checker
     start_background_updater()
 
-    # Run startup reconciliation to recover deployment state from container
-    # labels. It still counts clusters because a host upgraded from an older
-    # build can be running containers the deleted orchestrator labelled, and
-    # those are exactly what the orphan sweep has to find.
+    # Recover deployment state from container labels: a restart loses nothing
+    # the containers still know.
     try:
         result = reconcile_all()
         print(
-            f"Reconciliation complete: {result.clusters_reconciled} clusters, "
-            f"{result.deployments_reconciled} deployments, "
+            f"Reconciliation complete: {result.deployments_reconciled} deployments, "
             f"{result.orphaned_containers_cleaned} orphans cleaned"
         )
         if result.errors:

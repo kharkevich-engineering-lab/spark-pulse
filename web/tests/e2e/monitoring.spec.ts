@@ -16,7 +16,12 @@
  */
 
 import { expect, test } from "@playwright/test";
-import { UNIFIED_MEMORY_GPU, expectNoCrash, gotoPage, stubMemoryEndpoints } from "./helpers";
+import {
+  UNIFIED_MEMORY_NODE,
+  expectNoCrash,
+  gotoPage,
+  stubMemoryEndpoints,
+} from "./helpers";
 
 test("asks every node, and says which one runs the control plane", async ({ page }) => {
   await gotoPage(page, "/monitoring");
@@ -60,7 +65,7 @@ test("renders a GPU whose memory usage is not reported", async ({ page }) => {
   await expect(page.getByText(/MB free$/)).toHaveCount(0);
 
   // What nvidia-smi does report is still shown.
-  const gpu = UNIFIED_MEMORY_GPU.gpu[0];
+  const gpu = UNIFIED_MEMORY_NODE.gpu[0];
   await expect(page.getByText(`${gpu.utilization}%`, { exact: true })).toBeVisible();
   await expect(page.getByText(`${gpu.temperature}°C`, { exact: true }).first()).toBeVisible();
   await expect(page.getByText("— W", { exact: true })).toHaveCount(2); // draw and limit
@@ -73,9 +78,7 @@ test("renders a GPU whose memory usage is not reported", async ({ page }) => {
 test("renders host CPU and disk without a GPU at all", async ({ page }) => {
   // What a CI runner or a laptop reports: no GPU, no processes.
   await stubMemoryEndpoints(page, {
-    ...UNIFIED_MEMORY_GPU,
-    gpu: [],
-    processes: [],
+    nodes: [{ ...UNIFIED_MEMORY_NODE, gpu: [], processes: [] }],
   });
   await gotoPage(page, "/monitoring");
 
@@ -89,18 +92,8 @@ test("renders host CPU and disk without a GPU at all", async ({ page }) => {
 test("keeps the section of a node that could not be asked", async ({ page }) => {
   // Unknown is not idle: the row stays, and it says what happened.
   await stubMemoryEndpoints(page, {
-    ...UNIFIED_MEMORY_GPU,
     nodes: [
-      {
-        id: "control",
-        name: "spark-01",
-        address: "192.168.1.100",
-        is_control_plane: true,
-        reachable: true,
-        error: null,
-        unavailable: [],
-        ...UNIFIED_MEMORY_GPU,
-      },
+      UNIFIED_MEMORY_NODE,
       {
         id: "peer",
         name: "spark-02",
@@ -110,7 +103,7 @@ test("keeps the section of a node that could not be asked", async ({ page }) => 
         error: "10.0.0.11 has no enrolled agent",
         unavailable: [],
         gpu: [],
-        cpu: UNIFIED_MEMORY_GPU.cpu,
+        cpu: UNIFIED_MEMORY_NODE.cpu,
         disk: [],
         processes: [],
       },

@@ -610,9 +610,6 @@ def replicate_to_nodes(
     }
 
 
-sync_to_nodes = replicate_to_nodes
-
-
 #: The mock walks the three states in order so the UI and the e2e suite meet a
 #: partial replica, which is the one the old boolean could not express.
 _PRESENCE_CYCLE = (VERIFIED, PARTIAL, ABSENT)

@@ -448,11 +448,6 @@ class _Config:
             return entry
         return True
 
-    def save(self):
-        # Legacy — keep for compat but user settings now go to settings.json
-        user = _load_user_settings()
-        _save_user_settings(user)
-
     def update(self, **kwargs):
         user = _load_user_settings()
         for k, v in kwargs.items():

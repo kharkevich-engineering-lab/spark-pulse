@@ -1,4 +1,4 @@
-"""The deployment record store, plus the tombstone for pre-native records.
+"""The deployment record store.
 
 Every deployment — running, stopped or half-finished — is a row in one JSON
 file. :mod:`spark_pulse.tools.native_runtime` owns what those rows *mean*; this
@@ -10,13 +10,13 @@ behaviour here to simulate, only a file. Simulation mode changes *where* the
 file is (the gitignored ``spark_pulse/data/`` copy, so an e2e run never touches
 an operator's real state) and nothing else, so both modes run this code.
 
-**Legacy records.** Before the native runtime, a deployment was
-``run-recipe.sh`` forked out of a spark-vllm-docker checkout, tracked by PID.
-That path is gone and cannot be recreated. Its *records* can still be on disk
-after an upgrade, with a process still serving, so the minimum that keeps an
-operator honest is kept here and nowhere else: see such a deployment, read the
-log it already wrote, stop it by the PID it recorded, and delete it. Nothing
-can create one.
+There was a second kind of record here once: a deployment forked as
+``run-recipe.sh`` out of a spark-vllm-docker checkout and tracked by PID. That
+runtime was removed, and everything that could still list, stop and delete
+such a record has gone with it — including the only ``os.killpg`` in the
+control plane, which is the part that mattered. A PID is meaningless without
+the machine it is on, and every process this system ends now goes through the
+agent on the node that holds it.
 """
 
 from __future__ import annotations
@@ -24,7 +24,6 @@ from __future__ import annotations
 import logging
 import os
 import re
-import signal
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import threading
@@ -36,7 +35,7 @@ from sqlalchemy import JSON, String, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, mapped_column
 
-from spark_pulse.config import RUNTIME_NATIVE, config
+from spark_pulse.config import config
 from spark_pulse.db import Base, engine, is_done, mark_done_within, session_scope
 from spark_pulse.tools.atomic_json import (
     StateFileError as StateFileError,
@@ -53,9 +52,9 @@ RECORDS_FILE = (
     else Path.home() / ".config" / "spark-pulse" / "deployments.json"
 )
 
-# Matches -e KEY=VALUE and redacts the value. Legacy records stored the whole
-# forked command line, tokens included; sanitising on read is what gets those
-# out of a file written by an older version.
+# Matches -e KEY=VALUE and redacts the value. A record written by an older
+# build stored the whole forked command line, tokens included; sanitising on
+# read is what gets those out of a file somebody already has.
 _SENSITIVE_ENV_RE = re.compile(r"(-e\s+\w+=)\S+")
 
 
@@ -423,140 +422,3 @@ def purge_expired(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         # since with it.
         delete_many(expired)
     return kept
-
-
-# ── Legacy (pre-native) records ──────────────────────────────────────────────
-
-
-def is_legacy(record: dict[str, Any] | None) -> bool:
-    """Whether this record was made by the removed ``run-recipe.sh`` runner.
-
-    Those records predate the ``runtime`` field, so "not native" is the test.
-    """
-    return bool(record) and record.get("runtime") != RUNTIME_NATIVE  # type: ignore[union-attr]
-
-
-def _pid_is_alive(pid: int) -> bool:
-    """Whether the PID is still there.
-
-    ``PermissionError`` means the process exists and belongs to somebody else,
-    which is *alive*: reporting it dead would tell an operator a GPU is free
-    while something is still holding it.
-    """
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
-        return False
-    return True
-
-
-def list_legacy() -> list[dict[str, Any]]:
-    """Legacy records, reconciled against the PIDs they recorded.
-
-    A record whose process is gone is marked stopped; one that says ``pending``
-    with no PID never got as far as a process and is marked errored. This is
-    the only reconciliation these records will ever get.
-    """
-    with transaction():
-        records = load()
-        reconciled: list[dict[str, Any]] = []
-        for record in records:
-            if not is_legacy(record):
-                continue
-            status = record.get("status")
-            if status not in ("running", "pending"):
-                continue
-            pid = record.get("pid")
-            if not pid:
-                if status == "pending":
-                    record["status"] = "error"
-                    record["error_message"] = (
-                        "Interrupted: the deployment runtime that started this "
-                        "was removed"
-                    )
-                    record["stopped_at"] = _now()
-                    reconciled.append(record)
-                continue
-            if not _pid_is_alive(int(pid)):
-                record["status"] = "stopped"
-                record.setdefault("stopped_at", _now())
-                reconciled.append(record)
-            elif status == "pending":
-                record["status"] = "running"
-                reconciled.append(record)
-        for record in reconciled:
-            # Only the records this sweep decided something about. A native
-            # deployment created while the PIDs were being probed is none of
-            # this function's business, and a whole-set save would delete it.
-            upsert(record)
-        return [r for r in purge_expired(records) if is_legacy(r)]
-
-
-def stop_legacy(deployment_id: str) -> dict[str, Any] | None:
-    """Signal a legacy deployment's process group and mark it stopped.
-
-    SIGTERM to the process group, because that is how the runner started it —
-    ``start_new_session=True``, so the whole tree goes. A PID that is already
-    gone is success: the point is that the record and the machine agree.
-    """
-    with transaction():
-        record = get(deployment_id)
-        if record is None:
-            return None
-        pid = record.get("pid")
-        if pid:
-            try:
-                os.killpg(os.getpgid(int(pid)), signal.SIGTERM)
-            except (ProcessLookupError, PermissionError, OSError):
-                pass
-        # The signal and the record change are one step, so a concurrent
-        # delete cannot land between them and leave a signalled process with
-        # no record; and it is a two-field update of one row, not a rewrite of
-        # every deployment on the machine.
-        return update(deployment_id, status="stopped", stopped_at=_now())
-
-
-#: How much of a log file the tail may read. An engine log runs to gigabytes;
-#: reading it whole to show 200 lines would be the last thing this process did.
-_TAIL_BYTES = 1024 * 1024
-
-
-def logs_legacy(deployment_id: str, lines: int = 200) -> str:
-    """The tail of the log file the removed runner wrote for this deployment."""
-    record = get(deployment_id)
-    if not record:
-        return "Deployment not found"
-    log_path = record.get("log_path")
-    if not log_path or not Path(log_path).is_file():
-        return f"No log file for deployment {deployment_id}"
-    try:
-        with open(log_path, "rb") as handle:
-            handle.seek(0, os.SEEK_END)
-            handle.seek(max(0, handle.tell() - _TAIL_BYTES))
-            text = handle.read().decode("utf-8", errors="replace")
-    except OSError:
-        return "Failed to read log file"
-    return "\n".join(text.splitlines()[-lines:]) or "(empty log)"
-
-
-def live_legacy_ids() -> list[str]:
-    """Ids of legacy deployments whose process is still running.
-
-    Startup says these out loud. They cannot be recreated, so an operator who
-    does not know they are there is an operator with a GPU held by something
-    invisible.
-    """
-    try:
-        return [
-            str(r.get("id"))
-            for r in list_legacy()
-            if r.get("status") in ("running", "pending")
-        ]
-    except StateFileError:
-        raise
-    except Exception:  # pragma: no cover - defensive
-        return []

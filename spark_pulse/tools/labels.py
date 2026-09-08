@@ -6,9 +6,10 @@ Container labels are the source of truth for reconciliation, so the producer
 ``tools.reconciliation``) must agree on the exact keys. Import them from here —
 never spell a label out inline.
 
-The cluster block below is legacy. The orchestrator that wrote those labels is
-gone, and nothing emits them any more; they stay so that reconciliation can
-still recognise — and sweep — containers a previous build left behind.
+There was a second block here for the cluster orchestrator's own labels —
+cluster name, role, node rank, head IP, Ray flags. That orchestrator is gone,
+a cluster is a deployment of size N, and the labels went with it: keeping keys
+nothing writes only invites something to start reading them again.
 """
 
 from __future__ import annotations
@@ -68,33 +69,16 @@ def identity_labels(
     }
 
 
-# ── Cluster (legacy, read-only) ──────────────────────────────────────────
-#
-# Nothing writes these any more: the orchestrator that did is gone. The
-# orphan sweep still reads them, because a container an older build left on
-# a host carries no other identity we would recognise.
-
-CLUSTER_LABEL = label("cluster")
-ROLE_LABEL = label("role")
-NODE_RANK_LABEL = label("node_rank")
-HEAD_IP_LABEL = label("head_ip")
-WORKER_IPS_LABEL = label("worker_ips")
-RAY_LABEL = label("ray")
-RAY_ENABLED_LABEL = label("ray_enabled")
-RAY_READY_LABEL = label("ray_ready")
-
 # Kept as an alias so reconciliation and the container name label agree.
 CONTAINER_NAME_LABEL = NAME_LABEL
 
 MANAGED_FILTER = f"{MANAGED_LABEL}=true"
 
 __all__ = [
-    "CLUSTER_LABEL",
     "CONTAINER_NAME_LABEL",
     "CREATED_AT_LABEL",
     "DEPLOYMENT_LABEL",
     "GENERATION_LABEL",
-    "HEAD_IP_LABEL",
     "IMAGE_LABEL",
     "LABEL_PREFIX",
     "MANAGED_FILTER",
@@ -102,17 +86,11 @@ __all__ = [
     "MEMORY_LIMIT_LABEL",
     "MODE_LABEL",
     "NAME_LABEL",
-    "NODE_RANK_LABEL",
     "PRIVILEGED_LABEL",
     "RANK_LABEL",
-    "RAY_ENABLED_LABEL",
-    "RAY_LABEL",
-    "RAY_READY_LABEL",
     "RECIPE_LABEL",
-    "ROLE_LABEL",
     "SHM_SIZE_LABEL",
     "VERSION_LABEL",
-    "WORKER_IPS_LABEL",
     "WORLD_SIZE_LABEL",
     "identity_labels",
     "label",

@@ -1084,27 +1084,30 @@ class TestManagedListing:
     ):
         """The daemon's filter is an optimisation, not the decision.
 
-        A transport that ignores ``filters`` — the docker CLI's ``--filter``
-        is easy to get wrong over SSH — would otherwise return every managed
-        container as a match for a cluster nobody asked about.
+        A transport that ignores ``filters`` would otherwise return every
+        managed container as a match for a deployment nobody asked about.
         """
-        _run(service, client, name="head", metadata=_metadata("a", cluster="c1"))
-        _run(service, client, name="solo", metadata=_metadata("b"))
+        _run(service, client, name="rank-0", metadata=_metadata("a"))
+        _run(service, client, name="other", metadata=_metadata("b"))
         client.containers.honour_filters = False
 
-        assert [c.name for c in service.list_managed_containers()] == ["head", "solo"]
+        assert [c.name for c in service.list_managed_containers()] == [
+            "rank-0",
+            "other",
+        ]
         assert [
             c.name
-            for c in service.list_managed_containers({"spark-pulse.cluster": "c1"})
-        ] == ["head"]
+            for c in service.list_managed_containers({"spark-pulse.deployment": "a"})
+        ] == ["rank-0"]
         assert [
             c.name
-            for c in service.list_managed_containers({"spark-pulse.cluster": "c2"})
+            for c in service.list_managed_containers({"spark-pulse.deployment": "c"})
         ] == []
         # An empty value means "carries this label at all".
         assert [
-            c.name for c in service.list_managed_containers({"spark-pulse.cluster": ""})
-        ] == ["head"]
+            c.name
+            for c in service.list_managed_containers({"spark-pulse.deployment": ""})
+        ] == ["rank-0", "other"]
 
     def test_a_deployment_is_found_by_its_label(self, service, client):
         _run(service, client, name="rank-0", metadata=_metadata("dep-a"))

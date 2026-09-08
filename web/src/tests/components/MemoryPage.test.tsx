@@ -32,8 +32,9 @@ import { connectMetricsStream, fetchMemory, killGpuProcess } from "@/lib/api";
 
 const UUID = "GPU-11111111-2222-3333-4444-555555555555";
 
+/** One machine's answer: a GB10 that reports no GPU memory, because the pool
+ *  is unified, plus the process holding it. */
 function node(over: Partial<NodeStats> = {}): NodeStats {
-  const base = memory();
   return {
     id: "control",
     name: "spark-01",
@@ -42,16 +43,6 @@ function node(over: Partial<NodeStats> = {}): NodeStats {
     reachable: true,
     error: null,
     unavailable: [],
-    gpu: base.gpu,
-    cpu: base.cpu,
-    disk: base.disk,
-    processes: base.processes,
-    ...over,
-  };
-}
-
-function memory(over: Partial<MemoryResponse> = {}): MemoryResponse {
-  return {
     gpu: [
       {
         index: 0,
@@ -75,6 +66,16 @@ function memory(over: Partial<MemoryResponse> = {}): MemoryResponse {
     ],
     ...over,
   };
+}
+
+/** The whole answer: one shape, whatever the cluster size. */
+function memory(over: Partial<MemoryResponse> = {}): MemoryResponse {
+  return { nodes: [node()], ...over };
+}
+
+/** A single-machine answer, which is what most of these tests are about. */
+function oneNode(over: Partial<NodeStats> = {}): MemoryResponse {
+  return { nodes: [node(over)] };
 }
 
 /** The callback the page hands `connectMetricsStream`, so a test can push a frame. */
@@ -107,7 +108,7 @@ describe("MemoryPage", () => {
 
   it("shows the memory bar for a GPU that does report its usage", async () => {
     vi.mocked(fetchMemory).mockResolvedValue(
-      memory({
+      oneNode({
         gpu: [
           {
             index: 0,
@@ -148,7 +149,7 @@ describe("MemoryPage", () => {
 
     await user.click(screen.getByRole("button", { name: "Kill process" }));
 
-    await waitFor(() => expect(killGpuProcess).toHaveBeenCalledWith(98251, ""));
+    await waitFor(() => expect(killGpuProcess).toHaveBeenCalledWith(98251, "192.168.1.100"));
     // The polled figures are re-read, so the table cannot keep showing a
     // process that is gone.
     await waitFor(() => expect(fetchMemory).toHaveBeenCalledTimes(2));
@@ -234,7 +235,7 @@ describe("MemoryPage", () => {
 
   it("reports a tracked process as one of ours rather than a stranger's", async () => {
     vi.mocked(fetchMemory).mockResolvedValue(
-      memory({
+      oneNode({
         processes: [
           {
             gpu_uuid: UUID,
@@ -277,7 +278,7 @@ describe("MemoryPage", () => {
     await screen.findByText("NVIDIA GB10");
 
     const frame = (utilization: number, temperature: number) =>
-      memory({
+      oneNode({
         gpu: [
           {
             index: 0,
@@ -312,10 +313,9 @@ describe("MemoryPage", () => {
 
   it("keeps one GPU's history apart from another's", async () => {
     const OTHER = "GPU-99999999-8888-7777-6666-555555555555";
-    const two = (utilization: number): MemoryResponse => ({
-      ...memory(),
+    const two = (utilization: number): MemoryResponse => oneNode({
       gpu: [
-        ...memory().gpu,
+        ...node().gpu,
         {
           index: 1,
           gpu: "GPU 1",
@@ -348,7 +348,7 @@ describe("MemoryPage", () => {
     await screen.findByText("NVIDIA GB10");
 
     act(() => {
-      emit("metrics", memory({ cpu: { total: 131072, used: 65536, free: 65536, available: 65536, usage_percent: 50 } }));
+      emit("metrics", oneNode({ cpu: { total: 131072, used: 65536, free: 65536, available: 65536, usage_percent: 50 } }));
     });
 
     expect(await screen.findByText("64.0 / 128.0 GB")).toBeInTheDocument();
@@ -382,7 +382,7 @@ describe("MemoryPage", () => {
   });
 
   it("renders the disk card even on a machine reporting no GPU at all", async () => {
-    vi.mocked(fetchMemory).mockResolvedValue(memory({ gpu: [], processes: [] }));
+    vi.mocked(fetchMemory).mockResolvedValue(oneNode({ gpu: [], processes: [] }));
     render(<MemoryPage />);
 
     expect(await screen.findByText("/")).toBeInTheDocument();
@@ -526,13 +526,13 @@ describe("MemoryPage across nodes", () => {
     act(() =>
       emit("metrics", memory({
         nodes: [
-          node({ gpu: [{ ...memory().gpu[0], utilization: 40 }] }),
+          node({ gpu: [{ ...node().gpu[0], utilization: 40 }] }),
           node({
             id: "peer",
             name: "spark-02",
             address: "10.0.0.11",
             is_control_plane: false,
-            gpu: [{ ...memory().gpu[0], utilization: 90 }],
+            gpu: [{ ...node().gpu[0], utilization: 90 }],
           }),
         ],
       })),

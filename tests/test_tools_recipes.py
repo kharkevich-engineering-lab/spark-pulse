@@ -1,5 +1,4 @@
 import json
-import sys
 
 from spark_pulse.tools import recipes
 
@@ -261,44 +260,6 @@ def test_get_recipe_returns_v2_detail(tmp_path):
     assert out["env"] == {"VLLM_USE_V1": "1"}
     assert out["min_nodes"] == 2
     assert out["build_args"] == []
-
-
-def test_list_recipes_includes_imported_source(tmp_path, monkeypatch):
-    recipe_import = sys.modules["spark_pulse.tools.recipe_import"]
-
-    imported = tmp_path / "imported"
-    (imported / "recipes" / "cluster").mkdir(parents=True)
-    (imported / "recipes" / "cluster" / "big.yaml").write_text(
-        "name: Big\nmodel: org/big\ncontainer: vllm-node\ncommand: vllm serve\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(recipe_import, "IMPORTED_DIR", imported)
-
-    (tmp_path / "recipes").mkdir()
-    (tmp_path / "recipes" / "local.yaml").write_text(
-        "name: Local\nmodel: org/local\n", encoding="utf-8"
-    )
-
-    ids = [r["id"] for r in without_bundled(recipes.list_recipes(spark_path=tmp_path))]
-    assert ids == ["local", "imported/cluster/big"]
-
-
-def test_get_recipe_resolves_an_imported_id(tmp_path, monkeypatch):
-    recipe_import = sys.modules["spark_pulse.tools.recipe_import"]
-
-    imported = tmp_path / "imported"
-    (imported / "recipes").mkdir(parents=True)
-    (imported / "recipes" / "tiny.yaml").write_text(
-        "name: Imported Tiny\nmodel: org/tiny\ncontainer: vllm-node\ncommand: x\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(recipe_import, "IMPORTED_DIR", imported)
-
-    out = recipes.get_recipe("imported/tiny", spark_path=tmp_path)
-
-    assert out is not None
-    assert out["id"] == "imported/tiny"
-    assert out["name"] == "Imported Tiny"
 
 
 def test_render_command_supports_plain_placeholders():

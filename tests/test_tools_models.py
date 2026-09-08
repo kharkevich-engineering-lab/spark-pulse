@@ -441,22 +441,22 @@ class TestDiskSpaceGuard:
 class TestDistribution:
     def test_sync_requires_cached_model(self, hf_home):
         with pytest.raises(ValueError, match="not in local cache"):
-            models_tool.sync_to_nodes("acme/missing", ["node1"])
+            models_tool.replicate_to_nodes("acme/missing", ["node1"])
 
     def test_sync_requires_nodes(self, hf_home):
         with pytest.raises(ValueError, match="No nodes specified"):
-            models_tool.sync_to_nodes("acme/plain-7b", [])
+            models_tool.replicate_to_nodes("acme/plain-7b", [])
 
     def test_sync_reports_per_node_failure(self, hf_home):
         client = _RecordingSSHClient(copy_error=RuntimeError("rsync failed: no route"))
-        result = models_tool.sync_to_nodes("acme/plain-7b", ["n1"], client=client)
+        result = models_tool.replicate_to_nodes("acme/plain-7b", ["n1"], client=client)
         assert result["ok"] is False
         assert result["results"][0]["error"] == "rsync failed: no route"
         assert result["results"][0]["published"] is False
 
     def test_sync_reports_mkdir_failure(self, hf_home):
         client = _RecordingSSHClient(exec_returncode=1, exec_stderr="permission denied")
-        result = models_tool.sync_to_nodes("acme/plain-7b", ["n1"], client=client)
+        result = models_tool.replicate_to_nodes("acme/plain-7b", ["n1"], client=client)
         assert result["ok"] is False
         assert result["results"][0]["error"] == "permission denied"
         assert client.copies == []
@@ -467,7 +467,7 @@ class TestDistribution:
                 error_type=SSHErrorType.TIMEOUT, host="n1", message="timed out"
             )
         )
-        result = models_tool.sync_to_nodes("acme/plain-7b", ["n1"], client=client)
+        result = models_tool.replicate_to_nodes("acme/plain-7b", ["n1"], client=client)
         assert result["ok"] is False
         assert "timed out" in result["results"][0]["error"]
 
@@ -480,13 +480,13 @@ class TestDistribution:
             entry.unlink()
         client = _RecordingSSHClient()
         with pytest.raises(ValueError, match="is partial"):
-            models_tool.sync_to_nodes("acme/plain-7b", ["n1"], client=client)
+            models_tool.replicate_to_nodes("acme/plain-7b", ["n1"], client=client)
         assert client.copy_dirs == []
 
     def test_a_node_that_cannot_answer_is_never_published_to(self, hf_home):
         """No report means no proof, and no proof means no publish."""
         client = _RecordingSSHClient(stdout="python3: not found")
-        result = models_tool.sync_to_nodes("acme/plain-7b", ["n1"], client=client)
+        result = models_tool.replicate_to_nodes("acme/plain-7b", ["n1"], client=client)
         assert result["ok"] is False
         assert result["results"][0]["published"] is False
         assert "did not return a verification report" in result["results"][0]["error"]

@@ -17,7 +17,7 @@ export interface RecipeSummary {
   engines: string[];
   /** Engine-neutral parameters. Mirrors `defaults` for v1 recipes. */
   params: Record<string, unknown>;
-  /** Where the recipe came from: bundled, upstream, custom, oci or imported. */
+  /** Where the recipe came from: bundled, upstream, custom or oci. */
   source: string;
   /** Whether each known engine can run this recipe, and why not when it cannot. */
   engine_support: RecipeEngineSupport[];
@@ -48,47 +48,6 @@ export interface RecipeDetail extends RecipeSummary {
   min_nodes: number | null;
   engine_specs: Record<string, RecipeEngineSpec>;
 }
-
-// ── Importing recipes from an upstream checkout ─────────────────────────────
-
-export type RecipeImportStatusKind = "ok" | "skipped" | "error";
-
-export interface RecipeImportRecipeEntry {
-  file: string;
-  id: string | null;
-  status: RecipeImportStatusKind;
-  message: string;
-  name?: string;
-  recipe_version?: string;
-}
-
-export interface RecipeImportModEntry {
-  name: string;
-  status: RecipeImportStatusKind;
-  message: string;
-}
-
-export interface RecipeImportCounts {
-  ok: number;
-  skipped: number;
-  error: number;
-}
-
-export interface RecipeImportResult {
-  source: string;
-  source_url: string | null;
-  ref: string | null;
-  git_sha: string | null;
-  imported_at: string;
-  dest: string;
-  recipes: RecipeImportRecipeEntry[];
-  mods: RecipeImportModEntry[];
-  counts: { recipes: RecipeImportCounts; mods: RecipeImportCounts };
-}
-
-export type RecipeImportStatus =
-  | { imported: false }
-  | ({ imported: true } & RecipeImportResult);
 
 /** One rank of a deployment: where it runs and which container it is.
  *
@@ -276,14 +235,8 @@ export interface NodeStats {
 }
 
 export interface MemoryResponse {
-  /** The control node's own block, kept at the top level for readers written
-   *  before the answer covered a cluster. */
-  gpu: GPUStats[];
-  cpu: CPUStats;
-  disk: DiskStats[];
-  processes: GPUProcess[];
   /** Every registered node, control plane first. */
-  nodes?: NodeStats[];
+  nodes: NodeStats[];
 }
 
 export interface CacheEntry {

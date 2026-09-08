@@ -10,10 +10,7 @@ before the upgrade can still be seen, read, stopped and deleted — see
 from __future__ import annotations
 
 import importlib
-import json
-import signal
 import threading
-from datetime import datetime, timezone
 from unittest.mock import patch
 
 import pytest
@@ -140,22 +137,13 @@ class TestDispatchRouting:
 
         assert native.call_args.kwargs["nodes"] == ["a", "b"]
 
-    def test_list_merges_legacy_and_native(self, env):
-        env["records"].write_text(
-            json.dumps(
-                [
-                    {
-                        "id": "legacy",
-                        "status": "stopped",
-                        "created_at": "2020-01-01T00:00:00+00:00",
-                    }
-                ]
-            )
-        )
-        native = dispatch.create_deployment("qwen3-8b", "n", {})
+    def test_the_listing_is_oldest_first(self, env):
+        first = dispatch.create_deployment("qwen3-8b", "one", {})
+        second = dispatch.create_deployment("qwen3-8b", "two", {})
 
         listed = dispatch.list_deployments()
-        assert [d["id"] for d in listed] == ["legacy", native["id"]]
+
+        assert [d["id"] for d in listed] == [first["id"], second["id"]]
 
     def test_plan_starts_nothing(self, env):
         plan = dispatch.plan_deployment("qwen3-8b")
@@ -413,126 +401,6 @@ class TestLifecycleEndpoints:
 
         assert [d["id"] for d in listed] == [created["id"]]
         assert listed[0]["runtime"] == "native"
-
-
-class TestLegacyRecords:
-    """A deployment made by the removed upstream runner must not become a ghost.
-
-    The runner is gone and nothing can create one of these again. What must
-    survive the upgrade is the operator's ability to *see* and *end* one that
-    was still serving: a record they cannot stop is a GPU held by a process the
-    control plane no longer admits exists.
-    """
-
-    # Recent, so retention purging is not what the test is measuring.
-    RECENTLY = datetime.now(timezone.utc).isoformat()
-
-    LEGACY = {
-        "id": "legacy",
-        "name": "pre-upgrade",
-        "recipe_id": "qwen3-8b",
-        "status": "running",
-        "pid": 4242,
-        "port": 9000,
-        "created_at": "2020-01-01T00:00:00+00:00",
-        "log_path": None,
-    }
-
-    def _seed(self, env, **overrides):
-        env["records"].write_text(json.dumps([{**self.LEGACY, **overrides}]))
-
-    def test_a_legacy_record_is_still_listed(self, client, env):
-        self._seed(env)
-        with patch.object(records, "_pid_is_alive", return_value=True):
-            listed = client.get("/api/deployments").json()
-
-        assert [d["id"] for d in listed] == ["legacy"]
-        assert listed[0]["status"] == "running"
-
-    def test_stopping_one_signals_its_process_group(self, client, env):
-        self._seed(env)
-        with (
-            patch.object(records, "_pid_is_alive", return_value=True),
-            patch.object(records.os, "getpgid", return_value=4242) as getpgid,
-            patch.object(records.os, "killpg") as killpg,
-        ):
-            response = client.delete("/api/deployments/legacy")
-
-            assert response.status_code == 200
-            assert response.json()["sync"] == "in_progress"
-            # The signal is sent by the sweep, not by the request.
-            tools.reconciler.Reconciler().sweep()
-
-        getpgid.assert_called_once_with(4242)
-        assert killpg.call_args[0] == (4242, signal.SIGTERM)
-
-    def test_a_process_that_is_already_gone_still_marks_the_record(self, client, env):
-        self._seed(env)
-        with (
-            patch.object(records, "_pid_is_alive", return_value=True),
-            patch.object(records.os, "getpgid", side_effect=ProcessLookupError),
-        ):
-            response = client.delete("/api/deployments/legacy")
-            assert response.json()["sync"] == "in_progress"
-            tools.reconciler.Reconciler().sweep()
-
-        record = tools.deployment_records.get("legacy")
-        assert record["status"] == "stopped"
-        assert record["sync"] == "in_sync"
-
-    def test_a_dead_process_reconciles_the_record_to_stopped(self, client, env):
-        self._seed(env)
-        with patch.object(records, "_pid_is_alive", return_value=False):
-            listed = client.get("/api/deployments").json()
-
-        assert listed[0]["status"] == "stopped"
-
-    def test_deleting_a_stopped_one_drops_the_record(self, client, env):
-        self._seed(env, status="stopped", stopped_at=self.RECENTLY)
-
-        response = client.delete("/api/deployments/legacy")
-
-        assert response.json()["sync"] == "deleting"
-        tools.reconciler.Reconciler().sweep()
-        assert tools.deployment_records.load() == []
-
-    def test_deleting_one_stops_it_first(self, env):
-        """Forgetting a deployment is not the same as ending it."""
-        self._seed(env)
-        with (
-            patch.object(records, "_pid_is_alive", return_value=True),
-            patch.object(records.os, "getpgid", return_value=4242),
-            patch.object(records.os, "killpg") as killpg,
-        ):
-            assert dispatch.delete_deployment("legacy") is True
-
-        assert killpg.called
-        assert records.load() == []
-
-    def test_its_own_log_file_is_still_readable(self, client, env, tmp_path):
-        log = tmp_path / "legacy.log"
-        log.write_text("line one\nline two\n")
-        self._seed(env, log_path=str(log))
-
-        response = client.get("/api/deployments/legacy/logs")
-        assert "line two" in response.json()["logs"]
-
-    def test_startup_names_a_legacy_deployment_that_is_still_running(self, env, capfd):
-        self._seed(env)
-        with patch.object(records, "_pid_is_alive", return_value=True):
-            with TestClient(create_app()):
-                pass
-
-        out = capfd.readouterr().out
-        assert "legacy" in out
-        assert "upstream runtime" in out
-
-    def test_startup_is_quiet_when_nothing_legacy_is_running(self, env, capfd):
-        self._seed(env, status="stopped", stopped_at=self.RECENTLY)
-        with TestClient(create_app()):
-            pass
-
-        assert "upstream runtime" not in capfd.readouterr().out
 
 
 class TestConfigExposesRuntime:

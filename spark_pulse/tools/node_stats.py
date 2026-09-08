@@ -245,12 +245,12 @@ def _node_for(record: Any) -> Any:
 
 
 def collect(services: Any | None = None) -> dict[str, Any]:
-    """Every registered node's live stats, plus the control node's at the top.
+    """Every registered node's live stats, control plane first.
 
-    The top-level ``gpu``/``cpu``/``disk``/``processes`` keys are the control
-    node's own block, kept because every existing reader — the metrics stream,
-    the three sub-endpoints, the page's own cards — was written against them.
-    ``nodes`` is the new answer and the one a cluster needs.
+    One shape, whatever the cluster size. There was a flat copy of the control
+    node's own block beside this for readers written before the answer covered
+    more than one machine; it went with them, because a payload that answers
+    twice invites a page to read the wrong half and call it the cluster.
     """
     records = _registry_nodes()
     if not records:
@@ -259,7 +259,7 @@ def collect(services: Any | None = None) -> dict[str, Any]:
         control = for_node(tools.node_service.control_node(), services)
         control.update({"id": "control", "name": "this node", "address": ""})
         control["is_control_plane"] = True
-        return {**control, "nodes": [control]}
+        return {"nodes": [control]}
 
     def _one(record: Any) -> dict[str, Any]:
         block = for_node(_node_for(record), services)
@@ -278,17 +278,7 @@ def collect(services: Any | None = None) -> dict[str, Any]:
     ) as pool:
         blocks = list(pool.map(_one, records))
 
-    control = next(
-        (block for block in blocks if block.get("is_control_plane")),
-        blocks[0],
-    )
-    return {
-        "gpu": control["gpu"],
-        "cpu": control["cpu"],
-        "disk": control["disk"],
-        "processes": control["processes"],
-        "nodes": blocks,
-    }
+    return {"nodes": blocks}
 
 
 # ── Ending a process ─────────────────────────────────────────────────────────

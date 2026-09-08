@@ -4,7 +4,7 @@ Two formats coexist:
 
 * **v1** — the upstream ``spark-vllm-docker`` shape: ``name`` / ``container`` /
   ``command``, with everything vLLM-specific baked into the command template.
-  v1 stays valid forever; the importer (``recipe_import``) keeps it as-is.
+  v1 stays valid forever and is read exactly as written.
 * **v2** — engine-neutral ``params`` plus per-engine overrides under
   ``engines``, so one recipe can target vLLM, SGLang or a future engine.
 

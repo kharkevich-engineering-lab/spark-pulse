@@ -103,11 +103,6 @@ def encode_metadata(metadata: ContainerMetadata | None) -> pb.ContainerMetadata:
         image=metadata.image,
         generation=metadata.generation,
         rank=metadata.rank,
-        cluster=metadata.cluster,
-        role=metadata.role,
-        node_rank=metadata.node_rank,
-        head_ip=metadata.head_ip,
-        ray_enabled=metadata.ray_enabled,
     )
     set_optional(out, "mode", metadata.mode)
     set_optional(out, "created_at", metadata.created_at)
@@ -125,11 +120,6 @@ def decode_metadata(message: pb.ContainerMetadata) -> ContainerMetadata:
         "image": message.image,
         "generation": message.generation,
         "rank": message.rank,
-        "cluster": message.cluster,
-        "role": message.role,
-        "node_rank": message.node_rank,
-        "head_ip": message.head_ip,
-        "ray_enabled": message.ray_enabled,
     }
     for field in (
         "mode",

@@ -167,7 +167,7 @@ def list_recipes(spark_path: Path | None = None) -> list[dict[str, Any]]:
 
     Parsing is delegated to the shared module so simulation reports the same
     schema fields (recipe_version, engine, engines, params) and the same
-    sources (including ``imported/``) as production.
+    sources as production.
     """
     if spark_path is None:
         spark_path = config.spark_vllm_dir

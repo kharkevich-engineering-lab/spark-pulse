@@ -109,7 +109,14 @@ export function navLabel(text: string): string {
  * are unified, so the backend sets `memory_supported: false` and the page has
  * to render the card without a usage bar.
  */
-export const UNIFIED_MEMORY_GPU = {
+export const UNIFIED_MEMORY_NODE = {
+  id: "control",
+  name: "spark-01",
+  address: "192.168.1.100",
+  is_control_plane: true,
+  reachable: true,
+  error: null,
+  unavailable: [],
   gpu: [
     {
       index: 0,
@@ -146,6 +153,9 @@ export const UNIFIED_MEMORY_GPU = {
     },
   ],
 };
+
+/** The whole answer: one shape, whatever the cluster size. */
+export const UNIFIED_MEMORY_GPU = { nodes: [UNIFIED_MEMORY_NODE] };
 
 /** Serve the Monitoring page's data from a fixture instead of the backend.
  *

@@ -132,19 +132,6 @@ def isolate_the_legacy_import_sources(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def isolate_imported_recipes(tmp_path, monkeypatch):
-    """Keep recipe listing away from the developer's real ~/.config import dir.
-
-    Both the real and the mock importer read the real module's ``IMPORTED_DIR``
-    (the mock re-exports the path helpers), so patching it there covers both.
-    """
-    import spark_pulse.tools.recipe_import  # noqa: F401
-
-    real = sys.modules["spark_pulse.tools.recipe_import"]
-    monkeypatch.setattr(real, "IMPORTED_DIR", tmp_path / "_imported")
-
-
-@pytest.fixture(autouse=True)
 def isolate_managed_recipe_dirs(tmp_path, monkeypatch):
     """Keep recipe listing away from the developer's real config directory.
 

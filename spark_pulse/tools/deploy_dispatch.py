@@ -1,20 +1,13 @@
-"""Deployment dispatcher — one runtime, plus a tombstone for the old one.
+"""The deployment API's one entry point, over the one runtime.
 
-There is a single way to start a deployment: :mod:`tools.native_runtime`,
-which drives Docker from Python. The upstream runtime — fork ``run-recipe.sh``
-out of a spark-vllm-docker checkout, track a PID, SIGTERM the process group —
-is gone, and nothing can create such a deployment any more.
+There is a single way to run a deployment: :mod:`tools.native_runtime`, which
+drives Docker on every node through that node's agent. This module is what the
+routers and the MCP tools call, and all it does now is adapt: a plan comes back
+as a dict, a status read is a live one rather than the stored row.
 
-What can still exist is its *records*. An operator who upgrades while an
-upstream deployment is serving keeps a row in ``deployments.json`` and a
-process on the machine, and deleting the code without deleting that would
-leave a GPU held by something the control plane no longer admits exists. So
-acting on an existing deployment still routes by the record's own ``runtime``
-field: native records go to the native runtime, everything else goes to
-:mod:`tools.deployment_records`, which can list, log, stop and delete a legacy
-deployment and nothing else.
-
-Both live in the same ``deployments.json``, so listing is a merge.
+It used to *dispatch*, by the record's own ``runtime`` field, because a
+deployment made by the removed ``run-recipe.sh`` runner could still be on disk
+with a process still serving. That branch is gone with the records it was for.
 """
 
 from __future__ import annotations
@@ -22,27 +15,14 @@ from __future__ import annotations
 from typing import Any
 
 from spark_pulse import tools
-from spark_pulse.tools.native_runtime import RUNTIME_NAME
-
-
-def _is_native_record(record: dict[str, Any] | None) -> bool:
-    return bool(record) and record.get("runtime") == RUNTIME_NAME  # type: ignore[union-attr]
-
-
-def _record(deployment_id: str) -> dict[str, Any] | None:
-    return tools.deployment_records.get(deployment_id)
-
-
-# ── Dispatch ─────────────────────────────────────────────────────────────────
 
 
 def list_deployments() -> list[dict[str, Any]]:
-    """Every deployment: native ones reconciled, legacy ones checked by PID."""
-    legacy = tools.deployment_records.list_legacy()
-    native = tools.native_runtime.list_deployments()
-    merged = legacy + native
-    merged.sort(key=lambda d: str(d.get("created_at") or ""))
-    return merged
+    """Every deployment, reconciled against what the nodes are running."""
+    return sorted(
+        tools.native_runtime.list_deployments(),
+        key=lambda d: str(d.get("created_at") or ""),
+    )
 
 
 def create_deployment(
@@ -100,32 +80,19 @@ def plan_deployment(
 
 
 def stop_deployment(deployment_id: str) -> dict[str, Any] | None:
-    if _is_native_record(_record(deployment_id)):
-        return tools.native_runtime.stop_deployment(deployment_id)
-    return tools.deployment_records.stop_legacy(deployment_id)
+    return tools.native_runtime.stop_deployment(deployment_id)
 
 
 def delete_deployment(deployment_id: str) -> bool:
-    if _is_native_record(_record(deployment_id)):
-        return tools.native_runtime.delete_deployment(deployment_id)
-    # A legacy record is stopped before it is dropped, for the same reason a
-    # native one is: forgetting a deployment is not the same as ending it, and
-    # only one of those frees the GPU.
-    tools.deployment_records.stop_legacy(deployment_id)
-    return tools.deployment_records.delete(deployment_id)
+    return tools.native_runtime.delete_deployment(deployment_id)
 
 
 def get_logs(deployment_id: str, lines: int = 200) -> str:
-    if _is_native_record(_record(deployment_id)):
-        return tools.native_runtime.get_logs(deployment_id, lines)
-    return tools.deployment_records.logs_legacy(deployment_id, lines)
+    return tools.native_runtime.get_logs(deployment_id, lines)
 
 
 def get_deployment(deployment_id: str) -> dict[str, Any] | None:
-    """One deployment, live status included for native ones."""
-    record = _record(deployment_id)
-    if record is None:
+    """One deployment, with the status the nodes report rather than the row."""
+    if tools.deployment_records.get(deployment_id) is None:
         return None
-    if _is_native_record(record):
-        return tools.native_runtime.status(deployment_id)
-    return record
+    return tools.native_runtime.status(deployment_id)

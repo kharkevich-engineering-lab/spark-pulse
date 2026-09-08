@@ -214,7 +214,6 @@ def stop_or_delete_deployment(deployment_id: str):
     marked = tools.reconciler.mark(deployment_id, state, reason, intent)
     tools.reconciler.nudge()
     return {
-        "deleted": False,
         "accepted": True,
         "id": deployment_id,
         "sync": state,

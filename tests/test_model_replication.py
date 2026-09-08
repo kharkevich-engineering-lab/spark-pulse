@@ -815,9 +815,6 @@ class TestTransportContract:
         assert isinstance(client, OpenSSHClient)
         assert client.host_key_policy == "strict"
 
-    def test_sync_to_nodes_is_the_old_name_for_replication(self):
-        assert models_tool.sync_to_nodes is models_tool.replicate_to_nodes
-
     def test_replication_refuses_an_uncached_model(self, hub):
         with pytest.raises(ValueError, match="not in local cache"):
             models_tool.replicate_to_nodes("acme/missing", ["n1"])

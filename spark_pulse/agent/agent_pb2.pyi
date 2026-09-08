@@ -487,7 +487,7 @@ class StringList(_message.Message):
     def __init__(self, values: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class ContainerMetadata(_message.Message):
-    __slots__ = ("deployment", "recipe", "image", "mode", "created_at", "memory_limit_gb", "shm_size_gb", "privileged", "generation", "rank", "world_size", "cluster", "role", "node_rank", "head_ip", "ray_enabled")
+    __slots__ = ("deployment", "recipe", "image", "mode", "created_at", "memory_limit_gb", "shm_size_gb", "privileged", "generation", "rank", "world_size")
     DEPLOYMENT_FIELD_NUMBER: _ClassVar[int]
     RECIPE_FIELD_NUMBER: _ClassVar[int]
     IMAGE_FIELD_NUMBER: _ClassVar[int]
@@ -499,11 +499,6 @@ class ContainerMetadata(_message.Message):
     GENERATION_FIELD_NUMBER: _ClassVar[int]
     RANK_FIELD_NUMBER: _ClassVar[int]
     WORLD_SIZE_FIELD_NUMBER: _ClassVar[int]
-    CLUSTER_FIELD_NUMBER: _ClassVar[int]
-    ROLE_FIELD_NUMBER: _ClassVar[int]
-    NODE_RANK_FIELD_NUMBER: _ClassVar[int]
-    HEAD_IP_FIELD_NUMBER: _ClassVar[int]
-    RAY_ENABLED_FIELD_NUMBER: _ClassVar[int]
     deployment: str
     recipe: str
     image: str
@@ -515,12 +510,7 @@ class ContainerMetadata(_message.Message):
     generation: int
     rank: int
     world_size: int
-    cluster: str
-    role: str
-    node_rank: int
-    head_ip: str
-    ray_enabled: bool
-    def __init__(self, deployment: _Optional[str] = ..., recipe: _Optional[str] = ..., image: _Optional[str] = ..., mode: _Optional[str] = ..., created_at: _Optional[str] = ..., memory_limit_gb: _Optional[float] = ..., shm_size_gb: _Optional[float] = ..., privileged: _Optional[bool] = ..., generation: _Optional[int] = ..., rank: _Optional[int] = ..., world_size: _Optional[int] = ..., cluster: _Optional[str] = ..., role: _Optional[str] = ..., node_rank: _Optional[int] = ..., head_ip: _Optional[str] = ..., ray_enabled: _Optional[bool] = ...) -> None: ...
+    def __init__(self, deployment: _Optional[str] = ..., recipe: _Optional[str] = ..., image: _Optional[str] = ..., mode: _Optional[str] = ..., created_at: _Optional[str] = ..., memory_limit_gb: _Optional[float] = ..., shm_size_gb: _Optional[float] = ..., privileged: _Optional[bool] = ..., generation: _Optional[int] = ..., rank: _Optional[int] = ..., world_size: _Optional[int] = ...) -> None: ...
 
 class ContainerInfo(_message.Message):
     __slots__ = ("id", "name", "status", "image", "metadata", "labels")

@@ -232,13 +232,16 @@ class TestTheCluster:
 
         assert seen.count(True) == 1
 
-    def test_the_control_nodes_block_is_repeated_at_the_top_level(self):
-        """Every reader written before this existed reads those keys."""
-        answer = node_stats.collect(services_for(FakeService(spark_stats())))
-        control = next(n for n in answer["nodes"] if n["is_control_plane"])
+    def test_there_is_one_shape_whatever_the_cluster_size(self):
+        """No flat copy of the control node beside the list.
 
-        assert answer["gpu"] == control["gpu"]
-        assert answer["cpu"] == control["cpu"]
+        A payload that answers twice invites a page to read the wrong half and
+        call it the cluster — which is the defect this replaced.
+        """
+        answer = node_stats.collect(services_for(FakeService(spark_stats())))
+
+        assert set(answer) == {"nodes"}
+        assert answer["nodes"][0]["is_control_plane"] is True
 
     def test_one_unreachable_node_does_not_take_the_others_with_it(self):
         def _resolve(node):
@@ -249,7 +252,9 @@ class TestTheCluster:
         answer = node_stats.collect(_resolve)
 
         assert [n["reachable"] for n in answer["nodes"]] == [True, False]
-        assert answer["gpu"], "the control node's panel went with the peer's"
+        assert answer["nodes"][0][
+            "gpu"
+        ], "the control node's panel went with the peer's"
 
     def test_an_unreadable_registry_still_reports_this_machine(self, monkeypatch):
         """A registry we cannot read is not a machine that does not exist."""

@@ -22,10 +22,8 @@ from typing import Any
 
 from spark_pulse.config import config
 from spark_pulse.tools.labels import (
-    CLUSTER_LABEL,
     CREATED_AT_LABEL,
     DEPLOYMENT_LABEL,
-    HEAD_IP_LABEL,
     IMAGE_LABEL,
     LABEL_PREFIX,
     MANAGED_FILTER,
@@ -33,11 +31,8 @@ from spark_pulse.tools.labels import (
     MEMORY_LIMIT_LABEL,
     MODE_LABEL,
     NAME_LABEL,
-    NODE_RANK_LABEL,
     PRIVILEGED_LABEL,
-    RAY_ENABLED_LABEL,
     RECIPE_LABEL,
-    ROLE_LABEL,
     SHM_SIZE_LABEL,
     VERSION_LABEL,
     identity_labels,
@@ -236,12 +231,6 @@ class ContainerMetadata:
     generation: int = 0
     rank: int = 0
     world_size: int = 1
-    # Cluster membership — empty for solo deployments.
-    cluster: str = ""
-    role: str = ""
-    node_rank: int = 0
-    head_ip: str = ""
-    ray_enabled: bool = False
 
     def to_labels(self) -> dict[str, str]:
         """Serialize to Docker label dict (prefix: spark-pulse.)."""
@@ -267,13 +256,6 @@ class ContainerMetadata:
                     self.deployment, self.generation, self.rank, self.world_size
                 )
             )
-        if self.cluster:
-            labels[CLUSTER_LABEL] = self.cluster
-            labels[ROLE_LABEL] = self.role
-            labels[NODE_RANK_LABEL] = str(self.node_rank)
-            labels[RAY_ENABLED_LABEL] = "true" if self.ray_enabled else "false"
-            if self.head_ip:
-                labels[HEAD_IP_LABEL] = self.head_ip
         return labels
 
     @classmethod
@@ -289,7 +271,6 @@ class ContainerMetadata:
             return int(raw) if raw.strip().isdigit() else default
 
         mem = _get("memory_limit_gb")
-        rank = _get("node_rank")
         return cls(
             deployment=_get("deployment"),
             recipe=_get("recipe"),
@@ -302,11 +283,6 @@ class ContainerMetadata:
             generation=_int(_get("generation"), 0),
             rank=_int(_get("rank"), 0),
             world_size=_int(_get("world_size"), 1),
-            cluster=_get("cluster"),
-            role=_get("role"),
-            node_rank=int(rank) if rank.isdigit() else 0,
-            head_ip=_get("head_ip"),
-            ray_enabled=_get("ray_enabled") == "true",
         )
 
 

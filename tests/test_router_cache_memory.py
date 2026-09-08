@@ -64,6 +64,12 @@ class TestCacheRouter:
 # ── Memory ───────────────────────────────────────────────────────────────────
 
 
+def _control(client) -> dict:
+    """The control node's block. There is no flat copy of it any more."""
+    body = client.get("/api/memory").json()
+    return next(n for n in body["nodes"] if n["is_control_plane"])
+
+
 def _deploy(client) -> dict:
     """Start one simulated deployment and return its record.
 
@@ -96,14 +102,12 @@ class TestMemoryRouter:
         assert [n["name"] for n in body["nodes"]] == ["spark-01", "spark-02"]
         assert body["nodes"][0]["is_control_plane"] is True
 
-    def test_the_control_node_stays_at_the_top_level(self, client):
-        """Every existing reader — the stream, the cards — was written to this."""
+    def test_there_is_one_shape_and_it_is_the_node_list(self, client):
+        """No flat copy of the control node beside it: a payload that answers
+        twice invites a page to read the wrong half and call it the cluster."""
         body = client.get("/api/memory").json()
-        control = next(n for n in body["nodes"] if n["is_control_plane"])
 
-        assert body["gpu"] == control["gpu"]
-        assert body["cpu"] == control["cpu"]
-        assert body["disk"] == control["disk"]
+        assert set(body) == {"nodes"}
 
     def test_a_node_that_cannot_be_asked_says_so_rather_than_vanishing(self, client):
         """A missing row and an idle machine look identical on a page."""
@@ -121,7 +125,7 @@ class TestMemoryRouter:
     def test_a_gb10_reports_no_gpu_memory_rather_than_zero(self, client):
         """The pool is unified, so `nvidia-smi` prints `[N/A]`. A zero here
         would draw an empty bar for a full machine."""
-        gpu = client.get("/api/memory/gpu").json()["gpus"][0]
+        gpu = _control(client)["gpu"][0]
 
         assert gpu["name"] == "NVIDIA GB10"
         assert gpu["memory_supported"] is False
@@ -130,13 +134,13 @@ class TestMemoryRouter:
 
     def test_host_memory_comes_back_in_megabytes(self, client):
         """The protocol is bytes; the page has always read `free -m`."""
-        cpu = client.get("/api/memory/cpu").json()
+        cpu = _control(client)["cpu"]
 
         assert cpu["total"] == 130_000_000_000 // (1024 * 1024)
         assert 0 < cpu["usage_percent"] < 100
 
-    def test_disks_are_wrapped_in_disks_and_stay_in_bytes(self, client):
-        disks = client.get("/api/memory/disk").json()["disks"]
+    def test_disks_stay_in_bytes(self, client):
+        disks = _control(client)["disk"]
 
         assert [d["mount"] for d in disks] == ["/"]
         assert disks[0]["total"] > 1_000_000_000
@@ -146,7 +150,7 @@ class TestMemoryRouter:
         the control plane knows which containers are its own."""
         created = _deploy(client)
 
-        processes = client.get("/api/memory").json()["processes"]
+        processes = _control(client)["processes"]
 
         mine = [p for p in processes if p["deployment"] == created["id"]]
         assert mine, "the deployment's own container held no GPU process"
@@ -155,7 +159,7 @@ class TestMemoryRouter:
 
     def test_a_process_nothing_claims_is_reported_untracked(self, client):
         """The row an operator opens this page for."""
-        processes = client.get("/api/memory").json()["processes"]
+        processes = _control(client)["processes"]
 
         stray = [p for p in processes if not p["is_tracked"]]
         assert [p["process_name"] for p in stray] == ["python3"]
@@ -168,9 +172,7 @@ class TestKillGpuProcess:
         ports, and the runtime would restart it."""
         created = _deploy(client)
         tracked = next(
-            p
-            for p in client.get("/api/memory").json()["processes"]
-            if p["deployment"] == created["id"]
+            p for p in _control(client)["processes"] if p["deployment"] == created["id"]
         )
 
         result = client.delete(f"/api/memory/processes/{tracked['pid']}").json()

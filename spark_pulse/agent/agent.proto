@@ -397,11 +397,11 @@ message ContainerMetadata {
   uint32 generation = 9;
   uint32 rank = 10;
   optional uint32 world_size = 11;
-  string cluster = 12;
-  string role = 13;
-  uint32 node_rank = 14;
-  string head_ip = 15;
-  bool ray_enabled = 16;
+  // 12-16 carried the removed cluster orchestrator's own identity — cluster
+  // name, role, node rank, head IP, a Ray flag. Nothing wrote them after that
+  // orchestrator was deleted; reserved so a future field cannot land on a
+  // number an older agent still reads.
+  reserved 12, 13, 14, 15, 16;
 }
 
 message ContainerInfo {
