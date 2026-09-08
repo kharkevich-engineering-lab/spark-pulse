@@ -209,33 +209,6 @@ const CASES: Case[] = [
     body: { path: "/mods/flash" },
   },
   {
-    name: "applyMod",
-    call: () => api.applyMod({ mod_name: "flash", mod_path: "/mods/flash", target: "all" }),
-    path: "/api/mods/apply",
-    method: "POST",
-    body: { mod_name: "flash", mod_path: "/mods/flash", target: "all" },
-  },
-  {
-    name: "rollbackMod",
-    call: () =>
-      api.rollbackMod({
-        mod_name: "flash",
-        mod_path: "/mods/flash",
-        target: "all",
-        completed_nodes: ["10.0.0.11"],
-      }),
-    path: "/api/mods/rollback",
-    method: "POST",
-    body: {
-      mod_name: "flash",
-      mod_path: "/mods/flash",
-      target: "all",
-      completed_nodes: ["10.0.0.11"],
-    },
-  },
-
-  // ── Custom files ──────────────────────────────────────────────────────────
-  {
     name: "listCustomRecipes",
     call: () => api.listCustomRecipes(),
     path: "/api/custom-files/recipes/list",

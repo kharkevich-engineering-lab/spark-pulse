@@ -452,30 +452,6 @@ export interface OciAutoUpdateSettings {
 
 // ── Cluster Orchestration Types ──────────────────────────────────────────────
 //
-// What is left of the cluster orchestrator's vocabulary. The orchestrator, its
-// health checks and its REST surface are gone: a cluster is a deployment of
-// size N, so its machines come from `/api/nodes` and its state from
-// `/api/deployments`. These two shapes stay only because the mod endpoints
-// still take a `cluster_state` payload in this form.
-
-export interface ClusterNodeInfo {
-  ip: string;
-  container: string;
-  status: "starting" | "running" | "stopped" | "error";
-  ray_ready: boolean;
-  gpu_count: number;
-}
-
-export interface ClusterState {
-  name: string;
-  head: ClusterNodeInfo;
-  workers: ClusterNodeInfo[];
-  ray_enabled: boolean;
-  ray_ready: boolean;
-  total_nodes: number;
-  healthy: boolean;
-}
-
 // ── Launch Script Types (Phase 4) ────────────────────────────────────────────
 
 export interface LaunchScriptValidation {
@@ -527,7 +503,7 @@ export interface LaunchScriptPatchRequest {
   master_port?: number;
 }
 
-// ── Mod Deployment Types (Phase 4) ───────────────────────────────────────────
+// ── Mods ────────────────────────────────────────────────────────────────────
 
 export interface ModValidationResult {
   healthy: boolean;
@@ -535,34 +511,8 @@ export interface ModValidationResult {
   errors: string[];
 }
 
-export interface ModDeploymentResult {
-  mod_name: string;
-  target: "head" | "workers" | "all";
-  completed_nodes: string[];
-  failed_nodes: string[];
-}
-
-export interface ModRollbackResult {
-  rolled_back_nodes: string[];
-}
-
 export interface ModValidateRequest {
   path: string;
-}
-
-export interface ModApplyRequest {
-  mod_name: string;
-  mod_path: string;
-  target: "head" | "workers" | "all";
-  cluster_state?: ClusterState;
-}
-
-export interface ModRollbackRequest {
-  mod_name: string;
-  mod_path: string;
-  target: "head" | "workers" | "all";
-  completed_nodes: string[];
-  cluster_state?: ClusterState;
 }
 
 // ── Deployment Summary (Phase 4) ─────────────────────────────────────────────

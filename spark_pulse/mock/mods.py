@@ -1,14 +1,15 @@
-"""Mock mods tools — mod listing, inspection, and cluster deployment simulation.
+"""Mock mods tools — listing, inspection and validation.
 
-Returns deterministic results without accessing the filesystem.
-Mirrors the real mods.py API exactly.
+Returns deterministic results without accessing the filesystem. Mirrors the
+real mods.py API exactly, which no longer includes applying a mod: a recipe
+names its mods and the native runtime copies them into each rank's container
+at deploy time.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from spark_pulse.tools.launch_script import ValidationResult
 
@@ -47,21 +48,6 @@ _MODS: list[dict[str, Any]] = [
         "script": "#!/bin/bash\n# Configure NCCL\necho 'Setting NCCL optimizations...'",
     },
 ]
-
-
-@dataclass
-class ModDeployment:
-    """A mod deployment, tracked the way the real one is.
-
-    Named for its real twin on purpose: ``routers/mods.py`` builds one through
-    ``tools.mods`` and the switch has to hand it whichever module is in force.
-    """
-
-    mod_name: str
-    mod_path: Path
-    target: Literal["head", "workers", "all"]
-    completed_nodes: list[str] = field(default_factory=list)
-    failed_nodes: list[str] = field(default_factory=list)
 
 
 def list_mods() -> list[dict[str, Any]]:
@@ -112,101 +98,3 @@ def validate_mod_content(mod_path: Path) -> ValidationResult:
         warnings.append("run.sh uses network access (curl/wget)")
 
     return ValidationResult.ok(warnings=warnings if warnings else None)
-
-
-class ModOrchestrator:
-    """Mock mod orchestrator for cluster-wide deployment simulation.
-
-    Scenario-driven simulation:
-    - "success": all nodes succeed
-    - "partial_failure": some nodes fail
-    - "head_only": only head node is targeted
-    """
-
-    def __init__(
-        self,
-        ssh_client: Any = None,
-        services: Any = None,
-        scenario: str = "success",
-    ):
-        # ``ssh_client`` and ``services`` are the real orchestrator's arguments
-        # and are accepted so a caller can construct either module's class the
-        # same way; nothing is executed here, so they are ignored.
-        self._scenario = scenario
-        self._deployments: list[ModDeployment] = []
-
-    def apply_mod_cluster(
-        self,
-        mod_deployment: Any,
-        cluster_state: Any,
-    ) -> Any:
-        """Apply mod to cluster nodes based on target.
-
-        Returns a ModDeployment-like object with completed/failed tracking.
-        """
-        completed: list[str] = []
-        failed: list[str] = []
-
-        # Determine target nodes
-        target_nodes: list[Any] = []
-        if mod_deployment.target in ("head", "all"):
-            target_nodes.append(cluster_state.head)
-        if mod_deployment.target in ("workers", "all"):
-            target_nodes.extend(cluster_state.workers)
-
-        for node in target_nodes:
-            if self._scenario == "success":
-                completed.append(node.ip)
-            elif self._scenario == "partial_failure":
-                # First half succeeds, second half fails
-                idx = target_nodes.index(node)
-                if idx < len(target_nodes) // 2:
-                    completed.append(node.ip)
-                else:
-                    failed.append(node.ip)
-            elif self._scenario == "all_fail":
-                failed.append(node.ip)
-            else:
-                completed.append(node.ip)
-
-        deployment = ModDeployment(
-            mod_name=mod_deployment.mod_name,
-            mod_path=mod_deployment.mod_path,
-            target=mod_deployment.target,
-            completed_nodes=completed,
-            failed_nodes=failed,
-        )
-        self._deployments.append(deployment)
-        return deployment
-
-    def rollback_mod(
-        self,
-        mod_deployment: Any,
-        cluster_state: Any,
-    ) -> list[str]:
-        """Rollback mod on completed nodes."""
-        rolled_back: list[str] = []
-
-        target_nodes: list[Any] = []
-        if mod_deployment.target in ("head", "all"):
-            target_nodes.append(cluster_state.head)
-        if mod_deployment.target in ("workers", "all"):
-            target_nodes.extend(cluster_state.workers)
-
-        for node in target_nodes:
-            if node.ip in mod_deployment.completed_nodes:
-                rolled_back.append(node.ip)
-
-        return rolled_back
-
-    def validate_mod(
-        self,
-        mod_path: Path,
-    ) -> ValidationResult:
-        """Validate mod content (delegates to validate_mod_content)."""
-        return validate_mod_content(mod_path)
-
-    @property
-    def deployments(self) -> list[ModDeployment]:
-        """Return all recorded deployments."""
-        return list(self._deployments)

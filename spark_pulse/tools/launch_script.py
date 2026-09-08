@@ -361,7 +361,7 @@ class LaunchScriptManager:
 
 
 class LaunchScriptDistributor:
-    """Distributes patched scripts to cluster nodes.
+    """Copies a patched script into a node's container.
 
     One code path, because there is one transport: the node-bound container
     service copies the script in, and the service knows which node it belongs
@@ -369,6 +369,10 @@ class LaunchScriptDistributor:
     ``scp``-then-``docker cp`` on a worker — and the head branch copied from
     ``/tmp/exec-script.sh`` *inside the container*, a path nothing had put
     anything at. It could only ever have worked by accident.
+
+    The head-and-workers walk that sat on top of this went with the cluster
+    orchestrator that produced such a shape; a deployment is a gang of ranks
+    and the native runtime copies each rank's script itself.
     """
 
     def __init__(self, services: Any = None):
@@ -398,52 +402,6 @@ class LaunchScriptDistributor:
         self._service(node.ip).copy_to_container(
             container_name, str(script), "/workspace/exec-script.sh"
         )
-
-    def deploy_to_cluster(
-        self,
-        cluster_state: Any,
-        bundle: PatchedScriptBundle,
-    ) -> dict[int, bool]:
-        """Deploy patched scripts to all nodes in the cluster.
-
-        Args:
-            cluster_state: ClusterState with head and workers
-            bundle: PatchedScriptBundle with per-node scripts
-
-        Returns:
-            Dict mapping node_rank to success status
-        """
-        results: dict[int, bool] = {}
-
-        # Deploy to head (node_rank 0)
-        head_script = bundle.script_path(0)
-        if head_script:
-            try:
-                self.deploy_to_node(
-                    node=cluster_state.head,
-                    script=head_script,
-                    container_name=cluster_state.head.container_name,
-                )
-                results[0] = True
-            except Exception:
-                results[0] = False
-
-        # Deploy to workers
-        for i, worker in enumerate(cluster_state.workers):
-            worker_rank = i + 1
-            worker_script = bundle.script_path(worker_rank)
-            if worker_script:
-                try:
-                    self.deploy_to_node(
-                        node=worker,
-                        script=worker_script,
-                        container_name=worker.container_name,
-                    )
-                    results[worker_rank] = True
-                except Exception:
-                    results[worker_rank] = False
-
-        return results
 
 
 def validate_mod_content(
