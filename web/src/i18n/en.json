@@ -175,7 +175,8 @@
     "colNodes": "Nodes",
     "colPlacement": "Placement",
     "colEngine": "Engine",
-    "colStatus": "Status"
+    "colStatus": "Status",
+    "experimental": "Multi-node is still experimental."
   },
   "inference": {
     "title": "Inference",

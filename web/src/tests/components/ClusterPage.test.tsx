@@ -4,7 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import ClusterPage from "@/pages/ClusterPage";
-import { MULTI_NODE_BADGE_TITLE, MULTI_NODE_UNPROVEN } from "@/lib/experimental";
+import { MULTI_NODE_BADGE_TITLE } from "@/lib/experimental";
 import type { Deployment } from "@/lib/types";
 
 vi.mock("@/lib/api", () => ({
@@ -57,27 +57,15 @@ describe("ClusterPage", () => {
     vi.mocked(fetchDeployments).mockResolvedValue([SOLO, GANG]);
   });
 
-  it("warns that multi-node is unverified and lists what is unproven", async () => {
+  it("says multi-node is experimental in one line, not a wall of text", async () => {
+    // The full banner — six named unproven things and why — belongs where an
+    // operator is about to deploy across machines. This page is read, and on
+    // it the banner was the loudest thing on the screen.
     render(<ClusterPage />);
 
     const note = await screen.findByRole("note");
-    expect(note).toHaveTextContent(/implemented but unverified/i);
-    for (const item of MULTI_NODE_UNPROVEN) {
-      expect(note).toHaveTextContent(item);
-    }
-    expect(within(note).getAllByRole("listitem")).toHaveLength(MULTI_NODE_UNPROVEN.length);
-  });
-
-  it("does not repeat the stale claim that more than one node is refused", async () => {
-    render(<ClusterPage />);
-
-    const note = await screen.findByRole("note");
-    // The old copy said multi-node was refused outright. It is not: it is
-    // implemented and unverified, which is a different thing to tell an
-    // operator, and the difference is the whole point of the banner.
-    expect(note).not.toHaveTextContent(/asking for more than one node/i);
-    expect(note).not.toHaveTextContent(/refused by name/i);
-    expect(note).not.toHaveTextContent(/until the start loop covers every rank/i);
+    expect(note).toHaveTextContent("Multi-node is still experimental.");
+    expect(within(note).queryAllByRole("listitem")).toHaveLength(0);
   });
 
   it("marks the row of a deployment that spans machines", async () => {

@@ -175,7 +175,8 @@
     "colNodes": "Nœuds",
     "colPlacement": "Placement",
     "colEngine": "Moteur",
-    "colStatus": "État"
+    "colStatus": "État",
+    "experimental": "Le multi-nœud est encore expérimental."
   },
   "inference": {
     "title": "Inférence",
