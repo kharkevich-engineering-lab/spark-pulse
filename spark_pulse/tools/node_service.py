@@ -351,6 +351,25 @@ NODE_SERVICE_METHODS: tuple[str, ...] = (
     "remove_image",
 )
 
+#: What an agent answers about the *machine*, as opposed to its containers.
+#:
+#: Kept apart from :data:`NODE_SERVICE_METHODS` because that tuple has a
+#: stricter meaning: every name in it must match ``DockerService``'s signature,
+#: which is what lets a caller hold a service without knowing which
+#: implementation it is. These have no Docker equivalent — they read the node's
+#: hardware and its model cache, and signal its processes — so asserting they
+#: match it would be asserting something false.
+#:
+#: They still travel the same transport, are still answered by the same agent,
+#: and are still reached through the same resolver, which is the property that
+#: matters: the control node answers them exactly as a peer does.
+NODE_MACHINE_METHODS: tuple[str, ...] = (
+    "get_node_stats",
+    "list_snapshot",
+    "remove_snapshot",
+    "terminate_process",
+)
+
 
 def run_kwargs_from_docker_config(docker_config: dict[str, Any] | None) -> dict:
     """Map the cluster ``docker_config`` dict onto ``run_container`` kwargs.
@@ -467,6 +486,7 @@ class NodeServices:
 __all__ = [
     "CONTROL_NODE_ID",
     "LOOPBACK_ADDRESSES",
+    "NODE_MACHINE_METHODS",
     "NODE_SERVICE_METHODS",
     "STATUS_PROBE_TIMEOUT",
     "NoAgent",

@@ -1320,8 +1320,13 @@ def _remote_verify(
     return _parse_report(result.stdout)
 
 
-#: The old name for the operation. Replication is what it always meant to do.
-sync_to_nodes = replicate_to_nodes
+def _node_services(services: Any | None = None) -> Callable[[Any], Any]:
+    """The resolver every node — including this one — is reached through."""
+    if services is not None:
+        return services
+    from spark_pulse import tools
+
+    return tools.node_service.NodeServices()
 
 
 def presence(
@@ -1332,15 +1337,20 @@ def presence(
     client: SSHClient | None = None,
     revision: str | None = None,
     deep: bool = False,
+    services: Any | None = None,
 ) -> dict[str, Any]:
     """Report, per node, whether the model is absent, partial or verified.
 
     The old check ran ``test -d …/snapshots`` and called a hit "present". That
     directory exists after a transfer that copied no symlinks, after one that
     copied symlinks but no blobs, and after one that truncated every file, so
-    "present" meant nothing.  This asks the node to check its own copy against
-    the manifest and says which of the three it actually is, naming what is
-    missing when the answer is ``partial``.
+    "present" meant nothing.
+
+    What replaced it shipped ``hub_cache.py`` to each node over SSH and ran it
+    there — a second copy of the verifier on a machine that may not have the
+    interpreter for it, and an SSH login per question. The node now *lists* its
+    snapshot through its own agent, and the verdict is reached here, against
+    the manifest this side already holds. One verifier, one transport.
     """
     repo_path = local_repo_path(model_id)
     local_report = hub_cache.verify_snapshot(str(repo_path), revision, deep=deep)
@@ -1349,28 +1359,28 @@ def presence(
         hub_cache.EVIDENCE_MANIFEST,
         hub_cache.EVIDENCE_HASHES,
     )
+    manifest = hub_cache.read_manifest(str(repo_path), str(commit)) if commit else None
     remote_dir = f"{hub_dir()}/{repo_dir_name(model_id)}"
-    ssh = client or _make_ssh_client(ssh_user)
+    resolve = _node_services(services)
 
     def _one(node: str) -> dict[str, Any]:
+        from spark_pulse import tools
+
         try:
-            ssh.exec(node, f"mkdir -p {_q(_staging_root())}", timeout=timeout)
-            ssh.copy(
-                str(_helper_source()),
-                node,
-                _remote_helper_path(),
-                timeout=timeout,
+            service = resolve(
+                tools.node_service.node_for(node, ssh_user=ssh_user or "")
             )
-            report = _remote_verify(
-                ssh,
-                node,
-                remote_dir,
-                str(commit or ""),
-                require_manifest=require_manifest,
-                deep=deep,
-            )
-        except (SSHError, RuntimeError, OSError) as exc:
+            listing = service.list_snapshot(remote_dir, str(commit or ""), deep)
+        except Exception as exc:  # noqa: BLE001 — a node that cannot be asked
             return _presence_entry(node, None, error=str(exc)[:500])
+        report = hub_cache.verify_listing(
+            _listed_files(listing),
+            commit=listing.revision or str(commit or ""),
+            present=bool(listing.present),
+            manifest=manifest,
+            deep=deep,
+            require_manifest=require_manifest,
+        )
         return _presence_entry(node, report)
 
     results: list[dict[str, Any]] = []
@@ -1387,6 +1397,25 @@ def presence(
         "local_report": local_report,
         "nodes": results,
     }
+
+
+def _listed_files(listing: Any) -> list[dict[str, Any]]:
+    """A ``SnapshotListing`` as the plain dicts ``hub_cache`` reads.
+
+    ``hub_cache`` imports nothing from this package and knows nothing about
+    protobuf — that is what lets it be a standalone script — so the shape
+    crosses here rather than there.
+    """
+    return [
+        {
+            "path": entry.path,
+            "size": entry.size_bytes,
+            "sha256": entry.sha256,
+            "is_symlink": entry.is_symlink,
+            "resolved": entry.resolved,
+        }
+        for entry in listing.files
+    ]
 
 
 def _presence_entry(
@@ -1413,8 +1442,8 @@ def _presence_entry(
     return {
         "node": node,
         "state": state,
-        # Retained for callers written against the old boolean; it now means
-        # "verified", never "a directory exists".
+        # "Verified", never "a directory exists" — which is what the check
+        # this replaced actually tested.
         "present": state == hub_cache.STATE_VERIFIED,
         "reason": report.get("reason", ""),
         "revision": report.get("revision"),
@@ -1424,7 +1453,12 @@ def _presence_entry(
         "files_expected": int(report.get("files_expected") or 0),
         "missing": list(report.get("missing") or []),
         "missing_count": int(report.get("missing_count") or 0),
-        "verified_at": report.get("verified_at"),
+        # When the check itself ran, for a node that passed it. This used to
+        # come from a marker a replication wrote on the node, which said when
+        # some earlier transfer proved the copy; the check now runs on every
+        # ask, so the answer is the check that just happened.
+        "verified_at": report.get("verified_at")
+        or (report.get("checked_at") if state == hub_cache.STATE_VERIFIED else None),
         "error": error,
     }
 
@@ -1486,18 +1520,69 @@ def models_in_use() -> dict[str, list[str]]:
     return in_use
 
 
-def delete_model(model_id: str) -> dict[str, Any]:
-    """Delete a cached model directory, refusing when a deployment uses it."""
+def delete_model(
+    model_id: str,
+    nodes: list[str] | None = None,
+    revision: str | None = None,
+    services: Any | None = None,
+) -> dict[str, Any]:
+    """Delete a cached model, here and on whichever nodes were named.
+
+    A 26 GB model replicated to four Sparks used to be deleted from one of
+    them, and the page then said it was gone. Every node is asked through its
+    own agent — including this one, which is why there is no ``shutil.rmtree``
+    left here — and each answers for itself: removed or not, and how much it
+    freed.
+
+    Naming no revision takes the whole repository, which is what an operator
+    clearing a model means. Naming one leaves the blobs alone, because they
+    are shared with the revisions that stay.
+    """
+    from spark_pulse import tools
+
     users = models_in_use().get(model_id.lower(), [])
     if users:
         raise ValueError(
             f"Model {model_id} is in use by running deployment(s): {', '.join(users)}"
         )
     repo_path = hub_dir() / repo_dir_name(model_id)
-    if not repo_path.is_dir():
+    local_present = repo_path.is_dir()
+    if not local_present and not nodes:
         raise ValueError(f"Model not in local cache: {model_id}")
-    size, _ = _dir_stats(repo_path)
-    shutil.rmtree(repo_path, ignore_errors=True)
-    result = {"deleted": model_id, "path": str(repo_path), "freed_bytes": size}
+
+    resolve = _node_services(services)
+    targets: list[tuple[str, Any]] = [("", tools.node_service.control_node())]
+    for address in nodes or []:
+        if tools.node_service.is_local_address(address):
+            continue
+        targets.append((address, tools.node_service.node_for(address)))
+
+    def _one(target: tuple[str, Any]) -> dict[str, Any]:
+        address, node = target
+        try:
+            removal = resolve(node).remove_snapshot(str(repo_path), revision or "")
+        except Exception as exc:  # noqa: BLE001 — a node that cannot be asked
+            return {
+                "node": address,
+                "removed": False,
+                "freed_bytes": 0,
+                "error": str(exc)[:500],
+            }
+        return {
+            "node": address,
+            "removed": bool(removal.removed),
+            "freed_bytes": int(removal.freed_bytes),
+            "error": None,
+        }
+
+    with ThreadPoolExecutor(max_workers=max(1, len(targets))) as pool:
+        answers = list(pool.map(_one, targets))
+
+    result = {
+        "deleted": model_id,
+        "path": str(repo_path),
+        "freed_bytes": sum(a["freed_bytes"] for a in answers),
+        "nodes": answers,
+    }
     publish_event(EVENT_DELETED, model_id, result)
     return result

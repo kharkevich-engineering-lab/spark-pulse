@@ -17,7 +17,7 @@ export interface RecipeSummary {
   engines: string[];
   /** Engine-neutral parameters. Mirrors `defaults` for v1 recipes. */
   params: Record<string, unknown>;
-  /** Where the recipe came from: bundled, upstream, custom, oci or imported. */
+  /** Where the recipe came from: bundled, upstream, custom or oci. */
   source: string;
   /** Whether each known engine can run this recipe, and why not when it cannot. */
   engine_support: RecipeEngineSupport[];
@@ -48,47 +48,6 @@ export interface RecipeDetail extends RecipeSummary {
   min_nodes: number | null;
   engine_specs: Record<string, RecipeEngineSpec>;
 }
-
-// ── Importing recipes from an upstream checkout ─────────────────────────────
-
-export type RecipeImportStatusKind = "ok" | "skipped" | "error";
-
-export interface RecipeImportRecipeEntry {
-  file: string;
-  id: string | null;
-  status: RecipeImportStatusKind;
-  message: string;
-  name?: string;
-  recipe_version?: string;
-}
-
-export interface RecipeImportModEntry {
-  name: string;
-  status: RecipeImportStatusKind;
-  message: string;
-}
-
-export interface RecipeImportCounts {
-  ok: number;
-  skipped: number;
-  error: number;
-}
-
-export interface RecipeImportResult {
-  source: string;
-  source_url: string | null;
-  ref: string | null;
-  git_sha: string | null;
-  imported_at: string;
-  dest: string;
-  recipes: RecipeImportRecipeEntry[];
-  mods: RecipeImportModEntry[];
-  counts: { recipes: RecipeImportCounts; mods: RecipeImportCounts };
-}
-
-export type RecipeImportStatus =
-  | { imported: false }
-  | ({ imported: true } & RecipeImportResult);
 
 /** One rank of a deployment: where it runs and which container it is.
  *
@@ -143,6 +102,15 @@ export interface Deployment {
   stopped_at: string | null;
   error_message: string | null;
   launch_command?: string;
+  /** Convergence, as distinct from `status`.
+   *
+   * `status` says what the deployment is — running, pulling, stopped. This
+   * says whether what was asked for has happened yet: `in_sync`,
+   * `in_progress`, `deleting`, or `unknown` when a node could not be asked.
+   * Records written before this existed carry nothing and are settled. */
+  sync?: string;
+  /** Why it is not settled, in the operator's words. */
+  sync_reason?: string;
   /** "native" when the deployment runs as a container we drive ourselves;
    *  absent or "upstream" when it was launched via run-recipe.sh. */
   runtime?: string;
@@ -223,6 +191,11 @@ export interface GPUProcess {
   process_name: string;
   used_memory: number;
   is_tracked?: boolean;
+  /** The container the node found it in, when it could tell. */
+  container_id?: string;
+  /** The deployment that container belongs to, when it is one of ours. */
+  deployment?: string;
+  container_name?: string;
 }
 
 export interface CPUStats {
@@ -241,11 +214,29 @@ export interface DiskStats {
   usage_percent: number;
 }
 
-export interface MemoryResponse {
+/** One machine's answer.
+ *
+ * `reachable` is the third state this codebase keeps insisting on: a node that
+ * could not be asked has not said it is idle. The row is still here, and it
+ * says why — a missing row and a quiet machine look identical on a page. */
+export interface NodeStats {
+  id: string;
+  name: string;
+  address: string;
+  is_control_plane: boolean;
+  reachable: boolean;
+  error: string | null;
+  /** What the node could not read, in its own words. Empty means nothing. */
+  unavailable: string[];
   gpu: GPUStats[];
   cpu: CPUStats;
   disk: DiskStats[];
   processes: GPUProcess[];
+}
+
+export interface MemoryResponse {
+  /** Every registered node, control plane first. */
+  nodes: NodeStats[];
 }
 
 export interface CacheEntry {
@@ -909,13 +900,15 @@ export interface ModelSyncResult {
 export interface ModelPresence {
   model: string;
   local: boolean;
-  nodes: { node: string; present: boolean; error: string | null }[];
+  nodes: { node: string; present: boolean; state?: string; error: string | null }[];
 }
 
 export interface ModelDeleteResult {
   deleted: string;
   path: string;
   freed_bytes: number;
+  /** One row per node asked: the control node first, then those named. */
+  nodes?: { node: string; removed: boolean; freed_bytes: number; error: string | null }[];
 }
 
 // ── Engine images ──────────────────────────────────────────────────

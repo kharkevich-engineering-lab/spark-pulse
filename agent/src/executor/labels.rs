@@ -7,10 +7,10 @@
 //! with `spark_pulse/tools/labels.py` and `ContainerMetadata.to_labels()` key
 //! for key.
 //!
-//! The cluster block is legacy. Nothing writes those labels any more — the
-//! orchestrator that did is gone — but the orphan sweep still reads them,
-//! because a container an older build left on a host carries no other identity
-//! we would recognise.
+//! There was a cluster block here for the removed orchestrator's own labels —
+//! cluster name, role, node rank, head IP, a Ray flag. Nothing wrote them
+//! after that orchestrator was deleted, and keys nothing writes only invite
+//! something to start reading them again.
 
 use std::collections::BTreeMap;
 
@@ -38,11 +38,6 @@ label!(PRIVILEGED, "privileged");
 label!(GENERATION, "generation");
 label!(RANK, "rank");
 label!(WORLD_SIZE, "world_size");
-label!(CLUSTER, "cluster");
-label!(ROLE, "role");
-label!(NODE_RANK, "node_rank");
-label!(HEAD_IP, "head_ip");
-label!(RAY_ENABLED, "ray_enabled");
 
 /// Every managed container carries this, and every listing filters on it.
 pub const MANAGED_FILTER: &str = "spark-pulse.managed=true";
@@ -130,15 +125,6 @@ pub fn to_labels(metadata: &ContainerMetadata) -> BTreeMap<String, String> {
             metadata.world_size.unwrap_or(1).to_string(),
         );
     }
-    if !metadata.cluster.is_empty() {
-        labels.insert(CLUSTER.into(), metadata.cluster.clone());
-        labels.insert(ROLE.into(), metadata.role.clone());
-        labels.insert(NODE_RANK.into(), metadata.node_rank.to_string());
-        labels.insert(RAY_ENABLED.into(), bool_label(metadata.ray_enabled));
-        if !metadata.head_ip.is_empty() {
-            labels.insert(HEAD_IP.into(), metadata.head_ip.clone());
-        }
-    }
     labels
 }
 
@@ -163,7 +149,6 @@ pub fn from_labels(labels: &BTreeMap<String, String>) -> ContainerMetadata {
     let memory = get("memory_limit_gb");
     let mode = get("mode");
     let created = get("created_at");
-    let node_rank = get("node_rank");
     ContainerMetadata {
         deployment: get("deployment"),
         recipe: get("recipe"),
@@ -179,11 +164,6 @@ pub fn from_labels(labels: &BTreeMap<String, String>) -> ContainerMetadata {
         generation: int_or(&get("generation"), 0),
         rank: int_or(&get("rank"), 0),
         world_size: Some(int_or(&get("world_size"), 1)),
-        cluster: get("cluster"),
-        role: get("role"),
-        node_rank: int_or(&node_rank, 0),
-        head_ip: get("head_ip"),
-        ray_enabled: get("ray_enabled") == "true",
     }
 }
 
@@ -309,14 +289,14 @@ mod tests {
 
     #[test]
     fn an_empty_filter_value_matches_presence() {
-        let labels: BTreeMap<String, String> = [(CLUSTER.to_string(), "c".to_string())]
+        let labels: BTreeMap<String, String> = [(RECIPE.to_string(), "qwen".to_string())]
             .into_iter()
             .collect();
         let presence: BTreeMap<String, String> =
-            [(CLUSTER.to_string(), String::new())].into_iter().collect();
+            [(RECIPE.to_string(), String::new())].into_iter().collect();
         assert!(labels_match(&labels, &presence));
         let other: BTreeMap<String, String> =
-            [(ROLE.to_string(), String::new())].into_iter().collect();
+            [(MODE.to_string(), String::new())].into_iter().collect();
         assert!(!labels_match(&labels, &other));
     }
 }

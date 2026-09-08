@@ -137,9 +137,21 @@ def get_model(model_id: str):
 
 
 @router.delete("/{model_id:path}")
-def delete_model(model_id: str):
+def delete_model(
+    model_id: str,
+    nodes: str = Query("", description="Comma-separated node list"),
+    revision: str | None = Query(
+        None, description="One revision; the whole repository when absent"
+    ),
+):
+    """Remove a cached model, here and on whichever nodes were named.
+
+    A model replicated to four Sparks used to be deleted from one of them,
+    and the page then said it was gone. Every node answers for itself.
+    """
+    node_list = [n.strip() for n in nodes.split(",") if n.strip()]
     try:
-        return tools.models.delete_model(model_id)
+        return tools.models.delete_model(model_id, node_list, revision)
     except ValueError as exc:
         message = str(exc)
         status = 409 if "in use" in message else 404

@@ -97,10 +97,10 @@ test("lists the nodes the backend holds, with interfaces, role and state", async
   await expectNoCrash(page);
 });
 
-test("keeps the experimental banner", async ({ page }) => {
+test("keeps the experimental marking above the registry", async ({ page }) => {
   await gotoPage(page, "/cluster");
   await expect(
-    page.getByRole("note").filter({ hasText: "Multi-node is implemented but unverified" }),
+    page.getByRole("note").filter({ hasText: "Multi-node is still experimental" }),
   ).toBeVisible();
   await expectNoCrash(page);
 });

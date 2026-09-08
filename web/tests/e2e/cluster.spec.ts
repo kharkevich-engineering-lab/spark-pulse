@@ -7,11 +7,13 @@
  * those endpoints hold, and nothing on it calls an endpoint that no longer
  * exists.
  *
- * Multi-node is implemented but has never run on real hardware, so the page and
- * its nav entry still say so, and the banner names what is unproven rather
- * than saying "experimental". `cluster_experimental` in /api/config drives
- * both, so the marking disappears without a code change once a second Spark
- * has verified the list.
+ * Multi-node is implemented but has never run on real hardware, so the page
+ * and its nav entry still say so — in one line here, because this page is read
+ * rather than acted on. What is unproven and why belongs where an operator is
+ * about to deploy across machines: the deploy form and the expanded row on
+ * Inference, which have their own specs. `cluster_experimental` in /api/config
+ * drives the marking, so it disappears without a code change once a second
+ * Spark has verified the list.
  */
 
 import { expect, test } from "@playwright/test";
@@ -23,24 +25,17 @@ test("marks the cluster page and its nav entry experimental", async ({ page, req
 
   await expect(page.getByRole("heading", { name: "Cluster Orchestration" })).toBeVisible();
 
-  const banner = page.getByRole("note").filter({ hasText: "Multi-node is implemented but unverified" });
+  const note = page.getByRole("note").filter({ hasText: "Multi-node is still experimental" });
   const chip = page.getByRole("navigation").getByRole("link", { name: "Cluster" }).getByTitle(/never been run on two machines/i);
 
   if (config.cluster_experimental) {
-    await expect(banner).toBeVisible();
-    // The banner names the risks rather than saying "experimental" and
-    // leaving the operator to guess which parts are the unproven ones.
-    await expect(banner).toContainText("Only one DGX Spark exists");
-    await expect(banner).toContainText("rendezvous forms across machines");
-    // Two kinds of risk, labelled: a behaviour a published source specifies
-    // and we have not run reads very differently from one nobody documents.
-    await expect(banner).toContainText("Specified, unconfirmed —");
-    await expect(banner).toContainText("Documented nowhere —");
-    expect(await banner.getByRole("listitem").count()).toBeGreaterThan(3);
+    await expect(note).toBeVisible();
+    // One line: no list of risks on a page nobody deploys from.
+    expect(await note.getByRole("listitem").count()).toBe(0);
     await expect(chip).toBeVisible();
     await expect(chip).toHaveText("exp");
   } else {
-    await expect(banner).toHaveCount(0);
+    await expect(note).toHaveCount(0);
     await expect(chip).toHaveCount(0);
   }
   await expectNoCrash(page);

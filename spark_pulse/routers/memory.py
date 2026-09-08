@@ -1,46 +1,48 @@
-"""Memory monitoring API — GPU, CPU, disk stats."""
+"""Monitoring API — what every node is doing.
 
-from fastapi import APIRouter, HTTPException
+One endpoint, and it answers for the whole cluster: ``nodes`` carries one block
+per registered node, control plane first. There were three sub-endpoints
+answering for this machine alone; nothing called them, and an endpoint that
+silently means "the control node" is the defect this page was fixed for.
+
+Nothing here reads hardware. Each node is asked through its own agent —
+including this one — so the page does not depend on which machine the control
+plane happens to be installed on.
+"""
+
+from fastapi import APIRouter, HTTPException, Query
 
 from spark_pulse import tools
 
 router = APIRouter(prefix="/api/memory", tags=["memory"])
 
 
-@router.get("/gpu")
-def get_gpu_stats():
-    return {"gpus": tools.system.get_gpu_stats()}
-
-
-@router.get("/cpu")
-def get_cpu_stats():
-    return tools.system.get_cpu_stats()
-
-
-@router.get("/disk")
-def get_disk_stats():
-    return {"disks": tools.system.get_disk_stats()}
-
-
 @router.get("")
 def get_all_memory():
-    data = tools.system.get_all_memory()
-    running = [
-        d
-        for d in tools.deployment_records.load()
-        if d.get("status") in ("running", "pending")
-    ]
-    tools.system.enrich_gpu_process_tracking(data.get("processes", []), running)
-    return data
+    return tools.node_stats.collect()
 
 
 @router.delete("/processes/{pid}")
-def kill_gpu_process(pid: int):
-    result = tools.system.kill_gpu_process(pid)
-    if not result.get("killed") and result.get("error") == "Process not found":
-        raise HTTPException(status_code=404, detail=f"Process {pid} not found")
-    if not result.get("killed") and result.get("error") == "Permission denied":
-        raise HTTPException(
-            status_code=403, detail=f"Permission denied to kill process {pid}"
-        )
+def kill_gpu_process(
+    pid: int,
+    node: str = Query("", description="Address of the node the process is on"),
+    force: bool = Query(False, description="SIGKILL rather than SIGTERM"),
+):
+    """End one GPU process, on whichever node holds it.
+
+    A process inside a container this control plane started is ended by
+    stopping that container — killing the process inside it would leave the
+    container behind holding its ports. Anything else is signalled through the
+    node's agent, which is why the button now works on a node that is not this
+    one.
+    """
+    result = tools.node_stats.terminate(pid, node, force)
+    if not result.get("killed"):
+        error = str(result.get("error") or "")
+        if "no such process" in error.lower():
+            raise HTTPException(status_code=404, detail=f"Process {pid} not found")
+        if "not permitted" in error.lower() or "permission" in error.lower():
+            raise HTTPException(
+                status_code=403, detail=f"Not permitted to signal process {pid}"
+            )
     return result

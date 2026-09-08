@@ -3,7 +3,7 @@
 Shared layout: icon + title at top, description, optional badge row, chevron arrow.
 */
 
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Trash2 } from "lucide-react";
 
 interface BaseCardProps {
   icon: React.ReactNode;
@@ -14,9 +14,16 @@ interface BaseCardProps {
   onClick: () => void;
   disabled?: boolean;
   className?: string;
+  /** Shown as a trash control in the corner. Absent means this card names
+   *  something the operator did not create and cannot remove — a bundled
+   *  recipe lives inside the package. */
+  onDelete?: () => void;
+  /** What the delete control says it will do, for a screen reader and a
+   *  tooltip. Required with `onDelete` so no card offers an unlabelled bin. */
+  deleteLabel?: string;
 }
 
-export default function BaseCard({ icon, title, subtitle, description, badges, onClick, disabled, className }: BaseCardProps) {
+export default function BaseCard({ icon, title, subtitle, description, badges, onClick, disabled, className, onDelete, deleteLabel }: BaseCardProps) {
   const interactive = !disabled;
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -53,7 +60,25 @@ export default function BaseCard({ icon, title, subtitle, description, badges, o
             <p className="text-sm text-text-muted leading-snug mt-1 line-clamp-2">{description}</p>
           )}
         </div>
-        {!disabled && <ChevronRight size={16} className="text-text-muted group-hover:text-primary shrink-0 mt-0.5 transition-colors" />}
+        <div className="flex items-center gap-1 shrink-0 mt-0.5">
+          {onDelete && (
+            // `stopPropagation`, because the whole card is the open action and
+            // a delete that also opened what it deleted would be a trap.
+            <button
+              type="button"
+              aria-label={deleteLabel}
+              title={deleteLabel}
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete();
+              }}
+              className="p-1 rounded text-text-muted hover:text-danger hover:bg-danger/10 transition-colors"
+            >
+              <Trash2 size={15} />
+            </button>
+          )}
+          {!disabled && <ChevronRight size={16} className="text-text-muted group-hover:text-primary transition-colors" />}
+        </div>
       </div>
       {badges && <div className="flex flex-wrap gap-1.5 mt-3">{badges}</div>}
     </div>

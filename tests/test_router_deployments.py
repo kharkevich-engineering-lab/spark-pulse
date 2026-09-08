@@ -10,10 +10,7 @@ before the upgrade can still be seen, read, stopped and deleted — see
 from __future__ import annotations
 
 import importlib
-import json
-import signal
 import threading
-from datetime import datetime, timezone
 from unittest.mock import patch
 
 import pytest
@@ -78,6 +75,10 @@ def env(tmp_path):
             return_value=EngineRegistry(cache_dir=tmp_path / "engine-cache"),
         ),
         patch.object(nr, "_docker_service", return_value=docker),
+        # Container work goes through the node resolver now, for rank zero of a
+        # solo deployment exactly as for a rank on a peer, so the fixture pins
+        # the resolver rather than only the process's own service.
+        patch.object(nr, "rank_services", return_value=lambda _address: docker),
     ):
         yield {"records": records, "docker": docker}
         # A deploy that had to pull runs on a background thread. Left running,
@@ -97,8 +98,17 @@ def _join_deploy_threads(timeout: float = 5.0) -> None:
 
 @pytest.fixture
 def client(env):
+    """The app, with its reconciler stopped so sweeps are explicit.
+
+    `lifespan` starts a background thread that converges deleted deployments.
+    Left running it races every assertion about the state *between* the
+    request and the convergence — which is exactly what these tests are about
+    — so they sweep by hand instead. The thread itself is tested in
+    `test_tools_reconciler.py`.
+    """
     app = create_app()
     with TestClient(app) as test_client:
+        tools.reconciler.stop_reconciler()
         yield test_client
 
 
@@ -127,22 +137,13 @@ class TestDispatchRouting:
 
         assert native.call_args.kwargs["nodes"] == ["a", "b"]
 
-    def test_list_merges_legacy_and_native(self, env):
-        env["records"].write_text(
-            json.dumps(
-                [
-                    {
-                        "id": "legacy",
-                        "status": "stopped",
-                        "created_at": "2020-01-01T00:00:00+00:00",
-                    }
-                ]
-            )
-        )
-        native = dispatch.create_deployment("qwen3-8b", "n", {})
+    def test_the_listing_is_oldest_first(self, env):
+        first = dispatch.create_deployment("qwen3-8b", "one", {})
+        second = dispatch.create_deployment("qwen3-8b", "two", {})
 
         listed = dispatch.list_deployments()
-        assert [d["id"] for d in listed] == ["legacy", native["id"]]
+
+        assert [d["id"] for d in listed] == [first["id"], second["id"]]
 
     def test_plan_starts_nothing(self, env):
         plan = dispatch.plan_deployment("qwen3-8b")
@@ -328,23 +329,71 @@ class TestLifecycleEndpoints:
         assert response.status_code == 200
         assert created["container_name"] in response.json()["logs"]
 
-    def test_delete_stops_a_running_deployment(self, client, env):
+    def test_delete_answers_before_any_node_has_been_asked(self, client, env):
+        """The decision is made when the request arrives; the work is not.
+
+        Tearing every rank down on the request's thread made a delete as slow
+        as the slowest node, and on a node that had stopped answering, as slow
+        as the transport timeout. What the browser waited on was somebody
+        else's timeout, over a decision already taken.
+        """
         created = self._create(client)
+
         response = client.delete(f"/api/deployments/{created['id']}")
 
         assert response.status_code == 200
-        assert response.json()["status"] == "stopped"
-        assert created["container_name"] not in [
-            c.name for c in env["docker"].list_managed_containers()
+        body = response.json()
+        assert body["accepted"] is True
+        assert body["sync"] == "in_progress"
+        assert body["intent"] == "stop"
+        # Still listed, still running, and now marked: nothing has been torn
+        # down yet, and saying "stopped" here is what makes a UI report a
+        # container that still holds its GPU as gone.
+        listed = client.get("/api/deployments").json()
+        assert [(d["status"], d["sync"]) for d in listed] == [
+            ("running", "in_progress")
         ]
 
-    def test_delete_of_a_stopped_deployment_removes_it(self, client):
+    def test_the_sweep_is_what_stops_the_container(self, client, env):
         created = self._create(client)
         client.delete(f"/api/deployments/{created['id']}")
 
-        response = client.delete(f"/api/deployments/{created['id']}")
-        assert response.json() == {"deleted": True, "id": created["id"]}
+        tools.reconciler.Reconciler().sweep()
+
+        assert created["container_name"] not in [
+            c.name for c in env["docker"].list_managed_containers()
+        ]
+        listed = client.get("/api/deployments").json()
+        assert [(d["status"], d["sync"]) for d in listed] == [("stopped", "in_sync")]
+
+    def test_a_stop_is_not_a_removal(self, client, env):
+        """Two operations that share a verb in the UI and a method here.
+
+        Stopping a live deployment ends the containers; the record stays,
+        because a finished run is history an operator reads. Clearing that
+        record is a second, separate decision.
+        """
+        created = self._create(client)
+        client.delete(f"/api/deployments/{created['id']}")
+        tools.reconciler.Reconciler().sweep()
+        assert client.get("/api/deployments").json() != []
+
+        second = client.delete(f"/api/deployments/{created['id']}")
+
+        assert second.json()["sync"] == "deleting"
+        assert second.json()["intent"] == "delete"
+        tools.reconciler.Reconciler().sweep()
         assert client.get("/api/deployments").json() == []
+
+    def test_deleting_twice_is_not_an_error(self, client):
+        """An operator clicking again, or a retry, must not 500."""
+        created = self._create(client)
+        client.delete(f"/api/deployments/{created['id']}")
+
+        second = client.delete(f"/api/deployments/{created['id']}")
+
+        assert second.status_code == 200
+        assert second.json()["sync"] == "in_progress"
 
     def test_list_shows_the_native_deployment(self, client):
         created = self._create(client)
@@ -352,120 +401,6 @@ class TestLifecycleEndpoints:
 
         assert [d["id"] for d in listed] == [created["id"]]
         assert listed[0]["runtime"] == "native"
-
-
-class TestLegacyRecords:
-    """A deployment made by the removed upstream runner must not become a ghost.
-
-    The runner is gone and nothing can create one of these again. What must
-    survive the upgrade is the operator's ability to *see* and *end* one that
-    was still serving: a record they cannot stop is a GPU held by a process the
-    control plane no longer admits exists.
-    """
-
-    # Recent, so retention purging is not what the test is measuring.
-    RECENTLY = datetime.now(timezone.utc).isoformat()
-
-    LEGACY = {
-        "id": "legacy",
-        "name": "pre-upgrade",
-        "recipe_id": "qwen3-8b",
-        "status": "running",
-        "pid": 4242,
-        "port": 9000,
-        "created_at": "2020-01-01T00:00:00+00:00",
-        "log_path": None,
-    }
-
-    def _seed(self, env, **overrides):
-        env["records"].write_text(json.dumps([{**self.LEGACY, **overrides}]))
-
-    def test_a_legacy_record_is_still_listed(self, client, env):
-        self._seed(env)
-        with patch.object(records, "_pid_is_alive", return_value=True):
-            listed = client.get("/api/deployments").json()
-
-        assert [d["id"] for d in listed] == ["legacy"]
-        assert listed[0]["status"] == "running"
-
-    def test_stopping_one_signals_its_process_group(self, client, env):
-        self._seed(env)
-        with (
-            patch.object(records, "_pid_is_alive", return_value=True),
-            patch.object(records.os, "getpgid", return_value=4242) as getpgid,
-            patch.object(records.os, "killpg") as killpg,
-        ):
-            response = client.delete("/api/deployments/legacy")
-
-        assert response.status_code == 200
-        assert response.json()["status"] == "stopped"
-        getpgid.assert_called_once_with(4242)
-        assert killpg.call_args[0] == (4242, signal.SIGTERM)
-        # Through the store: state lives in the database now, and the seeded
-        # JSON file is only its migration source.
-        assert tools.deployment_records.load()[0]["status"] == "stopped"
-
-    def test_a_process_that_is_already_gone_still_marks_the_record(self, client, env):
-        self._seed(env)
-        with (
-            patch.object(records, "_pid_is_alive", return_value=True),
-            patch.object(records.os, "getpgid", side_effect=ProcessLookupError),
-        ):
-            response = client.delete("/api/deployments/legacy")
-
-        assert response.json()["status"] == "stopped"
-
-    def test_a_dead_process_reconciles_the_record_to_stopped(self, client, env):
-        self._seed(env)
-        with patch.object(records, "_pid_is_alive", return_value=False):
-            listed = client.get("/api/deployments").json()
-
-        assert listed[0]["status"] == "stopped"
-
-    def test_deleting_a_stopped_one_drops_the_record(self, client, env):
-        self._seed(env, status="stopped", stopped_at=self.RECENTLY)
-        response = client.delete("/api/deployments/legacy")
-
-        assert response.json() == {"deleted": True, "id": "legacy"}
-        assert tools.deployment_records.load() == []
-
-    def test_deleting_one_stops_it_first(self, env):
-        """Forgetting a deployment is not the same as ending it."""
-        self._seed(env)
-        with (
-            patch.object(records, "_pid_is_alive", return_value=True),
-            patch.object(records.os, "getpgid", return_value=4242),
-            patch.object(records.os, "killpg") as killpg,
-        ):
-            assert dispatch.delete_deployment("legacy") is True
-
-        assert killpg.called
-        assert records.load() == []
-
-    def test_its_own_log_file_is_still_readable(self, client, env, tmp_path):
-        log = tmp_path / "legacy.log"
-        log.write_text("line one\nline two\n")
-        self._seed(env, log_path=str(log))
-
-        response = client.get("/api/deployments/legacy/logs")
-        assert "line two" in response.json()["logs"]
-
-    def test_startup_names_a_legacy_deployment_that_is_still_running(self, env, capfd):
-        self._seed(env)
-        with patch.object(records, "_pid_is_alive", return_value=True):
-            with TestClient(create_app()):
-                pass
-
-        out = capfd.readouterr().out
-        assert "legacy" in out
-        assert "upstream runtime" in out
-
-    def test_startup_is_quiet_when_nothing_legacy_is_running(self, env, capfd):
-        self._seed(env, status="stopped", stopped_at=self.RECENTLY)
-        with TestClient(create_app()):
-            pass
-
-        assert "upstream runtime" not in capfd.readouterr().out
 
 
 class TestConfigExposesRuntime:

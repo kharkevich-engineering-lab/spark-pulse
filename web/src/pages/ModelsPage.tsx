@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "@/lib/i18n";
 import { Link } from "react-router-dom";
 import { AlertCircle, Boxes, Download, HardDrive, Loader2, Plus, Rocket, Save, Trash2, X } from "lucide-react";
@@ -8,8 +8,10 @@ import {
   deleteModel,
   fetchScheduledDeploys,
   fetchModelDownloads,
+  fetchModelPresence,
   fetchModelSources,
   fetchModels,
+  fetchNodes,
   saveModelSources,
   startModelDownload,
 } from "@/lib/api";
@@ -17,8 +19,14 @@ import { useQuery } from "@/hooks/useQuery";
 import { useSSEConnection } from "@/hooks/useSSEConnection";
 import { SSEConnectionState } from "@/lib/operations";
 import { formatSize } from "@/lib/utils";
-import { AlertModal, ConfirmModal } from "@/components/Modal";
-import type { ModelDownloadJob, ModelEntry, ModelSource, ScheduledDeploy } from "@/lib/types";
+import { AlertModal, Modal } from "@/components/Modal";
+import type {
+  ModelDownloadJob,
+  ModelEntry,
+  ModelPresence,
+  ModelSource,
+  ScheduledDeploy,
+} from "@/lib/types";
 
 const ACTIVE_STATES = ["queued", "running"];
 
@@ -133,6 +141,13 @@ export default function ModelsPage() {
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [alert, setAlert] = useState<{ title: string; message: string } | null>(null);
   const [scheduled, setScheduled] = useState<ScheduledDeploy[]>([]);
+  // The other machines a copy could be sitting on. Deleting from this one and
+  // calling the model gone is what left 26 GB on three Sparks.
+  const { data: nodes } = useQuery(fetchNodes);
+  const peers = useMemo(
+    () => (nodes ?? []).filter((n) => !n.is_control_plane).map((n) => n.address),
+    [nodes],
+  );
 
 
   const reloadJobs = useCallback(() => {
@@ -193,9 +208,27 @@ export default function ModelsPage() {
     }
   };
 
-  const doDelete = async (id: string) => {
+  const doDelete = async (id: string, nodes: string[]) => {
     try {
-      await deleteModel(id);
+      const result = await deleteModel(id, nodes);
+      const removed = (result.nodes ?? []).filter((n) => n.removed).length;
+      const refused = (result.nodes ?? []).filter((n) => n.error);
+      if (refused.length > 0) {
+        // Partly done is its own outcome. A page that says "deleted" while a
+        // node still holds 26 GB is the reason this reports per node.
+        setAlert({
+          title: t("models.deleteFailed"),
+          message: refused.map((n) => `${n.node || "this node"}: ${n.error}`).join("\n"),
+        });
+      } else if (nodes.length > 0) {
+        setAlert({
+          title: t("models.deleteTitle"),
+          message: t("models.removedFrom", {
+            count: removed,
+            size: formatSize(result.freed_bytes),
+          }),
+        });
+      }
       refetch();
     } catch (err) {
       setAlert({ title: t("models.deleteFailed"), message: err instanceof Error ? err.message : t("models.unknownError") });
@@ -404,14 +437,15 @@ export default function ModelsPage() {
       />
 
       {deleteTarget && (
-        <ConfirmModal
-          open={!!deleteTarget}
+        <ModelDeleteDialog
+          model={deleteTarget}
+          peers={peers}
           onClose={() => setDeleteTarget(null)}
-          onConfirm={() => { doDelete(deleteTarget); setDeleteTarget(null); }}
-          title={t("models.deleteTitle")}
-          message={t("models.deleteBody", { model: deleteTarget })}
-          confirmLabel={t("common.delete")}
-          confirmVariant="danger"
+          onConfirm={(onNodes) => {
+            const id = deleteTarget;
+            setDeleteTarget(null);
+            doDelete(id, onNodes);
+          }}
         />
       )}
 
@@ -419,5 +453,109 @@ export default function ModelsPage() {
         <AlertModal open={!!alert} onClose={() => setAlert(null)} title={alert.title} message={alert.message} />
       )}
     </div>
+  );
+}
+
+/** Which machines lose the model.
+ *
+ * A model replicated to four Sparks is on four disks. The old dialog deleted
+ * it from this one and said it was gone, which is how a cluster fills up with
+ * copies nobody can see. Presence is asked as the dialog opens so the nodes
+ * that actually hold it are the ones preselected — a node without a copy has
+ * nothing to reclaim.
+ */
+export function ModelDeleteDialog({
+  model,
+  peers,
+  onClose,
+  onConfirm,
+}: {
+  model: string;
+  peers: string[];
+  onClose: () => void;
+  onConfirm: (nodes: string[]) => void;
+}) {
+  const { t } = useI18n();
+  const [presence, setPresence] = useState<ModelPresence | "loading" | null>(null);
+  const [selected, setSelected] = useState<string[]>([]);
+  // A ref, not state: whether the operator has touched the boxes must not
+  // re-run the presence query, and reading it inside the effect is exactly
+  // what a ref is for.
+  const touched = useRef(false);
+
+  useEffect(() => {
+    if (peers.length === 0) return;
+    let live = true;
+    setPresence("loading");
+    fetchModelPresence(model, peers)
+      .then((answer) => {
+        if (!live) return;
+        setPresence(answer);
+        // Only preselect what the operator has not already changed.
+        setSelected((current) =>
+          touched.current
+            ? current
+            : answer.nodes.filter((n) => n.present).map((n) => n.node),
+        );
+      })
+      .catch(() => live && setPresence(null));
+    return () => {
+      live = false;
+    };
+  }, [model, peers]);
+
+  const holders = useMemo(() => {
+    if (!presence || presence === "loading") return [];
+    return presence.nodes.filter((n) => n.present).map((n) => n.node);
+  }, [presence]);
+
+  return (
+    <Modal open onClose={onClose} title={t("models.deleteTitle")}>
+      <div className="space-y-4">
+        <p className="text-sm text-text-muted">{t("models.deleteBody", { model })}</p>
+
+        {peers.length > 0 && (
+          <fieldset className="space-y-2">
+            <legend className="text-sm font-medium mb-1">{t("models.alsoRemoveFrom")}</legend>
+            {presence === "loading" && (
+              <p className="text-xs text-text-muted flex items-center gap-2">
+                <Loader2 size={12} className="animate-spin" />
+                {t("common.loading")}
+              </p>
+            )}
+            {peers.map((node) => (
+              <label key={node} className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={selected.includes(node)}
+                  onChange={(e) => {
+                    touched.current = true;
+                    setSelected((current) =>
+                      e.target.checked ? [...current, node] : current.filter((n) => n !== node),
+                    );
+                  }}
+                />
+                <span className="font-mono">{node}</span>
+                {presence && presence !== "loading" && !holders.includes(node) && (
+                  <span className="text-xs text-text-muted">{t("models.notThere")}</span>
+                )}
+              </label>
+            ))}
+          </fieldset>
+        )}
+
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 rounded-lg border border-border text-sm">
+            {t("common.cancel")}
+          </button>
+          <button
+            onClick={() => onConfirm(selected)}
+            className="px-4 py-2 rounded-lg bg-danger/10 text-danger border border-danger/30 hover:bg-danger/20 text-sm"
+          >
+            {selected.length > 0 ? t("models.deleteConfirm") : t("common.delete")}
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }

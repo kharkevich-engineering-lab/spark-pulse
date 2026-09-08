@@ -100,10 +100,18 @@ def publish_event(
 
 
 def _docker() -> Any:
-    """The container service for this process (real or mock)."""
+    """The container service for this machine — through its own agent.
+
+    Not ``tools.docker`` directly. Pulling, listing, inspecting and removing an
+    image are node operations, and this control plane reaches every node the
+    same way: the agent executes, this process coordinates. The agent it
+    reaches for itself is the one it runs over loopback, so there is no local
+    path here that a single-node install would exercise and a cluster would
+    not.
+    """
     from spark_pulse import tools
 
-    return tools.docker._get_service()
+    return tools.node_service.NodeServices().control()
 
 
 def local_digest(info: dict[str, Any] | None, repository: str) -> str:

@@ -14,6 +14,7 @@ import json
 import threading
 import time
 from pathlib import Path
+from contextlib import contextmanager
 from unittest.mock import patch
 
 import pytest
@@ -525,7 +526,7 @@ class TestImagePull:
         plan = native.plan("qwen3-8b")
         docker.client.images.add(plan.image_ref, size=26_843_545_600)
 
-        with patch.object(nr, "_docker_service", return_value=docker):
+        with _one_service(docker):
             replanned = native.plan("qwen3-8b")
 
         assert replanned.image_present is True
@@ -536,7 +537,7 @@ class TestImagePull:
         """A missing image is a warning, never a planning failure."""
         plan = native.plan("qwen3-8b")
         _forget_image(docker, plan.image_ref)
-        with patch.object(nr, "_docker_service", return_value=docker):
+        with _one_service(docker):
             plan = native.plan("qwen3-8b")
 
         assert plan.image_present is False
@@ -880,6 +881,22 @@ class TestDeleteTearsDown:
         assert plan.container.name not in names
 
 
+@contextmanager
+def _one_service(docker):
+    """Every node service in the deploy path is this one.
+
+    `_docker_service` used to be the only seam because a solo rank went
+    straight to `tools.docker`. It goes through the node resolver now — the
+    same path a rank on a peer takes — so a test that wants one injected
+    service pins the resolver too.
+    """
+    with (
+        patch.object(nr, "_docker_service", return_value=docker),
+        patch.object(nr, "rank_services", return_value=lambda _address: docker),
+    ):
+        yield
+
+
 class TestDeployDoesNotBlockOnAPull:
     """A 26 GB download must not hold one of the forty request threads.
 
@@ -943,7 +960,7 @@ class TestDeployDoesNotBlockOnAPull:
         image_ref = native.plan("qwen3-8b").container.image
         _forget_image(docker, image_ref)
 
-        with patch.object(nr, "_docker_service", return_value=docker):
+        with _one_service(docker):
             with patch.object(
                 docker.client.api, "pull", side_effect=self._endless_pull_stream
             ):
@@ -967,7 +984,7 @@ class TestDeployDoesNotBlockOnAPull:
         image_ref = native.plan("qwen3-8b").container.image
         docker.client.images.add(image_ref)
 
-        with patch.object(nr, "_docker_service", return_value=docker):
+        with _one_service(docker):
             record = native.create_deployment("qwen3-8b")
 
         assert record["status"] == "running"
@@ -979,7 +996,7 @@ class TestDeployDoesNotBlockOnAPull:
         image_ref = native.plan("qwen3-8b").container.image
         _forget_image(docker, image_ref)
 
-        with patch.object(nr, "_docker_service", return_value=docker):
+        with _one_service(docker):
             with patch.object(
                 docker.client.api, "pull", side_effect=self._endless_pull_stream
             ):

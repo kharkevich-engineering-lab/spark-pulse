@@ -1,7 +1,6 @@
 """Mock tools — simulation mode implementations."""
 
 from spark_pulse.mock import (
-    system as system,
     cache as cache,
     recipes as recipes,
     benchmarking as benchmarking,

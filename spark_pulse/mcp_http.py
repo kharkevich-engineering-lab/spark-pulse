@@ -53,7 +53,12 @@ TOOLS = [
     },
     {
         "name": "stop_deployment",
-        "description": "Stop a running deployment",
+        "description": (
+            "Stop a running deployment, or clear an already-stopped one from "
+            "history. Returns as soon as the intent is recorded; the "
+            "reconciler converges the nodes, and the deployment's `sync` field "
+            "says whether it has settled."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {"id": {"type": "string", "description": "Deployment ID"}},

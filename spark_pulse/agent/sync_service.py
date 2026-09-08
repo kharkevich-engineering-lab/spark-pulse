@@ -325,3 +325,25 @@ class AgentNodeService:
         handed to ask that node a question.
         """
         return self._run(self.ops.get_facts())
+
+    def get_node_stats(self) -> Any:
+        """What the node is doing right now.
+
+        Same reasoning as :meth:`get_facts`: a caller holding a service for a
+        node asks that node its own questions through it.
+        """
+        return self._run(self.ops.get_node_stats())
+
+    def list_snapshot(
+        self, repo_path: str, revision: str = "", deep: bool = False
+    ) -> Any:
+        """The files of one model snapshot on the node."""
+        return self._run(self.ops.list_snapshot(repo_path, revision, deep))
+
+    def remove_snapshot(self, repo_path: str, revision: str = "") -> Any:
+        """Delete a model snapshot from the node."""
+        return self._run(self.ops.remove_snapshot(repo_path, revision))
+
+    def terminate_process(self, pid: int, force: bool = False) -> Any:
+        """Signal one process on the node."""
+        return self._run(self.ops.terminate_process(pid, force))

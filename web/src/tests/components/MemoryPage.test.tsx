@@ -1,4 +1,4 @@
-/** Monitoring: GPU, CPU and disk, and the processes holding the GPU.
+/** Monitoring: GPU, CPU and disk, per node, and the processes holding them.
  *
  * Two things here are specific to this hardware rather than incidental. A GB10
  * reports `[N/A]` for GPU memory because host and device memory are unified,
@@ -6,6 +6,10 @@
  * "0 / 0 MB" or an empty bar. And the process table exists to answer "what is
  * holding the GPU that I did not start" — which is why an untracked process is
  * marked as untracked and can be killed from here.
+ *
+ * The third thing is the cluster. Every panel belongs to a node now, a node
+ * that could not be asked keeps its section and says so, and a kill names the
+ * machine it is sent to — the same pid on two Sparks is two processes.
  *
  * The page also prefers the live SSE frame over the polled fetch, so a stream
  * that has started must win; otherwise the numbers freeze at whatever the
@@ -16,7 +20,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import MemoryPage from "@/pages/MemoryPage";
-import type { MemoryResponse } from "@/lib/types";
+import type { MemoryResponse, NodeStats } from "@/lib/types";
 
 vi.mock("@/lib/api", () => ({
   fetchMemory: vi.fn(),
@@ -28,8 +32,17 @@ import { connectMetricsStream, fetchMemory, killGpuProcess } from "@/lib/api";
 
 const UUID = "GPU-11111111-2222-3333-4444-555555555555";
 
-function memory(over: Partial<MemoryResponse> = {}): MemoryResponse {
+/** One machine's answer: a GB10 that reports no GPU memory, because the pool
+ *  is unified, plus the process holding it. */
+function node(over: Partial<NodeStats> = {}): NodeStats {
   return {
+    id: "control",
+    name: "spark-01",
+    address: "192.168.1.100",
+    is_control_plane: true,
+    reachable: true,
+    error: null,
+    unavailable: [],
     gpu: [
       {
         index: 0,
@@ -53,6 +66,16 @@ function memory(over: Partial<MemoryResponse> = {}): MemoryResponse {
     ],
     ...over,
   };
+}
+
+/** The whole answer: one shape, whatever the cluster size. */
+function memory(over: Partial<MemoryResponse> = {}): MemoryResponse {
+  return { nodes: [node()], ...over };
+}
+
+/** A single-machine answer, which is what most of these tests are about. */
+function oneNode(over: Partial<NodeStats> = {}): MemoryResponse {
+  return { nodes: [node(over)] };
 }
 
 /** The callback the page hands `connectMetricsStream`, so a test can push a frame. */
@@ -85,7 +108,7 @@ describe("MemoryPage", () => {
 
   it("shows the memory bar for a GPU that does report its usage", async () => {
     vi.mocked(fetchMemory).mockResolvedValue(
-      memory({
+      oneNode({
         gpu: [
           {
             index: 0,
@@ -126,7 +149,7 @@ describe("MemoryPage", () => {
 
     await user.click(screen.getByRole("button", { name: "Kill process" }));
 
-    await waitFor(() => expect(killGpuProcess).toHaveBeenCalledWith(98251));
+    await waitFor(() => expect(killGpuProcess).toHaveBeenCalledWith(98251, "192.168.1.100"));
     // The polled figures are re-read, so the table cannot keep showing a
     // process that is gone.
     await waitFor(() => expect(fetchMemory).toHaveBeenCalledTimes(2));
@@ -212,9 +235,16 @@ describe("MemoryPage", () => {
 
   it("reports a tracked process as one of ours rather than a stranger's", async () => {
     vi.mocked(fetchMemory).mockResolvedValue(
-      memory({
+      oneNode({
         processes: [
-          { gpu_uuid: UUID, pid: 4242, process_name: "python", used_memory: 512, is_tracked: true },
+          {
+            gpu_uuid: UUID,
+            pid: 4242,
+            process_name: "python",
+            used_memory: 512,
+            is_tracked: true,
+            deployment: "d1",
+          },
         ],
       }),
     );
@@ -248,7 +278,7 @@ describe("MemoryPage", () => {
     await screen.findByText("NVIDIA GB10");
 
     const frame = (utilization: number, temperature: number) =>
-      memory({
+      oneNode({
         gpu: [
           {
             index: 0,
@@ -283,10 +313,9 @@ describe("MemoryPage", () => {
 
   it("keeps one GPU's history apart from another's", async () => {
     const OTHER = "GPU-99999999-8888-7777-6666-555555555555";
-    const two = (utilization: number): MemoryResponse => ({
-      ...memory(),
+    const two = (utilization: number): MemoryResponse => oneNode({
       gpu: [
-        ...memory().gpu,
+        ...node().gpu,
         {
           index: 1,
           gpu: "GPU 1",
@@ -319,7 +348,7 @@ describe("MemoryPage", () => {
     await screen.findByText("NVIDIA GB10");
 
     act(() => {
-      emit("metrics", memory({ cpu: { total: 131072, used: 65536, free: 65536, available: 65536, usage_percent: 50 } }));
+      emit("metrics", oneNode({ cpu: { total: 131072, used: 65536, free: 65536, available: 65536, usage_percent: 50 } }));
     });
 
     expect(await screen.findByText("64.0 / 128.0 GB")).toBeInTheDocument();
@@ -353,12 +382,165 @@ describe("MemoryPage", () => {
   });
 
   it("renders the disk card even on a machine reporting no GPU at all", async () => {
-    vi.mocked(fetchMemory).mockResolvedValue(memory({ gpu: [], processes: [] }));
+    vi.mocked(fetchMemory).mockResolvedValue(oneNode({ gpu: [], processes: [] }));
     render(<MemoryPage />);
 
     expect(await screen.findByText("/")).toBeInTheDocument();
     expect(screen.getByText("64.9%")).toBeInTheDocument();
     expect(screen.getByText("CPU Memory")).toBeInTheDocument();
     expect(screen.queryByText("GPU Processes")).toBeNull();
+  });
+});
+
+/** The cluster half.
+ *
+ * The page answered for one machine — whichever the control plane happened to
+ * be installed on — and said nothing about which. Three of four Sparks were
+ * invisible, and the visible one was unlabelled. */
+describe("MemoryPage across nodes", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(killGpuProcess).mockResolvedValue({ killed: true, pid: 98251 });
+    vi.mocked(connectMetricsStream).mockImplementation((onMessage) => {
+      emit = onMessage;
+      return stopStream;
+    });
+    vi.mocked(fetchMemory).mockResolvedValue(
+      memory({
+        nodes: [
+          node(),
+          node({
+            id: "peer",
+            name: "spark-02",
+            address: "10.0.0.11",
+            is_control_plane: false,
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("gives every node its own section, and says which one runs the control plane", async () => {
+    render(<MemoryPage />);
+
+    expect(await screen.findByTestId("node-control")).toBeInTheDocument();
+    expect(screen.getByTestId("node-peer")).toBeInTheDocument();
+    expect(within(screen.getByTestId("node-control")).getByText("Control plane")).toBeInTheDocument();
+    expect(within(screen.getByTestId("node-peer")).queryByText("Control plane")).toBeNull();
+    expect(screen.getByText("10.0.0.11")).toBeInTheDocument();
+  });
+
+  it("keeps the section of a node that could not be asked, and says why", async () => {
+    vi.mocked(fetchMemory).mockResolvedValue(
+      memory({
+        nodes: [
+          node(),
+          node({
+            id: "peer",
+            name: "spark-02",
+            address: "10.0.0.11",
+            is_control_plane: false,
+            reachable: false,
+            error: "10.0.0.11 has no enrolled agent",
+            gpu: [],
+            processes: [],
+          }),
+        ],
+      }),
+    );
+    render(<MemoryPage />);
+
+    const peer = within(await screen.findByTestId("node-peer"));
+    expect(peer.getByText("Could not be asked")).toBeInTheDocument();
+    expect(peer.getByText("10.0.0.11 has no enrolled agent")).toBeInTheDocument();
+    // Unknown, not idle: no zeroed panels under a machine nobody reached.
+    expect(peer.queryByText("CPU Memory")).toBeNull();
+  });
+
+  it("sends a kill to the node the process is on", async () => {
+    const user = userEvent.setup();
+    render(<MemoryPage />);
+
+    const peer = within(await screen.findByTestId("node-peer"));
+    const row = peer.getByText("98251").closest("tr")!;
+    await user.click(within(row).getByRole("button", { name: /kill/i }));
+    await user.click(screen.getByRole("button", { name: "Kill process" }));
+
+    await waitFor(() => expect(killGpuProcess).toHaveBeenCalledWith(98251, "10.0.0.11"));
+  });
+
+  it("names the node in the confirmation, because the same pid exists on both", async () => {
+    const user = userEvent.setup();
+    render(<MemoryPage />);
+
+    const peer = within(await screen.findByTestId("node-peer"));
+    const row = peer.getByText("98251").closest("tr")!;
+    await user.click(within(row).getByRole("button", { name: /kill/i }));
+
+    expect(
+      within(screen.getByRole("dialog")).getByText(/running on spark-02/),
+    ).toBeInTheDocument();
+  });
+
+  it("says which deployment holds a GPU, not merely that something does", async () => {
+    vi.mocked(fetchMemory).mockResolvedValue(
+      memory({
+        nodes: [
+          node({
+            processes: [
+              {
+                gpu_uuid: UUID,
+                pid: 7,
+                process_name: "VLLM::EngineCore",
+                used_memory: 90,
+                is_tracked: true,
+                deployment: "d1",
+              },
+            ],
+          }),
+        ],
+      }),
+    );
+    render(<MemoryPage />);
+
+    expect(await screen.findByText("held by d1")).toBeInTheDocument();
+  });
+
+  it("still renders a backend that answers for one machine only", async () => {
+    // An older control plane sends the flat block and no `nodes`.
+    vi.mocked(fetchMemory).mockResolvedValue(memory());
+    render(<MemoryPage />);
+
+    expect(await screen.findByText("NVIDIA GB10")).toBeInTheDocument();
+    expect(screen.getByText("CPU Memory")).toBeInTheDocument();
+  });
+
+  it("gives each node its own history chart rather than one shared series", async () => {
+    // Two Sparks reporting the same GPU UUID is not hypothetical: the
+    // hardware's UUIDs are per machine, and simulation seeds both alike. Keyed
+    // by UUID alone, one node's readings would be drawn under the other's card.
+    render(<MemoryPage />);
+    await screen.findByTestId("node-peer");
+
+    // Two readings make a line; one does not, and the chart says so instead.
+    act(() =>
+      emit("metrics", memory({
+        nodes: [
+          node({ gpu: [{ ...node().gpu[0], utilization: 40 }] }),
+          node({
+            id: "peer",
+            name: "spark-02",
+            address: "10.0.0.11",
+            is_control_plane: false,
+            gpu: [{ ...node().gpu[0], utilization: 90 }],
+          }),
+        ],
+      })),
+    );
+
+    await waitFor(() => expect(screen.getAllByText("Live history")).toHaveLength(2));
+    expect(
+      within(screen.getByTestId("node-control")).getAllByText("Live history"),
+    ).toHaveLength(1);
   });
 });

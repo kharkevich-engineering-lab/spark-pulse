@@ -1033,6 +1033,35 @@ class TestUninstallOciRecipe:
         assert len(result["removed"]) == 2
         assert list(env.recipes_dir.iterdir()) == []
 
+    def test_uninstalls_by_the_name_a_collection_listing_uses(self, env):
+        """The two lists name the same recipe differently.
+
+        ``/api/oci/recipes/meta`` — the installed list — says
+        ``Gemma4-26B-A4B.yaml``. ``/api/oci/collections/{c}/recipes`` — the
+        browse drawer, where the Uninstall button also sits — says
+        ``Gemma4-26B-A4B``. Uninstall answered "not found" for the second,
+        which is the one an operator reaches by browsing a collection.
+        """
+        (env.recipes_dir / "Gemma4-26B-A4B.yaml").write_text("name: g")
+        oci._write_recipe_meta(
+            "Gemma4-26B-A4B.yaml", "reg", "pack", "1.1.0", "sha256:g"
+        )
+
+        result = oci.uninstall_oci_recipe("Gemma4-26B-A4B")
+
+        assert result["success"] is True
+        assert result["action"] == "uninstalled"
+        assert list(env.recipes_dir.iterdir()) == []
+
+    def test_uninstalls_a_recipe_whose_name_carries_a_version(self, env):
+        (env.recipes_dir / "GLM-4.7-Flash-AWQ.yaml").write_text("name: glm")
+        oci._write_recipe_meta(
+            "GLM-4.7-Flash-AWQ.yaml", "reg", "pack", "1.1.0", "sha256:g"
+        )
+
+        assert oci.uninstall_oci_recipe("GLM-4.7-Flash-AWQ")["success"] is True
+        assert list(env.recipes_dir.iterdir()) == []
+
     def test_uninstalling_a_yml_recipe_also_removes_its_sidecar(self, env):
         """The sidecar for ``x.yml`` is written as ``x.yaml.meta`` — remove both."""
         (env.recipes_dir / "gamma.yml").write_text("name: gamma")
@@ -1049,9 +1078,26 @@ class TestUninstallOciRecipe:
 
 
 class TestRecipeMetadata:
-    def test_meta_path_for_an_extensionless_name(self, env):
-        assert oci._meta_path("alpha").name == "alpha.meta"
+    def test_the_sidecar_is_found_by_any_spelling_of_the_name(self, env):
+        """One metadata file, three ways of asking for it.
+
+        The installed list names a recipe ``alpha.yaml``; a collection listing
+        names the same recipe ``alpha``. Both have to resolve to the sidecar an
+        install actually wrote, which is always ``<stem>.yaml.meta``.
+        """
+        assert oci._meta_path("alpha").name == "alpha.yaml.meta"
+        assert oci._meta_path("alpha.yaml").name == "alpha.yaml.meta"
         assert oci._meta_path("alpha.yml").name == "alpha.yaml.meta"
+
+    def test_a_version_number_in_a_name_is_not_an_extension(self, env):
+        """`Path("GLM-4.7-Flash-AWQ").suffix` is ".7-Flash-AWQ".
+
+        Reading that as a file extension is what sent uninstall looking for a
+        sidecar that has never existed, and it answered "not found" for every
+        recipe whose name carries a version.
+        """
+        assert oci._meta_path("GLM-4.7-Flash-AWQ").name == "GLM-4.7-Flash-AWQ.yaml.meta"
+        assert oci._meta_path("Qwen3.8-27B").name == "Qwen3.8-27B.yaml.meta"
 
     def test_rewriting_metadata_preserves_the_original_install_time(self, env):
         oci._write_recipe_meta("alpha.yaml", "reg", "pack", "1.0.0", "sha256:a")

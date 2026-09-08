@@ -219,6 +219,9 @@ export default function RecipesPage() {
 
   // Confirmation modal state for reset
   const [resetConfirm, setResetConfirm] = useState<{ recipeId: string; recipeName: string } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<
+    { kind: "recipe" | "mod"; id: string; name: string } | null
+  >(null);
 
   // New recipe/mod modal state
   const [showNewRecipe, setShowNewRecipe] = useState(false);
@@ -279,6 +282,30 @@ export default function RecipesPage() {
   const handleDeleteCustomRecipe = async (_id: string) => {
     await deleteCustomRecipe(_id);
     await loadCustomData();
+  };
+
+  /** Deleting from the list, rather than from inside the editor.
+   *
+   * The editor drawer has had a delete since custom recipes existed, but it is
+   * two clicks and a scroll away from the card, so the list looked as though
+   * what it created could not be removed.
+   */
+  const confirmDelete = (kind: "recipe" | "mod", id: string, name: string) =>
+    setDeleteTarget({ kind, id, name });
+
+  const runDelete = async () => {
+    if (!deleteTarget) return;
+    const { kind, id, name } = deleteTarget;
+    setDeleteTarget(null);
+    try {
+      if (kind === "recipe") await handleDeleteCustomRecipe(id);
+      else await handleDeleteCustomMod(id);
+    } catch (e) {
+      setAlertModal({
+        title: t("recipes.deleteFailed", { name }),
+        message: e instanceof Error ? e.message : t("common.unknownError"),
+      });
+    }
   };
 
   const handleOpenCustomMod = async (mod: CustomModInfo) => {
@@ -537,6 +564,8 @@ export default function RecipesPage() {
                       title={r.name}
                       subtitle={r.filename}
                       onClick={() => handleOpenCustomRecipe(r)}
+                      onDelete={() => confirmDelete("recipe", r.id, r.name)}
+                      deleteLabel={t("recipes.deleteRecipe", { name: r.name })}
                     />
                   ))}
                 </div>
@@ -647,6 +676,8 @@ export default function RecipesPage() {
                         icon={<Wrench size={16} className="shrink-0 text-primary" />}
                         title={m.name}
                         description={m.description}
+                        onDelete={() => confirmDelete("mod", m.id, m.name)}
+                        deleteLabel={t("recipes.deleteMod", { name: m.name })}
                         badges={m.has_run_sh ? (
                           <span className="flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-success/15 text-success">
                             <span className="w-1.5 h-1.5 rounded-full bg-success" />run.sh
@@ -848,6 +879,22 @@ export default function RecipesPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {deleteTarget && (
+        <ConfirmModal
+          open={!!deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={runDelete}
+          title={
+            deleteTarget.kind === "recipe"
+              ? t("recipes.deleteRecipeTitle")
+              : t("recipes.deleteModTitle")
+          }
+          message={t("recipes.deleteBody", { name: deleteTarget.name })}
+          confirmLabel={t("common.delete")}
+          confirmVariant="danger"
+        />
       )}
 
       {resetConfirm && (

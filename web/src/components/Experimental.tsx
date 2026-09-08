@@ -21,6 +21,29 @@ export function ExperimentalBadge({ className, title }: { className?: string; ti
   );
 }
 
+/** One line saying a feature is unproven, and nothing else.
+ *
+ * The full banner names six things and why each is unverified, which is right
+ * where an operator is about to *use* the feature — the deploy form, an
+ * expanded multi-node deployment. On a page they are only reading, six
+ * bullets in a warning box is the loudest thing on the screen and says less
+ * than one sentence does.
+ */
+export function ExperimentalNote({ text, className }: { text: string; className?: string }) {
+  return (
+    <p
+      role="note"
+      className={cn(
+        "flex items-center gap-2 text-sm text-text-muted",
+        className,
+      )}
+    >
+      <FlaskConical size={14} className="shrink-0 text-warning" />
+      {text}
+    </p>
+  );
+}
+
 /** A page-level notice saying what is unproven and why.
  *
  * `reason` should say plainly what has and has not been exercised, so an

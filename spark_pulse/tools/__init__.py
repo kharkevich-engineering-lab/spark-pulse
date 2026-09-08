@@ -19,17 +19,19 @@ import os
 # in simulation as in production, so there is one store and not two); and
 # ``recipe_schema``/``recipe_sources``, which both the real and the mock
 # ``recipes`` import (they are not listed below for exactly that reason — the
-# switch must not see them), along with ``recipe_import``, which is now only a
-# reader of what an older build imported and has nothing left to simulate; and ``scheduled_deploys``, which is a database
-# table and reaches everything it acts on *through* the switch, so it is the
-# same code in both modes.  Everything else must exist in both packages.
+# switch must not see them), ``scheduled_deploys``, which is a database table and reaches everything it
+# acts on *through* the switch, so it is the same code in both modes; and
+# ``reconciler``, which is a thread over the records and reaches every node
+# through the switch, for the same reason; and ``node_stats``, which asks each
+# node's own agent through it.  Everything else must exist in both packages.
 from spark_pulse.tools import atomic_json as atomic_json
 from spark_pulse.tools import custom_files as custom_files
 from spark_pulse.tools import custom_recipes as custom_recipes
 from spark_pulse.tools import deployment_records as deployment_records
 from spark_pulse.tools import hub_cache as hub_cache
 from spark_pulse.tools import labels as labels
-from spark_pulse.tools import recipe_import as recipe_import
+from spark_pulse.tools import node_stats as node_stats
+from spark_pulse.tools import reconciler as reconciler
 from spark_pulse.tools import recipe_schema as recipe_schema
 from spark_pulse.tools import recipe_sources as recipe_sources
 from spark_pulse.tools import scheduled_deploys as scheduled_deploys
@@ -38,7 +40,6 @@ _sim_mode = os.environ.get("SIMULATION_MODE", "0") == "1"
 
 if _sim_mode:
     from spark_pulse.mock import (
-        system as system,
         cache as cache,
         recipes as recipes,
         benchmarking as benchmarking,
@@ -62,7 +63,6 @@ if _sim_mode:
     )
 else:
     from spark_pulse.tools import (
-        system as system,
         cache as cache,
         recipes as recipes,
         benchmarking as benchmarking,

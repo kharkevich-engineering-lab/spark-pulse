@@ -109,7 +109,14 @@ export function navLabel(text: string): string {
  * are unified, so the backend sets `memory_supported: false` and the page has
  * to render the card without a usage bar.
  */
-export const UNIFIED_MEMORY_GPU = {
+export const UNIFIED_MEMORY_NODE = {
+  id: "control",
+  name: "spark-01",
+  address: "192.168.1.100",
+  is_control_plane: true,
+  reachable: true,
+  error: null,
+  unavailable: [],
   gpu: [
     {
       index: 0,
@@ -147,16 +154,16 @@ export const UNIFIED_MEMORY_GPU = {
   ],
 };
 
+/** The whole answer: one shape, whatever the cluster size. */
+export const UNIFIED_MEMORY_GPU = { nodes: [UNIFIED_MEMORY_NODE] };
+
 /** Serve the Monitoring page's data from a fixture instead of the backend.
  *
- * Two reasons, both structural. Simulation mode delegates GPU stats to the
- * real `nvidia-smi` parsing, so a CI runner or a laptop reports no GPU at all
- * and the interesting rendering never happens. And `GET /api/memory` (like
- * `/sse/metrics`) does `from spark_pulse.tools.deployments import ...`, which
- * rebinds `tools.deployments` to the *real* module for the life of the
- * process — after one such call, simulated deploys shell out to a
- * spark-vllm-docker checkout that does not exist. Stubbing keeps the specs
- * independent of each other's ordering.
+ * Only for the shapes the simulated cluster does not produce — a machine with
+ * no GPU at all, and an answer from a control plane too old to know about
+ * nodes. The simulated agent answers with a GB10 now, so what the page does
+ * with real data is checked against the real backend instead of against a
+ * fixture that can agree with a broken page.
  */
 export async function stubMemoryEndpoints(
   page: Page,

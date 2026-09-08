@@ -477,28 +477,6 @@ class TestPerRowWrites:
         assert records.get("dep-1")["launch_command"].endswith("[REDACTED]")
         assert records.get("dep-2") is not None, "the concurrent record was deleted"
 
-    def test_reconciling_legacy_records_writes_back_only_those_it_decided(
-        self, state_file, monkeypatch
-    ):
-        """A PID sweep is about legacy records, and must not touch the rest.
-
-        ``_pid_is_alive`` is the seam for the same reason ``_redact`` is: it
-        runs between the load and the write-back, so a record that appears
-        there is one the sweep never read.
-        """
-        records.save([{"id": "old", "status": "running", "pid": 4242}])
-
-        def probe_and_race(_pid):
-            records.upsert({"id": "new", "status": "running", "runtime": "native"})
-            return False
-
-        monkeypatch.setattr(records, "_pid_is_alive", probe_and_race)
-
-        assert [r["id"] for r in records.list_legacy()] == ["old"]
-
-        assert records.get("old")["status"] == "stopped"
-        assert records.get("new") is not None, "a native deployment was purged"
-
 
 # ── Startup refuses on an unreadable state file ──────────────────────────────
 

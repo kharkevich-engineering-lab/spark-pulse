@@ -33,6 +33,7 @@ from spark_pulse.tools.docker import DockerService
 from spark_pulse.tools.node_service import (
     CONTROL_NODE_ID as CONTROL_NODE_ID,
     LOOPBACK_ADDRESSES as LOOPBACK_ADDRESSES,
+    NODE_MACHINE_METHODS as NODE_MACHINE_METHODS,
     NODE_SERVICE_METHODS as NODE_SERVICE_METHODS,
     STATUS_PROBE_TIMEOUT as STATUS_PROBE_TIMEOUT,
     NoAgent as NoAgent,
@@ -149,7 +150,9 @@ class SimulatedPeerService:
         return f"<SimulatedPeerService {self.host}>"
 
     def __getattr__(self, name: str) -> Any:
-        if name.startswith("_") or name not in NODE_SERVICE_METHODS:
+        if name.startswith("_") or name not in (
+            NODE_SERVICE_METHODS + NODE_MACHINE_METHODS
+        ):
             raise AttributeError(name)
         method = getattr(self.docker, name)
 
@@ -211,6 +214,7 @@ __all__ = [
     "CONTROL_NODE_ID",
     "DEFAULT_IMAGE_SIZE",
     "LOOPBACK_ADDRESSES",
+    "NODE_MACHINE_METHODS",
     "NODE_SERVICE_METHODS",
     "STATUS_PROBE_TIMEOUT",
     "NoAgent",

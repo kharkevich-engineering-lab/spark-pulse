@@ -20,12 +20,8 @@ from types import ModuleType
 
 import spark_pulse.tools.reconciliation  # noqa: F401 — see below
 from spark_pulse.tools.labels import (
-    CLUSTER_LABEL,
-    CONTAINER_NAME_LABEL,
     DEPLOYMENT_LABEL,
-    HEAD_IP_LABEL,
     IMAGE_LABEL,
-    WORKER_IPS_LABEL,
 )
 
 # Reaching the real module takes the same care conftest.py takes: under
@@ -89,90 +85,6 @@ class TestDefaultServices:
 
         assert rec._default_docker() is built
 
-    def test_the_default_cluster_service_is_the_control_nodes(self, monkeypatch):
-        service = object()
-        fake = ModuleType("spark_pulse.tools.node_service")
-        fake.control_node = lambda: "control-node"
-        fake.service_for = lambda node: service if node == "control-node" else None
-        monkeypatch.setitem(sys.modules, "spark_pulse.tools.node_service", fake)
-
-        assert rec._default_cluster_service() is service
-
-
-# ── Clusters ─────────────────────────────────────────────────────────────────
-
-
-class TestReconcileClusters:
-    def test_a_labelled_container_becomes_a_cluster(self):
-        service = _Service(
-            [
-                _Container(
-                    "spark-head",
-                    {
-                        CLUSTER_LABEL: "prod",
-                        HEAD_IP_LABEL: "10.0.0.1",
-                        WORKER_IPS_LABEL: "10.0.0.2, 10.0.0.3",
-                        IMAGE_LABEL: "vllm:latest",
-                    },
-                )
-            ]
-        )
-
-        clusters = rec.reconcile_clusters(service)
-
-        assert len(clusters) == 1
-        assert clusters[0]["name"] == "prod"
-        assert clusters[0]["worker_ips"] == ["10.0.0.2", "10.0.0.3"]
-        assert clusters[0]["status"] == "running"
-
-    def test_only_containers_carrying_the_cluster_label_are_asked_for(self):
-        service = _Service()
-
-        rec.reconcile_clusters(service)
-
-        assert service.filters == [{CLUSTER_LABEL: ""}]
-
-    def test_a_container_without_the_label_is_skipped(self):
-        service = _Service([_Container("stray", {IMAGE_LABEL: "vllm:latest"})])
-
-        assert rec.reconcile_clusters(service) == []
-
-    def test_the_container_name_fills_in_when_the_label_is_missing(self):
-        service = _Service([_Container("spark-head", {CLUSTER_LABEL: "prod"})])
-
-        assert rec.reconcile_clusters(service)[0]["container_name"] == "spark-head"
-
-    def test_the_name_label_wins_over_the_container_name(self):
-        service = _Service(
-            [
-                _Container(
-                    "docker-assigned",
-                    {CLUSTER_LABEL: "prod", CONTAINER_NAME_LABEL: "labelled"},
-                )
-            ]
-        )
-
-        assert rec.reconcile_clusters(service)[0]["container_name"] == "labelled"
-
-    def test_no_service_at_all_reconciles_nothing_rather_than_raising(
-        self, monkeypatch
-    ):
-        monkeypatch.setattr(rec, "_default_cluster_service", lambda: None)
-
-        assert rec.reconcile_clusters() == []
-
-    def test_a_daemon_that_will_not_answer_reconciles_nothing(self, caplog):
-        service = _Service(error=RuntimeError("docker is down"))
-
-        assert rec.reconcile_clusters(service) == []
-        assert "docker is down" in caplog.text
-
-    def test_simulation_mode_short_circuits_before_any_service(self, monkeypatch):
-        monkeypatch.setenv("SIMULATION_MODE", "1")
-        service = _Service(error=AssertionError("must not be reached"))
-
-        assert rec.reconcile_clusters(service) == []
-
 
 # ── Deployments ──────────────────────────────────────────────────────────────
 
@@ -204,7 +116,7 @@ class TestReconcileDeployments:
         assert service.filters == [{DEPLOYMENT_LABEL: ""}]
 
     def test_a_container_without_the_label_is_skipped(self):
-        service = _Service([_Container("stray", {CLUSTER_LABEL: "prod"})])
+        service = _Service([_Container("stray", {IMAGE_LABEL: "vllm:latest"})])
 
         assert rec.reconcile_deployments(service) == []
 
@@ -241,12 +153,12 @@ class TestCleanOrphanedContainers:
         service = _Service(
             [
                 _Container("dead", {DEPLOYMENT_LABEL: "dep-1"}, status="exited"),
-                _Container("dead-cluster", {CLUSTER_LABEL: "prod"}, status="exited"),
+                _Container("dead-too", {DEPLOYMENT_LABEL: "dep-2"}, status="exited"),
             ]
         )
 
         assert rec._clean_orphaned_containers(service) == 2
-        assert service.stopped == ["dead", "dead-cluster"]
+        assert service.stopped == ["dead", "dead-too"]
 
     def test_a_running_container_is_left_alone(self):
         service = _Service(
@@ -294,8 +206,7 @@ class TestCleanOrphanedContainers:
 
 
 class TestReconcileAll:
-    def test_the_counts_come_from_the_three_passes(self, monkeypatch):
-        monkeypatch.setattr(rec, "reconcile_clusters", lambda _s: [{"name": "prod"}])
+    def test_the_counts_come_from_both_passes(self, monkeypatch):
         monkeypatch.setattr(
             rec, "reconcile_deployments", lambda _d: [{"id": "a"}, {"id": "b"}]
         )
@@ -303,7 +214,6 @@ class TestReconcileAll:
 
         result = rec.reconcile_all()
 
-        assert result.clusters_reconciled == 1
         assert result.deployments_reconciled == 2
         assert result.orphaned_containers_cleaned == 3
         assert result.errors == []
@@ -314,31 +224,28 @@ class TestReconcileAll:
         def boom(_arg):
             raise RuntimeError("no daemon")
 
-        monkeypatch.setattr(rec, "reconcile_clusters", boom)
         monkeypatch.setattr(rec, "reconcile_deployments", boom)
         monkeypatch.setattr(rec, "_clean_orphaned_containers", boom)
 
         result = rec.reconcile_all()
 
         assert result.errors == [
-            "Cluster reconciliation failed: no daemon",
             "Deployment reconciliation failed: no daemon",
             "Orphan cleanup failed: no daemon",
         ]
-        assert result.clusters_reconciled == 0
+        assert result.deployments_reconciled == 0
 
     def test_one_failing_pass_does_not_stop_the_others(self, monkeypatch):
         def boom(_arg):
             raise RuntimeError("no daemon")
 
-        monkeypatch.setattr(rec, "reconcile_clusters", boom)
         monkeypatch.setattr(rec, "reconcile_deployments", lambda _d: [{"id": "a"}])
-        monkeypatch.setattr(rec, "_clean_orphaned_containers", lambda _d: 1)
+        monkeypatch.setattr(rec, "_clean_orphaned_containers", boom)
 
         result = rec.reconcile_all()
 
         assert result.deployments_reconciled == 1
-        assert result.orphaned_containers_cleaned == 1
+        assert result.orphaned_containers_cleaned == 0
         assert len(result.errors) == 1
 
     def test_simulation_mode_never_sweeps_containers(self, monkeypatch):
@@ -363,11 +270,9 @@ class TestMockReconciler:
 
         result = mock_rec.reconcile_all()
 
-        assert result.clusters_reconciled == 0
         assert result.deployments_reconciled == 0
         assert result.orphaned_containers_cleaned == 0
         assert result.errors == []
-        assert mock_rec.reconcile_clusters() == []
         assert mock_rec.reconcile_deployments() == []
 
     def test_the_orphaned_scenario_reports_containers_it_swept(self):
@@ -378,12 +283,11 @@ class TestMockReconciler:
         assert result.orphaned_containers_cleaned == 3
         assert result.errors == []
 
-    def test_the_partial_scenario_reports_both_passes_as_failed(self):
+    def test_the_partial_scenario_reports_the_pass_as_failed(self):
         from spark_pulse.mock.reconciliation import MockReconciler
 
         reconciler = MockReconciler("partial")
         result = reconciler.reconcile_all()
 
-        assert len(result.errors) == 2
-        assert reconciler.reconcile_clusters() == []
+        assert result.errors == ["Deployment reconciliation failed (mock)"]
         assert reconciler.reconcile_deployments() == []

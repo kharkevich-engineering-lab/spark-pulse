@@ -22,14 +22,8 @@ import NodeRegistry from "@/components/NodeRegistry";
 import NetworkDiscovery from "@/components/NetworkDiscovery";
 import { Server, AlertCircle, Loader2 } from "lucide-react";
 import type { Deployment } from "@/lib/types";
-import { ExperimentalBadge, ExperimentalBanner } from "@/components/Experimental";
-import {
-  MULTI_NODE_BADGE_TITLE,
-  MULTI_NODE_REASON,
-  MULTI_NODE_TITLE,
-  MULTI_NODE_UNPROVEN,
-  nodeCount,
-} from "@/lib/experimental";
+import { ExperimentalBadge, ExperimentalNote } from "@/components/Experimental";
+import { MULTI_NODE_BADGE_TITLE, nodeCount } from "@/lib/experimental";
 import { useConfig } from "@/lib/config";
 
 /** Where a deployment's ranks run, named rather than counted. */
@@ -51,18 +45,15 @@ export default function ClusterPage() {
 
   return (
     <div className="space-y-6">
-      {experimental && (
-        <ExperimentalBanner
-          title={MULTI_NODE_TITLE}
-          reason={MULTI_NODE_REASON}
-          items={MULTI_NODE_UNPROVEN}
-        />
-      )}
-
       {/* Header */}
       <div>
         <h2 className="text-2xl font-bold">{t("cluster.title")}</h2>
         <p className="text-text-muted mt-1">{t("cluster.subtitle")}</p>
+        {/* One line, not the full banner. This page is read rather than acted
+            on; what is unproven and why belongs where an operator is about to
+            deploy across machines, which is the deploy form and the expanded
+            row on Inference. */}
+        {experimental && <ExperimentalNote className="mt-2" text={t("cluster.experimental")} />}
       </div>
 
       {/* The node registry — what used to be two free-text IP boxes. */}
@@ -128,7 +119,11 @@ export default function ClusterPage() {
                       {deployment.engine ? `${deployment.engine}/${deployment.variant ?? "default"}` : "—"}
                     </td>
                     <td className="py-2">
-                      <StatusBadge status={deployment.status} />
+                      <StatusBadge
+                        status={deployment.status}
+                        sync={deployment.sync}
+                        syncReason={deployment.sync_reason}
+                      />
                     </td>
                   </tr>
                 ))}

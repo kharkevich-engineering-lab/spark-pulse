@@ -2,6 +2,7 @@
 
 import importlib
 import json
+import shutil
 import time
 from pathlib import Path
 from unittest.mock import patch
@@ -440,22 +441,22 @@ class TestDiskSpaceGuard:
 class TestDistribution:
     def test_sync_requires_cached_model(self, hf_home):
         with pytest.raises(ValueError, match="not in local cache"):
-            models_tool.sync_to_nodes("acme/missing", ["node1"])
+            models_tool.replicate_to_nodes("acme/missing", ["node1"])
 
     def test_sync_requires_nodes(self, hf_home):
         with pytest.raises(ValueError, match="No nodes specified"):
-            models_tool.sync_to_nodes("acme/plain-7b", [])
+            models_tool.replicate_to_nodes("acme/plain-7b", [])
 
     def test_sync_reports_per_node_failure(self, hf_home):
         client = _RecordingSSHClient(copy_error=RuntimeError("rsync failed: no route"))
-        result = models_tool.sync_to_nodes("acme/plain-7b", ["n1"], client=client)
+        result = models_tool.replicate_to_nodes("acme/plain-7b", ["n1"], client=client)
         assert result["ok"] is False
         assert result["results"][0]["error"] == "rsync failed: no route"
         assert result["results"][0]["published"] is False
 
     def test_sync_reports_mkdir_failure(self, hf_home):
         client = _RecordingSSHClient(exec_returncode=1, exec_stderr="permission denied")
-        result = models_tool.sync_to_nodes("acme/plain-7b", ["n1"], client=client)
+        result = models_tool.replicate_to_nodes("acme/plain-7b", ["n1"], client=client)
         assert result["ok"] is False
         assert result["results"][0]["error"] == "permission denied"
         assert client.copies == []
@@ -466,7 +467,7 @@ class TestDistribution:
                 error_type=SSHErrorType.TIMEOUT, host="n1", message="timed out"
             )
         )
-        result = models_tool.sync_to_nodes("acme/plain-7b", ["n1"], client=client)
+        result = models_tool.replicate_to_nodes("acme/plain-7b", ["n1"], client=client)
         assert result["ok"] is False
         assert "timed out" in result["results"][0]["error"]
 
@@ -479,13 +480,13 @@ class TestDistribution:
             entry.unlink()
         client = _RecordingSSHClient()
         with pytest.raises(ValueError, match="is partial"):
-            models_tool.sync_to_nodes("acme/plain-7b", ["n1"], client=client)
+            models_tool.replicate_to_nodes("acme/plain-7b", ["n1"], client=client)
         assert client.copy_dirs == []
 
     def test_a_node_that_cannot_answer_is_never_published_to(self, hf_home):
         """No report means no proof, and no proof means no publish."""
         client = _RecordingSSHClient(stdout="python3: not found")
-        result = models_tool.sync_to_nodes("acme/plain-7b", ["n1"], client=client)
+        result = models_tool.replicate_to_nodes("acme/plain-7b", ["n1"], client=client)
         assert result["ok"] is False
         assert result["results"][0]["published"] is False
         assert "did not return a verification report" in result["results"][0]["error"]
@@ -497,14 +498,114 @@ class TestDistribution:
 # ── Deletion ─────────────────────────────────────────────────────────────────
 
 
+class _RemovingService:
+    """A node that really deletes, and remembers what it was asked to.
+
+    Deletion goes through the node's own agent now — including for the machine
+    this process runs on — so the double is what stands in for the agent. The
+    removal itself is the agent's (`agent/src/executor/snapshots.rs`, with its
+    own tests); what belongs here is which repository and revision the control
+    plane names, and what it does with the answers.
+    """
+
+    def __init__(self):
+        self.asked: list[tuple[str, str]] = []
+
+    def remove_snapshot(self, repo_path: str, revision: str = ""):
+        from spark_pulse.agent import agent_pb2 as pb
+
+        self.asked.append((repo_path, revision))
+        target = (
+            Path(repo_path)
+            if not revision
+            else Path(repo_path) / "snapshots" / revision
+        )
+        if not target.exists():
+            return pb.SnapshotRemoval(removed=False)
+        freed = sum(f.stat().st_size for f in target.rglob("*") if f.is_file())
+        shutil.rmtree(target)
+        return pb.SnapshotRemoval(removed=True, freed_bytes=freed, paths=[str(target)])
+
+
+class _EmptyService:
+    """A node that holds no copy of the model."""
+
+    def remove_snapshot(self, repo_path: str, revision: str = ""):
+        from spark_pulse.agent import agent_pb2 as pb
+
+        return pb.SnapshotRemoval(removed=False)
+
+
 class TestDelete:
     def test_delete_removes_repo_dir(self, hf_home):
+        service = _RemovingService()
         with patch.object(models_tool, "models_in_use", return_value={}):
-            result = models_tool.delete_model("acme/plain-7b")
+            result = models_tool.delete_model(
+                "acme/plain-7b", services=lambda _node: service
+            )
         assert result["deleted"] == "acme/plain-7b"
         assert result["freed_bytes"] > 0
         assert not Path(result["path"]).exists()
         assert models_tool.get_model("acme/plain-7b") is None
+        # The whole repository, not one revision: an operator clearing a model
+        # means the blobs too, and naming a revision would leave them behind.
+        assert service.asked == [(result["path"], "")]
+
+    def test_every_named_node_is_asked_and_each_answers_for_itself(self, hf_home):
+        """A 26 GB model on four Sparks used to be deleted from one of them,
+        and the page then said it was gone."""
+        asked: list[str] = []
+
+        def _resolve(node):
+            # One filesystem in this test, so only the control node holds the
+            # copy; the peers answer for a repository they do not have.
+            asked.append(node.label)
+            return _RemovingService() if node.is_self else _EmptyService()
+
+        with patch.object(models_tool, "models_in_use", return_value={}):
+            result = models_tool.delete_model(
+                "acme/plain-7b", nodes=["10.0.0.11", "10.0.0.12"], services=_resolve
+            )
+
+        assert sorted(asked) == ["10.0.0.11", "10.0.0.12", "control"]
+        assert [row["node"] for row in result["nodes"]] == [
+            "",
+            "10.0.0.11",
+            "10.0.0.12",
+        ]
+        # Only this machine had a copy, and the answer says which did.
+        assert [row["removed"] for row in result["nodes"]] == [True, False, False]
+
+    def test_a_node_that_cannot_be_asked_is_reported_not_assumed_clean(self, hf_home):
+        def _resolve(node):
+            if node.is_self:
+                return _RemovingService()
+            raise RuntimeError("10.0.0.11 has no enrolled agent")
+
+        with patch.object(models_tool, "models_in_use", return_value={}):
+            result = models_tool.delete_model(
+                "acme/plain-7b", nodes=["10.0.0.11"], services=_resolve
+            )
+
+        peer = result["nodes"][1]
+        assert peer["removed"] is False
+        assert "no enrolled agent" in peer["error"]
+
+    def test_this_machine_is_not_asked_twice_when_it_is_also_named(self, hf_home):
+        """The control node is always a target; naming its address as well
+        must not delete it, fail, and then report both."""
+        asked: list[str] = []
+
+        def _resolve(node):
+            asked.append(node.label)
+            return _RemovingService()
+
+        with patch.object(models_tool, "models_in_use", return_value={}):
+            models_tool.delete_model(
+                "acme/plain-7b", nodes=["localhost"], services=_resolve
+            )
+
+        assert asked == ["control"]
 
     def test_delete_unknown_model(self, hf_home):
         with patch.object(models_tool, "models_in_use", return_value={}):

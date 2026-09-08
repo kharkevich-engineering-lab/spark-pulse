@@ -610,9 +610,6 @@ def replicate_to_nodes(
     }
 
 
-sync_to_nodes = replicate_to_nodes
-
-
 #: The mock walks the three states in order so the UI and the e2e suite meet a
 #: partial replica, which is the one the old boolean could not express.
 _PRESENCE_CYCLE = (VERIFIED, PARTIAL, ABSENT)
@@ -742,7 +739,12 @@ def models_in_use() -> dict[str, list[str]]:
     return in_use
 
 
-def delete_model(model_id: str) -> dict[str, Any]:
+def delete_model(
+    model_id: str,
+    nodes: list[str] | None = None,
+    revision: str | None = None,
+    services: Any | None = None,
+) -> dict[str, Any]:
     users = models_in_use().get(model_id.lower(), [])
     if users:
         raise ValueError(
@@ -756,6 +758,12 @@ def delete_model(model_id: str) -> dict[str, Any]:
         "deleted": model_id,
         "path": entry.get("repo_path"),
         "freed_bytes": entry.get("size_bytes", 0),
+        # One row per node asked, as the real one answers: the control node
+        # first, then whatever was named.
+        "nodes": [
+            {"node": address, "removed": True, "freed_bytes": 0, "error": None}
+            for address in ["", *(nodes or [])]
+        ],
     }
     publish_event(EVENT_DELETED, model_id, result)
     return result

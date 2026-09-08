@@ -46,6 +46,11 @@ class EventType(str, Enum):
     DEPLOYMENT_STARTED = "deployment_started"
     DEPLOYMENT_STOPPED = "deployment_stopped"
     DEPLOYMENT_ERROR = "deployment_error"
+    # Convergence, as opposed to lifecycle. A record whose `sync` changed has
+    # not necessarily started or stopped — it has been asked to, and the
+    # reconciler is working on it.
+    DEPLOYMENT_SYNC = "deployment_sync"
+    DEPLOYMENT_DELETED = "deployment_deleted"
 
     # Health
     HEALTH_CHECK_FAILED = "health_check_failed"

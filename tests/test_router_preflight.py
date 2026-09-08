@@ -12,6 +12,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from spark_pulse import tools
 from spark_pulse.app import create_app
 from spark_pulse.mock import preflight as mock_preflight
 
@@ -149,10 +150,17 @@ class TestTheDeployGate:
         # A deployment left behind holds its image, and the image tests then
         # find it in use. Simulation state outlives the test that made it, so
         # a create here has to be undone here.
+        #
+        # Twice, with a sweep after each: a delete records the intent and the
+        # reconciler makes it true, and this client never runs the app's
+        # lifespan, so there is no reconciler thread to do it. The first pass
+        # stops the containers, the second clears the record.
         for dep in client.get("/api/deployments").json():
             if dep["id"] not in before:
                 client.delete(f"/api/deployments/{dep['id']}")
+                tools.reconciler.Reconciler().sweep()
                 client.delete(f"/api/deployments/{dep['id']}")
+                tools.reconciler.Reconciler().sweep()
 
     def test_a_create_goes_ahead_when_nothing_blocks(self, client):
         response = client.post("/api/deployments", json=CREATE)

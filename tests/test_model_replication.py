@@ -38,8 +38,6 @@ hub_cache = importlib.import_module("spark_pulse.tools.hub_cache")
 from spark_pulse.tools.ssh import (  # noqa: E402
     OpenSSHClient,
     SSHClient,
-    SSHError,
-    SSHErrorType,
     SSHResult,
 )
 
@@ -156,6 +154,67 @@ class LoopbackSSHClient(SSHClient):
         return argv[:1] + excludes + argv[1:]
 
 
+class LoopbackNodeService:
+    """One node's agent, over that node's real filesystem.
+
+    Presence goes through the agent now: the node lists its own snapshot and
+    the control plane reaches the verdict from the manifest it holds. This
+    double does the listing part against the same per-node directories the
+    transfer really wrote into, so what is asserted is the real decision over
+    a real tree — a truncated blob, a link with no blob behind it, a shard
+    that never arrived.
+    """
+
+    def __init__(self, root: Path, hub: str):
+        self.root = root
+        self.hub = hub
+
+    def _local(self, path: str) -> Path:
+        return self.root / str(path).lstrip("/")
+
+    def list_snapshot(self, repo_path: str, revision: str = "", deep: bool = False):
+        from spark_pulse.agent import agent_pb2 as pb
+
+        repo = self._local(repo_path)
+        commit = revision
+        if not commit:
+            try:
+                commit = (repo / "refs" / "main").read_text().strip()
+            except OSError:
+                commit = ""
+        snapshot = repo / "snapshots" / commit if commit else None
+        if snapshot is None or not snapshot.is_dir():
+            return pb.SnapshotListing(revision=commit, present=False)
+
+        listing = pb.SnapshotListing(revision=commit, present=True)
+        for path in sorted(snapshot.rglob("*")):
+            if path.is_dir():
+                continue
+            resolved = path.exists()
+            size = path.stat().st_size if resolved else 0
+            entry = listing.files.add()
+            entry.path = str(path.relative_to(snapshot))
+            entry.size_bytes = size
+            entry.is_symlink = path.is_symlink()
+            entry.resolved = resolved
+            if deep and resolved:
+                entry.sha256 = hub_cache.sha256_of(str(path))
+            listing.bytes_present += size
+        return listing
+
+    def remove_snapshot(self, repo_path: str, revision: str = ""):
+        from spark_pulse.agent import agent_pb2 as pb
+
+        target = self._local(repo_path)
+        if revision:
+            target = target / "snapshots" / revision
+        if not target.exists():
+            return pb.SnapshotRemoval(removed=False)
+        freed = sum(f.stat().st_size for f in target.rglob("*") if f.is_file())
+        shutil.rmtree(target)
+        return pb.SnapshotRemoval(removed=True, freed_bytes=freed)
+
+
 class _RecordingSSHClient(SSHClient):
     """A transport that records and answers, for the paths that never run."""
 
@@ -213,6 +272,20 @@ def nodes(tmp_path, hub):
     return LoopbackSSHClient(roots, hub)
 
 
+@pytest.fixture
+def agents(nodes):
+    """The resolver presence and deletion reach those same nodes through."""
+
+    def _resolve(node):
+        root = nodes.roots.setdefault(
+            node.label, nodes.roots["n1"].parent / f"node-{node.label}"
+        )
+        root.mkdir(parents=True, exist_ok=True)
+        return LoopbackNodeService(root, nodes.hub)
+
+    return _resolve
+
+
 TOTAL_BYTES = sum(len(v) for v in SAMPLE_FILES.values())
 
 
@@ -248,7 +321,9 @@ class TestTransfer:
         assert (repo / "trees" / f"{SAMPLE_COMMIT}.json").is_file()
         assert (repo / "refs" / "main").read_text() == SAMPLE_COMMIT
 
-    def test_a_copy_that_drops_symlinks_is_partial_not_present(self, hub, nodes):
+    def test_a_copy_that_drops_symlinks_is_partial_not_present(
+        self, hub, nodes, agents
+    ):
         """``rsync -r`` skips symlinks, so the snapshot arrives empty.
 
         The old check ran ``test -d …/snapshots``, which this passes. Presence
@@ -272,7 +347,7 @@ class TestTransfer:
 
         node_repo = nodes.node_repo("n1")
         assert (node_repo / "snapshots").is_dir(), "the old check would pass here"
-        report = models_tool.presence(SAMPLE_MODEL, ["n1"], client=nodes)
+        report = models_tool.presence(SAMPLE_MODEL, ["n1"], services=agents)
         row = report["nodes"][0]
         assert row["state"] == hub_cache.STATE_PARTIAL
         assert row["present"] is False
@@ -385,7 +460,7 @@ class TestVerifyBeforePublish:
         assert nodes.node_repo("n1").is_dir()
         assert not nodes.node_staging("n1").exists()
 
-    def test_publishing_over_an_older_copy_leaves_no_debris(self, hub, nodes):
+    def test_publishing_over_an_older_copy_leaves_no_debris(self, hub, nodes, agents):
         models_tool.replicate_to_nodes(SAMPLE_MODEL, ["n1"], client=nodes)
         models_tool.replicate_to_nodes(SAMPLE_MODEL, ["n1"], client=nodes, force=True)
 
@@ -393,7 +468,7 @@ class TestVerifyBeforePublish:
         leftovers = [p.name for p in node_hub.iterdir() if ".sp-replaced" in p.name]
         assert leftovers == []
         assert (
-            models_tool.presence(SAMPLE_MODEL, ["n1"], client=nodes)["nodes"][0][
+            models_tool.presence(SAMPLE_MODEL, ["n1"], services=agents)["nodes"][0][
                 "state"
             ]
             == hub_cache.STATE_VERIFIED
@@ -492,7 +567,7 @@ class TestResume:
 
 @requires_rsync
 class TestPresence:
-    def test_absent_partial_and_verified_are_distinguished(self, hub, nodes):
+    def test_absent_partial_and_verified_are_distinguished(self, hub, nodes, agents):
         models_tool.replicate_to_nodes(SAMPLE_MODEL, ["n1"], client=nodes)
         # n2 gets everything but one shard.
         nodes.interrupt_after = 3
@@ -505,14 +580,14 @@ class TestPresence:
         nodes.roots["n3"] = nodes.roots["n1"].parent / "node-n3"
         nodes.roots["n3"].mkdir()
 
-        report = models_tool.presence(SAMPLE_MODEL, ["n1", "n2", "n3"], client=nodes)
+        report = models_tool.presence(SAMPLE_MODEL, ["n1", "n2", "n3"], services=agents)
 
         by_node = {row["node"]: row for row in report["nodes"]}
         assert by_node["n1"]["state"] == hub_cache.STATE_VERIFIED
         assert by_node["n2"]["state"] == hub_cache.STATE_PARTIAL
         assert by_node["n3"]["state"] == hub_cache.STATE_ABSENT
 
-    def test_partial_names_what_is_missing(self, hub, nodes):
+    def test_partial_names_what_is_missing(self, hub, nodes, agents):
         nodes.interrupt_after = 3
         models_tool.replicate_to_nodes(SAMPLE_MODEL, ["n1"], client=nodes)
         nodes.exec(
@@ -521,7 +596,7 @@ class TestPresence:
             f" {hub}/{hub_cache.repo_dir_name(SAMPLE_MODEL)}",
         )
 
-        row = models_tool.presence(SAMPLE_MODEL, ["n1"], client=nodes)["nodes"][0]
+        row = models_tool.presence(SAMPLE_MODEL, ["n1"], services=agents)["nodes"][0]
 
         assert row["state"] == hub_cache.STATE_PARTIAL
         assert row["missing"] == ["tokenizer.json"]
@@ -530,17 +605,17 @@ class TestPresence:
         assert row["bytes_expected"] == TOTAL_BYTES
         assert 0 < row["bytes_present"] < TOTAL_BYTES
 
-    def test_a_verified_node_reports_when_it_was_verified(self, hub, nodes):
+    def test_a_verified_node_reports_when_it_was_verified(self, hub, nodes, agents):
         models_tool.replicate_to_nodes(SAMPLE_MODEL, ["n1"], client=nodes)
-        row = models_tool.presence(SAMPLE_MODEL, ["n1"], client=nodes)["nodes"][0]
+        row = models_tool.presence(SAMPLE_MODEL, ["n1"], services=agents)["nodes"][0]
         assert row["present"] is True
         assert row["verified_at"]
         assert row["revision"] == SAMPLE_COMMIT
 
     def test_the_local_verdict_is_a_verification_not_a_directory_listing(
-        self, hub, nodes
+        self, hub, nodes, agents
     ):
-        report = models_tool.presence(SAMPLE_MODEL, [], client=nodes)
+        report = models_tool.presence(SAMPLE_MODEL, [], services=agents)
         assert report["local"] is True
         assert report["local_state"] == hub_cache.STATE_VERIFIED
 
@@ -552,29 +627,32 @@ class TestPresence:
             ),
             3,
         )
-        broken = models_tool.presence(SAMPLE_MODEL, [], client=nodes)
+        broken = models_tool.presence(SAMPLE_MODEL, [], services=agents)
         assert (hub / hub_cache.repo_dir_name(SAMPLE_MODEL) / "snapshots").is_dir()
         assert broken["local"] is False
         assert broken["local_state"] == hub_cache.STATE_PARTIAL
 
 
 class TestPresenceTransport:
-    def test_a_transport_failure_is_an_error_not_an_absence(self, hub):
-        client = _RecordingSSHClient(
-            exec_error=SSHError(
-                error_type=SSHErrorType.NETWORK, host="n1", message="no route to host"
-            )
-        )
-        row = models_tool.presence(SAMPLE_MODEL, ["n1"], client=client)["nodes"][0]
+    def test_a_node_that_cannot_be_asked_is_an_error_not_an_absence(self, hub):
+        """ "We could not ask" and "it is not there" are different answers, and
+        only the second one is a reason to send 26 GB again."""
+
+        def _refuse(_node):
+            raise RuntimeError("no route to host")
+
+        row = models_tool.presence(SAMPLE_MODEL, ["n1"], services=_refuse)["nodes"][0]
+
         assert row["state"] == hub_cache.STATE_ABSENT
         assert row["present"] is False
         assert "no route to host" in row["error"]
 
-    def test_an_unparseable_report_is_not_read_as_success(self, hub):
-        client = _RecordingSSHClient(stdout="command not found: python3")
-        row = models_tool.presence(SAMPLE_MODEL, ["n1"], client=client)["nodes"][0]
+    def test_a_node_that_holds_nothing_is_absent_rather_than_partial(self, hub, agents):
+        row = models_tool.presence(SAMPLE_MODEL, ["n9"], services=agents)["nodes"][0]
+
+        assert row["state"] == hub_cache.STATE_ABSENT
         assert row["present"] is False
-        assert row["reason"] == "no verification report"
+        assert row["error"] is None
 
 
 # ── Credentials ──────────────────────────────────────────────────────────────
@@ -704,26 +782,38 @@ class TestTransportContract:
         assert argv[-2:] == ["/local/repo/", "ubuntu@n1:/remote/repo/"]
 
     def test_replication_goes_through_the_ssh_client_not_a_subprocess(self, hub):
-        """No shelling out: the transport is the one phase A fixed."""
-        client = _RecordingSSHClient(stdout="")
-        with patch("subprocess.run") as run:
-            models_tool.presence(SAMPLE_MODEL, ["n1"], client=client)
-        assert run.call_count == 0
-        assert client.execs and client.copies
+        """No shelling out: the transport is the one phase A fixed.
 
-    def test_the_verifier_is_shipped_to_the_node_before_it_is_run(self, hub):
+        The client is given to it, so a run that reaches for a subprocess of
+        its own is composing a command line somewhere it should not.
+        """
         client = _RecordingSSHClient(stdout="")
-        models_tool.presence(SAMPLE_MODEL, ["n1"], client=client)
-        assert client.copies[0][0] == hub_cache.__file__
-        assert client.copies[0][2] == models_tool._remote_helper_path()
+
+        with patch("subprocess.run", side_effect=AssertionError("shelled out")):
+            models_tool.replicate_to_nodes(SAMPLE_MODEL, ["n1"], client=client)
+
+        assert client.execs and client.copy_dirs
+
+    def test_the_verifier_is_shipped_only_by_the_transfer(self, hub, agents):
+        """Presence no longer ships anything.
+
+        It used to copy `hub_cache.py` to the node and run it there — a second
+        copy of the verifier on a machine that may not have the interpreter for
+        it, and an SSH login per question. The node lists its snapshot through
+        its agent now and the verdict is reached here. Replication still ships
+        the helper, because it writes the completion marker on the node.
+        """
+        client = _RecordingSSHClient(stdout="")
+        with patch.object(models_tool, "_make_ssh_client", return_value=client):
+            models_tool.presence(SAMPLE_MODEL, ["n1"], services=agents)
+
+        assert client.copies == [], "presence copied something to a node"
+        assert client.execs == [], "presence opened an SSH session"
 
     def test_the_default_client_is_the_strict_openssh_one(self):
         client = models_tool._make_ssh_client("ubuntu")
         assert isinstance(client, OpenSSHClient)
         assert client.host_key_policy == "strict"
-
-    def test_sync_to_nodes_is_the_old_name_for_replication(self):
-        assert models_tool.sync_to_nodes is models_tool.replicate_to_nodes
 
     def test_replication_refuses_an_uncached_model(self, hub):
         with pytest.raises(ValueError, match="not in local cache"):

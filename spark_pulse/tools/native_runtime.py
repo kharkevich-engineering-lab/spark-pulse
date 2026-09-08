@@ -396,18 +396,28 @@ def rank_entries(record: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _docker_service() -> Any:
-    """The container service for this process (real or mock)."""
-    return tools.docker._get_service()
+    """The container service for this machine — through its own agent.
+
+    Not ``tools.docker`` directly. The control plane coordinates; the agent on
+    each node executes, including the agent this process runs for itself and
+    reaches over loopback. A solo deployment that drove Docker from Python
+    while a two-node deployment drove it through an agent was two code paths
+    for one operation, and only one of them was exercised by the machine most
+    people run.
+    """
+    return tools.node_service.NodeServices().control()
 
 
 def rank_services(docker: Any | None = None) -> Callable[[str], Any]:
     """Resolve the container service bound to a rank's node address.
 
     ``docker`` pins one service for every rank, which is what a caller that
-    already holds a service (and every test) wants. Otherwise the empty
-    address — the record's long-standing sentinel for this machine — goes
-    straight to the process's own container service, and a real address goes
-    through the node-bound resolver, which decides local versus SSH once.
+    already holds a service (and every test) wants. Otherwise every address
+    goes through the node-bound resolver — including the empty one, the
+    record's long-standing sentinel for this machine, which
+    ``is_local_address`` already reads as loopback. There is no local branch
+    here: rank zero of a solo deployment reaches its container exactly the way
+    rank one of a two-node deployment reaches its own.
     """
     if docker is not None:
         return lambda _address: docker
@@ -416,8 +426,6 @@ def rank_services(docker: Any | None = None) -> Callable[[str], Any]:
 
     def _resolve(address: str) -> Any:
         nonlocal resolver
-        if not address:
-            return _docker_service()
         if resolver is None:
             resolver = tools.node_service.NodeServices()
         return resolver.for_address(address)

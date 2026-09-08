@@ -126,7 +126,6 @@ def test_get_recipe_resolves_a_bundled_id(recipe_id):
     "recipe_id,expected",
     [
         ("bundled/qwen2.5-0.5b-instruct", "bundled"),
-        ("imported/cluster/big", "imported"),
         ("custom-mine", "custom"),
         ("oci-thing", "oci"),
         ("qwen3.5-35b", "upstream"),

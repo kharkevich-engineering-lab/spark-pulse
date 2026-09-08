@@ -9,7 +9,6 @@ from fastapi import APIRouter
 from starlette.responses import StreamingResponse
 
 # Use factory to get correct tools (real or mock) based on SIMULATION_MODE
-from spark_pulse.tools import system
 from spark_pulse.tools.events import EventBroadcaster
 from spark_pulse import tools
 from starlette.concurrency import run_in_threadpool
@@ -21,16 +20,12 @@ async def metrics_generator() -> AsyncGenerator[str, None]:
     """Generate SSE events with memory metrics every 5 seconds."""
 
     def _collect() -> dict:
-        # nvidia-smi and the deployment store are both blocking; on the loop
-        # they stall every other stream in the process for their duration.
-        data = system.get_all_memory()
-        running = [
-            d
-            for d in tools.deployment_records.load()
-            if d.get("status") in ("running", "pending")
-        ]
-        system.enrich_gpu_process_tracking(data.get("processes", []), running)
-        return data
+        # Asking every node is blocking — a gRPC round trip per node — and on
+        # the loop it would stall every other stream in the process for its
+        # duration. Tracking is decided inside `collect`, from each node's own
+        # managed-container list, because only the node can see the process and
+        # only the control plane knows what it started.
+        return tools.node_stats.collect()
 
     while True:
         try:

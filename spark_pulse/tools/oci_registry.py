@@ -987,8 +987,8 @@ def install_oci_recipe(
     target = None
     for r in recipes:
         # Match by filename (without .yaml/.yml) or by name in content
-        base_name = Path(r["filename"]).stem
-        if base_name == recipe_name or r["filename"] == f"{recipe_name}.yaml":
+        base_name = _recipe_stem(r["filename"])
+        if base_name == _recipe_stem(recipe_name):
             target = r
             break
 
@@ -1075,14 +1075,8 @@ def uninstall_oci_recipe(recipe_name: str) -> dict:
     if not meta:
         return {"success": False, "recipe": recipe_name, "action": "not_found"}
 
-    # Derive recipe filename from meta
-    base = meta.name
-    recipe_file = (
-        RECIPES_DIR / base
-        if base.endswith((".yaml", ".yml"))
-        else RECIPES_DIR / f"{base}.yaml"
-    )
-    meta_file = _meta_path(base)
+    recipe_file = _recipe_path(meta.name)
+    meta_file = _meta_path(meta.name)
 
     # Remove files
     removed = []
@@ -1187,12 +1181,46 @@ class RecipeMeta:
     local_changes: bool
 
 
+def _recipe_stem(recipe_name: str) -> str:
+    """The recipe's name without its extension, whether or not it had one.
+
+    ``Path.suffix`` cannot be used for this. Recipe names carry version
+    numbers — ``GLM-4.7-Flash-AWQ``, ``Qwen3.8-27B`` — and Python reads
+    ``.7-Flash-AWQ`` as an extension, so a name that came from a collection
+    listing resolved to a metadata file that has never existed. That is why
+    uninstalling from the browse drawer answered "not found" while the same
+    recipe uninstalled fine from the installed list, which passes the name
+    *with* ``.yaml``.
+    """
+    name = str(recipe_name).strip()
+    for suffix in (".yaml", ".yml"):
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
+    return name
+
+
 def _meta_path(recipe_filename: str) -> Path:
-    """Get the metadata file path for a recipe."""
-    base = Path(recipe_filename)
-    if base.suffix in {".yaml", ".yml"}:
-        return RECIPES_DIR / f"{base.stem}.yaml.meta"
-    return RECIPES_DIR / f"{recipe_filename}.meta"
+    """Where the metadata for a recipe lives.
+
+    Always ``<stem>.yaml.meta``, which is what every install has written.
+    """
+    return RECIPES_DIR / f"{_recipe_stem(recipe_filename)}.yaml.meta"
+
+
+def _recipe_path(recipe_name: str) -> Path:
+    """The recipe file itself.
+
+    ``.yaml`` is what an install writes, but a collection may ship ``.yml`` and
+    that extension is kept on disk, so the one that exists wins. The ``.yaml``
+    form is the answer when neither does — a caller asking where a recipe
+    *would* go gets the name it would be given.
+    """
+    stem = _recipe_stem(recipe_name)
+    for suffix in (".yaml", ".yml"):
+        candidate = RECIPES_DIR / f"{stem}{suffix}"
+        if candidate.exists():
+            return candidate
+    return RECIPES_DIR / f"{stem}.yaml"
 
 
 def _write_recipe_meta(
@@ -1241,12 +1269,7 @@ def _read_recipe_meta(recipe_filename: str) -> RecipeMeta | None:
         return None
 
     # Check if the recipe file has local modifications
-    base = Path(recipe_filename)
-    recipe_file = (
-        RECIPES_DIR / base.name
-        if base.suffix in {".yaml", ".yml"}
-        else RECIPES_DIR / recipe_filename
-    )
+    recipe_file = _recipe_path(recipe_filename)
     local_changes = False
     if recipe_file.exists():
         try:
@@ -1262,7 +1285,7 @@ def _read_recipe_meta(recipe_filename: str) -> RecipeMeta | None:
             pass
 
     return RecipeMeta(
-        name=base.name,
+        name=f"{_recipe_stem(recipe_filename)}.yaml",
         source=data.get("source", ""),
         collection=data.get("collection", ""),
         version=data.get("version", ""),

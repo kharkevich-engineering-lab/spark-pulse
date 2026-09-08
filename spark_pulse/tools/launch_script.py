@@ -371,11 +371,7 @@ class LaunchScriptDistributor:
     anything at. It could only ever have worked by accident.
     """
 
-    def __init__(
-        self,
-        services: Any = None,
-        **_legacy: Any,
-    ):
+    def __init__(self, services: Any = None):
         from spark_pulse.tools.node_service import NodeServices
 
         self._services = services or NodeServices()

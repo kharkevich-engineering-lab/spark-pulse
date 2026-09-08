@@ -121,7 +121,12 @@ export async function fetchEngineMetrics(id: string): Promise<EngineMetricsWindo
 // ── Memory ──────────────────────────────────────────────────────────────────
 
 export async function fetchMemory(): Promise<MemoryResponse> { return json<MemoryResponse>("/memory"); }
-export async function killGpuProcess(pid: number): Promise<{ killed: boolean; pid: number; error?: string }> { return json(`/memory/processes/${pid}`, { method: "DELETE" }); }
+export async function killGpuProcess(pid: number, node = ""): Promise<{ killed: boolean; pid: number; error?: string }> {
+  // The node is part of the address of a process: the same pid on two Sparks
+  // is two different processes, and the endpoint used to be able to reach only
+  // one of them.
+  return json(`/memory/processes/${pid}?node=${encodeURIComponent(node)}`, { method: "DELETE" });
+}
 
 // ── Cache ───────────────────────────────────────────────────────────────────
 
@@ -573,8 +578,13 @@ export async function fetchModelPresence(id: string, nodes: string[]): Promise<M
   return json<ModelPresence>(`/models/${id}/presence?nodes=${encodeURIComponent(nodes.join(","))}`);
 }
 
-export async function deleteModel(id: string): Promise<ModelDeleteResult> {
-  return json<ModelDeleteResult>(`/models/${id}`, { method: "DELETE" });
+export async function deleteModel(id: string, nodes: string[] = []): Promise<ModelDeleteResult> {
+  // A model replicated to four Sparks is on four disks; deleting it from one
+  // of them and saying it is gone is how 26 GB stays where nobody looks.
+  return json<ModelDeleteResult>(
+    `/models/${id}?nodes=${encodeURIComponent(nodes.join(","))}`,
+    { method: "DELETE" },
+  );
 }
 
 // ── Engine images ──────────────────────────────────────────────────

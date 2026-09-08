@@ -420,6 +420,176 @@ def _verify_against_manifest(
     return report
 
 
+def verify_listing(
+    files: list[dict[str, Any]],
+    *,
+    commit: str | None,
+    present: bool = True,
+    manifest: dict[str, dict[str, Any]] | None = None,
+    deep: bool = False,
+    require_manifest: bool = False,
+) -> dict[str, Any]:
+    """Decide the same three states from a *listing* rather than from disk.
+
+    The node walked its own snapshot and said what is there — paths, resolved
+    sizes, whether each entry is a symlink and whether it leads to bytes. This
+    turns that into the verdict, against the manifest the control plane already
+    holds.
+
+    The split is deliberate. Deciding on the node would need a second copy of
+    this verifier over there — which is what shipping ``hub_cache.py`` over SSH
+    was, and what re-implementing it in the agent would be a third of. A
+    directory listing cannot disagree with itself.
+
+    Args:
+        files: ``{path, size, sha256, is_symlink, resolved}`` per entry.
+        commit: The revision the listing is of, for the report.
+        present: Whether the snapshot directory existed at all.
+        manifest: The hub's manifest for ``commit``, when we have it.
+        deep: Compare hashes as well as sizes. Only the SHA-256 entries can be
+            checked this way: the agent hashes with SHA-256, and a manifest
+            entry with only a git blob id has no comparable digest, exactly as
+            the on-disk verifier skips it when the hub published no hash.
+        require_manifest: Refuse ``verified`` on structure alone.
+    """
+    if not present:
+        return _blank_report(
+            STATE_ABSENT,
+            f"no snapshot for revision {commit}" if commit else "no snapshot",
+            commit,
+        )
+
+    report = _blank_report(STATE_PARTIAL, "", commit)
+    by_path = {str(entry.get("path") or ""): entry for entry in files}
+
+    if manifest is None:
+        return _listing_structurally(by_path, report, require_manifest)
+
+    missing: list[str] = []
+    dangling: list[str] = []
+    mismatched: list[dict[str, Any]] = []
+    found = 0
+    bytes_present = 0
+
+    for rel_path in sorted(manifest):
+        entry = manifest[rel_path]
+        expected_size = int(entry.get("size") or 0)
+        actual = by_path.get(rel_path)
+        if actual is None:
+            missing.append(rel_path)
+            continue
+        # A link the node could not follow is not a small file: it is a
+        # snapshot copied without its blobs, which is the failure this whole
+        # exercise exists to name.
+        if not actual.get("resolved", True):
+            dangling.append(rel_path)
+            continue
+        actual_size = int(actual.get("size") or 0)
+        found += 1
+        bytes_present += actual_size
+        if actual_size != expected_size:
+            mismatched.append(
+                {
+                    "path": rel_path,
+                    "kind": "size",
+                    "expected": expected_size,
+                    "actual": actual_size,
+                }
+            )
+            continue
+        if deep:
+            algorithm_digest = expected_hash(entry)
+            digest = str(actual.get("sha256") or "")
+            if algorithm_digest is None or not digest:
+                continue
+            algorithm, expected_digest = algorithm_digest
+            if algorithm != "sha256":
+                # The node hashes with SHA-256; a git blob id is not something
+                # it can be compared against. Skipped rather than failed —
+                # claiming a mismatch here would be inventing one.
+                continue
+            if digest.lower() != expected_digest:
+                mismatched.append(
+                    {
+                        "path": rel_path,
+                        "kind": algorithm,
+                        "expected": expected_digest,
+                        "actual": digest.lower(),
+                    }
+                )
+
+    report.update(
+        {
+            "evidence": EVIDENCE_HASHES if deep else EVIDENCE_MANIFEST,
+            "files_expected": len(manifest),
+            "files_present": found,
+            "bytes_expected": manifest_bytes(manifest),
+            "bytes_present": bytes_present,
+            "missing": missing[:MAX_REPORTED_PATHS],
+            "missing_count": len(missing),
+            "dangling": dangling[:MAX_REPORTED_PATHS],
+            "dangling_count": len(dangling),
+            "mismatched": mismatched[:MAX_REPORTED_PATHS],
+            "mismatched_count": len(mismatched),
+        }
+    )
+    if missing or dangling or mismatched:
+        report["state"] = STATE_PARTIAL
+        report["reason"] = _describe(len(missing), len(dangling), len(mismatched))
+        return report
+    report["state"] = STATE_VERIFIED
+    report["reason"] = f"{len(manifest)} files match the manifest for {commit}"
+    return report
+
+
+def _listing_structurally(
+    by_path: dict[str, dict[str, Any]],
+    report: dict[str, Any],
+    require_manifest: bool,
+) -> dict[str, Any]:
+    """No manifest: prove it broken if it is, never prove it whole.
+
+    A listing with a link that leads nowhere is definitely partial. A listing
+    where everything resolves is *consistent*, which is not the same as
+    complete — nothing here knows how many files the revision should have.
+    """
+    dangling = sorted(
+        path for path, entry in by_path.items() if not entry.get("resolved", True)
+    )
+    found = len(by_path) - len(dangling)
+    report.update(
+        {
+            "evidence": EVIDENCE_STRUCTURE,
+            "files_expected": len(by_path),
+            "files_present": found,
+            "bytes_present": sum(
+                int(entry.get("size") or 0)
+                for entry in by_path.values()
+                if entry.get("resolved", True)
+            ),
+            "dangling": dangling[:MAX_REPORTED_PATHS],
+            "dangling_count": len(dangling),
+        }
+    )
+    if dangling:
+        report["state"] = STATE_PARTIAL
+        report["reason"] = _describe(0, len(dangling), 0)
+        return report
+    if not by_path:
+        report["state"] = STATE_ABSENT
+        report["reason"] = "the snapshot directory is empty"
+        return report
+    if require_manifest:
+        report["state"] = STATE_PARTIAL
+        report["reason"] = "no manifest to check the copy against"
+        return report
+    report["state"] = STATE_VERIFIED
+    report["reason"] = (
+        f"{found} file(s) present, with no manifest to check them against"
+    )
+    return report
+
+
 def _describe(missing: int, dangling: int, mismatched: int) -> str:
     parts = []
     if missing:

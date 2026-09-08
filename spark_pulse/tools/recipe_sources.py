@@ -14,8 +14,14 @@ Sources, in listing order:
 * ``~/.config/spark-pulse/recipes``, where OCI collections install
   (ids prefixed ``oci-``),
 * the ``recipes/`` directory of a spark-vllm-docker checkout, when one is
-  configured — read-only, and entirely optional, and
-* ``~/.config/spark-pulse/imported/recipes`` (ids prefixed ``imported/``).
+  configured — read-only, and entirely optional.
+
+There was a fifth: ``~/.config/spark-pulse/imported/recipes``, filled by an
+"Import from upstream" panel that copied a checkout's recipes into the config
+directory. The importer was removed and only the reader stayed, so the source
+could be read but never written — a directory nothing in circulation can
+create. It has gone too; the files an operator imported are still on disk if
+they want them, and the three sources above are the ones anything can add to.
 
 The custom and OCI directories used to reach this listing only because
 symlinks were planted in the checkout so upstream's runner could see them.
@@ -33,11 +39,6 @@ from pathlib import Path
 from typing import Any
 
 from spark_pulse.tools import recipe_schema
-from spark_pulse.tools.recipe_import import (
-    IMPORT_SOURCE_PREFIX,
-    imported_recipes_dir,
-    iter_imported_recipe_files,
-)
 from spark_pulse.tools.recipe_schema import RecipeV1, RecipeV2
 
 logger = logging.getLogger(__name__)
@@ -45,7 +46,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_CONTAINER = "vllm-node"
 
 #: Recipes shipped inside the package. Ids are prefixed so they never collide
-#: with an upstream, ``custom-``, ``oci-`` or ``imported/`` recipe.
+#: with an upstream, ``custom-`` or ``oci-`` recipe.
 BUNDLED_SOURCE_PREFIX = "bundled"
 BUNDLED_RECIPES_DIR = Path(__file__).resolve().parent.parent / "recipes"
 
@@ -57,7 +58,6 @@ OCI_PREFIX = "oci-"
 SOURCE_BUNDLED = "bundled"
 SOURCE_CUSTOM = "custom"
 SOURCE_OCI = "oci"
-SOURCE_IMPORTED = "imported"
 SOURCE_UPSTREAM = "upstream"
 
 #: Placeholders that only Spark Pulse ever understood — upstream's
@@ -176,19 +176,12 @@ def source_of(recipe_id: str) -> str:
     """Label the source a recipe id came from."""
     if recipe_id.startswith(f"{BUNDLED_SOURCE_PREFIX}/"):
         return SOURCE_BUNDLED
-    if recipe_id.startswith(f"{IMPORT_SOURCE_PREFIX}/"):
-        return SOURCE_IMPORTED
     leaf = recipe_id.rsplit("/", 1)[-1]
     if leaf.startswith("custom-"):
         return SOURCE_CUSTOM
     if leaf.startswith("oci-"):
         return SOURCE_OCI
     return SOURCE_UPSTREAM
-
-
-def _imported_recipe_id(recipe_file: Path) -> str:
-    rel = recipe_file.relative_to(imported_recipes_dir())
-    return f"{IMPORT_SOURCE_PREFIX}/{rel.with_suffix('').as_posix()}"
 
 
 def _flat_dir_files(directory: Path, id_prefix: str) -> list[tuple[str, Path]]:
@@ -243,8 +236,6 @@ def candidate_files(spark_path: Path | None) -> list[tuple[str, Path]]:
     if recipe_dir is not None:
         for path in iter_recipe_files(recipe_dir):
             pairs.append((recipe_id_from_path(recipe_dir, path), path))
-    for path in iter_imported_recipe_files():
-        pairs.append((_imported_recipe_id(path), path))
 
     seen: set[str] = set()
     unique: list[tuple[str, Path]] = []
@@ -406,14 +397,6 @@ def resolve_recipe(recipe_id: str, spark_path: Path | None) -> dict[str, Any] | 
         rel = recipe_id[len(BUNDLED_SOURCE_PREFIX) + 1 :]
         base = bundled_recipes_dir()
         for suffix in (".yaml", ".yml"):
-            path = base / f"{rel}{suffix}"
-            if path.is_file():
-                candidates.append((recipe_id, path))
-                break
-    elif recipe_id.startswith(f"{IMPORT_SOURCE_PREFIX}/"):
-        rel = recipe_id[len(IMPORT_SOURCE_PREFIX) + 1 :]
-        base = imported_recipes_dir()
-        for suffix in (".yaml", ".yml", ""):
             path = base / f"{rel}{suffix}"
             if path.is_file():
                 candidates.append((recipe_id, path))

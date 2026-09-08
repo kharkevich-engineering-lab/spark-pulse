@@ -172,6 +172,25 @@ def create_deployment(req: dict):
 
 @router.delete("/{deployment_id}")
 def stop_or_delete_deployment(deployment_id: str):
+    """Record the intent, answer, and let the reconciler make it true.
+
+    This used to tear every rank down on the request's own thread: head first,
+    one node at a time, and on a node that had stopped answering, for as long
+    as the transport waits. The decision was already made by then — what the
+    browser was holding a spinner over was somebody else's timeout.
+
+    Now the intent is recorded and returned. The reconciler is nudged rather
+    than waited on, so a single healthy node still completes in well under a
+    second, and a node that cannot be reached delays nothing but itself. The
+    record keeps its ports until a rank is confirmed gone, which is the rule
+    that stops a half-deleted deployment being redeployed on top of a container
+    still holding its GPU.
+
+    The two intents this endpoint has always carried stay apart. On a live
+    deployment it is a *stop*: the containers go and the record stays, because
+    a finished run is history somebody reads. On one that has already ended it
+    is a *removal*: the record itself is what the operator is clearing.
+    """
     deps = tools.deploy_dispatch.list_deployments()
     dep = next((d for d in deps if d.get("id") == deployment_id), None)
     if dep is None:
@@ -180,19 +199,27 @@ def stop_or_delete_deployment(deployment_id: str):
         )
 
     if dep.get("status") in ("stopped", "error"):
-        # Terminal state — remove from history, and drop the metrics window
-        # with it rather than waiting for the sampler's next sweep to notice.
-        tools.deploy_dispatch.delete_deployment(deployment_id)
-        tools.engine_metrics.forget(deployment_id)
-        return {"deleted": True, "id": deployment_id}
-
-    # Active — stop the process or container
-    result = tools.deploy_dispatch.stop_deployment(deployment_id)
-    if result is None:
-        raise HTTPException(
-            status_code=404, detail=f"Deployment '{deployment_id}' not found"
+        state, intent, reason = (
+            tools.reconciler.SYNC_DELETING,
+            None,
+            "removal requested",
         )
-    return result
+    else:
+        state, intent, reason = (
+            tools.reconciler.SYNC_IN_PROGRESS,
+            tools.reconciler.INTENT_STOP,
+            "stop requested",
+        )
+
+    marked = tools.reconciler.mark(deployment_id, state, reason, intent)
+    tools.reconciler.nudge()
+    return {
+        "accepted": True,
+        "id": deployment_id,
+        "sync": state,
+        "intent": intent or "delete",
+        "status": (marked or dep).get("status"),
+    }
 
 
 @router.get("/{deployment_id}")
