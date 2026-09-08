@@ -1,0 +1,61 @@
+# Publish the documentation site to GitHub Pages.
+#
+# There is no gh-pages branch and no build step. The site is Docsify: an
+# index.html that fetches the markdown at runtime, so what is published is
+# exactly what is in `docs/` — the same files a reader sees on GitHub, and the
+# same ones the code comments point at.
+#
+# Pages must be set to "GitHub Actions" as its source (Settings → Pages →
+# Build and deployment → Source). A repository still set to "Deploy from a
+# branch" fails this workflow with a permissions error rather than silently
+# publishing nothing.
+name: Docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; a queued run supersedes the one waiting, but never
+# cancels a deployment already in progress.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check the site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Every sidebar link resolves to a file
+        run: python3 scripts/check-docs-links.py
+
+  deploy:
+    name: Publish
+    needs: check
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/configure-pages@v5
+
+      - name: Upload docs/
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

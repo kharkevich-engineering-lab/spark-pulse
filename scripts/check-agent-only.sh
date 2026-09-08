@@ -48,12 +48,6 @@ for title, group in (
 print("\nthe seam itself (a node service is built here):")
 for name in sorted(ratchet.MAY_TOUCH_DOCKER_DIRECTLY):
     print(f"  {name}")
-
-print("\n── Still answers for the control node only ─────────────────────────────")
-for name, reason in sorted(ratchet.STILL_SINGLE_NODE.items()):
-    print(f"\n  {name}")
-    for line in __import__("textwrap").wrap(reason, 68):
-        print(f"      {line}")
 REPORT
 
 echo
