@@ -100,7 +100,12 @@ fn starting_a_container_does_not_change_the_machine() {
     assert_eq!(print(&["enp1s0", "docker0"], "m", 20, 1), bare);
     assert_eq!(print(&["enp1s0", "docker0", "br-1a2b3c"], "m", 20, 1), bare);
     assert_eq!(
-        print(&["enp1s0", "docker0", "br-1a2b3c", "veth1a2b3c"], "m", 20, 1),
+        print(
+            &["enp1s0", "docker0", "br-1a2b3c", "veth1a2b3c"],
+            "m",
+            20,
+            1
+        ),
         bare
     );
 }
@@ -157,7 +162,10 @@ fn a_containers_veth_is_docker_and_does_not_count() {
     // plane could not start.
     let bare = print(&["enp1s0"], "m", 20, 1);
     assert_eq!(print(&["enp1s0", "veth1a2b3c"], "m", 20, 1), bare);
-    assert_eq!(print(&["enp1s0", "veth8bf252c", "br-1a2b3c"], "m", 20, 1), bare);
+    assert_eq!(
+        print(&["enp1s0", "veth8bf252c", "br-1a2b3c"], "m", 20, 1),
+        bare
+    );
 }
 
 #[test]
