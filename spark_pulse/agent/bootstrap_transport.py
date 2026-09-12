@@ -39,6 +39,7 @@ import hashlib
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Protocol, runtime_checkable
 
+from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
@@ -55,6 +56,7 @@ __all__ = [
     "Prompt",
     "RootPasswordBootstrap",
     "RunResult",
+    "UnusableKey",
     "Unreachable",
     "generate_keypair",
     "keypair_from_private_pem",
@@ -161,20 +163,70 @@ def generate_keypair(comment: str = "spark-pulse") -> KeyPair:
     return KeyPair(private, f"{public.decode()} {comment}".strip())
 
 
+class UnusableKey(ValueError):
+    """A private key that cannot be read: not a key, or locked and no passphrase."""
+
+
 def keypair_from_private_pem(
-    private_pem: bytes, comment: str = "spark-pulse"
+    private_pem: bytes, comment: str = "spark-pulse", *, passphrase: str | None = None
 ) -> KeyPair:
     """Derive the public half of a private key the operator supplied.
 
     The private bytes are carried so the installer can authenticate *from* the
     control plane with them. They are never a thing any method here sends.
+
+    A key pasted or uploaded from a browser is often the operator's own, and
+    those are often encrypted; ``passphrase`` unlocks it *here*, and what is
+    carried onward is the decrypted key, so the SSH library is never handed a
+    passphrase it might prompt for. Both OpenSSH and PEM (PKCS#8, traditional)
+    encodings are accepted because both are what ``ssh-keygen`` has produced
+    across the versions in the field.
     """
-    key = serialization.load_ssh_private_key(private_pem, password=None)
+    secret = passphrase.encode() if passphrase else None
+    key = None
+    locked = False
+    for load in (
+        serialization.load_ssh_private_key,
+        serialization.load_pem_private_key,
+    ):
+        try:
+            key = load(private_pem, password=secret)
+            break
+        except TypeError:
+            # cryptography's "password was not given but the key is
+            # encrypted" is a TypeError, in both loaders.
+            locked = True
+        except ValueError as exc:
+            if "password" in str(exc).lower():
+                locked = True
+        except UnsupportedAlgorithm as exc:
+            raise UnusableKey(
+                f"this private key cannot be unlocked here: {exc}"
+            ) from exc
+    if key is None:
+        if secret is None and locked:
+            raise UnusableKey("the private key is encrypted; supply its passphrase")
+        if secret is not None:
+            # A wrong passphrase on an OpenSSH key surfaces as a checksum
+            # failure, not as a "bad password", so this cannot be told apart
+            # from "not a key" — and the message must not pretend it can.
+            raise UnusableKey(
+                "the passphrase does not unlock this private key, or it is not "
+                "an OpenSSH or PEM private key"
+            )
+        raise UnusableKey(
+            "the private key could not be read: it is not an OpenSSH or PEM private key"
+        )
+    unlocked = key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.OpenSSH,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
     public = key.public_key().public_bytes(
         encoding=serialization.Encoding.OpenSSH,
         format=serialization.PublicFormat.OpenSSH,
     )
-    return KeyPair(private_pem, f"{public.decode()} {comment}".strip())
+    return KeyPair(unlocked, f"{public.decode()} {comment}".strip())
 
 
 # ── The channel ─────────────────────────────────────────────────────────────

@@ -50,6 +50,10 @@ dependencies = [
     # spark_pulse/agent/bootstrap_transport.py, so a control plane that never
     # installs an agent still starts without it.
     "asyncssh>=2.14.0",
+    # Encrypted OpenSSH private keys (the kind `ssh-keygen` writes when asked
+    # for a passphrase) are bcrypt-KDF'd; without this, a key an operator
+    # uploads from the browser cannot be unlocked here.
+    "bcrypt>=4.0",
 ]
 
 [project.optional-dependencies]

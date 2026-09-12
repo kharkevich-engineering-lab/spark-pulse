@@ -116,17 +116,37 @@ async def start_local_agent(
     executable = Path(binary) if binary else host_binary()
 
     identity = AgentIdentity.load(directory)
+    entry = server.ledger.get(identity.node_id) if identity is not None else None
     stale = identity is not None and bool(node_id) and identity.node_id != node_id
-    if identity is None or server.ledger.get(identity.node_id) is None or stale:
+    denied = entry is not None and entry.state == "denied"
+    if identity is None or entry is None or stale or denied:
         # Never enrolled; enrolled against a CA/ledger that is gone (a fresh
-        # control-plane state directory, say); or holding an identity the node
-        # registry no longer agrees with. All three need a new identity, and
-        # all three go through the same enrollment a remote node goes through.
+        # control-plane state directory, say); holding an identity the node
+        # registry no longer agrees with; or denied by our own ledger. All four
+        # need a new identity, and all four go through the same enrollment a
+        # remote node goes through.
         #
         # Re-enrolling *ourselves* is safe in a way re-enrolling a peer is not:
         # the identity lives on this disk, the transport is loopback, and no
         # other machine has to be told. That asymmetry is why re-enrolment is
         # automatic here and never automatic there.
+        #
+        # The denied case is the one that matters in the field. The ledger
+        # denies a node whose hardware fingerprint moved, and *surfaces it for
+        # a human decision* — for a peer, the right thing. For the control node
+        # there is nobody to surface it to: a denied control node is a control
+        # plane that exits at startup, forever, and the page that would show
+        # the decision never loads. This machine is the one running the ledger;
+        # if it is reimaged, the ledger went with it. So the decision is made
+        # here, said out loud, and the identity is re-minted under the same id.
+        if denied:
+            logger.warning(
+                "the control node's agent (%s) was denied by its own ledger — %s — "
+                "re-enrolling it under the same id",
+                identity.node_id,
+                entry.denied_reason or "no reason recorded",
+            )
+            server.ledger.remove(identity.node_id)
         if identity is not None:
             identity.destroy()
         minted = await _enroll(server, executable, directory, host, name, node_id)

@@ -974,6 +974,78 @@ export interface ClusterNode {
   state: NodeState;
   last_seen: string | null;
   machine_id: string;
+  /** What the agent transport knows: whether this machine has an agent at
+   * all, and whether it is on the wire now. Absent when the transport is not
+   * running. */
+  agent?: NodeAgentState;
+}
+
+export interface NodeAgentState {
+  enrolled: boolean;
+  connected: boolean;
+}
+
+// ── Installing an agent from the browser ────────────────────────────────────
+
+/** How the installer may log in. `password` pushes the control plane's key
+ * and verifies it before anything else; `key` is a private key the operator
+ * supplies (unlocked on the control plane, never sent on); `control_plane_key`
+ * is for a node whose authorized_keys already holds the control plane's key. */
+export type NodeAuthMethod = "password" | "key" | "control_plane_key";
+
+/** The SSH host key a node offers, shown before any secret is sent. */
+export interface NodeHostKey {
+  host: string;
+  port: number;
+  algorithm: string;
+  fingerprint: string;
+}
+
+export interface InstallAgentRequest {
+  username: string;
+  auth: NodeAuthMethod;
+  /** The fingerprint the operator saw and confirmed; the install refuses a
+   * node that offers a different one. */
+  host_key_fingerprint: string;
+  password?: string;
+  private_key?: string;
+  passphrase?: string;
+  sudo_password?: string;
+  port?: number;
+  scope?: "auto" | "user" | "system";
+  control_host?: string;
+}
+
+/** Something the install went ahead without, and what that costs. */
+export interface InstallConcession {
+  capability: string;
+  detail: string;
+  cost: string;
+}
+
+/** The installer's account of one install. Nothing secret is in it. */
+export interface InstallReport {
+  host: string;
+  username: string;
+  name: string;
+  node_id: string;
+  scope: string;
+  scope_reason: string;
+  converged: boolean;
+  connected: boolean;
+  host_key_fingerprint: string;
+  public_key_fingerprint: string;
+  key_generated: boolean;
+  used_password: boolean;
+  capabilities: Record<string, unknown>;
+  privileged_calls: { why: string; command: string }[];
+  concessions: InstallConcession[];
+  steps: string[];
+  bundle: Record<string, unknown>;
+  unit_path: string;
+  identity_dir: string;
+  /** The node's registry entry after the install, as `/api/nodes` now shows it. */
+  node?: ClusterNode;
 }
 
 /** A responder found on the LAN over mDNS. */

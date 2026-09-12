@@ -150,7 +150,11 @@ pub fn classify_interface(name: &str) -> &'static str {
     if name == "lo" {
         return "loopback";
     }
-    if name.starts_with("docker") || name.starts_with("br-") {
+    // `veth*` is the host end of a container's cable. It is docker, and it
+    // has to be: the fingerprint excludes docker interfaces precisely so a
+    // container starting or stopping does not change it, and a veth counted
+    // as hardware made exactly that happen.
+    if name.starts_with("docker") || name.starts_with("br-") || name.starts_with("veth") {
         return "docker";
     }
     if name.starts_with("ib") || name.starts_with("mlx5") {

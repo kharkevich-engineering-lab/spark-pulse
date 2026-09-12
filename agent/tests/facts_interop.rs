@@ -99,6 +99,10 @@ fn starting_a_container_does_not_change_the_machine() {
     let bare = print(&["enp1s0"], "m", 20, 1);
     assert_eq!(print(&["enp1s0", "docker0"], "m", 20, 1), bare);
     assert_eq!(print(&["enp1s0", "docker0", "br-1a2b3c"], "m", 20, 1), bare);
+    assert_eq!(
+        print(&["enp1s0", "docker0", "br-1a2b3c", "veth1a2b3c"], "m", 20, 1),
+        bare
+    );
 }
 
 #[test]
@@ -144,13 +148,26 @@ fn a_print_is_a_sha256_in_hex() {
 }
 
 #[test]
-fn only_docker_interfaces_are_excluded_not_every_virtual_one() {
-    // `veth*` and `tun0` classify as "other", not "docker", so they *are*
-    // counted. That is deliberate rather than an oversight: the exclusion
-    // mirrors the control plane's classification exactly, and widening it here
-    // would be the two implementations disagreeing again.
+fn a_containers_veth_is_docker_and_does_not_count() {
+    // A `veth*` is the host end of a container's cable and it comes and goes
+    // with the container. It was once classified "other" and therefore
+    // counted, and the consequence was observed on a control node: stopping a
+    // container that had been running since before enrolment changed the
+    // fingerprint, the ledger denied the node as reimaged, and the control
+    // plane could not start.
     let bare = print(&["enp1s0"], "m", 20, 1);
-    assert_ne!(print(&["enp1s0", "veth1a2b3c"], "m", 20, 1), bare);
+    assert_eq!(print(&["enp1s0", "veth1a2b3c"], "m", 20, 1), bare);
+    assert_eq!(print(&["enp1s0", "veth8bf252c", "br-1a2b3c"], "m", 20, 1), bare);
+}
+
+#[test]
+fn other_virtual_interfaces_still_count() {
+    // `tun0`, `tailscale0` and the like classify as "other", so they *are*
+    // counted. The exclusion mirrors the control plane's classification
+    // exactly, and widening it here alone would be the two implementations
+    // disagreeing again — the fixture test above is what keeps them together.
+    let bare = print(&["enp1s0"], "m", 20, 1);
+    assert_ne!(print(&["enp1s0", "tun0"], "m", 20, 1), bare);
 }
 
 // ── And the branch above it ─────────────────────────────────────────────────

@@ -617,7 +617,7 @@ export async function fetchImagePresence(ref: string, nodes: string[]): Promise<
 
 // ── Node registry ────────────────────────────────────────────────────────────
 
-import type { AddNodeRequest, ClusterNode, DiscoverNodesResult, NodeFinding } from "@/lib/types";
+import type { AddNodeRequest, ClusterNode, DiscoverNodesResult, InstallAgentRequest, InstallReport, NodeFinding, NodeHostKey } from "@/lib/types";
 
 export async function fetchNodes(): Promise<ClusterNode[]> {
   return json<ClusterNode[]>("/nodes");
@@ -644,4 +644,21 @@ export async function discoverNodes(timeout = 3): Promise<DiscoverNodesResult> {
 
 export async function fetchNodeDiagnostics(): Promise<{ findings: NodeFinding[] }> {
   return json<{ findings: NodeFinding[] }>("/nodes/diagnostics");
+}
+
+/** The SSH host key a node offers. Sends nothing to the node — no user, no
+ * secret — so it is safe to ask an address that turns out to be the wrong
+ * machine. */
+export async function fetchNodeHostKey(id: string, port = 22): Promise<NodeHostKey> {
+  return json<NodeHostKey>(`/nodes/${encodeURIComponent(id)}/host-key?port=${port}`);
+}
+
+/** Install, enrol and start the agent on a registered node.
+ *
+ * The credentials in `body` are used for this one call and stored nowhere;
+ * what the node keeps afterwards is the control plane's public key. The
+ * request lasts as long as the install does — copying the agent, enrolling,
+ * waiting for it to dial home — which is tens of seconds, not a round trip. */
+export async function installNodeAgent(id: string, body: InstallAgentRequest): Promise<InstallReport> {
+  return json<InstallReport>(`/nodes/${encodeURIComponent(id)}/install`, { method: "POST", body: JSON.stringify(body) });
 }

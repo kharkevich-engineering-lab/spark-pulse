@@ -12,21 +12,58 @@ things about the shape are deliberate:
 * ``/discover`` cannot fail. mDNS being unavailable is reported in the payload
   as ``mdns_available: false`` with an empty peer list, because "no peers
   found" is the honest answer and adding a node by address always works.
+* ``/{node_id}/host-key`` then ``/{node_id}/install`` is how an agent gets onto
+  a registered machine from the browser. Two calls, because the operator must
+  see the host key's fingerprint before any secret is sent, and the install
+  carries the fingerprint that was shown so a key that changed in between is
+  refused. The credentials in the install body — a password, a private key
+  and its passphrase, a sudo password — are used for that one call and stored
+  nowhere: what the registry keeps afterwards is the SSH user, and what the
+  node keeps is the control plane's public key.
 """
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException, Query
 
 from spark_pulse import tools
+from spark_pulse.agent import onboarding
+from spark_pulse.agent import runtime as agent_runtime
+from spark_pulse.agent.bootstrap import ExistingIdentity
+from spark_pulse.agent.bootstrap_transport import (
+    AuthFailed,
+    BootstrapError,
+    HostKeyDeclined,
+    Unreachable,
+    UnusableKey,
+)
 
 router = APIRouter(prefix="/api/nodes", tags=["nodes"])
 
 
 def _node_payload(node: Any) -> dict[str, Any]:
-    return node.to_dict()
+    """The record, with what the agent transport knows laid over it.
+
+    The registry's ``state`` is what was last *written*; the hub knows what is
+    true now. When the transport is up and the node is enrolled, ``state`` is
+    the hub's liveness, and ``agent`` says whether the machine has an agent at
+    all — which is the difference between "add one" and "it is down".
+    """
+    data = node.to_dict()
+    runtime = agent_runtime.current()
+    if runtime is None:
+        data["agent"] = {"enrolled": False, "connected": False}
+        return data
+    node_id = runtime.control_node_id if node.is_control_plane else node.id
+    enrolled = bool(node_id) and runtime.server.ledger.get(node_id) is not None
+    connected = enrolled and runtime.hub.is_connected(node_id)
+    data["agent"] = {"enrolled": enrolled, "connected": connected}
+    if enrolled:
+        data["state"] = runtime.hub.liveness(node_id).value
+    return data
 
 
 def _peer_payload(peer: Any) -> dict[str, Any]:
@@ -147,6 +184,110 @@ def update_node(node_id: str, body: dict[str, Any] = Body(...)):
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _node_payload(node)
+
+
+@router.get("/{node_id}/host-key")
+async def node_host_key(node_id: str, port: int = Query(22, ge=1, le=65535)):
+    """The SSH host key the node offers, for the operator to confirm.
+
+    Nothing is sent to the node here — no username, no secret — so this is
+    safe to call on an address that turns out to be the wrong machine.
+    """
+    node = _peer_or_404(node_id)
+    try:
+        key = await onboarding.host_key_of(node.address, port)
+    except Unreachable as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except BootstrapError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {
+        "host": key.host,
+        "port": key.port,
+        "algorithm": key.algorithm,
+        "fingerprint": key.fingerprint,
+    }
+
+
+@router.post("/{node_id}/install")
+async def install_node_agent(node_id: str, body: dict[str, Any] = Body(...)):
+    """Install, enrol and start the agent on a registered node.
+
+    The body carries the SSH user, how to authenticate (``password``, ``key``
+    with an optional ``passphrase``, or ``control_plane_key``), an optional
+    ``sudo_password`` for a node that needs one, and the
+    ``host_key_fingerprint`` the operator confirmed. The answer is the
+    installer's report: what was probed, what scope was chosen and why, every
+    privileged call, and whether the agent has dialled home.
+    """
+    node = _peer_or_404(node_id)
+    runtime = agent_runtime.current()
+    if runtime is None:
+        raise HTTPException(
+            status_code=503,
+            detail="the agent transport is not running, so no node can enrol",
+        )
+    try:
+        request = onboarding.parse_request(body)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    control_host = request.control_host or _control_address()
+    if not control_host:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "the control node has no address for the new node to dial; set "
+                "one on the control plane's own entry, or pass control_host"
+            ),
+        )
+    try:
+        report = await onboarding.onboard(
+            runtime.server,
+            request,
+            host=node.address,
+            control_host=control_host,
+            name=node.name or node.address,
+            node_id=node.id,
+        )
+    except UnusableKey as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except HostKeyDeclined as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ExistingIdentity as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except AuthFailed as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except Unreachable as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except BootstrapError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    changes: dict[str, Any] = {"ssh_user": request.username}
+    if report.get("connected"):
+        changes["state"] = "healthy"
+        changes["last_seen"] = datetime.now(timezone.utc).isoformat()
+    tools.node_registry.update_node(node.id, **changes)
+    report["node"] = _node_payload(tools.node_registry.get_node(node.id))
+    return report
+
+
+def _peer_or_404(node_id: str) -> Any:
+    node = tools.node_registry.get_node(node_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail=f"No such node: {node_id}")
+    if node.is_control_plane:
+        raise HTTPException(
+            status_code=400,
+            detail="the control node runs its own agent; there is nothing to install",
+        )
+    if not node.address:
+        raise HTTPException(status_code=400, detail=f"{node.name} has no address")
+    return node
+
+
+def _control_address() -> str:
+    """The address peers dial: the control plane's own registry entry."""
+    control = tools.node_registry.self_node()
+    return str(getattr(control, "address", "") or "")
 
 
 @router.delete("/{node_id}")

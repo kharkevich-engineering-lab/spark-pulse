@@ -172,10 +172,17 @@ def _try_import_psutil():
 def _classify_interface(
     name: str,
 ) -> Literal["ethernet", "infiniband", "loopback", "docker", "other"]:
-    """Classify a network interface by name patterns."""
+    """Classify a network interface by name patterns.
+
+    ``veth*`` is docker: it is the host end of a container's network cable,
+    and one appears and vanishes with every container. The agent builds a
+    node's hardware fingerprint from the interfaces that are *not* docker, so
+    a veth counted as hardware meant that stopping any container changed the
+    fingerprint and the control plane denied the node as reimaged.
+    """
     if name == "lo":
         return "loopback"
-    if name.startswith(("docker", "br-")):
+    if name.startswith(("docker", "br-", "veth")):
         return "docker"
     if name.startswith(("ib", "mlx5")):
         return "infiniband"

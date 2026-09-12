@@ -26,6 +26,24 @@ SSH carries the agent onto the machine and does nothing else afterwards. The age
 
 The node's private key never leaves the node; the CA key never leaves the control node.
 
+### Installing from the browser
+
+Adding a node registers an address. The install that follows — offered as soon as the node is added, and again from the **Install agent** action on any peer's row — is where the SSH login happens, and it happens once:
+
+1. **Credentials.** The SSH user, and one of three ways in: a **password** (used once to place the control plane's public key on the node, then verified without it), a **private key** pasted or uploaded from the browser, with its passphrase if it has one, or the **control plane's own key** for a node whose `authorized_keys` already holds it. A sudo password is optional and used only if the node needs something elevated — enabling lingering, say, or writing a system unit.
+2. **Host key.** Before anything is sent, the dialog asks the node for its SSH host key and shows the fingerprint, the same `SHA256:…` that `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` prints on the node. The install carries the fingerprint you saw, and refuses if the node offers a different one in between.
+3. **Report.** Whether the agent dialled home, which unit scope was chosen and why, every step, every privileged call, and anything the install went ahead without.
+
+None of the secrets is kept. The registry keeps the SSH user; the node keeps the control plane's public key, which is what every later SSH — a model rsync, a reinstall — presents. A key you supplied is unlocked on the control plane and used to log in from there; it is not sent to the node.
+
+The API is the same two calls: `GET /api/nodes/{id}/host-key`, then `POST /api/nodes/{id}/install`.
+
+### The hardware fingerprint
+
+Enrolment records a fingerprint of the machine — a board serial where one is readable, otherwise a hash of the physical interface names, CPU count, memory and machine-id — and every later connection is compared against it, so a node rebuilt under an already-accepted identity is *denied and surfaced* rather than trusted. Docker's interfaces (`docker0`, `br-*`, and the `veth*` end of every container) are excluded: they come and go with workloads, and a fingerprint that moved when a container stopped would deny a node for running one.
+
+The control node is the one machine that cannot be surfaced to anybody — a denied control node is a control plane that exits at startup — so if its own ledger denies it, it says so in the log and re-enrols under the same identity.
+
 ## Diagnostics
 
 Each finding names a remedy, because every condition here is one the cluster can run with — the cost is confusion, not failure:
