@@ -73,7 +73,12 @@ def test_the_fixture_exercises_every_branch():
         # selects, `enp1s0np1` is the interface it drives — and calling the
         # device "infiniband" here would put it in the fingerprint twice.
         ("rocep1s0f1", "other"),
-        ("veth1a2b3c", "other"),
+        # The host end of a container's cable. It comes and goes with the
+        # container, so it is docker — counted as hardware, stopping a
+        # container changed the node's fingerprint and the ledger denied the
+        # node as reimaged. That happened on a control node.
+        ("veth1a2b3c", "docker"),
+        ("veth8bf252c", "docker"),
     ],
 )
 def test_the_rules_themselves(name: str, expected: str):

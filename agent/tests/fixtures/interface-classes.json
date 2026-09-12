@@ -24,7 +24,9 @@
     "rocep1s0f1": "other",
     "tailscale0": "other",
     "tun0": "other",
-    "veth1a2b3c": "other",
+    "veth1a2b3c": "docker",
+    "veth8bf252c": "docker",
+    "vethabc123": "docker",
     "virbr0": "other",
     "wlan0": "other"
   },

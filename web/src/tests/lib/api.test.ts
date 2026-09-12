@@ -684,6 +684,36 @@ const CASES: Case[] = [
     path: "/api/nodes/diagnostics",
     method: "GET",
   },
+  {
+    name: "fetchNodeHostKey defaults to port 22",
+    call: () => api.fetchNodeHostKey("node-1"),
+    path: "/api/nodes/node-1/host-key?port=22",
+    method: "GET",
+  },
+  {
+    name: "fetchNodeHostKey on another port",
+    call: () => api.fetchNodeHostKey("node-1", 2222),
+    path: "/api/nodes/node-1/host-key?port=2222",
+    method: "GET",
+  },
+  {
+    name: "installNodeAgent",
+    call: () =>
+      api.installNodeAgent("node-1", {
+        username: "spark",
+        auth: "password",
+        password: "hunter2",
+        host_key_fingerprint: "SHA256:abc",
+      }),
+    path: "/api/nodes/node-1/install",
+    method: "POST",
+    body: {
+      username: "spark",
+      auth: "password",
+      password: "hunter2",
+      host_key_fingerprint: "SHA256:abc",
+    },
+  },
 ];
 
 describe("api request surface", () => {

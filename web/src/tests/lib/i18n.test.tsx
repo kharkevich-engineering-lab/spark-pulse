@@ -69,7 +69,6 @@ describe("the dictionaries", () => {
     // image reference — not prose. Translating them would make them wrong.
     "engines.refPlaceholder",
     "nodes.addressPlaceholder",
-    "nodes.sshKeyPlaceholder",
     "recipeForm.buildArgPlaceholder",
     "deployOptions.extraArgsPlaceholder",
     // "Mods", "Image" and "Port" are the same word in French.

@@ -121,6 +121,12 @@ test("adds a node by address and keeps it across a reload", async ({ page, reque
   await dialog.getByLabel("SSH user").fill("spark");
   await dialog.getByRole("button", { name: "Add node" }).click();
   await expect(dialog).toBeHidden();
+  // Registering is half of it: the install is offered at once, for the node
+  // just added. Not here — this journey has no machine to SSH into.
+  const install = page.getByRole("dialog", { name: /^Install the agent on/ });
+  await expect(install).toBeVisible();
+  await install.getByRole("button", { name: "Later" }).click();
+  await expect(install).toBeHidden();
 
   const row = registry.getByRole("row").filter({ hasText: "spark-e2e" });
   await expect(row).toContainText(address);
@@ -157,6 +163,12 @@ test("offers discovered peers without ever requiring them", async ({ page, reque
   await dialog.getByLabel("Address *").fill(address);
   await dialog.getByRole("button", { name: "Add node" }).click();
   await expect(dialog).toBeHidden();
+  // Registering is half of it: the install is offered at once, for the node
+  // just added. Not here — this journey has no machine to SSH into.
+  const install = page.getByRole("dialog", { name: /^Install the agent on/ });
+  await expect(install).toBeVisible();
+  await install.getByRole("button", { name: "Later" }).click();
+  await expect(install).toBeHidden();
   await expect(
     page.getByTestId("node-registry").getByRole("row").filter({ hasText: address }),
   ).toBeVisible();
@@ -214,3 +226,42 @@ test("names each diagnostic finding with its remedy", async ({ page, request }) 
   }
   await expectNoCrash(page);
 });
+
+test("offers to install the agent on a peer, and checks the host key before any secret", async ({
+  page,
+}) => {
+  await gotoPage(page, "/cluster");
+  const registry = page.getByTestId("node-registry");
+  // The control plane runs its own agent; only peers get the action.
+  await expect(registry.getByRole("button", { name: /^Install agent on spark-01/ })).toHaveCount(0);
+  await registry.getByRole("button", { name: "Install agent on spark-02" }).click();
+
+  const dialog = page.getByRole("dialog", { name: "Install the agent on spark-02" });
+  await expect(dialog).toBeVisible();
+  // The seeded peer's SSH user is prefilled; the three ways in are offered.
+  await expect(dialog.getByLabel("SSH user *")).toHaveValue("spark");
+  await expect(dialog.getByLabel("Password", { exact: true })).toBeVisible();
+  await expect(dialog.getByLabel("Private key", { exact: true })).toBeVisible();
+  await expect(dialog.getByLabel("The control plane's own key")).toBeVisible();
+
+  // Nothing can be installed until the host key has been seen.
+  await dialog.getByLabel("Password *").fill("hunter2");
+  await expect(dialog.getByRole("button", { name: "Install agent" })).toBeDisabled();
+
+  // The seeded peer is an address nothing answers on, and the dialog says so
+  // rather than pretending: the fingerprint is what the operator confirms,
+  // so an unreachable node is an unreachable node.
+  await dialog.getByRole("button", { name: "Check host key" }).click();
+  // A route that drops packets rather than refusing them is only given up
+  // on at the connector's own timeout, ten seconds; the runner is one of
+  // those. Wait as long as the backend does.
+  await expect(dialog.getByRole("alert")).toContainText(/cannot reach|did not answer/, {
+    timeout: 30_000,
+  });
+  await expect(dialog.getByRole("button", { name: "Install agent" })).toBeDisabled();
+
+  await dialog.getByRole("button", { name: "Later" }).click();
+  await expect(dialog).toBeHidden();
+  await expectNoCrash(page);
+});
+

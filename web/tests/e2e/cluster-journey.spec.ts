@@ -110,6 +110,12 @@ test("enrol, select, preview, deploy, see the ranks, stop", async ({ page, reque
   await dialog.getByLabel("SSH user").fill("spark");
   await dialog.getByRole("button", { name: "Add node" }).click();
   await expect(dialog).toBeHidden();
+  // Registering is half of it: the install is offered at once, for the node
+  // just added. Not here — this journey has no machine to SSH into.
+  const install = page.getByRole("dialog", { name: /^Install the agent on/ });
+  await expect(install).toBeVisible();
+  await install.getByRole("button", { name: "Later" }).click();
+  await expect(install).toBeHidden();
 
   const enrolledRow = registry.getByRole("row").filter({ hasText: "spark-journey" });
   await expect(enrolledRow).toContainText(enrolled);

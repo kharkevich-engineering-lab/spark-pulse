@@ -156,13 +156,15 @@ class TestInterfaceClassification:
 
         assert _classify_interface("docker0") == "docker"
         assert _classify_interface("br-abc123") == "docker"
+        # A container's veth pair is container networking too.
+        assert _classify_interface("veth123") == "docker"
 
     def test_unknown_interface(self):
         """Test unknown interface classification."""
         from spark_pulse.tools.discovery import _classify_interface
 
         assert _classify_interface("wlan0") == "other"
-        assert _classify_interface("veth123") == "other"
+        assert _classify_interface("tun0") == "other"
 
 
 class TestDiscoverySimulation:

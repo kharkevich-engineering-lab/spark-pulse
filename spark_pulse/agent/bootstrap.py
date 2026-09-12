@@ -511,6 +511,14 @@ async def install_agent(
         host_key=host_key,
     )
     try:
+        if private_key is not None:
+            # The operator's key opened the door; the control plane's own key
+            # is what every later SSH to this node — an rsync of a model, a
+            # reinstall, a removal — will present. Leave it behind now, while
+            # the operator's key is in hand, or the first of those fails on a
+            # node that was onboarded a month ago with a key nobody kept.
+            await _install_public_key(session, control_plane_keypair(server))
+            report.note("installed the control plane's public key")
         if password is not None:
             await _install_public_key(session, keypair)
             report.note("installed the control plane's public key")
