@@ -252,7 +252,12 @@ test("offers to install the agent on a peer, and checks the host key before any 
   // rather than pretending: the fingerprint is what the operator confirms,
   // so an unreachable node is an unreachable node.
   await dialog.getByRole("button", { name: "Check host key" }).click();
-  await expect(dialog.getByRole("alert")).toContainText(/cannot reach|did not answer/);
+  // A route that drops packets rather than refusing them is only given up
+  // on at the connector's own timeout, ten seconds; the runner is one of
+  // those. Wait as long as the backend does.
+  await expect(dialog.getByRole("alert")).toContainText(/cannot reach|did not answer/, {
+    timeout: 30_000,
+  });
   await expect(dialog.getByRole("button", { name: "Install agent" })).toBeDisabled();
 
   await dialog.getByRole("button", { name: "Later" }).click();
