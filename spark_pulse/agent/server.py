@@ -101,6 +101,17 @@ class ControlPlaneServer:
         )
 
     @property
+    def names(self) -> list[str]:
+        """The names a node may dial this control plane by.
+
+        A node matches the address it was handed against the listener
+        certificate before it trusts anything, so an address absent from
+        here is an install that fails at enrolment. The installer checks
+        against this before it starts.
+        """
+        return ident.certificate_names(self._server_cert)
+
+    @property
     def trust_bundle_pem(self) -> bytes:
         """What an installer ships to a node so it can verify this server."""
         return self.ca.trust_bundle_pem

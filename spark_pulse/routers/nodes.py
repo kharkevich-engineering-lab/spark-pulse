@@ -239,6 +239,20 @@ async def install_node_agent(node_id: str, body: dict[str, Any] = Body(...)):
                 "one on the control plane's own entry, or pass control_host"
             ),
         )
+    names = runtime.server.names
+    if control_host.lower() not in names:
+        # Refused here, before an agent is put on the node, rather than by
+        # the node at enrolment with the agent already installed.
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"the node would dial {control_host}, but this control plane's "
+                "listener certificate is only valid for "
+                f"{', '.join(names)}. The certificate is issued at startup for "
+                "every address this machine had then; restart the control "
+                "plane, or pass control_host as one of those names"
+            ),
+        )
     try:
         report = await onboarding.onboard(
             runtime.server,

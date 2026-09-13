@@ -182,6 +182,8 @@ async def start_runtime(
     wait: float | None = 10.0,
     install: bool = True,
     local_agent: bool = True,
+    dns_names: list[str] | None = None,
+    ip_addresses: list[str] | None = None,
 ) -> ControlPlaneRuntime:
     """Start the listeners and the control node's own agent.
 
@@ -210,8 +212,15 @@ async def start_runtime(
         ports["session_port"] = session_port
     if enrollment_port is not None:
         ports["enrollment_port"] = enrollment_port
-    server = ControlPlaneServer(directory=directory, host=host, **ports)
+    server = ControlPlaneServer(
+        directory=directory,
+        host=host,
+        dns_names=dns_names,
+        ip_addresses=ip_addresses,
+        **ports,
+    )
     await server.start()
+    logger.info("listener certificate issued for %s", ", ".join(server.names))
     runtime = ControlPlaneRuntime(server, asyncio.get_running_loop())
     if install:
         set_current(runtime)
