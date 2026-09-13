@@ -189,11 +189,19 @@ async def lifespan(app: FastAPI):
     # In simulation the resolver is the mock and never consults this, but it
     # is started anyway, on ephemeral ports: a transport only production
     # exercises is a transport nothing exercises.
+    # The listener certificate is minted now, for every name this machine can
+    # be dialled by. A peer checks the address its install handed it against
+    # this certificate, so a name missing here is an enrolment that fails.
+    from spark_pulse.agent.advertise import advertised_names
+
+    dns_names, ip_addresses = advertised_names()
     try:
         app.state.control_plane = await agent_runtime.start_runtime(
             directory=agent_state_dir(),
             node_id=this_node.id if this_node is not None else "",
             session_port=0 if is_simulation() else None,
+            dns_names=dns_names,
+            ip_addresses=ip_addresses,
             # In simulation the resolver is the mock and never consults the
             # runtime, so this machine's own agent would be started, waited
             # for, and never asked anything. Skipped rather than tolerated:

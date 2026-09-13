@@ -50,7 +50,14 @@ async def fleet_hooks(agent_fleet, agent_bundle, monkeypatch):
 
 @pytest.fixture
 async def running(agent_server):
-    """The app with a control-plane runtime installed, on this loop."""
+    """The app with a control-plane runtime installed, on this loop.
+
+    The control node's registry address is set to loopback, which is what
+    the test server's listener certificate is issued for: a peer dials the
+    control node by that address, and the install refuses one the
+    certificate does not cover.
+    """
+    mock_registry.update_node(CONTROL_ID, address="127.0.0.1")
     runtime = ControlPlaneRuntime(agent_server, asyncio.get_running_loop())
     with agent_runtime.use(runtime):
         yield runtime
@@ -237,7 +244,6 @@ async def test_the_control_host_defaults_to_the_control_nodes_address(
     client, running, fleet_hooks, tmp_path
 ):
     """No ``control_host`` in the body: the control plane's own entry is it."""
-    mock_registry.update_node(CONTROL_ID, address="127.0.0.1")
     fleet_hooks.add(peer_node(tmp_path))
     fingerprint = await host_key(client)
     response = await client.post(
@@ -251,6 +257,30 @@ async def test_the_control_host_defaults_to_the_control_nodes_address(
     )
     assert response.status_code == 200, response.text
     assert response.json()["connected"] is True
+
+
+async def test_an_address_the_certificate_does_not_cover_is_refused_before_install(
+    client, running, fleet_hooks, tmp_path
+):
+    """What the first peer in the field hit — at enrolment, with the agent
+    already installed. Now it is refused here, naming the names that work."""
+    node = fleet_hooks.add(peer_node(tmp_path))
+    fingerprint = await host_key(client)
+    response = await client.post(
+        f"/api/nodes/{PEER_ID}/install",
+        json={
+            "username": USER,
+            "auth": "password",
+            "password": PASSWORD,
+            "host_key_fingerprint": fingerprint,
+            "control_host": "192.168.29.60",
+        },
+    )
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "192.168.29.60" in detail
+    assert "127.0.0.1" in detail and "localhost" in detail
+    assert node.commands == [], "nothing was put on the node"
 
 
 async def test_a_control_node_without_an_address_cannot_be_dialled(

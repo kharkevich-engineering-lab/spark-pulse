@@ -127,6 +127,22 @@ def node_id_from_spiffe(uri: str) -> str | None:
     return tail
 
 
+def certificate_names(cert_pem: bytes) -> list[str]:
+    """Every DNS name and IP address a certificate is valid for, as strings.
+
+    What a client matches its dial target against. The SPIFFE URI is not in
+    here: it is an identity, not something anyone dials.
+    """
+    cert = x509.load_pem_x509_certificate(cert_pem)
+    try:
+        san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    except x509.ExtensionNotFound:
+        return []
+    names = [str(n).lower() for n in san.get_values_for_type(x509.DNSName)]
+    names += [str(a) for a in san.get_values_for_type(x509.IPAddress)]
+    return names
+
+
 def spiffe_id_of(cert: x509.Certificate) -> str | None:
     """The single SPIFFE URI SAN in a certificate, or None.
 

@@ -38,6 +38,8 @@ None of the secrets is kept. The registry keeps the SSH user; the node keeps the
 
 The API is the same two calls: `GET /api/nodes/{id}/host-key`, then `POST /api/nodes/{id}/install`.
 
+The node dials the control plane by the control node's registry address (or the `control_host` in the request), and checks that name against the control plane's listener certificate before it trusts anything. That certificate is issued at every start, for every name this machine could be dialled by at that moment: its hostname, bare and `.local`, every interface address, the registry's address for it, and loopback. An address that is not covered — one the machine acquired after startup, say — is refused by the install *before* anything is put on the node, naming the addresses that would work; a restart of the control plane picks the new one up.
+
 ### The hardware fingerprint
 
 Enrolment records a fingerprint of the machine — a board serial where one is readable, otherwise a hash of the physical interface names, CPU count, memory and machine-id — and every later connection is compared against it, so a node rebuilt under an already-accepted identity is *denied and surfaced* rather than trusted. Docker's interfaces (`docker0`, `br-*`, and the `veth*` end of every container) are excluded: they come and go with workloads, and a fingerprint that moved when a container stopped would deny a node for running one.
