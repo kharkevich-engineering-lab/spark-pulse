@@ -437,7 +437,28 @@
     },
     "agentVersion": "agent {version}",
     "agentStale": "update available",
-    "updateAction": "Update"
+    "updateAction": "Update",
+    "doctor": {
+      "action": "Diagnose",
+      "actionFor": "Diagnose {name}",
+      "title": "Diagnosing {name}",
+      "running": "Asking the node…",
+      "healthy": "Nothing wrong that the doctor can see.",
+      "problems": "{count} to look at",
+      "channels": "Reached over: {channels}",
+      "fixable": "Fixable from here",
+      "decision": "Needs a decision",
+      "human": "Needs someone on that machine",
+      "repair": "Repair what is fixable",
+      "repairing": "Repairing, then checking again…",
+      "repairs": "What was done",
+      "applied": "done",
+      "notApplied": "not done",
+      "sudoPassword": "sudo password",
+      "sudoNote": "Only if a repair needs root, such as adding the docker group. Kept nowhere.",
+      "remedyLabel": "Remedy",
+      "close": "Close"
+    }
   },
   "recipeForm": {
     "name": "Recipe Name",

@@ -64,6 +64,7 @@ describe("the dictionaries", () => {
     "recipes.tabMods",
     "eventStream.info",
     "nodes.colInterfaces",
+    "nodes.doctor.applied",
     "fabric.colMtu",
     "fabric.colStatus",
     "nodes.agentVersion",

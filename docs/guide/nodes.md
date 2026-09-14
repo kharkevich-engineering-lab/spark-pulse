@@ -46,6 +46,14 @@ Enrolment records a fingerprint of the machine — a board serial where one is r
 
 The control node is the one machine that cannot be surfaced to anybody — a denied control node is a control plane that exits at startup — so if its own ledger denies it, it says so in the log and re-enrols under the same identity.
 
+## The doctor
+
+**Diagnose** on a node's row asks the doctor why it is not working. It reads only — the hub already knows the agent's liveness, version and what its Docker daemon answered, and the checks that need the machine (the unit, lingering, the docker socket, identity files, reachability, disk, clock) use the control plane's key over SSH. Every finding says which of three kinds it is: fixable from here, needs a decision (re-enrolment destroys identity, so a program never does it), or needs someone on that machine (a dead disk, a daemon that will not start, a wrong clock).
+
+**Repair what is fixable** acts only on the first kind and checks again afterward. It is the one button that changes anything, and each repair says what it did — a docker-group add now restarts the user's service manager so the group is in effect, rather than sending you to log in again. The control node is diagnosed the same way over its own agent, but not repaired over SSH: upgrade and restart the control plane instead.
+
+The API is `GET /api/nodes/{id}/doctor` (diagnose) and `POST /api/nodes/{id}/doctor` (treat).
+
 ## Diagnostics
 
 Each finding names a remedy, because every condition here is one the cluster can run with — the cost is confusion, not failure:

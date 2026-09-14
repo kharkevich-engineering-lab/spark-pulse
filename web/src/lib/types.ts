@@ -991,6 +991,35 @@ export interface NodeAgentState {
   control_plane_version?: string;
 }
 
+// ── Diagnosing a node ───────────────────────────────────────────────────────
+
+/** One thing the doctor looked at. `verdict` says who can fix it. */
+export interface DoctorFinding {
+  check: string;
+  status: "ok" | "warn" | "broken" | "unknown";
+  detail: string;
+  channel: string;
+  verdict: "fixable-here" | "needs-a-decision" | "needs-a-human-on-that-machine" | "nothing-to-do";
+  remedy: string;
+}
+
+/** Something the doctor did, or declined to do, and why. */
+export interface DoctorRepair {
+  check: string;
+  action: string;
+  applied: boolean;
+  detail: string;
+}
+
+export interface DoctorReport {
+  node_id: string;
+  host: string;
+  channels: string[];
+  findings: DoctorFinding[];
+  repairs: DoctorRepair[];
+  healthy: boolean;
+}
+
 // ── Installing an agent from the browser ────────────────────────────────────
 
 /** How the installer may log in. `password` pushes the control plane's key

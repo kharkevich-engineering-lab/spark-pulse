@@ -580,3 +580,111 @@ def _enrol(runtime, node_id: str) -> None:
     runtime.server.ledger.record_issue(
         node_id, public_key_fingerprint="fp", not_after=time.time() + 3600
     )
+
+
+class TestDoctor:
+    """The doctor, exposed on the node routes."""
+
+    async def test_diagnose_is_read_only_and_returns_the_report(
+        self, client, running, fleet_hooks, tmp_path, monkeypatch
+    ):
+        from spark_pulse.agent import doctor as node_doctor
+
+        captured = {}
+
+        async def fake_diagnose(server, node_id, *, access=None, connector=None):
+            captured["node_id"] = node_id
+            captured["access"] = access
+            report = node_doctor.DoctorReport(
+                node_id=node_id, channels=["ssh", "agent"]
+            )
+            report.add(node_doctor.Finding("unit", "ok", "active", "ssh"))
+            report.add(
+                node_doctor.Finding(
+                    "docker-socket",
+                    "broken",
+                    "not in the docker group",
+                    channel="ssh",
+                    verdict=node_doctor.FIXABLE,
+                    remedy="usermod -aG docker",
+                )
+            )
+            return report
+
+        monkeypatch.setattr(node_doctor, "diagnose", fake_diagnose)
+        response = await client.get(f"/api/nodes/{PEER_ID}/doctor")
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["node_id"] == PEER_ID
+        assert body["healthy"] is False
+        assert {f["check"] for f in body["findings"]} == {"unit", "docker-socket"}
+        assert captured["node_id"] == PEER_ID
+        assert captured["access"].username == "spark", "the registry's SSH user"
+
+    async def test_diagnose_a_node_without_an_ssh_user_runs_agent_only(
+        self, client, running, monkeypatch
+    ):
+        from spark_pulse.agent import doctor as node_doctor
+
+        mock_registry.update_node(PEER_ID, ssh_user="")
+        seen = {}
+
+        async def fake_diagnose(server, node_id, *, access=None, connector=None):
+            seen["access"] = access
+            return node_doctor.DoctorReport(node_id=node_id)
+
+        monkeypatch.setattr(node_doctor, "diagnose", fake_diagnose)
+        response = await client.get(f"/api/nodes/{PEER_ID}/doctor")
+        assert response.status_code == 200
+        assert seen["access"] is None, "no SSH user, so the agent channel alone"
+
+    async def test_diagnose_an_unknown_node_is_a_404(self, client, running):
+        assert (await client.get("/api/nodes/nope/doctor")).status_code == 404
+
+    async def test_diagnose_without_a_transport_is_a_503(self, client):
+        assert (await client.get(f"/api/nodes/{PEER_ID}/doctor")).status_code == 503
+
+    async def test_treat_repairs_and_passes_the_sudo_password(
+        self, client, running, fleet_hooks, tmp_path, monkeypatch
+    ):
+        from spark_pulse.agent import doctor as node_doctor
+
+        seen = {}
+
+        async def fake_treat(
+            server, node_id, *, access, connector=None, sudo_password_prompt=None
+        ):
+            seen["node_id"] = node_id
+            seen["sudo"] = (
+                await sudo_password_prompt("?") if sudo_password_prompt else None
+            )
+            report = node_doctor.DoctorReport(node_id=node_id)
+            report.add(node_doctor.Finding("docker-socket", "ok", "reachable", "ssh"))
+            report.repairs.append(
+                node_doctor.Repair(
+                    "docker-socket", "usermod -aG docker", True, "added and applied"
+                )
+            )
+            return report
+
+        monkeypatch.setattr(node_doctor, "treat", fake_treat)
+        response = await client.post(
+            f"/api/nodes/{PEER_ID}/doctor", json={"sudo_password": "s3cret"}
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["healthy"] is True
+        assert body["repairs"][0]["applied"] is True
+        assert seen["sudo"] == "s3cret"
+        assert "s3cret" not in response.text
+
+    async def test_treat_a_node_without_an_ssh_user_is_a_400(self, client, running):
+        mock_registry.update_node(PEER_ID, ssh_user="")
+        response = await client.post(f"/api/nodes/{PEER_ID}/doctor", json={})
+        assert response.status_code == 400
+        assert "no SSH user" in response.json()["detail"]
+
+    async def test_the_control_node_is_not_treated_over_ssh(self, client, running):
+        response = await client.post(f"/api/nodes/{CONTROL_ID}/doctor", json={})
+        assert response.status_code == 400
+        assert "control plane" in response.json()["detail"]

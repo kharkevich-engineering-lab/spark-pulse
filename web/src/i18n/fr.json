@@ -437,7 +437,28 @@
     },
     "agentVersion": "agent {version}",
     "agentStale": "mise à jour disponible",
-    "updateAction": "Mettre à jour"
+    "updateAction": "Mettre à jour",
+    "doctor": {
+      "action": "Diagnostiquer",
+      "actionFor": "Diagnostiquer {name}",
+      "title": "Diagnostic de {name}",
+      "running": "Interrogation du nœud…",
+      "healthy": "Rien d'anormal que le diagnostic puisse voir.",
+      "problems": "{count} à examiner",
+      "channels": "Atteint via : {channels}",
+      "fixable": "Réparable d'ici",
+      "decision": "Demande une décision",
+      "human": "Demande quelqu'un sur cette machine",
+      "repair": "Réparer ce qui est réparable",
+      "repairing": "Réparation, puis nouvelle vérification…",
+      "repairs": "Ce qui a été fait",
+      "applied": "fait",
+      "notApplied": "non fait",
+      "sudoPassword": "Mot de passe sudo",
+      "sudoNote": "Seulement si une réparation demande root, comme ajouter le groupe docker. Conservé nulle part.",
+      "remedyLabel": "Remède",
+      "close": "Fermer"
+    }
   },
   "recipeForm": {
     "name": "Nom de la recette",
