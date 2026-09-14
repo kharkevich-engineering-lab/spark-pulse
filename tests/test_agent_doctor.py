@@ -256,13 +256,14 @@ async def test_a_docker_daemon_that_is_down_needs_a_human_on_that_machine(
     assert not any("docker" in m for m in mutations(node, mark))
 
 
-async def test_a_user_no_longer_in_docker_is_repairable_with_a_caveat(
+async def test_a_user_no_longer_in_docker_is_added_and_the_group_applied(
     agent_server, agent_fleet, agent_bundle, tmp_path
 ):
     node = make_node(tmp_path)
     report = await install(agent_server, agent_fleet, node, agent_bundle)
     node.docker_socket_users.discard(USER)
     node.users[USER].groups = ("adm", "sudo")
+    restarts_before = node.user_manager_restarts
 
     found = await diagnose(
         agent_server, report.node_id, access=access(), connector=agent_fleet
@@ -280,8 +281,11 @@ async def test_a_user_no_longer_in_docker_is_repairable_with_a_caveat(
     )
     repair = next(r for r in treated.repairs if r.check == "docker-socket")
     assert repair.applied
-    assert "next login" in repair.detail
+    # The group is not only added; the user manager is restarted so it takes
+    # effect, and the repair says so rather than sending someone to re-login.
+    assert "run containers now" in repair.detail
     assert "docker" in node.users[USER].groups
+    assert node.user_manager_restarts == restarts_before + 1
 
 
 async def test_an_expired_certificate_is_a_decision_not_a_repair(
