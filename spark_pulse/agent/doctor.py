@@ -39,6 +39,7 @@ like any peer, and the agent-channel checks work on it with no SSH at all.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import shlex
 import time
@@ -234,8 +235,27 @@ async def diagnose(
             )
         return report
 
+    try:
+        session = await open_node_session(server, access, connector=connector)
+    except (BootstrapError, OSError, asyncio.TimeoutError) as exc:
+        # SSH is the recovery channel, and it is down too. That is a finding,
+        # not a crash: the agent-channel checks above still stand, and the
+        # host-level ones say plainly they could not be reached.
+        reason = f"could not reach {access.host} over SSH: {str(exc)[:160]}"
+        logger.info("doctor: %s", reason)
+        for check in (
+            "unit",
+            "linger",
+            "docker-socket",
+            "identity",
+            "reachability",
+            "disk",
+            "clock",
+        ):
+            report.add(Finding(check, "unknown", reason, channel="ssh"))
+        return report
+
     report.channels.append("ssh")
-    session = await open_node_session(server, access, connector=connector)
     try:
         caps = await probe_node(session, username=access.username)
         report.capabilities = caps.to_dict()

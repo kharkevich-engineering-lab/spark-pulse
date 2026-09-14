@@ -557,3 +557,26 @@ async def test_a_node_the_ledger_has_never_heard_of_is_a_decision(agent_server):
     membership = found.get("membership")
     assert membership.status == "broken"
     assert membership.verdict == NEEDS_DECISION
+
+
+async def test_ssh_unreachable_degrades_to_the_agent_channel(
+    agent_server, agent_fleet, agent_bundle, tmp_path
+):
+    """SSH is the recovery channel; when it is down too, the doctor reports
+    the host checks as unknown rather than raising — the agent-channel checks
+    still stand."""
+    node = make_node(tmp_path)
+    report = await install(agent_server, agent_fleet, node, agent_bundle)
+
+    # An address the fleet cannot reach: diagnose must not raise.
+    found = await diagnose(
+        agent_server,
+        report.node_id,
+        access=NodeAccess(host="10.255.255.1", username=USER),
+        connector=agent_fleet,
+    )
+    assert found.get("membership").status == "ok", "the agent channel answered"
+    unit = found.get("unit")
+    assert unit.status == "unknown"
+    assert "could not reach" in unit.detail
+    assert "ssh" not in found.channels, "ssh was not actually established"
