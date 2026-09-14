@@ -42,21 +42,27 @@ function ApplyDialog({ plan, onClose, onApplied }: ApplyDialogProps) {
   const { t } = useI18n();
   const [sudoPassword, setSudoPassword] = useState("");
   const [override, setOverride] = useState(false);
+  const [edited, setEdited] = useState<Record<string, string>>({});
   const [running, setRunning] = useState(false);
   const [reports, setReports] = useState<FabricApplyReport[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const proposed = plan.filter((n) => n.status === "proposed");
   const configured = plan.filter((n) => n.status === "configured");
-  const count = proposed.length + (override ? configured.length : 0);
+  const editedConfigured = configured.filter((n) => n.node_id in edited).length;
+  const count = proposed.length + (override ? configured.length : editedConfigured);
 
   const run = async () => {
     setRunning(true);
     setError(null);
     try {
+      const files = Object.fromEntries(
+        Object.entries(edited).filter(([, text]) => text.trim() !== ""),
+      );
       const result = await applyFabric({
         override,
         ...(sudoPassword ? { sudo_password: sudoPassword } : {}),
+        ...(Object.keys(files).length > 0 ? { files } : {}),
       });
       setReports(result.reports);
       onApplied();
@@ -142,16 +148,59 @@ function ApplyDialog({ plan, onClose, onApplied }: ApplyDialogProps) {
         ) : (
           <div className="space-y-4">
             {plan
-              .filter((n) => n.status === "proposed" || (override && n.status === "configured"))
-              .map((n) => (
-                <details key={n.node_id} className="rounded-lg border border-border p-3">
-                  <summary className="cursor-pointer text-sm font-medium">
-                    {t("fabric.showFile", { name: n.name })}
-                  </summary>
-                  <p className="mt-1 text-xs text-text-muted">{t("fabric.filePath", { path: n.netplan_path })}</p>
-                  <pre className="mt-2 overflow-x-auto rounded bg-bg p-2 font-mono text-xs">{n.netplan}</pre>
-                </details>
-              ))}
+              .filter((n) => n.status === "proposed" || (override && n.status === "configured") || n.node_id in edited)
+              .map((n) => {
+                const isEditing = n.node_id in edited;
+                return (
+                  <details key={n.node_id} className="rounded-lg border border-border p-3">
+                    <summary className="cursor-pointer text-sm font-medium">
+                      {t("fabric.showFile", { name: n.name })}
+                      {isEditing && (
+                        <span className="ml-2 text-xs font-normal text-warning">
+                          {t("fabric.editing")}
+                        </span>
+                      )}
+                    </summary>
+                    <p className="mt-1 text-xs text-text-muted">{t("fabric.filePath", { path: n.netplan_path })}</p>
+                    {isEditing ? (
+                      <>
+                        <textarea
+                          aria-label={t("fabric.showFile", { name: n.name })}
+                          rows={Math.min(16, n.netplan.split("\n").length + 1)}
+                          value={edited[n.node_id]}
+                          onChange={(e) => setEdited({ ...edited, [n.node_id]: e.target.value })}
+                          spellCheck={false}
+                          disabled={running}
+                          className="mt-2 w-full rounded bg-bg p-2 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-primary/50"
+                        />
+                        <p className="mt-1 text-xs text-text-muted">{t("fabric.editNote")}</p>
+                        <button
+                          onClick={() => {
+                            const next = { ...edited };
+                            delete next[n.node_id];
+                            setEdited(next);
+                          }}
+                          disabled={running}
+                          className="mt-1 text-xs text-primary hover:underline"
+                        >
+                          {t("fabric.reset")}
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <pre className="mt-2 overflow-x-auto rounded bg-bg p-2 font-mono text-xs">{n.netplan}</pre>
+                        <button
+                          onClick={() => setEdited({ ...edited, [n.node_id]: n.netplan })}
+                          disabled={running}
+                          className="mt-1 text-xs text-primary hover:underline"
+                        >
+                          {t("fabric.edit")}
+                        </button>
+                      </>
+                    )}
+                  </details>
+                );
+              })}
 
             {configured.length > 0 && (
               <label className="flex items-center gap-2 text-sm">

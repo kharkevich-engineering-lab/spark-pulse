@@ -168,7 +168,13 @@ class TestApply:
         seen = {}
 
         async def fake_apply(
-            server, access, plan, *, connector=None, sudo_password_prompt=None
+            server,
+            access,
+            plan,
+            *,
+            connector=None,
+            sudo_password_prompt=None,
+            override_netplan=None,
         ):
             seen["access"] = access
             seen["plan"] = plan
@@ -310,3 +316,73 @@ class TestShapesAndPinning:
         assert body["reports"] == []
         assert body["pinned"][PEER_ID]["fabric_mode"] == "direct"
         assert mock_registry.get_node(PEER_ID).ethernet_interface == "enp1s0f1np1"
+
+
+class TestExpertConfig:
+    async def test_a_supplied_file_is_passed_through_to_the_apply(
+        self, client, running, monkeypatch
+    ):
+        connect(running, PEER_ID, facts())
+        seen = {}
+
+        async def fake_apply(
+            server,
+            access,
+            plan,
+            *,
+            connector=None,
+            sudo_password_prompt=None,
+            override_netplan=None,
+        ):
+            seen["override"] = override_netplan
+            return fabric_apply.FabricApplyReport(
+                node_id=plan.node_id, name=plan.name, applied=True, verified=True
+            )
+
+        monkeypatch.setattr(fabric_apply, "apply_node_plan", fake_apply)
+        custom = "network:\n  version: 2\n  ethernets:\n    enp1s0f1np1:\n      addresses: [10.9.0.1/24]\n"
+        response = await client.post(
+            "/api/fabric/apply", json={"files": {PEER_ID: custom}}
+        )
+        assert response.status_code == 200, response.text
+        assert seen["override"] == custom
+
+    async def test_a_configured_node_with_a_supplied_file_becomes_a_target(
+        self, client, running, monkeypatch
+    ):
+        # Addressed and jumbo already, so the plan leaves it configured; a file
+        # makes it a target without turning on override for everyone.
+        connect(
+            running,
+            PEER_ID,
+            facts(
+                {
+                    "enp1s0f1np1": "192.168.177.12/24",
+                    "enP2p1s0f1np1": "192.168.178.12/24",
+                },
+                mtu=9000,
+            ),
+        )
+        applied = []
+
+        async def fake_apply(
+            server,
+            access,
+            plan,
+            *,
+            connector=None,
+            sudo_password_prompt=None,
+            override_netplan=None,
+        ):
+            applied.append((plan.node_id, override_netplan))
+            return fabric_apply.FabricApplyReport(
+                node_id=plan.node_id, name=plan.name, applied=True, verified=True
+            )
+
+        monkeypatch.setattr(fabric_apply, "apply_node_plan", fake_apply)
+        custom = "network:\n  version: 2\n"
+        response = await client.post(
+            "/api/fabric/apply", json={"files": {PEER_ID: custom}}
+        )
+        assert response.status_code == 200, response.text
+        assert applied == [(PEER_ID, custom)]

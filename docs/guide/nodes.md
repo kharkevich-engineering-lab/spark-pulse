@@ -94,7 +94,9 @@ A node whose fabric is already valid — an address on the lowercase twin, the t
 
 A deploy pins NCCL from the node's registry record — `ethernet_interface`, `infiniband_interfaces`, `fabric_mode` — which the control node fills for itself at startup and nothing used to fill for a peer. A verified apply writes them now, and a node that was already configured by hand is pinned by the same action without a login. The card says whether each node is pinned.
 
-The API is `GET /api/fabric` (the ports and the plan) and `POST /api/fabric/apply`.
+For a scheme the planner does not produce, each node's file is editable in the Configure dialog before it is applied. An edited file is written to the node verbatim; the plan's addresses and peer pings no longer describe it, so verification confirms only that the plan's ports came up with an address. A node the plan left configured becomes a target the moment it has an edited file, without turning override on for the rest.
+
+The API is `GET /api/fabric` (the ports and the plan) and `POST /api/fabric/apply` (with an optional `files` map of node id to netplan text for the expert path).
 
 ## The agent's version
 
