@@ -759,7 +759,7 @@
   },
   "fabric": {
     "heading": "Fabric ConnectX",
-    "subtitle": "Les ports 100G, tels que l'agent de chaque nœud les rapporte, et les adresses que le guide réseau de spark-vllm-docker leur donne.",
+    "subtitle": "Les ports ConnectX-7, tels que l'agent de chaque nœud les rapporte, et les adresses que le guide réseau de spark-vllm-docker leur donne.",
     "refresh": "Actualiser",
     "noTransport": "Le transport des agents ne tourne pas, donc les ports d'aucun nœud ne sont connus.",
     "colNode": "Nœud",
