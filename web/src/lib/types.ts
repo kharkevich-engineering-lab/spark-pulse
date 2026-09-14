@@ -1235,7 +1235,7 @@ export interface FabricApplyReport {
   verified: boolean;
   steps: string[];
   errors: string[];
-  readback: Record<string, { cidr: string; address_ok: boolean; mtu: string; mtu_ok: boolean }>;
+  readback: Record<string, { cidr: string; address_ok: boolean; mtu: string; mtu_ok: boolean | null }>;
   pings: { netdev: string; peer: string; address: string; reachable: boolean }[];
   privileged_calls: { why: string; command: string; via: string; returncode: number }[];
   /** What was written onto the registry record once the node verified. */

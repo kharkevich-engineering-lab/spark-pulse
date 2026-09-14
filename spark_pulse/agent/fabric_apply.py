@@ -34,7 +34,7 @@ from spark_pulse.agent.bootstrap_transport import (
     Prompt,
 )
 from spark_pulse.agent.server import ControlPlaneServer
-from spark_pulse.tools.fabric_plan import FABRIC_MTU, NETPLAN_PATH, NodePlan
+from spark_pulse.tools.fabric_plan import NETPLAN_PATH, NodePlan
 
 logger = logging.getLogger(__name__)
 
@@ -86,8 +86,10 @@ async def apply_node_plan(
     ``override_netplan`` is an operator-supplied file that replaces the
     rendered one — the expert path, for a scheme the planner does not produce.
     It is written and applied verbatim; verification then only confirms the
-    plan's ports carry *an* address and jumbo frames, and does not ping the
-    plan's peers, because a hand-edited file may put them elsewhere.
+    plan's ports came up with *an* address, and does not ping the plan's
+    peers or require any particular MTU, because a hand-edited file may set
+    both as the operator sees fit. The MTU each port ends up with is reported
+    for the operator to read, never gated on.
     """
     report = FabricApplyReport(node_id=plan.node_id, name=plan.name)
     if not plan.assignments:
@@ -229,10 +231,11 @@ async def _read_back(
 ) -> None:
     """The address and MTU each port now has, and whether every peer answers.
 
-    For an operator-supplied file the plan's cidrs and peers no longer
+    For an operator-supplied file the plan's cidrs, peers and MTU no longer
     describe what was written, so verification confirms only that each of the
-    plan's ports came up with *some* IPv4 address, and the peer pings — which
-    would target the plan's addresses — are skipped.
+    plan's ports came up with *some* IPv4 address; the MTU is reported but not
+    gated on, and the peer pings — which would target the plan's addresses —
+    are skipped.
     """
     verified = True
     for assignment in plan.assignments:
@@ -246,7 +249,8 @@ async def _read_back(
                 "cidr": found,
                 "address_ok": has_address,
                 "mtu": mtu.stdout.strip(),
-                "mtu_ok": mtu.stdout.strip() == str(FABRIC_MTU),
+                # No expected MTU for a hand-written file: reported, not gated.
+                "mtu_ok": None,
             }
             if not has_address:
                 verified = False

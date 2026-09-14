@@ -256,7 +256,32 @@ async def test_an_operator_supplied_file_is_written_verbatim(
         "enP2p1s0f1np1": "10.9.1.1/24",
     }
     assert report.readback["enp1s0f1np1"]["cidr"] == "10.9.0.1/24"
+    # The MTU is reported for the operator to read, never gated on.
+    assert report.readback["enp1s0f1np1"]["mtu_ok"] is None
     assert any("operator-supplied" in step for step in report.steps)
+
+
+async def test_an_operator_file_without_jumbo_frames_still_verifies(
+    agent_server, agent_fleet, machine
+):
+    """The expert path does not force MTU 9000: a deliberate non-jumbo file
+    whose ports come up is verified, not failed."""
+    custom = (
+        "network:\n  version: 2\n  ethernets:\n"
+        "    enp1s0f1np1:\n      addresses: [10.9.0.1/24]\n      mtu: 1500\n"
+        "    enP2p1s0f1np1:\n      addresses: [10.9.1.1/24]\n      mtu: 1500\n"
+    )
+    machine.fabric_peers = set()
+    report = await apply_node_plan(
+        agent_server,
+        access(machine),
+        the_plan(),
+        connector=agent_fleet,
+        sudo_password_prompt=password_prompt(SUDO_PASSWORD),
+        override_netplan=custom,
+    )
+    assert report.applied and report.verified
+    assert report.readback["enp1s0f1np1"]["mtu"] == "1500"
 
 
 async def test_a_supplied_file_that_leaves_a_port_down_is_not_verified(

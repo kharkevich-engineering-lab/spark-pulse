@@ -49,7 +49,9 @@ function ApplyDialog({ plan, onClose, onApplied }: ApplyDialogProps) {
 
   const proposed = plan.filter((n) => n.status === "proposed");
   const configured = plan.filter((n) => n.status === "configured");
-  const editedConfigured = configured.filter((n) => n.node_id in edited).length;
+  const editedConfigured = configured.filter(
+    (n) => n.node_id in edited && edited[n.node_id].trim() !== "",
+  ).length;
   const count = proposed.length + (override ? configured.length : editedConfigured);
 
   const run = async () => {
