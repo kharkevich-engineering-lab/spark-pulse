@@ -204,9 +204,10 @@ class FabricPlan:
 def render_netplan(assignments: tuple[Assignment, ...] | list[Assignment]) -> str:
     """The file NETWORKING.md lines 95-131 write by hand, for these assignments."""
     lines = [
-        "# Written by Spark Pulse. The ConnectX-7 fabric, as spark-vllm-docker's",
-        "# NETWORKING.md lays it out: a static /24 per cable, jumbo frames, and",
-        "# no IPv6 link-local so nothing but these addresses lives on the fabric.",
+        "# Managed by Spark Pulse — the ConnectX fabric.",
+        "# A static /24 per cable, jumbo frames, and no IPv6 link-local so that",
+        "# nothing but these addresses lives on the fabric. Edit this in the",
+        "# fabric card; a re-apply overwrites the file.",
         "network:",
         "  version: 2",
         "  ethernets:",

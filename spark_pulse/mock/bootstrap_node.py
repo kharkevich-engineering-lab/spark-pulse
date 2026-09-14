@@ -192,6 +192,9 @@ class SimulatedNode:
         self.clock_skew = clock_skew
         self.agent_runner = agent_runner or InProcessAgentRunner()
         self.units: dict[str, UnitState] = {}
+        #: How many times ``systemctl restart user@<uid>.service`` was run —
+        #: the bootstrap applies the docker group by restarting the manager.
+        self.user_manager_restarts = 0
 
         # ── The ConnectX fabric, as `netplan` and `nmcli` see it ──────────
         #: netdev → CIDR currently on the port, and its MTU.
@@ -954,6 +957,13 @@ class SimulatedSession:
             return RunResult(1, "", "Failed to connect to bus: Host is down")
         verb = args[0] if args else ""
         unit_name = args[1] if len(args) > 1 else ""
+
+        # `user@<uid>.service` is a system template unit present on every
+        # systemd host; restarting it rebuilds the login user's manager. It
+        # is not a file the installer wrote, so model it as always there.
+        if unit_name.startswith("user@") and verb in ("enable", "start", "restart"):
+            node.user_manager_restarts += 1
+            return RunResult(0, "", "")
 
         if verb == "is-system-running":
             return RunResult(1, "degraded\n", "")

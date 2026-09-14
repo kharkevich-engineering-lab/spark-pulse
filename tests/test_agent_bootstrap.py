@@ -420,14 +420,19 @@ async def test_sudo_is_authenticated_on_every_call_not_once(
 ):
     """tty_tickets: each exec channel is its own session, so each call pays.
 
-    Two privileged actions are needed here — lingering and the docker group —
-    and both must authenticate. An installer that assumed one authentication
-    covered the install would show one prompt and fail on the second action.
+    Three privileged actions are needed here — lingering, adding the docker
+    group, and restarting the user manager so the group takes effect — and
+    each must authenticate. An installer that assumed one authentication
+    covered the install would show one prompt and fail on the next action.
     """
     node = make_node(tmp_path, linger=False, docker_socket=False)
     report = await do_install(agent_server, agent_fleet, node, agent_bundle)
-    assert node.sudo_prompts == 2
-    assert [call["via"] for call in report.privileged_calls] == ["sudo -S", "sudo -S"]
+    assert node.sudo_prompts == 3
+    assert [call["via"] for call in report.privileged_calls] == [
+        "sudo -S",
+        "sudo -S",
+        "sudo -S",
+    ]
 
 
 async def test_a_sudo_password_that_differs_from_the_login_password_is_asked_for(
@@ -470,16 +475,32 @@ async def test_requiretty_is_detected_rather_than_waited_on(
     assert any(c.capability == "linger" for c in report.concessions)
 
 
-async def test_no_docker_socket_is_a_concession_with_a_cost(
+async def test_no_docker_socket_is_fixed_by_adding_the_group_and_restarting(
     agent_server, agent_fleet, agent_bundle, tmp_path
 ):
+    """The group is added *and applied*: the user manager is restarted so the
+    agent starts able to run containers, with no concession left for a human."""
     node = make_node(tmp_path, docker_socket=False, groups=("adm", "sudo"))
     report = await do_install(agent_server, agent_fleet, node, agent_bundle)
     assert report.connected
+    assert "docker" in node.users[USER].groups
+    assert node.user_manager_restarts == 1
+    assert not any(c.capability == "docker" for c in report.concessions)
+    assert any("docker group" in step for step in report.steps)
+    assert any("run containers straight away" in step for step in report.steps)
+
+
+async def test_docker_group_cannot_be_applied_without_a_uid_is_a_concession(
+    agent_server, agent_fleet, agent_bundle, tmp_path
+):
+    """A machine account with no numeric uid cannot have its manager restarted
+    by id; the group is added but the operator is told it needs a re-login."""
+    node = make_node(tmp_path, docker_socket=False, groups=("adm", "sudo"), uid=-1)
+    report = await do_install(agent_server, agent_fleet, node, agent_bundle)
+    assert node.user_manager_restarts == 0
     docker = next(c for c in report.concessions if c.capability == "docker")
     assert "docker group" in docker.detail
     assert "next login" in docker.cost
-    assert "docker" in node.users[USER].groups
 
 
 async def test_a_docker_daemon_that_is_down_is_not_read_as_no_permission(

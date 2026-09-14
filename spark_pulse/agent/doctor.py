@@ -814,17 +814,34 @@ async def _repair(
             result = await runner.run(
                 action, why=f"add {caps.user} to the docker group"
             )
+            if not result.ok:
+                report.repairs.append(
+                    Repair(check, action, False, result.stderr.strip()[:200])
+                )
+                return
+            # The group is written; a running manager does not have it until it
+            # is restarted, so restart user@<uid> and the agent picks it up.
+            applied = False
+            if paths.scope == "user" and caps.uid > 0:
+                restart = f"systemctl restart user@{caps.uid}.service"
+                applied = (
+                    await runner.run(
+                        restart,
+                        why=f"apply the docker group to {caps.user}'s service manager",
+                    )
+                ).ok
             report.repairs.append(
                 Repair(
                     check,
                     action,
-                    result.ok,
+                    True,
                     (
-                        "added to the docker group; it takes effect on the next login, "
-                        f"so `loginctl terminate-user {caps.user}` or a reboot is still "
-                        "needed"
-                        if result.ok
-                        else result.stderr.strip()[:200]
+                        "added to the docker group and restarted the user manager, "
+                        "so the agent can run containers now"
+                        if applied
+                        else "added to the docker group; it takes effect on the next "
+                        f"login, so `loginctl terminate-user {caps.user}` or a reboot "
+                        "is still needed"
                     ),
                 )
             )

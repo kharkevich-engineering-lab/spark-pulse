@@ -770,14 +770,20 @@ async def _apply_capability_repairs(
                 result = None
                 detail = f"{detail}; {exc.reason}"
             if result is not None and result.ok:
-                report.concede(
-                    "docker",
-                    f"{caps.user} was not able to reach the Docker socket ({detail}) "
-                    "and has been added to the docker group",
-                    "the group takes effect on the next login, so the agent "
-                    "cannot run containers until this user's systemd manager is "
-                    f"restarted — `loginctl terminate-user {caps.user}` or a reboot",
+                report.note(f"added {caps.user} to the docker group")
+                applied = await _apply_docker_group(
+                    session, runner, caps, paths, report
                 )
+                if not applied:
+                    report.concede(
+                        "docker",
+                        f"{caps.user} was not able to reach the Docker socket "
+                        f"({detail}) and has been added to the docker group",
+                        "the group takes effect on the next login, so the agent "
+                        "cannot run containers until this user's systemd manager "
+                        f"is restarted — `loginctl terminate-user {caps.user}` or "
+                        "a reboot",
+                    )
             else:
                 report.concede(
                     "docker",
@@ -793,6 +799,53 @@ async def _apply_capability_repairs(
                 "the agent will enrol and stay connected, but every container "
                 "operation on this node will fail",
             )
+
+
+async def _apply_docker_group(
+    session: NodeSession,
+    runner: PrivilegedRunner,
+    caps: NodeCapabilities,
+    paths: InstallPaths,
+    report: InstallReport,
+) -> bool:
+    """Make the docker group the agent will start under take effect *now*.
+
+    ``usermod -aG docker`` writes the group, but a process only picks up its
+    groups when it is created, and the login user's ``systemd --user`` manager
+    — the parent of a user-scope agent — was started before the group existed.
+    So the agent would start without it and every container call would fail
+    until the next login. Restarting ``user@<uid>.service`` (a system unit,
+    hence root) rebuilds that manager with the new group, and the agent this
+    install starts a moment later inherits it. A system-scope agent runs as
+    root and reaches the socket regardless, so there is nothing to restart.
+
+    Returns whether the group is now in effect for the agent to be started.
+    """
+    if paths.scope != "user":
+        report.note(
+            "the agent runs as root under a system unit; it reaches Docker directly"
+        )
+        return True
+    if caps.uid <= 0:
+        return False
+    command = f"systemctl restart user@{caps.uid}.service"
+    if not runner.can(command):
+        return False
+    try:
+        result = await runner.run(
+            command,
+            why=f"apply the docker group to {caps.user}'s service manager",
+            timeout=30,
+        )
+    except SudoDeclined:
+        return False
+    if result.ok:
+        report.note(
+            "restarted the user service manager, so the agent starts with the "
+            "docker group and can run containers straight away"
+        )
+        return True
+    return False
 
 
 # ── Placing the agent ───────────────────────────────────────────────────────

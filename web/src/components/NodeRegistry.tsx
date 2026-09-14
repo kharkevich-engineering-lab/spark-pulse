@@ -910,21 +910,31 @@ export default function NodeRegistry() {
                     </div>
                   </td>
                   <td className="py-2.5 text-right">
-                    {!node.is_control_plane && (
+                    {!node.is_control_plane && node.agent?.current === false ? (
                       <button
                         onClick={() => setInstalling(node)}
                         aria-label={t("nodes.install.actionFor", { name: node.name })}
-                        title={
-                          node.agent?.current === false
-                            ? t("nodes.install.update")
-                            : node.agent?.enrolled
+                        title={t("nodes.install.update")}
+                        className="mr-1 inline-flex items-center gap-1.5 rounded-lg border border-warning/40 bg-warning/10 px-2.5 py-1 text-xs font-medium text-warning transition-colors hover:bg-warning/20"
+                      >
+                        <Download size={13} />
+                        {t("nodes.updateAction")}
+                      </button>
+                    ) : (
+                      !node.is_control_plane && (
+                        <button
+                          onClick={() => setInstalling(node)}
+                          aria-label={t("nodes.install.actionFor", { name: node.name })}
+                          title={
+                            node.agent?.enrolled
                               ? t("nodes.install.reinstall")
                               : t("nodes.install.action")
-                        }
-                        className="rounded-lg p-1.5 text-text-muted transition-colors hover:bg-primary/10 hover:text-primary"
-                      >
-                        <Download size={14} />
-                      </button>
+                          }
+                          className="rounded-lg p-1.5 text-text-muted transition-colors hover:bg-primary/10 hover:text-primary"
+                        >
+                          <Download size={14} />
+                        </button>
+                      )
                     )}
                     {!node.is_control_plane && (
                       <button
