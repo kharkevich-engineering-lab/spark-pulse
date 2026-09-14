@@ -41,6 +41,7 @@ import {
 } from "@/lib/api";
 import { useQuery } from "@/hooks/useQuery";
 import { ConfirmModal } from "@/components/Modal";
+import NodeDoctor from "@/components/NodeDoctor";
 import type {
   ClusterNode,
   DiscoveredPeer,
@@ -58,6 +59,7 @@ import {
   KeyRound,
   Loader2,
   Network,
+  Stethoscope,
   Plus,
   Radar,
   Server,
@@ -778,6 +780,7 @@ export default function NodeRegistry() {
   const [findings, setFindings] = useState<NodeFinding[]>([]);
   const [showAdd, setShowAdd] = useState(false);
   const [installing, setInstalling] = useState<ClusterNode | null>(null);
+  const [diagnosing, setDiagnosing] = useState<ClusterNode | null>(null);
   const [forgetting, setForgetting] = useState<ClusterNode | null>(null);
   const [removeError, setRemoveError] = useState<string | null>(null);
 
@@ -936,6 +939,14 @@ export default function NodeRegistry() {
                         </button>
                       )
                     )}
+                    <button
+                      onClick={() => setDiagnosing(node)}
+                      aria-label={t("nodes.doctor.actionFor", { name: node.name })}
+                      title={t("nodes.doctor.action")}
+                      className="rounded-lg p-1.5 text-text-muted transition-colors hover:bg-primary/10 hover:text-primary"
+                    >
+                      <Stethoscope size={14} />
+                    </button>
                     {!node.is_control_plane && (
                       <button
                         onClick={() => {
@@ -974,6 +985,14 @@ export default function NodeRegistry() {
           node={installing}
           onClose={() => setInstalling(null)}
           onInstalled={reload}
+        />
+      )}
+
+      {diagnosing && (
+        <NodeDoctor
+          node={diagnosing}
+          onClose={() => setDiagnosing(null)}
+          onChanged={reload}
         />
       )}
 

@@ -617,7 +617,7 @@ export async function fetchImagePresence(ref: string, nodes: string[]): Promise<
 
 // ── Node registry ────────────────────────────────────────────────────────────
 
-import type { AddNodeRequest, ClusterNode, DiscoverNodesResult, FabricApplyRequest, FabricApplyResponse, FabricResponse, InstallAgentRequest, InstallReport, NodeFinding, NodeHostKey } from "@/lib/types";
+import type { AddNodeRequest, ClusterNode, DiscoverNodesResult, DoctorReport, FabricApplyRequest, FabricApplyResponse, FabricResponse, InstallAgentRequest, InstallReport, NodeFinding, NodeHostKey } from "@/lib/types";
 
 export async function fetchNodes(): Promise<ClusterNode[]> {
   return json<ClusterNode[]>("/nodes");
@@ -644,6 +644,20 @@ export async function discoverNodes(timeout = 3): Promise<DiscoverNodesResult> {
 
 export async function fetchNodeDiagnostics(): Promise<{ findings: NodeFinding[] }> {
   return json<{ findings: NodeFinding[] }>("/nodes/diagnostics");
+}
+
+/** Why is a node not working, read-only — nothing is changed. */
+export async function fetchNodeDoctor(id: string): Promise<DoctorReport> {
+  return json<DoctorReport>(`/nodes/${encodeURIComponent(id)}/doctor`);
+}
+
+/** Diagnose, repair what is safely repairable over SSH, and check again. The
+ * sudo password, if any, is used for this call and kept nowhere. */
+export async function treatNode(id: string, sudoPassword?: string): Promise<DoctorReport> {
+  return json<DoctorReport>(`/nodes/${encodeURIComponent(id)}/doctor`, {
+    method: "POST",
+    body: JSON.stringify(sudoPassword ? { sudo_password: sudoPassword } : {}),
+  });
 }
 
 /** The SSH host key a node offers. Sends nothing to the node — no user, no

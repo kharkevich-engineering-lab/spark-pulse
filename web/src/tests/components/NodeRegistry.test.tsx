@@ -17,6 +17,8 @@ vi.mock("@/lib/api", () => ({
   fetchNodeDiagnostics: vi.fn(),
   fetchNodeHostKey: vi.fn(),
   installNodeAgent: vi.fn(),
+  fetchNodeDoctor: vi.fn(),
+  treatNode: vi.fn(),
 }));
 
 import {

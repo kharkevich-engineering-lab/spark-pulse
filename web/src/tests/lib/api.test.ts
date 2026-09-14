@@ -714,6 +714,26 @@ const CASES: Case[] = [
       host_key_fingerprint: "SHA256:abc",
     },
   },
+  {
+    name: "fetchNodeDoctor",
+    call: () => api.fetchNodeDoctor("node-1"),
+    path: "/api/nodes/node-1/doctor",
+    method: "GET",
+  },
+  {
+    name: "treatNode with a sudo password",
+    call: () => api.treatNode("node-1", "s3cret"),
+    path: "/api/nodes/node-1/doctor",
+    method: "POST",
+    body: { sudo_password: "s3cret" },
+  },
+  {
+    name: "treatNode without one",
+    call: () => api.treatNode("node-1"),
+    path: "/api/nodes/node-1/doctor",
+    method: "POST",
+    body: {},
+  },
   { name: "fetchFabric", call: () => api.fetchFabric(), path: "/api/fabric", method: "GET" },
   {
     name: "fetchFabric with override",

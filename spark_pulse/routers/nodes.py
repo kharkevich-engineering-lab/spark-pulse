@@ -30,6 +30,7 @@ from typing import Any
 from fastapi import APIRouter, Body, HTTPException, Query
 
 from spark_pulse import tools
+from spark_pulse.agent import doctor as node_doctor
 from spark_pulse.agent import onboarding
 from spark_pulse.agent import runtime as agent_runtime
 from spark_pulse.agent.bootstrap import ExistingIdentity
@@ -332,6 +333,91 @@ def _control_address() -> str:
     """The address peers dial: the control plane's own registry entry."""
     control = tools.node_registry.self_node()
     return str(getattr(control, "address", "") or "")
+
+
+@router.get("/{node_id}/doctor")
+async def diagnose_node(node_id: str):
+    """Why is this node not working, read-only. Never changes anything.
+
+    Everything the hub already knows is answered with no SSH; the checks that
+    need the machine use the control plane's key, which every install leaves
+    behind. A node with no SSH user in the registry is diagnosed on the agent
+    channel alone — which is exactly the channel that is down when the doctor
+    is most wanted, so the report says which checks it could not reach.
+    """
+    node = tools.node_registry.get_node(node_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail=f"No such node: {node_id}")
+    runtime = agent_runtime.current()
+    if runtime is None:
+        raise HTTPException(
+            status_code=503, detail="the agent transport is not running"
+        )
+    target = runtime.control_node_id if node.is_control_plane else node.id
+    report = await node_doctor.diagnose(
+        runtime.server,
+        target,
+        access=_doctor_access(node),
+        connector=onboarding.connector_factory(),
+    )
+    return {**report.to_dict(), "node_id": node.id}
+
+
+@router.post("/{node_id}/doctor")
+async def treat_node(node_id: str, body: dict[str, Any] = Body(default={})):
+    """Diagnose, repair what is safely repairable over SSH, and check again.
+
+    Only ``fixable-here`` findings are acted on; re-enrolment and a dead disk
+    are reported, never attempted. ``sudo_password`` is used for this call and
+    kept nowhere.
+    """
+    node = tools.node_registry.get_node(node_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail=f"No such node: {node_id}")
+    if node.is_control_plane:
+        raise HTTPException(
+            status_code=400,
+            detail="the control node runs its own agent; treat it by upgrading "
+            "and restarting the control plane, not over SSH",
+        )
+    access = _doctor_access(node)
+    if access is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{node.name} has no SSH user in the registry, so a repair "
+            "cannot log in. Install its agent from the Cluster page, which "
+            "records one.",
+        )
+    runtime = agent_runtime.current()
+    if runtime is None:
+        raise HTTPException(
+            status_code=503, detail="the agent transport is not running"
+        )
+    sudo_password = str(body.get("sudo_password") or "") or None
+
+    async def sudo(_question: str) -> str | None:
+        return sudo_password
+
+    try:
+        report = await node_doctor.treat(
+            runtime.server,
+            node.id,
+            access=access,
+            connector=onboarding.connector_factory(),
+            sudo_password_prompt=sudo,
+        )
+    except BootstrapError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {**report.to_dict(), "node_id": node.id}
+
+
+def _doctor_access(node: Any) -> Any | None:
+    """How the doctor logs in, or ``None`` for agent-channel-only checks."""
+    from spark_pulse.agent.bootstrap import NodeAccess
+
+    if node.is_control_plane or not node.address or not node.ssh_user:
+        return None
+    return NodeAccess(host=node.address, username=node.ssh_user)
 
 
 @router.delete("/{node_id}")

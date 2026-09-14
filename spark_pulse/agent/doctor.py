@@ -39,6 +39,7 @@ like any peer, and the agent-channel checks work on it with no SSH at all.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import shlex
 import time
@@ -234,8 +235,27 @@ async def diagnose(
             )
         return report
 
+    try:
+        session = await open_node_session(server, access, connector=connector)
+    except (BootstrapError, OSError, asyncio.TimeoutError) as exc:
+        # SSH is the recovery channel, and it is down too. That is a finding,
+        # not a crash: the agent-channel checks above still stand, and the
+        # host-level ones say plainly they could not be reached.
+        reason = f"could not reach {access.host} over SSH: {str(exc)[:160]}"
+        logger.info("doctor: %s", reason)
+        for check in (
+            "unit",
+            "linger",
+            "docker-socket",
+            "identity",
+            "reachability",
+            "disk",
+            "clock",
+        ):
+            report.add(Finding(check, "unknown", reason, channel="ssh"))
+        return report
+
     report.channels.append("ssh")
-    session = await open_node_session(server, access, connector=connector)
     try:
         caps = await probe_node(session, username=access.username)
         report.capabilities = caps.to_dict()
@@ -819,32 +839,32 @@ async def _repair(
                     Repair(check, action, False, result.stderr.strip()[:200])
                 )
                 return
-            # The group is written; a running manager does not have it until it
-            # is restarted, so restart user@<uid> and the agent picks it up.
-            applied = False
-            if paths.scope == "user" and caps.uid > 0:
-                restart = f"systemctl restart user@{caps.uid}.service"
-                applied = (
+            # The group is written; a running manager does not have it until
+            # it is restarted, so restart user@<uid> and the agent picks it
+            # up. A system-scope agent runs as root and reaches the socket
+            # regardless, so there is nothing to restart there.
+            if paths.scope != "user":
+                detail = "added to the docker group; the system-scope agent runs as root and reaches Docker directly"
+            elif (
+                caps.uid > 0
+                and (
                     await runner.run(
-                        restart,
+                        f"systemctl restart user@{caps.uid}.service",
                         why=f"apply the docker group to {caps.user}'s service manager",
                     )
                 ).ok
-            report.repairs.append(
-                Repair(
-                    check,
-                    action,
-                    True,
-                    (
-                        "added to the docker group and restarted the user manager, "
-                        "so the agent can run containers now"
-                        if applied
-                        else "added to the docker group; it takes effect on the next "
-                        f"login, so `loginctl terminate-user {caps.user}` or a reboot "
-                        "is still needed"
-                    ),
+            ):
+                detail = (
+                    "added to the docker group and restarted the user manager, "
+                    "so the agent can run containers now"
                 )
-            )
+            else:
+                detail = (
+                    "added to the docker group; it takes effect on the next login, "
+                    f"so `loginctl terminate-user {caps.user}` or a reboot is still "
+                    "needed"
+                )
+            report.repairs.append(Repair(check, action, True, detail))
             return
 
         if check == "identity-permissions":

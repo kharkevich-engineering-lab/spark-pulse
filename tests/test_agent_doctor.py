@@ -29,7 +29,7 @@ from spark_pulse.agent.doctor import (
     treat,
 )
 from spark_pulse.agent.local import start_local_agent
-from spark_pulse.mock.bootstrap_node import _split_operators
+from spark_pulse.mock.bootstrap_node import SudoPolicy, _split_operators
 from spark_pulse.mock.docker import MockDockerClient, MockDockerService
 from tests.agent_bootstrap_fixtures import (
     PASSWORD,
@@ -557,3 +557,48 @@ async def test_a_node_the_ledger_has_never_heard_of_is_a_decision(agent_server):
     membership = found.get("membership")
     assert membership.status == "broken"
     assert membership.verdict == NEEDS_DECISION
+
+
+async def test_a_system_scope_docker_repair_does_not_send_you_to_reboot(
+    agent_server, agent_fleet, agent_bundle, tmp_path
+):
+    """A system-scope agent runs as root and reaches Docker directly, so its
+    docker repair must not claim a re-login is needed the way a user one would."""
+    node = make_node(tmp_path, user_manager=False, sudo=SudoPolicy(mode="nopasswd"))
+    report = await install(agent_server, agent_fleet, node, agent_bundle)
+    assert report.scope == "system"
+    node.docker_socket_users.discard(USER)
+    node.users[USER].groups = ("adm", "sudo")
+    restarts_before = node.user_manager_restarts
+
+    treated = await treat(
+        agent_server, report.node_id, access=access(), connector=agent_fleet
+    )
+    repair = next(r for r in treated.repairs if r.check == "docker-socket")
+    assert repair.applied
+    assert "next login" not in repair.detail
+    assert "runs as root" in repair.detail
+    assert node.user_manager_restarts == restarts_before, "nothing to restart"
+
+
+async def test_ssh_unreachable_degrades_to_the_agent_channel(
+    agent_server, agent_fleet, agent_bundle, tmp_path
+):
+    """SSH is the recovery channel; when it is down too, the doctor reports
+    the host checks as unknown rather than raising — the agent-channel checks
+    still stand."""
+    node = make_node(tmp_path)
+    report = await install(agent_server, agent_fleet, node, agent_bundle)
+
+    # An address the fleet cannot reach: diagnose must not raise.
+    found = await diagnose(
+        agent_server,
+        report.node_id,
+        access=NodeAccess(host="10.255.255.1", username=USER),
+        connector=agent_fleet,
+    )
+    assert found.get("membership").status == "ok", "the agent channel answered"
+    unit = found.get("unit")
+    assert unit.status == "unknown"
+    assert "could not reach" in unit.detail
+    assert "ssh" not in found.channels, "ssh was not actually established"
