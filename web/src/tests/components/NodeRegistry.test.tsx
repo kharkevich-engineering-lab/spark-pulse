@@ -706,5 +706,29 @@ describe("InstallAgentDialog", () => {
     await user.click(screen.getByRole("button", { name: "Install agent on spark-02" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("not a unit-managed install");
   });
+
+  it("opens the reinstall dialog when the agent is too old to self-update", async () => {
+    const user = userEvent.setup();
+    mockApi({
+      nodes: [
+        CONTROL,
+        { ...PEER, ssh_user: "spark", agent: { enrolled: true, connected: true, version: "1.2.3", current: false } },
+      ],
+    });
+    vi.mocked(updateNodeAgent).mockResolvedValue({
+      node_id: "peer",
+      name: "spark-02",
+      updated: false,
+      needs_reinstall: true,
+      detail: "this agent predates stream self-update",
+    });
+    render(<NodeRegistry />);
+    await screen.findByRole("row", { name: /spark-02/ });
+    await user.click(screen.getByRole("button", { name: "Install agent on spark-02" }));
+    await waitFor(() => expect(updateNodeAgent).toHaveBeenCalledWith("peer"));
+    // Instead of a cryptic error, the operator is handed the reinstall dialog.
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
 });
 
