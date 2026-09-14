@@ -755,6 +755,13 @@ const CASES: Case[] = [
     method: "POST",
     body: {},
   },
+  {
+    name: "applyFabric with an operator-supplied file",
+    call: () => api.applyFabric({ files: { a: "network:\n" } }),
+    path: "/api/fabric/apply",
+    method: "POST",
+    body: { files: { a: "network:\n" } },
+  },
 ];
 
 describe("api request surface", () => {

@@ -271,5 +271,27 @@ describe("FabricCard", () => {
     expect(row).toHaveTextContent("10G port down");
     expect(screen.getByText(/switchless three-node mesh/)).toBeInTheDocument();
   });
+
+  it("lets an expert edit a node's file and applies it verbatim", async () => {
+    const user = userEvent.setup();
+    vi.mocked(applyFabric).mockResolvedValue({ mode: "direct", reports: [] });
+    render(<FabricCard />);
+    await screen.findByRole("row", { name: /gx10-ced2/ });
+    await user.click(screen.getByRole("button", { name: "Configure fabric" }));
+    const dialog = screen.getByRole("dialog", { name: "Configure fabric" });
+    // Open the first node's file and switch it to editing.
+    await user.click(within(dialog).getAllByText("Show the file for gx10-ced2")[0]);
+    await user.click(within(dialog).getAllByRole("button", { name: "Edit" })[0]);
+    const area = within(dialog).getByLabelText("Show the file for gx10-ced2");
+    await user.clear(area);
+    await user.type(area, "network: custom");
+    await user.click(within(dialog).getByRole("button", { name: /Configure/ }));
+    await waitFor(() =>
+      expect(applyFabric).toHaveBeenCalledWith({
+        override: false,
+        files: { a: "network: custom" },
+      }),
+    );
+  });
 });
 

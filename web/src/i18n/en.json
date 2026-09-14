@@ -823,6 +823,10 @@
     "modeDual": "Both cables between two nodes: one subnet pair per cable, no mesh settings.",
     "pinned": "Pinned for deploys",
     "notPinned": "Not pinned for deploys",
-    "noWired": "10G port down"
+    "noWired": "10G port down",
+    "edit": "Edit",
+    "editing": "Editing — applied verbatim",
+    "reset": "Reset to planned",
+    "editNote": "An edited file is written as-is; the plan's addresses and peer checks no longer apply, so only that the ports come up is verified."
   }
 }

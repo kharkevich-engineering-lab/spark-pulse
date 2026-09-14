@@ -79,8 +79,18 @@ async def apply_node_plan(
     *,
     connector: Connector | None = None,
     sudo_password_prompt: Prompt | None = None,
+    override_netplan: str | None = None,
 ) -> FabricApplyReport:
-    """Write ``plan`` onto the node it is for, apply it, and read it back."""
+    """Write ``plan`` onto the node it is for, apply it, and read it back.
+
+    ``override_netplan`` is an operator-supplied file that replaces the
+    rendered one — the expert path, for a scheme the planner does not produce.
+    It is written and applied verbatim; verification then only confirms the
+    plan's ports came up with *an* address, and does not ping the plan's
+    peers or require any particular MTU, because a hand-edited file may set
+    both as the operator sees fit. The MTU each port ends up with is reported
+    for the operator to read, never gated on.
+    """
     report = FabricApplyReport(node_id=plan.node_id, name=plan.name)
     if not plan.assignments:
         report.fail("the plan has nothing to write for this node")
@@ -100,7 +110,9 @@ async def apply_node_plan(
                     f"sudo password for {caps.user}@{access.host}"
                 )
             )
-        await _write_and_apply(session, runner, caps.home, plan, report)
+        await _write_and_apply(
+            session, runner, caps.home, plan, report, override_netplan
+        )
     except SudoDeclined as exc:
         report.fail(f"needs root and none was available: {exc}")
     except BootstrapError as exc:
@@ -119,6 +131,7 @@ async def _write_and_apply(
     home: str,
     plan: NodePlan,
     report: FabricApplyReport,
+    override_netplan: str | None = None,
 ) -> None:
     staged = f"{home.rstrip('/')}/{STAGED}"
     made = await session.run(
@@ -126,8 +139,13 @@ async def _write_and_apply(
     )
     if not made.ok:
         raise BootstrapError(f"could not stage the file: {made.stderr.strip()[:200]}")
-    await session.upload(plan.netplan.encode(), staged, mode=0o600)
-    report.note(f"staged {NETPLAN_PATH} ({len(plan.assignments)} ports)")
+    content = override_netplan if override_netplan is not None else plan.netplan
+    await session.upload(content.encode(), staged, mode=0o600)
+    report.note(
+        f"staged an operator-supplied {NETPLAN_PATH}"
+        if override_netplan is not None
+        else f"staged {NETPLAN_PATH} ({len(plan.assignments)} ports)"
+    )
 
     installed = await runner.run(
         f"install -o root -g root -m 600 {shlex.quote(staged)} {shlex.quote(NETPLAN_PATH)}",
@@ -158,7 +176,7 @@ async def _write_and_apply(
     report.applied = True
     report.note("netplan apply ran")
 
-    await _read_back(session, plan, report)
+    await _read_back(session, plan, report, overridden=override_netplan is not None)
 
 
 async def _quiet_network_manager(
@@ -205,14 +223,42 @@ async def _quiet_network_manager(
 
 
 async def _read_back(
-    session: NodeSession, plan: NodePlan, report: FabricApplyReport
+    session: NodeSession,
+    plan: NodePlan,
+    report: FabricApplyReport,
+    *,
+    overridden: bool = False,
 ) -> None:
-    """The address and MTU each port now has, and whether every peer answers."""
+    """The address and MTU each port now has, and whether every peer answers.
+
+    For an operator-supplied file the plan's cidrs, peers and MTU no longer
+    describe what was written, so verification confirms only that each of the
+    plan's ports came up with *some* IPv4 address; the MTU is reported but not
+    gated on, and the peer pings — which would target the plan's addresses —
+    are skipped.
+    """
     verified = True
     for assignment in plan.assignments:
         dev = shlex.quote(assignment.netdev)
         addr = await session.run(f"ip -o -f inet addr show dev {dev}", timeout=20)
         mtu = await session.run(f"cat /sys/class/net/{dev}/mtu", timeout=20)
+        if overridden:
+            has_address = " inet " in addr.stdout
+            found = addr.stdout.split(" inet ", 1)[1].split()[0] if has_address else ""
+            report.readback[assignment.netdev] = {
+                "cidr": found,
+                "address_ok": has_address,
+                "mtu": mtu.stdout.strip(),
+                # No expected MTU for a hand-written file: reported, not gated.
+                "mtu_ok": None,
+            }
+            if not has_address:
+                verified = False
+                report.fail(
+                    f"{assignment.netdev} came up with no address from the "
+                    "supplied file"
+                )
+            continue
         has_address = assignment.cidr in addr.stdout
         has_mtu = mtu.stdout.strip() == str(assignment.mtu)
         report.readback[assignment.netdev] = {

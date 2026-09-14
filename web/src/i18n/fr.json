@@ -823,6 +823,10 @@
     "modeDual": "Les deux câbles entre deux nœuds : une paire de sous-réseaux par câble, sans réglages de maillage.",
     "pinned": "Épinglé pour les déploiements",
     "notPinned": "Non épinglé pour les déploiements",
-    "noWired": "Port 10G inactif"
+    "noWired": "Port 10G inactif",
+    "edit": "Modifier",
+    "editing": "En édition — appliqué tel quel",
+    "reset": "Rétablir le plan",
+    "editNote": "Un fichier modifié est écrit tel quel ; les adresses du plan et les tests de pairs ne s'appliquent plus, seul le fait que les ports montent est vérifié."
   }
 }

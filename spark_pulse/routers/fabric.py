@@ -164,8 +164,20 @@ async def apply_fabric(body: dict[str, Any] = Body(default={})):
     override = bool(body.get("override"))
     wanted = {str(n) for n in (body.get("node_ids") or [])}
     sudo_password = str(body.get("sudo_password") or "") or None
+    # Expert path: an operator-supplied netplan file per node, applied verbatim.
+    files = {str(k): str(v) for k, v in (body.get("files") or {}).items() if v}
     plan = tools.fabric_plan.plan_fabric(_node_fabrics(runtime), override=override)
-    targets = [n for n in plan.proposed if not wanted or n.node_id in wanted]
+    by_id = {n.node_id: n for n in plan.nodes}
+    target_ids = [n.node_id for n in plan.proposed if not wanted or n.node_id in wanted]
+    # A node with a supplied file is a target even if the plan left it alone.
+    for node_id in files:
+        if (
+            node_id not in target_ids
+            and node_id in by_id
+            and (not wanted or node_id in wanted)
+        ):
+            target_ids.append(node_id)
+    targets = [by_id[nid] for nid in target_ids]
     configured = [
         n
         for n in plan.nodes
@@ -209,6 +221,7 @@ async def apply_fabric(body: dict[str, Any] = Body(default={})):
             node_plan,
             connector=onboarding.connector_factory(),
             sudo_password_prompt=sudo,
+            override_netplan=files.get(node_plan.node_id),
         )
         result = report.to_dict()
         if report.verified:
