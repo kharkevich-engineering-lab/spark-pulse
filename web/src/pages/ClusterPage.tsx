@@ -17,7 +17,6 @@ import { useI18n } from "@/lib/i18n";
 import { fetchDeployments } from "@/lib/api";
 import { useQuery } from "@/hooks/useQuery";
 import StatusBadge from "@/components/StatusBadge";
-import LaunchScriptAnalyzer from "@/components/LaunchScriptAnalyzer";
 import NodeRegistry from "@/components/NodeRegistry";
 import NetworkDiscovery from "@/components/NetworkDiscovery";
 import FabricCard from "@/components/FabricCard";
@@ -138,9 +137,6 @@ export default function ClusterPage() {
         )}
       </div>
 
-      {/* The launch-script analyser kept its endpoint when the cluster form
-          lost its dialog, so it stands on its own rather than disappearing. */}
-      <LaunchScriptAnalyzer />
     </div>
   );
 }

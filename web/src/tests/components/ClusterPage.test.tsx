@@ -9,8 +9,8 @@ import type { Deployment } from "@/lib/types";
 
 vi.mock("@/lib/api", () => ({
   fetchDeployments: vi.fn(),
-  // <NodeRegistry /> and <LaunchScriptAnalyzer /> live on this page and fetch
-  // on mount; they are stubbed out so the assertions are about this page.
+  // <NodeRegistry /> and <FabricCard /> live on this page and fetch on mount;
+  // they are stubbed out so the assertions are about this page.
   fetchNodes: vi.fn(),
   fetchNodeDiagnostics: vi.fn(),
   addNode: vi.fn(),
@@ -18,9 +18,6 @@ vi.mock("@/lib/api", () => ({
   discoverNodes: vi.fn(),
   fetchFabric: vi.fn(),
   applyFabric: vi.fn(),
-  resolveLaunchScript: vi.fn(),
-  analyzeLaunchScript: vi.fn(),
-  validateLaunchScript: vi.fn(),
 }));
 
 import { fetchDeployments, fetchNodeDiagnostics, fetchNodes } from "@/lib/api";

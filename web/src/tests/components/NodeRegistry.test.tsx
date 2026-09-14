@@ -639,7 +639,9 @@ describe("InstallAgentDialog", () => {
     render(<NodeRegistry />);
     const row = await screen.findByRole("row", { name: /spark-02/ });
     expect(within(row).getByTestId("agent-version-peer")).toHaveTextContent("agent 1.2.3 · update available");
-    expect(screen.getByRole("button", { name: "Install agent on spark-02" })).toHaveAttribute("title", "Update agent");
+    const update = screen.getByRole("button", { name: "Install agent on spark-02" });
+    expect(update).toHaveAttribute("title", "Update agent");
+    expect(update).toHaveTextContent("Update");
   });
 
   it("shows a current agent's version without a nag", async () => {
