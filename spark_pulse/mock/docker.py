@@ -469,6 +469,7 @@ class MockDockerService(DockerService):
         self.snapshots: dict[str, dict[str, list[tuple[str, int]]]] = {}
         #: Processes a caller asked this node to signal.
         self.terminated: list[tuple[int, bool]] = []
+        self.fabric_applied: list = []
 
     # ── Beyond containers: what the agent answers about its machine ──────
 
@@ -550,6 +551,38 @@ class MockDockerService(DockerService):
             self.terminated.append((int(pid), bool(force)))
             return pb.ProcessTermination(terminated=True)
         return pb.ProcessTermination(terminated=False, detail="no such process")
+
+    def configure_fabric(
+        self,
+        interfaces: list[tuple[str, str, str, int]],
+        peers: list[tuple[str, str]],
+    ) -> Any:
+        """Apply the fabric on a simulated node.
+
+        There is no real nmcli here, so the ports are recorded as applied
+        exactly as asked and every peer answers — the flow is exercised end to
+        end without a network. A test that wants a failure overrides this.
+        """
+        from spark_pulse.agent import agent_pb2 as pb
+
+        self.fabric_applied = list(interfaces)
+        return pb.FabricResult(
+            ports=[
+                pb.FabricPortState(
+                    netdev=netdev,
+                    cidr=cidr,
+                    address_ok=True,
+                    mtu=int(mtu),
+                    mtu_ok=True,
+                )
+                for netdev, _name, cidr, mtu in interfaces
+            ],
+            pings=[
+                pb.FabricPing(netdev=netdev, address=addr, reachable=True)
+                for netdev, addr in peers
+            ],
+            steps=[f"configured {len(interfaces)} port(s) via nmcli (simulated)"],
+        )
 
     def list_snapshot(
         self, repo_path: str, revision: str = "", deep: bool = False

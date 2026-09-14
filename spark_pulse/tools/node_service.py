@@ -331,6 +331,14 @@ class NodeService(Protocol):
         """Remove an image from the node. False when it was not there."""
         ...
 
+    def configure_fabric(
+        self,
+        interfaces: list[tuple[str, str, str, int]],
+        peers: list[tuple[str, str]],
+    ) -> Any:
+        """Apply this node's ConnectX fabric config through its agent."""
+        ...
+
 
 #: The method names the three implementations must agree on.
 NODE_SERVICE_METHODS: tuple[str, ...] = (
@@ -368,6 +376,7 @@ NODE_MACHINE_METHODS: tuple[str, ...] = (
     "list_snapshot",
     "remove_snapshot",
     "terminate_process",
+    "configure_fabric",
 )
 
 

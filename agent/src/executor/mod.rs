@@ -18,6 +18,7 @@
 
 pub mod containers;
 pub mod copy;
+pub mod fabric;
 pub mod images;
 pub mod labels;
 pub mod processes;
@@ -301,6 +302,10 @@ impl Executor {
                     Op::TerminateProcess(req) => {
                         return ok!(Outcome::Termination(processes::terminate(req)));
                     }
+                    Op::ConfigureFabric(req) => {
+                        let result = attempt!(fabric::configure(req));
+                        return ok!(Outcome::Fabric(result));
+                    }
                     _ => {}
                 }
                 return failure(id, &error.kind, error.message);
@@ -325,6 +330,10 @@ impl Executor {
                 ok!(Outcome::Removal(removal))
             }
             Op::TerminateProcess(req) => ok!(Outcome::Termination(processes::terminate(&req))),
+            Op::ConfigureFabric(req) => {
+                let result = attempt!(fabric::configure(&req));
+                ok!(Outcome::Fabric(result))
+            }
 
             Op::RunContainer(req) => {
                 let info = attempt!(containers::run_container(docker, req).await);

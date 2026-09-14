@@ -16,9 +16,7 @@ from typing import Any
 from fastapi import APIRouter, Body, HTTPException
 
 from spark_pulse import tools
-from spark_pulse.agent import fabric_apply, onboarding
 from spark_pulse.agent import runtime as agent_runtime
-from spark_pulse.agent.bootstrap import NodeAccess
 
 router = APIRouter(prefix="/api/fabric", tags=["fabric"])
 
@@ -150,10 +148,13 @@ def read_fabric(override: bool = False):
 
 @router.post("/apply")
 async def apply_fabric(body: dict[str, Any] = Body(default={})):
-    """Write and apply the plan on the proposed nodes, then read them back.
+    """Apply the plan on the proposed nodes through each node's own agent.
 
-    ``node_ids`` narrows it; ``override`` re-addresses already-valid nodes
-    too; ``sudo_password`` is used only if a node needs it.
+    ``node_ids`` narrows it; ``override`` re-addresses already-valid nodes too.
+    Each node's agent drives ``nmcli`` — no SSH, and the control node is
+    reached over its own agent like any peer, so it needs no SSH user. A node
+    whose agent lacks the nmcli sudoers grant reports that, rather than the
+    control plane logging in on its behalf.
     """
     runtime = agent_runtime.current()
     if runtime is None:
@@ -163,21 +164,11 @@ async def apply_fabric(body: dict[str, Any] = Body(default={})):
         )
     override = bool(body.get("override"))
     wanted = {str(n) for n in (body.get("node_ids") or [])}
-    sudo_password = str(body.get("sudo_password") or "") or None
-    # Expert path: an operator-supplied netplan file per node, applied verbatim.
-    files = {str(k): str(v) for k, v in (body.get("files") or {}).items() if v}
     plan = tools.fabric_plan.plan_fabric(_node_fabrics(runtime), override=override)
     by_id = {n.node_id: n for n in plan.nodes}
-    target_ids = [n.node_id for n in plan.proposed if not wanted or n.node_id in wanted]
-    # A node with a supplied file is a target even if the plan left it alone.
-    for node_id in files:
-        if (
-            node_id not in target_ids
-            and node_id in by_id
-            and (not wanted or node_id in wanted)
-        ):
-            target_ids.append(node_id)
-    targets = [by_id[nid] for nid in target_ids]
+    targets = [
+        by_id[n.node_id] for n in plan.proposed if not wanted or n.node_id in wanted
+    ]
     configured = [
         n
         for n in plan.nodes
@@ -191,49 +182,111 @@ async def apply_fabric(body: dict[str, Any] = Body(default={})):
             + (f" — {'; '.join(plan.problems)}" if plan.problems else ""),
         )
 
-    async def sudo(_question: str) -> str | None:
-        return sudo_password
+    reports = [
+        await _apply_through_agent(node_plan, plan.mode) for node_plan in targets
+    ]
 
-    reports = []
-    for node_plan in targets:
-        node = tools.node_registry.get_node(node_plan.node_id)
-        if node is None or not node.address or not node.ssh_user:
-            reports.append(
-                {
-                    "node_id": node_plan.node_id,
-                    "name": node_plan.name,
-                    "applied": False,
-                    "verified": False,
-                    "steps": [],
-                    "errors": [
-                        "the registry has no SSH user for this node; install its "
-                        "agent from the Cluster page first, which records one"
-                    ],
-                    "readback": {},
-                    "pings": [],
-                    "privileged_calls": [],
-                }
-            )
-            continue
-        report = await fabric_apply.apply_node_plan(
-            runtime.server,
-            NodeAccess(host=node.address, username=node.ssh_user),
-            node_plan,
-            connector=onboarding.connector_factory(),
-            sudo_password_prompt=sudo,
-            override_netplan=files.get(node_plan.node_id),
-        )
-        result = report.to_dict()
-        if report.verified:
-            result["pinned"] = _pin_record(node_plan, plan.mode)
-        reports.append(result)
-
-    # A node already configured by somebody's hand has a fabric a deploy can
-    # use only if the registry says so; pin those too, without logging in.
+    # A node already configured by hand has a fabric a deploy can use only if
+    # the registry says so; pin those too, no agent call needed.
     pinned = {}
-    for node_plan in plan.nodes:
-        if node_plan.status == tools.fabric_plan.STATUS_CONFIGURED and (
-            not wanted or node_plan.node_id in wanted
-        ):
-            pinned[node_plan.node_id] = _pin_record(node_plan, plan.mode)
+    for node_plan in configured:
+        pinned[node_plan.node_id] = _pin_record(node_plan, plan.mode)
     return {"mode": plan.mode, "reports": reports, "pinned": pinned}
+
+
+def _connection_name(netdev: str) -> str:
+    """The NetworkManager connection the agent creates for a fabric port."""
+    return f"spark-pulse-{netdev}"
+
+
+async def _apply_through_agent(node_plan: Any, mode: str) -> dict[str, Any]:
+    """Configure one node's fabric over its agent, and shape the report.
+
+    Runs the blocking node-service call in a worker thread: the agent client
+    is synchronous and must not be awaited on the control plane's loop.
+    """
+    import asyncio
+
+    node = tools.node_registry.get_node(node_plan.node_id)
+    base = {
+        "node_id": node_plan.node_id,
+        "name": node_plan.name,
+        "applied": False,
+        "verified": False,
+        "steps": [],
+        "errors": [],
+        "readback": {},
+        "pings": [],
+    }
+    if node is None:
+        base["errors"] = ["the node is no longer in the registry"]
+        return base
+
+    interfaces = [
+        (a.netdev, _connection_name(a.netdev), a.cidr, a.mtu)
+        for a in node_plan.assignments
+        if a.cidr
+    ]
+    peers = [
+        (a.netdev, address) for a in node_plan.assignments for _peer, address in a.peers
+    ]
+    if not interfaces:
+        base["errors"] = ["the plan assigned this node no addresses"]
+        return base
+
+    from spark_pulse.tools.node_service import NoAgent, node_for, service_for
+
+    # node_for decides control-node-vs-peer by address; service_for then reaches
+    # that node's agent (the control node over loopback, a peer over its stream).
+    target = node_for(node.address, ssh_user=node.ssh_user)
+    try:
+        service = service_for(target)
+        result = await asyncio.to_thread(service.configure_fabric, interfaces, peers)
+    except NoAgent as exc:
+        base["errors"] = [str(exc)]
+        return base
+    except Exception as exc:  # the agent ran it and it failed — reachable, definite
+        base["errors"] = [str(exc)]
+        base["applied"] = True
+        return base
+
+    ports = {
+        p.netdev: {
+            "cidr": p.cidr,
+            "address_ok": p.address_ok,
+            "mtu": str(p.mtu),
+            "mtu_ok": p.mtu_ok,
+        }
+        for p in result.ports
+    }
+    pings = [
+        {"netdev": p.netdev, "address": p.address, "reachable": p.reachable}
+        for p in result.pings
+    ]
+    addresses_ok = all(p.address_ok for p in result.ports)
+    peers_ok = all(p.reachable for p in result.pings)
+    verified = addresses_ok and peers_ok
+    errors = []
+    for p in result.ports:
+        if not p.address_ok:
+            errors.append(
+                f"{p.netdev} did not come up with {ports[p.netdev]['cidr'] or 'an address'}"
+            )
+    for ping in result.pings:
+        if not ping.reachable:
+            errors.append(
+                f"{ping.address} does not answer over {ping.netdev}; either that "
+                "node is not applied yet, or the cable does not go where the plan assumed"
+            )
+    report = {
+        **base,
+        "applied": True,
+        "verified": verified,
+        "steps": list(result.steps),
+        "errors": errors,
+        "readback": ports,
+        "pings": pings,
+    }
+    if verified:
+        report["pinned"] = _pin_record(node_plan, mode)
+    return report

@@ -7,7 +7,7 @@ module is that page as a function: given what each node's agent reports about
 its ports, produce the file each node should hold, and refuse — in upstream's
 own terms — the shapes upstream refuses.
 
-Pure, on purpose. Nothing here touches a machine; :mod:`spark_pulse.agent.fabric_apply`
+Pure, on purpose. Nothing here touches a machine; :mod:`spark_pulse.routers.fabric`
 is what writes the files, and the pre-flight is what reads the result back
 through the agent. Keeping the plan pure is what makes it testable against
 ``NETWORKING.md``'s own examples, byte for byte.

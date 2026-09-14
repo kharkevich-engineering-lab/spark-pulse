@@ -1222,9 +1222,6 @@ export interface FabricApplyRequest {
   node_ids?: string[];
   override?: boolean;
   sudo_password?: string;
-  /** Expert path: an operator-supplied netplan file per node, applied verbatim
-   * instead of the rendered one. */
-  files?: Record<string, string>;
 }
 
 /** One node's apply, as the machine answered it. */

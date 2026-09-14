@@ -424,6 +424,36 @@ class NodeOperations:
 
     # ── Processes ────────────────────────────────────────────────────────
 
+    async def configure_fabric(
+        self,
+        interfaces: list[tuple[str, str, str, int]],
+        peers: list[tuple[str, str]],
+    ) -> pb.FabricResult:
+        """Configure this node's ConnectX fabric through its agent.
+
+        ``interfaces`` is ``(netdev, connection_name, cidr, mtu)`` per port;
+        ``peers`` is ``(netdev, address)`` to ping once each port is up. The
+        agent drives ``nmcli`` under the one sudoers grant it has and reads the
+        ports back — no SSH, and nothing written to ``/etc/netplan``.
+        """
+        command = self.hub.new_command(
+            configure_fabric=pb.ConfigureFabric(
+                interfaces=[
+                    pb.FabricInterface(
+                        netdev=netdev,
+                        connection_name=name,
+                        cidr=cidr,
+                        mtu=int(mtu),
+                    )
+                    for netdev, name, cidr, mtu in interfaces
+                ],
+                peers=[
+                    pb.FabricPeer(netdev=netdev, address=addr) for netdev, addr in peers
+                ],
+            )
+        )
+        return await self._call(command, "fabric")
+
     async def terminate_process(
         self, pid: int, force: bool = False
     ) -> pb.ProcessTermination:

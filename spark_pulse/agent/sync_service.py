@@ -74,6 +74,9 @@ CONTRACT_EXCEPTIONS: dict[str, type[BaseException]] = {
 #: ever spent if the hub itself is wedged — in which case a thread that waits
 #: forever is a leaked worker, and this turns it into an error.
 RESULT_MARGIN = 30.0
+#: nmcli apply plus per-port readback and peer pings takes longer than a
+#: normal command; give the fabric op its own budget.
+FABRIC_TIMEOUT = 120.0
 
 
 class AgentNodeService:
@@ -347,3 +350,14 @@ class AgentNodeService:
     def terminate_process(self, pid: int, force: bool = False) -> Any:
         """Signal one process on the node."""
         return self._run(self.ops.terminate_process(pid, force))
+
+    def configure_fabric(
+        self,
+        interfaces: list[tuple[str, str, str, int]],
+        peers: list[tuple[str, str]],
+    ) -> Any:
+        """Apply this node's ConnectX fabric config through its agent."""
+        return self._run(
+            self.ops.configure_fabric(interfaces, peers),
+            timeout=FABRIC_TIMEOUT,
+        )

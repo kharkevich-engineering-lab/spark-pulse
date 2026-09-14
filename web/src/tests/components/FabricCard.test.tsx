@@ -152,10 +152,9 @@ describe("FabricCard", () => {
     await screen.findByRole("row", { name: /gx10-ced2/ });
     await user.click(screen.getByRole("button", { name: "Configure fabric" }));
     const dialog = screen.getByRole("dialog", { name: "Configure fabric" });
-    expect(within(dialog).getByText("Show the file for gx10-ced2")).toBeInTheDocument();
-    expect(within(dialog).getByText("Show the file for gx10-b90f")).toBeInTheDocument();
-    expect(dialog).toHaveTextContent("Written to /etc/netplan/40-cx7.yaml");
-    expect(dialog).toHaveTextContent("addresses: [192.168.177.11/24]");
+    expect(within(dialog).getByText("Planned addresses for gx10-ced2")).toBeInTheDocument();
+    expect(within(dialog).getByText("Planned addresses for gx10-b90f")).toBeInTheDocument();
+    expect(dialog).toHaveTextContent("192.168.177.11/24");
     // No node is already configured, so there is nothing to override.
     expect(within(dialog).queryByLabelText(/already configured/)).toBeNull();
 
@@ -220,9 +219,9 @@ describe("FabricCard", () => {
     await user.click(screen.getByRole("button", { name: "Configure fabric" }));
     const dialog = screen.getByRole("dialog", { name: "Configure fabric" });
     expect(within(dialog).getByRole("button", { name: "Configure 1 node(s)" })).toBeEnabled();
-    expect(within(dialog).queryByText("Show the file for gx10-ced2")).toBeNull();
+    expect(within(dialog).queryByText("Planned addresses for gx10-ced2")).toBeNull();
     await user.click(within(dialog).getByLabelText(/already configured/));
-    expect(within(dialog).getByText("Show the file for gx10-ced2")).toBeInTheDocument();
+    expect(within(dialog).getByText("Planned addresses for gx10-ced2")).toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: "Configure 2 node(s)" }));
     await waitFor(() => expect(applyFabric).toHaveBeenCalledWith({ override: true }));
   });
@@ -271,27 +270,4 @@ describe("FabricCard", () => {
     expect(row).toHaveTextContent("10G port down");
     expect(screen.getByText(/switchless three-node mesh/)).toBeInTheDocument();
   });
-
-  it("lets an expert edit a node's file and applies it verbatim", async () => {
-    const user = userEvent.setup();
-    vi.mocked(applyFabric).mockResolvedValue({ mode: "direct", reports: [] });
-    render(<FabricCard />);
-    await screen.findByRole("row", { name: /gx10-ced2/ });
-    await user.click(screen.getByRole("button", { name: "Configure fabric" }));
-    const dialog = screen.getByRole("dialog", { name: "Configure fabric" });
-    // Open the first node's file and switch it to editing.
-    await user.click(within(dialog).getAllByText("Show the file for gx10-ced2")[0]);
-    await user.click(within(dialog).getAllByRole("button", { name: "Edit" })[0]);
-    const area = within(dialog).getByLabelText("Show the file for gx10-ced2");
-    await user.clear(area);
-    await user.type(area, "network: custom");
-    await user.click(within(dialog).getByRole("button", { name: /Configure/ }));
-    await waitFor(() =>
-      expect(applyFabric).toHaveBeenCalledWith({
-        override: false,
-        files: { a: "network: custom" },
-      }),
-    );
-  });
 });
-

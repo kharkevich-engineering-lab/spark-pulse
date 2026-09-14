@@ -102,6 +102,42 @@ async def test_every_operation_the_protocol_carries_has_a_method(agent_server):
         assert callable(getattr(NodeOperations, name))
 
 
+async def test_configure_fabric_round_trips_through_the_agent(agent_server, join_agent):
+    """The op carries the per-port config and the peers, and the FabricResult
+    comes back with the port states and pings."""
+
+    def answers_fabric(command: pb.Command) -> pb.CommandResult:
+        assert command.WhichOneof("op") == "configure_fabric"
+        req = command.configure_fabric
+        ports = [
+            pb.FabricPortState(
+                netdev=i.netdev, cidr=i.cidr, address_ok=True, mtu=i.mtu, mtu_ok=True
+            )
+            for i in req.interfaces
+        ]
+        pings = [
+            pb.FabricPing(netdev=p.netdev, address=p.address, reachable=True)
+            for p in req.peers
+        ]
+        return pb.CommandResult(
+            command_id=command.command_id,
+            fabric=pb.FabricResult(ports=ports, pings=pings, steps=["applied"]),
+        )
+
+    node = await join_agent("spark-fabric", handler=answers_fabric)
+    result = await ops(agent_server, node).configure_fabric(
+        [("enp1s0f1np1", "spark-pulse-enp1s0f1np1", "192.168.177.11/24", 9000)],
+        [("enp1s0f1np1", "192.168.177.12")],
+    )
+    assert [p.netdev for p in result.ports] == ["enp1s0f1np1"]
+    assert result.ports[0].cidr == "192.168.177.11/24"
+    assert result.ports[0].address_ok and result.ports[0].mtu_ok
+    assert [(p.address, p.reachable) for p in result.pings] == [
+        ("192.168.177.12", True)
+    ]
+    assert list(result.steps) == ["applied"]
+
+
 # ── The three outcomes ──────────────────────────────────────────────────────
 
 

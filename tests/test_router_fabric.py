@@ -8,7 +8,6 @@ import httpx
 import pytest
 
 from spark_pulse.agent import agent_pb2 as pb
-from spark_pulse.agent import fabric_apply
 from spark_pulse.agent import runtime as agent_runtime
 from spark_pulse.agent.hub import AgentConnection
 from spark_pulse.agent.runtime import ControlPlaneRuntime
@@ -151,6 +150,52 @@ class TestRead:
         ] == [PEER_ID]
 
 
+def fabric_result(interfaces, peers, *, address_ok=True, mtu_ok=True, reachable=True):
+    """A proto FabricResult a fake agent service returns for configure_fabric."""
+    return pb.FabricResult(
+        ports=[
+            pb.FabricPortState(
+                netdev=netdev,
+                cidr=cidr,
+                address_ok=address_ok,
+                mtu=int(mtu),
+                mtu_ok=mtu_ok,
+            )
+            for netdev, _name, cidr, mtu in interfaces
+        ],
+        pings=[
+            pb.FabricPing(netdev=netdev, address=addr, reachable=reachable)
+            for netdev, addr in peers
+        ],
+        steps=["configured via nmcli (fake)"],
+    )
+
+
+class FakeService:
+    """Records the fabric config it was handed and answers as told."""
+
+    def __init__(self, sink, **result_kwargs):
+        self.sink = sink
+        self.result_kwargs = result_kwargs
+
+    def configure_fabric(self, interfaces, peers):
+        self.sink.append({"interfaces": interfaces, "peers": peers})
+        return fabric_result(interfaces, peers, **self.result_kwargs)
+
+
+def patch_service(monkeypatch, sink, **result_kwargs):
+    import importlib
+
+    node_service = importlib.import_module("spark_pulse.tools.node_service")
+
+    monkeypatch.setattr(
+        node_service,
+        "service_for",
+        lambda node, **_: FakeService(sink, **result_kwargs),
+    )
+    return sink
+
+
 class TestApply:
     async def test_without_a_transport_it_is_a_503(self, client):
         assert (await client.post("/api/fabric/apply", json={})).status_code == 503
@@ -161,89 +206,101 @@ class TestApply:
         assert response.status_code == 400
         assert "nothing to apply" in response.json()["detail"]
 
-    async def test_the_proposed_nodes_are_applied_with_the_registrys_ssh_user(
+    async def test_the_proposed_node_is_configured_through_its_agent(
         self, client, running, monkeypatch
     ):
         connect(running, PEER_ID, facts())
-        seen = {}
-
-        async def fake_apply(
-            server,
-            access,
-            plan,
-            *,
-            connector=None,
-            sudo_password_prompt=None,
-            override_netplan=None,
-        ):
-            seen["access"] = access
-            seen["plan"] = plan
-            seen["sudo"] = (
-                await sudo_password_prompt("?") if sudo_password_prompt else None
-            )
-            report = fabric_apply.FabricApplyReport(
-                node_id=plan.node_id, name=plan.name, applied=True, verified=True
-            )
-            report.note("done")
-            return report
-
-        monkeypatch.setattr(fabric_apply, "apply_node_plan", fake_apply)
-        response = await client.post(
-            "/api/fabric/apply", json={"sudo_password": "s3cret"}
-        )
+        sink = patch_service(monkeypatch, [])
+        response = await client.post("/api/fabric/apply", json={})
         assert response.status_code == 200, response.text
         body = response.json()
         assert body["mode"] == "direct"
         assert [r["node_id"] for r in body["reports"]] == [PEER_ID]
-        assert body["reports"][0]["verified"] is True
-        assert seen["access"].host == "10.0.0.11"
-        assert seen["access"].username == "spark", "the user the install recorded"
-        assert seen["plan"].node_id == PEER_ID
-        assert seen["sudo"] == "s3cret"
-        assert "s3cret" not in response.text
+        report = body["reports"][0]
+        assert report["applied"] and report["verified"]
+        assert report["errors"] == []
+        # The agent was handed the planned per-port config and the peers.
+        assert len(sink) == 1
+        netdevs = [i[0] for i in sink[0]["interfaces"]]
+        assert netdevs == ["enp1s0f1np1", "enP2p1s0f1np1"]
+        assert all(
+            name.startswith("spark-pulse-")
+            for _n, name, _c, _m in sink[0]["interfaces"]
+        )
+        assert report["readback"]["enp1s0f1np1"]["address_ok"] is True
 
     async def test_node_ids_narrow_the_apply(self, client, running, monkeypatch):
         connect(running, PEER_ID, facts())
-        calls = []
-
-        async def fake_apply(server, access, plan, **_):
-            calls.append(plan.node_id)
-            return fabric_apply.FabricApplyReport(node_id=plan.node_id, name=plan.name)
-
-        monkeypatch.setattr(fabric_apply, "apply_node_plan", fake_apply)
-        response = await client.post(
-            "/api/fabric/apply", json={"node_ids": ["not-a-node"]}
-        )
-        assert response.status_code == 400
+        sink = patch_service(monkeypatch, [])
+        assert (
+            await client.post("/api/fabric/apply", json={"node_ids": ["not-a-node"]})
+        ).status_code == 400
+        assert sink == []
         response = await client.post("/api/fabric/apply", json={"node_ids": [PEER_ID]})
-        assert response.status_code == 200 and calls == [PEER_ID]
+        assert response.status_code == 200 and len(sink) == 1
 
-    async def test_a_node_without_an_ssh_user_is_reported_not_attempted(
+    async def test_a_peer_that_does_not_answer_is_not_verified(
+        self, client, running, monkeypatch
+    ):
+        # A second registered, connected node puts a peer on the pair's subnets,
+        # so there is something to ping — and a ping that fails is not verified.
+        second = mock_registry.add_node(name="spark-03", address="10.0.0.12")
+        connect(running, PEER_ID, facts())
+        connect(running, second.id, facts())
+        patch_service(monkeypatch, [], reachable=False)
+        body = (await client.post("/api/fabric/apply", json={})).json()
+        assert body["reports"], body
+        report = next(r for r in body["reports"] if r["node_id"] == PEER_ID)
+        assert report["pings"], "the pair gives each node a peer to ping"
+        assert report["applied"] and not report["verified"]
+        assert any("does not answer" in e for e in report["errors"])
+        assert "pinned" not in report
+
+    async def test_an_agent_that_cannot_be_reached_is_reported_not_raised(
         self, client, running, monkeypatch
     ):
         connect(running, PEER_ID, facts())
-        mock_registry.update_node(PEER_ID, ssh_user="")
+        import importlib
 
-        async def never(*_, **__):  # pragma: no cover
-            raise AssertionError("no login should be attempted")
+        node_service = importlib.import_module("spark_pulse.tools.node_service")
 
-        monkeypatch.setattr(fabric_apply, "apply_node_plan", never)
+        def boom(node, **_):
+            raise node_service.NoAgent("no agent for this node")
+
+        monkeypatch.setattr(node_service, "service_for", boom)
         body = (await client.post("/api/fabric/apply", json={})).json()
-        assert body["reports"][0]["applied"] is False
-        assert "no SSH user" in body["reports"][0]["errors"][0]
+        report = body["reports"][0]
+        assert not report["applied"]
+        assert any("no agent" in e for e in report["errors"])
+
+    async def test_the_agent_failing_the_op_is_applied_but_not_verified(
+        self, client, running, monkeypatch
+    ):
+        connect(running, PEER_ID, facts())
+        import importlib
+
+        node_service = importlib.import_module("spark_pulse.tools.node_service")
+
+        class Failing:
+            def configure_fabric(self, interfaces, peers):
+                raise RuntimeError("nmcli: sudo: a password is required")
+
+        monkeypatch.setattr(node_service, "service_for", lambda node, **_: Failing())
+        body = (await client.post("/api/fabric/apply", json={})).json()
+        report = body["reports"][0]
+        assert report["applied"] and not report["verified"]
+        assert any("password is required" in e for e in report["errors"])
 
 
 class TestShapesAndPinning:
     async def test_both_cables_on_the_seeded_pair_is_the_dual_shape(
         self, client, running
     ):
-        """The registry holds two nodes, so four ports up is both cables."""
         connect(running, PEER_ID, facts(both_cables=True))
         body = (await client.get("/api/fabric")).json()
         peer = next(n for n in body["nodes"] if n["node_id"] == PEER_ID)
         assert peer["mode"] == "dual"
         assert peer["ib_hca"] == "rocep1s0f0,rocep1s0f1,roceP2p1s0f0,roceP2p1s0f1"
-        assert peer["wired_management_up"] is None
         assert peer["pinned"] == {
             "ethernet_interface": "eth0",
             "infiniband_interfaces": ["ib0", "ib1"],
@@ -260,13 +317,7 @@ class TestShapesAndPinning:
         self, client, running, monkeypatch
     ):
         connect(running, PEER_ID, facts())
-
-        async def fake_apply(server, access, plan, **_):
-            return fabric_apply.FabricApplyReport(
-                node_id=plan.node_id, name=plan.name, applied=True, verified=True
-            )
-
-        monkeypatch.setattr(fabric_apply, "apply_node_plan", fake_apply)
+        patch_service(monkeypatch, [])
         body = (await client.post("/api/fabric/apply", json={})).json()
         assert body["reports"][0]["pinned"] == {
             "ethernet_interface": "enp1s0f1np1",
@@ -280,18 +331,12 @@ class TestShapesAndPinning:
 
     async def test_an_unverified_apply_pins_nothing(self, client, running, monkeypatch):
         connect(running, PEER_ID, facts())
-
-        async def fake_apply(server, access, plan, **_):
-            return fabric_apply.FabricApplyReport(
-                node_id=plan.node_id, name=plan.name, applied=True, verified=False
-            )
-
-        monkeypatch.setattr(fabric_apply, "apply_node_plan", fake_apply)
+        patch_service(monkeypatch, [], address_ok=False)
         body = (await client.post("/api/fabric/apply", json={})).json()
         assert "pinned" not in body["reports"][0]
         assert mock_registry.get_node(PEER_ID).fabric_mode == ""
 
-    async def test_a_configured_node_is_pinned_without_logging_in(
+    async def test_a_configured_node_is_pinned_without_calling_the_agent(
         self, client, running, monkeypatch
     ):
         connect(
@@ -305,84 +350,17 @@ class TestShapesAndPinning:
                 mtu=9000,
             ),
         )
+        import importlib
 
-        async def never(*_, **__):  # pragma: no cover
-            raise AssertionError("a configured node needs no login")
+        node_service = importlib.import_module("spark_pulse.tools.node_service")
 
-        monkeypatch.setattr(fabric_apply, "apply_node_plan", never)
+        def never(node, **_):  # pragma: no cover
+            raise AssertionError("a configured node needs no agent call")
+
+        monkeypatch.setattr(node_service, "service_for", never)
         response = await client.post("/api/fabric/apply", json={})
         assert response.status_code == 200, response.text
         body = response.json()
         assert body["reports"] == []
         assert body["pinned"][PEER_ID]["fabric_mode"] == "direct"
         assert mock_registry.get_node(PEER_ID).ethernet_interface == "enp1s0f1np1"
-
-
-class TestExpertConfig:
-    async def test_a_supplied_file_is_passed_through_to_the_apply(
-        self, client, running, monkeypatch
-    ):
-        connect(running, PEER_ID, facts())
-        seen = {}
-
-        async def fake_apply(
-            server,
-            access,
-            plan,
-            *,
-            connector=None,
-            sudo_password_prompt=None,
-            override_netplan=None,
-        ):
-            seen["override"] = override_netplan
-            return fabric_apply.FabricApplyReport(
-                node_id=plan.node_id, name=plan.name, applied=True, verified=True
-            )
-
-        monkeypatch.setattr(fabric_apply, "apply_node_plan", fake_apply)
-        custom = "network:\n  version: 2\n  ethernets:\n    enp1s0f1np1:\n      addresses: [10.9.0.1/24]\n"
-        response = await client.post(
-            "/api/fabric/apply", json={"files": {PEER_ID: custom}}
-        )
-        assert response.status_code == 200, response.text
-        assert seen["override"] == custom
-
-    async def test_a_configured_node_with_a_supplied_file_becomes_a_target(
-        self, client, running, monkeypatch
-    ):
-        # Addressed and jumbo already, so the plan leaves it configured; a file
-        # makes it a target without turning on override for everyone.
-        connect(
-            running,
-            PEER_ID,
-            facts(
-                {
-                    "enp1s0f1np1": "192.168.177.12/24",
-                    "enP2p1s0f1np1": "192.168.178.12/24",
-                },
-                mtu=9000,
-            ),
-        )
-        applied = []
-
-        async def fake_apply(
-            server,
-            access,
-            plan,
-            *,
-            connector=None,
-            sudo_password_prompt=None,
-            override_netplan=None,
-        ):
-            applied.append((plan.node_id, override_netplan))
-            return fabric_apply.FabricApplyReport(
-                node_id=plan.node_id, name=plan.name, applied=True, verified=True
-            )
-
-        monkeypatch.setattr(fabric_apply, "apply_node_plan", fake_apply)
-        custom = "network:\n  version: 2\n"
-        response = await client.post(
-            "/api/fabric/apply", json={"files": {PEER_ID: custom}}
-        )
-        assert response.status_code == 200, response.text
-        assert applied == [(PEER_ID, custom)]
