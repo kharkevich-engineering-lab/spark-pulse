@@ -14,8 +14,12 @@ jobs:
   version:
     name: Work out the next version
     runs-on: ubuntu-latest
+    # `contents: write`, for a job that writes nothing: semantic-release
+    # proves it *could* push the tag (`git push --dry-run`) before it works
+    # out a version, in dry-run mode too, and a read-only token fails that
+    # proof with EGITNOPERMISSION. The same permission the release job has.
     permissions:
-      contents: read
+      contents: write
       issues: read
       pull-requests: read
     outputs:
