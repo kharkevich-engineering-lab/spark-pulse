@@ -67,7 +67,7 @@ describe("the dictionaries", () => {
     "nodes.doctor.applied",
     "fabric.colMtu",
     "fabric.colStatus",
-    "fabric.edit",
+    "fabric.showPlan",
     "nodes.agentVersion",
     "nodes.colActions",
     // Placeholders that are literal examples — an address, a key path, an

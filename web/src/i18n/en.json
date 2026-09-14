@@ -824,9 +824,6 @@
     "pinned": "Pinned for deploys",
     "notPinned": "Not pinned for deploys",
     "noWired": "10G port down",
-    "edit": "Edit",
-    "editing": "Editing — applied verbatim",
-    "reset": "Reset to planned",
-    "editNote": "An edited file is written as-is; the plan's addresses and peer checks no longer apply, so only that the ports come up is verified."
+    "showPlan": "Planned addresses for {name}"
   }
 }

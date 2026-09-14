@@ -205,5 +205,8 @@ async def onboard(
         sudo_password_prompt=sudo_password,
         scope=request.scope,
         bundle=bundle or bundle_factory(),
+        # Grant the agent passwordless nmcli so the fabric can be configured
+        # over it afterwards, without a second trip for the sudo password.
+        offer_sudoers=True,
     )
     return report.to_dict()

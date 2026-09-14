@@ -302,6 +302,31 @@ async def test_linger_off_is_enabled_with_one_privileged_call(
     assert report.concessions == []
 
 
+async def test_offer_sudoers_installs_the_nmcli_grant_for_fabric_config(
+    agent_server, agent_fleet, agent_bundle, tmp_path
+):
+    """The browser onboarding opts in, so the agent gets passwordless nmcli and
+    the fabric can be configured over it afterwards."""
+    node = make_node(tmp_path)
+    report = await do_install(
+        agent_server, agent_fleet, node, agent_bundle, offer_sudoers=True
+    )
+    assert report.connected
+    assert any("nmcli" in step for step in report.steps)
+    installed = node.read("/etc/sudoers.d/spark-pulse-agent-nmcli").decode()
+    assert installed == f"{USER} ALL=(root) NOPASSWD: /usr/bin/nmcli\n"
+    assert not any(c.capability == "fabric-sudoers" for c in report.concessions)
+
+
+async def test_without_offer_sudoers_no_nmcli_grant_is_written(
+    agent_server, agent_fleet, agent_bundle, tmp_path
+):
+    node = make_node(tmp_path)
+    report = await do_install(agent_server, agent_fleet, node, agent_bundle)
+    assert report.connected
+    assert not node.exists("/etc/sudoers.d/spark-pulse-agent-nmcli")
+
+
 async def test_the_privileged_summary_names_the_manager_restart(
     agent_server, agent_fleet, agent_bundle, tmp_path
 ):

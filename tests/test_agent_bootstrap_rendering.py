@@ -94,6 +94,19 @@ class TestRenderedFilesAreNotInjectable:
             with pytest.raises(BootstrapError):
                 render_sudoers(hostile)
 
+    def test_the_network_sudoers_grants_exactly_nmcli(self):
+        from spark_pulse.agent.bootstrap import render_network_sudoers
+
+        rule = render_network_sudoers("spark")
+        assert rule == "spark ALL=(root) NOPASSWD: /usr/bin/nmcli\n"
+
+    def test_the_network_sudoers_refuses_a_hostile_username(self):
+        from spark_pulse.agent.bootstrap import BootstrapError, render_network_sudoers
+
+        for hostile in ("spark, root", "spark ALL", "%wheel", "spark\n", ""):
+            with pytest.raises(BootstrapError):
+                render_network_sudoers(hostile)
+
     def test_the_usernames_a_node_actually_has_are_accepted(self):
         """And the allowlist must not refuse a name a real node reports."""
         from spark_pulse.agent.bootstrap import render_sudoers

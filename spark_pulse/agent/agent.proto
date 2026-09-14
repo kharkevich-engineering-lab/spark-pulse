@@ -179,6 +179,7 @@ message Command {
     ListSnapshot list_snapshot = 28;
     RemoveSnapshot remove_snapshot = 29;
     TerminateProcess terminate_process = 30;
+    ConfigureFabric configure_fabric = 31;
   }
 }
 
@@ -204,6 +205,7 @@ message CommandResult {
     SnapshotListing snapshot = 15;
     SnapshotRemoval removal = 16;
     ProcessTermination termination = 17;
+    FabricResult fabric = 18;
   }
 }
 
@@ -537,6 +539,57 @@ message NodeStats {
 // process holding VRAM that no deployment claims — and it exists so that
 // answering "kill it" does not depend on which machine the operator happens to
 // be looking at.
+// Configure this node's ConnectX fabric through NetworkManager, the tool that
+// manages these ports on DGX OS. The control plane computes the addresses
+// (see tools/fabric_plan.py) and hands each port its final state; the agent
+// drives nmcli under `sudo -n` — the one command the bootstrap sudoers rule
+// grants it — then reads each port back and pings the peers to prove the
+// cabling. Nothing here writes /etc/netplan: on a NM-managed node that fights
+// the node's own files, and `netplan generate` then trips on them.
+message ConfigureFabric {
+  repeated FabricInterface interfaces = 1;
+  // Addresses to ping from each port once it is up, to prove the cable goes
+  // where the plan assumed.
+  repeated FabricPeer peers = 2;
+}
+
+message FabricInterface {
+  // The netdev the address goes on, e.g. `enp1s0f1np1`.
+  string netdev = 1;
+  // The NetworkManager connection to create or modify for it.
+  string connection_name = 2;
+  // `<ip>/<prefix>`, e.g. `192.168.177.11/24`.
+  string cidr = 3;
+  uint32 mtu = 4;
+}
+
+message FabricPeer {
+  string netdev = 1;
+  string address = 2;
+}
+
+message FabricResult {
+  repeated FabricPortState ports = 1;
+  repeated FabricPing pings = 2;
+  // What the agent did, in order, for the operator to read.
+  repeated string steps = 3;
+}
+
+message FabricPortState {
+  string netdev = 1;
+  // The address actually on the port after apply.
+  string cidr = 2;
+  bool address_ok = 3;
+  uint32 mtu = 4;
+  bool mtu_ok = 5;
+}
+
+message FabricPing {
+  string netdev = 1;
+  string address = 2;
+  bool reachable = 3;
+}
+
 message TerminateProcess {
   uint32 pid = 1;
   // SIGKILL rather than SIGTERM. A second click, not a first one.

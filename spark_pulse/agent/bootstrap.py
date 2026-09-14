@@ -395,6 +395,24 @@ WantedBy={paths.wanted_by}
 """
 
 
+def render_network_sudoers(user: str) -> str:
+    """A drop-in granting the agent user passwordless ``nmcli``, and only that.
+
+    Host network configuration needs root, and the agent runs rootless. Rather
+    than run the agent as root, it is given exactly one privileged command —
+    ``nmcli`` — so the fabric can be configured through the agent (over its own
+    transport, no SSH) with a boundary an operator can read in one line. The
+    agent's own code refuses to run anything but ``nmcli`` this way, so this is
+    the OS-level half of a two-layer allowlist.
+    """
+    if not _POSIX_USERNAME.fullmatch(user):
+        raise BootstrapError(
+            f"{user!r} is not a username this can write a sudoers rule for; "
+            "expected letters, digits, and any of '_', '-', '.', '$'"
+        )
+    return f"{user} ALL=(root) NOPASSWD: /usr/bin/nmcli\n"
+
+
 def render_sudoers(user: str, *, unit: str = UNIT_NAME) -> str:
     """A drop-in covering three verbs on one unit. Offered, never required.
 
@@ -595,6 +613,13 @@ async def _install_over(
     report.note(f"installing a {chosen} unit: {reason}")
 
     needs = _privileged_needs(caps, paths)
+    # Writing the nmcli sudoers grant needs root even when nothing else does,
+    # so a node that would otherwise need no elevation still has to offer a
+    # password once when the caller asked for the grant.
+    if offer_sudoers:
+        needs = needs + [
+            ("grant the agent passwordless nmcli for fabric config", "install -m 0440")
+        ]
     runner = PrivilegedRunner(session, caps, password=None, prompt=sudo_password_prompt)
     if needs and not all(runner.can(command) for _, command in needs):
         # Ask once, and only when something actually needs it. A node that
@@ -909,6 +934,11 @@ async def _place_agent(
     await _write_unit(session, runner, paths, control_host, server, name, report)
     if offer_sudoers and paths.scope == "system":
         await _write_sudoers(session, runner, paths, caps, report)
+    # The fabric is configured through the agent, which needs root for nmcli;
+    # grant exactly that when the caller opted in (the browser onboarding does).
+    # Off by default so a node that needs no elevation still takes none.
+    if offer_sudoers:
+        await _write_network_sudoers(session, runner, paths, caps, report)
     await _start_unit(session, runner, paths, report)
     return AgentInstallation(paths=paths, node_id=node_id, bundle_name=bundle.name)
 
@@ -1107,6 +1137,53 @@ async def _write_unit(
             why="write the system unit",
         )
     report.note(f"wrote {paths.unit_path}")
+
+
+async def _write_network_sudoers(
+    session: NodeSession,
+    runner: PrivilegedRunner,
+    paths: InstallPaths,
+    caps: NodeCapabilities,
+    report: InstallReport,
+) -> None:
+    """Grant the agent user passwordless ``nmcli`` so it can configure the fabric.
+
+    Staged, parsed with ``visudo -cf``, then installed — never an ``echo`` and
+    never an argument, exactly as the unit sudoers is. A node where this cannot
+    be installed still enrols and runs containers; only fabric configuration
+    over the agent is unavailable, which is said as a concession.
+    """
+    path = "/etc/sudoers.d/spark-pulse-agent-nmcli"
+    staged = f"{paths.staging}/sudoers-nmcli"
+    await session.upload(render_network_sudoers(caps.user).encode(), staged, mode=0o600)
+    check = await session.run(f"visudo -cf {shlex.quote(staged)}", timeout=30)
+    if not check.ok:
+        report.concede(
+            "fabric-sudoers",
+            f"the nmcli sudoers drop-in did not parse: {(check.stderr or check.stdout).strip()[:200]}",
+            "the fabric cannot be configured through this node's agent",
+        )
+        return
+    try:
+        result = await runner.run(
+            f"install -m 0440 -o root -g root {shlex.quote(staged)} {shlex.quote(path)}",
+            why="grant the agent passwordless nmcli for fabric config",
+        )
+    except SudoDeclined as exc:
+        report.concede(
+            "fabric-sudoers",
+            f"the nmcli sudoers drop-in was not installed: {exc.reason}",
+            "the fabric cannot be configured through this node's agent until it is",
+        )
+        return
+    if result.ok:
+        report.note(f"installed {path} (passwordless nmcli for fabric config)")
+    else:  # pragma: no cover - defensive
+        report.concede(
+            "fabric-sudoers",
+            f"writing {path} failed: {result.stderr.strip()[:200]}",
+            "the fabric cannot be configured through this node's agent",
+        )
 
 
 async def _write_sudoers(
