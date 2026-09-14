@@ -839,32 +839,32 @@ async def _repair(
                     Repair(check, action, False, result.stderr.strip()[:200])
                 )
                 return
-            # The group is written; a running manager does not have it until it
-            # is restarted, so restart user@<uid> and the agent picks it up.
-            applied = False
-            if paths.scope == "user" and caps.uid > 0:
-                restart = f"systemctl restart user@{caps.uid}.service"
-                applied = (
+            # The group is written; a running manager does not have it until
+            # it is restarted, so restart user@<uid> and the agent picks it
+            # up. A system-scope agent runs as root and reaches the socket
+            # regardless, so there is nothing to restart there.
+            if paths.scope != "user":
+                detail = "added to the docker group; the system-scope agent runs as root and reaches Docker directly"
+            elif (
+                caps.uid > 0
+                and (
                     await runner.run(
-                        restart,
+                        f"systemctl restart user@{caps.uid}.service",
                         why=f"apply the docker group to {caps.user}'s service manager",
                     )
                 ).ok
-            report.repairs.append(
-                Repair(
-                    check,
-                    action,
-                    True,
-                    (
-                        "added to the docker group and restarted the user manager, "
-                        "so the agent can run containers now"
-                        if applied
-                        else "added to the docker group; it takes effect on the next "
-                        f"login, so `loginctl terminate-user {caps.user}` or a reboot "
-                        "is still needed"
-                    ),
+            ):
+                detail = (
+                    "added to the docker group and restarted the user manager, "
+                    "so the agent can run containers now"
                 )
-            )
+            else:
+                detail = (
+                    "added to the docker group; it takes effect on the next login, "
+                    f"so `loginctl terminate-user {caps.user}` or a reboot is still "
+                    "needed"
+                )
+            report.repairs.append(Repair(check, action, True, detail))
             return
 
         if check == "identity-permissions":

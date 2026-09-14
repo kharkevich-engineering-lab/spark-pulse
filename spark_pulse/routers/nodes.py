@@ -360,7 +360,7 @@ async def diagnose_node(node_id: str):
         access=_doctor_access(node),
         connector=onboarding.connector_factory(),
     )
-    return {"node_id": node.id, **report.to_dict()}
+    return {**report.to_dict(), "node_id": node.id}
 
 
 @router.post("/{node_id}/doctor")
@@ -408,7 +408,7 @@ async def treat_node(node_id: str, body: dict[str, Any] = Body(default={})):
         )
     except BootstrapError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return {"node_id": node.id, **report.to_dict()}
+    return {**report.to_dict(), "node_id": node.id}
 
 
 def _doctor_access(node: Any) -> Any | None:
@@ -420,7 +420,6 @@ def _doctor_access(node: Any) -> Any | None:
     return NodeAccess(host=node.address, username=node.ssh_user)
 
 
-@router.delete("/{node_id}")
 @router.delete("/{node_id}")
 def remove_node(node_id: str):
     """Forget a node.

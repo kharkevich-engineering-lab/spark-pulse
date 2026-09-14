@@ -638,6 +638,20 @@ class TestDoctor:
         assert response.status_code == 200
         assert seen["access"] is None, "no SSH user, so the agent channel alone"
 
+    async def test_diagnose_the_control_node_reports_the_registry_id(
+        self, client, running, monkeypatch
+    ):
+        from spark_pulse.agent import doctor as node_doctor
+
+        async def fake_diagnose(server, node_id, *, access=None, connector=None):
+            # The report carries the internal target id, which for the control
+            # node is not the registry id the caller clicked.
+            return node_doctor.DoctorReport(node_id=node_id or "internal-cp-id")
+
+        monkeypatch.setattr(node_doctor, "diagnose", fake_diagnose)
+        body = (await client.get(f"/api/nodes/{CONTROL_ID}/doctor")).json()
+        assert body["node_id"] == CONTROL_ID, "the id the row is keyed on"
+
     async def test_diagnose_an_unknown_node_is_a_404(self, client, running):
         assert (await client.get("/api/nodes/nope/doctor")).status_code == 404
 
