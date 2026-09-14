@@ -302,6 +302,25 @@ async def test_linger_off_is_enabled_with_one_privileged_call(
     assert report.concessions == []
 
 
+async def test_the_privileged_summary_names_the_manager_restart(
+    agent_server, agent_fleet, agent_bundle, tmp_path
+):
+    """The pre-consent summary lists every elevated command, the group's
+    manager restart included, so an operator auditing sudo use is not
+    surprised by a call that was never named."""
+    from spark_pulse.agent.bootstrap import _privileged_needs, paths_for
+    from spark_pulse.agent.bootstrap_probe import probe_node
+
+    node = make_node(tmp_path, docker_socket=False, linger=False)
+    agent_fleet.add(node)
+    caps = await probe_node(
+        await agent_fleet.connect(node.host, USER, password=PASSWORD), username=USER
+    )
+    whys = [why for why, _ in _privileged_needs(caps, paths_for("user", caps))]
+    assert f"add {USER} to the docker group" in whys
+    assert f"apply the docker group to {USER}'s service manager" in whys
+
+
 async def test_linger_off_and_no_sudo_password_is_a_named_concession(
     agent_server, agent_fleet, agent_bundle, tmp_path
 ):
