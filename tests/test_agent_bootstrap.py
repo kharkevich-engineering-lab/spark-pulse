@@ -302,6 +302,25 @@ async def test_linger_off_is_enabled_with_one_privileged_call(
     assert report.concessions == []
 
 
+async def test_a_reinstall_restarts_the_agent_onto_the_new_bundle(
+    agent_server, agent_fleet, agent_bundle, tmp_path
+):
+    """`enable --now` is a no-op on a running unit, so a reinstall must restart
+    it explicitly or the freshly unpacked binary never takes effect — the
+    fault that left a node on the old agent after an upgrade."""
+    node = make_node(tmp_path)
+    await do_install(agent_server, agent_fleet, node, agent_bundle)
+    mark = len(node.commands)
+    await do_install(agent_server, agent_fleet, node, agent_bundle)
+    later = [e["command"] for e in node.commands[mark:]]
+    assert any(
+        "restart spark-pulse-agent.service" in c for c in later
+    ), "the reinstall must restart the unit"
+    assert not any(
+        "enable --now spark-pulse-agent.service" in c for c in later
+    ), "enable --now would not replace a running agent"
+
+
 async def test_offer_sudoers_installs_the_nmcli_grant_for_fabric_config(
     agent_server, agent_fleet, agent_bundle, tmp_path
 ):
