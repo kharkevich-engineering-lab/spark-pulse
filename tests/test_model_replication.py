@@ -839,3 +839,36 @@ class TestTransportContract:
         assert "--require-manifest" in command
         assert "--deep" in command
         assert json.dumps({"model": "x/y"}, sort_keys=True) in command
+
+
+class TestReplicationIdentity:
+    """The rsync client authenticates with the control-plane key, not luck."""
+
+    def test_without_a_runtime_no_identity_is_pinned(self, monkeypatch):
+        from spark_pulse.agent import runtime as agent_runtime
+
+        monkeypatch.setattr(agent_runtime, "current", lambda: None)
+        client = models_tool._make_ssh_client("spark")
+        assert client._identity_file is None
+
+    def test_with_a_runtime_the_control_plane_key_is_pinned(
+        self, monkeypatch, tmp_path
+    ):
+        from spark_pulse.agent import runtime as agent_runtime
+        from spark_pulse.agent import bootstrap
+
+        server = type("S", (), {"directory": tmp_path})()
+        runtime = type("R", (), {"server": server})()
+        monkeypatch.setattr(agent_runtime, "current", lambda: runtime)
+        # control_plane_keypair would generate a real key; the path is what we
+        # assert on, so stub it to a no-op that leaves the file location alone.
+        monkeypatch.setattr(bootstrap, "control_plane_keypair", lambda _s: None)
+        client = models_tool._make_ssh_client("spark")
+        assert client._identity_file == str(tmp_path / "bootstrap" / "id_ed25519")
+
+    def test_a_pinned_identity_is_used_alone(self):
+        # IdentitiesOnly keeps ssh from offering every other key first.
+        client = OpenSSHClient(identity_file="/k/id_ed25519", host_key_policy="strict")
+        options = client._common_options()
+        assert "IdentitiesOnly=yes" in options
+        assert "/k/id_ed25519" in options

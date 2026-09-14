@@ -333,7 +333,11 @@ class OpenSSHClient(SSHClient):
                 ]
             )
         if self._identity_file:
-            args.extend(["-i", self._identity_file])
+            # Pin to exactly this key. Without IdentitiesOnly, ssh also offers
+            # every key in the agent and in ~/.ssh first, and a control plane
+            # with several can trip MaxAuthTries before it reaches the one the
+            # node actually trusts.
+            args.extend(["-o", "IdentitiesOnly=yes", "-i", self._identity_file])
         return args
 
     @contextlib.contextmanager

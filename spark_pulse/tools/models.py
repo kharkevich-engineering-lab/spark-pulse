@@ -750,9 +750,38 @@ def clear_finished_downloads() -> int:
 # treats a path existing as proof that it is ready.
 
 
+def _control_plane_identity() -> str | None:
+    """Path to the control-plane key every enrolled node already trusts.
+
+    Each install leaves this key's public half in the node's
+    ``authorized_keys`` (``agent.onboarding``), so replication authenticates
+    with the one identity the cluster is built around rather than whatever
+    personal SSH key the control-plane user happens to have — on a fresh box it
+    has none, and rsync would fail for the want of it. Returns ``None`` when the
+    agent runtime is not up (tests, an import-time call), and ssh then falls
+    back to its default identity as before.
+    """
+    try:
+        from spark_pulse.agent import runtime as agent_runtime
+        from spark_pulse.agent.bootstrap import control_plane_keypair
+    except Exception:  # pragma: no cover — the agent stack is always importable
+        return None
+    current = agent_runtime.current()
+    if current is None:
+        return None
+    # Ensures the key exists on disk (idempotent) and returns the keypair; we
+    # want its file path to hand ssh with -i.
+    control_plane_keypair(current.server)
+    return str(current.server.directory / "bootstrap" / "id_ed25519")
+
+
 def _make_ssh_client(ssh_user: str | None) -> SSHClient:
     """Build the SSH client used for distribution (overridable in tests)."""
-    return OpenSSHClient(user=ssh_user or None, host_key_policy="strict")
+    return OpenSSHClient(
+        user=ssh_user or None,
+        host_key_policy="strict",
+        identity_file=_control_plane_identity(),
+    )
 
 
 #: Where a transfer lands before it has earned the right to be the real thing.
