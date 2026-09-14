@@ -59,9 +59,19 @@ Each finding names a remedy, because every condition here is one the cluster can
 
 ## Fabric
 
-Discovery reads this host's interfaces and RoCE devices, and works out how it is cabled: `direct` (one cable — a pair, or a QSFP switch) or `mesh` (the switchless three-node ring). The distinction matters because a mesh needs NCCL settings a pair must not get.
+Every node's ConnectX-7 ports are read from what its agent reports on each heartbeat — the RoCE devices under `/sys/class/infiniband`, the netdev each drives, whether the port is active, and the address and MTU on it — so the Cluster page's **ConnectX fabric** card and the deploy pre-flight see the same thing without logging in. The shape is worked out the way `spark-vllm-docker`'s `autodiscover.sh` works it out: two CX7 interfaces up per node is `direct` (one cable — a pair, or a QSFP switch), four is `mesh` (the switchless three-node ring, which needs NCCL settings a pair must not get), and any other count is refused by number.
 
 RoCE devices are recorded as they appear in `/sys/class/infiniband` — `rocep1s0f1`, not the netdev it drives — and **both** twins of every cabled port are kept: one QSFP port is two RoCE devices sharing a PCIe x4 pair, and naming only one halves the bandwidth silently.
+
+### Configuring it
+
+A Spark arrives with its 100G ports under NetworkManager's generic DHCP profiles, so a cabled port sits with no address and the pre-flight refuses a multi-node deploy on it. The card plans every node at once, from `NETWORKING.md`'s own scheme: a static `/24` per cable (`192.168.177.0/24` on the lowercase twin, `178` on its capital-P twin; `187/188` and `197/198` for the mesh's other two cables), hosts `.11`, `.12`, `.13` in registry order, MTU 9000, IPv6 link-local off. Each node's `/etc/netplan/40-cx7.yaml` is shown before anything is written.
+
+A node whose fabric is already valid — an address on the lowercase twin, the twins on different subnets, jumbo frames — is left alone and reported as configured, whatever scheme it follows; **Re-address nodes that are already configured** is the one way to overrule that, for a cluster half on one scheme and half on another.
+
+**Configure fabric** logs in to each proposed node with the control plane's key, writes the file at 0600 as root, checks it with `netplan generate`, turns off NetworkManager's DHCP profiles on those ports so they do not fight the static file, runs `netplan apply`, then reads each port back and pings every peer the plan put on the same subnet over that port. A cable that does not go where the plan assumed is a ping that fails with the link named, not a file that was written and believed. The only secret in the request is an optional sudo password.
+
+The API is `GET /api/fabric` (the ports and the plan) and `POST /api/fabric/apply`.
 
 ## What "cluster" means here
 

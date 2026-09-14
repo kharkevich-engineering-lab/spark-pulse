@@ -830,11 +830,19 @@ def _check_link_local(found: _Findings, discovery: Any) -> None:
     except Exception as exc:  # pragma: no cover — discovery is best effort
         logger.debug("Link-local detection failed: %s", exc)
         return
+    # The fabric's own ports are excluded: NETWORKING.md sets ``link-local: []``
+    # on them on purpose, and discovery sweeps run over the management link.
+    fabric_ports: set[str] = set()
+    try:
+        fabric_ports = {port.netdev for port in discovery.detect_fabric().ports}
+    except Exception as exc:  # pragma: no cover — discovery is best effort
+        logger.debug("Fabric detection failed: %s", exc)
     missing = [
         interface.name
         for interface in interfaces
         if interface.is_up
         and interface.type in ("ethernet", "infiniband")
+        and interface.name not in fabric_ports
         and not link_local.get(interface.name)
     ]
     if not missing:

@@ -24,7 +24,7 @@ use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
-use crate::proto::{NetworkInterface, NodeFacts};
+use crate::proto::{NetworkInterface, NodeFacts, RoceLink};
 
 /// The agent's version, which is *spark-pulse's* version, stamped in at build
 /// time from `pyproject.toml`.
@@ -188,8 +188,10 @@ fn interfaces() -> (Vec<NetworkInterface>, Vec<String>) {
         let is_up = operstate == "up"
             || (operstate == "unknown"
                 && read_trimmed(base.join("carrier")).as_deref() == Some("1"));
+        let (ip, prefix_length) = ipv4_for(&name).unwrap_or_default();
         found.push(NetworkInterface {
-            ip: ipv4_for(&name).unwrap_or_default(),
+            ip,
+            prefix_length,
             mtu,
             is_up,
             r#type: classify_interface(&name).to_string(),
@@ -240,19 +242,15 @@ fn interface_names() -> Vec<String> {
     names.into_iter().collect()
 }
 
-/// The first non-loopback IPv4 address on an interface.
+/// The first non-loopback IPv4 address on an interface, with its prefix length.
 ///
 /// Read from the kernel rather than by shelling out to `ip`: a fact-gathering
 /// path that forks is a fact-gathering path that can hang.
-fn ipv4_for(name: &str) -> Option<String> {
-    let text = fs::read_to_string("/proc/net/route").ok()?;
-    // /proc/net/route only carries routed interfaces, so fall back to the
-    // per-interface address via a netlink-free route: getifaddrs.
-    let _ = text;
+fn ipv4_for(name: &str) -> Option<(String, u32)> {
     ipv4_via_getifaddrs(name)
 }
 
-fn ipv4_via_getifaddrs(want: &str) -> Option<String> {
+fn ipv4_via_getifaddrs(want: &str) -> Option<(String, u32)> {
     use std::ffi::CStr;
     let mut head: *mut libc::ifaddrs = std::ptr::null_mut();
     // SAFETY: getifaddrs allocates a list we free below; we only read fields
@@ -280,7 +278,15 @@ fn ipv4_via_getifaddrs(want: &str) -> Option<String> {
         let octets = u32::from_be(sin.sin_addr.s_addr).to_be_bytes();
         let text = format!("{}.{}.{}.{}", octets[0], octets[1], octets[2], octets[3]);
         if text != "127.0.0.1" {
-            answer = Some(text);
+            let prefix = if entry.ifa_netmask.is_null() {
+                0
+            } else {
+                // SAFETY: for an AF_INET address the netmask is a sockaddr_in
+                // of the same family, and it was null-checked above.
+                let mask = unsafe { &*(entry.ifa_netmask as *const libc::sockaddr_in) };
+                u32::from_be(mask.sin_addr.s_addr).count_ones()
+            };
+            answer = Some((text, prefix));
             break;
         }
     }
@@ -371,6 +377,46 @@ fn hex(bytes: impl AsRef<[u8]>) -> String {
     bytes.as_ref().iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// What `ibdev2netdev` prints, read from sysfs rather than by running it.
+///
+/// Every RoCE device under `/sys/class/infiniband` names the netdev it
+/// drives under `device/net/`, and its first port's `state` reads
+/// `4: ACTIVE` when the cable is up. That is the whole of what the fabric
+/// logic on the control plane needs, and a fact read from sysfs cannot hang
+/// a heartbeat the way a forked `ibdev2netdev` could.
+pub fn roce_links() -> Vec<RoceLink> {
+    let mut links: Vec<RoceLink> = Vec::new();
+    let Ok(devices) = fs::read_dir("/sys/class/infiniband") else {
+        return links;
+    };
+    let mut names: Vec<String> = devices
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    for hca in names {
+        let base = Path::new("/sys/class/infiniband").join(&hca);
+        let netdev = fs::read_dir(base.join("device/net"))
+            .ok()
+            .and_then(|mut entries| entries.next())
+            .and_then(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let state = read_trimmed(base.join("ports/1/state")).unwrap_or_default();
+        links.push(RoceLink {
+            hca,
+            netdev,
+            is_up: port_is_active(&state),
+        });
+    }
+    links
+}
+
+/// `4: ACTIVE` is up; everything else (`1: DOWN`, `2: INIT`, empty) is not.
+pub fn port_is_active(state: &str) -> bool {
+    state.to_ascii_uppercase().contains("ACTIVE")
+}
+
 /// Describe this machine. Never fails.
 pub fn collect(docker_version: String) -> NodeFacts {
     let machine_id = read_machine_id();
@@ -391,6 +437,7 @@ pub fn collect(docker_version: String) -> NodeFacts {
         hardware_fingerprint: fingerprint(&interfaces, &machine_id, cpus, memory),
         interfaces,
         infiniband_interfaces,
+        roce_links: roce_links(),
     }
 }
 

@@ -20,6 +20,7 @@ import StatusBadge from "@/components/StatusBadge";
 import LaunchScriptAnalyzer from "@/components/LaunchScriptAnalyzer";
 import NodeRegistry from "@/components/NodeRegistry";
 import NetworkDiscovery from "@/components/NetworkDiscovery";
+import FabricCard from "@/components/FabricCard";
 import { Server, AlertCircle, Loader2 } from "lucide-react";
 import type { Deployment } from "@/lib/types";
 import { ExperimentalBadge, ExperimentalNote } from "@/components/Experimental";
@@ -58,6 +59,10 @@ export default function ClusterPage() {
 
       {/* The node registry — what used to be two free-text IP boxes. */}
       <NodeRegistry />
+
+      {/* Every node's 100G ports as its agent reports them, and the netplan
+          file each should hold. Configuring them is done from here. */}
+      <FabricCard />
 
       {/* What this host's fabric actually looks like, and what NCCL will be
           told about it. It was a card in Settings under a Cluster tab; the

@@ -22,7 +22,8 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use spark_pulse_agent::facts::{
-    classify_interface, composite_fingerprint, fingerprint, identifying_names,
+    classify_interface, composite_fingerprint, fingerprint, identifying_names, port_is_active,
+    roce_links,
 };
 use spark_pulse_agent::proto::NetworkInterface;
 
@@ -205,4 +206,27 @@ fn docker_interfaces_are_not_identifying() {
         interface("ib0"),
     ];
     assert_eq!(identifying_names(&interfaces), vec!["enp1s0", "ib0"]);
+}
+
+// ── RoCE links, what ibdev2netdev prints ────────────────────────────────────
+
+#[test]
+fn a_port_is_up_when_sysfs_says_active() {
+    // `/sys/class/infiniband/<hca>/ports/1/state` on a Spark with one cable:
+    // `4: ACTIVE` on the cabled port, `1: DOWN` on the other.
+    assert!(port_is_active("4: ACTIVE"));
+    assert!(port_is_active("4: ACTIVE\n"));
+    assert!(!port_is_active("1: DOWN"));
+    assert!(!port_is_active("2: INIT"));
+    assert!(!port_is_active(""));
+}
+
+#[test]
+fn reading_the_links_never_fails() {
+    // A developer's machine has no /sys/class/infiniband; a Spark has four
+    // devices. Either way this is a list, never a panic.
+    let links = roce_links();
+    for link in &links {
+        assert!(!link.hca.is_empty());
+    }
 }

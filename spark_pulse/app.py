@@ -29,6 +29,7 @@ from spark_pulse.routers import (
     docker as docker_router,
     discovery as discovery_router,
     nodes as nodes_router,
+    fabric as fabric_router,
     launch_script as launch_script_router,
     engines as engines_router,
     preflight as preflight_router,
@@ -348,6 +349,7 @@ def create_app() -> FastAPI:
     app.include_router(docker_router.router)
     app.include_router(discovery_router.router)
     app.include_router(nodes_router.router)
+    app.include_router(fabric_router.router)
     app.include_router(launch_script_router.router)
     app.include_router(engines_router.router)
     app.include_router(preflight_router.router)

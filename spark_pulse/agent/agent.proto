@@ -597,6 +597,17 @@ message NodeFacts {
   // Stable across reboots, unstable across a reimage. Compared on every
   // heartbeat against what enrollment recorded.
   string hardware_fingerprint = 13;
+  // What `ibdev2netdev` prints: each RoCE device and the netdev it drives,
+  // with whether the port is ACTIVE. The control plane builds a node's fabric
+  // configuration from this and `interfaces`, so the pre-flight no longer
+  // has to log in to ask.
+  repeated RoceLink roce_links = 14;
+}
+
+message RoceLink {
+  string hca = 1;
+  string netdev = 2;
+  bool is_up = 3;
 }
 
 // Field-for-field the repository's own tools.discovery.NetworkInterface. The
@@ -610,4 +621,8 @@ message NetworkInterface {
   uint32 mtu = 3;
   bool is_up = 4;
   string type = 5;
+  // The IPv4 prefix length that goes with `ip`, 0 when there is no address.
+  // Two fabric twins on one subnet is a refusal upstream makes in bold, and
+  // it cannot be made from a bare address.
+  uint32 prefix_length = 6;
 }

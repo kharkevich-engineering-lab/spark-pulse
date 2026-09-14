@@ -1113,3 +1113,91 @@ export interface ScheduledDeploy {
   /** The download job, on the response that created this. */
   download?: ModelDownloadJob;
 }
+
+// ── The ConnectX fabric ─────────────────────────────────────────────────────
+
+/** One RoCE device and the netdev it drives, as a node's agent reports it. */
+export interface FabricPort {
+  hca: string;
+  netdev: string;
+  is_up: boolean;
+  cidr: string;
+  mtu: number;
+}
+
+/** One node's ports as they are now. `reported` is false when no agent has
+ * said anything about the machine yet. */
+export interface FabricNode {
+  node_id: string;
+  name: string;
+  is_control_plane: boolean;
+  reported: boolean;
+  mode: string;
+  ports: FabricPort[];
+  ib_hca: string;
+  errors: string[];
+  warnings: string[];
+}
+
+export interface FabricAssignment {
+  netdev: string;
+  hca: string;
+  cidr: string;
+  mtu: number;
+  current_cidr: string;
+  current_mtu: number;
+  changes: boolean;
+  peers: { name: string; address: string }[];
+}
+
+export type FabricNodeStatus = "configured" | "proposed" | "unknown" | "refused";
+
+/** What one node should hold: the file, and why. */
+export interface FabricNodePlan {
+  node_id: string;
+  name: string;
+  status: FabricNodeStatus;
+  is_control_plane: boolean;
+  assignments: FabricAssignment[];
+  reasons: string[];
+  netplan: string;
+  netplan_path: string;
+}
+
+export interface FabricPlan {
+  mode: string;
+  nodes: FabricNodePlan[];
+  problems: string[];
+  proposed: string[];
+}
+
+export interface FabricResponse {
+  transport: boolean;
+  nodes: FabricNode[];
+  plan: FabricPlan;
+}
+
+export interface FabricApplyRequest {
+  node_ids?: string[];
+  override?: boolean;
+  sudo_password?: string;
+}
+
+/** One node's apply, as the machine answered it. */
+export interface FabricApplyReport {
+  node_id: string;
+  name: string;
+  applied: boolean;
+  verified: boolean;
+  steps: string[];
+  errors: string[];
+  readback: Record<string, { cidr: string; address_ok: boolean; mtu: string; mtu_ok: boolean }>;
+  pings: { netdev: string; peer: string; address: string; reachable: boolean }[];
+  privileged_calls: { why: string; command: string; via: string; returncode: number }[];
+}
+
+export interface FabricApplyResponse {
+  mode: string;
+  reports: FabricApplyReport[];
+}
+

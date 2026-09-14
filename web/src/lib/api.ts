@@ -617,7 +617,7 @@ export async function fetchImagePresence(ref: string, nodes: string[]): Promise<
 
 // ── Node registry ────────────────────────────────────────────────────────────
 
-import type { AddNodeRequest, ClusterNode, DiscoverNodesResult, InstallAgentRequest, InstallReport, NodeFinding, NodeHostKey } from "@/lib/types";
+import type { AddNodeRequest, ClusterNode, DiscoverNodesResult, FabricApplyRequest, FabricApplyResponse, FabricResponse, InstallAgentRequest, InstallReport, NodeFinding, NodeHostKey } from "@/lib/types";
 
 export async function fetchNodes(): Promise<ClusterNode[]> {
   return json<ClusterNode[]>("/nodes");
@@ -662,3 +662,17 @@ export async function fetchNodeHostKey(id: string, port = 22): Promise<NodeHostK
 export async function installNodeAgent(id: string, body: InstallAgentRequest): Promise<InstallReport> {
   return json<InstallReport>(`/nodes/${encodeURIComponent(id)}/install`, { method: "POST", body: JSON.stringify(body) });
 }
+
+// ── The ConnectX fabric ─────────────────────────────────────────────────────
+
+/** Every node's ports as its agent last reported them, and the plan for all. */
+export async function fetchFabric(override = false): Promise<FabricResponse> {
+  return json<FabricResponse>(`/fabric${override ? "?override=true" : ""}`);
+}
+
+/** Write and apply the plan on the proposed nodes, then read each back. The
+ * sudo password, if any, is used for this call and kept nowhere. */
+export async function applyFabric(body: FabricApplyRequest = {}): Promise<FabricApplyResponse> {
+  return json<FabricApplyResponse>("/fabric/apply", { method: "POST", body: JSON.stringify(body) });
+}
+

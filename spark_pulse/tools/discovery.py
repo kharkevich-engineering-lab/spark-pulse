@@ -1088,6 +1088,30 @@ def fabric_from_output(text: str) -> FabricConfig:
     return build_fabric_config(ports, addresses)
 
 
+def fabric_from_facts(facts: Any) -> FabricConfig | None:
+    """A fabric configuration from what a node's agent reported.
+
+    The agent reads ``/sys/class/infiniband`` and ``getifaddrs`` on every
+    heartbeat, which is ``ibdev2netdev`` and ``ip addr`` without a login. An
+    agent too old to report ``roce_links`` — or a machine with no ConnectX at
+    all — answers ``None`` here, and the caller falls back to asking.
+    """
+    links = list(getattr(facts, "roce_links", ()) or ())
+    if not links:
+        return None
+    ports = [
+        RoCEPort(hca=link.hca, port=1, netdev=link.netdev, is_up=bool(link.is_up))
+        for link in links
+        if link.hca
+    ]
+    addresses: dict[str, str] = {}
+    for interface in getattr(facts, "interfaces", ()) or ():
+        if interface.ip and interface.name:
+            prefix = int(getattr(interface, "prefix_length", 0) or 0) or 32
+            addresses.setdefault(interface.name, f"{interface.ip}/{prefix}")
+    return build_fabric_config(ports, addresses)
+
+
 def detect_fabric() -> FabricConfig:
     """Read this machine's own fabric.
 
