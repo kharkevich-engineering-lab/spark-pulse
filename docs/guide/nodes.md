@@ -104,7 +104,9 @@ The API is `GET /api/fabric` (the ports and the plan) and `POST /api/fabric/appl
 
 Every agent reports its version and the SHA-256 of its own binary on each heartbeat. The node list shows the version beside each peer, and says **update available** when the binary is not one this control plane ships — decided from the digest, not the version string, because a version is baked in at build time and can be stale while the bytes are what they are. An older agent that reports no digest is judged by version.
 
-**Update agent** on a peer's row is a reinstall over the control plane's key: the node keeps its identity and certificate, only the binary and unit are replaced, and no password is asked. The control node's own agent is the packaged binary, so `pip install --upgrade spark-pulse` and a service restart update it.
+**Update agent** on a peer's row updates it **over the agent's own stream — no SSH**. The control plane sends the bundle it packages; the agent unpacks it beside the running one, verifies the new binary runs, repoints `current`, replies, and restarts its unit onto it. SSH is only for the first bootstrap; a node that already runs an agent never needs it again to move version. The control node's own agent is the packaged binary, so `pip install --upgrade spark-pulse` and a service restart update it.
+
+**Automatic updates** are on by default (`agent_auto_update`, Settings → Cluster; env `SPARK_PULSE_AGENT_AUTO_UPDATE`). A background sweep pushes the packaged bundle to any connected peer whose running binary — matched by SHA-256, not version string — is not the one this control plane ships, so a fleet does not drift behind after an upgrade. Turn it off to pin versions and update by hand. `POST /api/nodes/{id}/update` is the manual trigger.
 
 Releases build the agent with the version semantic-release is about to publish (`SPARK_PULSE_VERSION` into `scripts/build-agent.sh`); before that, every shipped agent reported the version in the checked-in `pyproject.toml`, whatever the release was.
 

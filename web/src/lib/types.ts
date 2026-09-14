@@ -305,6 +305,7 @@ export interface Settings {
   default_port_range_end: number;
   webui_port: number;
   cluster_enabled: boolean;
+  agent_auto_update?: boolean;
   cluster_experimental: boolean;
   job_retention_days: number;
   benchmarking_enabled: boolean;
@@ -978,6 +979,17 @@ export interface ClusterNode {
    * all, and whether it is on the wire now. Absent when the transport is not
    * running. */
   agent?: NodeAgentState;
+}
+
+/** The result of updating a node's agent over its stream. */
+export interface AgentUpdateResult {
+  node_id: string;
+  name: string;
+  updated: boolean;
+  version?: string;
+  path?: string;
+  restarting?: boolean;
+  detail?: string;
 }
 
 export interface NodeAgentState {

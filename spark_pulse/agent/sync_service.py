@@ -351,6 +351,13 @@ class AgentNodeService:
         """Signal one process on the node."""
         return self._run(self.ops.terminate_process(pid, force))
 
+    def install_bundle(self, tarball: bytes, dir_name: str, version: str) -> Any:
+        """Update this node's agent over its stream (no SSH)."""
+        return self._run(
+            self.ops.install_bundle(tarball, dir_name, version),
+            timeout=FABRIC_TIMEOUT,
+        )
+
     def configure_fabric(
         self,
         interfaces: list[tuple[str, str, str, int]],

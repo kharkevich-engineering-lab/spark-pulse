@@ -203,6 +203,23 @@ class _Config:
         return dict(value) if isinstance(value, dict) else {}
 
     @property
+    def agent_auto_update(self) -> bool:
+        """Whether the control plane keeps node agents on the version it ships.
+
+        On by default: a peer whose running binary is not the one this control
+        plane packages is updated over its own stream, so a fleet does not
+        drift behind the control plane after an upgrade. An operator who wants
+        to pin versions turns it off. Env ``SPARK_PULSE_AGENT_AUTO_UPDATE``
+        overrides settings.json; the control node is never a target.
+        """
+        import os
+
+        env = os.environ.get("SPARK_PULSE_AGENT_AUTO_UPDATE")
+        if env is not None:
+            return env.strip().lower() in ("1", "true", "yes", "on")
+        return bool(self._data.get("agent_auto_update", True))
+
+    @property
     def cluster_enabled(self) -> bool:
         """Whether cluster-only recipes are offered.
 

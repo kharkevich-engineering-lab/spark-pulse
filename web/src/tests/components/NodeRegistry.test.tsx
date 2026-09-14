@@ -17,6 +17,7 @@ vi.mock("@/lib/api", () => ({
   fetchNodeDiagnostics: vi.fn(),
   fetchNodeHostKey: vi.fn(),
   installNodeAgent: vi.fn(),
+  updateNodeAgent: vi.fn(),
   fetchNodeDoctor: vi.fn(),
   treatNode: vi.fn(),
 }));
@@ -29,6 +30,7 @@ import {
   fetchNodes,
   installNodeAgent,
   removeNode,
+  updateNodeAgent,
 } from "@/lib/api";
 
 function node(overrides: Partial<ClusterNode> = {}): ClusterNode {
@@ -657,7 +659,7 @@ describe("InstallAgentDialog", () => {
     expect(screen.getByRole("button", { name: "Install agent on spark-02" })).toHaveAttribute("title", "Reinstall agent");
   });
 
-  it("updates an enrolled node over the control plane's key, with no password asked", async () => {
+  it("updates an enrolled node over its agent in one click, no SSH dialog", async () => {
     const user = userEvent.setup();
     mockApi({
       nodes: [
@@ -665,30 +667,44 @@ describe("InstallAgentDialog", () => {
         {
           ...PEER,
           ssh_user: "spark",
-          agent: { enrolled: true, connected: true, version: "1.2.3", current: false, control_plane_version: "1.23.0" },
+          agent: { enrolled: true, connected: true, version: "1.2.3", current: false, control_plane_version: "1.25.0" },
         },
       ],
     });
-    vi.mocked(fetchNodeHostKey).mockResolvedValue(HOST_KEY);
-    vi.mocked(installNodeAgent).mockResolvedValue(report({ used_password: false, key_generated: false }));
+    vi.mocked(updateNodeAgent).mockResolvedValue({
+      node_id: "peer",
+      name: "spark-02",
+      updated: true,
+      version: "1.25.0",
+      restarting: true,
+      detail: "staged and restarting onto the new binary",
+    });
     render(<NodeRegistry />);
     await screen.findByRole("row", { name: /spark-02/ });
     await user.click(screen.getByRole("button", { name: "Install agent on spark-02" }));
-    const dialog = screen.getByRole("dialog", { name: "Update agent: spark-02" });
-    expect(dialog).toHaveTextContent("runs agent 1.2.3; this control plane ships 1.23.0");
-    expect(within(dialog).getByLabelText("The control plane's own key")).toBeChecked();
-    expect(within(dialog).queryByLabelText("Password *")).toBeNull();
-    await user.click(within(dialog).getByRole("button", { name: "Check host key" }));
-    await within(dialog).findByTestId("host-key-fingerprint");
-    await user.click(within(dialog).getByRole("button", { name: "Install agent" }));
-    await waitFor(() =>
-      expect(installNodeAgent).toHaveBeenCalledWith("peer", {
-        username: "spark",
-        auth: "control_plane_key",
-        host_key_fingerprint: HOST_KEY.fingerprint,
-        port: 22,
-      }),
-    );
+    await waitFor(() => expect(updateNodeAgent).toHaveBeenCalledWith("peer"));
+    // No SSH dialog is opened for an update; it goes straight over the agent.
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("surfaces a failed agent update", async () => {
+    const user = userEvent.setup();
+    mockApi({
+      nodes: [
+        CONTROL,
+        { ...PEER, agent: { enrolled: true, connected: true, version: "1.2.3", current: false } },
+      ],
+    });
+    vi.mocked(updateNodeAgent).mockResolvedValue({
+      node_id: "peer",
+      name: "spark-02",
+      updated: false,
+      detail: "not a unit-managed install",
+    });
+    render(<NodeRegistry />);
+    await screen.findByRole("row", { name: /spark-02/ });
+    await user.click(screen.getByRole("button", { name: "Install agent on spark-02" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("not a unit-managed install");
   });
 });
 

@@ -22,6 +22,7 @@ pub mod fabric;
 pub mod images;
 pub mod labels;
 pub mod processes;
+pub mod selfupdate;
 pub mod snapshots;
 pub mod stats;
 
@@ -306,6 +307,10 @@ impl Executor {
                         let result = attempt!(fabric::configure(req));
                         return ok!(Outcome::Fabric(result));
                     }
+                    Op::InstallBundle(req) => {
+                        let installed = attempt!(selfupdate::install(req));
+                        return ok!(Outcome::BundleInstalled(installed));
+                    }
                     _ => {}
                 }
                 return failure(id, &error.kind, error.message);
@@ -333,6 +338,10 @@ impl Executor {
             Op::ConfigureFabric(req) => {
                 let result = attempt!(fabric::configure(&req));
                 ok!(Outcome::Fabric(result))
+            }
+            Op::InstallBundle(req) => {
+                let installed = attempt!(selfupdate::install(&req));
+                ok!(Outcome::BundleInstalled(installed))
             }
 
             Op::RunContainer(req) => {

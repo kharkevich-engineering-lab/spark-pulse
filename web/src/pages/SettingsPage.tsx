@@ -521,6 +521,18 @@ export default function SettingsPage() {
               <Toggle on={!!form.cluster_enabled} onClick={() => setForm({ ...form, cluster_enabled: !form.cluster_enabled })} label={t("settings.clusterMode")} />
             </div>
 
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="font-medium">{t("settings.agentAutoUpdate")}</p>
+                <p className="text-xs text-text-muted mt-1">{t("settings.agentAutoUpdateHelp")}</p>
+              </div>
+              <Toggle
+                on={form.agent_auto_update !== false}
+                onClick={() => setForm({ ...form, agent_auto_update: !(form.agent_auto_update !== false) })}
+                label={t("settings.agentAutoUpdate")}
+              />
+            </div>
+
             {/* MCP is env-managed, so it is reported rather than switched. It
                 belongs beside benchmarking anyway: both decide whether a way
                 in exists at all. */}

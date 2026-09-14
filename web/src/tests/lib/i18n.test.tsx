@@ -69,6 +69,7 @@ describe("the dictionaries", () => {
     "fabric.colStatus",
     "fabric.showPlan",
     "nodes.agentVersion",
+    "nodes.updating",
     "nodes.colActions",
     // Placeholders that are literal examples — an address, a key path, an
     // image reference — not prose. Translating them would make them wrong.

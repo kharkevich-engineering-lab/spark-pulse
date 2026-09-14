@@ -32,6 +32,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useI18n } from "@/lib/i18n";
 import {
   addNode,
+  updateNodeAgent,
   discoverNodes,
   fetchNodeDiagnostics,
   fetchNodeHostKey,
@@ -781,6 +782,8 @@ export default function NodeRegistry() {
   const [showAdd, setShowAdd] = useState(false);
   const [installing, setInstalling] = useState<ClusterNode | null>(null);
   const [diagnosing, setDiagnosing] = useState<ClusterNode | null>(null);
+  const [updating, setUpdating] = useState<string | null>(null);
+  const [updateError, setUpdateError] = useState<string | null>(null);
   const [forgetting, setForgetting] = useState<ClusterNode | null>(null);
   const [removeError, setRemoveError] = useState<string | null>(null);
 
@@ -798,6 +801,27 @@ export default function NodeRegistry() {
     refetch();
     loadDiagnostics();
   }, [refetch, loadDiagnostics]);
+
+  const runUpdate = useCallback(
+    async (node: ClusterNode) => {
+      setUpdateError(null);
+      setUpdating(node.id);
+      try {
+        const result = await updateNodeAgent(node.id);
+        if (!result.updated) {
+          setUpdateError(`${node.name}: ${result.detail || "update failed"}`);
+        }
+        // The agent restarts onto the new binary; give it a moment, then reload
+        // so the row reflects the new version once it reconnects.
+        setTimeout(reload, 4000);
+      } catch (e) {
+        setUpdateError(e instanceof Error ? e.message : "Update failed");
+      } finally {
+        setUpdating(null);
+      }
+    },
+    [reload],
+  );
 
   return (
     <section
@@ -842,6 +866,16 @@ export default function NodeRegistry() {
         >
           <AlertCircle size={18} />
           <span>{error}</span>
+        </div>
+      )}
+
+      {updateError && (
+        <div
+          role="alert"
+          className="mb-3 flex items-center gap-3 rounded-lg border border-danger/30 bg-danger/10 p-3 text-danger"
+        >
+          <AlertCircle size={18} />
+          <span>{updateError}</span>
         </div>
       )}
 
@@ -915,13 +949,18 @@ export default function NodeRegistry() {
                   <td className="py-2.5 text-right">
                     {!node.is_control_plane && node.agent?.current === false ? (
                       <button
-                        onClick={() => setInstalling(node)}
+                        onClick={() => void runUpdate(node)}
+                        disabled={updating === node.id}
                         aria-label={t("nodes.install.actionFor", { name: node.name })}
                         title={t("nodes.install.update")}
-                        className="mr-1 inline-flex items-center gap-1.5 rounded-lg border border-warning/40 bg-warning/10 px-2.5 py-1 text-xs font-medium text-warning transition-colors hover:bg-warning/20"
+                        className="mr-1 inline-flex items-center gap-1.5 rounded-lg border border-warning/40 bg-warning/10 px-2.5 py-1 text-xs font-medium text-warning transition-colors hover:bg-warning/20 disabled:opacity-50"
                       >
-                        <Download size={13} />
-                        {t("nodes.updateAction")}
+                        {updating === node.id ? (
+                          <Loader2 size={13} className="animate-spin" />
+                        ) : (
+                          <Download size={13} />
+                        )}
+                        {updating === node.id ? t("nodes.updating") : t("nodes.updateAction")}
                       </button>
                     ) : (
                       !node.is_control_plane && (

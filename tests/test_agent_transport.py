@@ -138,6 +138,34 @@ async def test_configure_fabric_round_trips_through_the_agent(agent_server, join
     assert list(result.steps) == ["applied"]
 
 
+async def test_install_bundle_round_trips_through_the_agent(agent_server, join_agent):
+    """The op carries the tarball and dir name; the agent answers with the
+    version it staged and that it is restarting."""
+
+    def answers_install(command: pb.Command) -> pb.CommandResult:
+        assert command.WhichOneof("op") == "install_bundle"
+        req = command.install_bundle
+        assert (
+            req.tarball == b"BUNDLE"
+            and req.dir_name == "1.26.0-abc"
+            and req.version == "1.26.0"
+        )
+        return pb.CommandResult(
+            command_id=command.command_id,
+            bundle_installed=pb.BundleInstalled(
+                version=req.version, path="/x/" + req.dir_name, restarting=True
+            ),
+        )
+
+    node = await join_agent("spark-update", handler=answers_install)
+    result = await ops(agent_server, node).install_bundle(
+        b"BUNDLE", "1.26.0-abc", "1.26.0"
+    )
+    assert result.version == "1.26.0"
+    assert result.restarting is True
+    assert result.path.endswith("1.26.0-abc")
+
+
 # ── The three outcomes ──────────────────────────────────────────────────────
 
 

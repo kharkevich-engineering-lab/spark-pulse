@@ -617,7 +617,7 @@ export async function fetchImagePresence(ref: string, nodes: string[]): Promise<
 
 // ── Node registry ────────────────────────────────────────────────────────────
 
-import type { AddNodeRequest, ClusterNode, DiscoverNodesResult, DoctorReport, FabricApplyRequest, FabricApplyResponse, FabricResponse, InstallAgentRequest, InstallReport, NodeFinding, NodeHostKey } from "@/lib/types";
+import type { AddNodeRequest, AgentUpdateResult, ClusterNode, DiscoverNodesResult, DoctorReport, FabricApplyRequest, FabricApplyResponse, FabricResponse, InstallAgentRequest, InstallReport, NodeFinding, NodeHostKey } from "@/lib/types";
 
 export async function fetchNodes(): Promise<ClusterNode[]> {
   return json<ClusterNode[]>("/nodes");
@@ -644,6 +644,12 @@ export async function discoverNodes(timeout = 3): Promise<DiscoverNodesResult> {
 
 export async function fetchNodeDiagnostics(): Promise<{ findings: NodeFinding[] }> {
   return json<{ findings: NodeFinding[] }>("/nodes/diagnostics");
+}
+
+/** Update a node's agent over its own stream — no SSH. The agent unpacks the
+ * bundle, repoints current, replies, and restarts onto it. */
+export async function updateNodeAgent(id: string): Promise<AgentUpdateResult> {
+  return json<AgentUpdateResult>(`/nodes/${encodeURIComponent(id)}/update`, { method: "POST" });
 }
 
 /** Why is a node not working, read-only — nothing is changed. */

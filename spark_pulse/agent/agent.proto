@@ -180,6 +180,7 @@ message Command {
     RemoveSnapshot remove_snapshot = 29;
     TerminateProcess terminate_process = 30;
     ConfigureFabric configure_fabric = 31;
+    InstallBundle install_bundle = 32;
   }
 }
 
@@ -206,6 +207,7 @@ message CommandResult {
     SnapshotRemoval removal = 16;
     ProcessTermination termination = 17;
     FabricResult fabric = 18;
+    BundleInstalled bundle_installed = 19;
   }
 }
 
@@ -546,6 +548,31 @@ message NodeStats {
 // grants it — then reads each port back and pings the peers to prove the
 // cabling. Nothing here writes /etc/netplan: on a NM-managed node that fights
 // the node's own files, and `netplan generate` then trips on them.
+// Update this node's own agent, over the stream it is already connected on —
+// no SSH. The control plane ships the same bundle the installer would, the
+// agent unpacks it beside the running one, repoints `current`, replies, and
+// restarts its unit onto the new binary. SSH stays for the *first* bootstrap
+// only; a node that already runs an agent updates through it.
+message InstallBundle {
+  // The agent bundle: a .tar.gz of bin/spark-pulse-agent plus a manifest,
+  // exactly what the SSH installer ships.
+  bytes tarball = 1;
+  // Versioned directory name to unpack into, e.g. `1.26.0-<digest12>`, and the
+  // value `current` is repointed to. The control plane picks it so the layout
+  // matches an SSH install byte for byte.
+  string dir_name = 2;
+  string version = 3;
+}
+
+message BundleInstalled {
+  string version = 1;
+  // Where it was unpacked; `current` now points here.
+  string path = 2;
+  // The agent has staged the new binary and is about to restart onto it, so
+  // the control plane should expect a brief disconnect and reconnect.
+  bool restarting = 3;
+}
+
 message ConfigureFabric {
   repeated FabricInterface interfaces = 1;
   // Addresses to ping from each port once it is up, to prove the cable goes

@@ -53,6 +53,7 @@ class TestGetSettings:
             "default_port_range_end",
             "webui_port",
             "cluster_enabled",
+            "agent_auto_update",
             "job_retention_days",
             "runtime",
             "deploy_ready_timeout_seconds",
