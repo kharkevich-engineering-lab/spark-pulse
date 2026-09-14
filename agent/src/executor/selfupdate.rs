@@ -47,7 +47,11 @@ fn install_root() -> Result<PathBuf, OpError> {
         .ok_or_else(|| err("the agent is not laid out under an install root"))?
         .to_path_buf();
     let current = root.join("current");
-    if !current.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(false) {
+    if !current
+        .symlink_metadata()
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
+    {
         return Err(err(
             "this agent is not a unit-managed install (no 'current' symlink); it \
              updates when its package does, not over the stream",
@@ -61,7 +65,10 @@ pub fn install(request: &InstallBundle) -> Result<BundleInstalled, OpError> {
         || request.dir_name.contains('/')
         || request.dir_name.starts_with('.')
     {
-        return Err(err(format!("unsafe bundle dir name {:?}", request.dir_name)));
+        return Err(err(format!(
+            "unsafe bundle dir name {:?}",
+            request.dir_name
+        )));
     }
     let root = install_root()?;
     let target = root.join(&request.dir_name);
@@ -97,7 +104,9 @@ pub fn install(request: &InstallBundle) -> Result<BundleInstalled, OpError> {
         .output()
         .map_err(|e| err(format!("the new binary does not run: {e}")))?;
     if !versioned.status.success() {
-        return Err(err("the new binary did not answer --version; not switching to it"));
+        return Err(err(
+            "the new binary did not answer --version; not switching to it",
+        ));
     }
 
     // Repoint `current` atomically: write a new symlink to a temp name and
@@ -153,7 +162,11 @@ mod tests {
     fn an_unsafe_dir_name_is_refused_before_touching_anything() {
         for bad in ["", "..", "a/b", "../evil", ".hidden"] {
             let e = install(&req(bad)).unwrap_err();
-            assert!(e.message.contains("unsafe bundle dir name"), "{bad:?}: {}", e.message);
+            assert!(
+                e.message.contains("unsafe bundle dir name"),
+                "{bad:?}: {}",
+                e.message
+            );
         }
     }
 
