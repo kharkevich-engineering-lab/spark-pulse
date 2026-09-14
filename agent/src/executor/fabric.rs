@@ -96,36 +96,6 @@ fn parse_connections(listing: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::parse_connections;
-
-    #[test]
-    fn a_connection_name_may_itself_contain_a_colon() {
-        // `nmcli -t` does not quote the name, so the device is the last field.
-        let listing = "Wired connection 1:enp1s0f1np1\nspark:pulse:enP2p1s0f1np1\n\n";
-        assert_eq!(
-            parse_connections(listing),
-            vec![
-                ("Wired connection 1".to_string(), "enp1s0f1np1".to_string()),
-                ("spark:pulse".to_string(), "enP2p1s0f1np1".to_string()),
-            ]
-        );
-    }
-
-    #[test]
-    fn a_profile_with_no_device_is_skipped_cleanly() {
-        // A profile not bound to a device shows an empty last field, never a panic.
-        assert_eq!(
-            parse_connections("lo:lo\nunbound:\n"),
-            vec![
-                ("lo".to_string(), "lo".to_string()),
-                ("unbound".to_string(), "".to_string()),
-            ]
-        );
-    }
-}
-
 /// The IPv4 address currently on a device, `<ip>/<prefix>`, or empty.
 fn address_of(netdev: &str) -> String {
     let output = Command::new("ip")
@@ -268,4 +238,34 @@ pub fn configure(request: &ConfigureFabric) -> Result<FabricResult, OpError> {
         pings,
         steps,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_connections;
+
+    #[test]
+    fn a_connection_name_may_itself_contain_a_colon() {
+        // `nmcli -t` does not quote the name, so the device is the last field.
+        let listing = "Wired connection 1:enp1s0f1np1\nspark:pulse:enP2p1s0f1np1\n\n";
+        assert_eq!(
+            parse_connections(listing),
+            vec![
+                ("Wired connection 1".to_string(), "enp1s0f1np1".to_string()),
+                ("spark:pulse".to_string(), "enP2p1s0f1np1".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_profile_with_no_device_is_skipped_cleanly() {
+        // A profile not bound to a device shows an empty last field, never a panic.
+        assert_eq!(
+            parse_connections("lo:lo\nunbound:\n"),
+            vec![
+                ("lo".to_string(), "lo".to_string()),
+                ("unbound".to_string(), "".to_string()),
+            ]
+        );
+    }
 }
