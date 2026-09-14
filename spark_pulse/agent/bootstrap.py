@@ -722,6 +722,16 @@ def _privileged_needs(
         needs.append(
             (f"add {caps.user} to the docker group", f"usermod -aG docker {caps.user}")
         )
+        # Adding the group is not enough on its own; a user-scope agent's
+        # manager must be restarted to pick it up, and that is a second
+        # elevated command the operator should see named before consenting.
+        if paths.scope == "user" and caps.uid > 0:
+            needs.append(
+                (
+                    f"apply the docker group to {caps.user}'s service manager",
+                    f"systemctl restart user@{caps.uid}.service",
+                )
+            )
     if paths.scope == "system":
         needs.append(("write and start a system unit", "systemctl daemon-reload"))
     return needs
