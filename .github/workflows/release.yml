@@ -35,6 +35,16 @@ jobs:
         uses: cycjimmy/semantic-release-action@v6
         with:
           dry_run: true
+          # The same plugins as the real run below: .releaserc names them,
+          # and semantic-release loads every plugin before it decides
+          # anything, dry run or not. A dry run runs no prepareCmd, so
+          # release.sh never executes here; @semantic-release/exec is only
+          # needed so the config resolves.
+          extra_plugins: |
+            @semantic-release/commit-analyzer
+            @semantic-release/release-notes-generator
+            @semantic-release/exec
+            @semantic-release/github
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
