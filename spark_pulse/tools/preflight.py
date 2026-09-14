@@ -24,16 +24,21 @@ useless — an operator learns to ignore it, because it is always red. So
 * ``ready`` — nothing failed and nothing must transfer. Advisories may still be
   attached (unreported GPU memory is one, on this hardware always).
 
-**Two transports, deliberately.** Container facts — is the image here, at which
-digest — go through the node service, which phase C bound to a node at
+**One transport, through the agent.** Container facts — is the image here, at
+which digest — go through the node service, which phase C bound to a node at
 construction so no call can silently ask the wrong machine. Host facts — a GPU,
-a port, an interface, free disk — need a shell, so they go through a
-:class:`HostProbe`: locally a subprocess, on a peer an SSH command. The probe
-keeps phase A's structural distinction between *unreachable* and *the command
-failed*: ``ssh`` reserves exit 255 for its own failures, so
-:class:`~spark_pulse.tools.ssh.SSHClient` raises for a transport failure and
-returns a result for a remote non-zero exit. A pre-flight that reported "docker
-is missing" when the truth was "the node is off" would be worse than none.
+a port, an interface, free disk — need a shell, and that shell is the node's own
+agent: a :class:`HostProbe` sends each command as a ``RunHostProbe`` operation
+and the agent runs it unprivileged with a timeout. The control node is reached
+over its own agent (loopback), exactly as a peer is, so there is no local
+subprocess and no SSH login — the pre-flight follows the same agent-only rule as
+the rest of the control plane. The probe keeps the structural distinction
+between *unreachable* and *the command failed*: a result that arrives means the
+node answered, and its exit code is the command's own; a transport failure (no
+agent, a dropped connection) comes back unreachable. A pre-flight that reported
+"docker is missing" when the truth was "the node is off" would be worse than
+none. A node whose agent is too old to run probes reads as unreachable with that
+said in words — its remedy is to update the agent.
 
 **One hardware fact is baked in.** ``nvidia-smi`` reports no GPU memory at all
 on a DGX Spark — total, used and free all come back ``[N/A]``, because the GPU
@@ -53,7 +58,6 @@ import json
 import logging
 import re
 import shlex
-import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -62,7 +66,6 @@ from typing import Any, Callable, Iterable, Protocol
 from spark_pulse import tools
 from spark_pulse.tools import discovery
 from spark_pulse.tools import vram
-from spark_pulse.tools.ssh import SSHClient, SSHError
 
 logger = logging.getLogger(__name__)
 
@@ -260,78 +263,68 @@ class HostProbe(Protocol):
         ...
 
 
-class LocalHostProbe:
-    """Shell commands on the machine this process runs on.
+class AgentHostProbe:
+    """Shell commands on a node, run by its own agent.
 
-    Local is reachable by construction, so the only way to come back
-    unreachable is no usable shell at all.
+    The one transport the pre-flight uses. Each command travels as a
+    ``RunHostProbe`` operation to the node service the resolver binds to a node,
+    so no call can ask the wrong machine — the control node included, over
+    loopback. The service is resolved lazily, inside :meth:`run`, so a runtime
+    that is not up yet reads as unreachable rather than raising out of a whole
+    node's gather. A result that arrives means the node answered and its
+    ``exit_code`` is the command's own; a transport failure (no agent, a dropped
+    connection) or an agent too old to know the operation comes back
+    unreachable, with the reason in words, never mixed with a command's verdict.
     """
 
+    def __init__(self, resolve: Callable[[Any], Any], node: Any, label: str = ""):
+        self._resolve = resolve
+        self._node = node
+        self.label = label
+
     def run(self, command: str, timeout: int = PROBE_TIMEOUT) -> ProbeResult:
+        from spark_pulse.agent.errors import NodeOperationError, NodeUnreachable
+
         try:
-            done = subprocess.run(
-                ["/bin/sh", "-c", command],
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
-        except FileNotFoundError as exc:  # pragma: no cover — no /bin/sh
+            service = self._resolve(self._node)
+            result = service.run_host_probe(command, timeout_seconds=int(timeout))
+        except NodeUnreachable as exc:
             return ProbeResult(reachable=False, error=str(exc))
-        except subprocess.TimeoutExpired:
-            return ProbeResult(
-                reachable=True,
-                returncode=124,
-                error=f"timed out after {timeout}s",
-            )
-        return ProbeResult(
-            reachable=True,
-            returncode=done.returncode,
-            stdout=done.stdout or "",
-            stderr=done.stderr or "",
-        )
-
-
-class SSHHostProbe:
-    """Shell commands on a peer, over SSH.
-
-    :class:`~spark_pulse.tools.ssh.SSHError` means the node could not be
-    reached or authenticated; an :class:`~spark_pulse.tools.ssh.SSHResult`
-    means the command ran and this is what it said. The two are never mixed.
-    """
-
-    def __init__(self, address: str, ssh_client: SSHClient):
-        self.address = address
-        self.ssh = ssh_client
-
-    def run(self, command: str, timeout: int = PROBE_TIMEOUT) -> ProbeResult:
-        try:
-            result = self.ssh.exec(self.address, command, timeout=timeout)
-        except SSHError as exc:
-            return ProbeResult(reachable=False, error=exc.message or str(exc))
-        except OSError as exc:
+        except NodeOperationError as exc:
+            # An agent too old to know the probe op answers "command carries no
+            # op"; either way the node cannot be probed, so it reads unreachable
+            # with the reason said plainly.
+            return ProbeResult(reachable=False, error=exc.error_message or str(exc))
+        except Exception as exc:  # noqa: BLE001 — every transport failure alike
             return ProbeResult(reachable=False, error=str(exc))
         return ProbeResult(
             reachable=True,
-            returncode=int(getattr(result, "returncode", 1)),
+            returncode=int(getattr(result, "exit_code", 1)),
             stdout=getattr(result, "stdout", "") or "",
             stderr=getattr(result, "stderr", "") or "",
         )
 
 
-def probe_for(target: NodeTarget, ssh_client: SSHClient | None = None) -> HostProbe:
-    """The host probe bound to ``target``.
+def probe_for(
+    target: NodeTarget, services: Callable[[Any], Any] | None = None
+) -> HostProbe:
+    """The host probe bound to ``target`` — its own agent.
 
-    Overridden wholesale by ``spark_pulse.mock.preflight``, so simulation swaps
-    the transport at one place rather than branching inside every check.
+    Uses the same node-service resolver as the container-fact checks, so both
+    halves of the pre-flight reach a node exactly one way. The control node is
+    resolved with an empty address and ``is_self`` set, which reaches its own
+    agent over loopback. Overridden wholesale by ``spark_pulse.mock.preflight``,
+    so simulation swaps the transport at one place rather than branching inside
+    every check.
     """
-    if target.is_control_plane:
-        return LocalHostProbe()
-    from spark_pulse.tools.ssh import OpenSSHClient
-
-    return SSHHostProbe(
-        target.address,
-        ssh_client or OpenSSHClient(user=target.ssh_user or None),
+    resolve = services or tools.node_service.NodeServices()
+    node = tools.node_service.Node(
+        id=target.id,
+        address="" if target.is_control_plane else target.address,
+        is_self=target.is_control_plane,
+        ssh_user=target.ssh_user,
     )
+    return AgentHostProbe(resolve, node, label=target.label)
 
 
 # ── Parsing the probe output ─────────────────────────────────────────────────
@@ -2157,7 +2150,6 @@ def run(
     plan: dict[str, Any] | None = None,
     targets: list[NodeTarget] | None = None,
     probe_factory: Callable[..., HostProbe] | None = None,
-    ssh_client: SSHClient | None = None,
     services: Callable[[Any], Any] | None = None,
     model_presence: Callable[..., dict[str, Any]] | None = None,
     model_config: Callable[[str], dict[str, Any] | None] | None = None,
@@ -2175,8 +2167,8 @@ def run(
         plan: An already-resolved plan, to avoid planning twice.
         targets: Override the node set (tests).
         probe_factory: Builds the host probe for a node (simulation, tests).
-        ssh_client: SSH transport handed to the default probe factory.
-        services: Node-service resolver (simulation, tests).
+        services: Node-service resolver, shared by the host probes and the
+            container-fact checks (simulation, tests).
         model_presence: The model verifier seam (simulation, tests).
         model_config: The model-config reader seam (tests).
 
@@ -2199,9 +2191,7 @@ def run(
     node_targets = targets if targets is not None else targets_for(plan)
     hub_dir = _hub_dir()
     node_count = max(1, int(plan.get("node_count") or 1))
-    build_probe = probe_factory or (
-        lambda target: probe_for(target, ssh_client=ssh_client)
-    )
+    build_probe = probe_factory or (lambda target: probe_for(target, services=services))
 
     with ThreadPoolExecutor(max_workers=max(1, len(node_targets))) as pool:
         gathered = list(
@@ -2308,12 +2298,11 @@ __all__ = [
     "VERDICT_BLOCKED",
     "VERDICT_READY",
     "VERDICT_SLOW",
+    "AgentHostProbe",
     "Check",
     "HostProbe",
-    "LocalHostProbe",
     "NodeTarget",
     "ProbeResult",
-    "SSHHostProbe",
     "checks_for_node",
     "disk_command",
     "parse_df",

@@ -599,6 +599,25 @@ class MockDockerService(DockerService):
             steps=[f"configured {len(interfaces)} port(s) via nmcli (simulated)"],
         )
 
+    def run_host_probe(self, command_line: str, timeout_seconds: int = 0) -> Any:
+        """Run a host probe on a simulated node.
+
+        Simulation reads its host facts through ``mock.preflight``'s simulated
+        host, not this transport, so this exists only to satisfy the machine
+        service contract and records the command it was asked to run. It answers
+        the reachability probe truthfully and everything else with an empty
+        success, which is enough for a caller that resolves a mock service
+        directly.
+        """
+        from spark_pulse.agent import agent_pb2 as pb
+
+        self.host_probes = getattr(self, "host_probes", [])
+        self.host_probes.append(command_line)
+        stdout = (
+            "spark-pulse-preflight\n" if "spark-pulse-preflight" in command_line else ""
+        )
+        return pb.HostProbeResult(exit_code=0, stdout=stdout, stderr="")
+
     def list_snapshot(
         self, repo_path: str, revision: str = "", deep: bool = False
     ) -> Any:

@@ -1580,3 +1580,120 @@ def test_an_exclusion_list_is_not_reported_as_a_missing_device():
         if c["id"] == preflight.CHECK_INTERFACES
     }
     assert "rocep1s0f0" not in named
+
+
+import importlib as _importlib  # noqa: E402
+
+#: The real pre-flight submodule (the mock is what ``preflight`` binds to
+#: under simulation, and it neither exports ``AgentHostProbe`` nor takes the
+#: ``services`` seam; these tests are about the real agent transport).
+_real_preflight = _importlib.import_module("spark_pulse.tools.preflight")
+
+
+# ── The agent-backed host probe (the production transport) ────────────────────
+
+
+class _FakeMachineService:
+    """Stands in for a node's agent, recording the probe it was asked to run."""
+
+    def __init__(self, result: Any = None, raises: Exception | None = None):
+        self._result = result
+        self._raises = raises
+        self.calls: list[tuple[str, int]] = []
+
+    def run_host_probe(self, command_line: str, timeout_seconds: int = 0) -> Any:
+        self.calls.append((command_line, timeout_seconds))
+        if self._raises is not None:
+            raise self._raises
+        return self._result
+
+
+class _Probed:
+    """A HostProbeResult-shaped answer from the agent."""
+
+    def __init__(self, exit_code: int, stdout: str = "", stderr: str = ""):
+        self.exit_code = exit_code
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+class TestAgentHostProbe:
+    def test_a_result_that_arrives_is_reachable_with_the_commands_own_exit(self):
+        service = _FakeMachineService(_Probed(0, stdout="hello\n"))
+        probe = _real_preflight.AgentHostProbe(lambda _n: service, node=object())
+        result = probe.run("echo hello", timeout=15)
+        assert result.reachable is True
+        assert result.returncode == 0
+        assert result.stdout == "hello\n"
+        # The command and timeout reach the agent unchanged.
+        assert service.calls == [("echo hello", 15)]
+
+    def test_a_non_zero_exit_is_reachable_not_a_transport_failure(self):
+        service = _FakeMachineService(_Probed(1, stderr="ss: not found"))
+        probe = _real_preflight.AgentHostProbe(lambda _n: service, node=object())
+        result = probe.run("ss -ltn")
+        assert result.reachable is True
+        assert result.returncode == 1
+        assert result.stderr == "ss: not found"
+
+    def test_an_unreachable_node_is_unreachable(self):
+        from spark_pulse.agent.errors import NodeUnreachable
+
+        service = _FakeMachineService(raises=NodeUnreachable("agent not connected"))
+        probe = _real_preflight.AgentHostProbe(lambda _n: service, node=object())
+        result = probe.run("echo hi")
+        assert result.reachable is False
+        assert "not connected" in result.error
+
+    def test_an_agent_too_old_for_the_op_reads_unreachable_with_the_reason(self):
+        from spark_pulse.agent.errors import NodeOperationError
+
+        service = _FakeMachineService(
+            raises=NodeOperationError("n1", "ValueError", "command carries no op")
+        )
+        probe = _real_preflight.AgentHostProbe(lambda _n: service, node=object())
+        result = probe.run("echo hi")
+        assert result.reachable is False
+        assert result.error == "command carries no op"
+
+    def test_a_resolver_that_raises_is_unreachable_not_an_exception(self):
+        # service_for raises NoAgent before the runtime is up; a whole node's
+        # gather must not crash on it.
+        from spark_pulse.tools.node_service import NoAgent
+
+        def resolve(_node):
+            raise NoAgent("the agent transport is not running")
+
+        probe = _real_preflight.AgentHostProbe(resolve, node=object())
+        result = probe.run("echo hi")
+        assert result.reachable is False
+        assert "not running" in result.error
+
+
+class TestProbeFor:
+    def test_the_control_node_is_resolved_over_loopback(self):
+        seen: dict[str, Any] = {}
+
+        def services(node: Any) -> Any:
+            seen["node"] = node
+            return _FakeMachineService(_Probed(0))
+
+        _real_preflight.probe_for(CONTROL, services=services).run("echo hi")
+        node = seen["node"]
+        # Empty address + is_self is how node_service reaches this machine's
+        # own agent, never a local branch.
+        assert node.address == ""
+        assert node.is_self is True
+
+    def test_a_peer_is_resolved_by_address(self):
+        seen: dict[str, Any] = {}
+
+        def services(node: Any) -> Any:
+            seen["node"] = node
+            return _FakeMachineService(_Probed(0))
+
+        _real_preflight.probe_for(PEER, services=services).run("echo hi")
+        node = seen["node"]
+        assert node.address == "10.0.0.11"
+        assert node.is_self is False
+        assert node.ssh_user == "spark"

@@ -21,9 +21,11 @@ Reading a machine's own hardware used to be the exception here: `tools.system`
 shelled out to `nvidia-smi` and `/proc` for the monitoring panels, and the
 page was single-node as a result. That is gone — `GetNodeStats` is a command
 now, so every node answers for itself and the control node is not a special
-case. What remains outside is `tools.preflight`, whose probes run over the
-probe's own transport, and `tools.discovery`, which enumerates this host's
-interfaces before there is any node to ask.
+case. The pre-flight's host probes followed: `tools.preflight` sends each one
+as a `RunHostProbe` command through the node's own agent, the control node over
+loopback, so it no longer shells out or logs in. What remains outside is
+`tools.discovery`, which enumerates this host's interfaces before there is any
+node to ask.
 """
 
 from __future__ import annotations
@@ -80,7 +82,6 @@ MAY_SIGNAL_A_PROCESS: dict[str, str] = {}
 MAY_USE_SUBPROCESS = {
     "discovery.py": "this host's own interfaces and RoCE devices",
     "docker.py": "the Docker client itself",
-    "preflight.py": "probe commands, which run over the probe's own transport",
     "registry.py": "the local registry container",
     "ssh.py": "the SSH transport, used for bootstrap only",
     "models.py": "the hub-cache verifier it still ships to peers over SSH",
@@ -260,10 +261,17 @@ def test_nothing_asks_this_machine_about_its_own_gpu():
     invisible and the visible one was unlabelled. The reading lives in the
     agent now, so no module here may name the tool.
     """
+    # The pre-flight *names* nvidia-smi in a probe command, but it ships that
+    # command to the node's agent (`RunHostProbe`) rather than running it here
+    # — the string is data on the wire, not a local read. It is safe to exempt
+    # from this string match because `test_only_the_named_modules_shell_out`
+    # already forbids it any `subprocess`/`os.system` of its own, so it cannot
+    # run the tool locally even if it holds its name.
+    ships_to_the_agent = {"preflight.py"}
     offenders = []
     for module in _tool_modules():
         source = module.read_text(encoding="utf-8")
-        if module.name in MAY_USE_SUBPROCESS:
+        if module.name in MAY_USE_SUBPROCESS or module.name in ships_to_the_agent:
             continue
         for tool in ("nvidia-smi", "free -m", "df -B1"):
             # In a string that is *run*, not in prose about what used to be.

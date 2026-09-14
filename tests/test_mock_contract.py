@@ -55,9 +55,9 @@ KNOWN_GAPS: dict[str, set[str]] = {
     "models": {"local_repo_path"},
     # mock/native_runtime.py delegates wholesale and misses one accessor.
     "native_runtime": {"logs_for_container"},
-    # The two host probes pre-flight injects; the mock simulates at a higher
-    # level and never exposes them.
-    "preflight": {"LocalHostProbe", "SSHHostProbe"},
+    # The agent-backed host probe pre-flight uses in production; the mock
+    # simulates at a higher level (SimulatedHostProbe) and never exposes it.
+    "preflight": {"AgentHostProbe"},
 }
 
 _PROBE = """

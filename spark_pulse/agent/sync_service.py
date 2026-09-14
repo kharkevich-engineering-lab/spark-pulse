@@ -368,3 +368,7 @@ class AgentNodeService:
             self.ops.configure_fabric(interfaces, peers),
             timeout=FABRIC_TIMEOUT,
         )
+
+    def run_host_probe(self, command_line: str, timeout_seconds: int = 0) -> Any:
+        """Run one read-only host diagnostic on the node (for the pre-flight)."""
+        return self._run(self.ops.run_host_probe(command_line, timeout_seconds))
