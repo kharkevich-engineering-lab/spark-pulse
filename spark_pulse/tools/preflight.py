@@ -600,15 +600,39 @@ def _gather(target: NodeTarget, probe: HostProbe, hub_dir: str) -> _NodeFacts:
         facts.netdevs = {line.strip() for line in head.splitlines() if line.strip()}
         facts.ibdevs = {line.strip() for line in tail.splitlines() if line.strip()}
 
-    facts.fabric_probe = probe.run(discovery.FABRIC_COMMAND)
-    if facts.fabric_probe.ok:
-        facts.fabric = discovery.fabric_from_output(facts.fabric_probe.stdout)
+    facts.fabric = _fabric_from_agent(target)
+    if facts.fabric is None:
+        # An agent too old to report its ports, or a node with none: ask.
+        facts.fabric_probe = probe.run(discovery.FABRIC_COMMAND)
+        if facts.fabric_probe.ok:
+            facts.fabric = discovery.fabric_from_output(facts.fabric_probe.stdout)
 
     facts.disk_probe = probe.run(disk_command([facts.docker_root, hub_dir]))
     if facts.disk_probe.ok:
         facts.disk = parse_df(facts.disk_probe.stdout)
 
     return facts
+
+
+def _fabric_from_agent(target: NodeTarget) -> Any | None:
+    """The node's fabric as its agent reported it on the last heartbeat.
+
+    The agent reads ``/sys/class/infiniband`` and the addresses on every beat,
+    so this is ``ibdev2netdev`` and ``ip addr`` without a login — and it is
+    what ``/api/fabric`` plans from, so the pre-flight and the plan cannot
+    disagree about a node. ``None`` when there is no transport, no connection,
+    or an agent that predates the field.
+    """
+    from spark_pulse.agent import runtime as agent_runtime
+
+    runtime = agent_runtime.current()
+    if runtime is None:
+        return None
+    node_id = runtime.control_node_id if target.is_control_plane else target.id
+    connection = runtime.hub.get(node_id) if node_id else None
+    if connection is None:
+        return None
+    return discovery.fabric_from_facts(connection.facts)
 
 
 @dataclass

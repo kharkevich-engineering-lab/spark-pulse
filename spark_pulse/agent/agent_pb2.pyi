@@ -750,7 +750,7 @@ class SnapshotRemoval(_message.Message):
     def __init__(self, removed: _Optional[bool] = ..., freed_bytes: _Optional[int] = ..., paths: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class NodeFacts(_message.Message):
-    __slots__ = ("hostname", "boot_id", "machine_id", "os_release", "kernel", "agent_version", "docker_version", "cpu_count", "memory_bytes", "gpu_count", "interfaces", "infiniband_interfaces", "hardware_fingerprint")
+    __slots__ = ("hostname", "boot_id", "machine_id", "os_release", "kernel", "agent_version", "docker_version", "cpu_count", "memory_bytes", "gpu_count", "interfaces", "infiniband_interfaces", "hardware_fingerprint", "roce_links")
     HOSTNAME_FIELD_NUMBER: _ClassVar[int]
     BOOT_ID_FIELD_NUMBER: _ClassVar[int]
     MACHINE_ID_FIELD_NUMBER: _ClassVar[int]
@@ -764,6 +764,7 @@ class NodeFacts(_message.Message):
     INTERFACES_FIELD_NUMBER: _ClassVar[int]
     INFINIBAND_INTERFACES_FIELD_NUMBER: _ClassVar[int]
     HARDWARE_FINGERPRINT_FIELD_NUMBER: _ClassVar[int]
+    ROCE_LINKS_FIELD_NUMBER: _ClassVar[int]
     hostname: str
     boot_id: str
     machine_id: str
@@ -777,18 +778,31 @@ class NodeFacts(_message.Message):
     interfaces: _containers.RepeatedCompositeFieldContainer[NetworkInterface]
     infiniband_interfaces: _containers.RepeatedScalarFieldContainer[str]
     hardware_fingerprint: str
-    def __init__(self, hostname: _Optional[str] = ..., boot_id: _Optional[str] = ..., machine_id: _Optional[str] = ..., os_release: _Optional[str] = ..., kernel: _Optional[str] = ..., agent_version: _Optional[str] = ..., docker_version: _Optional[str] = ..., cpu_count: _Optional[int] = ..., memory_bytes: _Optional[int] = ..., gpu_count: _Optional[int] = ..., interfaces: _Optional[_Iterable[_Union[NetworkInterface, _Mapping]]] = ..., infiniband_interfaces: _Optional[_Iterable[str]] = ..., hardware_fingerprint: _Optional[str] = ...) -> None: ...
+    roce_links: _containers.RepeatedCompositeFieldContainer[RoceLink]
+    def __init__(self, hostname: _Optional[str] = ..., boot_id: _Optional[str] = ..., machine_id: _Optional[str] = ..., os_release: _Optional[str] = ..., kernel: _Optional[str] = ..., agent_version: _Optional[str] = ..., docker_version: _Optional[str] = ..., cpu_count: _Optional[int] = ..., memory_bytes: _Optional[int] = ..., gpu_count: _Optional[int] = ..., interfaces: _Optional[_Iterable[_Union[NetworkInterface, _Mapping]]] = ..., infiniband_interfaces: _Optional[_Iterable[str]] = ..., hardware_fingerprint: _Optional[str] = ..., roce_links: _Optional[_Iterable[_Union[RoceLink, _Mapping]]] = ...) -> None: ...
+
+class RoceLink(_message.Message):
+    __slots__ = ("hca", "netdev", "is_up")
+    HCA_FIELD_NUMBER: _ClassVar[int]
+    NETDEV_FIELD_NUMBER: _ClassVar[int]
+    IS_UP_FIELD_NUMBER: _ClassVar[int]
+    hca: str
+    netdev: str
+    is_up: bool
+    def __init__(self, hca: _Optional[str] = ..., netdev: _Optional[str] = ..., is_up: _Optional[bool] = ...) -> None: ...
 
 class NetworkInterface(_message.Message):
-    __slots__ = ("name", "ip", "mtu", "is_up", "type")
+    __slots__ = ("name", "ip", "mtu", "is_up", "type", "prefix_length")
     NAME_FIELD_NUMBER: _ClassVar[int]
     IP_FIELD_NUMBER: _ClassVar[int]
     MTU_FIELD_NUMBER: _ClassVar[int]
     IS_UP_FIELD_NUMBER: _ClassVar[int]
     TYPE_FIELD_NUMBER: _ClassVar[int]
+    PREFIX_LENGTH_FIELD_NUMBER: _ClassVar[int]
     name: str
     ip: str
     mtu: int
     is_up: bool
     type: str
-    def __init__(self, name: _Optional[str] = ..., ip: _Optional[str] = ..., mtu: _Optional[int] = ..., is_up: _Optional[bool] = ..., type: _Optional[str] = ...) -> None: ...
+    prefix_length: int
+    def __init__(self, name: _Optional[str] = ..., ip: _Optional[str] = ..., mtu: _Optional[int] = ..., is_up: _Optional[bool] = ..., type: _Optional[str] = ..., prefix_length: _Optional[int] = ...) -> None: ...

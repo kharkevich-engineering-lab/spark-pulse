@@ -16,6 +16,8 @@ vi.mock("@/lib/api", () => ({
   addNode: vi.fn(),
   removeNode: vi.fn(),
   discoverNodes: vi.fn(),
+  fetchFabric: vi.fn(),
+  applyFabric: vi.fn(),
   resolveLaunchScript: vi.fn(),
   analyzeLaunchScript: vi.fn(),
   validateLaunchScript: vi.fn(),

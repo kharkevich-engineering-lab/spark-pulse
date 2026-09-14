@@ -193,6 +193,19 @@ class SimulatedNode:
         self.agent_runner = agent_runner or InProcessAgentRunner()
         self.units: dict[str, UnitState] = {}
 
+        # ── The ConnectX fabric, as `netplan` and `nmcli` see it ──────────
+        #: netdev → CIDR currently on the port, and its MTU.
+        self.addresses: dict[str, str] = {}
+        self.mtus: dict[str, int] = {}
+        #: NetworkManager's profiles: name → (device, autoconnect, active).
+        #: ``None`` means the machine has no NetworkManager at all.
+        self.nm_profiles: dict[str, dict[str, Any]] | None = {}
+        #: Addresses ``ping`` reaches over the fabric. A peer not here is a
+        #: cable that does not go where the plan assumed.
+        self.fabric_peers: set[str] = set()
+        #: What ``netplan generate`` says, when it refuses. Empty accepts.
+        self.netplan_error: str = ""
+
         #: Every command, with ``stdin`` kept as its own field. The separation
         #: is the point: a secret may appear there and nowhere else.
         self.commands: list[dict[str, Any]] = []
@@ -846,6 +859,81 @@ class SimulatedSession:
         dst.chmod(mode)
         return RunResult(0, "", "")
 
+    # ── The fabric: netplan, nmcli, ip, ping ─────────────────────────────
+
+    async def _cmd_netplan(self, parts, stdin, as_root) -> RunResult:
+        """``netplan generate`` parses the file; ``netplan apply`` enacts it.
+
+        The parser is the few lines the planner writes, read back: an
+        ``ethernets:`` block whose entries carry ``addresses: [cidr]`` and
+        ``mtu: n``. Anything else the file says is ignored, which is what makes
+        this a simulator and not a second netplan.
+        """
+        node = self.node
+        if not as_root:
+            return RunResult(1, "", "netplan: Permission denied (are you root?)")
+        verb = parts[1] if len(parts) > 1 else ""
+        if verb not in ("generate", "apply"):
+            return RunResult(2, "", f"netplan: unknown command {verb!r}")
+        if node.netplan_error:
+            return RunResult(1, "", node.netplan_error)
+        if verb == "apply":
+            for cidr_by_dev, mtu_by_dev in [_parse_netplan_dir(node)]:
+                node.addresses.update(cidr_by_dev)
+                node.mtus.update(mtu_by_dev)
+                for dev, mtu in mtu_by_dev.items():
+                    sysfs = node.path(f"/sys/class/net/{dev}/mtu", "root")
+                    sysfs.parent.mkdir(parents=True, exist_ok=True)
+                    sysfs.write_text(f"{mtu}\n")
+        return RunResult(0, "", "")
+
+    async def _cmd_nmcli(self, parts, stdin, as_root) -> RunResult:
+        node = self.node
+        if node.nm_profiles is None:
+            return RunResult(127, "", "nmcli: command not found")
+        args = [a for a in parts[1:] if a not in ("-t",)]
+        if args[:1] == ["-f"]:
+            args = args[2:]
+        if args[:2] == ["connection", "show"]:
+            lines = [f"{name}:{p['device']}" for name, p in node.nm_profiles.items()]
+            return RunResult(0, "\n".join(lines) + ("\n" if lines else ""), "")
+        if not as_root:
+            return RunResult(4, "", "Error: Insufficient privileges.")
+        if args[:2] == ["connection", "modify"] and len(args) >= 5:
+            profile = node.nm_profiles.get(args[2])
+            if profile is None:
+                return RunResult(10, "", f"Error: unknown connection '{args[2]}'.")
+            if args[3] == "connection.autoconnect":
+                profile["autoconnect"] = args[4] == "yes"
+            return RunResult(0, "", "")
+        if args[:2] == ["connection", "down"] and len(args) >= 3:
+            profile = node.nm_profiles.get(args[2])
+            if profile is None:
+                return RunResult(10, "", f"Error: unknown connection '{args[2]}'.")
+            profile["active"] = False
+            return RunResult(0, "", "")
+        return RunResult(2, "", "nmcli: unsupported invocation")
+
+    async def _cmd_ip(self, parts, stdin, as_root) -> RunResult:
+        """Only ``ip -o -f inet addr show dev X``, as the read-back asks it."""
+        if "dev" not in parts:
+            return RunResult(1, "", "ip: unsupported invocation")
+        dev = parts[parts.index("dev") + 1]
+        cidr = self.node.addresses.get(dev)
+        if not cidr:
+            return RunResult(0, "", "")
+        return RunResult(
+            0, f"2: {dev}    inet {cidr} brd 0.0.0.0 scope global {dev}\n", ""
+        )
+
+    async def _cmd_ping(self, parts, stdin, as_root) -> RunResult:
+        target = parts[-1]
+        if target in self.node.fabric_peers:
+            return RunResult(
+                0, "2 packets transmitted, 2 received, 0% packet loss\n", ""
+            )
+        return RunResult(1, "", f"From {target}: Destination Host Unreachable")
+
     async def _cmd_visudo(self, parts, stdin, as_root) -> RunResult:
         target = parts[-1]
         path = self.node.path(target, self.user.name)
@@ -1216,3 +1304,28 @@ def _split_operators(script: str) -> list[tuple[str, str]]:
         index += 1
     clauses.append((operator, "".join(current).strip()))
     return [(op, clause) for op, clause in clauses if clause]
+
+
+def _parse_netplan_dir(node: "SimulatedNode") -> tuple[dict[str, str], dict[str, int]]:
+    """Every ``ethernets:`` entry under ``/etc/netplan``: netdev → cidr, → mtu."""
+    cidrs: dict[str, str] = {}
+    mtus: dict[str, int] = {}
+    directory = node.path("/etc/netplan", "root")
+    if not directory.exists():
+        return cidrs, mtus
+    for file in sorted(directory.glob("*.yaml")):
+        current = ""
+        for raw in file.read_text().splitlines():
+            line = raw.rstrip()
+            if (
+                line.startswith("    ")
+                and not line.startswith("      ")
+                and line.endswith(":")
+            ):
+                current = line.strip()[:-1]
+            elif current and "addresses:" in line:
+                inside = line.split("[", 1)[1].split("]", 1)[0]
+                cidrs[current] = inside.split(",")[0].strip()
+            elif current and "mtu:" in line:
+                mtus[current] = int(line.split(":", 1)[1].strip())
+    return cidrs, mtus

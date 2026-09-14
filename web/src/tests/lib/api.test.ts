@@ -714,6 +714,27 @@ const CASES: Case[] = [
       host_key_fingerprint: "SHA256:abc",
     },
   },
+  { name: "fetchFabric", call: () => api.fetchFabric(), path: "/api/fabric", method: "GET" },
+  {
+    name: "fetchFabric with override",
+    call: () => api.fetchFabric(true),
+    path: "/api/fabric?override=true",
+    method: "GET",
+  },
+  {
+    name: "applyFabric",
+    call: () => api.applyFabric({ sudo_password: "s3cret" }),
+    path: "/api/fabric/apply",
+    method: "POST",
+    body: { sudo_password: "s3cret" },
+  },
+  {
+    name: "applyFabric with nothing to say",
+    call: () => api.applyFabric(),
+    path: "/api/fabric/apply",
+    method: "POST",
+    body: {},
+  },
 ];
 
 describe("api request surface", () => {

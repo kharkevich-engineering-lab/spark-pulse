@@ -64,6 +64,8 @@ describe("the dictionaries", () => {
     "recipes.tabMods",
     "eventStream.info",
     "nodes.colInterfaces",
+    "fabric.colMtu",
+    "fabric.colStatus",
     "nodes.colActions",
     // Placeholders that are literal examples — an address, a key path, an
     // image reference — not prose. Translating them would make them wrong.

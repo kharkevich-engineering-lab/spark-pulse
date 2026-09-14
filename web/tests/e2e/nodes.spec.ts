@@ -265,3 +265,15 @@ test("offers to install the agent on a peer, and checks the host key before any 
   await expectNoCrash(page);
 });
 
+test("shows the fabric card, and says which nodes no agent has reported", async ({ page }) => {
+  await gotoPage(page, "/cluster");
+  const card = page.getByTestId("fabric-card");
+  await expect(card).toBeVisible();
+  // In simulation the listeners are up but no agent is connected, so every
+  // node's ports are unknown and there is nothing to configure — said as
+  // such, never as an empty table.
+  await expect(card.getByRole("row", { name: /spark-02/ })).toContainText("No agent has reported this node");
+  await expect(card.getByRole("button", { name: "Configure fabric" })).toBeDisabled();
+  await expectNoCrash(page);
+});
+

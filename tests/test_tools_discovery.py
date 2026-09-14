@@ -799,3 +799,78 @@ class TestLocalFabricDetection:
             discovery.reset_mock_scenario()
         assert config.mode == FABRIC_DIRECT
         assert config.ib_hca_value == "rocep1s0f1,roceP2p1s0f1"
+
+
+class TestFabricFromFacts:
+    """The agent's facts are ``ibdev2netdev`` and ``ip addr`` without a login."""
+
+    def _facts(self, **overrides):
+        from spark_pulse.agent import agent_pb2 as pb
+
+        values = dict(
+            interfaces=[
+                pb.NetworkInterface(
+                    name="enp1s0f1np1",
+                    ip="192.168.177.11",
+                    prefix_length=24,
+                    mtu=9000,
+                    is_up=True,
+                    type="ethernet",
+                ),
+                pb.NetworkInterface(
+                    name="enP2p1s0f1np1",
+                    ip="192.168.178.11",
+                    prefix_length=24,
+                    mtu=9000,
+                    is_up=True,
+                    type="ethernet",
+                ),
+            ],
+            roce_links=[
+                pb.RoceLink(hca="rocep1s0f1", netdev="enp1s0f1np1", is_up=True),
+                pb.RoceLink(hca="roceP2p1s0f1", netdev="enP2p1s0f1np1", is_up=True),
+                pb.RoceLink(hca="rocep1s0f0", netdev="enp1s0f0np0", is_up=False),
+            ],
+        )
+        values.update(overrides)
+        return pb.NodeFacts(**values)
+
+    def test_a_pair_reads_the_same_as_the_shell_probe(self):
+        from spark_pulse.tools.discovery import fabric_from_facts, fabric_from_output
+
+        via_facts = fabric_from_facts(self._facts())
+        via_shell = fabric_from_output(
+            "rocep1s0f1 port 1 ==> enp1s0f1np1 (Up)\n"
+            "roceP2p1s0f1 port 1 ==> enP2p1s0f1np1 (Up)\n"
+            "rocep1s0f0 port 1 ==> enp1s0f0np0 (Down)\n"
+            "== addr\n"
+            "2: enp1s0f1np1    inet 192.168.177.11/24 brd 192.168.177.255 scope global enp1s0f1np1\n"
+            "3: enP2p1s0f1np1    inet 192.168.178.11/24 brd 192.168.178.255 scope global enP2p1s0f1np1\n"
+        )
+        assert via_facts == via_shell
+        assert via_facts.mode == "direct"
+        assert via_facts.ib_hca_value == "rocep1s0f1,roceP2p1s0f1"
+
+    def test_an_agent_without_the_field_answers_none(self):
+        from spark_pulse.tools.discovery import fabric_from_facts
+
+        assert fabric_from_facts(self._facts(roce_links=[])) is None
+
+    def test_a_missing_prefix_is_a_host_route_not_a_guess(self):
+        from spark_pulse.agent import agent_pb2 as pb
+        from spark_pulse.tools.discovery import fabric_from_facts
+
+        fabric = fabric_from_facts(
+            self._facts(
+                interfaces=[
+                    pb.NetworkInterface(
+                        name="enp1s0f1np1",
+                        ip="192.168.177.11",
+                        mtu=1500,
+                        is_up=True,
+                        type="ethernet",
+                    )
+                ]
+            )
+        )
+        assert fabric.addresses["enp1s0f1np1"] == "192.168.177.11/32"
