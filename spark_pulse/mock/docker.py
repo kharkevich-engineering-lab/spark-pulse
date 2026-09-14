@@ -552,6 +552,21 @@ class MockDockerService(DockerService):
             return pb.ProcessTermination(terminated=True)
         return pb.ProcessTermination(terminated=False, detail="no such process")
 
+    def install_bundle(self, tarball: bytes, dir_name: str, version: str) -> Any:
+        """Accept a self-update on a simulated node and report it staged.
+
+        No real filesystem or restart; the flow is exercised without one. A
+        test that wants a failure overrides this.
+        """
+        from spark_pulse.agent import agent_pb2 as pb
+
+        self.installed_bundle = (dir_name, version, len(tarball))
+        return pb.BundleInstalled(
+            version=version,
+            path=f"/home/spark/.local/share/spark-pulse/agent/{dir_name}",
+            restarting=True,
+        )
+
     def configure_fabric(
         self,
         interfaces: list[tuple[str, str, str, int]],

@@ -24,6 +24,7 @@ things about the shape are deliberate:
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from typing import Any
 
@@ -333,6 +334,33 @@ def _control_address() -> str:
     """The address peers dial: the control plane's own registry entry."""
     control = tools.node_registry.self_node()
     return str(getattr(control, "address", "") or "")
+
+
+@router.post("/{node_id}/update")
+async def update_node_agent(node_id: str):
+    """Update a node's agent over its own stream — no SSH.
+
+    The control plane sends the bundle it packages; the agent unpacks it,
+    repoints ``current``, replies, and restarts onto it. SSH is only for the
+    first bootstrap; a node that already runs an agent updates this way. The
+    control node is refused: it runs its agent from the control-plane process
+    and moves version with the package.
+    """
+    node = tools.node_registry.get_node(node_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail=f"No such node: {node_id}")
+    if node.is_control_plane:
+        raise HTTPException(
+            status_code=400,
+            detail="the control node runs its agent from the control-plane "
+            "process; upgrade the package to move its version",
+        )
+    if agent_runtime.current() is None:
+        raise HTTPException(
+            status_code=503, detail="the agent transport is not running"
+        )
+    report = await asyncio.to_thread(tools.agent_update.update_node, node)
+    return report
 
 
 @router.get("/{node_id}/doctor")

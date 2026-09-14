@@ -424,6 +424,22 @@ class NodeOperations:
 
     # ── Processes ────────────────────────────────────────────────────────
 
+    async def install_bundle(
+        self, tarball: bytes, dir_name: str, version: str
+    ) -> pb.BundleInstalled:
+        """Update this node's own agent over the stream, no SSH.
+
+        The agent unpacks ``tarball`` into ``dir_name`` beside the running
+        binary, repoints ``current``, replies, then restarts onto it — so this
+        call returns just before a brief disconnect and reconnect.
+        """
+        command = self.hub.new_command(
+            install_bundle=pb.InstallBundle(
+                tarball=tarball, dir_name=dir_name, version=version
+            )
+        )
+        return await self._call(command, "bundle_installed")
+
     async def configure_fabric(
         self,
         interfaces: list[tuple[str, str, str, int]],

@@ -24,6 +24,7 @@ import os
 # ``reconciler``, which is a thread over the records and reaches every node
 # through the switch, for the same reason; and ``node_stats``, which asks each
 # node's own agent through it.  Everything else must exist in both packages.
+from spark_pulse.tools import agent_update as agent_update
 from spark_pulse.tools import atomic_json as atomic_json
 from spark_pulse.tools import custom_files as custom_files
 from spark_pulse.tools import custom_recipes as custom_recipes

@@ -339,6 +339,10 @@ class NodeService(Protocol):
         """Apply this node's ConnectX fabric config through its agent."""
         ...
 
+    def install_bundle(self, tarball: bytes, dir_name: str, version: str) -> Any:
+        """Update this node's agent over its stream (no SSH)."""
+        ...
+
 
 #: The method names the three implementations must agree on.
 NODE_SERVICE_METHODS: tuple[str, ...] = (
@@ -377,6 +381,7 @@ NODE_MACHINE_METHODS: tuple[str, ...] = (
     "remove_snapshot",
     "terminate_process",
     "configure_fabric",
+    "install_bundle",
 )
 
 

@@ -224,6 +224,8 @@ async def lifespan(app: FastAPI):
 
     # Start OCI background update checker
     start_background_updater()
+    if not is_simulation():
+        tools.agent_update.start_updater()
 
     # Recover deployment state from container labels: a restart loses nothing
     # the containers still know.
@@ -282,6 +284,10 @@ async def lifespan(app: FastAPI):
 
     # Cleanup on shutdown
     stop_background_updater()
+    try:
+        tools.agent_update.stop_updater()
+    except Exception:  # pragma: no cover - best effort
+        pass
 
     try:
         await agent_runtime.stop_runtime(getattr(app.state, "control_plane", None))

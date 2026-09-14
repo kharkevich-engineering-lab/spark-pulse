@@ -458,7 +458,9 @@
       "sudoNote": "Seulement si une réparation demande root, comme ajouter le groupe docker. Conservé nulle part.",
       "remedyLabel": "Remède",
       "close": "Fermer"
-    }
+    },
+    "updating": "Mise à jour…",
+    "updateFailed": "Échec de la mise à jour"
   },
   "recipeForm": {
     "name": "Nom de la recette",
@@ -624,7 +626,9 @@
     "unsaved": "Modifications non enregistrées sur cette page.",
     "webuiPort": "Port de l'interface web",
     "workerThreads": "Fils de travail",
-    "workerThreadsHelp": "Le travail bloquant est déporté ici plutôt qu'exécuté sur la boucle d'événements."
+    "workerThreadsHelp": "Le travail bloquant est déporté ici plutôt qu'exécuté sur la boucle d'événements.",
+    "agentAutoUpdate": "Mettre à jour les agents automatiquement",
+    "agentAutoUpdateHelp": "Garder l'agent de chaque nœud sur la version livrée par ce plan de contrôle. Un pair exécutant un binaire plus ancien est mis à jour via son propre flux, sans SSH. Activé par défaut."
   },
   "models": {
     "title": "Modèles",

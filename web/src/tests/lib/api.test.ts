@@ -734,6 +734,12 @@ const CASES: Case[] = [
     method: "POST",
     body: {},
   },
+  {
+    name: "updateNodeAgent",
+    call: () => api.updateNodeAgent("node-1"),
+    path: "/api/nodes/node-1/update",
+    method: "POST",
+  },
   { name: "fetchFabric", call: () => api.fetchFabric(), path: "/api/fabric", method: "GET" },
   {
     name: "fetchFabric with override",

@@ -458,7 +458,9 @@
       "sudoNote": "Only if a repair needs root, such as adding the docker group. Kept nowhere.",
       "remedyLabel": "Remedy",
       "close": "Close"
-    }
+    },
+    "updating": "Updating…",
+    "updateFailed": "Update failed"
   },
   "recipeForm": {
     "name": "Recipe Name",
@@ -624,7 +626,9 @@
     "unsaved": "Unsaved changes on this page.",
     "webuiPort": "Web UI port",
     "workerThreads": "Worker threads",
-    "workerThreadsHelp": "Blocking work is offloaded here rather than run on the event loop."
+    "workerThreadsHelp": "Blocking work is offloaded here rather than run on the event loop.",
+    "agentAutoUpdate": "Automatically update agents",
+    "agentAutoUpdateHelp": "Keep each node's agent on the version this control plane ships. A peer running an older binary is updated over its own stream, no SSH. On by default."
   },
   "models": {
     "title": "Models",
