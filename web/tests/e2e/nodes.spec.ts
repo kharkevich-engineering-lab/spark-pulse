@@ -285,7 +285,10 @@ test("diagnoses a node from its row", async ({ page }) => {
   await expect(dialog).toBeVisible();
   // In simulation the node has no live agent, so the doctor reports rather
   // than repairs; either way the dialog resolves to a report or a reason.
-  await expect(dialog.getByTestId("doctor-findings").or(dialog.getByRole("alert"))).toBeVisible();
+  // In simulation the seeded peer is not reachable over SSH; diagnose falls
+  // back to the agent channel and reports the host checks as unknown, which
+  // can take the SSH connect timeout to resolve.
+  await expect(dialog.getByTestId("doctor-findings").or(dialog.getByRole("alert"))).toBeVisible({ timeout: 30_000 });
   // The header X and the footer button both read "Close"; the footer is last.
   await dialog.getByRole("button", { name: "Close" }).last().click();
   await expect(dialog).toBeHidden();
