@@ -1242,12 +1242,30 @@ async def _start_unit(
     await _run_scoped(
         session, runner, paths, f"{paths.systemctl} daemon-reload", why="reload systemd"
     )
+    enabled = await _run_scoped(
+        session,
+        runner,
+        paths,
+        f"{paths.systemctl} enable {paths.unit_name}",
+        why="enable the agent to start at boot",
+        timeout=60,
+    )
+    if not enabled.ok:
+        raise BootstrapError(
+            f"enabling {paths.unit_name} failed: "
+            f"{(enabled.stderr or enabled.stdout).strip()[:400]}"
+        )
+    # `restart`, not `enable --now`: on a reinstall over a *running* agent,
+    # `enable --now` is a no-op and the old binary keeps running — the newly
+    # unpacked bundle never takes effect until something restarts the unit.
+    # `restart` starts it if stopped and replaces it if running, so a reinstall
+    # actually swaps the binary.
     result = await _run_scoped(
         session,
         runner,
         paths,
-        f"{paths.systemctl} enable --now {paths.unit_name}",
-        why="enable and start the agent",
+        f"{paths.systemctl} restart {paths.unit_name}",
+        why="start (or restart) the agent onto the installed bundle",
         timeout=60,
     )
     if not result.ok:
