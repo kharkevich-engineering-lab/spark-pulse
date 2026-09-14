@@ -244,7 +244,13 @@ export default function FabricCard() {
   const planFor = (id: string) => plan?.nodes.find((n) => n.node_id === id);
   const proposed = plan?.proposed.length ?? 0;
   const modeText =
-    plan?.mode === "direct" ? t("fabric.modeDirect") : plan?.mode === "mesh" ? t("fabric.modeMesh") : t("fabric.modeNone");
+    plan?.mode === "direct"
+      ? t("fabric.modeDirect")
+      : plan?.mode === "dual"
+        ? t("fabric.modeDual")
+        : plan?.mode === "mesh"
+          ? t("fabric.modeMesh")
+          : t("fabric.modeNone");
   const statusLabel: Record<FabricNodeStatus, string> = {
     configured: t("fabric.statusConfigured"),
     proposed: t("fabric.statusProposed"),
@@ -295,6 +301,15 @@ export default function FabricCard() {
       {data && data.transport && (
         <>
           <p className="mb-3 text-sm text-text-muted">{modeText}</p>
+          {plan && (plan.advice?.length ?? 0) > 0 && (
+            <ul className="mb-3 space-y-1" data-testid="fabric-advice">
+              {plan.advice!.map((a, i) => (
+                <li key={i} role="note" className="rounded-lg border border-border bg-surface-hover p-2 text-sm text-text-muted">
+                  {a}
+                </li>
+              ))}
+            </ul>
+          )}
           {plan && plan.problems.length > 0 && (
             <ul className="mb-3 space-y-1" data-testid="fabric-problems">
               {plan.problems.map((p, i) => (
@@ -321,7 +336,17 @@ export default function FabricCard() {
                   const up = upPorts(node);
                   return (
                     <tr key={node.node_id} className="border-b border-border/50 align-top last:border-0">
-                      <td className="py-2.5 pr-4 font-medium">{node.name}</td>
+                      <td className="py-2.5 pr-4 font-medium">
+                        {node.name}
+                        {node.reported && (
+                          <div className="mt-0.5 text-xs font-normal text-text-muted">
+                            {node.pinned?.fabric_mode ? t("fabric.pinned") : t("fabric.notPinned")}
+                            {node.wired_management_up === false && plan?.mode === "mesh" && (
+                              <span className="text-warning"> · {t("fabric.noWired")}</span>
+                            )}
+                          </div>
+                        )}
+                      </td>
                       <td className="py-2.5 pr-4 font-mono text-xs">
                         {!node.reported
                           ? <span className="font-sans text-text-muted">{t("fabric.notReported")}</span>

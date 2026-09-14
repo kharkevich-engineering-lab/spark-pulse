@@ -217,12 +217,53 @@ class TestTheMesh:
         assert first["enp1s0f0np0"] == (("spark2", "192.168.177.12"),)
         assert first["enp1s0f1np1"] == (("spark3", "192.168.187.13"),)
 
-    def test_two_cables_on_two_nodes_is_not_a_mesh(self):
+    def test_two_cables_on_two_nodes_is_the_dual_pair_not_the_mesh(self):
+        """NVIDIA allows both cables between two Sparks; upstream would call
+        four ports up a mesh and hand the pair the mesh's NCCL settings."""
         plan = plan_fabric(
             [node("1", "spark1", TWO_CABLES), node("2", "spark2", TWO_CABLES)]
         )
-        assert plan.mode == "mesh"
-        assert any("three-node mesh" in p and "2 node(s)" in p for p in plan.problems)
+        assert plan.mode == "dual"
+        assert plan.problems == ()
+        cidrs = {n.name: [a.cidr for a in n.assignments] for n in plan.nodes}
+        # One subnet pair per cable, the same on both nodes, hosts .11/.12.
+        assert cidrs["spark1"] == [
+            "192.168.177.11/24",
+            "192.168.178.11/24",
+            "192.168.187.11/24",
+            "192.168.188.11/24",
+        ]
+        assert cidrs["spark2"] == [
+            "192.168.177.12/24",
+            "192.168.178.12/24",
+            "192.168.187.12/24",
+            "192.168.188.12/24",
+        ]
+        for a in plan.nodes[0].assignments:
+            assert len(a.peers) == 1 and a.peers[0][0] == "spark2"
+        assert any("second cable" in a.lower() for a in plan.advice)
+        assert not any("port 0" in a for a in plan.advice), "no ring rule for a pair"
+
+    def test_the_mesh_says_how_to_cable_it_and_what_it_coordinates_over(self):
+        plan = plan_fabric([node(str(i), f"spark{i}", TWO_CABLES) for i in (1, 2, 3)])
+        assert any("node 1 port 0 to node 2 port 1" in a for a in plan.advice)
+        assert any("enP7s7" in a for a in plan.advice)
+        assert plan.problems == (), "unknown link state is not a problem"
+
+    def test_a_mesh_node_without_the_10g_link_is_named(self):
+        nodes = [node(str(i), f"spark{i}", TWO_CABLES) for i in (1, 2, 3)]
+        from dataclasses import replace
+
+        nodes[1] = replace(nodes[1], wired_management_up=False)
+        nodes[2] = replace(nodes[2], wired_management_up=True)
+        plan = plan_fabric(nodes)
+        assert any("spark2: the 10G RJ-45 port" in p for p in plan.problems)
+        assert not any("spark3" in p for p in plan.problems)
+
+    def test_a_pair_gets_the_second_cable_advice_and_no_ring_rule(self):
+        plan = plan_fabric([node("a", "spark"), node("b", "spark2")])
+        assert len(plan.advice) == 1 and "second cable" in plan.advice[0].lower()
+        assert plan.to_dict()["advice"] == list(plan.advice)
 
 
 class TestRefusals:

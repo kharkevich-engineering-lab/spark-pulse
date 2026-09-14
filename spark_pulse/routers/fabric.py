@@ -29,16 +29,30 @@ def _facts_for(runtime: Any, node: Any) -> Any | None:
     return connection.facts if connection is not None else None
 
 
+#: The wired 10G port a mesh coordinates over, by the name a Spark gives it.
+WIRED_MANAGEMENT = "enP7s7"
+
+
 def _node_fabrics(runtime: Any | None) -> list[Any]:
+    nodes = tools.node_registry.list_nodes()
     fabrics = []
-    for node in tools.node_registry.list_nodes():
+    for node in nodes:
         facts = _facts_for(runtime, node) if runtime is not None else None
-        fabric = tools.discovery.fabric_from_facts(facts) if facts is not None else None
+        fabric = (
+            tools.discovery.fabric_from_facts(facts, node_count=len(nodes))
+            if facts is not None
+            else None
+        )
         mtus = (
             {i.name: int(i.mtu) for i in facts.interfaces if i.name}
             if facts is not None
             else {}
         )
+        wired: bool | None = None
+        if facts is not None:
+            for interface in facts.interfaces:
+                if interface.name == WIRED_MANAGEMENT:
+                    wired = bool(interface.is_up)
         fabrics.append(
             tools.fabric_plan.NodeFabric(
                 node_id=node.id,
@@ -46,9 +60,31 @@ def _node_fabrics(runtime: Any | None) -> list[Any]:
                 is_control_plane=bool(node.is_control_plane),
                 fabric=fabric,
                 mtus=mtus,
+                wired_management_up=wired,
             )
         )
     return fabrics
+
+
+def _pin_record(node_plan: Any, mode: str) -> dict[str, Any]:
+    """Write what a deploy pins NCCL with onto the node's registry record.
+
+    A deploy takes ``ethernet_interface``, ``infiniband_interfaces`` and
+    ``fabric_mode`` from the registry — ``register_self`` fills them for the
+    control node and nothing filled them for a peer — so a peer whose fabric
+    was verified here still deployed unpinned. This is the missing write.
+    """
+    assignments = list(node_plan.assignments)
+    if not assignments:
+        return {}
+    lowercase = [a for a in assignments if "P" not in a.netdev]
+    changes = {
+        "ethernet_interface": (lowercase or assignments)[0].netdev,
+        "infiniband_interfaces": [a.hca for a in assignments],
+        "fabric_mode": mode,
+    }
+    tools.node_registry.update_node(node_plan.node_id, **changes)
+    return changes
 
 
 def _current(fabrics: list[Any]) -> list[dict[str, Any]]:
@@ -80,9 +116,23 @@ def _current(fabrics: list[Any]) -> list[dict[str, Any]]:
                 "ib_hca": fabric.ib_hca_value if fabric else "",
                 "errors": list(fabric.errors) if fabric else [],
                 "warnings": list(fabric.warnings) if fabric else [],
+                "wired_management_up": entry.wired_management_up,
+                "pinned": _pinned(entry.node_id),
             }
         )
     return rows
+
+
+def _pinned(node_id: str) -> dict[str, Any]:
+    """What the registry would pin a deploy on this node with, right now."""
+    node = tools.node_registry.get_node(node_id)
+    if node is None:
+        return {}
+    return {
+        "ethernet_interface": node.ethernet_interface,
+        "infiniband_interfaces": list(node.infiniband_interfaces),
+        "fabric_mode": node.fabric_mode,
+    }
 
 
 @router.get("")
@@ -116,7 +166,13 @@ async def apply_fabric(body: dict[str, Any] = Body(default={})):
     sudo_password = str(body.get("sudo_password") or "") or None
     plan = tools.fabric_plan.plan_fabric(_node_fabrics(runtime), override=override)
     targets = [n for n in plan.proposed if not wanted or n.node_id in wanted]
-    if not targets:
+    configured = [
+        n
+        for n in plan.nodes
+        if n.status == tools.fabric_plan.STATUS_CONFIGURED
+        and (not wanted or n.node_id in wanted)
+    ]
+    if not targets and not configured:
         raise HTTPException(
             status_code=400,
             detail="nothing to apply: no node is proposed a change"
@@ -154,5 +210,17 @@ async def apply_fabric(body: dict[str, Any] = Body(default={})):
             connector=onboarding.connector_factory(),
             sudo_password_prompt=sudo,
         )
-        reports.append(report.to_dict())
-    return {"mode": plan.mode, "reports": reports}
+        result = report.to_dict()
+        if report.verified:
+            result["pinned"] = _pin_record(node_plan, plan.mode)
+        reports.append(result)
+
+    # A node already configured by somebody's hand has a fabric a deploy can
+    # use only if the registry says so; pin those too, without logging in.
+    pinned = {}
+    for node_plan in plan.nodes:
+        if node_plan.status == tools.fabric_plan.STATUS_CONFIGURED and (
+            not wanted or node_plan.node_id in wanted
+        ):
+            pinned[node_plan.node_id] = _pin_record(node_plan, plan.mode)
+    return {"mode": plan.mode, "reports": reports, "pinned": pinned}

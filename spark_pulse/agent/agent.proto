@@ -602,6 +602,10 @@ message NodeFacts {
   // configuration from this and `interfaces`, so the pre-flight no longer
   // has to log in to ask.
   repeated RoceLink roce_links = 14;
+  // SHA-256 of the running binary, computed once at start. What the control
+  // plane compares against the binary it packages to say "current": a
+  // version string is baked at build time and can lie, bytes cannot.
+  string binary_sha256 = 15;
 }
 
 message RoceLink {

@@ -22,7 +22,11 @@ CONTROL_ID = "c0ntr01plane00000000000000000001"
 
 
 def facts(
-    addresses: dict[str, str] | None = None, mtu: int = 1500, cabled: bool = True
+    addresses: dict[str, str] | None = None,
+    mtu: int = 1500,
+    cabled: bool = True,
+    both_cables: bool = False,
+    wired_up: bool | None = None,
 ) -> pb.NodeFacts:
     addresses = addresses or {}
 
@@ -37,24 +41,33 @@ def facts(
             type="ethernet",
         )
 
+    interfaces = [
+        interface("enp1s0f0np0"),
+        interface("enp1s0f1np1"),
+        interface("enP2p1s0f0np0"),
+        interface("enP2p1s0f1np1"),
+        pb.NetworkInterface(
+            name="wlP9s9",
+            ip="10.0.0.11",
+            prefix_length=22,
+            mtu=1500,
+            is_up=True,
+            type="other",
+        ),
+    ]
+    if wired_up is not None:
+        interfaces.append(
+            pb.NetworkInterface(
+                name="enP7s7", mtu=1500, is_up=wired_up, type="ethernet"
+            )
+        )
     return pb.NodeFacts(
         hostname="spark",
-        interfaces=[
-            interface("enp1s0f1np1"),
-            interface("enP2p1s0f1np1"),
-            pb.NetworkInterface(
-                name="wlP9s9",
-                ip="10.0.0.11",
-                prefix_length=22,
-                mtu=1500,
-                is_up=True,
-                type="other",
-            ),
-        ],
+        interfaces=interfaces,
         roce_links=[
-            pb.RoceLink(hca="rocep1s0f0", netdev="enp1s0f0np0", is_up=False),
+            pb.RoceLink(hca="rocep1s0f0", netdev="enp1s0f0np0", is_up=both_cables),
             pb.RoceLink(hca="rocep1s0f1", netdev="enp1s0f1np1", is_up=cabled),
-            pb.RoceLink(hca="roceP2p1s0f0", netdev="enP2p1s0f0np0", is_up=False),
+            pb.RoceLink(hca="roceP2p1s0f0", netdev="enP2p1s0f0np0", is_up=both_cables),
             pb.RoceLink(hca="roceP2p1s0f1", netdev="enP2p1s0f1np1", is_up=cabled),
         ],
     )
@@ -212,3 +225,88 @@ class TestApply:
         body = (await client.post("/api/fabric/apply", json={})).json()
         assert body["reports"][0]["applied"] is False
         assert "no SSH user" in body["reports"][0]["errors"][0]
+
+
+class TestShapesAndPinning:
+    async def test_both_cables_on_the_seeded_pair_is_the_dual_shape(
+        self, client, running
+    ):
+        """The registry holds two nodes, so four ports up is both cables."""
+        connect(running, PEER_ID, facts(both_cables=True))
+        body = (await client.get("/api/fabric")).json()
+        peer = next(n for n in body["nodes"] if n["node_id"] == PEER_ID)
+        assert peer["mode"] == "dual"
+        assert peer["ib_hca"] == "rocep1s0f0,rocep1s0f1,roceP2p1s0f0,roceP2p1s0f1"
+        assert peer["wired_management_up"] is None
+        assert peer["pinned"] == {
+            "ethernet_interface": "eth0",
+            "infiniband_interfaces": ["ib0", "ib1"],
+            "fabric_mode": "",
+        }
+
+    async def test_the_wired_management_link_is_reported(self, client, running):
+        connect(running, PEER_ID, facts(wired_up=False))
+        body = (await client.get("/api/fabric")).json()
+        peer = next(n for n in body["nodes"] if n["node_id"] == PEER_ID)
+        assert peer["wired_management_up"] is False
+
+    async def test_a_verified_apply_pins_the_registry_record(
+        self, client, running, monkeypatch
+    ):
+        connect(running, PEER_ID, facts())
+
+        async def fake_apply(server, access, plan, **_):
+            return fabric_apply.FabricApplyReport(
+                node_id=plan.node_id, name=plan.name, applied=True, verified=True
+            )
+
+        monkeypatch.setattr(fabric_apply, "apply_node_plan", fake_apply)
+        body = (await client.post("/api/fabric/apply", json={})).json()
+        assert body["reports"][0]["pinned"] == {
+            "ethernet_interface": "enp1s0f1np1",
+            "infiniband_interfaces": ["rocep1s0f1", "roceP2p1s0f1"],
+            "fabric_mode": "direct",
+        }
+        node = mock_registry.get_node(PEER_ID)
+        assert node.ethernet_interface == "enp1s0f1np1"
+        assert list(node.infiniband_interfaces) == ["rocep1s0f1", "roceP2p1s0f1"]
+        assert node.fabric_mode == "direct"
+
+    async def test_an_unverified_apply_pins_nothing(self, client, running, monkeypatch):
+        connect(running, PEER_ID, facts())
+
+        async def fake_apply(server, access, plan, **_):
+            return fabric_apply.FabricApplyReport(
+                node_id=plan.node_id, name=plan.name, applied=True, verified=False
+            )
+
+        monkeypatch.setattr(fabric_apply, "apply_node_plan", fake_apply)
+        body = (await client.post("/api/fabric/apply", json={})).json()
+        assert "pinned" not in body["reports"][0]
+        assert mock_registry.get_node(PEER_ID).fabric_mode == ""
+
+    async def test_a_configured_node_is_pinned_without_logging_in(
+        self, client, running, monkeypatch
+    ):
+        connect(
+            running,
+            PEER_ID,
+            facts(
+                {
+                    "enp1s0f1np1": "192.168.177.12/24",
+                    "enP2p1s0f1np1": "192.168.178.12/24",
+                },
+                mtu=9000,
+            ),
+        )
+
+        async def never(*_, **__):  # pragma: no cover
+            raise AssertionError("a configured node needs no login")
+
+        monkeypatch.setattr(fabric_apply, "apply_node_plan", never)
+        response = await client.post("/api/fabric/apply", json={})
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["reports"] == []
+        assert body["pinned"][PEER_ID]["fabric_mode"] == "direct"
+        assert mock_registry.get_node(PEER_ID).ethernet_interface == "enp1s0f1np1"

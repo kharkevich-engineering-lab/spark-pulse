@@ -81,6 +81,39 @@ class MissingAgentBinary(RuntimeError):
     """
 
 
+def packaged_digests() -> dict[str, str]:
+    """SHA-256 of every agent binary this control plane ships, by target.
+
+    What a node's reported ``binary_sha256`` is compared against to say it
+    runs what we would install. Read once per process: the binaries are
+    package data and do not change under a running control plane.
+    """
+    global _DIGESTS
+    if _DIGESTS is None:
+        found: dict[str, str] = {}
+        directory = binary_dir()
+        if directory.is_dir():
+            for path in sorted(directory.glob("spark-pulse-agent-*")):
+                if path.is_file():
+                    found[path.name.removeprefix("spark-pulse-agent-")] = (
+                        hashlib.sha256(path.read_bytes()).hexdigest()
+                    )
+        # The control node's own agent runs the host binary, which on a
+        # developer's machine is a cargo build rather than package data. It is
+        # what this control plane runs, so it counts as what it ships.
+        try:
+            host = host_binary()
+        except MissingAgentBinary:
+            host = None
+        if host is not None and host.is_file():
+            found.setdefault("host", hashlib.sha256(host.read_bytes()).hexdigest())
+        _DIGESTS = found
+    return dict(_DIGESTS)
+
+
+_DIGESTS: dict[str, str] | None = None
+
+
 def agent_binary(target: str = DEFAULT_TARGET) -> Path:
     """The built agent for ``target``, or a refusal naming how to build it."""
     path = binary_dir() / f"spark-pulse-agent-{target}"

@@ -431,8 +431,12 @@
       "concessions": "Went ahead without",
       "privileged": "Privileged calls: {count}",
       "later": "Later",
-      "close": "Done"
-    }
+      "close": "Done",
+      "update": "Update agent",
+      "updateHint": "This node runs agent {version}; this control plane ships {current}. Reinstalling keeps the node's identity and only replaces the binary. The control plane's key is already on the node, so no password is needed."
+    },
+    "agentVersion": "agent {version}",
+    "agentStale": "update available"
   },
   "recipeForm": {
     "name": "Recipe Name",
@@ -793,6 +797,10 @@
     "unreachable": "no answer",
     "steps": "What happened",
     "cancel": "Cancel",
-    "close": "Done"
+    "close": "Done",
+    "modeDual": "Both cables between two nodes: one subnet pair per cable, no mesh settings.",
+    "pinned": "Pinned for deploys",
+    "notPinned": "Not pinned for deploys",
+    "noWired": "10G port down"
   }
 }
