@@ -65,7 +65,7 @@ RoCE devices are recorded as they appear in `/sys/class/infiniband` — `rocep1s
 
 ### Configuring it
 
-A Spark arrives with its 100G ports under NetworkManager's generic DHCP profiles, so a cabled port sits with no address and the pre-flight refuses a multi-node deploy on it. The card plans every node at once, from `NETWORKING.md`'s own scheme: a static `/24` per cable (`192.168.177.0/24` on the lowercase twin, `178` on its capital-P twin; `187/188` and `197/198` for the mesh's other two cables), hosts `.11`, `.12`, `.13` in registry order, MTU 9000, IPv6 link-local off. Each node's `/etc/netplan/40-cx7.yaml` is shown before anything is written.
+A Spark arrives with its ConnectX ports under NetworkManager's generic DHCP profiles, so a cabled port sits with no address and the pre-flight refuses a multi-node deploy on it. The card plans every node at once, from `NETWORKING.md`'s own scheme: a static `/24` per cable (`192.168.177.0/24` on the lowercase twin, `178` on its capital-P twin; `187/188` and `197/198` for the mesh's other two cables), hosts `.11`, `.12`, `.13` in registry order, MTU 9000, IPv6 link-local off. Each node's `/etc/netplan/40-cx7.yaml` is shown before anything is written.
 
 A node whose fabric is already valid — an address on the lowercase twin, the twins on different subnets, jumbo frames — is left alone and reported as configured, whatever scheme it follows; **Re-address nodes that are already configured** is the one way to overrule that, for a cluster half on one scheme and half on another.
 

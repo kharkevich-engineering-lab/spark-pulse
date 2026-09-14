@@ -60,7 +60,7 @@ export default function ClusterPage() {
       {/* The node registry — what used to be two free-text IP boxes. */}
       <NodeRegistry />
 
-      {/* Every node's 100G ports as its agent reports them, and the netplan
+      {/* Every node's ConnectX ports as its agent reports them, and the netplan
           file each should hold. Configuring them is done from here. */}
       <FabricCard />
 
