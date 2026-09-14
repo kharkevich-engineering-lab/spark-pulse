@@ -156,7 +156,9 @@ async def test_a_password_install_leaves_a_connected_node_and_no_secret(
     # The registry now says what the hub says: healthy, with the SSH user kept.
     assert report["node"]["state"] == "healthy"
     assert report["node"]["ssh_user"] == USER
-    assert report["node"]["agent"] == {"enrolled": True, "connected": True}
+    assert report["node"]["agent"]["enrolled"] is True
+    assert report["node"]["agent"]["connected"] is True
+    assert report["node"]["agent"]["current"] is True, "it runs the binary we ship"
     listed = (await client.get("/api/nodes")).json()
     peer = next(n for n in listed if n["id"] == PEER_ID)
     assert peer["state"] == "healthy"
@@ -466,10 +468,115 @@ async def test_a_node_that_went_away_between_the_two_calls_is_a_502(
 async def test_the_listing_reads_agent_state_from_the_hub(client, running):
     """Without an agent the seeded peer is not enrolled, and says so."""
     listed = {n["id"]: n for n in (await client.get("/api/nodes")).json()}
-    assert listed[PEER_ID]["agent"] == {"enrolled": False, "connected": False}
+    assert listed[PEER_ID]["agent"]["enrolled"] is False
+    assert listed[PEER_ID]["agent"]["connected"] is False
     assert listed[PEER_ID]["state"] == "unknown", "what the registry last wrote"
 
 
 async def test_the_listing_without_a_transport_reports_no_agent(client):
     listed = (await client.get("/api/nodes")).json()
-    assert all(n["agent"] == {"enrolled": False, "connected": False} for n in listed)
+    assert all(
+        not n["agent"]["enrolled"] and not n["agent"]["connected"] for n in listed
+    )
+
+
+class TestAgentCurrency:
+    """Whether a node runs what this control plane ships."""
+
+    async def test_without_a_connection_nothing_is_claimed(self, client, running):
+        listed = {n["id"]: n for n in (await client.get("/api/nodes")).json()}
+        agent = listed[PEER_ID]["agent"]
+        assert agent["version"] == ""
+        assert agent["current"] is None
+        assert agent["control_plane_version"]
+
+    async def test_a_digest_we_ship_is_current_whatever_the_version_says(
+        self, client, running, monkeypatch
+    ):
+        from spark_pulse.agent import agent_pb2 as pb
+        from spark_pulse.agent import bundle
+        from spark_pulse.agent.hub import AgentConnection
+
+        monkeypatch.setattr(
+            bundle, "packaged_digests", lambda: {"aarch64-unknown-linux-musl": "abc123"}
+        )
+        _enrol(running, PEER_ID)
+        running.hub.attach(
+            AgentConnection(
+                PEER_ID,
+                agent_version="1.2.3",
+                facts=pb.NodeFacts(agent_version="1.2.3", binary_sha256="abc123"),
+            )
+        )
+        agent = {n["id"]: n for n in (await client.get("/api/nodes")).json()}[PEER_ID][
+            "agent"
+        ]
+        assert agent == {
+            "enrolled": True,
+            "connected": True,
+            "version": "1.2.3",
+            "current": True,
+            "control_plane_version": agent["control_plane_version"],
+        }
+
+    async def test_a_digest_we_do_not_ship_is_stale(self, client, running, monkeypatch):
+        from spark_pulse.agent import agent_pb2 as pb
+        from spark_pulse.agent import bundle
+        from spark_pulse.agent.hub import AgentConnection
+        from spark_pulse.version import __version__
+
+        monkeypatch.setattr(
+            bundle, "packaged_digests", lambda: {"aarch64-unknown-linux-musl": "abc123"}
+        )
+        _enrol(running, PEER_ID)
+        running.hub.attach(
+            AgentConnection(
+                PEER_ID,
+                agent_version=__version__,
+                facts=pb.NodeFacts(agent_version=__version__, binary_sha256="0ther"),
+            )
+        )
+        agent = {n["id"]: n for n in (await client.get("/api/nodes")).json()}[PEER_ID][
+            "agent"
+        ]
+        assert agent["current"] is False, "the version matches and the bytes do not"
+
+    async def test_an_agent_without_a_digest_is_judged_by_version(
+        self, client, running
+    ):
+        from spark_pulse.agent import agent_pb2 as pb
+        from spark_pulse.agent.hub import AgentConnection
+        from spark_pulse.version import __version__
+
+        _enrol(running, PEER_ID)
+        running.hub.attach(
+            AgentConnection(
+                PEER_ID,
+                agent_version="0.9.0",
+                facts=pb.NodeFacts(agent_version="0.9.0"),
+            )
+        )
+        agent = {n["id"]: n for n in (await client.get("/api/nodes")).json()}[PEER_ID][
+            "agent"
+        ]
+        assert agent["current"] is False
+        running.hub.attach(
+            AgentConnection(
+                PEER_ID,
+                agent_version=__version__,
+                facts=pb.NodeFacts(agent_version=__version__),
+            )
+        )
+        agent = {n["id"]: n for n in (await client.get("/api/nodes")).json()}[PEER_ID][
+            "agent"
+        ]
+        assert agent["current"] is True
+
+
+def _enrol(runtime, node_id: str) -> None:
+    """Put an accepted row in the ledger so the node counts as enrolled."""
+    import time
+
+    runtime.server.ledger.record_issue(
+        node_id, public_key_fingerprint="fp", not_after=time.time() + 3600
+    )

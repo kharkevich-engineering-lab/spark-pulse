@@ -239,4 +239,37 @@ describe("FabricCard", () => {
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(screen.queryByRole("dialog")).toBeNull();
   });
+
+  it("names the dual-cable pair, shows the plan's advice, and whether each node is pinned", async () => {
+    vi.mocked(fetchFabric).mockResolvedValue({
+      transport: true,
+      nodes: [
+        node({ mode: "dual", pinned: { ethernet_interface: "enp1s0f0np0", infiniband_interfaces: ["rocep1s0f0"], fabric_mode: "dual" } }),
+        node({ node_id: "b", name: "gx10-b90f", is_control_plane: false, mode: "dual", pinned: { ethernet_interface: "", infiniband_interfaces: [], fabric_mode: "" } }),
+      ],
+      plan: {
+        ...PAIR.plan,
+        mode: "dual",
+        advice: ["One cable already carries both RoCE twins of its port (200G). Plug the second in or not — either shape is planned."],
+      },
+    });
+    render(<FabricCard />);
+    expect(await screen.findByText(/Both cables between two nodes/)).toBeInTheDocument();
+    expect(screen.getByTestId("fabric-advice")).toHaveTextContent("either shape is planned");
+    expect(screen.getByRole("row", { name: /gx10-ced2/ })).toHaveTextContent("Pinned for deploys");
+    expect(screen.getByRole("row", { name: /gx10-b90f/ })).toHaveTextContent("Not pinned for deploys");
+  });
+
+  it("flags a mesh node whose 10G port has no link", async () => {
+    vi.mocked(fetchFabric).mockResolvedValue({
+      transport: true,
+      nodes: [node({ mode: "mesh", wired_management_up: false })],
+      plan: { ...PAIR.plan, mode: "mesh", nodes: [plan()], proposed: ["a"] },
+    });
+    render(<FabricCard />);
+    const row = await screen.findByRole("row", { name: /gx10-ced2/ });
+    expect(row).toHaveTextContent("10G port down");
+    expect(screen.getByText(/switchless three-node mesh/)).toBeInTheDocument();
+  });
 });
+

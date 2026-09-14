@@ -983,6 +983,12 @@ export interface ClusterNode {
 export interface NodeAgentState {
   enrolled: boolean;
   connected: boolean;
+  /** What the node's agent reports itself as. Empty without a connection. */
+  version?: string;
+  /** Whether it runs the binary this control plane ships, decided from the
+   * binary's digest when the agent reports one. `null` without a connection. */
+  current?: boolean | null;
+  control_plane_version?: string;
 }
 
 // ── Installing an agent from the browser ────────────────────────────────────
@@ -1137,6 +1143,10 @@ export interface FabricNode {
   ib_hca: string;
   errors: string[];
   warnings: string[];
+  /** Whether the wired 10G port has link; a mesh coordinates over it. */
+  wired_management_up?: boolean | null;
+  /** What the registry would pin a deploy on this node with, right now. */
+  pinned?: { ethernet_interface: string; infiniband_interfaces: string[]; fabric_mode: string };
 }
 
 export interface FabricAssignment {
@@ -1168,6 +1178,8 @@ export interface FabricPlan {
   mode: string;
   nodes: FabricNodePlan[];
   problems: string[];
+  /** What an operator should know about this shape. Nothing here stops an apply. */
+  advice?: string[];
   proposed: string[];
 }
 
@@ -1194,10 +1206,14 @@ export interface FabricApplyReport {
   readback: Record<string, { cidr: string; address_ok: boolean; mtu: string; mtu_ok: boolean }>;
   pings: { netdev: string; peer: string; address: string; reachable: boolean }[];
   privileged_calls: { why: string; command: string; via: string; returncode: number }[];
+  /** What was written onto the registry record once the node verified. */
+  pinned?: { ethernet_interface: string; infiniband_interfaces: string[]; fabric_mode: string };
 }
 
 export interface FabricApplyResponse {
   mode: string;
   reports: FabricApplyReport[];
+  /** Nodes that were already configured and were pinned without a login. */
+  pinned?: Record<string, { ethernet_interface: string; infiniband_interfaces: string[]; fabric_mode: string }>;
 }
 

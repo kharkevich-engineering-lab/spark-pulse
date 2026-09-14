@@ -18,6 +18,7 @@ from typing import Literal
 from spark_pulse.tools import discovery as _real
 from spark_pulse.tools.discovery import (  # noqa: F401 — re-exported shapes
     FABRIC_DIRECT as FABRIC_DIRECT,
+    FABRIC_DUAL as FABRIC_DUAL,
     FABRIC_MESH as FABRIC_MESH,
     FABRIC_MODES as FABRIC_MODES,
     MESH_NCCL_ENV as MESH_NCCL_ENV,

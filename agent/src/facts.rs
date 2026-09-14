@@ -21,6 +21,7 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
+use std::sync::OnceLock;
 
 use sha2::{Digest, Sha256};
 
@@ -417,6 +418,25 @@ pub fn port_is_active(state: &str) -> bool {
     state.to_ascii_uppercase().contains("ACTIVE")
 }
 
+/// SHA-256 of the running binary, read once.
+///
+/// The control plane packages one agent per target and knows each one's
+/// digest; comparing bytes is how it says "this node runs what I ship"
+/// without trusting a version string somebody baked in. Empty when the
+/// executable cannot be read, which is a fact too.
+pub fn binary_sha256() -> String {
+    static DIGEST: OnceLock<String> = OnceLock::new();
+    DIGEST
+        .get_or_init(|| {
+            std::env::current_exe()
+                .ok()
+                .and_then(|path| fs::read(path).ok())
+                .map(|bytes| hex(Sha256::digest(&bytes)))
+                .unwrap_or_default()
+        })
+        .clone()
+}
+
 /// Describe this machine. Never fails.
 pub fn collect(docker_version: String) -> NodeFacts {
     let machine_id = read_machine_id();
@@ -438,6 +458,7 @@ pub fn collect(docker_version: String) -> NodeFacts {
         interfaces,
         infiniband_interfaces,
         roce_links: roce_links(),
+        binary_sha256: binary_sha256(),
     }
 }
 

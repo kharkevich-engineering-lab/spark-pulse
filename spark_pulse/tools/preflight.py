@@ -553,7 +553,9 @@ class _NodeFacts:
     disk_probe: ProbeResult | None = None
 
 
-def _gather(target: NodeTarget, probe: HostProbe, hub_dir: str) -> _NodeFacts:
+def _gather(
+    target: NodeTarget, probe: HostProbe, hub_dir: str, node_count: int = 1
+) -> _NodeFacts:
     """Run every host command for one node, once."""
     facts = _NodeFacts()
 
@@ -600,12 +602,14 @@ def _gather(target: NodeTarget, probe: HostProbe, hub_dir: str) -> _NodeFacts:
         facts.netdevs = {line.strip() for line in head.splitlines() if line.strip()}
         facts.ibdevs = {line.strip() for line in tail.splitlines() if line.strip()}
 
-    facts.fabric = _fabric_from_agent(target)
+    facts.fabric = _fabric_from_agent(target, node_count)
     if facts.fabric is None:
         # An agent too old to report its ports, or a node with none: ask.
         facts.fabric_probe = probe.run(discovery.FABRIC_COMMAND)
         if facts.fabric_probe.ok:
-            facts.fabric = discovery.fabric_from_output(facts.fabric_probe.stdout)
+            facts.fabric = discovery.fabric_from_output(
+                facts.fabric_probe.stdout, node_count=node_count
+            )
 
     facts.disk_probe = probe.run(disk_command([facts.docker_root, hub_dir]))
     if facts.disk_probe.ok:
@@ -614,7 +618,7 @@ def _gather(target: NodeTarget, probe: HostProbe, hub_dir: str) -> _NodeFacts:
     return facts
 
 
-def _fabric_from_agent(target: NodeTarget) -> Any | None:
+def _fabric_from_agent(target: NodeTarget, node_count: int = 1) -> Any | None:
     """The node's fabric as its agent reported it on the last heartbeat.
 
     The agent reads ``/sys/class/infiniband`` and the addresses on every beat,
@@ -632,7 +636,7 @@ def _fabric_from_agent(target: NodeTarget) -> Any | None:
     connection = runtime.hub.get(node_id) if node_id else None
     if connection is None:
         return None
-    return discovery.fabric_from_facts(connection.facts)
+    return discovery.fabric_from_facts(connection.facts, node_count=node_count)
 
 
 @dataclass
@@ -1491,7 +1495,15 @@ def _check_fabric(target: NodeTarget, ctx: _Context) -> list[Check]:
             )
 
     if not checks:
-        shape = "mesh" if fabric.is_mesh else "single cable"
+        shape = (
+            "mesh"
+            if fabric.is_mesh
+            else (
+                "both cables"
+                if fabric.mode == discovery.FABRIC_DUAL
+                else "single cable"
+            )
+        )
         checks.append(
             _check(
                 CHECK_FABRIC,
@@ -2186,6 +2198,7 @@ def run(
 
     node_targets = targets if targets is not None else targets_for(plan)
     hub_dir = _hub_dir()
+    node_count = max(1, int(plan.get("node_count") or 1))
     build_probe = probe_factory or (
         lambda target: probe_for(target, ssh_client=ssh_client)
     )
@@ -2193,7 +2206,9 @@ def run(
     with ThreadPoolExecutor(max_workers=max(1, len(node_targets))) as pool:
         gathered = list(
             pool.map(
-                lambda target: _gather(target, build_probe(target), hub_dir),
+                lambda target: _gather(
+                    target, build_probe(target), hub_dir, node_count
+                ),
                 node_targets,
             )
         )

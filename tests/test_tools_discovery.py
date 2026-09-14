@@ -874,3 +874,41 @@ class TestFabricFromFacts:
             )
         )
         assert fabric.addresses["enp1s0f1np1"] == "192.168.177.11/32"
+
+    def test_four_ports_up_is_the_dual_pair_only_when_told_two_nodes(self):
+        from spark_pulse.agent import agent_pb2 as pb
+        from spark_pulse.tools.discovery import fabric_from_facts
+
+        four = [
+            pb.RoceLink(hca=h, netdev=n, is_up=True)
+            for h, n in (
+                ("rocep1s0f0", "enp1s0f0np0"),
+                ("rocep1s0f1", "enp1s0f1np1"),
+                ("roceP2p1s0f0", "enP2p1s0f0np0"),
+                ("roceP2p1s0f1", "enP2p1s0f1np1"),
+            )
+        ]
+        interfaces = [
+            pb.NetworkInterface(
+                name=n, ip=ip, prefix_length=24, mtu=9000, is_up=True, type="ethernet"
+            )
+            for n, ip in (
+                ("enp1s0f0np0", "192.168.177.11"),
+                ("enP2p1s0f0np0", "192.168.178.11"),
+                ("enp1s0f1np1", "192.168.187.11"),
+                ("enP2p1s0f1np1", "192.168.188.11"),
+            )
+        ]
+        facts = pb.NodeFacts(interfaces=interfaces, roce_links=four)
+        pair = fabric_from_facts(facts, node_count=2)
+        assert pair.mode == "dual"
+        assert (
+            pair.nccl_env == {}
+        ), "the mesh's settings would cost the second cable its point"
+        assert pair.ethernet == "enp1s0f0np0"
+        assert pair.ib_hca_value == "rocep1s0f0,rocep1s0f1,roceP2p1s0f0,roceP2p1s0f1"
+        ring = fabric_from_facts(facts, node_count=3)
+        assert ring.mode == "mesh" and ring.nccl_env
+        assert (
+            fabric_from_facts(facts).mode == "mesh"
+        ), "unknown count reads as upstream does"

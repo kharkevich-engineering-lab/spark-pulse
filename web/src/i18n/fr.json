@@ -431,8 +431,12 @@
       "concessions": "Poursuivi sans",
       "privileged": "Appels privilégiés : {count}",
       "later": "Plus tard",
-      "close": "Terminé"
-    }
+      "close": "Terminé",
+      "update": "Mettre à jour l'agent",
+      "updateHint": "Ce nœud exécute l'agent {version} ; ce plan de contrôle livre {current}. Réinstaller garde l'identité du nœud et ne remplace que le binaire. La clé du plan de contrôle est déjà sur le nœud, aucun mot de passe n'est nécessaire."
+    },
+    "agentVersion": "agent {version}",
+    "agentStale": "mise à jour disponible"
   },
   "recipeForm": {
     "name": "Nom de la recette",
@@ -793,6 +797,10 @@
     "unreachable": "pas de réponse",
     "steps": "Ce qui s'est passé",
     "cancel": "Annuler",
-    "close": "Terminé"
+    "close": "Terminé",
+    "modeDual": "Les deux câbles entre deux nœuds : une paire de sous-réseaux par câble, sans réglages de maillage.",
+    "pinned": "Épinglé pour les déploiements",
+    "notPinned": "Non épinglé pour les déploiements",
+    "noWired": "Port 10G inactif"
   }
 }

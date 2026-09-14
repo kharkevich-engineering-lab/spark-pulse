@@ -35,6 +35,7 @@ from typing import Any
 
 from spark_pulse.tools.discovery import (
     FABRIC_DIRECT,
+    FABRIC_DUAL,
     FABRIC_MESH,
     FabricConfig,
     RoCEPort,
@@ -66,8 +67,28 @@ FIRST_HOST = 11
 #: The ``/24``s upstream uses, third octet only. A cable is a pair of subnets:
 #: the lowercase twin takes the first, the capital-P twin the second.
 PAIR_LINK = (177, 178)
-#: The three cables of the mesh, in NETWORKING.md's own order.
+#: The three cables of the mesh, in NETWORKING.md's own order. A pair with
+#: both cables uses the first two: one per cable, on both nodes.
 MESH_LINKS = ((177, 178), (187, 188), (197, 198))
+#: NVIDIA's ring rule, said once so an operator cables it right first time.
+MESH_CABLING = (
+    "Cable the ring as NVIDIA's three-Spark playbook does: node 1 port 0 to "
+    "node 2 port 1, node 2 port 0 to node 3 port 1, node 3 port 0 to node 1 "
+    "port 1 — port 0 is the QSFP port next to the RJ-45. The apply step pings "
+    "every peer over every cable, so a ring cabled differently is a named "
+    "failure, not a silent mis-address."
+)
+MESH_MANAGEMENT = (
+    "A ring carries every cable in NCCL's rings, so it coordinates over the "
+    "10G RJ-45 port (enP7s7). NVIDIA's and upstream's launchers both pin it; "
+    "Wi-Fi works with a warning and is slower."
+)
+SECOND_CABLE = (
+    "One cable already carries both RoCE twins of its port (200G). NVIDIA "
+    "allows a second cable between two Sparks with all four interfaces "
+    "addressed; spark-vllm-docker measured no noticeable gain. Plug it in or "
+    "not — either shape is planned."
+)
 #: Which cable each node's two up ports carry in the mesh drawing (lines
 #: 56-80): node 0's ports carry cables 0 and 1, node 1's carry 2 and 0, node
 #: 2's carry 1 and 2. That is the drawing; the apply step verifies it.
@@ -91,6 +112,9 @@ class NodeFabric:
     fabric: FabricConfig | None = None
     #: Netdev name to its current MTU.
     mtus: dict[str, int] = field(default_factory=dict)
+    #: Whether the wired 10G management port has link. ``None`` when unknown.
+    #: A mesh coordinates over it; a pair does not need it.
+    wired_management_up: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -156,6 +180,9 @@ class FabricPlan:
     mode: str
     nodes: tuple[NodePlan, ...] = ()
     problems: tuple[str, ...] = ()
+    #: What an operator should know about this shape. Not problems: nothing
+    #: here stops an apply.
+    advice: tuple[str, ...] = ()
 
     @property
     def proposed(self) -> tuple[NodePlan, ...]:
@@ -166,6 +193,7 @@ class FabricPlan:
             "mode": self.mode,
             "nodes": [n.to_dict() for n in self.nodes],
             "problems": list(self.problems),
+            "advice": list(self.advice),
             "proposed": [n.node_id for n in self.proposed],
         }
 
@@ -270,15 +298,36 @@ def plan_fabric(nodes: list[NodeFabric], *, override: bool = False) -> FabricPla
             f"({described}). A pair or a switch has two CX7 interfaces up per "
             "node — one cable, both twins — and the mesh has four."
         )
+    advice: list[str] = []
     ports_up = next(iter(counts)) if len(counts) == 1 else 0
     if ports_up == 2:
         mode = FABRIC_DIRECT
+        advice.append(SECOND_CABLE)
+    elif ports_up == 4 and len(shapes) == 2:
+        # Both cables between two Sparks: not the mesh, whatever the port
+        # count says, and not given the mesh's NCCL settings.
+        mode = FABRIC_DUAL
+        advice.append(SECOND_CABLE)
     elif ports_up == 4:
         mode = FABRIC_MESH
+        advice.append(MESH_CABLING)
+        advice.append(MESH_MANAGEMENT)
         if len(shapes) != 3:
             problems.append(
                 "four CX7 interfaces up per node is the switchless three-node "
                 f"mesh, and there are {len(shapes)} node(s) reporting ports"
+            )
+        unwired = [
+            n.name
+            for n in nodes
+            if n.node_id in shapes and n.wired_management_up is False
+        ]
+        if unwired:
+            problems.append(
+                f"{', '.join(unwired)}: the 10G RJ-45 port (enP7s7) has no "
+                "link. A ring coordinates over it; cable every node's RJ-45 "
+                "to the same switch, or accept Wi-Fi coordination with the "
+                "warning it carries."
             )
     else:
         mode = ""
@@ -303,6 +352,8 @@ def plan_fabric(nodes: list[NodeFabric], *, override: bool = False) -> FabricPla
         for port_index, twins in enumerate(physical):
             if mode == FABRIC_DIRECT:
                 links = PAIR_LINK
+            elif mode == FABRIC_DUAL and port_index < len(MESH_LINKS):
+                links = MESH_LINKS[port_index]
             elif mode == FABRIC_MESH and index < len(MESH_PORT_LINKS):
                 links = MESH_LINKS[MESH_PORT_LINKS[index][port_index]]
             else:
@@ -400,4 +451,9 @@ def plan_fabric(nodes: list[NodeFabric], *, override: bool = False) -> FabricPla
 
     order = {n.node_id: i for i, n in enumerate(nodes)}
     planned.sort(key=lambda p: order[p.node_id])
-    return FabricPlan(mode=mode, nodes=tuple(planned), problems=tuple(problems))
+    return FabricPlan(
+        mode=mode,
+        nodes=tuple(planned),
+        problems=tuple(problems),
+        advice=tuple(advice),
+    )

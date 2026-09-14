@@ -59,7 +59,20 @@ Each finding names a remedy, because every condition here is one the cluster can
 
 ## Fabric
 
-Every node's ConnectX-7 ports are read from what its agent reports on each heartbeat — the RoCE devices under `/sys/class/infiniband`, the netdev each drives, whether the port is active, and the address and MTU on it — so the Cluster page's **ConnectX fabric** card and the deploy pre-flight see the same thing without logging in. The shape is worked out the way `spark-vllm-docker`'s `autodiscover.sh` works it out: two CX7 interfaces up per node is `direct` (one cable — a pair, or a QSFP switch), four is `mesh` (the switchless three-node ring, which needs NCCL settings a pair must not get), and any other count is refused by number.
+Every node's ConnectX-7 ports are read from what its agent reports on each heartbeat — the RoCE devices under `/sys/class/infiniband`, the netdev each drives, whether the port is active, and the address and MTU on it — so the Cluster page's **ConnectX fabric** card and the deploy pre-flight see the same thing without logging in.
+
+The shape is worked out from the cabling, with one thing `spark-vllm-docker`'s `autodiscover.sh` cannot know: how many nodes there are.
+
+| Ports up per node | Nodes | Shape | NCCL |
+|---|---|---|---|
+| 2 (one cable, both twins) | any | `direct` — a pair, or a QSFP switch | both RoCE twins in `NCCL_IB_HCA` |
+| 4 (both cables) | 2 | `dual` — both cables between a pair | all four twins, **no** mesh settings |
+| 4 (both cables) | 3 | `mesh` — the switchless ring | all four twins plus `NCCL_NET_PLUGIN=none`, `NCCL_IB_SUBNET_AWARE_ROUTING=1`, `NCCL_IB_MERGE_NICS=0` |
+| anything else | | refused, by number | |
+
+One cable already carries 200G: each QSFP port is two PCIe x4 links, and NCCL reaches the full rate only when told both RoCE twins. NVIDIA's two-node playbook allows a second cable between two Sparks with all four interfaces addressed; upstream measured no noticeable gain. Both shapes are planned, and the second cable is never given the mesh's settings — `NCCL_IB_MERGE_NICS=0` would throw away exactly the aggregation it is for.
+
+The ring is cabled as NVIDIA's three-Spark playbook draws it: node 1 port 0 to node 2 port 1, node 2 port 0 to node 3 port 1, node 3 port 0 to node 1 port 1, where port 0 is the QSFP port next to the RJ-45. It coordinates over the 10G RJ-45 port (`enP7s7`), so the card flags a ring member whose 10G port has no link. Wi-Fi coordination works with a warning.
 
 RoCE devices are recorded as they appear in `/sys/class/infiniband` — `rocep1s0f1`, not the netdev it drives — and **both** twins of every cabled port are kept: one QSFP port is two RoCE devices sharing a PCIe x4 pair, and naming only one halves the bandwidth silently.
 
@@ -71,7 +84,17 @@ A node whose fabric is already valid — an address on the lowercase twin, the t
 
 **Configure fabric** logs in to each proposed node with the control plane's key, writes the file at 0600 as root, checks it with `netplan generate`, turns off NetworkManager's DHCP profiles on those ports so they do not fight the static file, runs `netplan apply`, then reads each port back and pings every peer the plan put on the same subnet over that port. A cable that does not go where the plan assumed is a ping that fails with the link named, not a file that was written and believed. The only secret in the request is an optional sudo password.
 
+A deploy pins NCCL from the node's registry record — `ethernet_interface`, `infiniband_interfaces`, `fabric_mode` — which the control node fills for itself at startup and nothing used to fill for a peer. A verified apply writes them now, and a node that was already configured by hand is pinned by the same action without a login. The card says whether each node is pinned.
+
 The API is `GET /api/fabric` (the ports and the plan) and `POST /api/fabric/apply`.
+
+## The agent's version
+
+Every agent reports its version and the SHA-256 of its own binary on each heartbeat. The node list shows the version beside each peer, and says **update available** when the binary is not one this control plane ships — decided from the digest, not the version string, because a version is baked in at build time and can be stale while the bytes are what they are. An older agent that reports no digest is judged by version.
+
+**Update agent** on a peer's row is a reinstall over the control plane's key: the node keeps its identity and certificate, only the binary and unit are replaced, and no password is asked. The control node's own agent is the packaged binary, so `pip install --upgrade spark-pulse` and a service restart update it.
+
+Releases build the agent with the version semantic-release is about to publish (`SPARK_PULSE_VERSION` into `scripts/build-agent.sh`); before that, every shipped agent reported the version in the checked-in `pyproject.toml`, whatever the release was.
 
 ## What "cluster" means here
 

@@ -59,11 +59,41 @@ def _node_payload(node: Any) -> dict[str, Any]:
         return data
     node_id = runtime.control_node_id if node.is_control_plane else node.id
     enrolled = bool(node_id) and runtime.server.ledger.get(node_id) is not None
-    connected = enrolled and runtime.hub.is_connected(node_id)
-    data["agent"] = {"enrolled": enrolled, "connected": connected}
+    connection = runtime.hub.get(node_id) if enrolled else None
+    data["agent"] = {
+        "enrolled": enrolled,
+        "connected": connection is not None,
+        **_agent_currency(connection),
+    }
     if enrolled:
         data["state"] = runtime.hub.liveness(node_id).value
     return data
+
+
+def _agent_currency(connection: Any | None) -> dict[str, Any]:
+    """What the node runs against what this control plane ships.
+
+    ``current`` is decided from the binary's digest when the agent reports
+    one — bytes cannot lie about which build they are — and from the
+    version string only for an agent too old to report a digest. ``None``
+    when there is no connection to ask.
+    """
+    from spark_pulse.agent.bundle import packaged_digests
+    from spark_pulse.version import __version__
+
+    if connection is None:
+        return {"version": "", "current": None, "control_plane_version": __version__}
+    version = str(connection.agent_version or connection.facts.agent_version or "")
+    digest = str(getattr(connection.facts, "binary_sha256", "") or "")
+    if digest:
+        current = digest in packaged_digests().values()
+    else:
+        current = bool(version) and version == __version__
+    return {
+        "version": version,
+        "current": current,
+        "control_plane_version": __version__,
+    }
 
 
 def _peer_payload(peer: Any) -> dict[str, Any]:

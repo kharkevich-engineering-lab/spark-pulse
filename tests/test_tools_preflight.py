@@ -906,12 +906,16 @@ def test_a_mesh_cabled_node_without_the_mesh_settings_warns():
     They configure NCCL itself, not the engine, and a ring whose link pairs
     land on different subnets does not route without them.
     """
+    # Four ports up is the mesh only at three nodes; at two it is both cables
+    # between a pair, which must not get these settings. The plan says three.
+    plan = fabric_plan(
+        {"NCCL_SOCKET_IFNAME": "enP7s7", "NCCL_IB_HCA": ALL_FOUR},
+        BOTH_TWINS,
+    )
+    plan["node_count"] = 3
     report = run(
         targets=[CONTROL, PEER],
-        plan=fabric_plan(
-            {"NCCL_SOCKET_IFNAME": "enP7s7", "NCCL_IB_HCA": ALL_FOUR},
-            BOTH_TWINS,
-        ),
+        plan=plan,
         probes={
             CONTROL.id: fabric_probe(CONTROL.address, MESH_IBDEV, MESH_ADDRS),
             PEER.id: fabric_probe(PEER.address),
@@ -933,9 +937,11 @@ def test_a_mesh_cabled_node_that_carries_them_passes():
         "NCCL_IB_SUBNET_AWARE_ROUTING": "1",
         "NCCL_IB_MERGE_NICS": "0",
     }
+    plan = fabric_plan(mesh_env, BOTH_TWINS)
+    plan["node_count"] = 3
     report = run(
         targets=[CONTROL, PEER],
-        plan=fabric_plan(mesh_env, BOTH_TWINS),
+        plan=plan,
         probes={
             CONTROL.id: fabric_probe(CONTROL.address, MESH_IBDEV, MESH_ADDRS),
             PEER.id: fabric_probe(PEER.address),
@@ -943,6 +949,49 @@ def test_a_mesh_cabled_node_that_carries_them_passes():
         services=two_node_services(),
     )
     assert check_of(report, preflight.CHECK_FABRIC, "spark-01")["status"] == STATUS_PASS
+
+
+def test_both_cables_between_two_nodes_is_a_pair_and_needs_no_mesh_settings():
+    """NVIDIA allows a second cable between two Sparks. Upstream would read
+    four ports up as the mesh and demand its settings; at two nodes it is
+    both cables, and the mesh settings would cost the second cable its point."""
+    report = run(
+        targets=[CONTROL, PEER],
+        plan=fabric_plan(
+            {"NCCL_SOCKET_IFNAME": "enp1s0f0np0", "NCCL_IB_HCA": ALL_FOUR},
+            BOTH_TWINS,
+        ),
+        probes={
+            CONTROL.id: fabric_probe(CONTROL.address, MESH_IBDEV, MESH_ADDRS),
+            PEER.id: fabric_probe(PEER.address),
+        },
+        services=two_node_services(),
+    )
+    check = check_of(report, preflight.CHECK_FABRIC, "spark-01")
+    assert check["status"] == STATUS_PASS, check
+    assert "both cables" in check["observed"]
+
+
+def test_both_cables_between_two_nodes_carrying_the_mesh_settings_warns():
+    report = run(
+        targets=[CONTROL, PEER],
+        plan=fabric_plan(
+            {
+                "NCCL_SOCKET_IFNAME": "enp1s0f0np0",
+                "NCCL_IB_HCA": ALL_FOUR,
+                "NCCL_IB_MERGE_NICS": "0",
+            },
+            BOTH_TWINS,
+        ),
+        probes={
+            CONTROL.id: fabric_probe(CONTROL.address, MESH_IBDEV, MESH_ADDRS),
+            PEER.id: fabric_probe(PEER.address),
+        },
+        services=two_node_services(),
+    )
+    check = check_of(report, preflight.CHECK_FABRIC, "spark-01")
+    assert check["status"] == STATUS_WARN
+    assert "NCCL_IB_MERGE_NICS" in check["observed"]
 
 
 def test_a_single_cable_node_carrying_the_mesh_settings_warns():

@@ -24,10 +24,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // would fire on every node, for ever, and mean nothing. `release.sh`
     // rewrites `pyproject.toml`, so reading it here makes one release process
     // drive both halves.
-    println!(
-        "cargo:rustc-env=SPARK_PULSE_VERSION={}",
-        spark_pulse_version()?
-    );
+    //
+    // `SPARK_PULSE_VERSION` in the environment wins. The release workflow
+    // builds the agent *before* semantic-release rewrites `pyproject.toml`,
+    // so the file still says whatever the last hand-edit said; the workflow
+    // works the next version out first and hands it in here. Without that,
+    // every shipped agent reported one stale number and the control plane's
+    // version check would have flagged every node for ever.
+    println!("cargo:rerun-if-env-changed=SPARK_PULSE_VERSION");
+    let version = match std::env::var("SPARK_PULSE_VERSION") {
+        Ok(value) if !value.trim().is_empty() => value.trim().to_string(),
+        _ => spark_pulse_version()?,
+    };
+    println!("cargo:rustc-env=SPARK_PULSE_VERSION={version}");
 
     if !proto.exists() {
         return Err(format!(

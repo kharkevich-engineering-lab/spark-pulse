@@ -766,7 +766,16 @@ FABRIC_MESH = "mesh"
 MESH_RING_NODES = 3
 
 #: Every fabric shape a record may carry, plus ``""`` for "not known yet".
-FABRIC_MODES = (FABRIC_DIRECT, FABRIC_MESH)
+#: Two Sparks, both cables. Four CX7 interfaces up on *two* nodes. NVIDIA's
+#: two-node playbook allows it ("when two QSFP cables are connected, all four
+#: interfaces must be assigned IP addresses to obtain full bandwidth"); upstream
+#: measured no noticeable gain and reads four ports up as the mesh regardless.
+#: It is its own shape here because it must *not* get the mesh's NCCL
+#: settings: ``NCCL_IB_MERGE_NICS=0`` throws away exactly the aggregation the
+#: second cable exists for.
+FABRIC_DUAL = "dual"
+
+FABRIC_MODES = (FABRIC_DIRECT, FABRIC_DUAL, FABRIC_MESH)
 
 #: The management links a mesh uses for coordination, in upstream's order of
 #: preference (autodiscover.sh lines 171-184). All four fabric links carry the
@@ -958,7 +967,10 @@ def _twin_key(netdev: str) -> str:
 
 
 def build_fabric_config(
-    ports: Iterable[RoCEPort], addresses: dict[str, str] | None = None
+    ports: Iterable[RoCEPort],
+    addresses: dict[str, str] | None = None,
+    *,
+    node_count: int | None = None,
 ) -> FabricConfig:
     """Turn ``ibdev2netdev`` and ``ip addr`` into a fabric configuration.
 
@@ -1028,6 +1040,12 @@ def build_fabric_config(
     count = len(up)
     if count == 2:
         mode = FABRIC_DIRECT
+    elif count == 4 and node_count == 2:
+        # Four ports up is the mesh to upstream, unconditionally. But a mesh
+        # is a ring of three; four ports up on two nodes is both cables
+        # between them, and only the cluster knows which — so the caller says
+        # how many nodes there are when it knows.
+        mode = FABRIC_DUAL
     elif count == 4:
         mode = FABRIC_MESH
     else:
@@ -1040,7 +1058,7 @@ def build_fabric_config(
         mode = ""
 
     ethernet = ""
-    if mode == FABRIC_DIRECT:
+    if mode in (FABRIC_DIRECT, FABRIC_DUAL):
         addressed = [port.netdev for port in up if port.netdev in addresses]
         preferred = [name for name in addressed if not _has_capital_p(name)]
         if preferred:
@@ -1082,13 +1100,15 @@ def build_fabric_config(
     )
 
 
-def fabric_from_output(text: str) -> FabricConfig:
+def fabric_from_output(text: str, *, node_count: int | None = None) -> FabricConfig:
     """A fabric configuration from :data:`FABRIC_COMMAND` output."""
     ports, addresses = parse_fabric_output(text)
-    return build_fabric_config(ports, addresses)
+    return build_fabric_config(ports, addresses, node_count=node_count)
 
 
-def fabric_from_facts(facts: Any) -> FabricConfig | None:
+def fabric_from_facts(
+    facts: Any, *, node_count: int | None = None
+) -> FabricConfig | None:
     """A fabric configuration from what a node's agent reported.
 
     The agent reads ``/sys/class/infiniband`` and ``getifaddrs`` on every
@@ -1109,7 +1129,7 @@ def fabric_from_facts(facts: Any) -> FabricConfig | None:
         if interface.ip and interface.name:
             prefix = int(getattr(interface, "prefix_length", 0) or 0) or 32
             addresses.setdefault(interface.name, f"{interface.ip}/{prefix}")
-    return build_fabric_config(ports, addresses)
+    return build_fabric_config(ports, addresses, node_count=node_count)
 
 
 def detect_fabric() -> FabricConfig:

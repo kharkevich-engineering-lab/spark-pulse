@@ -370,7 +370,10 @@ function InstallAgentDialog({ node, onClose, onInstalled }: InstallAgentDialogPr
   const { t } = useI18n();
   const [username, setUsername] = useState(node.ssh_user || "");
   const [port, setPort] = useState("22");
-  const [auth, setAuth] = useState<NodeAuthMethod>("password");
+  // A node that already has an agent is reached with the key the install
+  // left behind; an update is a reinstall over that key, no password asked.
+  const updating = Boolean(node.agent?.enrolled);
+  const [auth, setAuth] = useState<NodeAuthMethod>(updating ? "control_plane_key" : "password");
   const [password, setPassword] = useState("");
   const [privateKey, setPrivateKey] = useState("");
   const [passphrase, setPassphrase] = useState("");
@@ -436,7 +439,9 @@ function InstallAgentDialog({ node, onClose, onInstalled }: InstallAgentDialogPr
     }
   };
 
-  const title = t("nodes.install.title", { name: node.name || node.address });
+  const title = updating
+    ? `${t("nodes.install.update")}: ${node.name || node.address}`
+    : t("nodes.install.title", { name: node.name || node.address });
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
@@ -464,7 +469,12 @@ function InstallAgentDialog({ node, onClose, onInstalled }: InstallAgentDialogPr
         ) : (
           <div className="space-y-4">
             <p className="text-sm text-text-muted">
-              {t("nodes.install.intro", { address: node.address })}
+              {updating
+                ? t("nodes.install.updateHint", {
+                    version: node.agent?.version || "?",
+                    current: node.agent?.control_plane_version || "?",
+                  })
+                : t("nodes.install.intro", { address: node.address })}
             </p>
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_7rem]">
@@ -872,13 +882,24 @@ export default function NodeRegistry() {
                     {interfaceSummary(node)}
                   </td>
                   <td className="py-2.5 pr-4">
-                    {node.is_control_plane ? (
-                      <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-primary/15 text-primary">
-                        Control plane
-                      </span>
-                    ) : (
-                      <span className="text-text-muted">{t("nodes.peer")}</span>
-                    )}
+                    <div className="flex flex-col items-start gap-1">
+                      {node.is_control_plane ? (
+                        <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-primary/15 text-primary">
+                          Control plane
+                        </span>
+                      ) : (
+                        <span className="text-text-muted">{t("nodes.peer")}</span>
+                      )}
+                      {node.agent?.version && (
+                        <span
+                          className={`text-xs ${node.agent.current === false ? "text-warning" : "text-text-muted"}`}
+                          data-testid={`agent-version-${node.id}`}
+                        >
+                          {t("nodes.agentVersion", { version: node.agent.version })}
+                          {node.agent.current === false && ` · ${t("nodes.agentStale")}`}
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="py-2.5 pr-4">
                     <div className="flex flex-col items-start gap-1">
@@ -894,9 +915,11 @@ export default function NodeRegistry() {
                         onClick={() => setInstalling(node)}
                         aria-label={t("nodes.install.actionFor", { name: node.name })}
                         title={
-                          node.agent?.enrolled
-                            ? t("nodes.install.reinstall")
-                            : t("nodes.install.action")
+                          node.agent?.current === false
+                            ? t("nodes.install.update")
+                            : node.agent?.enrolled
+                              ? t("nodes.install.reinstall")
+                              : t("nodes.install.action")
                         }
                         className="rounded-lg p-1.5 text-text-muted transition-colors hover:bg-primary/10 hover:text-primary"
                       >

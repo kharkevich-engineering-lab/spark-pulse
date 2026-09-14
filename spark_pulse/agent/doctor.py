@@ -289,7 +289,14 @@ def _check_agent_facts(
         return
     snapshot = connection.snapshot()
 
-    if snapshot.agent_version and snapshot.agent_version != __version__:
+    digest = str(getattr(snapshot.facts, "binary_sha256", "") or "")
+    if digest:
+        from spark_pulse.agent.bundle import packaged_digests
+
+        stale = digest not in packaged_digests().values()
+    else:
+        stale = bool(snapshot.agent_version) and snapshot.agent_version != __version__
+    if stale:
         report.add(
             Finding(
                 "agent-version",

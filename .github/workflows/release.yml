@@ -4,6 +4,40 @@ on:
     branches: [main]
 
 jobs:
+  # The version this push will release, before anything is built with it.
+  #
+  # The agent bakes spark-pulse's version in at compile time, and it used to
+  # be compiled from the checked-out pyproject.toml — which semantic-release
+  # rewrites only later, in release.sh. Every shipped agent reported the same
+  # stale number. A dry run here answers the version first, and the agent
+  # job hands it to the build.
+  version:
+    name: Work out the next version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      version: ${{ steps.next.outputs.new_release_version }}
+      published: ${{ steps.next.outputs.new_release_published }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Dry-run semantic-release
+        id: next
+        uses: cycjimmy/semantic-release-action@v6
+        with:
+          dry_run: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   # The node agent, built natively per architecture.
   #
   # Natively, because `scripts/build-agent.sh` refuses to run under emulation:
@@ -18,6 +52,7 @@ jobs:
   # the wheel for either architecture would be wrong.
   agent:
     name: Build the node agent (${{ matrix.target }})
+    needs: version
     strategy:
       matrix:
         include:
@@ -38,6 +73,8 @@ jobs:
           key: agent-release-${{ matrix.target }}-${{ hashFiles('agent/Cargo.lock') }}
           restore-keys: agent-release-${{ matrix.target }}-
       - name: Build
+        env:
+          SPARK_PULSE_VERSION: ${{ needs.version.outputs.version }}
         run: TARGET=${{ matrix.target }} ./scripts/build-agent.sh
       - name: Check what came out
         run: |

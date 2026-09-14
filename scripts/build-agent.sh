@@ -72,6 +72,7 @@ echo "build-agent: building $TARGET natively on $HOST_ARCH with $ENGINE"
   -v "$ROOT/.agent-build-cache":/target:z \
   -w /src/agent \
   -e CARGO_TARGET_DIR=/target \
+  -e SPARK_PULSE_VERSION="${SPARK_PULSE_VERSION:-}" \
   docker.io/library/rust:alpine \
   sh -euc '
     apk add --no-cache musl-dev protoc protobuf-dev >/dev/null
