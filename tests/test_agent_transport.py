@@ -166,6 +166,28 @@ async def test_install_bundle_round_trips_through_the_agent(agent_server, join_a
     assert result.path.endswith("1.26.0-abc")
 
 
+async def test_run_host_probe_round_trips_through_the_agent(agent_server, join_agent):
+    """The op carries the command and timeout; the agent answers with the exit
+    code, stdout and stderr — the transport the pre-flight now uses."""
+
+    def answers_probe(command: pb.Command) -> pb.CommandResult:
+        assert command.WhichOneof("op") == "run_host_probe"
+        req = command.run_host_probe
+        assert req.command == "nvidia-smi --query-gpu=index --format=csv"
+        assert req.timeout_seconds == 20
+        return pb.CommandResult(
+            command_id=command.command_id,
+            host_probe=pb.HostProbeResult(exit_code=0, stdout="0\n", stderr=""),
+        )
+
+    node = await join_agent("spark-probe", handler=answers_probe)
+    result = await ops(agent_server, node).run_host_probe(
+        "nvidia-smi --query-gpu=index --format=csv", timeout_seconds=20
+    )
+    assert result.exit_code == 0
+    assert result.stdout == "0\n"
+
+
 # ── The three outcomes ──────────────────────────────────────────────────────
 
 

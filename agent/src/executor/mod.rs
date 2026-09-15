@@ -21,6 +21,7 @@ pub mod copy;
 pub mod fabric;
 pub mod images;
 pub mod labels;
+pub mod probe;
 pub mod processes;
 pub mod selfupdate;
 pub mod snapshots;
@@ -311,6 +312,9 @@ impl Executor {
                         let installed = attempt!(selfupdate::install(req));
                         return ok!(Outcome::BundleInstalled(installed));
                     }
+                    Op::RunHostProbe(req) => {
+                        return ok!(Outcome::HostProbe(probe::run(req)));
+                    }
                     _ => {}
                 }
                 return failure(id, &error.kind, error.message);
@@ -343,6 +347,7 @@ impl Executor {
                 let installed = attempt!(selfupdate::install(&req));
                 ok!(Outcome::BundleInstalled(installed))
             }
+            Op::RunHostProbe(req) => ok!(Outcome::HostProbe(probe::run(&req))),
 
             Op::RunContainer(req) => {
                 let info = attempt!(containers::run_container(docker, req).await);

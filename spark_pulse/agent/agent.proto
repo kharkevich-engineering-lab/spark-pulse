@@ -181,6 +181,7 @@ message Command {
     TerminateProcess terminate_process = 30;
     ConfigureFabric configure_fabric = 31;
     InstallBundle install_bundle = 32;
+    RunHostProbe run_host_probe = 33;
   }
 }
 
@@ -208,6 +209,7 @@ message CommandResult {
     ProcessTermination termination = 17;
     FabricResult fabric = 18;
     BundleInstalled bundle_installed = 19;
+    HostProbeResult host_probe = 20;
   }
 }
 
@@ -571,6 +573,30 @@ message BundleInstalled {
   // The agent has staged the new binary and is about to restart onto it, so
   // the control plane should expect a brief disconnect and reconnect.
   bool restarting = 3;
+}
+
+message RunHostProbe {
+  // A read-only host diagnostic. The agent runs it with `/bin/sh -c` as its
+  // own unprivileged user — never under sudo — with a hard timeout, and
+  // returns what the shell said. This is how the pre-flight learns a node's
+  // host facts (docker version, GPU, free memory, listening ports, network
+  // interfaces, free disk) now that it no longer logs in over SSH to ask. It
+  // grants the control plane nothing `InstallBundle` does not: that op already
+  // unpacks and runs a delivered binary as this same user. The command is set
+  // by the control plane's own pre-flight, not by any node input.
+  string command = 1;
+  // Seconds before the command is killed. 0 means the agent's default.
+  uint32 timeout_seconds = 2;
+}
+
+message HostProbeResult {
+  // The shell's exit status. 124 is a timeout, matching coreutils `timeout`;
+  // 127 means the shell itself could not be started. A result arriving at all
+  // means the node was reachable — that distinction lives in the transport,
+  // never in this message.
+  int32 exit_code = 1;
+  string stdout = 2;
+  string stderr = 3;
 }
 
 message ConfigureFabric {

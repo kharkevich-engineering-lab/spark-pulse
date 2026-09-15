@@ -343,6 +343,10 @@ class NodeService(Protocol):
         """Update this node's agent over its stream (no SSH)."""
         ...
 
+    def run_host_probe(self, command_line: str, timeout_seconds: int = 0) -> Any:
+        """Run one read-only host diagnostic on the node (for the pre-flight)."""
+        ...
+
 
 #: The method names the three implementations must agree on.
 NODE_SERVICE_METHODS: tuple[str, ...] = (
@@ -382,6 +386,7 @@ NODE_MACHINE_METHODS: tuple[str, ...] = (
     "terminate_process",
     "configure_fabric",
     "install_bundle",
+    "run_host_probe",
 )
 
 

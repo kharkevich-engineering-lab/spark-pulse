@@ -470,6 +470,25 @@ class NodeOperations:
         )
         return await self._call(command, "fabric")
 
+    async def run_host_probe(
+        self, command_line: str, timeout_seconds: int = 0
+    ) -> pb.HostProbeResult:
+        """Run one read-only host diagnostic on the node through its agent.
+
+        This is how the pre-flight reads a node's host facts — the docker
+        version, the GPU, free memory, listening ports, interfaces, free disk —
+        now that it no longer logs in over SSH. The agent runs ``command_line``
+        as its own unprivileged user with a hard timeout and returns the exit
+        code, stdout and stderr verbatim; a non-zero exit is a fact to read, not
+        an error to raise.
+        """
+        command = self.hub.new_command(
+            run_host_probe=pb.RunHostProbe(
+                command=command_line, timeout_seconds=int(timeout_seconds)
+            )
+        )
+        return await self._call(command, "host_probe")
+
     async def terminate_process(
         self, pid: int, force: bool = False
     ) -> pb.ProcessTermination:
