@@ -113,6 +113,36 @@ class TestUpdateRoute:
         assert body["updated"] is False
         assert "unit-managed" in body["detail"]
 
+    async def test_an_agent_too_old_for_the_op_asks_for_a_reinstall(
+        self, client, running, monkeypatch
+    ):
+        from spark_pulse.agent.errors import NodeOperationError
+
+        # A pre-self-update agent does not know the `install_bundle` field, so
+        # the `op` reads as unset and it answers "command carries no op".
+        patch(
+            monkeypatch,
+            raises=NodeOperationError(PEER_ID, "ValueError", "command carries no op"),
+        )
+        body = (await client.post(f"/api/nodes/{PEER_ID}/update")).json()
+        assert body["updated"] is False
+        assert body["needs_reinstall"] is True
+        assert "reinstall" in body["detail"].lower()
+
+    async def test_another_value_error_is_not_read_as_too_old(
+        self, client, running, monkeypatch
+    ):
+        from spark_pulse.agent.errors import NodeOperationError
+
+        patch(
+            monkeypatch,
+            raises=NodeOperationError(PEER_ID, "ValueError", "disk full"),
+        )
+        body = (await client.post(f"/api/nodes/{PEER_ID}/update")).json()
+        assert body["updated"] is False
+        assert body.get("needs_reinstall") is not True
+        assert "disk full" in body["detail"]
+
 
 class TestStalePeers:
     async def test_a_peer_whose_digest_we_do_not_ship_is_stale(

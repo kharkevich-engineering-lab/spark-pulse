@@ -37,6 +37,21 @@ _thread: threading.Thread | None = None
 _stop = threading.Event()
 
 
+#: The agent's own answer to a command whose `op` oneof it does not recognise
+#: (`agent/src/executor/mod.rs`). An agent too old to know `install_bundle`
+#: sees the field as unknown and the oneof as empty, so this is exactly how a
+#: pre-self-update agent reports "I cannot be updated over my stream".
+_UNKNOWN_OP_MESSAGE = "command carries no op"
+
+
+def _is_unknown_op(exc: Any) -> bool:
+    """Whether ``exc`` is the agent saying it did not recognise the operation."""
+    return (
+        getattr(exc, "error_type", "") == "ValueError"
+        and getattr(exc, "error_message", "") == _UNKNOWN_OP_MESSAGE
+    )
+
+
 def _bundle_for(target: str):
     from spark_pulse.agent.bundle import build_bundle
     from spark_pulse.agent import runtime as agent_runtime
@@ -54,6 +69,7 @@ def update_node(node: Any) -> dict[str, Any]:
     caller iterating nodes is never stopped by one.
     """
     from spark_pulse.agent.bundle import DEFAULT_TARGET, MissingAgentBinary
+    from spark_pulse.agent.errors import NodeOperationError
     from spark_pulse.tools import node_service
 
     base = {"node_id": node.id, "name": node.name or node.address, "updated": False}
@@ -73,6 +89,24 @@ def update_node(node: Any) -> dict[str, Any]:
         service = node_service.service_for(target)
         result = service.install_bundle(bundle.data, bundle.name, bundle.version)
     except node_service.NoAgent as exc:
+        base["detail"] = str(exc)
+        return base
+    except NodeOperationError as exc:
+        # An agent older than the self-update op cannot receive it: it does not
+        # know the `install_bundle` field, so the whole `op` reads as unset and
+        # it answers "command carries no op". Self-update is chicken-and-egg —
+        # the very capability to accept the update is what is missing — so this
+        # first hop has to go over SSH. `needs_reinstall` tells the caller to
+        # reinstall over the control-plane key already in the node's
+        # `authorized_keys`, which is bootstrap-class work and the one place SSH
+        # still belongs.
+        if _is_unknown_op(exc):
+            base["needs_reinstall"] = True
+            base["detail"] = (
+                "this agent predates stream self-update, so it cannot update "
+                "itself; reinstall it over SSH to bring it current"
+            )
+            return base
         base["detail"] = str(exc)
         return base
     except Exception as exc:  # the agent ran it and it failed — reachable

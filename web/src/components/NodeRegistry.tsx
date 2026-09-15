@@ -808,6 +808,14 @@ export default function NodeRegistry() {
       setUpdating(node.id);
       try {
         const result = await updateNodeAgent(node.id);
+        if (result.needs_reinstall) {
+          // The agent is too old to update itself over its stream. Hand the
+          // operator straight to the reinstall dialog, which defaults to the
+          // control-plane key already trusted on the node — one confirmation,
+          // no password, and the first hop onto a self-updating agent is done.
+          setInstalling(node);
+          return;
+        }
         if (!result.updated) {
           setUpdateError(`${node.name}: ${result.detail || "update failed"}`);
         }

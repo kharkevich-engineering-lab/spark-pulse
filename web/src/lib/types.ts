@@ -990,6 +990,8 @@ export interface AgentUpdateResult {
   path?: string;
   restarting?: boolean;
   detail?: string;
+  /** The agent is too old to update over its stream; reinstall it over SSH. */
+  needs_reinstall?: boolean;
 }
 
 export interface NodeAgentState {
