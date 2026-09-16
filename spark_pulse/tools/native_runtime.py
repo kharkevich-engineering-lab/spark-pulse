@@ -1625,6 +1625,57 @@ def _pull_cancel_requested(deployment_id: str) -> bool:
         return _active_pulls.get(deployment_id, False)
 
 
+# ── Per-deployment lifecycle lock ────────────────────────────────────────────
+#
+# Create, stop and delete each mutate the same containers, and a background
+# ``_pull_then_start`` can be creating a rank at the very moment a teardown
+# walks its record. Without a lock the two interleave: a stop tears down the
+# ranks it can see, finds none because the create has not launched them yet,
+# marks the record stopped, and *then* the create launches a container for a
+# record nobody will ever tear down again — a stranded rank holding the GPU.
+#
+# One lock per deployment id, so unrelated deployments never wait on each
+# other. The guard is held only long enough to fetch-or-create the id's lock;
+# the lock itself is re-entrant, because ``delete_deployment`` holds it across
+# a ``stop_deployment`` that takes it again on the same thread.
+_lifecycle_locks: dict[str, threading.RLock] = {}
+_lifecycle_locks_guard = threading.Lock()
+
+
+def _lifecycle_lock(deployment_id: str) -> threading.RLock:
+    """The re-entrant lock serialising this deployment's create/stop/delete."""
+    with _lifecycle_locks_guard:
+        lock = _lifecycle_locks.get(deployment_id)
+        if lock is None:
+            lock = threading.RLock()
+            _lifecycle_locks[deployment_id] = lock
+        return lock
+
+
+def _is_torn_down(deployment_id: str) -> bool:
+    """Whether a stop or delete has already settled this record.
+
+    A delete removes the record outright; a stop leaves it ``stopped``. Either
+    is a deliberate teardown, and a starter or watcher that observes it must
+    not write over it — a readiness result reported after a stop reads as a
+    crash, and a container launched after one is an orphan.
+    """
+    record = get_deployment(deployment_id)
+    return record is None or str(record.get("status")) == "stopped"
+
+
+def _teardown_requested(deployment_id: str) -> bool:
+    """Whether the create path should abort rather than launch anything.
+
+    Two signals cover two moments. The pull-cancel flag is set while a stop
+    races an in-flight pull, before the record has changed. Once the stop has
+    actually run it is the record that says so — :func:`_is_torn_down`. A
+    background start re-reads this at each phase boundary so it never builds a
+    container for a record that is on its way out.
+    """
+    return _pull_cancel_requested(deployment_id) or _is_torn_down(deployment_id)
+
+
 def _pull_targets(plan_obj: DeployPlan) -> list[str]:
     """Each distinct node the gang runs on, in start order.
 
@@ -1955,18 +2006,49 @@ def start(
             },
         )
 
-    for rank_plan in plan_obj.teardown_order():
-        try:
-            _create_rank(services(rank_plan.node), plan_obj, rank_plan, warnings)
-        except NativeRuntimeError as exc:
-            return _abort(rank_plan, exc, "start")
-        touched.append(rank_plan)
+    def _cancelled() -> dict[str, Any]:
+        # A stop or delete arrived after the pull, so the pull-cancel hook
+        # never fired. Tear down anything this attempt created and settle the
+        # record stopped — a deliberate teardown, not a crash. If the record
+        # was deleted underneath us, the returned dict is only a value; the
+        # store already holds nothing.
+        if touched:
+            _teardown_entries(services, [_rank_record(r) for r in touched])
+        message = f"deploy of {dep_id} cancelled by teardown"
+        publish_event(EventType.DEPLOYMENT_STOPPED, dep_id, message)
+        return _update_record(dep_id, status="stopped", stopped_at=_now()) or {
+            **record,
+            "status": "stopped",
+        }
 
-    for rank_plan in plan_obj.start_order():
-        try:
-            _launch_rank(services(rank_plan.node), plan_obj, rank_plan)
-        except NativeRuntimeError as exc:
-            return _abort(rank_plan, exc, "launch")
+    # The create and launch phases run under the deployment's lifecycle lock so
+    # a concurrent stop or delete cannot interleave with them: the teardown
+    # either runs entirely before this section (and the re-check below catches
+    # it) or entirely after (and it tears down a gang that fully exists). The
+    # re-checks are what stops a create that has already begun from launching a
+    # container for a record a stop settled while we waited for the lock.
+    with _lifecycle_lock(dep_id):
+        if _teardown_requested(dep_id):
+            return _cancelled()
+
+        for rank_plan in plan_obj.teardown_order():
+            try:
+                _create_rank(services(rank_plan.node), plan_obj, rank_plan, warnings)
+            except NativeRuntimeError as exc:
+                return _abort(rank_plan, exc, "start")
+            touched.append(rank_plan)
+
+        # Every container now exists but none is serving. This is the last
+        # point a teardown can be honoured without stranding one, so it is
+        # re-checked here as well as before the create.
+        if _teardown_requested(dep_id):
+            return _cancelled()
+
+        for rank_plan in plan_obj.start_order():
+            try:
+                _launch_rank(services(rank_plan.node), plan_obj, rank_plan)
+            except NativeRuntimeError as exc:
+                return _abort(rank_plan, exc, "launch")
 
     started = _now()
     _update_record(dep_id, status="starting", started_at=started, warnings=warnings)
@@ -2035,20 +2117,29 @@ def create_deployment(
     services = rank_services()
 
     def _watch() -> None:
+        dep_id = plan_obj.deployment_id
         try:
             _wait_ready(services, plan_obj, config.deploy_ready_timeout_seconds)
         except NativeRuntimeError as exc:
-            publish_event(EventType.DEPLOYMENT_ERROR, plan_obj.deployment_id, str(exc))
+            # A stop or delete may have settled this record while we waited. A
+            # readiness timeout after a deliberate teardown is not a crash, and
+            # writing "error" over "stopped" — or resurrecting a deleted record
+            # — would report one. Leave the teardown's verdict standing.
+            if _is_torn_down(dep_id):
+                return
+            publish_event(EventType.DEPLOYMENT_ERROR, dep_id, str(exc))
             _update_record(
-                plan_obj.deployment_id,
+                dep_id,
                 status="error",
                 error_message=str(exc),
                 stopped_at=_now(),
             )
             return
+        if _is_torn_down(dep_id):
+            return
         publish_event(
             EventType.DEPLOYMENT_READY,
-            plan_obj.deployment_id,
+            dep_id,
             f"{plan_obj.recipe_id} is serving on port {plan_obj.port}",
             {"port": plan_obj.port},
         )
@@ -2095,29 +2186,36 @@ def stop_deployment(
     — are written back as outstanding orphans, and the deployment keeps its
     ports until something confirms those containers are gone.
     """
-    record = get_deployment(deployment_id)
-    if record is None:
+    if get_deployment(deployment_id) is None:
         return None
     # A deployment still pulling has no container to stop; what has to stop is
-    # the download. Ask first, then fall through — the pull thread settles the
-    # record itself once it notices.
+    # the download. Ask before taking the lock — the pull runs outside it — so
+    # a start racing this stop sees the cancel and aborts rather than launching
+    # a container the teardown below would never see.
     cancel_pull(deployment_id)
-    services = services or rank_services(docker)
-    entries = rank_entries(record)
-    orphans = _teardown_entries(services, entries)
-    names = ", ".join(str(e.get("container_name") or "") for e in entries)
-    publish_event(EventType.DEPLOYMENT_STOPPED, deployment_id, f"stopped {names}")
-    return _update_record(
-        deployment_id,
-        status="stopped",
-        stopped_at=_now(),
-        orphans=orphans,
-        final_logs={
-            str(e.get("rank", 0)): e["final_logs"]
-            for e in entries
-            if e.get("final_logs")
-        },
-    )
+    # The lock serialises this teardown against a create's launch phase: the
+    # two cannot interleave, so we never tear down a half-created gang and then
+    # have the create launch the other half behind us.
+    with _lifecycle_lock(deployment_id):
+        record = get_deployment(deployment_id)
+        if record is None:
+            return None
+        services = services or rank_services(docker)
+        entries = rank_entries(record)
+        orphans = _teardown_entries(services, entries)
+        names = ", ".join(str(e.get("container_name") or "") for e in entries)
+        publish_event(EventType.DEPLOYMENT_STOPPED, deployment_id, f"stopped {names}")
+        return _update_record(
+            deployment_id,
+            status="stopped",
+            stopped_at=_now(),
+            orphans=orphans,
+            final_logs={
+                str(e.get("rank", 0)): e["final_logs"]
+                for e in entries
+                if e.get("final_logs")
+            },
+        )
 
 
 def delete_deployment(
@@ -2131,21 +2229,31 @@ def delete_deployment(
     that node's ports on inference, which is exactly the orphan bug §3.3 warns
     about. The record stays, stopped, with its orphans listed.
     """
-    record = get_deployment(deployment_id)
-    if record is None:
+    if get_deployment(deployment_id) is None:
         return False
-    # Always tear the containers down, whatever the record says: a deployment
-    # that errored during readiness still has a container running.
-    stopped = stop_deployment(deployment_id, docker=docker, services=services)
-    if stopped is not None and stopped.get("orphans"):
-        return False
-    with tools.deployment_records.transaction():
-        records = _load_records()
-        remaining = [r for r in records if r.get("id") != deployment_id]
-        if len(remaining) == len(records):
+    # Set the pull-cancel flag before the lock, for the same reason stop does:
+    # the pull runs outside the lock, so a racing start must be able to see the
+    # cancel and abort rather than launch a container for a record we drop.
+    cancel_pull(deployment_id)
+    # The whole stop-then-drop runs under the lifecycle lock — re-entrant, so
+    # the nested stop takes it again on this thread — so a create cannot slip a
+    # freshly launched container in between the teardown and the record drop.
+    with _lifecycle_lock(deployment_id):
+        if get_deployment(deployment_id) is None:
             return False
-        _save_records(remaining)
-    return True
+        # Always tear the containers down, whatever the record says: a
+        # deployment that errored during readiness still has a container
+        # running.
+        stopped = stop_deployment(deployment_id, docker=docker, services=services)
+        if stopped is not None and stopped.get("orphans"):
+            return False
+        with tools.deployment_records.transaction():
+            records = _load_records()
+            remaining = [r for r in records if r.get("id") != deployment_id]
+            if len(remaining) == len(records):
+                return False
+            _save_records(remaining)
+        return True
 
 
 def logs_for_container(docker: Any, name: str, lines: int) -> str:

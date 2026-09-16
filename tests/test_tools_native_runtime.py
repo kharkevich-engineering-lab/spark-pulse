@@ -1038,6 +1038,120 @@ class TestDeployDoesNotBlockOnAPull:
         assert nr.pull_is_active("no-such-deployment") is False
 
 
+class TestTeardownDoesNotStrandAContainer:
+    """The lifecycle is serialised, so a teardown cannot race the launch.
+
+    The bug: a stop or delete that lands after the pull but before the launch
+    tore down the ranks it could see — none, because the launch had not run
+    yet — marked the record gone, and then the background start launched a
+    container for a record nobody would ever tear down again. One stranded
+    rank, holding the GPU, invisible to the page.
+    """
+
+    @staticmethod
+    def _wait_until(predicate, timeout: float = 5.0) -> bool:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if predicate():
+                return True
+            time.sleep(0.02)
+        return predicate()
+
+    def test_a_delete_during_the_create_phase_launches_nothing(
+        self, native, docker, records
+    ):
+        """A delete that completes mid-start aborts the launch, cleanly.
+
+        The pull is the one part of a start that runs outside the lifecycle
+        lock, so it is where a delete can slip in and finish first. Here the
+        pull is held open, the delete runs to completion, and only then does
+        the pull return — at which point the start must notice the record is
+        gone and create no container at all.
+        """
+        image_ref = native.plan("qwen3-8b").container.image
+        _forget_image(docker, image_ref)
+
+        pull_started = threading.Event()
+        release_pull = threading.Event()
+
+        def _barrier_pull(ref, progress=None, cancel=None, **_kwargs):
+            # Ignore the cancel hook on purpose: this test is about the window
+            # *after* the pull, where the cancel flag no longer helps because
+            # the pull has already unregistered it.
+            pull_started.set()
+            assert release_pull.wait(timeout=5), "the test never released the pull"
+            docker.client.images.add(ref)
+            return {"image_ref": ref, "percent": 100.0}
+
+        with _one_service(docker):
+            with patch.object(docker, "pull_image", side_effect=_barrier_pull):
+                record = native.create_deployment("qwen3-8b")
+                dep_id = record["id"]
+                assert record["status"] == "pulling"
+                assert pull_started.wait(timeout=5), "the pull never began"
+
+                # The delete finishes before the pull returns: it tears down
+                # nothing (no container exists yet) and drops the record.
+                assert native.delete_deployment(dep_id, docker=docker) is True
+                assert native.get_deployment(dep_id) is None
+
+                # Now let the pull complete. The start resumes, sees the record
+                # is gone, and must launch nothing.
+                release_pull.set()
+                assert self._wait_until(
+                    lambda: not any(
+                        t.name == f"native-deploy-{dep_id}"
+                        for t in threading.enumerate()
+                    )
+                ), "the background deploy thread never finished"
+
+        assert native.get_deployment(dep_id) is None
+        names = [c.name for c in docker.client.containers.list(all=True)]
+        assert not any(dep_id in name for name in names), (
+            "a container was launched for a deployment that had already been "
+            "deleted — the exact strand the lifecycle lock exists to prevent"
+        )
+
+    def test_watch_does_not_overwrite_a_stopped_status(self, native, docker, records):
+        """A readiness timeout after a deliberate stop is not a crash.
+
+        The watcher waits on readiness on its own thread. If a stop settles the
+        record while it waits, the timeout that follows must leave the record
+        ``stopped`` — writing ``error`` over it would make an operator's own
+        teardown read as a failure.
+        """
+        docker.client.images.add(native.plan("qwen3-8b").container.image)
+
+        proceed = threading.Event()
+
+        def _blocking_wait(*_a, **_kw):
+            assert proceed.wait(timeout=5), "the watcher was never released"
+            raise native.NativeRuntimeError("engine did not become ready")
+
+        with _one_service(docker):
+            with patch.object(nr, "_wait_ready", side_effect=_blocking_wait):
+                record = native.create_deployment("qwen3-8b")
+                dep_id = record["id"]
+                assert record["status"] == "running"
+
+                # Stop it while the watcher is parked on readiness.
+                native.stop_deployment(dep_id, docker=docker)
+                assert native.get_deployment(dep_id)["status"] == "stopped"
+
+                # Release the watcher; its timeout must not overwrite "stopped".
+                proceed.set()
+                assert self._wait_until(
+                    lambda: not any(
+                        t.name == f"native-ready-{dep_id}"
+                        for t in threading.enumerate()
+                    )
+                ), "the watcher thread never finished"
+
+        settled = native.get_deployment(dep_id)
+        assert settled["status"] == "stopped"
+        assert settled.get("error_message") is None
+
+
 class TestAllocatePort:
     def test_skips_taken_ports(self):
         first = nr.allocate_port()
