@@ -230,6 +230,22 @@ def get_benchmark(benchmark_id: str) -> dict | None:
     return None
 
 
+def delete_benchmark(benchmark_id: str) -> bool:
+    """Remove one mock benchmark. ``False`` when there was nothing to remove.
+
+    The simulated store is the file itself, so there is no cache to keep in
+    step with it the way the real module has — rewriting the list *is* the
+    eviction.
+    """
+    with _atomic_benchmarks() as benchmarks:
+        keep = [b for b in benchmarks if b.get("benchmark_id") != benchmark_id]
+        removed = len(keep) != len(benchmarks)
+        benchmarks[:] = keep
+    if removed:
+        logger.info("Mock benchmark %s deleted", benchmark_id)
+    return removed
+
+
 def get_benchmarks_for_recipe(recipe_id: str) -> list[dict]:
     """Return all mock benchmarks for a recipe."""
     benchmarks = list_benchmarks()

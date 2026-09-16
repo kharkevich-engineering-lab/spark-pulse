@@ -251,6 +251,11 @@ export async function fetchBenchmark(id: string): Promise<BenchmarkResult> {
   return json<BenchmarkResult>(`/benchmarks/${id}`);
 }
 
+/** Remove one result for good. Refused with a 409 while the run is still going. */
+export async function deleteBenchmark(id: string): Promise<void> {
+  await json(`/benchmarks/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
 export async function fetchLatestByRecipe(signal?: AbortSignal): Promise<Record<string, BenchmarkResult>> {
   return json<Record<string, BenchmarkResult>>("/benchmarks/latest-by-recipe", { signal });
 }

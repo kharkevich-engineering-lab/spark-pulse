@@ -268,6 +268,14 @@ const CASES: Case[] = [
     method: "GET",
   },
   {
+    name: "deleteBenchmark",
+    call: () => api.deleteBenchmark("run 1"),
+    // The id is a uuid today, but it reaches the path from a record rather
+    // than from a generator, so it is encoded like every other one.
+    path: "/api/benchmarks/run%201",
+    method: "DELETE",
+  },
+  {
     name: "fetchLatestByRecipe",
     call: () => api.fetchLatestByRecipe(),
     path: "/api/benchmarks/latest-by-recipe",
