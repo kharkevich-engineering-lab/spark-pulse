@@ -324,6 +324,21 @@ export interface Settings {
   env_managed?: string[];
   /** How this process is configured. Reported, never written from the UI. */
   environment?: EnvironmentReport;
+  /** The cluster this control plane actually has. Derived, never written. */
+  cluster?: ClusterReport;
+}
+
+/** Whether cluster-only recipes are offered, and what decided it.
+ *
+ * The condition is the registry, not the switch: a control plane with a peer
+ * enrolled has a cluster. `forced` is `cluster_enabled`, which can only add —
+ * it offers the recipes below two nodes, for a cluster still being built.
+ */
+export interface ClusterReport {
+  available: boolean;
+  /** Nodes to deploy across, this machine included. */
+  node_count: number;
+  forced: boolean;
 }
 
 /** The container knobs every deployment inherits.

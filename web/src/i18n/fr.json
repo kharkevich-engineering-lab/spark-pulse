@@ -257,6 +257,9 @@
       "one": "{count} mod personnalisé",
       "other": "{count} mods personnalisés"
     },
+    "clusterHint": "Les recettes en grappe exigent au moins deux nœuds. Vous en avez {count}.",
+    "clusterHintAddNode": "Ajouter un nœud",
+    "clusterHintForce": "Forcer le mode grappe dans les Paramètres",
     "customMode": "Mode personnalisé",
     "customRecipeCount": {
       "one": "{count} recette personnalisée",
@@ -275,6 +278,10 @@
     "downloadStarted": "Téléchargement démarré",
     "downloadStartedBody": "{model} est en cours de téléchargement. « {name} » se déploiera tout seul une fois terminé — suivez la progression sur la page Modèles, où vous pouvez aussi l'annuler.",
     "managedRecipe": "Recette gérée — suppression impossible",
+    "hideUnavailable": {
+      "one": "Masquer {count} recette indisponible (grappe uniquement)",
+      "other": "Masquer {count} recettes indisponibles (grappe uniquement)"
+    },
     "missingModelTitle": "Ce modèle n'est pas encore téléchargé",
     "newMod": "Nouveau mod",
     "newRecipe": "Nouvelle recette",
@@ -291,6 +298,10 @@
     "reset": "Réinitialiser",
     "resetBody": "Réinitialiser « {name} » à sa recette d'origine ? Vos personnalisations seront perdues.",
     "resetTitle": "Réinitialiser la personnalisation",
+    "showUnavailable": {
+      "one": "Afficher {count} recette indisponible (grappe uniquement)",
+      "other": "Afficher {count} recettes indisponibles (grappe uniquement)"
+    },
     "subtitleBundled": "Parcourir les recettes de déploiement et les modifications disponibles",
     "subtitleCustom": "Parcourir vos recettes et mods personnalisés",
     "tabMods": "Mods",
@@ -545,8 +556,8 @@
     "caches": "Caches et point d'entrée",
     "clearToken": "Effacer le jeton",
     "clusterExperimental": "Le multi-nœud est marqué expérimental dans cette version.",
-    "clusterMode": "Mode cluster",
-    "clusterModeHelp": "Propose les recettes qui exigent plusieurs nœuds. Désactivé, elles apparaissent comme indisponibles.",
+    "clusterMode": "Forcer le mode grappe",
+    "clusterModeHelp": "Force l'affichage des recettes qui exigent plusieurs nœuds. Elles sont proposées d'office dès qu'un second nœud est inscrit ; ceci sert donc à une grappe encore en construction.",
     "defaultPath": "{backend} (chemin par défaut)",
     "defaults": "Valeurs par défaut du déploiement",
     "discover": "Découvrir",

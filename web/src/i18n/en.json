@@ -257,6 +257,9 @@
       "one": "{count} custom mod",
       "other": "{count} custom mods"
     },
+    "clusterHint": "Cluster recipes need two or more nodes. You have {count}.",
+    "clusterHintAddNode": "Add a node",
+    "clusterHintForce": "Force cluster mode in Settings",
     "customMode": "Custom mode",
     "customRecipeCount": {
       "one": "{count} custom recipe",
@@ -275,6 +278,10 @@
     "downloadStarted": "Download started",
     "downloadStartedBody": "{model} is downloading. \"{name}\" will deploy on its own when it finishes — follow the progress on the Models page, where you can also call it off.",
     "managedRecipe": "Managed recipe — cannot be deleted",
+    "hideUnavailable": {
+      "one": "Hide {count} unavailable recipe (cluster only)",
+      "other": "Hide {count} unavailable recipes (cluster only)"
+    },
     "missingModelTitle": "This model is not downloaded yet",
     "newMod": "New Mod",
     "newRecipe": "New Recipe",
@@ -291,6 +298,10 @@
     "reset": "Reset",
     "resetBody": "Reset \"{name}\" to its original recipe? Any customizations you made will be lost.",
     "resetTitle": "Reset Customization",
+    "showUnavailable": {
+      "one": "Show {count} unavailable recipe (cluster only)",
+      "other": "Show {count} unavailable recipes (cluster only)"
+    },
     "subtitleBundled": "Browse deployment recipes and available modifications",
     "subtitleCustom": "Browse your custom recipes and mods",
     "tabMods": "Mods",
@@ -545,8 +556,8 @@
     "caches": "Caches and Entrypoint",
     "clearToken": "Clear token",
     "clusterExperimental": "Multi-node is marked experimental in this build.",
-    "clusterMode": "Cluster mode",
-    "clusterModeHelp": "Offers recipes that need more than one node. With this off they are listed as unavailable.",
+    "clusterMode": "Force cluster mode",
+    "clusterModeHelp": "Forces recipes that need more than one node on. They are offered anyway once a second node is enrolled, so this is for a cluster still being built.",
     "defaultPath": "{backend} (default path)",
     "defaults": "Deployment Defaults",
     "discover": "Discover",

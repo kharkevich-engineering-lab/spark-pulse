@@ -9,11 +9,12 @@ import { X } from "lucide-react";
 import SlideDrawer from "./SlideDrawer";
 import type { RecipeDetail, RecipeCustomization, RecipeFormRef } from "@/lib/types";
 
-export default function RecipeDrawer({ recipe, customization, isRunning, clusterEnabled, onClose, onError, onDeploy, onSaveCustomization, onReset }: {
+export default function RecipeDrawer({ recipe, customization, isRunning, clusterAvailable, onClose, onError, onDeploy, onSaveCustomization, onReset }: {
   recipe: RecipeDetail;
   customization: RecipeCustomization;
   isRunning: boolean;
-  clusterEnabled: boolean;
+  /** Whether this install can run a `cluster_only` recipe at all. */
+  clusterAvailable: boolean;
   onClose: () => void;
   onError: (msg: string) => void;
   onDeploy?: (name: string, params: Record<string, unknown>, options?: DeployOptionsValue) => Promise<void>;
@@ -23,7 +24,7 @@ export default function RecipeDrawer({ recipe, customization, isRunning, cluster
   const { t } = useI18n();
   const formRef = useRef<RecipeFormRef>(null);
   const [deployOptions, setDeployOptions] = useState<DeployOptionsValue>({});
-  const clusterBlocked = recipe.cluster_only && !clusterEnabled;
+  const clusterBlocked = recipe.cluster_only && !clusterAvailable;
   const hasCustomization = customization && Object.keys(customization).length > 0;
   const [isEditing, setIsEditing] = useState(false);
   const [deploying, setDeploying] = useState(false);

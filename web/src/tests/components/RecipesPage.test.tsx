@@ -17,6 +17,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import RecipesPage from "@/pages/RecipesPage";
 import type {
   CustomModInfo,
@@ -153,7 +154,18 @@ const MOD: ModSummary = {
   has_patches: true,
 };
 
-const SETTINGS = { cluster_enabled: false } as Settings;
+/** A solo install: this machine and nothing else enrolled. */
+const SETTINGS = {
+  cluster_enabled: false,
+  cluster: { available: false, node_count: 1, forced: false },
+} as Settings;
+
+/** The same install once a second Spark is enrolled. The switch stays off:
+ *  the point is that it no longer has to be on. */
+const CLUSTER_SETTINGS = {
+  cluster_enabled: false,
+  cluster: { available: true, node_count: 2, forced: false },
+} as Settings;
 
 const CUSTOM_RECIPE: CustomRecipeInfo = {
   id: "custom/mine",
@@ -226,6 +238,9 @@ const missingModelError = (model = "unsloth/Qwen3-27B-NVFP4") =>
     },
   });
 
+/** The page needs a router: the cluster hint links to /cluster and /settings. */
+const renderPage = () => render(<MemoryRouter><RecipesPage /></MemoryRouter>);
+
 const openDeployDrawer = async (name = "Qwen3 8B") => {
   await userEvent.click(await screen.findByText(name));
   return screen.findByRole("heading", { name });
@@ -273,7 +288,7 @@ describe("RecipesPage", () => {
 
   describe("listing", () => {
     it("lists each recipe with what it runs and where", async () => {
-      render(<RecipesPage />);
+      renderPage();
 
       expect(await screen.findByText("Qwen3 8B")).toBeInTheDocument();
       expect(screen.getByText("Qwen3 at 8B, one GPU")).toBeInTheDocument();
@@ -285,7 +300,7 @@ describe("RecipesPage", () => {
       vi.mocked(fetchDeployments).mockResolvedValue([
         { id: "d1", recipe_id: SOLO.id, status: "running" } as Deployment,
       ]);
-      render(<RecipesPage />);
+      renderPage();
 
       expect(await screen.findByText("Running")).toBeInTheDocument();
     });
@@ -294,7 +309,7 @@ describe("RecipesPage", () => {
      *  away behind a count rather than offered and then refused. */
     it("folds cluster-only recipes away on a solo install", async () => {
       vi.mocked(fetchRecipes).mockResolvedValue([SOLO, CLUSTER_ONLY]);
-      render(<RecipesPage />);
+      renderPage();
 
       await screen.findByText("Qwen3 8B");
       expect(screen.queryByText("Big Mesh")).not.toBeInTheDocument();
@@ -309,10 +324,43 @@ describe("RecipesPage", () => {
       expect(screen.queryByText("Big Mesh")).not.toBeInTheDocument();
     });
 
-    it("offers every recipe once the cluster is enabled", async () => {
+    /** "Enable cluster mode" named a setting and not a condition, which is
+     *  how an operator with a real cluster ended up hunting for a toggle. */
+    it("says how many nodes there are and where to add one", async () => {
+      vi.mocked(fetchRecipes).mockResolvedValue([SOLO, CLUSTER_ONLY]);
+      renderPage();
+
+      await screen.findByText("Qwen3 8B");
+
+      expect(
+        screen.getByText(/Cluster recipes need two or more nodes\. You have 1\./),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Add a node" })).toHaveAttribute(
+        "href",
+        "/cluster",
+      );
+      expect(
+        screen.getByRole("link", { name: "Force cluster mode in Settings" }),
+      ).toHaveAttribute("href", "/settings");
+    });
+
+    /** The defect this page had: a healthy two-node cluster still filed every
+     *  multi-node recipe under "unavailable" until a switch was found. */
+    it("offers every recipe once a second node is enrolled", async () => {
+      vi.mocked(fetchRecipes).mockResolvedValue([SOLO, CLUSTER_ONLY]);
+      vi.mocked(fetchSettings).mockResolvedValue(CLUSTER_SETTINGS);
+      renderPage();
+
+      expect(await screen.findByText("Big Mesh")).toBeInTheDocument();
+      expect(screen.queryByText(/unavailable recipe/)).not.toBeInTheDocument();
+    });
+
+    /** The override still works, and a control plane too old to report the
+     *  derived block falls back to it rather than hiding everything. */
+    it("offers every recipe when the override is on below two nodes", async () => {
       vi.mocked(fetchRecipes).mockResolvedValue([SOLO, CLUSTER_ONLY]);
       vi.mocked(fetchSettings).mockResolvedValue({ cluster_enabled: true } as Settings);
-      render(<RecipesPage />);
+      renderPage();
 
       expect(await screen.findByText("Big Mesh")).toBeInTheDocument();
       expect(screen.queryByText(/unavailable recipe/)).not.toBeInTheDocument();
@@ -320,7 +368,7 @@ describe("RecipesPage", () => {
 
     it("points at Settings when there are no recipes at all", async () => {
       vi.mocked(fetchRecipes).mockResolvedValue([]);
-      render(<RecipesPage />);
+      renderPage();
 
       expect(await screen.findByText("No recipes found.")).toBeInTheDocument();
       expect(screen.getByText(/Check spark-vllm-docker path in Settings/)).toBeInTheDocument();
@@ -328,7 +376,7 @@ describe("RecipesPage", () => {
 
     it("surfaces a recipe list the backend could not produce", async () => {
       vi.mocked(fetchRecipes).mockRejectedValue(new Error("recipes dir unreadable"));
-      render(<RecipesPage />);
+      renderPage();
 
       expect(await screen.findByText("recipes dir unreadable")).toBeInTheDocument();
     });
@@ -387,7 +435,7 @@ describe("RecipesPage", () => {
 
   describe("mods tab", () => {
     it("lists the mods with their assets", async () => {
-      render(<RecipesPage />);
+      renderPage();
       await userEvent.click(await screen.findByRole("button", { name: /Mods \(1\)/ }));
 
       expect(screen.getByText("flash-attn")).toBeInTheDocument();
@@ -398,7 +446,7 @@ describe("RecipesPage", () => {
 
     it("says there are no mods rather than showing an empty grid", async () => {
       vi.mocked(fetchMods).mockResolvedValue([]);
-      render(<RecipesPage />);
+      renderPage();
       await userEvent.click(await screen.findByRole("button", { name: /Mods \(0\)/ }));
 
       expect(screen.getByText("No mods found")).toBeInTheDocument();
@@ -407,7 +455,7 @@ describe("RecipesPage", () => {
     /** A mod is a shell script that runs inside the container as root; the
      *  drawer exists so an operator can read it before applying it. */
     it("opens a mod and shows the script it would run", async () => {
-      render(<RecipesPage />);
+      renderPage();
       await userEvent.click(await screen.findByRole("button", { name: /Mods \(1\)/ }));
       await userEvent.click(screen.getByText("flash-attn"));
 
@@ -417,7 +465,7 @@ describe("RecipesPage", () => {
 
     it("reports a mod whose script could not be read", async () => {
       vi.mocked(fetchMod).mockRejectedValue(new Error("mod dir vanished"));
-      render(<RecipesPage />);
+      renderPage();
       await userEvent.click(await screen.findByRole("button", { name: /Mods \(1\)/ }));
       await userEvent.click(screen.getByText("flash-attn"));
 
@@ -429,7 +477,7 @@ describe("RecipesPage", () => {
     it("copies the mod's script to the clipboard", async () => {
       const writeText = vi.fn().mockResolvedValue(undefined);
       vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
-      render(<RecipesPage />);
+      renderPage();
       await userEvent.click(await screen.findByRole("button", { name: /Mods \(1\)/ }));
       await userEvent.click(screen.getByText("flash-attn"));
       await screen.findByText(/echo patched/);
@@ -444,7 +492,7 @@ describe("RecipesPage", () => {
 
   describe("deploying", () => {
     it("creates the deployment the drawer describes and closes it", async () => {
-      render(<RecipesPage />);
+      renderPage();
       await openDeployDrawer();
 
       await userEvent.click(screen.getByRole("button", { name: "Deploy" }));
@@ -473,7 +521,7 @@ describe("RecipesPage", () => {
         { id: "peer-1", name: "spark-02", address: "10.0.0.11", is_control_plane: false },
       ] as never);
       vi.mocked(fetchRecipe).mockResolvedValue(detail({ solo_only: false }));
-      render(<RecipesPage />);
+      renderPage();
       await openDeployDrawer();
 
       await userEvent.click(screen.getByRole("button", { name: /deploy options/i }));
@@ -496,7 +544,7 @@ describe("RecipesPage", () => {
       vi.mocked(createDeployment).mockRejectedValue(
         new ApiError(400, "API 400: port 9000 is already bound", { detail: "port 9000" }),
       );
-      render(<RecipesPage />);
+      renderPage();
       await openDeployDrawer();
 
       await userEvent.click(screen.getByRole("button", { name: "Deploy" }));
@@ -507,7 +555,7 @@ describe("RecipesPage", () => {
 
     it("shows the pre-flight report, not an alert, when the gate refuses", async () => {
       vi.mocked(createDeployment).mockRejectedValue(gateError(blockedReport()));
-      render(<RecipesPage />);
+      renderPage();
       await openDeployDrawer();
 
       await userEvent.click(screen.getByRole("button", { name: "Deploy" }));
@@ -533,7 +581,7 @@ describe("RecipesPage", () => {
       vi.mocked(createDeployment)
         .mockRejectedValueOnce(gateError(blockedReport()))
         .mockResolvedValueOnce({ id: "d-1" } as unknown as Deployment);
-      render(<RecipesPage />);
+      renderPage();
       await openDeployDrawer();
       await userEvent.click(screen.getByRole("button", { name: "Deploy" }));
       await screen.findByTestId("preflight-block-modal");
@@ -557,7 +605,7 @@ describe("RecipesPage", () => {
       vi.mocked(createDeployment)
         .mockRejectedValueOnce(gateError(blockedReport()))
         .mockRejectedValueOnce(new Error("API 500: docker daemon is gone"));
-      render(<RecipesPage />);
+      renderPage();
       await openDeployDrawer();
       await userEvent.click(screen.getByRole("button", { name: "Deploy" }));
       await screen.findByTestId("preflight-block-modal");
@@ -571,7 +619,7 @@ describe("RecipesPage", () => {
 
     it("lets the operator back out of a blocked deploy", async () => {
       vi.mocked(createDeployment).mockRejectedValue(gateError(blockedReport()));
-      render(<RecipesPage />);
+      renderPage();
       await openDeployDrawer();
       await userEvent.click(screen.getByRole("button", { name: "Deploy" }));
       await screen.findByTestId("preflight-block-modal");
@@ -588,7 +636,7 @@ describe("RecipesPage", () => {
       vi.mocked(createDeployment).mockRejectedValue(
         new ApiError(409, "API 409: conflict", { detail: "conflict" }),
       );
-      render(<RecipesPage />);
+      renderPage();
       await openDeployDrawer();
 
       await userEvent.click(screen.getByRole("button", { name: "Deploy" }));
@@ -603,7 +651,7 @@ describe("RecipesPage", () => {
      *  back later and remember what they were doing. */
     it("offers to download the model instead of reporting the 400", async () => {
       vi.mocked(createDeployment).mockRejectedValue(missingModelError());
-      render(<RecipesPage />);
+      renderPage();
       await openDeployDrawer();
 
       await userEvent.click(screen.getByRole("button", { name: "Deploy" }));
@@ -621,7 +669,7 @@ describe("RecipesPage", () => {
         model: "unsloth/Qwen3-27B-NVFP4",
         status: "waiting",
       } as never);
-      render(<RecipesPage />);
+      renderPage();
       await openDeployDrawer();
       await userEvent.click(screen.getByRole("button", { name: "Deploy" }));
       await screen.findByTestId("missing-model-modal");
@@ -639,7 +687,7 @@ describe("RecipesPage", () => {
     it("says the deploy will happen on its own", async () => {
       vi.mocked(createDeployment).mockRejectedValue(missingModelError());
       vi.mocked(scheduleDeploy).mockResolvedValue({ id: "s-1" } as never);
-      render(<RecipesPage />);
+      renderPage();
       await openDeployDrawer();
       await userEvent.click(screen.getByRole("button", { name: "Deploy" }));
       await screen.findByTestId("missing-model-modal");
@@ -651,7 +699,7 @@ describe("RecipesPage", () => {
 
     it("lets the operator decline the download", async () => {
       vi.mocked(createDeployment).mockRejectedValue(missingModelError());
-      render(<RecipesPage />);
+      renderPage();
       await openDeployDrawer();
       await userEvent.click(screen.getByRole("button", { name: "Deploy" }));
       await screen.findByTestId("missing-model-modal");
@@ -665,7 +713,7 @@ describe("RecipesPage", () => {
     it("reports a download that could not even be started", async () => {
       vi.mocked(createDeployment).mockRejectedValue(missingModelError());
       vi.mocked(scheduleDeploy).mockRejectedValue(new Error("API 502: hub unreachable"));
-      render(<RecipesPage />);
+      renderPage();
       await openDeployDrawer();
       await userEvent.click(screen.getByRole("button", { name: "Deploy" }));
       await screen.findByTestId("missing-model-modal");
@@ -682,7 +730,7 @@ describe("RecipesPage", () => {
       vi.mocked(createDeployment).mockRejectedValue(
         new ApiError(400, "API 400: port 9000 is already bound", { detail: { message: "port taken" } }),
       );
-      render(<RecipesPage />);
+      renderPage();
       await openDeployDrawer();
 
       await userEvent.click(screen.getByRole("button", { name: "Deploy" }));
@@ -693,7 +741,7 @@ describe("RecipesPage", () => {
 
     it("says so when the recipe itself could not be opened", async () => {
       vi.mocked(fetchRecipe).mockRejectedValue(new Error("recipe file is malformed"));
-      render(<RecipesPage />);
+      renderPage();
 
       await userEvent.click(await screen.findByText("Qwen3 8B"));
 
@@ -703,7 +751,7 @@ describe("RecipesPage", () => {
 
   describe("customization", () => {
     it("saves the edited fields and reopens the recipe as customized", async () => {
-      render(<RecipesPage />);
+      renderPage();
       await openDeployDrawer();
 
       await userEvent.click(screen.getByRole("button", { name: "Customize" }));
@@ -721,7 +769,7 @@ describe("RecipesPage", () => {
 
     it("reports a customization the backend would not store", async () => {
       vi.mocked(saveRecipeCustomization).mockRejectedValue(new Error("config dir is read-only"));
-      render(<RecipesPage />);
+      renderPage();
       await openDeployDrawer();
 
       await userEvent.click(screen.getByRole("button", { name: "Customize" }));
@@ -738,7 +786,7 @@ describe("RecipesPage", () => {
         .mockResolvedValueOnce(detail({ model: "Qwen/Qwen3-32B", is_customized: true }))
         .mockResolvedValue(detail());
       vi.mocked(fetchRecipeCustomization).mockResolvedValue({ model: "Qwen/Qwen3-32B" });
-      render(<RecipesPage />);
+      renderPage();
       await openDeployDrawer();
       expect(screen.getByText("Qwen/Qwen3-32B")).toBeInTheDocument();
 
@@ -757,7 +805,7 @@ describe("RecipesPage", () => {
      *  affordance asks before it calls the API. */
     it("asks before resetting a customized recipe from its card", async () => {
       vi.mocked(fetchRecipes).mockResolvedValue([summary({ is_customized: true })]);
-      render(<RecipesPage />);
+      renderPage();
       await screen.findByText("Qwen3 8B");
 
       await userEvent.click(screen.getByRole("button", { name: "Reset to original" }));
@@ -775,7 +823,7 @@ describe("RecipesPage", () => {
     it("reports a reset the backend refused", async () => {
       vi.mocked(fetchRecipes).mockResolvedValue([summary({ is_customized: true })]);
       vi.mocked(deleteRecipeCustomization).mockRejectedValue(new Error("nothing to reset"));
-      render(<RecipesPage />);
+      renderPage();
       await screen.findByText("Qwen3 8B");
 
       await userEvent.click(screen.getByRole("button", { name: "Reset to original" }));
@@ -792,7 +840,7 @@ describe("RecipesPage", () => {
     };
 
     it("swaps the bundled recipes for the operator's own", async () => {
-      render(<RecipesPage />);
+      renderPage();
       await screen.findByText("Qwen3 8B");
 
       await enterCustomMode();
@@ -806,7 +854,7 @@ describe("RecipesPage", () => {
     it("says there are none rather than showing an empty grid", async () => {
       vi.mocked(listCustomRecipes).mockResolvedValue([]);
       vi.mocked(listCustomMods).mockResolvedValue([]);
-      render(<RecipesPage />);
+      renderPage();
       await screen.findByText("Qwen3 8B");
 
       await enterCustomMode();
@@ -823,7 +871,7 @@ describe("RecipesPage", () => {
     it("offers to create the first recipe when there are none", async () => {
       vi.mocked(listCustomRecipes).mockResolvedValue([]);
       vi.mocked(listCustomMods).mockResolvedValue([]);
-      render(<RecipesPage />);
+      renderPage();
       await screen.findByText("Qwen3 8B");
 
       await enterCustomMode();
@@ -835,7 +883,7 @@ describe("RecipesPage", () => {
     it("offers to create the first mod when there are none", async () => {
       vi.mocked(listCustomRecipes).mockResolvedValue([]);
       vi.mocked(listCustomMods).mockResolvedValue([]);
-      render(<RecipesPage />);
+      renderPage();
       await screen.findByText("Qwen3 8B");
       await enterCustomMode();
 
@@ -846,7 +894,7 @@ describe("RecipesPage", () => {
     });
 
     it("still offers to create one when some already exist", async () => {
-      render(<RecipesPage />);
+      renderPage();
       await screen.findByText("Qwen3 8B");
 
       await enterCustomMode();
@@ -857,7 +905,7 @@ describe("RecipesPage", () => {
 
     it("surfaces a custom directory it could not read", async () => {
       vi.mocked(listCustomRecipes).mockRejectedValue(new Error("config dir missing"));
-      render(<RecipesPage />);
+      renderPage();
       await screen.findByText("Qwen3 8B");
 
       await userEvent.click(screen.getByRole("button", { name: "Toggle custom mode" }));
@@ -866,7 +914,7 @@ describe("RecipesPage", () => {
     });
 
     it("edits a custom recipe's YAML and writes it back", async () => {
-      render(<RecipesPage />);
+      renderPage();
       await screen.findByText("Qwen3 8B");
       await enterCustomMode();
 
@@ -883,7 +931,7 @@ describe("RecipesPage", () => {
     });
 
     it("deletes a custom recipe once the operator confirms", async () => {
-      render(<RecipesPage />);
+      renderPage();
       await screen.findByText("Qwen3 8B");
       await enterCustomMode();
 
@@ -901,7 +949,7 @@ describe("RecipesPage", () => {
      *  is two clicks and a scroll from the card, so the list looked as though
      *  what it created could not be removed. */
     it("deletes a custom recipe from its card, after confirming", async () => {
-      render(<RecipesPage />);
+      renderPage();
       await screen.findByText("Qwen3 8B");
       await enterCustomMode();
 
@@ -914,7 +962,7 @@ describe("RecipesPage", () => {
 
     it("says why a delete from the card failed", async () => {
       vi.mocked(deleteCustomRecipe).mockRejectedValueOnce(new Error("permission denied"));
-      render(<RecipesPage />);
+      renderPage();
       await screen.findByText("Qwen3 8B");
       await enterCustomMode();
 
@@ -925,7 +973,7 @@ describe("RecipesPage", () => {
     });
 
     it("opens a custom mod with the files it holds and saves them together", async () => {
-      render(<RecipesPage />);
+      renderPage();
       await screen.findByText("Qwen3 8B");
       await enterCustomMode();
       await userEvent.click(screen.getByRole("button", { name: /Mods \(1\)/ }));
@@ -947,7 +995,7 @@ describe("RecipesPage", () => {
 
     it("reports a custom mod whose files could not be read", async () => {
       vi.mocked(getCustomModFiles).mockRejectedValue(new Error("gone"));
-      render(<RecipesPage />);
+      renderPage();
       await screen.findByText("Qwen3 8B");
       await enterCustomMode();
       await userEvent.click(screen.getByRole("button", { name: /Mods \(1\)/ }));
@@ -958,7 +1006,7 @@ describe("RecipesPage", () => {
     });
 
     it("deletes a custom mod once the operator confirms", async () => {
-      render(<RecipesPage />);
+      renderPage();
       await screen.findByText("Qwen3 8B");
       await enterCustomMode();
       await userEvent.click(screen.getByRole("button", { name: /Mods \(1\)/ }));
@@ -974,7 +1022,7 @@ describe("RecipesPage", () => {
 
     it("reports a custom recipe the drawer could not read", async () => {
       vi.mocked(getCustomRecipeContent).mockRejectedValue(new Error("mine.yaml is gone"));
-      render(<RecipesPage />);
+      renderPage();
       await screen.findByText("Qwen3 8B");
       await enterCustomMode();
 
@@ -984,7 +1032,7 @@ describe("RecipesPage", () => {
     });
 
     it("closes a custom recipe drawer without writing anything", async () => {
-      render(<RecipesPage />);
+      renderPage();
       await screen.findByText("Qwen3 8B");
       await enterCustomMode();
       await userEvent.click(await screen.findByText("Mine"));
@@ -1007,7 +1055,7 @@ describe("RecipesPage", () => {
         "fetch",
         vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({}) }),
       );
-      render(<RecipesPage />);
+      renderPage();
       await screen.findByText("Qwen3 8B");
       await enterCustomMode();
       const before = vi.mocked(listCustomRecipes).mock.calls.length;
@@ -1030,7 +1078,7 @@ describe("RecipesPage", () => {
     });
 
     it("abandons the new-recipe form without writing anything", async () => {
-      render(<RecipesPage />);
+      renderPage();
       await screen.findByText("Qwen3 8B");
       await enterCustomMode();
 
@@ -1048,7 +1096,7 @@ describe("RecipesPage", () => {
           .fn()
           .mockResolvedValue({ ok: true, status: 200, json: async () => ({ id: "custom/m", name: "m" }) }),
       );
-      render(<RecipesPage />);
+      renderPage();
       await screen.findByText("Qwen3 8B");
       await enterCustomMode();
       await userEvent.click(screen.getByRole("button", { name: /Mods \(1\)/ }));
@@ -1066,7 +1114,7 @@ describe("RecipesPage", () => {
     });
 
     it("abandons the new-mod form without writing anything", async () => {
-      render(<RecipesPage />);
+      renderPage();
       await screen.findByText("Qwen3 8B");
       await enterCustomMode();
       await userEvent.click(screen.getByRole("button", { name: /Mods \(1\)/ }));

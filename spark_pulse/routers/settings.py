@@ -9,11 +9,12 @@ read from. Without the allowlist, ``PUT /api/settings {"auth_enabled": false}``
 turns authentication off, which would make this endpoint the way past every
 other check in the system.
 
-**Reported but not editable** — the ``environment`` block. An operator has to
-be able to *see* how the process is configured to make sense of anything else:
-which database it is on, whether authentication is active, which origins may
-call it. Showing that is not the same as letting the browser change it, and
-the ones that would be dangerous to change are exactly the ones worth showing.
+**Reported but not editable** — the ``environment`` and ``cluster`` blocks. An
+operator has to be able to *see* how the process is configured to make sense of
+anything else: which database it is on, whether authentication is active, which
+origins may call it, and whether this control plane has a second node to deploy
+across. Showing that is not the same as letting the browser change it, and the
+ones that would be dangerous to change are exactly the ones worth showing.
 
 **Secret** — never reported at all, only replaced. ``hf_token`` comes back
 masked; the raw value leaves this process only in a deployment's environment.
@@ -23,6 +24,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import APIRouter, HTTPException
 
+from spark_pulse import tools
 from spark_pulse.config import config
 from spark_pulse.engines import reset_registry
 
@@ -32,9 +34,10 @@ _ALLOWED_SECRET_KEYS = {"hf_token"}
 
 #: The settings this endpoint may change — exactly the ones it reports back.
 #:
-#: ``env_managed`` and ``environment`` are absent on purpose: the first is a
-#: report of which fields the environment owns, the second a report of how the
-#: process is configured. Neither is a field.
+#: ``env_managed``, ``environment`` and ``cluster`` are absent on purpose: the
+#: first is a report of which fields the environment owns, the second a report
+#: of how the process is configured, the third a report of what the registry
+#: actually holds. None of them is a field.
 _ALLOWED_SETTING_KEYS = frozenset(
     {
         "spark_vllm_path",
@@ -184,6 +187,36 @@ def _image_registry() -> dict:
     }
 
 
+def _cluster_block() -> dict:
+    """Whether cluster-only recipes are offered, and what decided it.
+
+    The condition is the cluster, not the switch. An operator who enrolled a
+    second Spark has a cluster; the recipes page calling every multi-node
+    recipe "unavailable" until they find a toggle on another page is the
+    defect this block exists to remove. ``cluster_enabled`` survives as an
+    override — force the recipes on below two nodes — and says so in
+    ``forced``.
+
+    A peer that is merely out of contact still counts. Availability that
+    flickers with a heartbeat would fold the recipes away mid-session, and
+    unknown is not gone; a peer marked ``dead`` is the one that does not count.
+    ``node_count`` includes the machine this process runs on, which is always
+    one node whether or not the registry has caught up with saying so.
+    """
+    try:
+        nodes = tools.node_registry.list_nodes()
+    except Exception:
+        # The report must not fail the page: a settings screen that 500s
+        # because the registry is unreadable hides every other answer on it.
+        nodes = []
+    peers = [n for n in nodes if not n.is_control_plane and n.state != "dead"]
+    return {
+        "available": bool(peers) or config.cluster_enabled,
+        "node_count": len(peers) + 1,
+        "forced": config.cluster_enabled,
+    }
+
+
 def _settings_response() -> dict:
     return {
         "spark_vllm_path": config.spark_vllm_path,
@@ -205,6 +238,7 @@ def _settings_response() -> dict:
         "mod": {"network_policy": config.mod_network_policy},
         "env_managed": config.env_managed,
         "environment": _environment_block(),
+        "cluster": _cluster_block(),
     }
 
 
@@ -228,7 +262,7 @@ def get_settings():
 
 @router.put("")
 def update_settings(req: dict):
-    reported_only = {"env_managed", "environment"}
+    reported_only = {"env_managed", "environment", "cluster"}
     unknown = sorted(set(req) - _ALLOWED_SETTING_KEYS - reported_only)
     if unknown:
         raise HTTPException(

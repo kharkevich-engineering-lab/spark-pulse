@@ -222,12 +222,19 @@ class _Config:
 
     @property
     def cluster_enabled(self) -> bool:
-        """Whether cluster-only recipes are offered.
+        """Force cluster-only recipes on, below two nodes.
 
-        Read by the recipes page: a recipe marked ``cluster_only`` is listed as
-        unavailable until this is on. It is served by ``/api/settings`` and by
-        nothing else — ``/api/config`` carried a second copy that no component
-        ever read, which is exactly how a setting comes to look inert.
+        An **override**, not the condition. What normally decides whether a
+        ``cluster_only`` recipe is offered is the registry: a control plane
+        with a peer enrolled has a cluster, and the recipes page reads the
+        derived ``cluster`` block ``/api/settings`` reports for that. This flag
+        only adds to it — for a cluster being built, or a recipe somebody wants
+        to read before the second machine arrives. Turning it off never takes
+        cluster recipes away from a fleet that really has two nodes.
+
+        Served by ``/api/settings`` and by nothing else — ``/api/config``
+        carried a second copy that no component ever read, which is exactly how
+        a setting comes to look inert.
         """
         return bool(self._data.get("cluster_enabled", False))
 
