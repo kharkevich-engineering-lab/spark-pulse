@@ -2,9 +2,9 @@
 
 Every managed container carries ``spark-pulse.*`` labels (dotted, hyphenated).
 Container labels are the source of truth for reconciliation, so the producer
-(``tools.docker``) and the consumers (``tools.native_runtime``,
-``tools.reconciliation``) must agree on the exact keys. Import them from here —
-never spell a label out inline.
+(``tools.docker``) and the consumer (``tools.native_runtime``, which rebuilds
+deployment state from them in ``list_deployments``) must agree on the exact
+keys. Import them from here — never spell a label out inline.
 
 There was a second block here for the cluster orchestrator's own labels —
 cluster name, role, node rank, head IP, Ray flags. That orchestrator is gone,

@@ -6,8 +6,9 @@ here, held once per process. Synchronous callers reach it through
 :func:`current`; that is the whole reason the module exists.
 
 **Why a process-wide handle rather than dependency injection.** The callers
-that need a node service are not endpoints. They are ``reconcile_all()`` at
-startup, the orchestrator deep inside a deploy, the image cache, the health
+that need a node service are not endpoints. They are the deployment recovery
+pass (``native_runtime.list_deployments``) at startup, the orchestrator deep
+inside a deploy, the image cache, the health
 validator — reached through four or five frames of synchronous code that a
 router does not thread anything through. Passing the runtime down all of them
 would mean changing every signature between the router and the docker call,
