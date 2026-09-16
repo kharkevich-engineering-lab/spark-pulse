@@ -378,14 +378,48 @@ export interface BenchmarkResult {
 
 // ── OCI Registry Types ───────────────────────────────────────────────────────
 
+/** Non-secret auth fields the real backend reports back on a registry.
+ *
+ * A stored token or password is never echoed here — `routers/oci.py`'s
+ * `GET /api/oci/registries` returns them in plaintext today, but the edit
+ * dialog deliberately never reads them regardless, so this type does not
+ * carry them either. Only `type` and (for username/password auth) the
+ * username are safe to pre-fill a form with. */
+export interface OciRegistryAuth {
+  type: "token" | "username_password" | "none";
+  username?: string;
+}
+
 export interface OciRegistry {
   name: string;
   url: string;
   enabled: boolean;
   default: boolean;
   auth_type: "token" | "username_password" | "none";
+  auth?: OciRegistryAuth;
   connected?: boolean;
   error?: string;
+}
+
+/** A new secret going *out* to `PUT /api/oci/registries/{name}`, as opposed
+ *  to `OciRegistryAuth`, which is what can safely come back in. `token` and
+ *  `password` are write-only — present only when the operator entered a new
+ *  one, since the backend merges a partial `auth` update rather than
+ *  replacing it (see `update_registry` in `tools/oci_registry.py`). */
+export interface OciRegistryAuthUpdate {
+  type: "token" | "username_password" | "none";
+  username?: string;
+  token?: string;
+  password?: string;
+}
+
+/** Body for `PUT /api/oci/registries/{name}` — only the fields being
+ *  changed belong here; omitted fields are left untouched. */
+export interface OciRegistryUpdate {
+  url?: string;
+  enabled?: boolean;
+  default?: boolean;
+  auth?: OciRegistryAuthUpdate;
 }
 
 export interface OciCollection {
@@ -452,69 +486,6 @@ export interface OciAutoUpdateSettings {
 }
 
 // ── Cluster Orchestration Types ──────────────────────────────────────────────
-//
-// ── Launch Script Types (Phase 4) ────────────────────────────────────────────
-
-export interface LaunchScriptValidation {
-  healthy: boolean;
-  warnings: string[];
-  errors: string[];
-}
-
-export interface LaunchScriptInfo {
-  path: string;
-  command_line: string | null;
-  parallelism: { tp: number; pp: number; dp: number };
-  backend: string | null;
-  has_model_flag: boolean;
-  is_valid: boolean;
-  validation: LaunchScriptValidation | null;
-}
-
-export interface LaunchScriptResolveResult {
-  path: string;
-  exists: boolean;
-  is_file: boolean;
-}
-
-export interface PatchedScriptBundle {
-  original_script: string;
-  total_nodes: number;
-  master_addr: string;
-  master_port: number;
-  scripts: Record<number, string>;
-}
-
-export interface LaunchScriptResolveRequest {
-  path: string;
-}
-
-export interface LaunchScriptAnalyzeRequest {
-  path: string;
-}
-
-export interface LaunchScriptValidateRequest {
-  path: string;
-}
-
-export interface LaunchScriptPatchRequest {
-  path: string;
-  total_nodes: number;
-  master_addr?: string;
-  master_port?: number;
-}
-
-// ── Mods ────────────────────────────────────────────────────────────────────
-
-export interface ModValidationResult {
-  healthy: boolean;
-  warnings: string[];
-  errors: string[];
-}
-
-export interface ModValidateRequest {
-  path: string;
-}
 
 // ── Deployment Summary (Phase 4) ─────────────────────────────────────────────
 
@@ -839,6 +810,11 @@ export interface ModelSyncNodeResult {
   ok: boolean;
   error: string | null;
   duration_s: number;
+  /** True when the node already held a verified copy and nothing transferred. */
+  skipped?: boolean;
+  /** Why: "node already holds a verified copy of this revision", a transfer
+   *  failure, etc. Present whether or not the node succeeded. */
+  reason?: string;
 }
 
 export interface ModelSyncResult {

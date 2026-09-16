@@ -25,6 +25,7 @@ const handlers = () => ({
   onToggle: vi.fn(),
   onTest: vi.fn(),
   onRemove: vi.fn(),
+  onEdit: vi.fn(),
 });
 
 describe("RegistryCard", () => {
@@ -62,6 +63,14 @@ describe("RegistryCard", () => {
     expect(test).toBeEnabled();
     fireEvent.click(test);
     expect(h.onTest).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the edit dialog for a registry", () => {
+    const h = handlers();
+    render(<RegistryCard reg={registry()} {...h} />);
+
+    fireEvent.click(screen.getByTitle("Edit registry"));
+    expect(h.onEdit).toHaveBeenCalledTimes(1);
   });
 
   it("removes a registry that is not the default", () => {

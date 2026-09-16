@@ -27,11 +27,12 @@ import {
   updateOciRecipe,
   uninstallOciRecipe,
 } from "@/lib/api";
-import type { OciRegistry, OciCollection, OciCollectionRecipe, OciUpdateCheck } from "@/lib/types";
+import type { OciRegistry, OciRegistryUpdate, OciCollection, OciCollectionRecipe, OciUpdateCheck } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
 import { AlertModal } from "@/components/Modal";
 import SlideDrawer from "@/components/SlideDrawer";
 import RegistryCard from "@/components/RegistryCard";
+import EditRegistryDialog from "@/components/EditRegistryDialog";
 import CollectionCard from "@/components/CollectionCard";
 
 type Tab = "browse" | "installed" | "settings";
@@ -46,6 +47,7 @@ export default function OciRegistryPage() {
   const [drawerRecipesLoading, setDrawerRecipesLoading] = useState(false);
   const [recipeActions, setRecipeActions] = useState<Record<string, "installing" | "updating" | "done">>({});
   const [addingRegistry, setAddingRegistry] = useState(false);
+  const [editingRegistry, setEditingRegistry] = useState<OciRegistry | null>(null);
   const [newRegName, setNewRegName] = useState("");
   const [newRegUrl, setNewRegUrl] = useState("");
   const [autoUpdating, setAutoUpdating] = useState(false);
@@ -102,6 +104,22 @@ export default function OciRegistryPage() {
       refetchRegs();
     } catch (e) {
       setAlertModal({ title: "Error", message: e instanceof Error ? e.message : "Test failed", open: true });
+    }
+  };
+
+  const handleSaveRegistry = async (name: string, update: OciRegistryUpdate) => {
+    await updateOciRegistry(name, update);
+    refetchRegs();
+    // A changed URL is worth re-validating immediately rather than waiting
+    // for the operator to notice it is still marked unreachable; a failed
+    // test here is not itself an error, just fresh status.
+    if (update.url !== undefined) {
+      try {
+        await testOciRegistry(name);
+      } catch {
+        // best-effort re-check; refetch below shows whatever state landed
+      }
+      refetchRegs();
     }
   };
 
@@ -522,6 +540,7 @@ export default function OciRegistryPage() {
                     onToggle={() => handleToggleRegistry(reg)}
                     onTest={() => handleTestRegistry(reg)}
                     onRemove={() => handleRemoveRegistry(reg)}
+                    onEdit={() => setEditingRegistry(reg)}
                     onVersionChange={(version) => {
                       console.log(`Registry ${reg.name} version changed to ${version}`);
                     }}
@@ -773,6 +792,13 @@ export default function OciRegistryPage() {
           </div>
         </div>
       </SlideDrawer>
+
+      {/* Edit Registry Dialog */}
+      <EditRegistryDialog
+        reg={editingRegistry}
+        onClose={() => setEditingRegistry(null)}
+        onSave={handleSaveRegistry}
+      />
 
       {/* Alert Modal */}
       {alertModal && alertModal.open && (

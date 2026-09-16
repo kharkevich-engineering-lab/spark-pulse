@@ -794,6 +794,72 @@ class TestPerRowWrites:
         }
 
 
+# ── delete_benchmark ─────────────────────────────────────────────────────────
+
+
+class TestDeleteBenchmark:
+    """A delete has to hold against the cache, not only against the table."""
+
+    def test_the_row_goes(self, store):
+        _seed(store, [_record("keep"), _record("drop")])
+
+        assert benchmarking.delete_benchmark("drop") is True
+
+        assert [b["benchmark_id"] for b in _on_disk(store)] == ["keep"]
+
+    def test_deleting_what_is_not_there_says_so(self, store):
+        _seed(store, [_record("keep")])
+
+        assert benchmarking.delete_benchmark("never-existed") is False
+
+        assert [b["benchmark_id"] for b in _on_disk(store)] == ["keep"]
+
+    def test_a_deleted_benchmark_is_gone_from_a_warm_cache(self, store):
+        """The bug this exists for: every read path answers from
+        ``_bench_cache``, so a delete that only took the row would leave the
+        record being listed and fetched until something else marked the cache
+        dirty — a delete that undoes itself in front of the operator."""
+        _seed(store, [_record("keep"), _record("drop")])
+        # Warm every cache-backed read path before the delete.
+        assert {b["benchmark_id"] for b in benchmarking.list_benchmarks()} == {
+            "keep",
+            "drop",
+        }
+        assert benchmarking.get_benchmark("drop") is not None
+
+        assert benchmarking.delete_benchmark("drop") is True
+
+        assert benchmarking.get_benchmark("drop") is None
+        assert [b["benchmark_id"] for b in benchmarking.list_benchmarks()] == ["keep"]
+        assert benchmarking.get_benchmarks_for_recipe("qwen3-30b") == [
+            b for b in benchmarking.list_benchmarks() if b["benchmark_id"] == "keep"
+        ]
+
+    def test_it_takes_one_row_rather_than_rewriting_the_history(self, store):
+        """The same property the per-row writes have: one DELETE, no reload of
+        the table to learn that one record is gone."""
+        _seed(store, [_record(f"b{i}") for i in range(6)])
+        benchmarking.list_benchmarks()  # warm the cache
+
+        with _rows_written() as statements:
+            benchmarking.delete_benchmark("b3")
+
+        assert len(statements) == 1
+        assert statements[0].strip().upper().startswith("DELETE")
+
+    def test_the_cache_still_answers_for_everything_else(self, store):
+        """Evicting one entry, not resetting the cache: the remaining records
+        stay loaded, so the next read does not go back to the database."""
+        _seed(store, [_record("keep"), _record("drop")])
+        benchmarking.list_benchmarks()
+
+        benchmarking.delete_benchmark("drop")
+
+        with _rows_written() as statements:
+            assert benchmarking.get_benchmark("keep") is not None
+        assert statements == []
+
+
 # ── Retention ────────────────────────────────────────────────────────────────
 
 

@@ -173,6 +173,25 @@ class TestSchedulingTheDeploy:
 
         assert [e["model"] for e in listed] == [ABSENT]
 
+    def test_one_entry_can_be_read_by_id(self, client):
+        """A caller holding an id should not have to scan the whole list."""
+        entry = client.post(
+            "/api/scheduled-deploys", json={"recipe_id": RECIPE, "model": ABSENT}
+        ).json()
+
+        response = client.get(f"/api/scheduled-deploys/{entry['id']}")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["id"] == entry["id"]
+        assert body["model"] == ABSENT
+
+    def test_an_unknown_entry_is_a_404(self, client):
+        response = client.get("/api/scheduled-deploys/no-such-entry")
+
+        assert response.status_code == 404
+        assert "no-such-entry" in response.json()["detail"]
+
 
 # ── What happens when the bytes land ────────────────────────────────────────
 

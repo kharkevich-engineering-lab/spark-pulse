@@ -325,14 +325,49 @@ def remove_registry(name: str) -> bool:
 
 
 def update_registry(name: str, updates: dict) -> dict | None:
-    """Update fields of an existing registry. Returns updated dict or None."""
+    """Update fields of an existing registry. Returns updated dict or None.
+
+    ``auth`` is merged into the existing auth dict rather than replacing it
+    wholesale: the browser never receives a stored secret back (see
+    ``routers/oci.py``), so an edit that only changes the URL or the username
+    must not be able to see, and therefore cannot resend, the token or
+    password already on file. A partial ``auth`` update (e.g. just a new
+    ``token``, or just a changed ``username``) keeps whatever it does not
+    mention.
+    """
     regs = _load_registries()
     for i, r in enumerate(regs):
         if r["name"] == name:
+            auth_update = updates.pop("auth", None)
             regs[i].update(updates)
+            if auth_update is not None:
+                merged_auth = dict(regs[i].get("auth") or {})
+                # A masked secret is what the router *returns*; it is never a
+                # value to store. A client that reads a registry and writes it
+                # back verbatim must keep the real credential, not replace it
+                # with bullets — so masked values are dropped from the update.
+                merged_auth.update(
+                    {
+                        k: v
+                        for k, v in auth_update.items()
+                        if not (k in _SECRET_AUTH_KEYS and _is_masked_secret(v))
+                    }
+                )
+                regs[i]["auth"] = merged_auth
             _save_registries(regs)
             return regs[i]
     return None
+
+
+#: Auth keys that hold a credential. Kept here, beside the merge that must
+#: refuse a masked one, and mirrored by the router's masking of responses.
+_SECRET_AUTH_KEYS = ("token", "password")
+_MASK_CHAR = "•"
+
+
+def _is_masked_secret(value: object) -> bool:
+    """Whether ``value`` is the masked marker a response carries, not a secret."""
+    return isinstance(value, str) and value.startswith(_MASK_CHAR)
 
 
 def get_registry(name: str) -> dict | None:

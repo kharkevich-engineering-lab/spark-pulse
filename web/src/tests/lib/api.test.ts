@@ -202,13 +202,6 @@ const CASES: Case[] = [
     method: "DELETE",
   },
   {
-    name: "validateMod",
-    call: () => api.validateMod({ path: "/mods/flash" }),
-    path: "/api/mods/validate",
-    method: "POST",
-    body: { path: "/mods/flash" },
-  },
-  {
     name: "listCustomRecipes",
     call: () => api.listCustomRecipes(),
     path: "/api/custom-files/recipes/list",
@@ -268,6 +261,14 @@ const CASES: Case[] = [
     method: "GET",
   },
   {
+    name: "deleteBenchmark",
+    call: () => api.deleteBenchmark("run 1"),
+    // The id is a uuid today, but it reaches the path from a record rather
+    // than from a generator, so it is encoded like every other one.
+    path: "/api/benchmarks/run%201",
+    method: "DELETE",
+  },
+  {
     name: "fetchLatestByRecipe",
     call: () => api.fetchLatestByRecipe(),
     path: "/api/benchmarks/latest-by-recipe",
@@ -304,10 +305,10 @@ const CASES: Case[] = [
   },
   {
     name: "updateOciRegistry escapes the registry name",
-    call: () => api.updateOciRegistry("my registry", { name: "my registry" }),
+    call: () => api.updateOciRegistry("my registry", { enabled: false }),
     path: "/api/oci/registries/my%20registry",
     method: "PUT",
-    body: { name: "my registry" },
+    body: { enabled: false },
   },
   {
     name: "removeOciRegistry",
@@ -458,34 +459,6 @@ const CASES: Case[] = [
     call: () => api.getValidation(),
     path: "/api/discovery/validation",
     method: "GET",
-  },
-  {
-    name: "resolveLaunchScript",
-    call: () => api.resolveLaunchScript({ path: "/opt/run.sh" }),
-    path: "/api/launch-script/resolve",
-    method: "POST",
-    body: { path: "/opt/run.sh" },
-  },
-  {
-    name: "analyzeLaunchScript",
-    call: () => api.analyzeLaunchScript({ path: "/opt/run.sh" }),
-    path: "/api/launch-script/analyze",
-    method: "POST",
-    body: { path: "/opt/run.sh" },
-  },
-  {
-    name: "validateLaunchScript",
-    call: () => api.validateLaunchScript({ path: "/opt/run.sh" }),
-    path: "/api/launch-script/validate",
-    method: "POST",
-    body: { path: "/opt/run.sh" },
-  },
-  {
-    name: "patchLaunchScript",
-    call: () => api.patchLaunchScript({ path: "/opt/run.sh", total_nodes: 2 }),
-    path: "/api/launch-script/patch",
-    method: "POST",
-    body: { path: "/opt/run.sh", total_nodes: 2 },
   },
 
   // ── Engines ───────────────────────────────────────────────────────────────

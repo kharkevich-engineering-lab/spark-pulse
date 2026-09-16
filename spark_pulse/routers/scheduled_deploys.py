@@ -28,6 +28,21 @@ def list_scheduled(active_only: bool = False) -> list[dict[str, Any]]:
     return tools.scheduled_deploys.listing(active_only=active_only)
 
 
+@router.get("/{entry_id}")
+def get_scheduled(entry_id: str) -> dict[str, Any]:
+    """One entry by id, so a caller holding one can follow it without the list.
+
+    Declared before the POST purely for reading order; the two never collide,
+    since a path parameter on GET cannot swallow the collection's own POST.
+    """
+    entry = tools.scheduled_deploys.get(entry_id)
+    if entry is None:
+        raise HTTPException(
+            status_code=404, detail=f"Scheduled deploy '{entry_id}' not found"
+        )
+    return entry
+
+
 @router.post("")
 def schedule_deploy(req: dict) -> dict[str, Any]:
     """Start the model download, and deploy this request when it finishes.

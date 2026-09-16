@@ -123,6 +123,8 @@
     "indexTtl": "Index cache lifetime",
     "indexes": "Engine indexes",
     "indexesHelp": "One OCI reference per line. Fetched on demand and cached, never on startup.",
+    "lastEngineMessage": "At least one engine has to stay enabled, or no recipe could be deployed.",
+    "lastEngineTitle": "Can't disable the last engine",
     "live": "live",
     "modelsLink": "Models are downloaded separately.",
     "needAttention": "{count} need attention",
@@ -156,6 +158,8 @@
     "syncFailed": "Copy failed",
     "syncTitle": "Copy to every registered node",
     "title": "Engines",
+    "toggleFailed": "Could not change that engine",
+    "toggleLabel": "Enable or disable {engine}",
     "unmanaged": "not from an index",
     "unpublished": "no image published",
     "verifiedCount": "verified on hardware {count} time(s)"
@@ -349,18 +353,6 @@
     "head": "Head",
     "workers": "Workers"
   },
-  "launchScript": {
-    "title": "Launch Script Analysis",
-    "notFound": "Script not found at resolved path",
-    "command": "Command",
-    "parallelism": "Parallelism",
-    "backend": "Backend",
-    "modelFlag": "Model Flag",
-    "missingModelFlag": "Missing --model flag",
-    "errors": "Errors:",
-    "warnings": "Warnings:",
-    "pathPlaceholder": "Path to launch script (e.g., /opt/spark-vllm-docker/examples/launch_vllm.sh)"
-  },
   "eventStream": {
     "title": "Event Stream",
     "eventCount": {
@@ -405,6 +397,12 @@
     "none": "No nodes registered yet.",
     "addNote": "Adding registers the machine. Installing the agent on it is the next step, and it starts as soon as this is added.",
     "noAgent": "No agent",
+    "edit": {
+      "action": "Edit node",
+      "actionFor": "Edit {name}",
+      "title": "Edit {name}",
+      "controlPlaneNote": "The control plane is reached over its own agent, not an address peers dial it at, so only its name can be changed here."
+    },
     "install": {
       "action": "Install agent",
       "reinstall": "Reinstall agent",
@@ -696,7 +694,17 @@
     "deleteConfirm": "Delete everywhere selected",
     "deleteFromNodes": "{count} node(s) still hold it",
     "removedFrom": "Removed from {count} node(s), freeing {size}",
-    "saveFailed": "Save failed"
+    "saveFailed": "Save failed",
+    "replicateModel": "Replicate {model} to other nodes",
+    "replicateTitle": "Replicate to nodes",
+    "replicateBody": "Copy the cached snapshot for \"{model}\" to the selected nodes.",
+    "replicateTo": "Replicate to",
+    "alreadyThere": "already there",
+    "forceOption": "Re-transfer even if already present",
+    "replicateConfirm": "Replicate",
+    "replicateVerified": "verified",
+    "replicateSkipped": "already verified — skipped",
+    "replicateNodeFailed": "failed"
   },
   "mcp": {
     "title": "MCP Server",
@@ -758,7 +766,11 @@
     "compareFailed": "Failed to compare benchmarks",
     "clear": "Clear",
     "compareSelected": "Compare Selected",
-    "runComparison": "Run Comparison"
+    "runComparison": "Run Comparison",
+    "delete": "Delete this run",
+    "deleteTitle": "Delete benchmark run?",
+    "deleteMessage": "\"{name}\" and its measurements are removed for good. Nothing else changes.",
+    "deleteFailed": "Failed to delete the benchmark"
   },
   "oci": {
     "noCollections": "No collections found",
@@ -798,7 +810,22 @@
     "noRecipesInCollection": "No recipes found for this collection",
     "scheduleNote": "Check for updates on a schedule",
     "solo": "Solo",
-    "cluster": "Cluster"
+    "cluster": "Cluster",
+    "editRegistryButton": "Edit registry",
+    "editRegistry": "Edit {name}",
+    "authType": "Authentication",
+    "authNone": "None",
+    "authToken": "Token",
+    "authUsernamePassword": "Username & password",
+    "username": "Username",
+    "usernamePlaceholder": "username",
+    "newToken": "New token (leave blank to keep the current one)",
+    "newPassword": "New password (leave blank to keep the current one)",
+    "urlRequired": "URL is required",
+    "usernameRequired": "Username is required for username & password authentication",
+    "secretRequiredOnAuthChange": "Enter a token or password before switching to this authentication type",
+    "registryUpdated": "Registry updated",
+    "registryUpdateFailed": "Failed to update registry"
   },
   "fabric": {
     "heading": "ConnectX fabric",

@@ -1,4 +1,4 @@
-import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntry, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, CustomRecipeInfo, CustomModInfo, ModFileMap, BenchmarkResult, OciRegistry, OciCollection, OciCollectionRecipe, OciRecipeMeta, OciUpdateCheck, OciUpdateApply, OciUpdateResult, OciAutoUpdateSettings, EngineListResponse, EngineDetail, EngineIndexRefreshResult, RenderRequest, RenderResult, ModelEntry, ModelSource, ModelDownloadJob, ModelSyncResult, ModelPresence, ModelDeleteResult, ImageEntry, ImagePullJob, ImageSyncResult, ImagePresence, ImageDeleteResult, DeployPlan, DeployPlanRequest, PreflightReport, EngineMetricsWindow, ScheduledDeploy } from "@/lib/types";
+import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntry, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, CustomRecipeInfo, CustomModInfo, ModFileMap, BenchmarkResult, OciRegistry, OciRegistryUpdate, OciCollection, OciCollectionRecipe, OciRecipeMeta, OciUpdateCheck, OciUpdateApply, OciUpdateResult, OciAutoUpdateSettings, EngineListResponse, EngineDetail, EngineIndexRefreshResult, RenderRequest, RenderResult, ModelEntry, ModelSource, ModelDownloadJob, ModelSyncResult, ModelPresence, ModelDeleteResult, ImageEntry, ImagePullJob, ImageSyncResult, ImagePresence, ImageDeleteResult, DeployPlan, DeployPlanRequest, PreflightReport, EngineMetricsWindow, ScheduledDeploy } from "@/lib/types";
 
 const API = "/api";
 
@@ -251,6 +251,11 @@ export async function fetchBenchmark(id: string): Promise<BenchmarkResult> {
   return json<BenchmarkResult>(`/benchmarks/${id}`);
 }
 
+/** Remove one result for good. Refused with a 409 while the run is still going. */
+export async function deleteBenchmark(id: string): Promise<void> {
+  await json(`/benchmarks/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
 export async function fetchLatestByRecipe(signal?: AbortSignal): Promise<Record<string, BenchmarkResult>> {
   return json<Record<string, BenchmarkResult>>("/benchmarks/latest-by-recipe", { signal });
 }
@@ -280,7 +285,7 @@ export async function addOciRegistry(registry: Partial<OciRegistry>): Promise<Oc
   return json<OciRegistry>("/oci/registries", { method: "POST", body: JSON.stringify(registry) });
 }
 
-export async function updateOciRegistry(name: string, registry: Partial<OciRegistry>): Promise<OciRegistry> {
+export async function updateOciRegistry(name: string, registry: OciRegistryUpdate): Promise<OciRegistry> {
   return json<OciRegistry>(`/oci/registries/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify(registry) });
 }
 
@@ -457,60 +462,6 @@ export async function getValidation(): Promise<ValidationResult> {
   return json<ValidationResult>("/discovery/validation");
 }
 
-// ── Launch Script (Phase 4) ──────────────────────────────────────────────────
-
-import type {
-  LaunchScriptInfo,
-  LaunchScriptResolveResult,
-  LaunchScriptResolveRequest,
-  LaunchScriptAnalyzeRequest,
-  LaunchScriptValidateRequest,
-  LaunchScriptPatchRequest,
-  PatchedScriptBundle,
-} from "@/lib/types";
-
-export async function resolveLaunchScript(body: LaunchScriptResolveRequest): Promise<LaunchScriptResolveResult> {
-  return json<LaunchScriptResolveResult>("/launch-script/resolve", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-}
-
-export async function analyzeLaunchScript(body: LaunchScriptAnalyzeRequest): Promise<LaunchScriptInfo> {
-  return json<LaunchScriptInfo>("/launch-script/analyze", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-}
-
-export async function validateLaunchScript(body: LaunchScriptValidateRequest): Promise<{ healthy: boolean; warnings: string[]; errors: string[] }> {
-  return json<{ healthy: boolean; warnings: string[]; errors: string[] }>("/launch-script/validate", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-}
-
-export async function patchLaunchScript(body: LaunchScriptPatchRequest): Promise<PatchedScriptBundle> {
-  return json<PatchedScriptBundle>("/launch-script/patch", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-}
-
-// ── Mods ─────────────────────────────────────────────────────────────────────
-
-import type {
-  ModValidationResult,
-  ModValidateRequest,
-} from "@/lib/types";
-
-export async function validateMod(body: ModValidateRequest): Promise<ModValidationResult> {
-  return json<ModValidationResult>("/mods/validate", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-}
-
 // ── Engines ─────────────────────────────────────────────────────────────────
 
 export async function fetchEngines(signal?: AbortSignal): Promise<EngineListResponse> { return json<EngineListResponse>("/engines", { signal }); }
@@ -552,8 +503,21 @@ export async function cancelModelDownload(jobId: string): Promise<ModelDownloadJ
   return json<ModelDownloadJob>(`/models/downloads/${jobId}/cancel`, { method: "POST" });
 }
 
-export async function syncModelToNodes(id: string, nodes: string[], sshUser?: string): Promise<ModelSyncResult> {
-  return json<ModelSyncResult>(`/models/${id}/sync`, { method: "POST", body: JSON.stringify({ nodes, ssh_user: sshUser }) });
+export async function syncModelToNodes(
+  id: string,
+  nodes: string[],
+  sshUser?: string,
+  options?: { deep?: boolean; force?: boolean },
+): Promise<ModelSyncResult> {
+  return json<ModelSyncResult>(`/models/${id}/sync`, {
+    method: "POST",
+    body: JSON.stringify({
+      nodes,
+      ssh_user: sshUser,
+      deep: options?.deep,
+      force: options?.force,
+    }),
+  });
 }
 
 export async function fetchModelPresence(id: string, nodes: string[]): Promise<ModelPresence> {

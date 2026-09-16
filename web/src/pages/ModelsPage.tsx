@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "@/lib/i18n";
 import { Link } from "react-router-dom";
-import { AlertCircle, Boxes, Download, HardDrive, Loader2, Plus, Rocket, Save, Trash2, X } from "lucide-react";
+import { AlertCircle, Boxes, Download, HardDrive, Loader2, Plus, Rocket, Save, Server, Trash2, X } from "lucide-react";
 import {
   cancelModelDownload,
   cancelScheduledDeploy,
@@ -14,6 +14,7 @@ import {
   fetchNodes,
   saveModelSources,
   startModelDownload,
+  syncModelToNodes,
 } from "@/lib/api";
 import { useQuery } from "@/hooks/useQuery";
 import { useSSEConnection } from "@/hooks/useSSEConnection";
@@ -25,6 +26,7 @@ import type {
   ModelEntry,
   ModelPresence,
   ModelSource,
+  ModelSyncResult,
   ScheduledDeploy,
 } from "@/lib/types";
 
@@ -139,6 +141,7 @@ export default function ModelsPage() {
   const [revision, setRevision] = useState("");
   const [starting, setStarting] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [replicateTarget, setReplicateTarget] = useState<string | null>(null);
   const [alert, setAlert] = useState<{ title: string; message: string } | null>(null);
   const [scheduled, setScheduled] = useState<ScheduledDeploy[]>([]);
   // The other machines a copy could be sitting on. Deleting from this one and
@@ -414,7 +417,17 @@ export default function ModelsPage() {
                   <td className="p-3 font-mono text-text-muted">{shortRevision(m.revision)}</td>
                   <td className="p-3">{describePrecision(m)}</td>
                   <td className="p-3">{m.referenced_by.length}</td>
-                  <td className="p-3 text-right">
+                  <td className="p-3 text-right whitespace-nowrap">
+                    {peers.length > 0 && (
+                      <button
+                        aria-label={t("models.replicateModel", { model: m.id })}
+                        title={t("models.replicateTitle")}
+                        onClick={() => setReplicateTarget(m.id)}
+                        className="p-1.5 rounded-lg text-text-muted hover:text-primary hover:bg-primary/10"
+                      >
+                        <Server size={15} />
+                      </button>
+                    )}
                     <button aria-label={t("models.deleteModel", { model: m.id })} onClick={() => setDeleteTarget(m.id)} className="p-1.5 rounded-lg text-text-muted hover:text-danger hover:bg-danger/10">
                       <Trash2 size={15} />
                     </button>
@@ -446,6 +459,14 @@ export default function ModelsPage() {
             setDeleteTarget(null);
             doDelete(id, onNodes);
           }}
+        />
+      )}
+
+      {replicateTarget && (
+        <ModelReplicateDialog
+          model={replicateTarget}
+          peers={peers}
+          onClose={() => setReplicateTarget(null)}
         />
       )}
 
@@ -553,6 +574,157 @@ export function ModelDeleteDialog({
             className="px-4 py-2 rounded-lg bg-danger/10 text-danger border border-danger/30 hover:bg-danger/20 text-sm"
           >
             {selected.length > 0 ? t("models.deleteConfirm") : t("common.delete")}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/** Which machines get a copy.
+ *
+ * The inverse of the delete dialog: a node presence already reports as
+ * holding the model has nothing to gain from a transfer, so it starts
+ * unchecked and the nodes actually missing it are what's preselected. The
+ * control node is never offered — it is always the source `peers` already
+ * excludes it. `force` is offered for the case presence gets it wrong (a
+ * node that verifies against a different manifest, say): re-transfer rather
+ * than trust the skip.
+ */
+export function ModelReplicateDialog({
+  model,
+  peers,
+  onClose,
+}: {
+  model: string;
+  peers: string[];
+  onClose: () => void;
+}) {
+  const { t } = useI18n();
+  const [presence, setPresence] = useState<ModelPresence | "loading" | null>(null);
+  const [selected, setSelected] = useState<string[]>([]);
+  const touched = useRef(false);
+  const [force, setForce] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [result, setResult] = useState<ModelSyncResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadPresence = useCallback(() => {
+    if (peers.length === 0) return Promise.resolve();
+    setPresence("loading");
+    return fetchModelPresence(model, peers)
+      .then((answer) => {
+        setPresence(answer);
+        // Only preselect what the operator has not already changed — the
+        // nodes presence says do NOT hold a copy yet.
+        setSelected((current) =>
+          touched.current
+            ? current
+            : answer.nodes.filter((n) => !n.present).map((n) => n.node),
+        );
+      })
+      .catch(() => setPresence(null));
+  }, [model, peers]);
+
+  useEffect(() => {
+    loadPresence();
+  }, [loadPresence]);
+
+  const holders = useMemo(() => {
+    if (!presence || presence === "loading") return [];
+    return presence.nodes.filter((n) => n.present).map((n) => n.node);
+  }, [presence]);
+
+  const resultFor = useCallback(
+    (node: string) => result?.results.find((r) => r.node === node) ?? null,
+    [result],
+  );
+
+  const doSync = async () => {
+    setSyncing(true);
+    setError(null);
+    setResult(null);
+    try {
+      const outcome = await syncModelToNodes(model, selected, undefined, { force });
+      setResult(outcome);
+      await loadPresence();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("models.unknownError"));
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  return (
+    <Modal open onClose={onClose} title={t("models.replicateTitle")}>
+      <div className="space-y-4">
+        <p className="text-sm text-text-muted">{t("models.replicateBody", { model })}</p>
+
+        {peers.length > 0 && (
+          <fieldset className="space-y-2">
+            <legend className="text-sm font-medium mb-1">{t("models.replicateTo")}</legend>
+            {presence === "loading" && (
+              <p className="text-xs text-text-muted flex items-center gap-2">
+                <Loader2 size={12} className="animate-spin" />
+                {t("common.loading")}
+              </p>
+            )}
+            {peers.map((node) => {
+              const nodeResult = resultFor(node);
+              return (
+                <label key={node} className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={selected.includes(node)}
+                    onChange={(e) => {
+                      touched.current = true;
+                      setSelected((current) =>
+                        e.target.checked ? [...current, node] : current.filter((n) => n !== node),
+                      );
+                    }}
+                  />
+                  <span className="font-mono">{node}</span>
+                  {presence && presence !== "loading" && holders.includes(node) && (
+                    <span className="text-xs text-text-muted">{t("models.alreadyThere")}</span>
+                  )}
+                  {nodeResult && (
+                    <span className={nodeResult.ok ? "text-xs text-success" : "text-xs text-danger"}>
+                      {nodeResult.ok
+                        ? nodeResult.skipped
+                          ? t("models.replicateSkipped")
+                          : t("models.replicateVerified")
+                        : nodeResult.error || t("models.replicateNodeFailed")}
+                    </span>
+                  )}
+                </label>
+              );
+            })}
+          </fieldset>
+        )}
+
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} />
+          {t("models.forceOption")}
+        </label>
+
+        {error && (
+          <div className="p-3 rounded-lg bg-danger/10 border border-danger/30 text-danger text-sm flex items-center gap-2">
+            <AlertCircle size={16} />
+            <span>{error}</span>
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 rounded-lg border border-border text-sm">
+            {t("common.cancel")}
+          </button>
+          <button
+            onClick={doSync}
+            disabled={selected.length === 0 || syncing}
+            className="px-4 py-2 rounded-lg bg-primary/10 text-primary border border-primary/30 hover:bg-primary/20 disabled:opacity-50 text-sm flex items-center gap-2"
+          >
+            {syncing && <Loader2 className="animate-spin" size={14} />}
+            {t("models.replicateConfirm")}
           </button>
         </div>
       </div>

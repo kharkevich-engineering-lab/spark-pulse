@@ -14,7 +14,9 @@ faults were live when this file was written:
   (That module is gone: the health monitor it belonged to never ran, and the
   engine-metrics sampler replaced it.)
 * ``mock/launch_script.py`` had none of the four names
-  ``routers/launch_script.py`` calls.
+  ``routers/launch_script.py`` called. (That router is gone — its UI was
+  deleted — but the tool module stays: ``tools/mods.py`` re-exports its
+  validation, and the mock subclasses its distributor.)
 
 Each of those is a 500 a unit test would never have seen and an e2e failure
 nobody would have understood. This file is the test that catches the next one:

@@ -123,6 +123,8 @@
     "indexTtl": "Durée du cache d'index",
     "indexes": "Index de moteurs",
     "indexesHelp": "Une référence OCI par ligne. Récupérée à la demande et mise en cache, jamais au démarrage.",
+    "lastEngineMessage": "Au moins un moteur doit rester activé, sinon aucune recette ne pourrait être déployée.",
+    "lastEngineTitle": "Impossible de désactiver le dernier moteur",
     "live": "en direct",
     "modelsLink": "Les modèles se téléchargent séparément.",
     "needAttention": "{count} à examiner",
@@ -156,6 +158,8 @@
     "syncFailed": "Échec de la copie",
     "syncTitle": "Copier vers chaque nœud enregistré",
     "title": "Moteurs",
+    "toggleFailed": "Impossible de modifier ce moteur",
+    "toggleLabel": "Activer ou désactiver {engine}",
     "unmanaged": "hors index",
     "unpublished": "aucune image publiée",
     "verifiedCount": "vérifié {count} fois sur du matériel"
@@ -349,18 +353,6 @@
     "head": "Tête",
     "workers": "Travailleurs"
   },
-  "launchScript": {
-    "title": "Analyse du script de lancement",
-    "notFound": "Script introuvable au chemin résolu",
-    "command": "Commande",
-    "parallelism": "Parallélisme",
-    "backend": "Moteur d'exécution",
-    "modelFlag": "Option de modèle",
-    "missingModelFlag": "Option --model manquante",
-    "errors": "Erreurs :",
-    "warnings": "Avertissements :",
-    "pathPlaceholder": "Chemin du script de lancement (ex. /opt/spark-vllm-docker/examples/launch_vllm.sh)"
-  },
   "eventStream": {
     "title": "Flux d'événements",
     "eventCount": {
@@ -405,6 +397,12 @@
     "none": "Aucun nœud enregistré pour l'instant.",
     "addNote": "Ajouter enregistre la machine. Installer l'agent dessus est l'étape suivante, et elle commence dès l'ajout.",
     "noAgent": "Pas d'agent",
+    "edit": {
+      "action": "Modifier le nœud",
+      "actionFor": "Modifier {name}",
+      "title": "Modifier {name}",
+      "controlPlaneNote": "Le plan de contrôle est joint via son propre agent, pas une adresse que les pairs composent, donc seul son nom peut être modifié ici."
+    },
     "install": {
       "action": "Installer l'agent",
       "reinstall": "Réinstaller l'agent",
@@ -696,7 +694,17 @@
     "deleteConfirm": "Supprimer partout où c'est coché",
     "deleteFromNodes": "{count} nœud(s) le détiennent encore",
     "removedFrom": "Supprimé de {count} nœud(s), libérant {size}",
-    "saveFailed": "Échec de l'enregistrement"
+    "saveFailed": "Échec de l'enregistrement",
+    "replicateModel": "Répliquer {model} vers d'autres nœuds",
+    "replicateTitle": "Répliquer vers des nœuds",
+    "replicateBody": "Copier l'instantané en cache de « {model} » vers les nœuds sélectionnés.",
+    "replicateTo": "Répliquer vers",
+    "alreadyThere": "déjà présent",
+    "forceOption": "Retransférer même si déjà présent",
+    "replicateConfirm": "Répliquer",
+    "replicateVerified": "vérifié",
+    "replicateSkipped": "déjà vérifié — ignoré",
+    "replicateNodeFailed": "échec"
   },
   "mcp": {
     "title": "Serveur MCP",
@@ -758,7 +766,11 @@
     "compareFailed": "Échec de la comparaison des analyses",
     "clear": "Effacer",
     "compareSelected": "Comparer la sélection",
-    "runComparison": "Lancer la comparaison"
+    "runComparison": "Lancer la comparaison",
+    "delete": "Supprimer cette analyse",
+    "deleteTitle": "Supprimer cette analyse ?",
+    "deleteMessage": "« {name} » et ses mesures seront supprimés définitivement. Rien d'autre ne change.",
+    "deleteFailed": "Échec de la suppression de l'analyse"
   },
   "oci": {
     "noCollections": "Aucune collection trouvée",
@@ -798,7 +810,22 @@
     "noRecipesInCollection": "Aucune recette trouvée pour cette collection",
     "scheduleNote": "Vérifier les mises à jour selon une planification",
     "solo": "Seul",
-    "cluster": "Grappe"
+    "cluster": "Grappe",
+    "editRegistryButton": "Modifier le registre",
+    "editRegistry": "Modifier {name}",
+    "authType": "Authentification",
+    "authNone": "Aucune",
+    "authToken": "Jeton",
+    "authUsernamePassword": "Nom d'utilisateur et mot de passe",
+    "username": "Nom d'utilisateur",
+    "usernamePlaceholder": "nom d'utilisateur",
+    "newToken": "Nouveau jeton (laisser vide pour conserver l'actuel)",
+    "newPassword": "Nouveau mot de passe (laisser vide pour conserver l'actuel)",
+    "urlRequired": "L'URL est requise",
+    "usernameRequired": "Le nom d'utilisateur est requis pour l'authentification par nom d'utilisateur et mot de passe",
+    "secretRequiredOnAuthChange": "Saisissez un jeton ou un mot de passe avant de passer à ce type d'authentification",
+    "registryUpdated": "Registre mis à jour",
+    "registryUpdateFailed": "Échec de la mise à jour du registre"
   },
   "fabric": {
     "heading": "Fabric ConnectX",

@@ -246,6 +246,113 @@ class TestGetBenchmark:
         assert "not found" in data["detail"]
 
 
+# ── Test: DELETE /api/benchmarks/{id} ───────────────────────────────────────
+
+
+def _record(**over):
+    record = {
+        "benchmark_id": "abc-def",
+        "deployment_id": "dep-x",
+        "recipe_id": "model-v1",
+        "baseline_id": None,
+        "status": "completed",
+        "started_at": "2026-05-27T08:00:00Z",
+        "completed_at": "2026-05-27T08:02:00Z",
+        "params": {},
+        "results": {"throughput": 38.5},
+    }
+    record.update(over)
+    return record
+
+
+class TestDeleteBenchmark:
+    """A benchmark result is somebody's record, and removing one is theirs too."""
+
+    def test_delete_removes_a_finished_run(self, app_client):
+        with (
+            patch(
+                "spark_pulse.routers.benchmarking.tools.benchmarking.get_benchmark",
+                return_value=_record(),
+            ),
+            patch(
+                "spark_pulse.routers.benchmarking.tools.benchmarking.delete_benchmark",
+                return_value=True,
+            ) as delete,
+        ):
+            resp = app_client.delete("/api/benchmarks/abc-def")
+
+        assert resp.status_code == 200
+        assert resp.json() == {"deleted": "abc-def"}
+        delete.assert_called_once_with("abc-def")
+
+    def test_a_failed_run_can_be_deleted_too(self, app_client):
+        """'error' is a stopped benchmark, and a bad run is the usual reason."""
+        with (
+            patch(
+                "spark_pulse.routers.benchmarking.tools.benchmarking.get_benchmark",
+                return_value=_record(status="error", results={"error": "boom"}),
+            ),
+            patch(
+                "spark_pulse.routers.benchmarking.tools.benchmarking.delete_benchmark",
+                return_value=True,
+            ),
+        ):
+            resp = app_client.delete("/api/benchmarks/abc-def")
+
+        assert resp.status_code == 200
+
+    def test_delete_of_a_missing_benchmark_is_a_404(self, app_client):
+        with (
+            patch(
+                "spark_pulse.routers.benchmarking.tools.benchmarking.get_benchmark",
+                return_value=None,
+            ),
+            patch(
+                "spark_pulse.routers.benchmarking.tools.benchmarking.delete_benchmark",
+            ) as delete,
+        ):
+            resp = app_client.delete("/api/benchmarks/nonexistent")
+
+        assert resp.status_code == 404
+        assert "not found" in resp.json()["detail"]
+        delete.assert_not_called()
+
+    def test_a_run_that_vanished_between_read_and_write_is_a_404(self, app_client):
+        """Retention, or a second operator — either way, not a 500."""
+        with (
+            patch(
+                "spark_pulse.routers.benchmarking.tools.benchmarking.get_benchmark",
+                return_value=_record(),
+            ),
+            patch(
+                "spark_pulse.routers.benchmarking.tools.benchmarking.delete_benchmark",
+                return_value=False,
+            ),
+        ):
+            resp = app_client.delete("/api/benchmarks/abc-def")
+
+        assert resp.status_code == 404
+
+    @pytest.mark.parametrize("status", ["running", "queued", "pending"])
+    def test_a_running_benchmark_is_refused(self, app_client, status):
+        """``execute_benchmark`` holds the write mutex and writes the record
+        back when it ends, so a mid-run delete either times out or is undone."""
+        with (
+            patch(
+                "spark_pulse.routers.benchmarking.tools.benchmarking.get_benchmark",
+                return_value=_record(status=status, completed_at=None, results=None),
+            ),
+            patch(
+                "spark_pulse.routers.benchmarking.tools.benchmarking.delete_benchmark",
+            ) as delete,
+        ):
+            resp = app_client.delete("/api/benchmarks/abc-def")
+
+        assert resp.status_code == 409
+        assert status in resp.json()["detail"]
+        delete.assert_not_called()
+
+
 # ── Test: POST /api/benchmarks ──────────────────────────────────────────────
 
 
