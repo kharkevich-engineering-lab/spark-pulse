@@ -11,7 +11,13 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import EnginesPage, { joinEngines, shortDigest, updateReason } from "@/pages/EnginesPage";
+import EnginesPage, {
+  isDigestTag,
+  joinEngines,
+  shortDigest,
+  shortImageTag,
+  updateReason,
+} from "@/pages/EnginesPage";
 import type { ClusterNode, EngineSummary, ImageEntry, Settings } from "@/lib/types";
 
 /** The shared setupTests EventSource stub records listeners but cannot deliver
@@ -185,6 +191,33 @@ describe("shortDigest", () => {
   it("renders an em dash for nothing", () => {
     expect(shortDigest("")).toBe("—");
     expect(shortDigest(null)).toBe("—");
+  });
+});
+
+describe("isDigestTag", () => {
+  it("recognizes a digest-pinned tag", () => {
+    expect(isDigestTag(`sha256:${"a".repeat(64)}`)).toBe(true);
+  });
+
+  it("rejects a floating tag", () => {
+    expect(isDigestTag("latest")).toBe(false);
+    expect(isDigestTag("26.5.0")).toBe(false);
+    expect(isDigestTag(null)).toBe(false);
+    expect(isDigestTag(undefined)).toBe(false);
+  });
+});
+
+describe("shortImageTag", () => {
+  // 64 hex characters: 8 distinctive at the front, 4 at the back, noise between.
+  const HEX = "01234567" + "9".repeat(52) + "89ab";
+
+  it("keeps the algorithm prefix and enough of each end to compare by eye", () => {
+    expect(shortImageTag(`sha256:${HEX}`)).toBe("sha256:01234567…89ab");
+  });
+
+  it("leaves a tag-pinned ref exactly as it was", () => {
+    expect(shortImageTag("26.5.0")).toBe("26.5.0");
+    expect(shortImageTag("latest")).toBe("latest");
   });
 });
 
@@ -423,6 +456,56 @@ describe("EnginesPage", () => {
 
     // Every row for that engine says so — three images, one unpublished engine.
     expect((await screen.findAllByText("no image published")).length).toBeGreaterThan(0);
+  });
+});
+
+// ── Digest-pinned refs in the image column ───────────────────────────────────
+//
+// A digest-pinned tag is 64 hex characters; rendered in full it pushed the
+// table past the viewport. `shortImageTag` shortens it for display, but the
+// full ref has to stay reachable — on hover, and in the DOM for a screen
+// reader or a copy.
+
+describe("EnginesPage digest-pinned image refs", () => {
+  const DIGEST_HEX = "01234567" + "9".repeat(52) + "89ab";
+  const DIGEST_REF = `ghcr.io/acme/engine/llama-cpp:sha256:${DIGEST_HEX}`;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    CapturingEventSource.instances = [];
+    vi.stubGlobal("EventSource", CapturingEventSource);
+    vi.mocked(fetchImagePulls).mockResolvedValue([]);
+    vi.mocked(fetchEngines).mockResolvedValue({ default_engine: "vllm", engines: [] });
+    vi.mocked(fetchNodes).mockResolvedValue([node("10.0.0.1", true)]);
+    vi.mocked(fetchSettings).mockResolvedValue(SETTINGS);
+  });
+
+  it("shortens a digest-pinned ref, keeping the full ref on hover and in the DOM", async () => {
+    vi.mocked(fetchImages).mockResolvedValue([
+      entry({
+        ref: DIGEST_REF,
+        repository: "ghcr.io/acme/engine/llama-cpp",
+        tag: `sha256:${DIGEST_HEX}`,
+        engine: "llama-cpp",
+        engine_key: "llama-cpp/default",
+      }),
+    ]);
+    renderPage();
+
+    const shortened = await screen.findByTitle(DIGEST_REF);
+    expect(shortened.textContent).toContain("sha256:01234567…89ab");
+    expect(shortened.textContent).not.toContain(DIGEST_HEX);
+    // The full ref is still in the DOM — for a screen reader, and for copy.
+    expect(screen.getByText(DIGEST_REF)).toBeInTheDocument();
+  });
+
+  it("leaves a tag-pinned ref exactly as it was, with no hover title", async () => {
+    vi.mocked(fetchImages).mockResolvedValue([entry({})]);
+    renderPage();
+
+    await screen.findByText("ghcr.io/acme/engine/vllm");
+    expect(screen.getByText(":0.1.0")).toBeInTheDocument();
+    expect(screen.queryByTitle(PRESENT)).not.toBeInTheDocument();
   });
 });
 

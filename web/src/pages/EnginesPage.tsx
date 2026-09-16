@@ -76,6 +76,25 @@ export function shortDigest(digest: string | null | undefined): string {
   return body.slice(0, 12);
 }
 
+/** A tag *is* a digest when the image was pulled `@sha256:...` rather than
+ * by a floating tag like `latest` or `26.5.0` — the two look nothing alike
+ * and the row needs to tell them apart before it can decide how to render
+ * one. */
+export function isDigestTag(tag: string | null | undefined): boolean {
+  return /^sha256:[0-9a-f]{64}$/i.test(tag ?? "");
+}
+
+/** Same trade as `shortDigest` — enough of each end to compare by eye — but
+ * kept in the tag's own `sha256:<hex>` shape rather than `shortDigest`'s bare
+ * hex, since this is what stands in for the tag itself in the image ref, not
+ * a value next to a label that already says "digest". A non-digest tag is
+ * returned unchanged. */
+export function shortImageTag(tag: string): string {
+  if (!isDigestTag(tag)) return tag;
+  const hex = tag.slice("sha256:".length);
+  return `sha256:${hex.slice(0, 8)}…${hex.slice(-4)}`;
+}
+
 /** Why this image wants attention, or "" when it does not. */
 export function updateReason(image: ImageEntry): string {
   if (image.digest_drift) return "newer digest published";
@@ -530,26 +549,41 @@ export default function EnginesPage() {
                         )}
                       </div>
                     </td>
-                    <td className="p-3 font-mono">
-                      <span className="truncate">{image.repository}</span>
-                      <span className="text-text-muted">:{image.tag}</span>
+                    <td className="p-3 font-mono min-w-0 max-w-sm">
+                      {/* A digest-pinned tag is 64 hex characters — rendered in
+                          full it was pushing the table past the viewport. It is
+                          shortened for display, but the full ref stays in the
+                          DOM (for a screen reader and for copy) and on hover. */}
+                      <div
+                        className="flex items-center gap-1 min-w-0"
+                        title={isDigestTag(image.tag) ? image.ref : undefined}
+                        aria-hidden={isDigestTag(image.tag) || undefined}
+                      >
+                        <span className="truncate">{image.repository}</span>
+                        <span className="text-text-muted shrink-0">
+                          :{shortImageTag(image.tag)}
+                        </span>
+                      </div>
+                      {isDigestTag(image.tag) && <span className="sr-only">{image.ref}</span>}
                     </td>
-                    <td className="p-3">
-                      {image.present ? (
-                        <span className="text-success">{t("engines.present")}</span>
-                      ) : (
-                        <span className="text-text-muted">{t("engines.notPulled")}</span>
-                      )}
-                      {engine?.available === false && (
-                        <span className="ml-2 px-1.5 py-0.5 rounded text-xs bg-text-muted/10 text-text-muted border border-border">
-                          {t("engines.unpublished")}
-                        </span>
-                      )}
-                      {reason && (
-                        <span className="ml-2 px-1.5 py-0.5 rounded text-xs bg-warning/10 text-warning border border-warning/30">
-                          {reason}
-                        </span>
-                      )}
+                    <td className="p-3 min-w-36">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {image.present ? (
+                          <span className="whitespace-nowrap text-success">{t("engines.present")}</span>
+                        ) : (
+                          <span className="whitespace-nowrap text-text-muted">{t("engines.notPulled")}</span>
+                        )}
+                        {engine?.available === false && (
+                          <span className="whitespace-nowrap px-1.5 py-0.5 rounded text-xs bg-text-muted/10 text-text-muted border border-border">
+                            {t("engines.unpublished")}
+                          </span>
+                        )}
+                        {reason && (
+                          <span className="whitespace-nowrap px-1.5 py-0.5 rounded text-xs bg-warning/10 text-warning border border-warning/30">
+                            {reason}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="p-3 font-mono">{image.present ? formatSize(image.size_bytes) : "—"}</td>
                     <td className="p-3 font-mono text-text-muted">
