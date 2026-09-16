@@ -12,6 +12,7 @@ import type {
 vi.mock("@/lib/api", () => ({
   fetchNodes: vi.fn(),
   addNode: vi.fn(),
+  updateNode: vi.fn(),
   removeNode: vi.fn(),
   discoverNodes: vi.fn(),
   fetchNodeDiagnostics: vi.fn(),
@@ -30,6 +31,7 @@ import {
   fetchNodes,
   installNodeAgent,
   removeNode,
+  updateNode,
   updateNodeAgent,
 } from "@/lib/api";
 
@@ -316,6 +318,146 @@ describe("NodeRegistry", () => {
       "cannot be removed from the registry",
     );
     expect(screen.getByRole("row", { name: /spark-02/ })).toBeInTheDocument();
+  });
+});
+
+// ── Editing a node ───────────────────────────────────────────────────────────
+
+describe("EditNodeDialog", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockApi();
+  });
+
+  it("pre-fills the dialog with the node's current name, address and SSH user", async () => {
+    const user = userEvent.setup();
+    mockApi({ nodes: [CONTROL, { ...PEER, ssh_user: "spark" }] });
+    render(<NodeRegistry />);
+    await screen.findByRole("row", { name: /spark-02/ });
+
+    await user.click(screen.getByRole("button", { name: "Edit spark-02" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit spark-02" });
+    expect(within(dialog).getByLabelText("Name")).toHaveValue("spark-02");
+    expect(within(dialog).getByLabelText("Address *")).toHaveValue("10.0.0.11");
+    expect(within(dialog).getByLabelText("SSH user")).toHaveValue("spark");
+  });
+
+  it("saves only the changed fields and refetches the list", async () => {
+    const user = userEvent.setup();
+    mockApi({ nodes: [CONTROL, { ...PEER, ssh_user: "spark" }] });
+    vi.mocked(updateNode).mockResolvedValue({ ...PEER, name: "spark-02b", ssh_user: "spark" });
+    render(<NodeRegistry />);
+    await screen.findByRole("row", { name: /spark-02/ });
+
+    await user.click(screen.getByRole("button", { name: "Edit spark-02" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit spark-02" });
+    const nameField = within(dialog).getByLabelText("Name");
+    await user.clear(nameField);
+    await user.type(nameField, "spark-02b");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(updateNode).toHaveBeenCalledWith("peer", { name: "spark-02b" }),
+    );
+    await waitFor(() => expect(fetchNodes).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("sends address and ssh user changes together with the name unchanged", async () => {
+    const user = userEvent.setup();
+    mockApi({ nodes: [CONTROL, { ...PEER, ssh_user: "spark" }] });
+    vi.mocked(updateNode).mockResolvedValue(PEER);
+    render(<NodeRegistry />);
+    await screen.findByRole("row", { name: /spark-02/ });
+
+    await user.click(screen.getByRole("button", { name: "Edit spark-02" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit spark-02" });
+    const addressField = within(dialog).getByLabelText("Address *");
+    await user.clear(addressField);
+    await user.type(addressField, "10.0.0.99");
+    const sshField = within(dialog).getByLabelText("SSH user");
+    await user.clear(sshField);
+    await user.type(sshField, "ubuntu");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(updateNode).toHaveBeenCalledWith("peer", {
+        address: "10.0.0.99",
+        ssh_user: "ubuntu",
+      }),
+    );
+  });
+
+  it("shows a backend error inline and keeps the dialog open", async () => {
+    const user = userEvent.setup();
+    vi.mocked(updateNode).mockRejectedValue(
+      new Error("API 400: a node with address 10.0.0.99 is already registered"),
+    );
+    render(<NodeRegistry />);
+    await screen.findByRole("row", { name: /spark-02/ });
+
+    await user.click(screen.getByRole("button", { name: "Edit spark-02" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit spark-02" });
+    const addressField = within(dialog).getByLabelText("Address *");
+    await user.clear(addressField);
+    await user.type(addressField, "10.0.0.99");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "already registered",
+    );
+    expect(dialog).toBeInTheDocument();
+    expect(fetchNodes).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes without calling the API when nothing changed", async () => {
+    const user = userEvent.setup();
+    render(<NodeRegistry />);
+    await screen.findByRole("row", { name: /spark-02/ });
+
+    await user.click(screen.getByRole("button", { name: "Edit spark-02" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit spark-02" });
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(updateNode).not.toHaveBeenCalled();
+  });
+
+  it("offers only the name field for the control plane, which is not reached at an address", async () => {
+    const user = userEvent.setup();
+    render(<NodeRegistry />);
+    await screen.findByRole("row", { name: /spark-01/ });
+
+    await user.click(screen.getByRole("button", { name: "Edit spark-01" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit spark-01" });
+    expect(within(dialog).getByLabelText("Name")).toHaveValue("spark-01");
+    expect(within(dialog).queryByLabelText("Address *")).toBeNull();
+    expect(within(dialog).queryByLabelText("SSH user")).toBeNull();
+    expect(dialog).toHaveTextContent(/reached over its own agent/i);
+  });
+
+  it("cannot save an empty name", async () => {
+    const user = userEvent.setup();
+    render(<NodeRegistry />);
+    await screen.findByRole("row", { name: /spark-02/ });
+
+    await user.click(screen.getByRole("button", { name: "Edit spark-02" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit spark-02" });
+    await user.clear(within(dialog).getByLabelText("Name"));
+    expect(within(dialog).getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+
+  it("closes on cancel without saving", async () => {
+    const user = userEvent.setup();
+    render(<NodeRegistry />);
+    await screen.findByRole("row", { name: /spark-02/ });
+
+    await user.click(screen.getByRole("button", { name: "Edit spark-02" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit spark-02" });
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(updateNode).not.toHaveBeenCalled();
   });
 });
 

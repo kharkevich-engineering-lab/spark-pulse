@@ -405,6 +405,12 @@
     "none": "Aucun nœud enregistré pour l'instant.",
     "addNote": "Ajouter enregistre la machine. Installer l'agent dessus est l'étape suivante, et elle commence dès l'ajout.",
     "noAgent": "Pas d'agent",
+    "edit": {
+      "action": "Modifier le nœud",
+      "actionFor": "Modifier {name}",
+      "title": "Modifier {name}",
+      "controlPlaneNote": "Le plan de contrôle est joint via son propre agent, pas une adresse que les pairs composent, donc seul son nom peut être modifié ici."
+    },
     "install": {
       "action": "Installer l'agent",
       "reinstall": "Réinstaller l'agent",
