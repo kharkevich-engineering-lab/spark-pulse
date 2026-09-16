@@ -798,7 +798,22 @@
     "noRecipesInCollection": "No recipes found for this collection",
     "scheduleNote": "Check for updates on a schedule",
     "solo": "Solo",
-    "cluster": "Cluster"
+    "cluster": "Cluster",
+    "editRegistryButton": "Edit registry",
+    "editRegistry": "Edit {name}",
+    "authType": "Authentication",
+    "authNone": "None",
+    "authToken": "Token",
+    "authUsernamePassword": "Username & password",
+    "username": "Username",
+    "usernamePlaceholder": "username",
+    "newToken": "New token (leave blank to keep the current one)",
+    "newPassword": "New password (leave blank to keep the current one)",
+    "urlRequired": "URL is required",
+    "usernameRequired": "Username is required for username & password authentication",
+    "secretRequiredOnAuthChange": "Enter a token or password before switching to this authentication type",
+    "registryUpdated": "Registry updated",
+    "registryUpdateFailed": "Failed to update registry"
   },
   "fabric": {
     "heading": "ConnectX fabric",

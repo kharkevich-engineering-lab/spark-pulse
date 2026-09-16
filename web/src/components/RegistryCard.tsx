@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useI18n } from "@/lib/i18n";
-import { CheckCircle2, XCircle, Loader2, Power, PowerOff, ChevronDown, GitBranch } from "lucide-react";
+import { CheckCircle2, XCircle, Loader2, Power, PowerOff, ChevronDown, GitBranch, Pencil } from "lucide-react";
 import type { OciRegistry } from "@/lib/types";
 
 export default function RegistryCard({
@@ -11,6 +11,7 @@ export default function RegistryCard({
   onToggle,
   onTest,
   onRemove,
+  onEdit,
   onVersionChange,
 }: {
   reg: OciRegistry;
@@ -18,6 +19,7 @@ export default function RegistryCard({
   onToggle: () => void;
   onTest: () => void;
   onRemove: () => void;
+  onEdit: () => void;
   onVersionChange?: (version: string) => void;
 }) {
   const { t } = useI18n();
@@ -91,6 +93,13 @@ export default function RegistryCard({
             ) : (
               <PowerOff size={16} className="text-text-muted" />
             )}
+          </button>
+          <button
+            onClick={onEdit}
+            className="p-1.5 rounded hover:bg-surface-pressed transition-colors"
+            title={t("oci.editRegistryButton")}
+          >
+            <Pencil size={16} className="text-text-muted hover:text-foreground" />
           </button>
           {!reg.default && (
             <button
