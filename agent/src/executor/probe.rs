@@ -20,11 +20,10 @@
 //!   shell itself could not be started, and even then it answers — a result
 //!   arriving at all is what tells the control plane the node was reachable.
 
-use std::process::{Command, Stdio};
-use std::sync::mpsc;
-use std::thread;
+use std::process::Command;
 use std::time::Duration;
 
+use super::bounded;
 use crate::proto::{HostProbeResult, RunHostProbe};
 
 /// Seconds a probe may run when the control plane names no timeout.
@@ -44,58 +43,28 @@ pub fn run(req: &RunHostProbe) -> HostProbeResult {
         u64::from(req.timeout_seconds)
     };
 
-    let child = Command::new("/bin/sh")
-        .arg("-c")
-        .arg(&req.command)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn();
-    let child = match child {
-        Ok(child) => child,
-        Err(error) => {
-            return HostProbeResult {
-                exit_code: NO_SHELL_EXIT_CODE,
-                stdout: String::new(),
-                stderr: format!("could not start /bin/sh: {error}"),
-            };
-        }
-    };
+    let mut command = Command::new("/bin/sh");
+    command.arg("-c").arg(&req.command);
 
-    // The child's id, kept before `wait_with_output` consumes it, so a timeout
-    // can terminate the process it left running.
-    let pid = child.id();
-    let (tx, rx) = mpsc::channel();
-    // A dedicated thread drains both pipes and waits, so a chatty command
-    // cannot deadlock on a full pipe while we time it.
-    thread::spawn(move || {
-        let _ = tx.send(child.wait_with_output());
-    });
-
-    match rx.recv_timeout(Duration::from_secs(timeout)) {
-        Ok(Ok(output)) => HostProbeResult {
-            exit_code: output.status.code().unwrap_or(-1),
+    // The bounded runner puts the shell in its own process group and, on
+    // timeout, kills the whole group (TERM then KILL) — so a pipeline's
+    // children go with the shell rather than being orphaned.
+    match bounded::run(command, Duration::from_secs(timeout)) {
+        Ok(output) if output.timed_out() => HostProbeResult {
+            exit_code: TIMEOUT_EXIT_CODE,
+            stdout: String::new(),
+            stderr: format!("timed out after {timeout}s"),
+        },
+        Ok(output) => HostProbeResult {
+            exit_code: output.status.and_then(|s| s.code()).unwrap_or(-1),
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         },
-        Ok(Err(error)) => HostProbeResult {
-            exit_code: -1,
+        Err(error) => HostProbeResult {
+            exit_code: NO_SHELL_EXIT_CODE,
             stdout: String::new(),
-            stderr: format!("probe could not run: {error}"),
+            stderr: format!("could not start /bin/sh: {error}"),
         },
-        Err(_) => {
-            // Timed out. Terminate the process it left behind; the draining
-            // thread then completes on its own and is discarded.
-            let _ = Command::new("kill")
-                .arg("-TERM")
-                .arg(pid.to_string())
-                .output();
-            HostProbeResult {
-                exit_code: TIMEOUT_EXIT_CODE,
-                stdout: String::new(),
-                stderr: format!("timed out after {timeout}s"),
-            }
-        }
     }
 }
 
@@ -130,6 +99,21 @@ mod tests {
         let result = probe("sleep 10", 1);
         assert_eq!(result.exit_code, TIMEOUT_EXIT_CODE);
         assert!(result.stderr.contains("timed out"));
+    }
+
+    #[test]
+    fn a_timed_out_pipeline_with_a_grandchild_is_reaped_and_returns_promptly() {
+        // The shell backgrounds a TERM-ignoring `sleep` that keeps the output
+        // pipe open. Killing only the shell would leave the draining threads
+        // blocked on that pipe forever; the whole-group kill makes this return.
+        let started = std::time::Instant::now();
+        let result = probe("trap '' TERM; sleep 30 & sleep 30", 1);
+        assert_eq!(result.exit_code, TIMEOUT_EXIT_CODE);
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the group was not reaped promptly: {:?}",
+            started.elapsed()
+        );
     }
 
     #[test]

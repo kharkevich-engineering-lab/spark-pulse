@@ -206,31 +206,46 @@ pub fn create_config(
     }
 }
 
-/// Stop and remove a container. False when it was not there.
+/// Stop and remove a container. `Ok(true)` once it is gone; an error only when
+/// the daemon refused, so the two are never confused.
 ///
 /// Stop **and remove**: a container that is merely stopped still owns its name
 /// and its ports, so a redeploy of the same rank collides with the corpse of
 /// the last one. `missing` is the only state that frees a rank's ports, and
 /// this is what produces it.
-pub async fn stop_container(docker: &Docker, name: &str, timeout: Option<i32>) -> bool {
+///
+/// Three outcomes used to fold into one `bool`: gone, not-there, and a genuine
+/// daemon failure all returned — the last two both as `false`. A caller could
+/// then not tell "already gone" (the state it wanted, and idempotent) from
+/// "the daemon would not stop it" (a real error it must surface and retry).
+/// So *not found is success* — the container is gone, which is the whole point
+/// — and a real stop/remove error is raised, travelling to the control plane
+/// as a `CommandFailure` rather than a silent `false`.
+pub async fn stop_container(
+    docker: &Docker,
+    name: &str,
+    timeout: Option<i32>,
+) -> DockerResult<bool> {
     let options = StopContainerOptionsBuilder::default()
         .t(timeout.unwrap_or(30))
         .build();
     match docker.stop_container(name, Some(options)).await {
         Ok(()) => {}
-        Err(error) if is_not_found(&error) => return false,
+        // Already gone before we could stop it: exactly the state asked for.
+        Err(error) if is_not_found(&error) => return Ok(true),
         Err(error) => {
             tracing::error!(%name, %error, "failed to stop container");
-            return false;
+            return Err(OpError::from_docker(error));
         }
     }
     let remove = RemoveContainerOptionsBuilder::default().force(true).build();
     match docker.remove_container(name, Some(remove)).await {
-        Ok(()) => true,
-        Err(error) if is_not_found(&error) => false,
+        // Removed, or removed out from under us between stop and remove: gone.
+        Ok(()) => Ok(true),
+        Err(error) if is_not_found(&error) => Ok(true),
         Err(error) => {
             tracing::error!(%name, %error, "failed to remove container");
-            false
+            Err(OpError::from_docker(error))
         }
     }
 }
