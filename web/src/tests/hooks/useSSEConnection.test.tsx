@@ -400,6 +400,44 @@ describe("useSSEConnection, live", () => {
     expect(result.current.last_connected_at).toBeUndefined();
     expect(result.current.state).toBe(SSEConnectionState.RECONNECTING);
   });
+
+  /** The point of the heartbeat: a laptop that slept for minutes leaves the
+   *  socket reporting OPEN to a browser that has not yet noticed anything is
+   *  wrong. Nothing will ever call `onerror` on its own, so the heartbeat has
+   *  to notice the gap in the wall clock itself and force the issue. */
+  it("reconnects a stream still reporting OPEN after the clock jumps far past the heartbeat's own schedule", () => {
+    vi.useFakeTimers();
+    renderHook(() =>
+      useSSEConnection("/sse/deployments", vi.fn(), { heartbeatIntervalMs: 15_000 }),
+    );
+
+    act(() => latest().open());
+    expect(FakeEventSource.instances).toHaveLength(1);
+
+    // The machine sleeps for five minutes. No timer fires while it is
+    // suspended, so the heartbeat's next tick lands long after it was
+    // scheduled for.
+    act(() => {
+      vi.setSystemTime(new Date(Date.now() + 5 * 60_000));
+      vi.advanceTimersByTime(15_000);
+    });
+
+    expect(FakeEventSource.instances).toHaveLength(2);
+  });
+
+  /** A heartbeat that ticks on schedule — the ordinary case — must not treat
+   *  its own normal interval as a sign anything slept. */
+  it("does not reconnect a healthy stream just because the heartbeat ticked", () => {
+    vi.useFakeTimers();
+    renderHook(() =>
+      useSSEConnection("/sse/deployments", vi.fn(), { heartbeatIntervalMs: 15_000 }),
+    );
+
+    act(() => latest().open());
+    act(() => void vi.advanceTimersByTime(15_000));
+
+    expect(FakeEventSource.instances).toHaveLength(1);
+  });
 });
 
 describe("the named stream hooks", () => {

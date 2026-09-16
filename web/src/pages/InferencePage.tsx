@@ -22,7 +22,7 @@ import {
   MULTI_NODE_TITLE,
   MULTI_NODE_UNPROVEN,
 } from "@/lib/experimental";
-import { ConfirmModal, AlertModal } from "@/components/Modal";
+import { ConfirmModal, AlertModal, Modal } from "@/components/Modal";
 import { Square, X, Trash2, Loader2, AlertCircle, Terminal, Flame } from "lucide-react";
 import type { DeploymentEvent } from "@/lib/operations";
 import type { Deployment, EngineMetricsWindow } from "@/lib/types";
@@ -99,8 +99,8 @@ export default function InferencePage() {
       refetch();
     } catch (e) {
       setAlertModal({
-        title: "Error",
-        message: e instanceof Error ? e.message : "Failed to run benchmark",
+        title: t("common.error"),
+        message: e instanceof Error ? e.message : t("benchmarking.runFailed"),
       });
     } finally {
       setIsBenchmarking(false);
@@ -375,26 +375,19 @@ export default function InferencePage() {
 
       {/* Benchmark confirmation */}
       {benchmarkModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="rounded-xl bg-surface border border-border w-full max-w-sm p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-bold flex items-center gap-2">
-                <Flame size={20} className="text-primary" />
-                Run Benchmark
-              </h3>
-              <button onClick={() => setBenchmarkModal(null)} className="p-1 rounded hover:bg-surface-hover">
-                <X size={18} />
-              </button>
-            </div>
-            <p className="text-sm text-text-muted">
-              Run a benchmark on <strong>{benchmarkModal.name}</strong>? This will measure throughput, latency, and memory usage.
-            </p>
-            <div className="flex justify-end gap-2 pt-2">
+        <Modal
+          open={benchmarkModal !== null}
+          onClose={() => !isBenchmarking && setBenchmarkModal(null)}
+          title={t("inference.runBenchmark")}
+          icon={<Flame size={20} className="text-primary" />}
+          actions={
+            <>
               <button
                 onClick={() => setBenchmarkModal(null)}
-                className="px-4 py-2 rounded-lg border border-border text-sm hover:bg-surface-hover transition-colors"
+                disabled={isBenchmarking}
+                className="px-4 py-2 rounded-lg border border-border text-sm hover:bg-surface-hover disabled:opacity-50 transition-colors"
               >
-                Cancel
+                {t("common.cancel")}
               </button>
               <button
                 onClick={handleBenchmark}
@@ -402,11 +395,15 @@ export default function InferencePage() {
                 className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-colors disabled:opacity-50"
               >
                 {isBenchmarking && <Loader2 size={16} className="animate-spin" />}
-                {isBenchmarking ? "Running..." : "Run"}
+                {isBenchmarking ? t("common.working") : t("inference.benchmarkConfirm")}
               </button>
-            </div>
-          </div>
-        </div>
+            </>
+          }
+        >
+          <p className="text-sm text-text-muted">
+            {t("inference.benchmarkOn", { name: benchmarkModal.name })}
+          </p>
+        </Modal>
       )}
     </div>
   );

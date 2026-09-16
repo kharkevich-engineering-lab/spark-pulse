@@ -101,7 +101,7 @@ describe("EventStreamViewer", () => {
 
     expect(screen.getByText("Deployment failed")).toBeInTheDocument();
     expect(screen.queryByText("Cluster starting")).not.toBeInTheDocument();
-    expect(screen.getByText("1 events")).toBeInTheDocument();
+    expect(screen.getByText("1 event")).toBeInTheDocument();
   });
 
   it("narrows the list to one node, offering only the nodes that spoke", () => {

@@ -48,11 +48,18 @@ export function useSSEConnection(
   const esRef = useRef<EventSource | null>(null);
   const retryCountRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const heartbeatRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  /** When the heartbeat interval last actually fired. Not "when the server
+   *  last spoke" — a quiet stream is not a dead one — but "when this timer
+   *  was last given a turn on the event loop at all". */
+  const lastHeartbeatTickRef = useRef<number>(Date.now());
   /** Whether the most recent close was ours rather than the server's. */
   const intentionalCloseRef = useRef(false);
   const isMountedRef = useRef(true);
   const lastConnectedRef = useRef<string | undefined>(undefined);
+  /** `connect`, kept current for the heartbeat's own closure so starting it
+   *  does not have to depend on — and thereby be redefined by — `connect`. */
+  const connectRef = useRef<() => void>(() => {});
 
   const connectionStatus = useSSEStore((s) => s.getConnection(url));
   const updateConnection = useSSEStore((s) => s.updateConnection);
@@ -64,10 +71,38 @@ export function useSSEConnection(
 
   const clearHeartbeat = useCallback(() => {
     if (heartbeatRef.current) {
-      clearTimeout(heartbeatRef.current);
+      clearInterval(heartbeatRef.current);
       heartbeatRef.current = null;
     }
   }, []);
+
+  /** Starts once the stream is actually open, and stops as soon as it is not.
+   *
+   *  The check is not "has a message arrived lately" — a quiet deployment
+   *  stream can go minutes between real events — it is "did this timer fire
+   *  on schedule". Suspending a laptop pauses its whole JS event loop, timers
+   *  included; on wake, a repeating timer fires far later than the interval
+   *  it was given, which a machine that never slept does not do. That gap is
+   *  treated as a sleep/wake, and a socket the browser still calls OPEN is
+   *  forced to reconnect, because the wake can leave it dead on the far end
+   *  without ever raising `onerror`.
+   */
+  const startHeartbeat = useCallback(() => {
+    clearHeartbeat();
+    lastHeartbeatTickRef.current = Date.now();
+    heartbeatRef.current = setInterval(() => {
+      if (!isMountedRef.current) return;
+      const now = Date.now();
+      const elapsed = now - lastHeartbeatTickRef.current;
+      lastHeartbeatTickRef.current = now;
+      if (
+        elapsed > mergedOptions.heartbeatIntervalMs * 2 &&
+        esRef.current?.readyState === EventSource.OPEN
+      ) {
+        connectRef.current();
+      }
+    }, mergedOptions.heartbeatIntervalMs);
+  }, [clearHeartbeat, mergedOptions.heartbeatIntervalMs]);
 
   const scheduleReconnect = useCallback(
     (attempt: number) => {
@@ -94,6 +129,10 @@ export function useSSEConnection(
 
   const connect = useCallback(() => {
     if (!isMountedRef.current) return;
+
+    // A reconnect leaves the previous connection's heartbeat with nothing to
+    // watch; `onopen` below starts a fresh one once this attempt succeeds.
+    clearHeartbeat();
 
     // Close existing connection. Flagged, so the `onerror` this provokes is
     // not mistaken for the server hanging up on us.
@@ -123,7 +162,7 @@ export function useSSEConnection(
         error: undefined,
       });
       retryCountRef.current = 0;
-      clearHeartbeat();
+      startHeartbeat();
     };
 
     es.onmessage = (event: MessageEvent) => {
@@ -170,6 +209,11 @@ export function useSSEConnection(
     es.onerror = () => {
       if (!isMountedRef.current) return;
 
+      // Whatever this stream was doing, it is not OPEN any more — nothing
+      // left for the wake heartbeat to watch until a future `onopen` starts
+      // it again.
+      clearHeartbeat();
+
       if (es.readyState === EventSource.CLOSED) {
         if (intentionalCloseRef.current) return;
         // The browser closed the stream itself and will not retry. That is
@@ -200,17 +244,11 @@ export function useSSEConnection(
         });
       }
     };
+  }, [url, mergedOptions, updateConnection, clearHeartbeat, startHeartbeat]);
 
-    // Heartbeat: detect browser sleep/wake
-    heartbeatRef.current = setTimeout(() => {
-      if (es.readyState === EventSource.OPEN) {
-        // Send a ping by checking connection state
-        updateConnection(url, {
-          last_connected_at: new Date().toISOString(),
-        });
-      }
-    }, mergedOptions.heartbeatIntervalMs);
-  }, [url, mergedOptions, updateConnection, clearHeartbeat]);
+  useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
 
   useEffect(() => {
     isMountedRef.current = true;

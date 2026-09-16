@@ -128,7 +128,7 @@ export default function EventStreamViewer({
   onClear,
   className = "",
 }: EventStreamViewerProps) {
-  const { t } = useI18n();
+  const { t, plural } = useI18n();
   const [filterSeverity, setFilterSeverity] = useState<string>("all");
   const [filterNode, setFilterNode] = useState<string>("all");
 
@@ -153,7 +153,7 @@ export default function EventStreamViewer({
           <Activity size={20} className="text-primary" />
           <h3 className="text-lg font-semibold">{t("eventStream.title")}</h3>
           <span className="text-xs text-text-muted bg-surface-hover px-2 py-0.5 rounded-full">
-            {filteredEvents.length} events
+            {plural("eventStream.eventCount", filteredEvents.length)}
           </span>
         </div>
         {onClear && events.length > 0 && (
@@ -162,7 +162,7 @@ export default function EventStreamViewer({
             className="flex items-center gap-1 px-2 py-1 text-sm rounded-lg hover:bg-surface-hover transition-colors"
           >
             <Trash2 size={14} />
-            Clear
+            {t("common.clear")}
           </button>
         )}
       </div>
@@ -196,7 +196,7 @@ export default function EventStreamViewer({
       <div className="space-y-1 max-h-96 overflow-y-auto">
         {filteredEvents.length === 0 ? (
           <div className="p-8 text-center text-text-muted text-sm">
-            No events to display
+            {t("eventStream.noEvents")}
           </div>
         ) : (
           filteredEvents.map((event) => {
