@@ -406,8 +406,7 @@ impl Executor {
                 }))
             }
             Op::StopContainer(req) => {
-                let gone =
-                    attempt!(containers::stop_container(docker, &req.name, req.timeout).await);
+                let gone = containers::stop_container(docker, &req.name, req.timeout).await;
                 ok!(Outcome::Boolean(crate::proto::BoolValue { value: gone }))
             }
             Op::GetContainerStatus(req) => {
