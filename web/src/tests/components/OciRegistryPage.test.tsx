@@ -71,6 +71,12 @@ const REGISTRY: OciRegistry = {
   connected: true,
 };
 
+const REGISTRY_WITH_AUTH: OciRegistry = {
+  ...REGISTRY,
+  auth_type: "username_password",
+  auth: { type: "username_password", username: "alice" },
+};
+
 const COLLECTION: OciCollection = {
   name: "spark-recipes",
   version: "1.2.0",
@@ -489,6 +495,158 @@ describe("OciRegistryPage", () => {
       await userEvent.click(await screen.findByRole("button", { name: "Disable" }));
 
       expect(await screen.findByText("registries.yaml is read-only")).toBeInTheDocument();
+    });
+
+    it("opens the edit dialog pre-filled, without ever showing a stored secret", async () => {
+      vi.mocked(fetchOciRegistries).mockResolvedValue([REGISTRY_WITH_AUTH]);
+      render(<OciRegistryPage />);
+      await openTab("Settings");
+
+      await userEvent.click(await screen.findByRole("button", { name: "Edit registry" }));
+
+      expect(screen.getByLabelText("URL")).toHaveValue("ghcr.io/acme/recipes");
+      expect(screen.getByLabelText("Authentication")).toHaveValue("username_password");
+      expect(screen.getByLabelText("Username")).toHaveValue("alice");
+      // A username/password registry never echoes its stored password back;
+      // the "new password" field always starts blank.
+      expect(screen.getByLabelText(/New password/)).toHaveValue("");
+    });
+
+    it("saves only the fields the operator changed, plus a non-empty new secret", async () => {
+      vi.mocked(fetchOciRegistries).mockResolvedValue([REGISTRY_WITH_AUTH]);
+      render(<OciRegistryPage />);
+      await openTab("Settings");
+
+      await userEvent.click(await screen.findByRole("button", { name: "Edit registry" }));
+      const url = screen.getByLabelText("URL");
+      await userEvent.clear(url);
+      await userEvent.type(url, "ghcr.io/acme/recipes-v2");
+      await userEvent.type(screen.getByLabelText(/New password/), "hunter2");
+      await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() =>
+        expect(updateOciRegistry).toHaveBeenCalledWith("ghcr", {
+          url: "ghcr.io/acme/recipes-v2",
+          auth: { type: "username_password", username: "alice", password: "hunter2" },
+        }),
+      );
+      // Test connection is re-run for a URL change, then the list refreshes.
+      await waitFor(() => expect(testOciRegistry).toHaveBeenCalledWith("ghcr"));
+      await waitFor(() => expect(screen.queryByLabelText("URL")).not.toBeInTheDocument());
+    });
+
+    it("leaves the stored secret alone when only the URL changes", async () => {
+      vi.mocked(fetchOciRegistries).mockResolvedValue([REGISTRY_WITH_AUTH]);
+      render(<OciRegistryPage />);
+      await openTab("Settings");
+
+      await userEvent.click(await screen.findByRole("button", { name: "Edit registry" }));
+      const url = screen.getByLabelText("URL");
+      await userEvent.clear(url);
+      await userEvent.type(url, "ghcr.io/acme/recipes-v2");
+      await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() =>
+        expect(updateOciRegistry).toHaveBeenCalledWith("ghcr", {
+          url: "ghcr.io/acme/recipes-v2",
+        }),
+      );
+    });
+
+    it("shows a backend error inline and keeps the dialog open to retry", async () => {
+      vi.mocked(updateOciRegistry).mockRejectedValue(new Error("registries.yaml is read-only"));
+      render(<OciRegistryPage />);
+      await openTab("Settings");
+
+      await userEvent.click(await screen.findByRole("button", { name: "Edit registry" }));
+      const url = screen.getByLabelText("URL");
+      await userEvent.clear(url);
+      await userEvent.type(url, "ghcr.io/acme/recipes-v2");
+      await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      expect(await screen.findByText("registries.yaml is read-only")).toBeInTheDocument();
+      expect(screen.getByLabelText("URL")).toBeInTheDocument();
+    });
+
+    it("requires a username for username & password authentication", async () => {
+      vi.mocked(fetchOciRegistries).mockResolvedValue([REGISTRY_WITH_AUTH]);
+      render(<OciRegistryPage />);
+      await openTab("Settings");
+
+      await userEvent.click(await screen.findByRole("button", { name: "Edit registry" }));
+      const username = screen.getByLabelText("Username");
+      await userEvent.clear(username);
+      await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      expect(
+        await screen.findByText("Username is required for username & password authentication"),
+      ).toBeInTheDocument();
+      expect(updateOciRegistry).not.toHaveBeenCalled();
+    });
+
+    it("requires a URL", async () => {
+      render(<OciRegistryPage />);
+      await openTab("Settings");
+
+      await userEvent.click(await screen.findByRole("button", { name: "Edit registry" }));
+      const url = screen.getByLabelText("URL");
+      await userEvent.clear(url);
+      await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      expect(await screen.findByText("URL is required")).toBeInTheDocument();
+      expect(updateOciRegistry).not.toHaveBeenCalled();
+    });
+
+    it("switches to token authentication with a new token", async () => {
+      render(<OciRegistryPage />);
+      await openTab("Settings");
+
+      await userEvent.click(await screen.findByRole("button", { name: "Edit registry" }));
+      await userEvent.selectOptions(screen.getByLabelText("Authentication"), "token");
+      await userEvent.type(screen.getByLabelText(/New token/), "abc123");
+      await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() =>
+        expect(updateOciRegistry).toHaveBeenCalledWith("ghcr", {
+          auth: { type: "token", token: "abc123" },
+        }),
+      );
+    });
+
+    it("requires a new secret before switching to a different authentication type", async () => {
+      render(<OciRegistryPage />);
+      await openTab("Settings");
+
+      await userEvent.click(await screen.findByRole("button", { name: "Edit registry" }));
+      await userEvent.selectOptions(screen.getByLabelText("Authentication"), "token");
+      await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      expect(
+        await screen.findByText("Enter a token or password before switching to this authentication type"),
+      ).toBeInTheDocument();
+      expect(updateOciRegistry).not.toHaveBeenCalled();
+    });
+
+    it("closes without saving when nothing changed", async () => {
+      render(<OciRegistryPage />);
+      await openTab("Settings");
+
+      await userEvent.click(await screen.findByRole("button", { name: "Edit registry" }));
+      await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      expect(updateOciRegistry).not.toHaveBeenCalled();
+      await waitFor(() => expect(screen.queryByLabelText("URL")).not.toBeInTheDocument());
+    });
+
+    it("abandons the edit dialog on cancel", async () => {
+      render(<OciRegistryPage />);
+      await openTab("Settings");
+
+      await userEvent.click(await screen.findByRole("button", { name: "Edit registry" }));
+      await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+      expect(screen.queryByLabelText("URL")).not.toBeInTheDocument();
+      expect(updateOciRegistry).not.toHaveBeenCalled();
     });
 
     it("removes a registry the operator no longer wants", async () => {

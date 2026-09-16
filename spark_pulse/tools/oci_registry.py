@@ -325,11 +325,25 @@ def remove_registry(name: str) -> bool:
 
 
 def update_registry(name: str, updates: dict) -> dict | None:
-    """Update fields of an existing registry. Returns updated dict or None."""
+    """Update fields of an existing registry. Returns updated dict or None.
+
+    ``auth`` is merged into the existing auth dict rather than replacing it
+    wholesale: the browser never receives a stored secret back (see
+    ``routers/oci.py``), so an edit that only changes the URL or the username
+    must not be able to see, and therefore cannot resend, the token or
+    password already on file. A partial ``auth`` update (e.g. just a new
+    ``token``, or just a changed ``username``) keeps whatever it does not
+    mention.
+    """
     regs = _load_registries()
     for i, r in enumerate(regs):
         if r["name"] == name:
+            auth_update = updates.pop("auth", None)
             regs[i].update(updates)
+            if auth_update is not None:
+                merged_auth = dict(regs[i].get("auth") or {})
+                merged_auth.update(auth_update)
+                regs[i]["auth"] = merged_auth
             _save_registries(regs)
             return regs[i]
     return None

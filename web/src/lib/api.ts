@@ -1,4 +1,4 @@
-import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntry, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, CustomRecipeInfo, CustomModInfo, ModFileMap, BenchmarkResult, OciRegistry, OciCollection, OciCollectionRecipe, OciRecipeMeta, OciUpdateCheck, OciUpdateApply, OciUpdateResult, OciAutoUpdateSettings, EngineListResponse, EngineDetail, EngineIndexRefreshResult, RenderRequest, RenderResult, ModelEntry, ModelSource, ModelDownloadJob, ModelSyncResult, ModelPresence, ModelDeleteResult, ImageEntry, ImagePullJob, ImageSyncResult, ImagePresence, ImageDeleteResult, DeployPlan, DeployPlanRequest, PreflightReport, EngineMetricsWindow, ScheduledDeploy } from "@/lib/types";
+import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntry, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, CustomRecipeInfo, CustomModInfo, ModFileMap, BenchmarkResult, OciRegistry, OciRegistryUpdate, OciCollection, OciCollectionRecipe, OciRecipeMeta, OciUpdateCheck, OciUpdateApply, OciUpdateResult, OciAutoUpdateSettings, EngineListResponse, EngineDetail, EngineIndexRefreshResult, RenderRequest, RenderResult, ModelEntry, ModelSource, ModelDownloadJob, ModelSyncResult, ModelPresence, ModelDeleteResult, ImageEntry, ImagePullJob, ImageSyncResult, ImagePresence, ImageDeleteResult, DeployPlan, DeployPlanRequest, PreflightReport, EngineMetricsWindow, ScheduledDeploy } from "@/lib/types";
 
 const API = "/api";
 
@@ -285,7 +285,7 @@ export async function addOciRegistry(registry: Partial<OciRegistry>): Promise<Oc
   return json<OciRegistry>("/oci/registries", { method: "POST", body: JSON.stringify(registry) });
 }
 
-export async function updateOciRegistry(name: string, registry: Partial<OciRegistry>): Promise<OciRegistry> {
+export async function updateOciRegistry(name: string, registry: OciRegistryUpdate): Promise<OciRegistry> {
   return json<OciRegistry>(`/oci/registries/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify(registry) });
 }
 

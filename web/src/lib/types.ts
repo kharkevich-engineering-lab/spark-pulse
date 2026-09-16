@@ -378,14 +378,48 @@ export interface BenchmarkResult {
 
 // ── OCI Registry Types ───────────────────────────────────────────────────────
 
+/** Non-secret auth fields the real backend reports back on a registry.
+ *
+ * A stored token or password is never echoed here — `routers/oci.py`'s
+ * `GET /api/oci/registries` returns them in plaintext today, but the edit
+ * dialog deliberately never reads them regardless, so this type does not
+ * carry them either. Only `type` and (for username/password auth) the
+ * username are safe to pre-fill a form with. */
+export interface OciRegistryAuth {
+  type: "token" | "username_password" | "none";
+  username?: string;
+}
+
 export interface OciRegistry {
   name: string;
   url: string;
   enabled: boolean;
   default: boolean;
   auth_type: "token" | "username_password" | "none";
+  auth?: OciRegistryAuth;
   connected?: boolean;
   error?: string;
+}
+
+/** A new secret going *out* to `PUT /api/oci/registries/{name}`, as opposed
+ *  to `OciRegistryAuth`, which is what can safely come back in. `token` and
+ *  `password` are write-only — present only when the operator entered a new
+ *  one, since the backend merges a partial `auth` update rather than
+ *  replacing it (see `update_registry` in `tools/oci_registry.py`). */
+export interface OciRegistryAuthUpdate {
+  type: "token" | "username_password" | "none";
+  username?: string;
+  token?: string;
+  password?: string;
+}
+
+/** Body for `PUT /api/oci/registries/{name}` — only the fields being
+ *  changed belong here; omitted fields are left untouched. */
+export interface OciRegistryUpdate {
+  url?: string;
+  enabled?: boolean;
+  default?: boolean;
+  auth?: OciRegistryAuthUpdate;
 }
 
 export interface OciCollection {

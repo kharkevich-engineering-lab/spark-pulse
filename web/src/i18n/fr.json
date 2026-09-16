@@ -810,7 +810,22 @@
     "noRecipesInCollection": "Aucune recette trouvée pour cette collection",
     "scheduleNote": "Vérifier les mises à jour selon une planification",
     "solo": "Seul",
-    "cluster": "Grappe"
+    "cluster": "Grappe",
+    "editRegistryButton": "Modifier le registre",
+    "editRegistry": "Modifier {name}",
+    "authType": "Authentification",
+    "authNone": "Aucune",
+    "authToken": "Jeton",
+    "authUsernamePassword": "Nom d'utilisateur et mot de passe",
+    "username": "Nom d'utilisateur",
+    "usernamePlaceholder": "nom d'utilisateur",
+    "newToken": "Nouveau jeton (laisser vide pour conserver l'actuel)",
+    "newPassword": "Nouveau mot de passe (laisser vide pour conserver l'actuel)",
+    "urlRequired": "L'URL est requise",
+    "usernameRequired": "Le nom d'utilisateur est requis pour l'authentification par nom d'utilisateur et mot de passe",
+    "secretRequiredOnAuthChange": "Saisissez un jeton ou un mot de passe avant de passer à ce type d'authentification",
+    "registryUpdated": "Registre mis à jour",
+    "registryUpdateFailed": "Échec de la mise à jour du registre"
   },
   "fabric": {
     "heading": "Fabric ConnectX",

@@ -305,10 +305,10 @@ const CASES: Case[] = [
   },
   {
     name: "updateOciRegistry escapes the registry name",
-    call: () => api.updateOciRegistry("my registry", { name: "my registry" }),
+    call: () => api.updateOciRegistry("my registry", { enabled: false }),
     path: "/api/oci/registries/my%20registry",
     method: "PUT",
-    body: { name: "my registry" },
+    body: { enabled: false },
   },
   {
     name: "removeOciRegistry",
