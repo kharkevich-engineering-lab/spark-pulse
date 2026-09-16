@@ -202,9 +202,15 @@ def _paths_in(command: str) -> list[str]:
     return shlex.split(body)
 
 
-def probe_for(target: NodeTarget, ssh_client: Any = None) -> HostProbe:
-    """The simulated probe bound to ``target``."""
-    _ = ssh_client
+def probe_for(target: NodeTarget, services: Any = None) -> HostProbe:
+    """The simulated probe bound to ``target``.
+
+    Takes ``services`` under the same name the real ``probe_for`` does — the
+    real one resolves the node's agent through it, the mock answers out of
+    memory and ignores it — so a caller reaching ``tools.preflight`` through
+    the switch binds either the same way.
+    """
+    _ = services
     return SimulatedHostProbe(
         target.address or "localhost",
         unreachable=target.address in UNREACHABLE,
