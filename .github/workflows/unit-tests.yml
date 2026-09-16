@@ -179,9 +179,12 @@ jobs:
       - name: Run frontend build
         working-directory: web
         run: npm run build
+      # test:coverage (vitest run --coverage) rather than test:run: the
+      # thresholds in vitest.config.ts are a ratchet on real coverage, and a
+      # job that only ran the suite never evaluated them.
       - name: Run UI unit tests
         working-directory: web
-        run: npm run test:run
+        run: npm run test:coverage
 
   # The browser suite, once per storage backend.
   #
