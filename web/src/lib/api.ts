@@ -503,8 +503,21 @@ export async function cancelModelDownload(jobId: string): Promise<ModelDownloadJ
   return json<ModelDownloadJob>(`/models/downloads/${jobId}/cancel`, { method: "POST" });
 }
 
-export async function syncModelToNodes(id: string, nodes: string[], sshUser?: string): Promise<ModelSyncResult> {
-  return json<ModelSyncResult>(`/models/${id}/sync`, { method: "POST", body: JSON.stringify({ nodes, ssh_user: sshUser }) });
+export async function syncModelToNodes(
+  id: string,
+  nodes: string[],
+  sshUser?: string,
+  options?: { deep?: boolean; force?: boolean },
+): Promise<ModelSyncResult> {
+  return json<ModelSyncResult>(`/models/${id}/sync`, {
+    method: "POST",
+    body: JSON.stringify({
+      nodes,
+      ssh_user: sshUser,
+      deep: options?.deep,
+      force: options?.force,
+    }),
+  });
 }
 
 export async function fetchModelPresence(id: string, nodes: string[]): Promise<ModelPresence> {
