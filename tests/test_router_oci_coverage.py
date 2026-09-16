@@ -108,6 +108,67 @@ class TestRegistries:
         assert response.status_code == 404
         assert response.json()["detail"] == "Registry 'ghost' not found"
 
+    def test_list_masks_stored_secrets(self, client):
+        """A stored token or password never leaves the process in the clear.
+
+        The same rule the settings router applies to ``hf_token``: a long
+        secret keeps its last four characters so it can be identified, a short
+        one is hidden entirely, and non-secret auth fields are untouched.
+        """
+        regs = [
+            {
+                "name": "t",
+                "url": "u",
+                "enabled": True,
+                "default": False,
+                "auth": {"type": "token", "token": "ghp_" + "x" * 32},
+            },
+            {
+                "name": "p",
+                "url": "u2",
+                "enabled": True,
+                "default": False,
+                "auth": {
+                    "type": "username_password",
+                    "username": "alice",
+                    "password": "s3cret",
+                },
+            },
+        ]
+        with patch.object(oci_router, "list_registries", return_value=regs):
+            body = client.get("/api/oci/registries").json()
+        by_name = {r["name"]: r for r in body}
+        token = by_name["t"]["auth"]["token"]
+        assert "ghp_" not in token
+        assert token.startswith("•" * 8) and token.endswith("xxxx")
+        assert by_name["p"]["auth"]["password"] == "•" * 8
+        assert by_name["p"]["auth"]["username"] == "alice"
+        # Masking happens on a copy: the tool's own record keeps the credential
+        # it needs to talk to the registry.
+        assert regs[0]["auth"]["token"] == "ghp_" + "x" * 32
+
+    def test_create_and_update_responses_are_masked_too(self, client):
+        record = {
+            "name": "t",
+            "url": "u",
+            "auth": {"type": "token", "token": "tok-" + "y" * 20},
+        }
+        with patch.object(oci_router, "add_registry", return_value=record):
+            created = client.post(
+                "/api/oci/registries", json={"name": "t", "url": "u"}
+            ).json()
+        with patch.object(oci_router, "update_registry", return_value=record):
+            updated = client.put("/api/oci/registries/t", json={"url": "u"}).json()
+        for body in (created, updated):
+            assert "tok-" not in body["auth"]["token"]
+            assert body["auth"]["token"].startswith("•")
+
+    def test_a_registry_without_secrets_is_returned_untouched(self, client):
+        regs = [{"name": "n", "url": "u", "auth": {"type": "none"}}]
+        with patch.object(oci_router, "list_registries", return_value=regs):
+            body = client.get("/api/oci/registries").json()
+        assert body[0]["auth"] == {"type": "none"}
+
     def test_delete_confirms_removal(self, client):
         with patch.object(oci_router, "remove_registry", return_value=True) as remove:
             response = client.delete("/api/oci/registries/mine")

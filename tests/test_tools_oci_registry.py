@@ -172,6 +172,28 @@ class TestRegistryConfig:
         result = update_registry("test-registry", {"auth": {"token": "new-token"}})
         assert result["auth"] == {"type": "token", "token": "new-token"}
 
+    def test_update_registry_refuses_to_store_a_masked_secret(self, sample_registry):
+        """A masked value is what a response carries, never a credential.
+
+        A client that reads a registry (masked) and writes it back verbatim
+        must keep the real token, not replace it with bullets.
+        """
+        masked = "•" * 8 + "oken"
+        result = update_registry("test-registry", {"auth": {"token": masked}})
+        assert result["auth"]["token"] == "test-token"
+
+    def test_update_registry_drops_a_masked_password_but_keeps_other_fields(
+        self, sample_registry
+    ):
+        result = update_registry(
+            "test-registry",
+            {"auth": {"username": "alice", "password": "•" * 8}},
+        )
+        assert result["auth"]["username"] == "alice"
+        assert "password" not in result["auth"]
+        # The pre-existing token is untouched by an update that did not name it.
+        assert result["auth"]["token"] == "test-token"
+
     def test_update_registry_auth_type_switch_keeps_stale_fields(self, sample_registry):
         """Switching auth type without a new secret leaves old fields behind.
 

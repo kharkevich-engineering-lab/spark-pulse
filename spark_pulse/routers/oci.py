@@ -43,25 +43,67 @@ router = APIRouter(prefix="/api/oci", tags=["oci"])
 # ── Registries ───────────────────────────────────────────────────────────────
 
 
+#: Auth fields that are secrets. They leave this process only as a masked
+#: marker: the browser has no reason to see a stored token or password, and
+#: the edit dialog never pre-fills one. This is the same rule the settings
+#: router applies to ``hf_token`` (``config.hf_token_masked``).
+_SECRET_AUTH_KEYS = ("token", "password")
+_MASK = "•" * 8
+
+
+def _masked_secret(value: object) -> str:
+    """The masked form of a stored secret, mirroring ``hf_token_masked``.
+
+    The last four characters are kept only for a secret long enough that they
+    identify it without weakening it (a token); a short password is hidden
+    entirely.
+    """
+    text = str(value or "")
+    if not text:
+        return ""
+    return _MASK + text[-4:] if len(text) >= 12 else _MASK
+
+
+def _public_registry(registry: dict) -> dict:
+    """A registry record safe to send to the browser: stored secrets masked.
+
+    Applied at this boundary rather than in ``tools.oci_registry``, because the
+    tool's own callers (``_oras_list_tags``, ``_auth_headers``) need the real
+    credential to talk to the registry. Masking is idempotent, so a record
+    that was already masked stays masked, and ``update_registry`` refuses to
+    store a masked value, so nothing this returns can round-trip into the
+    registries file.
+    """
+    public = dict(registry)
+    auth = public.get("auth")
+    if isinstance(auth, dict):
+        masked = dict(auth)
+        for key in _SECRET_AUTH_KEYS:
+            if masked.get(key):
+                masked[key] = _masked_secret(masked[key])
+        public["auth"] = masked
+    return public
+
+
 @router.get("/registries")
 def get_registries():
     """List all configured registries with connectivity status."""
     if is_simulation():
-        return _mock_reg_state
-    return list_registries()
+        return [_public_registry(r) for r in _mock_reg_state]
+    return [_public_registry(r) for r in list_registries()]
 
 
 @router.post("/registries")
 def create_registry(body: dict):
     """Add a new registry."""
     if is_simulation():
-        return _mock_add_registry(body)
+        return _public_registry(_mock_add_registry(body))
     name = body.get("name")
     url = body.get("url")
     if not name or not url:
         raise HTTPException(status_code=400, detail="name and url are required")
     try:
-        return add_registry(body)
+        return _public_registry(add_registry(body))
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -70,11 +112,11 @@ def create_registry(body: dict):
 def update_registry_endpoint(name: str, body: dict):
     """Update an existing registry."""
     if is_simulation():
-        return _mock_update_registry(name, body)
+        return _public_registry(_mock_update_registry(name, body))
     result = update_registry(name, body)
     if not result:
         raise HTTPException(status_code=404, detail=f"Registry '{name}' not found")
-    return result
+    return _public_registry(result)
 
 
 @router.delete("/registries/{name}")
