@@ -13,15 +13,20 @@ function usableEngines(r: RecipeSummary): string[] {
   return r.engines ?? [];
 }
 
-export default function RecipeCard({ r, isRunning, clusterBlocked, onSelect, onReset }: {
+export default function RecipeCard({ r, isRunning, clusterBlocked, onSelect, onReset, onUninstall }: {
   r: RecipeSummary;
   isRunning: boolean;
   clusterBlocked: boolean;
   onSelect: () => void;
   onReset?: () => void;
+  /** Uninstalls an OCI-installed recipe. Only ever passed for `source ===
+   *  "oci"` — a bundled or upstream recipe has nothing this can remove. */
+  onUninstall?: () => void;
 }) {
   const { t } = useI18n();
   const engines = usableEngines(r);
+  const isOci = r.source === "oci";
+  const isManaged = r.source === "bundled" || r.source === "upstream";
   const badges = (
     <>
       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-tag-bg text-text-muted">
@@ -76,6 +81,9 @@ export default function RecipeCard({ r, isRunning, clusterBlocked, onSelect, onR
       badges={badges}
       onClick={onSelect}
       disabled={clusterBlocked}
+      onDelete={isOci ? onUninstall : undefined}
+      deleteLabel={isOci ? t("recipes.uninstallRecipe", { name: r.name }) : undefined}
+      hint={isManaged ? t("recipes.managedRecipe") : undefined}
     />
   );
 }

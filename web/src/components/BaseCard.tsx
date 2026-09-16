@@ -21,9 +21,14 @@ interface BaseCardProps {
   /** What the delete control says it will do, for a screen reader and a
    *  tooltip. Required with `onDelete` so no card offers an unlabelled bin. */
   deleteLabel?: string;
+  /** Shown as a native tooltip when there is no `onDelete`, so a card with
+   *  nothing to remove reads as deliberate ("Managed recipe") rather than
+   *  broken. Ignored when `onDelete` is set — the delete button already
+   *  carries its own tooltip via `deleteLabel`. */
+  hint?: string;
 }
 
-export default function BaseCard({ icon, title, subtitle, description, badges, onClick, disabled, className, onDelete, deleteLabel }: BaseCardProps) {
+export default function BaseCard({ icon, title, subtitle, description, badges, onClick, disabled, className, onDelete, deleteLabel, hint }: BaseCardProps) {
   const interactive = !disabled;
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -41,6 +46,7 @@ export default function BaseCard({ icon, title, subtitle, description, badges, o
       aria-disabled={disabled || undefined}
       onClick={interactive ? onClick : undefined}
       onKeyDown={handleKeyDown}
+      title={onDelete ? undefined : hint}
       className={`text-left p-5 rounded-xl bg-surface border transition-colors ${
         disabled
           ? "opacity-50 cursor-not-allowed border-border"
