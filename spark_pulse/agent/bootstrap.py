@@ -396,21 +396,42 @@ WantedBy={paths.wanted_by}
 
 
 def render_network_sudoers(user: str) -> str:
-    """A drop-in granting the agent user passwordless ``nmcli``, and only that.
+    """A drop-in granting the agent user passwordless ``nmcli``, scoped to the
+    four ``connection`` verbs the fabric applier actually issues.
 
     Host network configuration needs root, and the agent runs rootless. Rather
-    than run the agent as root, it is given exactly one privileged command —
-    ``nmcli`` — so the fabric can be configured through the agent (over its own
-    transport, no SSH) with a boundary an operator can read in one line. The
-    agent's own code refuses to run anything but ``nmcli`` this way, so this is
-    the OS-level half of a two-layer allowlist.
+    than run the agent as root, or grant it ``nmcli`` outright — root ``nmcli``
+    with an arbitrary argument is a privilege-escalation surface in its own
+    right (``connection edit``'s shell, ``connection import`` of a VPN plugin,
+    ``general``, ``device``, ...) — it is given passwordless sudo for exactly
+    the sub-commands ``agent/src/executor/fabric.rs`` runs under ``sudo -n``:
+    ``connection add`` (a new port profile), ``connection modify`` (updating
+    an existing one, and quieting a competing profile's autoconnect),
+    ``connection up`` and ``connection down``. Everything after the verb —
+    connection name, addresses, MTU — is data the plan computes per port and
+    can't be pinned to a literal the way ``render_sudoers`` pins a unit name,
+    so the verb is the security boundary here; sudoers matches a command's
+    full argument vector with shell-style globbing where ``*`` also matches
+    spaces (see ``sudoers(5)``, WILDCARDS), so ``connection add *`` covers the
+    whole rest of that line without reopening any other ``nmcli`` subcommand.
+    The agent's own code refuses to run anything but these ``nmcli connection``
+    calls this way, so this is the OS-level half of a two-layer allowlist.
     """
     if not _POSIX_USERNAME.fullmatch(user):
         raise BootstrapError(
             f"{user!r} is not a username this can write a sudoers rule for; "
             "expected letters, digits, and any of '_', '-', '.', '$'"
         )
-    return f"{user} ALL=(root) NOPASSWD: /usr/bin/nmcli\n"
+    verbs = ", ".join(
+        f"/usr/bin/nmcli connection {verb} *"
+        for verb in ("add", "modify", "up", "down")
+    )
+    return (
+        "# Installed by spark-pulse. Covers connection add/modify/up/down —\n"
+        "# what agent/src/executor/fabric.rs issues under sudo -n — and\n"
+        "# nothing else: no other nmcli object, no shell, no arbitrary command.\n"
+        f"{user} ALL=(root) NOPASSWD: {verbs}\n"
+    )
 
 
 def render_sudoers(user: str, *, unit: str = UNIT_NAME) -> str:
