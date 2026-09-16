@@ -233,8 +233,8 @@ class TestSweep:
         rc.mark("d1", rc.SYNC_IN_PROGRESS)
 
         with patch.object(
-            tools.reconciliation,
-            "reconcile_deployments",
+            tools.native_runtime,
+            "list_deployments",
             side_effect=RuntimeError("no route to host"),
         ):
             rc.Reconciler().sweep()

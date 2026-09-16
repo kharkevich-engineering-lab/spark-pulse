@@ -23,7 +23,7 @@ that says "stopped" about a container still holding 90 GB of VRAM.
 ``unknown`` is the third state this codebase keeps insisting on. A node that
 cannot be asked has not said no. The reconciler leaves the record alone and
 says so, rather than inferring a state from silence — the same rule
-``reconcile_deployments`` follows for ranks it could not enumerate.
+``native_runtime.list_deployments`` follows for ranks it could not enumerate.
 """
 
 from __future__ import annotations
@@ -264,13 +264,24 @@ class Reconciler:
     ) -> dict[str, Any] | None:
         """Ask the nodes what is actually running, then stop saying in-progress.
 
-        The question is the one `reconcile_deployments` already asks at
-        startup. What is new is asking it on a timer, so a deployment that
+        The question is the one `native_runtime.list_deployments` already asks
+        at startup — every node through its own agent, the control node over
+        loopback. What is new is asking it on a timer, so a deployment that
         finished starting stops reading as in-flight without an operator
         reloading the page.
+
+        A record the pull thread still owns is left untouched: reconciling it
+        now would mark it stopped on a container the pull has not created yet,
+        so the pulling/pending check comes *before* the reconcile, not only
+        after it.
         """
+        if str(record.get("status")) in ("pulling", "pending"):
+            # Still genuinely in flight: the pull thread owns this one and
+            # will settle the record itself.
+            return None
+
         try:
-            tools.reconciliation.reconcile_deployments()
+            tools.native_runtime.list_deployments()
         except Exception as exc:  # noqa: BLE001 — an unreachable node
             logger.debug("could not settle %s: %s", deployment_id, exc)
             return mark(
@@ -281,8 +292,6 @@ class Reconciler:
         if current is None:
             return {"id": deployment_id, "deleted": True}
         if str(current.get("status")) in ("pulling", "pending"):
-            # Still genuinely in flight: the pull thread owns this one and
-            # will settle the record itself.
             return None
         return mark(deployment_id, SYNC_OK)
 

@@ -84,9 +84,6 @@ from spark_pulse.tools.node_service import (
     control_node,
     peer_node,
 )
-from spark_pulse.tools.reconciliation import (
-    _reconcile_deployments_real,
-)
 
 # pytest-env forces SIMULATION_MODE=1, so the package attribute
 # ``spark_pulse.tools.docker`` is the mock re-export. ``copy_to_container`` is
@@ -735,89 +732,6 @@ class TestPullAggregation:
         assert split_ref(ref) == expected
 
 
-class TestReconciliationContract:
-    """Reconciliation rebuilds state from the labels the services actually write."""
-
-    # The public reconcile_* functions short-circuit to a no-op under
-    # SIMULATION_MODE, which pytest forces on; the _real variants are what runs
-    # in production, so those are what is exercised here.
-
-    def test_reconcile_finds_a_solo_deployment(self):
-        """A container started by DockerService is reconciled from its labels."""
-        docker = DockerService(client=_fake_sdk_client())
-        docker.run_container(
-            image=IMAGE,
-            name="contract-reconcile",
-            env_vars={},
-            metadata=_metadata("contract-reconcile"),
-        )
-
-        deployments = _reconcile_deployments_real(docker)
-
-        assert len(deployments) == 1
-        assert deployments[0]["id"] == "contract-reconcile"
-        assert deployments[0]["container_name"] == "contract-reconcile"
-        assert deployments[0]["image"] == IMAGE
-        assert deployments[0]["status"] == "running"
-
-    def test_reconcile_finds_a_mock_deployment(self):
-        """The same holds for the simulation-mode service."""
-        docker = MockDockerService(MockDockerClient())
-        docker.run_container(
-            image=IMAGE,
-            name="contract-reconcile-mock",
-            env_vars={},
-            metadata=_metadata("contract-reconcile-mock"),
-        )
-
-        deployments = _reconcile_deployments_real(docker)
-
-        assert [d["id"] for d in deployments] == ["contract-reconcile-mock"]
-
-    def test_reconcile_reads_a_ranks_identity_back(self):
-        """Rank, generation and world size survive the round trip to Docker.
-
-        Not a plan-level assertion: the identity has to reach the daemon
-        through whichever service wrote the container, or reaping a leftover
-        generation has nothing to go on.
-        """
-        docker = DockerService(client=_fake_sdk_client())
-        docker.run_container(
-            image=IMAGE,
-            name="spark-pulse-contract-r1-g3",
-            env_vars={},
-            metadata=_metadata("contract", generation=3, rank=1, world_size=2),
-        )
-
-        deployments = _reconcile_deployments_real(docker)
-
-        assert deployments[0]["generation"] == 3
-        assert deployments[0]["rank"] == 1
-        assert deployments[0]["world_size"] == 2
-
-    def test_a_container_without_a_generation_reads_as_a_lone_rank_zero(self):
-        """A container written before ranks existed is exactly what it was."""
-        docker = DockerService(client=_fake_sdk_client())
-        docker.run_container(
-            image=IMAGE,
-            name="spark-pulse-legacy",
-            env_vars={},
-            metadata=_metadata("legacy"),
-        )
-
-        deployment = _reconcile_deployments_real(docker)[0]
-
-        assert (deployment["generation"], deployment["rank"]) == (0, 0)
-        assert deployment["world_size"] == 1
-
-    def test_reconcile_ignores_unlabelled_containers(self):
-        """Containers without our labels are not adopted."""
-        client = _fake_sdk_client()
-        client.containers.run(IMAGE, name="someone-elses", labels={"other": "1"})
-
-        assert _reconcile_deployments_real(DockerService(client=client)) == []
-
-
 # ── Client hygiene ──────────────────────────────────────────────────────────
 
 
@@ -1177,8 +1091,9 @@ class TestContainerStatusContract:
 
         The CLI path used to fold everything that was not running into
         ``stopped`` — a word Docker does not use and the SDK path never
-        returns. ``reconciliation._clean_orphaned_containers`` sweeps on
-        ``status == "exited"``, so on a peer it could never fire at all.
+        returns. The orphan sweep keys on Docker's own words, so a peer that
+        reported ``stopped`` could never be reconciled the way the local node
+        was.
         """
         _run(service, "contract-exited", _metadata("contract-exited"))
         _exit_container(service, "contract-exited")
@@ -1262,8 +1177,7 @@ class TestListManagedContract:
 
         ``list_managed_containers`` returned ``[]`` whenever the command
         failed, so a peer whose Docker had died erased that peer's deployments
-        and clusters from reconciliation, gave ``_clean_orphaned_containers``
-        nothing to clean, and told ``native_runtime._stale_names`` there was no
+        from reconciliation and told ``native_runtime._stale_names`` there was no
         earlier generation to reap — which starts a new rank on top of one that
         may still be holding the GPU. The local path lets the exception out;
         so does this one now.

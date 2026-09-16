@@ -136,6 +136,40 @@ def test_no_tool_reaches_the_container_service_without_a_node(module: Path):
 
 
 @pytest.mark.parametrize("module", _tool_modules(), ids=lambda p: p.name)
+def test_no_tool_constructs_the_container_service_directly(module: Path):
+    """Naming the node is not enough if the service is built without one.
+
+    ``docker._get_service()`` is the obvious way to reach this process's own
+    Docker client, and the test above forbids it. Constructing
+    ``DockerService()`` directly is the same local operation wearing a
+    different name: it binds to whatever daemon this machine has and never
+    reaches an agent, so a call meant for a peer runs here instead. That is how
+    ``reconciliation.py`` came to reap only this node's orphans while the
+    ratchet stayed green — it built the client rather than calling the spelling
+    the ratchet knew. Container work is built by the seam (`docker`,
+    `node_service`) and reached through `node_service`, which routes even this
+    machine through its own agent.
+    """
+    if module.name in MAY_TOUCH_DOCKER_DIRECTLY:
+        pytest.skip(f"{module.name} is the seam itself")
+
+    tree = ast.parse(module.read_text(encoding="utf-8"))
+    offenders = sorted(
+        _dotted(call.func)
+        for call in _calls(tree)
+        if _dotted(call.func).endswith("DockerService")
+    )
+
+    assert offenders == [], (
+        f"{module.name} constructs the container service directly "
+        f"({', '.join(offenders)}). A DockerService built here talks to this "
+        "machine's Docker with no node in the call, so an operation meant for "
+        "a peer runs locally instead. Go through `node_service.service_for`, "
+        "which reaches even this machine through its own agent."
+    )
+
+
+@pytest.mark.parametrize("module", _tool_modules(), ids=lambda p: p.name)
 def test_only_the_named_modules_shell_out(module: Path):
     """Shelling out is how a local operation gets written by accident.
 

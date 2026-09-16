@@ -45,7 +45,6 @@ from spark_pulse.tools.oci_registry import (
     start_background_updater,
     stop_background_updater,
 )
-from spark_pulse.tools.reconciliation import reconcile_all
 from spark_pulse.version import get_version
 from spark_pulse.mcp_http import handle_mcp, MCP_PATH
 
@@ -228,16 +227,15 @@ async def lifespan(app: FastAPI):
         tools.agent_update.start_updater()
 
     # Recover deployment state from container labels: a restart loses nothing
-    # the containers still know.
+    # the containers still know. `native_runtime.list_deployments` asks every
+    # node through its own agent — the control node over loopback — adopts any
+    # container it has no record for, marks a record whose container is gone
+    # stopped, sweeps the orphans it can now confirm gone, and persists all of
+    # it. That is the agent-routed recovery; the old local-only reconciler
+    # only counted.
     try:
-        result = reconcile_all()
-        print(
-            f"Reconciliation complete: {result.deployments_reconciled} deployments, "
-            f"{result.orphaned_containers_cleaned} orphans cleaned"
-        )
-        if result.errors:
-            for err in result.errors:
-                print(f"Reconciliation warning: {err}")
+        recovered = tools.native_runtime.list_deployments()
+        print(f"Reconciliation complete: {len(recovered)} deployments")
     except Exception as e:
         print(f"Warning: reconciliation failed: {e}")
 
@@ -270,7 +268,7 @@ async def lifespan(app: FastAPI):
 
     # The reconciler, which is what makes a delete answer immediately: the
     # request records the intent, this thread converges the nodes. Started
-    # after `reconcile_all` so its first sweep sees a settled store.
+    # after the recovery pass above so its first sweep sees a settled store.
     try:
         tools.reconciler.start_reconciler()
         print(
