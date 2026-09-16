@@ -66,9 +66,9 @@ A create that needs a download goes through `POST /api/scheduled-deploys`, which
 | `GET /api/recipes` · `GET /api/recipes/{id}` | The catalogue. |
 | `PUT /api/recipes/customize/{id}` · `DELETE …` | Saved parameter overrides. |
 | `GET/POST/PUT/DELETE /api/custom-files/recipes⎮mods` | Your own recipe and mod files. |
-| `GET /api/mods` · `GET /api/mods/{id}` · `POST /api/mods/validate` | List, read, and check a mod for what it must never do. |
+| `GET /api/mods` · `GET /api/mods/{id}` | List and read a mod. |
 
-Applying a mod is not an endpoint: a recipe names its mods and they are copied into each rank's container at deploy time.
+Applying a mod is not an endpoint: a recipe names its mods and they are copied into each rank's container at deploy time. Neither is validating one any more — `POST /api/mods/validate` went with the page that called it; the checks live on in `tools.mods.validate_mod_content`.
 
 ## OCI recipe collections
 

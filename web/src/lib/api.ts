@@ -457,60 +457,6 @@ export async function getValidation(): Promise<ValidationResult> {
   return json<ValidationResult>("/discovery/validation");
 }
 
-// ── Launch Script (Phase 4) ──────────────────────────────────────────────────
-
-import type {
-  LaunchScriptInfo,
-  LaunchScriptResolveResult,
-  LaunchScriptResolveRequest,
-  LaunchScriptAnalyzeRequest,
-  LaunchScriptValidateRequest,
-  LaunchScriptPatchRequest,
-  PatchedScriptBundle,
-} from "@/lib/types";
-
-export async function resolveLaunchScript(body: LaunchScriptResolveRequest): Promise<LaunchScriptResolveResult> {
-  return json<LaunchScriptResolveResult>("/launch-script/resolve", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-}
-
-export async function analyzeLaunchScript(body: LaunchScriptAnalyzeRequest): Promise<LaunchScriptInfo> {
-  return json<LaunchScriptInfo>("/launch-script/analyze", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-}
-
-export async function validateLaunchScript(body: LaunchScriptValidateRequest): Promise<{ healthy: boolean; warnings: string[]; errors: string[] }> {
-  return json<{ healthy: boolean; warnings: string[]; errors: string[] }>("/launch-script/validate", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-}
-
-export async function patchLaunchScript(body: LaunchScriptPatchRequest): Promise<PatchedScriptBundle> {
-  return json<PatchedScriptBundle>("/launch-script/patch", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-}
-
-// ── Mods ─────────────────────────────────────────────────────────────────────
-
-import type {
-  ModValidationResult,
-  ModValidateRequest,
-} from "@/lib/types";
-
-export async function validateMod(body: ModValidateRequest): Promise<ModValidationResult> {
-  return json<ModValidationResult>("/mods/validate", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-}
-
 // ── Engines ─────────────────────────────────────────────────────────────────
 
 export async function fetchEngines(signal?: AbortSignal): Promise<EngineListResponse> { return json<EngineListResponse>("/engines", { signal }); }

@@ -452,69 +452,6 @@ export interface OciAutoUpdateSettings {
 }
 
 // ── Cluster Orchestration Types ──────────────────────────────────────────────
-//
-// ── Launch Script Types (Phase 4) ────────────────────────────────────────────
-
-export interface LaunchScriptValidation {
-  healthy: boolean;
-  warnings: string[];
-  errors: string[];
-}
-
-export interface LaunchScriptInfo {
-  path: string;
-  command_line: string | null;
-  parallelism: { tp: number; pp: number; dp: number };
-  backend: string | null;
-  has_model_flag: boolean;
-  is_valid: boolean;
-  validation: LaunchScriptValidation | null;
-}
-
-export interface LaunchScriptResolveResult {
-  path: string;
-  exists: boolean;
-  is_file: boolean;
-}
-
-export interface PatchedScriptBundle {
-  original_script: string;
-  total_nodes: number;
-  master_addr: string;
-  master_port: number;
-  scripts: Record<number, string>;
-}
-
-export interface LaunchScriptResolveRequest {
-  path: string;
-}
-
-export interface LaunchScriptAnalyzeRequest {
-  path: string;
-}
-
-export interface LaunchScriptValidateRequest {
-  path: string;
-}
-
-export interface LaunchScriptPatchRequest {
-  path: string;
-  total_nodes: number;
-  master_addr?: string;
-  master_port?: number;
-}
-
-// ── Mods ────────────────────────────────────────────────────────────────────
-
-export interface ModValidationResult {
-  healthy: boolean;
-  warnings: string[];
-  errors: string[];
-}
-
-export interface ModValidateRequest {
-  path: string;
-}
 
 // ── Deployment Summary (Phase 4) ─────────────────────────────────────────────
 

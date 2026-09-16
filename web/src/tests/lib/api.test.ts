@@ -202,13 +202,6 @@ const CASES: Case[] = [
     method: "DELETE",
   },
   {
-    name: "validateMod",
-    call: () => api.validateMod({ path: "/mods/flash" }),
-    path: "/api/mods/validate",
-    method: "POST",
-    body: { path: "/mods/flash" },
-  },
-  {
     name: "listCustomRecipes",
     call: () => api.listCustomRecipes(),
     path: "/api/custom-files/recipes/list",
@@ -458,34 +451,6 @@ const CASES: Case[] = [
     call: () => api.getValidation(),
     path: "/api/discovery/validation",
     method: "GET",
-  },
-  {
-    name: "resolveLaunchScript",
-    call: () => api.resolveLaunchScript({ path: "/opt/run.sh" }),
-    path: "/api/launch-script/resolve",
-    method: "POST",
-    body: { path: "/opt/run.sh" },
-  },
-  {
-    name: "analyzeLaunchScript",
-    call: () => api.analyzeLaunchScript({ path: "/opt/run.sh" }),
-    path: "/api/launch-script/analyze",
-    method: "POST",
-    body: { path: "/opt/run.sh" },
-  },
-  {
-    name: "validateLaunchScript",
-    call: () => api.validateLaunchScript({ path: "/opt/run.sh" }),
-    path: "/api/launch-script/validate",
-    method: "POST",
-    body: { path: "/opt/run.sh" },
-  },
-  {
-    name: "patchLaunchScript",
-    call: () => api.patchLaunchScript({ path: "/opt/run.sh", total_nodes: 2 }),
-    path: "/api/launch-script/patch",
-    method: "POST",
-    body: { path: "/opt/run.sh", total_nodes: 2 },
   },
 
   // ── Engines ───────────────────────────────────────────────────────────────

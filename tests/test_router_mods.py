@@ -1,13 +1,8 @@
 """Tests for the /api/mods router and the simulation twin behind it.
 
-The router had no tests, and neither did ``mock/mods.py``. Between them sat
-three defects that no test could have missed had either been exercised: the
-mock never defined ``ModOrchestrator``/``ModDeployment`` at all, the router
-reached past the simulation switch with a function-level
-``from spark_pulse.tools.mods import ModDeployment`` (which rebinds
-``tools.mods`` to the real module for the rest of the process), and it handed
-the orchestrator a raw JSON dict where an object with ``.head``/``.workers``
-was expected — so apply and rollback could not return 200 for any input.
+The router reads: it lists mods and returns one. Applying a mod is the deploy
+path's job, and ``POST /validate`` — the last write-shaped endpoint here — went
+with the UI that called it.
 
 These tests pin the router against the mock deliberately: the mock is what the
 e2e suite drives, so it is the twin whose API has to keep up.
@@ -21,14 +16,6 @@ from fastapi.testclient import TestClient
 from spark_pulse.app import create_app
 from spark_pulse.mock import mods as mock_mods
 from spark_pulse.routers import mods as mods_router
-
-CLUSTER = {
-    "head": {"ip": "10.0.0.1", "container_name": "head-container"},
-    "workers": [
-        {"ip": "10.0.0.2", "container_name": "worker0"},
-        {"ip": "10.0.0.3", "container_name": "worker1"},
-    ],
-}
 
 
 @pytest.fixture
@@ -77,48 +64,3 @@ class TestGetMod:
 
         assert response.status_code == 404
         assert "nope" in response.json()["detail"]
-
-
-# ── Validation ───────────────────────────────────────────────────────────────
-
-
-class TestValidateMod:
-    def test_a_path_is_required(self, client):
-        response = client.post("/api/mods/validate", json={})
-
-        assert response.status_code == 400
-        assert response.json()["detail"] == "path is required"
-
-    def test_a_plain_mod_validates_clean(self, client):
-        response = client.post("/api/mods/validate", json={"path": "/mods/plain"})
-
-        assert response.status_code == 200
-        assert response.json() == {"healthy": True, "warnings": [], "errors": []}
-
-    def test_a_dangerous_mod_reports_its_errors_and_warnings(self, client):
-        body = client.post(
-            "/api/mods/validate", json={"path": "/mods/dangerous-thing"}
-        ).json()
-
-        assert body["healthy"] is False
-        assert body["errors"] and body["warnings"]
-
-    def test_a_mod_reaching_the_network_is_healthy_but_warned_about(self, client):
-        body = client.post("/api/mods/validate", json={"path": "/mods/network"}).json()
-
-        assert body["healthy"] is True
-        assert body["warnings"] == ["run.sh uses network access (curl/wget)"]
-
-    def test_a_validator_that_blows_up_becomes_a_500(self, client, monkeypatch):
-        def boom(_path):
-            raise RuntimeError("scanner unavailable")
-
-        monkeypatch.setattr(mock_mods, "validate_mod_content", boom)
-
-        response = client.post("/api/mods/validate", json={"path": "/mods/x"})
-
-        assert response.status_code == 500
-        assert response.json()["detail"] == "scanner unavailable"
-
-
-# ── Apply ────────────────────────────────────────────────────────────────────

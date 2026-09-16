@@ -349,18 +349,6 @@
     "head": "Head",
     "workers": "Workers"
   },
-  "launchScript": {
-    "title": "Launch Script Analysis",
-    "notFound": "Script not found at resolved path",
-    "command": "Command",
-    "parallelism": "Parallelism",
-    "backend": "Backend",
-    "modelFlag": "Model Flag",
-    "missingModelFlag": "Missing --model flag",
-    "errors": "Errors:",
-    "warnings": "Warnings:",
-    "pathPlaceholder": "Path to launch script (e.g., /opt/spark-vllm-docker/examples/launch_vllm.sh)"
-  },
   "eventStream": {
     "title": "Event Stream",
     "eventCount": {

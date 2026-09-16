@@ -349,18 +349,6 @@
     "head": "Tête",
     "workers": "Travailleurs"
   },
-  "launchScript": {
-    "title": "Analyse du script de lancement",
-    "notFound": "Script introuvable au chemin résolu",
-    "command": "Commande",
-    "parallelism": "Parallélisme",
-    "backend": "Moteur d'exécution",
-    "modelFlag": "Option de modèle",
-    "missingModelFlag": "Option --model manquante",
-    "errors": "Erreurs :",
-    "warnings": "Avertissements :",
-    "pathPlaceholder": "Chemin du script de lancement (ex. /opt/spark-vllm-docker/examples/launch_vllm.sh)"
-  },
   "eventStream": {
     "title": "Flux d'événements",
     "eventCount": {
