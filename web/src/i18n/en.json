@@ -393,6 +393,12 @@
     "none": "No nodes registered yet.",
     "addNote": "Adding registers the machine. Installing the agent on it is the next step, and it starts as soon as this is added.",
     "noAgent": "No agent",
+    "edit": {
+      "action": "Edit node",
+      "actionFor": "Edit {name}",
+      "title": "Edit {name}",
+      "controlPlaneNote": "The control plane is reached over its own agent, not an address peers dial it at, so only its name can be changed here."
+    },
     "install": {
       "action": "Install agent",
       "reinstall": "Reinstall agent",

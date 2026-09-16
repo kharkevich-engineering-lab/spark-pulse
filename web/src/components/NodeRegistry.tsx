@@ -32,6 +32,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useI18n } from "@/lib/i18n";
 import {
   addNode,
+  updateNode,
   updateNodeAgent,
   discoverNodes,
   fetchNodeDiagnostics,
@@ -41,7 +42,7 @@ import {
   removeNode,
 } from "@/lib/api";
 import { useQuery } from "@/hooks/useQuery";
-import { ConfirmModal } from "@/components/Modal";
+import { ConfirmModal, Modal } from "@/components/Modal";
 import NodeDoctor from "@/components/NodeDoctor";
 import type {
   ClusterNode,
@@ -60,6 +61,7 @@ import {
   KeyRound,
   Loader2,
   Network,
+  Pencil,
   Stethoscope,
   Plus,
   Radar,
@@ -358,6 +360,148 @@ function AddNodeDialog({ onClose, onAdded }: AddNodeDialogProps) {
 const INPUT =
   "w-full rounded-lg border border-border bg-bg px-3 py-2 text-text focus:outline-none focus:ring-2 focus:ring-primary/50";
 const LABEL = "mb-1 block text-sm font-medium text-text-muted";
+
+interface EditNodeDialogProps {
+  node: ClusterNode;
+  onClose: () => void;
+  onSaved: () => void;
+}
+
+/** Fixing a mistyped name, address or SSH user without "Forget" and re-adding
+ * the node, which would throw away its agent enrollment for nothing the
+ * enrollment was wrong about. Only what `update_node` actually accepts is
+ * offered here (`nodes.py::update_node`'s allowlist: name, address, ssh_user
+ * among them) and only the fields that changed are sent.
+ *
+ * The control plane is a special case, the same way it already is for
+ * install and forget: its address is not a place peers dial it at (its own
+ * agent is reached over loopback, never SSH), so re-addressing it here would
+ * invite an operator to "fix" a value nothing reads that way. Only its name
+ * is offered. */
+function EditNodeDialog({ node, onClose, onSaved }: EditNodeDialogProps) {
+  const { t } = useI18n();
+  const [name, setName] = useState(node.name);
+  const [address, setAddress] = useState(node.address);
+  const [sshUser, setSshUser] = useState(node.ssh_user);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const trimmedName = name.trim();
+  const trimmedAddress = address.trim();
+  const canSave = trimmedName !== "" && (node.is_control_plane || trimmedAddress !== "");
+
+  const submit = async () => {
+    const changes: Partial<ClusterNode> = {};
+    if (trimmedName !== node.name) changes.name = trimmedName;
+    if (!node.is_control_plane) {
+      if (trimmedAddress !== node.address) changes.address = trimmedAddress;
+      if (sshUser.trim() !== node.ssh_user) changes.ssh_user = sshUser.trim();
+    }
+    if (Object.keys(changes).length === 0) {
+      onClose();
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      await updateNode(node.id, changes);
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not update the node");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={t("nodes.edit.title", { name: node.name })}
+      icon={<Pencil size={20} className="text-primary" />}
+      actions={
+        <>
+          <button
+            onClick={onClose}
+            disabled={submitting}
+            className="rounded-lg border border-border px-4 py-2 transition-colors hover:bg-surface-hover disabled:opacity-50"
+          >
+            {t("common.cancel")}
+          </button>
+          <button
+            onClick={submit}
+            disabled={submitting || !canSave}
+            className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+          >
+            {submitting && <Loader2 size={16} className="animate-spin" />}
+            {submitting ? t("common.saving") : t("common.save")}
+          </button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <div>
+          <label htmlFor="edit-node-name" className={LABEL}>
+            {t("nodes.name")}
+          </label>
+          <input
+            id="edit-node-name"
+            type="text"
+            autoFocus
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            disabled={submitting}
+            className={INPUT}
+          />
+        </div>
+
+        {node.is_control_plane ? (
+          <p className="text-xs text-text-muted">{t("nodes.edit.controlPlaneNote")}</p>
+        ) : (
+          <>
+            <div>
+              <label htmlFor="edit-node-address" className={LABEL}>
+                {t("nodes.address")}
+              </label>
+              <input
+                id="edit-node-address"
+                type="text"
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+                disabled={submitting}
+                className={INPUT}
+              />
+            </div>
+            <div>
+              <label htmlFor="edit-node-ssh-user" className={LABEL}>
+                {t("nodes.sshUser")}
+              </label>
+              <input
+                id="edit-node-ssh-user"
+                type="text"
+                value={sshUser}
+                onChange={(e) => setSshUser(e.target.value)}
+                disabled={submitting}
+                className={INPUT}
+              />
+            </div>
+          </>
+        )}
+
+        {error && (
+          <div
+            role="alert"
+            className="flex items-center gap-2 rounded-lg border border-danger/30 bg-danger/10 p-3 text-sm text-danger"
+          >
+            <AlertCircle size={16} className="shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
 
 interface InstallAgentDialogProps {
   node: ClusterNode;
@@ -781,6 +925,7 @@ export default function NodeRegistry() {
   const [findings, setFindings] = useState<NodeFinding[]>([]);
   const [showAdd, setShowAdd] = useState(false);
   const [installing, setInstalling] = useState<ClusterNode | null>(null);
+  const [editing, setEditing] = useState<ClusterNode | null>(null);
   const [diagnosing, setDiagnosing] = useState<ClusterNode | null>(null);
   const [updating, setUpdating] = useState<string | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
@@ -987,6 +1132,14 @@ export default function NodeRegistry() {
                       )
                     )}
                     <button
+                      onClick={() => setEditing(node)}
+                      aria-label={t("nodes.edit.actionFor", { name: node.name })}
+                      title={t("nodes.edit.action")}
+                      className="rounded-lg p-1.5 text-text-muted transition-colors hover:bg-primary/10 hover:text-primary"
+                    >
+                      <Pencil size={14} />
+                    </button>
+                    <button
                       onClick={() => setDiagnosing(node)}
                       aria-label={t("nodes.doctor.actionFor", { name: node.name })}
                       title={t("nodes.doctor.action")}
@@ -1032,6 +1185,14 @@ export default function NodeRegistry() {
           node={installing}
           onClose={() => setInstalling(null)}
           onInstalled={reload}
+        />
+      )}
+
+      {editing && (
+        <EditNodeDialog
+          node={editing}
+          onClose={() => setEditing(null)}
+          onSaved={reload}
         />
       )}
 
