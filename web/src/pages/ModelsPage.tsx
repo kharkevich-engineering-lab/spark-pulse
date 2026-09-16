@@ -92,7 +92,7 @@ function SourcesEditor({ sources, onSaved, onError }: { sources: ModelSource[]; 
             <Plus size={14} />{t("models.addSource")}
           </button>
           <button onClick={save} disabled={saving} className="px-3 py-1.5 rounded-lg bg-primary/10 text-primary border border-primary/30 hover:bg-primary/20 disabled:opacity-50 text-sm flex items-center gap-1.5">
-            {saving ? <Loader2 className="animate-spin" size={14} /> : <Save size={14} />}Save
+            {saving ? <Loader2 className="animate-spin" size={14} /> : <Save size={14} />}{t("common.save")}
           </button>
         </div>
       </div>
@@ -103,7 +103,7 @@ function SourcesEditor({ sources, onSaved, onError }: { sources: ModelSource[]; 
         {draft.map((s, i) => (
           <div key={i} className="grid grid-cols-1 md:grid-cols-[1fr_140px_1fr_1fr_auto] gap-2 items-center">
             <input aria-label={t("models.sourceName", { n: i + 1 })} value={s.name} onChange={(e) => update(i, { name: e.target.value })} placeholder={t("models.namePlaceholder")} className="px-2 py-1.5 rounded-lg bg-bg border border-border text-sm" />
-            <select aria-label={`Source ${i + 1} type`} value={s.type} onChange={(e) => update(i, { type: e.target.value as ModelSource["type"] })} className="px-2 py-1.5 rounded-lg bg-bg border border-border text-sm">
+            <select aria-label={t("models.sourceType", { n: i + 1 })} value={s.type} onChange={(e) => update(i, { type: e.target.value as ModelSource["type"] })} className="px-2 py-1.5 rounded-lg bg-bg border border-border text-sm">
               <option value="hf_hub">hf_hub</option>
               <option value="local_path">local_path</option>
             </select>
@@ -433,7 +433,7 @@ export default function ModelsPage() {
       <SourcesEditor
         sources={sources ?? []}
         onSaved={refetchSources}
-        onError={(message) => setAlert({ title: "Save failed", message })}
+        onError={(message) => setAlert({ title: t("models.saveFailed"), message })}
       />
 
       {deleteTarget && (

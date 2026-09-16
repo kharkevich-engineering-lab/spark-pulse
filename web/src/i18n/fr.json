@@ -26,6 +26,7 @@
     "seconds": "secondes",
     "unknownError": "Erreur inconnue",
     "upload": "Téléverser",
+    "working": "En cours…",
     "yes": "oui"
   },
   "a11y": {
@@ -164,7 +165,11 @@
     "nothingToFix": "Rien à corriger et rien à télécharger au préalable."
   },
   "health": {
-    "notEnoughHistory": "Pas encore assez d'historique"
+    "notEnoughHistory": "Pas encore assez d'historique",
+    "healthy": "Sain",
+    "degraded": "Dégradé",
+    "unhealthy": "Défaillant",
+    "unknown": "Inconnu"
   },
   "cluster": {
     "title": "Orchestration de grappe",
@@ -200,7 +205,8 @@
     "removeBody": "Retirer « {name} » de l'historique ?",
     "cancelBody": "Annuler « {name} » avant son démarrage ?",
     "stopBody": "Arrêter « {name} » ? Cela mettra fin au processus en cours.",
-    "benchmarkOn": "Lancer une analyse sur"
+    "benchmarkOn": "Lancer une analyse sur « {name} » ? Cela mesurera le débit, la latence et l'utilisation de la mémoire.",
+    "benchmarkConfirm": "Lancer"
   },
   "monitoring": {
     "title": "Surveillance",
@@ -237,7 +243,8 @@
     "heldBy": "occupé par {deployment}",
     "killOnNode": "Il s'exécute sur {node}.",
     "noProcesses": "Aucun processus GPU.",
-    "tracked": "démarré ici"
+    "tracked": "démarré ici",
+    "kill": "Terminer"
   },
   "recipes": {
     "assets": "Ressources",
@@ -356,6 +363,10 @@
   },
   "eventStream": {
     "title": "Flux d'événements",
+    "eventCount": {
+      "one": "{count} événement",
+      "other": "{count} événements"
+    },
     "allSeverities": "Toutes les gravités",
     "errors": "Erreurs",
     "warnings": "Avertissements",
@@ -641,6 +652,7 @@
     "sourceName": "Nom de la source {n}",
     "sourceEndpoint": "Point de terminaison de la source {n}",
     "sourceToken": "Clé de secret de la source {n}",
+    "sourceType": "Type de la source {n}",
     "sourcePath": "Chemin de la source {n}",
     "namePlaceholder": "nom",
     "tokenPlaceholder": "clé du secret de jeton",
@@ -683,7 +695,8 @@
     "notThere": "absent",
     "deleteConfirm": "Supprimer partout où c'est coché",
     "deleteFromNodes": "{count} nœud(s) le détiennent encore",
-    "removedFrom": "Supprimé de {count} nœud(s), libérant {size}"
+    "removedFrom": "Supprimé de {count} nœud(s), libérant {size}",
+    "saveFailed": "Échec de l'enregistrement"
   },
   "mcp": {
     "title": "Serveur MCP",

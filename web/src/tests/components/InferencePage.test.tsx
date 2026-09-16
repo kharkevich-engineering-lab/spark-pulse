@@ -124,16 +124,6 @@ describe("InferencePage multi-node marking", () => {
   });
 });
 
-/** The benchmark modal is a hand-rolled div rather than a `role="dialog"`,
- *  so its buttons are reached through its heading. The row's own icon buttons
- *  are titled "Stop" and "Cancel" too, which is why every confirmation click
- *  below is scoped to the modal rather than to the page. */
-function benchmarkDialog(): HTMLElement {
-  return screen
-    .getByRole("heading", { name: "Run Benchmark" })
-    .closest("div.rounded-xl") as HTMLElement;
-}
-
 /** The teardown path.
  *
  * One button does three different things depending on what the deployment is
@@ -242,7 +232,8 @@ describe("InferencePage teardown", () => {
     await user.click(within(row).getByTitle("Run Benchmark"));
 
     expect(await screen.findByRole("heading", { name: "Run Benchmark" })).toBeInTheDocument();
-    expect(screen.getByText("running job", { selector: "strong" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toHaveAttribute("aria-labelledby");
+    expect(screen.getByText(/Run a benchmark on "running job"/)).toBeInTheDocument();
     expect(runBenchmark).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole("button", { name: "Run" }));
@@ -276,7 +267,7 @@ describe("InferencePage teardown", () => {
 
     const row = await screen.findByTestId("deployment-run1");
     await user.click(within(row).getByTitle("Run Benchmark"));
-    await user.click(within(benchmarkDialog()).getByRole("button", { name: "Cancel" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
 
     await waitFor(() =>
       expect(screen.queryByRole("heading", { name: "Run Benchmark" })).toBeNull(),
@@ -443,12 +434,8 @@ describe("InferencePage expanded detail", () => {
 
     const row = await screen.findByTestId("deployment-nat1");
     await user.click(within(row).getByTitle("Run Benchmark"));
-    const dialog = screen
-      .getByRole("heading", { name: "Run Benchmark" })
-      .closest("div.rounded-xl") as HTMLElement;
 
-    // The X carries no label of its own; it is the first button in the header.
-    await user.click(within(dialog).getAllByRole("button")[0]);
+    await user.click(within(screen.getByRole("dialog")).getByTitle("Close"));
 
     await waitFor(() =>
       expect(screen.queryByRole("heading", { name: "Run Benchmark" })).toBeNull(),

@@ -61,8 +61,8 @@ export default function OciRegistryPage() {
   }, []);
 
   // Memoized fetchers to prevent infinite refetch loops
-  const fetchCollections = useCallback(() => fetchOciCollections(), []);
-  const fetchUpdates = useCallback(() => checkOciUpdates(), []);
+  const fetchCollections = useCallback((signal?: AbortSignal) => fetchOciCollections(undefined, undefined, signal), []);
+  const fetchUpdates = useCallback((signal?: AbortSignal) => checkOciUpdates(undefined, undefined, signal), []);
 
   // Data queries
   const { data: registries, loading: regsLoading, refetch: refetchRegs } = useQuery(fetchOciRegistries);

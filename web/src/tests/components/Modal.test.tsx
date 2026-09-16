@@ -1,16 +1,20 @@
-/** ConfirmModal and AlertModal — the dialogs that stand between an operator
- * and every destructive action in the app.
+/** Modal, ConfirmModal and AlertModal — the dialogs that stand between an
+ * operator and every destructive action in the app.
  *
  * Stopping a deployment, forgetting a node, deleting a custom recipe and
  * cleaning the cache all end at ConfirmModal, so the properties worth holding
  * are the ones that decide whether the right thing happened: cancel must not
  * confirm, a second click while the first is still running must not fire
  * twice, and the dialog must not close underneath an action that is mid-flight.
+ * The shared frame itself (`Modal`) is what makes any of that accessible: the
+ * dialog must be reachable by keyboard alone, must not leak Tab to the page
+ * behind it, and must hand focus back to whatever opened it.
  */
 
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { AlertModal, ConfirmModal } from "@/components/Modal";
+import { AlertModal, ConfirmModal, Modal } from "@/components/Modal";
 
 /** A promise plus the handle to settle it, so a test can hold a confirm open. */
 function deferred() {
@@ -20,6 +24,81 @@ function deferred() {
   });
   return { promise, resolve };
 }
+
+describe("Modal", () => {
+  it("labels the dialog with its own title, for a screen reader that announces it", () => {
+    render(
+      <Modal open onClose={vi.fn()} title="Node details">
+        <p>body</p>
+      </Modal>,
+    );
+
+    const dialog = screen.getByRole("dialog");
+    const labelledBy = dialog.getAttribute("aria-labelledby");
+    expect(labelledBy).toBeTruthy();
+    expect(document.getElementById(labelledBy!)).toHaveTextContent("Node details");
+  });
+
+  /** Nothing behind the dialog should be reachable by keyboard while it is
+   *  up — Tab off either end must land back inside it, not on the page. */
+  it("traps Tab inside the dialog, wrapping at either end", () => {
+    render(
+      <Modal
+        open
+        onClose={vi.fn()}
+        title="Pick one"
+        actions={
+          <>
+            <button>First</button>
+            <button>Last</button>
+          </>
+        }
+      >
+        <p>body</p>
+      </Modal>,
+    );
+
+    const close = screen.getByTitle("Close");
+    const last = screen.getByRole("button", { name: "Last" });
+
+    last.focus();
+    fireEvent.keyDown(window, { key: "Tab" });
+    expect(document.activeElement).toBe(close);
+
+    close.focus();
+    fireEvent.keyDown(window, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(last);
+  });
+
+  /** Closing a dialog must not strand a keyboard user on a page whose focused
+   *  element just vanished underneath them. */
+  it("returns focus to the element that opened it once it closes", () => {
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button onClick={() => setOpen(true)}>Open</button>
+          <Modal open={open} onClose={() => setOpen(false)} title="Title">
+            <p>body</p>
+          </Modal>
+        </>
+      );
+    }
+    render(<Harness />);
+
+    const opener = screen.getByRole("button", { name: "Open" });
+    opener.focus();
+    fireEvent.click(opener);
+
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(document.activeElement).not.toBe(opener);
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(document.activeElement).toBe(opener);
+  });
+});
 
 describe("ConfirmModal", () => {
   it("renders nothing at all while closed", () => {
@@ -184,7 +263,7 @@ describe("ConfirmModal", () => {
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled(),
     );
-    const confirming = screen.getByRole("button", { name: "..." });
+    const confirming = screen.getByRole("button", { name: "Working…" });
     expect(confirming).toBeDisabled();
 
     fireEvent.click(confirming);
@@ -210,7 +289,7 @@ describe("ConfirmModal", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "..." })).toBeDisabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Working…" })).toBeDisabled());
 
     const backdrop = container.querySelector(".absolute.inset-0") as HTMLElement;
     fireEvent.click(backdrop);
@@ -241,7 +320,7 @@ describe("ConfirmModal", () => {
 
   /** A caller that handles its own failure (every current one does — they
    *  catch and raise an AlertModal) must find the dialog re-armed rather than
-   *  stuck on "..." forever, so a failed stop can be retried without a
+   *  stuck on "Working…" forever, so a failed stop can be retried without a
    *  reload. */
   it("re-arms after an action that reported a failure of its own", async () => {
     const onConfirm = vi.fn(async () => {

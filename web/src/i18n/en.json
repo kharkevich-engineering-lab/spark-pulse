@@ -26,6 +26,7 @@
     "seconds": "seconds",
     "unknownError": "Unknown error",
     "upload": "Upload",
+    "working": "Working…",
     "yes": "yes"
   },
   "a11y": {
@@ -164,7 +165,11 @@
     "nothingToFix": "Nothing to fix and nothing to download first."
   },
   "health": {
-    "notEnoughHistory": "Not enough history yet"
+    "notEnoughHistory": "Not enough history yet",
+    "healthy": "Healthy",
+    "degraded": "Degraded",
+    "unhealthy": "Unhealthy",
+    "unknown": "Unknown"
   },
   "cluster": {
     "title": "Cluster Orchestration",
@@ -200,7 +205,8 @@
     "removeBody": "Remove \"{name}\" from history?",
     "cancelBody": "Cancel \"{name}\" before it starts?",
     "stopBody": "Stop \"{name}\"? This will terminate the running process.",
-    "benchmarkOn": "Run a benchmark on"
+    "benchmarkOn": "Run a benchmark on \"{name}\"? This will measure throughput, latency, and memory usage.",
+    "benchmarkConfirm": "Run"
   },
   "monitoring": {
     "title": "Monitoring",
@@ -237,7 +243,8 @@
     "heldBy": "held by {deployment}",
     "killOnNode": "It is running on {node}.",
     "noProcesses": "No GPU processes.",
-    "tracked": "started here"
+    "tracked": "started here",
+    "kill": "Kill"
   },
   "recipes": {
     "assets": "Assets",
@@ -356,6 +363,10 @@
   },
   "eventStream": {
     "title": "Event Stream",
+    "eventCount": {
+      "one": "{count} event",
+      "other": "{count} events"
+    },
     "allSeverities": "All Severities",
     "errors": "Errors",
     "warnings": "Warnings",
@@ -641,6 +652,7 @@
     "sourceName": "Source {n} name",
     "sourceEndpoint": "Source {n} endpoint",
     "sourceToken": "Source {n} token secret",
+    "sourceType": "Source {n} type",
     "sourcePath": "Source {n} path",
     "namePlaceholder": "name",
     "tokenPlaceholder": "token secret key",
@@ -683,7 +695,8 @@
     "notThere": "not there",
     "deleteConfirm": "Delete everywhere selected",
     "deleteFromNodes": "{count} node(s) still hold it",
-    "removedFrom": "Removed from {count} node(s), freeing {size}"
+    "removedFrom": "Removed from {count} node(s), freeing {size}",
+    "saveFailed": "Save failed"
   },
   "mcp": {
     "title": "MCP Server",

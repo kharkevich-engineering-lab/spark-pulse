@@ -76,7 +76,7 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
 
 // ── Recipes ─────────────────────────────────────────────────────────────────
 
-export async function fetchRecipes(): Promise<RecipeSummary[]> { return json<RecipeSummary[]>("/recipes"); }
+export async function fetchRecipes(signal?: AbortSignal): Promise<RecipeSummary[]> { return json<RecipeSummary[]>("/recipes", { signal }); }
 export async function fetchRecipe(id: string): Promise<RecipeDetail> { return json<RecipeDetail>(`/recipes/${id}`); }
 
 /** Import recipes and mods from a local spark-vllm-docker checkout or a git URL. */
@@ -84,7 +84,7 @@ export async function fetchRecipe(id: string): Promise<RecipeDetail> { return js
 
 // ── Deployments ─────────────────────────────────────────────────────────────
 
-export async function fetchDeployments(): Promise<Deployment[]> { return json<Deployment[]>("/deployments"); }
+export async function fetchDeployments(signal?: AbortSignal): Promise<Deployment[]> { return json<Deployment[]>("/deployments", { signal }); }
 export async function createDeployment(body: { recipe_id: string; name: string; params: Record<string, unknown>; nodes?: string[]; engine?: string; variant?: string; model?: string; extra_args?: string[]; allow_missing_model?: boolean; skip_preflight?: boolean }): Promise<Deployment> { return json<Deployment>("/deployments", { method: "POST", body: JSON.stringify(body) }); }
 /** Dry run: resolve engine, image, model and the rendered command without deploying. */
 export async function planDeployment(body: DeployPlanRequest): Promise<DeployPlan> { return json<DeployPlan>("/deployments/plan", { method: "POST", body: JSON.stringify(body) }); }
@@ -130,20 +130,20 @@ export async function killGpuProcess(pid: number, node = ""): Promise<{ killed: 
 
 // ── Cache ───────────────────────────────────────────────────────────────────
 
-export async function fetchCache(): Promise<{ entries: CacheEntry[] }> { return json<{ entries: CacheEntry[] }>("/cache"); }
+export async function fetchCache(signal?: AbortSignal): Promise<{ entries: CacheEntry[] }> { return json<{ entries: CacheEntry[] }>("/cache", { signal }); }
 export async function cleanCache(targets: string[]): Promise<Record<string, string>> { return json<Record<string, string>>("/cache/clean", { method: "POST", body: JSON.stringify({ targets }) }); }
 
 // ── Settings ────────────────────────────────────────────────────────────────
 
-export async function fetchSettings(): Promise<Settings> { return json<Settings>("/settings"); }
+export async function fetchSettings(signal?: AbortSignal): Promise<Settings> { return json<Settings>("/settings", { signal }); }
 export async function updateSettings(partial: Partial<Settings>): Promise<Settings> { return json<Settings>("/settings", { method: "PUT", body: JSON.stringify(partial) }); }
-export async function fetchSecrets(): Promise<SecretsResponse> { return json<SecretsResponse>("/settings/secrets"); }
+export async function fetchSecrets(signal?: AbortSignal): Promise<SecretsResponse> { return json<SecretsResponse>("/settings/secrets", { signal }); }
 export async function saveSecrets(partial: { hf_token?: string }): Promise<SecretsResponse> { return json<SecretsResponse>("/settings/secrets", { method: "PUT", body: JSON.stringify(partial) }); }
 export async function deleteSecret(key: string): Promise<void> { await json(`/settings/secrets/${key}`, { method: "DELETE" }); }
 
 // ── Mods ─────────────────────────────────────────────────────────────────────
 
-export async function fetchMods(): Promise<ModSummary[]> { return json<ModSummary[]>("/mods"); }
+export async function fetchMods(signal?: AbortSignal): Promise<ModSummary[]> { return json<ModSummary[]>("/mods", { signal }); }
 export async function fetchMod(id: string): Promise<ModDetail> { return json<ModDetail>(`/mods/${encodeURIComponent(id)}`); }
 
 // ── Recipe Customizations ────────────────────────────────────────────────────
@@ -243,16 +243,16 @@ export async function deleteCustomMod(modId: string): Promise<{ deleted: boolean
 
 // ── Benchmarking ──────────────────────────────────────────────────────────────
 
-export async function fetchBenchmarks(): Promise<BenchmarkResult[]> {
-  return json<BenchmarkResult[]>("/benchmarks");
+export async function fetchBenchmarks(signal?: AbortSignal): Promise<BenchmarkResult[]> {
+  return json<BenchmarkResult[]>("/benchmarks", { signal });
 }
 
 export async function fetchBenchmark(id: string): Promise<BenchmarkResult> {
   return json<BenchmarkResult>(`/benchmarks/${id}`);
 }
 
-export async function fetchLatestByRecipe(): Promise<Record<string, BenchmarkResult>> {
-  return json<Record<string, BenchmarkResult>>("/benchmarks/latest-by-recipe");
+export async function fetchLatestByRecipe(signal?: AbortSignal): Promise<Record<string, BenchmarkResult>> {
+  return json<Record<string, BenchmarkResult>>("/benchmarks/latest-by-recipe", { signal });
 }
 
 export async function compareRuns(runIds: string[]): Promise<{
@@ -272,8 +272,8 @@ export async function compareRuns(runIds: string[]): Promise<{
 
 // ── OCI Registry ─────────────────────────────────────────────────────────────
 
-export async function fetchOciRegistries(): Promise<OciRegistry[]> {
-  return json<OciRegistry[]>("/oci/registries");
+export async function fetchOciRegistries(signal?: AbortSignal): Promise<OciRegistry[]> {
+  return json<OciRegistry[]>("/oci/registries", { signal });
 }
 
 export async function addOciRegistry(registry: Partial<OciRegistry>): Promise<OciRegistry> {
@@ -296,12 +296,12 @@ export async function fetchOciRegistryVersions(name: string): Promise<{ versions
   return json(`/oci/registries/${encodeURIComponent(name)}/versions`);
 }
 
-export async function fetchOciCollections(registry?: string, version?: string): Promise<OciCollection[]> {
+export async function fetchOciCollections(registry?: string, version?: string, signal?: AbortSignal): Promise<OciCollection[]> {
   const params = new URLSearchParams();
   if (registry) params.set("registry", registry);
   if (version) params.set("version", version);
   const query = params.toString();
-  return json<OciCollection[]>(`/oci/collections${query ? `?${query}` : ""}`);
+  return json<OciCollection[]>(`/oci/collections${query ? `?${query}` : ""}`, { signal });
 }
 
 export async function installOciCollection(name: string, version: string, registry?: string): Promise<{ installed: string[] }> {
@@ -311,12 +311,12 @@ export async function installOciCollection(name: string, version: string, regist
   });
 }
 
-export async function checkOciUpdates(collection?: string, registry?: string): Promise<OciUpdateCheck[]> {
+export async function checkOciUpdates(collection?: string, registry?: string, signal?: AbortSignal): Promise<OciUpdateCheck[]> {
   const params = new URLSearchParams();
   if (collection) params.set("collection", collection);
   if (registry) params.set("registry", registry);
   const query = params.toString();
-  return json<OciUpdateCheck[]>(`/oci/check${query ? `?${query}` : ""}`);
+  return json<OciUpdateCheck[]>(`/oci/check${query ? `?${query}` : ""}`, { signal });
 }
 
 export async function applyOciUpdates(updates: OciUpdateApply[]): Promise<OciUpdateResult[]> {
@@ -326,8 +326,8 @@ export async function applyOciUpdates(updates: OciUpdateApply[]): Promise<OciUpd
   });
 }
 
-export async function fetchOciMeta(): Promise<OciRecipeMeta[]> {
-  return json<OciRecipeMeta[]>("/oci/recipes/meta");
+export async function fetchOciMeta(signal?: AbortSignal): Promise<OciRecipeMeta[]> {
+  return json<OciRecipeMeta[]>("/oci/recipes/meta", { signal });
 }
 
 export async function fetchOciMetaByName(name: string): Promise<OciRecipeMeta> {
@@ -342,8 +342,8 @@ export async function fetchOciCollectionRecipes(name: string, version?: string, 
   return json<OciCollectionRecipe[]>(`/oci/collections/${encodeURIComponent(name)}/recipes${query ? `?${query}` : ""}`);
 }
 
-export async function fetchOciAutoUpdateSettings(): Promise<OciAutoUpdateSettings> {
-  return json<OciAutoUpdateSettings>("/oci/auto-update/settings");
+export async function fetchOciAutoUpdateSettings(signal?: AbortSignal): Promise<OciAutoUpdateSettings> {
+  return json<OciAutoUpdateSettings>("/oci/auto-update/settings", { signal });
 }
 
 export async function updateOciAutoUpdateSettings(partial: Partial<OciAutoUpdateSettings>): Promise<OciAutoUpdateSettings> {
@@ -513,23 +513,23 @@ export async function validateMod(body: ModValidateRequest): Promise<ModValidati
 
 // ── Engines ─────────────────────────────────────────────────────────────────
 
-export async function fetchEngines(): Promise<EngineListResponse> { return json<EngineListResponse>("/engines"); }
+export async function fetchEngines(signal?: AbortSignal): Promise<EngineListResponse> { return json<EngineListResponse>("/engines", { signal }); }
 export async function fetchEngine(engine: string, variant = "default"): Promise<EngineDetail> { return json<EngineDetail>(`/engines/${engine}/${variant}`); }
 export async function refreshEngines(): Promise<EngineIndexRefreshResult> { return json<EngineIndexRefreshResult>("/engines/refresh", { method: "POST" }); }
 export async function renderLaunch(body: RenderRequest): Promise<RenderResult> { return json<RenderResult>("/engines/render", { method: "POST", body: JSON.stringify(body) }); }
 
 // ── Models ───────────────────────────────────────────────────────────────────
 
-export async function fetchModels(): Promise<ModelEntry[]> {
-  return (await json<{ models: ModelEntry[] }>("/models")).models;
+export async function fetchModels(signal?: AbortSignal): Promise<ModelEntry[]> {
+  return (await json<{ models: ModelEntry[] }>("/models", { signal })).models;
 }
 
 export async function fetchModel(id: string): Promise<ModelEntry> {
   return json<ModelEntry>(`/models/${id}`);
 }
 
-export async function fetchModelSources(): Promise<ModelSource[]> {
-  return (await json<{ sources: ModelSource[] }>("/models/sources")).sources;
+export async function fetchModelSources(signal?: AbortSignal): Promise<ModelSource[]> {
+  return (await json<{ sources: ModelSource[] }>("/models/sources", { signal })).sources;
 }
 
 export async function saveModelSources(sources: ModelSource[]): Promise<ModelSource[]> {
@@ -574,8 +574,8 @@ export async function deleteModel(id: string, nodes: string[] = []): Promise<Mod
 // An image ref carries slashes and colons, so it never goes in the path: the
 // catalogue is flat and every ref-taking call passes it in the body or query.
 
-export async function fetchImages(): Promise<ImageEntry[]> {
-  return (await json<{ images: ImageEntry[] }>("/images")).images;
+export async function fetchImages(signal?: AbortSignal): Promise<ImageEntry[]> {
+  return (await json<{ images: ImageEntry[] }>("/images", { signal })).images;
 }
 
 export async function startImagePull(ref: string): Promise<ImagePullJob> {
@@ -619,8 +619,8 @@ export async function fetchImagePresence(ref: string, nodes: string[]): Promise<
 
 import type { AddNodeRequest, AgentUpdateResult, ClusterNode, DiscoverNodesResult, DoctorReport, FabricApplyRequest, FabricApplyResponse, FabricResponse, InstallAgentRequest, InstallReport, NodeFinding, NodeHostKey } from "@/lib/types";
 
-export async function fetchNodes(): Promise<ClusterNode[]> {
-  return json<ClusterNode[]>("/nodes");
+export async function fetchNodes(signal?: AbortSignal): Promise<ClusterNode[]> {
+  return json<ClusterNode[]>("/nodes", { signal });
 }
 
 /** Register a node. The id is minted by the server and is never sent. */
