@@ -123,6 +123,8 @@
     "indexTtl": "Index cache lifetime",
     "indexes": "Engine indexes",
     "indexesHelp": "One OCI reference per line. Fetched on demand and cached, never on startup.",
+    "lastEngineMessage": "At least one engine has to stay enabled, or no recipe could be deployed.",
+    "lastEngineTitle": "Can't disable the last engine",
     "live": "live",
     "modelsLink": "Models are downloaded separately.",
     "needAttention": "{count} need attention",
@@ -156,6 +158,8 @@
     "syncFailed": "Copy failed",
     "syncTitle": "Copy to every registered node",
     "title": "Engines",
+    "toggleFailed": "Could not change that engine",
+    "toggleLabel": "Enable or disable {engine}",
     "unmanaged": "not from an index",
     "unpublished": "no image published",
     "verifiedCount": "verified on hardware {count} time(s)"

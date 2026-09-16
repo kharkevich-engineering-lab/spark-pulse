@@ -123,6 +123,8 @@
     "indexTtl": "Durée du cache d'index",
     "indexes": "Index de moteurs",
     "indexesHelp": "Une référence OCI par ligne. Récupérée à la demande et mise en cache, jamais au démarrage.",
+    "lastEngineMessage": "Au moins un moteur doit rester activé, sinon aucune recette ne pourrait être déployée.",
+    "lastEngineTitle": "Impossible de désactiver le dernier moteur",
     "live": "en direct",
     "modelsLink": "Les modèles se téléchargent séparément.",
     "needAttention": "{count} à examiner",
@@ -156,6 +158,8 @@
     "syncFailed": "Échec de la copie",
     "syncTitle": "Copier vers chaque nœud enregistré",
     "title": "Moteurs",
+    "toggleFailed": "Impossible de modifier ce moteur",
+    "toggleLabel": "Activer ou désactiver {engine}",
     "unmanaged": "hors index",
     "unpublished": "aucune image publiée",
     "verifiedCount": "vérifié {count} fois sur du matériel"
