@@ -61,6 +61,7 @@ vi.mock("@/lib/api", async () => {
     fetchNodes: vi.fn(),
     planDeployment: vi.fn(),
     runPreflight: vi.fn(),
+    uninstallOciRecipe: vi.fn(),
   };
 });
 
@@ -98,6 +99,7 @@ import {
   saveCustomModFiles,
   saveCustomRecipe,
   saveRecipeCustomization,
+  uninstallOciRecipe,
 } from "@/lib/api";
 
 const summary = (over: Partial<RecipeSummary> = {}): RecipeSummary => ({
@@ -137,6 +139,11 @@ const CLUSTER_ONLY = summary({
   name: "Big Mesh",
   solo_only: false,
   cluster_only: true,
+});
+const OCI_RECIPE = summary({
+  id: "oci-Qwen3-32B",
+  name: "Qwen3 32B",
+  source: "oci",
 });
 
 const MOD: ModSummary = {
@@ -257,6 +264,11 @@ describe("RecipesPage", () => {
       ...MOD,
       script: "#!/bin/bash\necho patched\n",
     });
+    vi.mocked(uninstallOciRecipe).mockResolvedValue({
+      success: true,
+      recipe: "Qwen3-32B",
+      action: "uninstalled",
+    });
   });
 
   describe("listing", () => {
@@ -319,6 +331,57 @@ describe("RecipesPage", () => {
       render(<RecipesPage />);
 
       expect(await screen.findByText("recipes dir unreadable")).toBeInTheDocument();
+    });
+  });
+
+  /** The gap this whole feature closes: an OCI-installed recipe used to be
+   *  removable only from the separate OCI Registry page. */
+  describe("uninstalling an OCI recipe", () => {
+    it("offers an uninstall action and calls the API with the installed filename", async () => {
+      vi.mocked(fetchRecipes).mockResolvedValue([SOLO, OCI_RECIPE]);
+      render(<RecipesPage />);
+      await screen.findByText("Qwen3 8B");
+
+      await userEvent.click(screen.getByRole("button", { name: "Uninstall Qwen3 32B" }));
+      await userEvent.click(screen.getByRole("button", { name: "Uninstall" }));
+
+      await waitFor(() => expect(uninstallOciRecipe).toHaveBeenCalledWith("Qwen3-32B"));
+      // The recipe is gone from the list the moment the backend confirms it,
+      // not just from whatever the card happened to be showing.
+      await waitFor(() => expect(fetchRecipes).toHaveBeenCalledTimes(2));
+    });
+
+    it("asks before uninstalling, and does nothing on cancel", async () => {
+      vi.mocked(fetchRecipes).mockResolvedValue([SOLO, OCI_RECIPE]);
+      render(<RecipesPage />);
+      await screen.findByText("Qwen3 8B");
+
+      await userEvent.click(screen.getByRole("button", { name: "Uninstall Qwen3 32B" }));
+      expect(screen.getByText(/Qwen3 32B is removed from disk/)).toBeInTheDocument();
+      await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+      expect(uninstallOciRecipe).not.toHaveBeenCalled();
+    });
+
+    it("reports a failed uninstall without removing the card", async () => {
+      vi.mocked(fetchRecipes).mockResolvedValue([SOLO, OCI_RECIPE]);
+      vi.mocked(uninstallOciRecipe).mockRejectedValue(new Error("recipe is in use"));
+      render(<RecipesPage />);
+      await screen.findByText("Qwen3 8B");
+
+      await userEvent.click(screen.getByRole("button", { name: "Uninstall Qwen3 32B" }));
+      await userEvent.click(screen.getByRole("button", { name: "Uninstall" }));
+
+      expect(await screen.findByText("recipe is in use")).toBeInTheDocument();
+      expect(screen.getByText("Qwen3 32B")).toBeInTheDocument();
+    });
+
+    it("offers no uninstall for a bundled recipe, only the managed hint", async () => {
+      render(<RecipesPage />);
+      const card = (await screen.findByText("Qwen3 8B")).closest('[role="button"]')!;
+
+      expect(within(card as HTMLElement).queryByRole("button", { name: /Uninstall/ })).not.toBeInTheDocument();
+      expect(card).toHaveAttribute("title", "Managed recipe — cannot be deleted");
     });
   });
 

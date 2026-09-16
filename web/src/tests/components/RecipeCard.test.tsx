@@ -216,4 +216,67 @@ describe("RecipeCard", () => {
     );
     expect(screen.queryByTitle("Reset to original")).not.toBeInTheDocument();
   });
+
+  /** An OCI-installed recipe is the one source an operator can actually
+   *  remove from here — everywhere else, removal used to mean a trip to the
+   *  separate OCI Registry page. */
+  it("offers to uninstall an OCI-installed recipe", () => {
+    const onUninstall = vi.fn();
+    render(
+      <RecipeCard
+        r={recipe({ source: "oci", name: "Qwen3-32B" })}
+        isRunning={false}
+        clusterBlocked={false}
+        onSelect={vi.fn()}
+        onUninstall={onUninstall}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Uninstall Qwen3-32B" }));
+    expect(onUninstall).toHaveBeenCalledTimes(1);
+  });
+
+  /** A bundled recipe has nothing here to remove; the tooltip says so is
+   *  deliberate, rather than leaving the absence of a delete to read as a
+   *  bug. */
+  it("hints that a bundled recipe is managed rather than offering a delete", () => {
+    render(
+      <RecipeCard
+        r={recipe({ source: "bundled" })}
+        isRunning={false}
+        clusterBlocked={false}
+        onSelect={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: /Uninstall/ })).not.toBeInTheDocument();
+    expect(screen.getByTitle("Managed recipe — cannot be deleted")).toBeInTheDocument();
+  });
+
+  it("hints the same way for an upstream recipe", () => {
+    render(
+      <RecipeCard
+        r={recipe({ source: "upstream" })}
+        isRunning={false}
+        clusterBlocked={false}
+        onSelect={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTitle("Managed recipe — cannot be deleted")).toBeInTheDocument();
+  });
+
+  it("offers neither an uninstall nor the managed hint for a custom recipe", () => {
+    render(
+      <RecipeCard
+        r={recipe({ source: "custom" })}
+        isRunning={false}
+        clusterBlocked={false}
+        onSelect={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: /Uninstall/ })).not.toBeInTheDocument();
+    expect(screen.queryByTitle("Managed recipe — cannot be deleted")).not.toBeInTheDocument();
+  });
 });

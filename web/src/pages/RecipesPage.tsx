@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { useI18n } from "@/lib/i18n";
-import { fetchRecipes, fetchRecipe, fetchDeployments, createDeployment, scheduleDeploy, fetchSettings, fetchRecipeCustomization, saveRecipeCustomization, deleteRecipeCustomization, fetchMods, fetchMod, listCustomRecipes, saveCustomRecipe, deleteCustomRecipe, listCustomMods, getCustomModFiles, saveCustomModFiles, deleteCustomMod, ApiError } from "@/lib/api";
+import { fetchRecipes, fetchRecipe, fetchDeployments, createDeployment, scheduleDeploy, fetchSettings, fetchRecipeCustomization, saveRecipeCustomization, deleteRecipeCustomization, fetchMods, fetchMod, listCustomRecipes, saveCustomRecipe, deleteCustomRecipe, listCustomMods, getCustomModFiles, saveCustomModFiles, deleteCustomMod, uninstallOciRecipe, ApiError } from "@/lib/api";
 import type { RecipeDetail, RecipeCustomization, RecipeSummary, ModSummary, ModDetail, CustomRecipeInfo, CustomModInfo, ModFileMap, PreflightReport } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
 import { AlertModal, ConfirmModal } from "@/components/Modal";
@@ -62,6 +62,15 @@ function blockingPreflight(payload: unknown): PreflightReport | null {
   if (!detail || typeof detail !== "object") return null;
   const preflight = (detail as { preflight?: unknown }).preflight;
   return preflight && typeof preflight === "object" ? (preflight as PreflightReport) : null;
+}
+
+/** ``oci-`` is the id prefix ``recipe_sources.py`` mints for a recipe an OCI
+ *  collection installed — the stem after it is the filename ``uninstall_oci_
+ *  recipe`` (and the OCI Registry page) expect, with or without ``.yaml``. */
+const OCI_ID_PREFIX = "oci-";
+
+function ociRecipeName(recipeId: string): string {
+  return recipeId.startsWith(OCI_ID_PREFIX) ? recipeId.slice(OCI_ID_PREFIX.length) : recipeId;
 }
 
 // ── File-kind badge colours ──────────────────────────────────────────────────
@@ -220,7 +229,7 @@ export default function RecipesPage() {
   // Confirmation modal state for reset
   const [resetConfirm, setResetConfirm] = useState<{ recipeId: string; recipeName: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<
-    { kind: "recipe" | "mod"; id: string; name: string } | null
+    { kind: "recipe" | "mod" | "oci"; id: string; name: string } | null
   >(null);
 
   // New recipe/mod modal state
@@ -290,8 +299,17 @@ export default function RecipesPage() {
    * two clicks and a scroll away from the card, so the list looked as though
    * what it created could not be removed.
    */
-  const confirmDelete = (kind: "recipe" | "mod", id: string, name: string) =>
+  const confirmDelete = (kind: "recipe" | "mod" | "oci", id: string, name: string) =>
     setDeleteTarget({ kind, id, name });
+
+  /** OCI recipes are not read from `~/.config/spark-pulse/custom-recipes`, so
+   *  removing one is not a delete on the custom-recipe list — it never
+   *  appears there, and `refetch()` (the bundled/upstream/OCI listing) is
+   *  what makes it disappear from the card the operator just clicked. */
+  const handleUninstallOciRecipe = async (recipeId: string) => {
+    await uninstallOciRecipe(ociRecipeName(recipeId));
+    await refetch();
+  };
 
   const runDelete = async () => {
     if (!deleteTarget) return;
@@ -299,10 +317,14 @@ export default function RecipesPage() {
     setDeleteTarget(null);
     try {
       if (kind === "recipe") await handleDeleteCustomRecipe(id);
-      else await handleDeleteCustomMod(id);
+      else if (kind === "mod") await handleDeleteCustomMod(id);
+      else await handleUninstallOciRecipe(id);
     } catch (e) {
       setAlertModal({
-        title: t("recipes.deleteFailed", { name }),
+        title:
+          kind === "oci"
+            ? t("recipes.uninstallFailed", { name })
+            : t("recipes.deleteFailed", { name }),
         message: e instanceof Error ? e.message : t("common.unknownError"),
       });
     }
@@ -592,6 +614,7 @@ export default function RecipesPage() {
                         clusterBlocked={false}
                         onSelect={() => handleSelect(r)}
                         onReset={() => openResetConfirm(r)}
+                        onUninstall={() => confirmDelete("oci", r.id, r.name)}
                       />
                     ))}
                   </div>
@@ -615,6 +638,7 @@ export default function RecipesPage() {
                               clusterBlocked={true}
                               onSelect={() => {}}
                               onReset={() => openResetConfirm(r)}
+                              onUninstall={() => confirmDelete("oci", r.id, r.name)}
                             />
                           ))}
                         </div>
@@ -889,10 +913,16 @@ export default function RecipesPage() {
           title={
             deleteTarget.kind === "recipe"
               ? t("recipes.deleteRecipeTitle")
-              : t("recipes.deleteModTitle")
+              : deleteTarget.kind === "mod"
+                ? t("recipes.deleteModTitle")
+                : t("recipes.uninstallRecipeTitle")
           }
-          message={t("recipes.deleteBody", { name: deleteTarget.name })}
-          confirmLabel={t("common.delete")}
+          message={
+            deleteTarget.kind === "oci"
+              ? t("recipes.uninstallBody", { name: deleteTarget.name })
+              : t("recipes.deleteBody", { name: deleteTarget.name })
+          }
+          confirmLabel={deleteTarget.kind === "oci" ? t("common.uninstall") : t("common.delete")}
           confirmVariant="danger"
         />
       )}

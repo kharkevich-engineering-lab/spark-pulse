@@ -24,6 +24,7 @@
     "saved": "Enregistré !",
     "saving": "Enregistrement…",
     "seconds": "secondes",
+    "uninstall": "Désinstaller",
     "unknownError": "Erreur inconnue",
     "upload": "Téléverser",
     "working": "En cours…",
@@ -273,6 +274,7 @@
     "downloadFailed": "Impossible de démarrer le téléchargement",
     "downloadStarted": "Téléchargement démarré",
     "downloadStartedBody": "{model} est en cours de téléchargement. « {name} » se déploiera tout seul une fois terminé — suivez la progression sur la page Modèles, où vous pouvez aussi l'annuler.",
+    "managedRecipe": "Recette gérée — suppression impossible",
     "missingModelTitle": "Ce modèle n'est pas encore téléchargé",
     "newMod": "Nouveau mod",
     "newRecipe": "Nouvelle recette",
@@ -294,7 +296,11 @@
     "tabMods": "Mods",
     "tabRecipes": "Recettes",
     "title": "Recettes et mods",
-    "toggleCustom": "Basculer le mode personnalisé"
+    "toggleCustom": "Basculer le mode personnalisé",
+    "uninstallBody": "{name} est retiré du disque. Réinstallez-le depuis la page Registre OCI si besoin.",
+    "uninstallFailed": "Désinstallation de {name} impossible",
+    "uninstallRecipe": "Désinstaller {name}",
+    "uninstallRecipeTitle": "Désinstaller cette recette"
   },
   "recipeCard": {
     "running": "En cours",
