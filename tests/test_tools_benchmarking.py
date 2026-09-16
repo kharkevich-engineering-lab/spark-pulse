@@ -591,6 +591,41 @@ class TestGetBaselineComparison:
         assert benchmarking.get_baseline_comparison("b1") is None
 
 
+# ── delete_benchmark ─────────────────────────────────────────────────────────
+
+
+class TestDeleteBenchmark:
+    """The simulated twin of the real delete, same signature, same answers."""
+
+    def test_delete_removes_the_record(self, monkeypatch, _bench_path):
+        bench_file = _bench_path / "benchmarks.json"
+        bench_file.write_text(
+            json.dumps(
+                [
+                    {"benchmark_id": "keep", "started_at": _DAY1},
+                    {"benchmark_id": "drop", "started_at": _DAY2},
+                ]
+            )
+        )
+
+        from spark_pulse.tools import benchmarking
+
+        assert benchmarking.delete_benchmark("drop") is True
+        assert [b["benchmark_id"] for b in benchmarking.list_benchmarks()] == ["keep"]
+        assert benchmarking.get_benchmark("drop") is None
+
+    def test_deleting_what_is_not_there_says_so(self, monkeypatch, _bench_path):
+        bench_file = _bench_path / "benchmarks.json"
+        bench_file.write_text(
+            json.dumps([{"benchmark_id": "keep", "started_at": _DAY1}])
+        )
+
+        from spark_pulse.tools import benchmarking
+
+        assert benchmarking.delete_benchmark("never-existed") is False
+        assert [b["benchmark_id"] for b in benchmarking.list_benchmarks()] == ["keep"]
+
+
 # ── _purge_expired ───────────────────────────────────────────────────────────
 
 

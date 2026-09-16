@@ -5,14 +5,15 @@ import {
   fetchLatestByRecipe,
   runBenchmark,
   compareRuns,
+  deleteBenchmark,
 } from "@/lib/api";
 import { useQuery } from "@/hooks/useQuery";
 import StatusBadge from "@/components/StatusBadge";
-import { AlertModal } from "@/components/Modal";
+import { AlertModal, ConfirmModal } from "@/components/Modal";
 import {
   Flame, Loader2, AlertCircle, TrendingUp,
   TrendingDown,
-  X, Play, BarChart3, Table as TableIcon,
+  X, Play, BarChart3, Table as TableIcon, Trash2,
 } from "lucide-react";
 import type { BenchmarkResult } from "@/lib/types";
 
@@ -43,6 +44,36 @@ export default function BenchmarkingPage() {
   } | null>(null);
   const [showComparison, setShowComparison] = useState(false);
 
+  /** The run the operator asked to delete, held until they confirm. Kept as
+   *  the record rather than the id so the dialog can name it. */
+  const [deleteTarget, setDeleteTarget] = useState<BenchmarkResult | null>(null);
+
+  /** What the list calls a run — the same fallback chain the row itself uses,
+   *  so the dialog names it the way the operator just read it. */
+  const runLabel = (bench: BenchmarkResult) =>
+    bench.recipe_name || bench.recipe_id || bench.benchmark_id.slice(0, 8);
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    const id = deleteTarget.benchmark_id;
+    try {
+      await deleteBenchmark(id);
+      setDeleteTarget(null);
+      // A deleted run cannot stay in a comparison selection: the compare call
+      // would 404 on an id that is no longer there.
+      setSelectedRunIds((prev) => prev.filter((i) => i !== id));
+      refetch();
+    } catch (e) {
+      // The dialog closes and the reason takes its place — a 409 ("still
+      // running") is the one an operator most needs to read, and leaving the
+      // confirm up behind an alert hides it.
+      setDeleteTarget(null);
+      setAlertModal({
+        title: t("common.error"),
+        message: e instanceof Error ? e.message : t("benchmarking.deleteFailed"),
+      });
+    }
+  };
 
   const handleRun = async () => {
     if (!runTarget) return;
@@ -150,6 +181,14 @@ export default function BenchmarkingPage() {
                       vs baseline
                     </span>
                   )}
+                  <button
+                    onClick={() => setDeleteTarget(bench)}
+                    aria-label={t("benchmarking.delete")}
+                    title={t("benchmarking.delete")}
+                    className="p-1.5 rounded-lg text-text-muted hover:text-danger hover:bg-danger/10 transition-colors shrink-0"
+                  >
+                    <Trash2 size={16} />
+                  </button>
                 </div>
               </div>
             );
@@ -408,6 +447,19 @@ export default function BenchmarkingPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Delete confirmation */}
+      {deleteTarget && (
+        <ConfirmModal
+          open={!!deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={handleDelete}
+          title={t("benchmarking.deleteTitle")}
+          message={t("benchmarking.deleteMessage", { name: runLabel(deleteTarget) })}
+          confirmLabel={t("common.delete")}
+          confirmVariant="danger"
+        />
       )}
 
       {/* Alert modal */}

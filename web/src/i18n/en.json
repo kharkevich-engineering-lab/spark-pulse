@@ -746,7 +746,11 @@
     "compareFailed": "Failed to compare benchmarks",
     "clear": "Clear",
     "compareSelected": "Compare Selected",
-    "runComparison": "Run Comparison"
+    "runComparison": "Run Comparison",
+    "delete": "Delete this run",
+    "deleteTitle": "Delete benchmark run?",
+    "deleteMessage": "\"{name}\" and its measurements are removed for good. Nothing else changes.",
+    "deleteFailed": "Failed to delete the benchmark"
   },
   "oci": {
     "noCollections": "No collections found",

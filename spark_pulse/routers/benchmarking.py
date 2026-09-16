@@ -7,6 +7,16 @@ from spark_pulse import tools
 
 router = APIRouter(prefix="/api/benchmarks", tags=["benchmarking"])
 
+#: A benchmark in one of these is still being written to by the background task
+#: ``run_benchmark`` handed to ``execute_benchmark``, and is refused a delete.
+#: Not squeamishness about deleting live data: ``execute_benchmark`` holds the
+#: store's write mutex for the whole length of a run and writes the record back
+#: when it ends, so a delete issued mid-run either waits out the run and then
+#: times out, or lands and is promptly undone by that final write. Either way
+#: the operator is told something that is not true. They can delete it once it
+#: has stopped — including when it stopped by failing.
+_ACTIVE_STATUSES = frozenset({"running", "queued", "pending"})
+
 
 class RunBenchmarkRequest(BaseModel):
     deployment_id: str
@@ -89,6 +99,35 @@ def get_benchmark(benchmark_id: str):
     if result is None:
         raise HTTPException(status_code=404, detail="Benchmark not found")
     return result
+
+
+@router.delete("/{benchmark_id}")
+def delete_benchmark(benchmark_id: str) -> dict:
+    """Remove one benchmark result. 404 when there is none, 409 while it runs.
+
+    200 with a body rather than 204, because that is what every other DELETE
+    on this API answers and what ``api.ts``' one fetch wrapper can read: it
+    calls ``res.json()`` on any non-error response, so a 204's empty body
+    would arrive at the browser as a parse error on a request that succeeded.
+    """
+    record = tools.benchmarking.get_benchmark(benchmark_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Benchmark not found")
+    status = str(record.get("status") or "")
+    if status in _ACTIVE_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"benchmark {benchmark_id} is still {status}; "
+                "wait for it to finish or fail, then delete it"
+            ),
+        )
+    if not tools.benchmarking.delete_benchmark(benchmark_id):
+        # Something else removed it between the read and the write — retention,
+        # or a second operator. The answer they want is the one they would have
+        # got a moment earlier, not a 500.
+        raise HTTPException(status_code=404, detail="Benchmark not found")
+    return {"deleted": benchmark_id}
 
 
 @router.post("/compare")

@@ -450,6 +450,37 @@ def get_benchmark(benchmark_id: str) -> dict | None:
         return _bench_cache.get(benchmark_id)
 
 
+def delete_benchmark(benchmark_id: str) -> bool:
+    """Remove one benchmark for good. ``False`` when there was nothing to remove.
+
+    Two stores have to agree for a delete to *look* like one: the row and the
+    point-read cache every read path answers from. Dropping only the row leaves
+    ``get_benchmark`` and ``list_benchmarks`` still returning the record until
+    something else happens to mark the cache dirty — a delete an operator
+    watched succeed and then watched undo itself.
+
+    The row goes first, and the cache entry after it, under the cache lock but
+    *not* holding that lock across the write. The order is what makes the
+    sequence safe against a concurrent reader: ``_ensure_cache_loaded`` and
+    ``list_benchmarks`` both hold the cache lock across load-and-populate, so
+    the eviction below either lands before such a reader starts (and its load
+    then misses the deleted row) or after it finishes (and evicts what it just
+    put there). Holding the cache lock over ``_delete_row`` instead would
+    serialise every read behind the write mutex, which a benchmark run holds
+    for minutes.
+
+    One entry, not :func:`_reset_cache`: reloading ninety days of history to
+    learn that one record is gone is the cost the per-row writes exist to
+    avoid — the same reasoning as :func:`_cache_put`.
+    """
+    removed = _delete_row(benchmark_id)
+    with _bench_cache_lock:
+        _bench_cache.pop(benchmark_id, None)
+    if removed:
+        logger.info("Deleted benchmark %s", benchmark_id)
+    return removed
+
+
 def get_benchmarks_for_recipe(recipe_id: str) -> list[dict]:
     """Return all benchmarks for a specific recipe, sorted by date descending."""
     with _bench_cache_lock:

@@ -746,7 +746,11 @@
     "compareFailed": "Échec de la comparaison des analyses",
     "clear": "Effacer",
     "compareSelected": "Comparer la sélection",
-    "runComparison": "Lancer la comparaison"
+    "runComparison": "Lancer la comparaison",
+    "delete": "Supprimer cette analyse",
+    "deleteTitle": "Supprimer cette analyse ?",
+    "deleteMessage": "« {name} » et ses mesures seront supprimés définitivement. Rien d'autre ne change.",
+    "deleteFailed": "Échec de la suppression de l'analyse"
   },
   "oci": {
     "noCollections": "Aucune collection trouvée",

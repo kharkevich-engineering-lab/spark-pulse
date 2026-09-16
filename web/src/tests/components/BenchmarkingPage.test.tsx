@@ -18,9 +18,10 @@ vi.mock("@/lib/api", () => ({
   fetchLatestByRecipe: vi.fn(),
   runBenchmark: vi.fn(),
   compareRuns: vi.fn(),
+  deleteBenchmark: vi.fn(),
 }));
 
-import { compareRuns, fetchBenchmarks, fetchLatestByRecipe, runBenchmark } from "@/lib/api";
+import { compareRuns, deleteBenchmark, fetchBenchmarks, fetchLatestByRecipe, runBenchmark } from "@/lib/api";
 
 const run = (over: Partial<BenchmarkResult> = {}): BenchmarkResult => ({
   benchmark_id: "bench-0001",
@@ -72,6 +73,7 @@ describe("BenchmarkingPage", () => {
     vi.mocked(fetchLatestByRecipe).mockResolvedValue({});
     vi.mocked(runBenchmark).mockResolvedValue({} as never);
     vi.mocked(compareRuns).mockResolvedValue(COMPARISON as never);
+    vi.mocked(deleteBenchmark).mockResolvedValue(undefined);
   });
 
   it("lists every run with its recipe and status, counting them on the tab", async () => {
@@ -102,6 +104,100 @@ describe("BenchmarkingPage", () => {
     render(<BenchmarkingPage />);
 
     expect(await screen.findByText("benchmark store unreadable")).toBeInTheDocument();
+  });
+
+  /** A benchmark result is a record somebody made, and a bad run is worth
+   *  less than nothing next to the good ones — so removing one has to be
+   *  possible, deliberate, and honest about being refused. */
+  describe("deleting a run", () => {
+    const deleteButtons = () => screen.getAllByRole("button", { name: "Delete this run" });
+
+    it("asks before removing anything, naming the run", async () => {
+      render(<BenchmarkingPage />);
+      await screen.findByText("Qwen3 8B");
+
+      await userEvent.click(deleteButtons()[0]);
+
+      expect(screen.getByText("Delete benchmark run?")).toBeInTheDocument();
+      expect(
+        screen.getByText(/"Qwen3 8B" and its measurements are removed for good/),
+      ).toBeInTheDocument();
+      expect(deleteBenchmark).not.toHaveBeenCalled();
+    });
+
+    it("deletes the run it was pointed at and refetches the list", async () => {
+      render(<BenchmarkingPage />);
+      await screen.findByText("Qwen3 32B");
+      expect(fetchBenchmarks).toHaveBeenCalledTimes(1);
+
+      await userEvent.click(deleteButtons()[1]);
+      await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+      await waitFor(() => expect(deleteBenchmark).toHaveBeenCalledWith("bench-0002"));
+      // The list is re-read rather than edited in place: retention and other
+      // operators both touch this store.
+      await waitFor(() => expect(fetchBenchmarks).toHaveBeenCalledTimes(2));
+      expect(screen.queryByText("Delete benchmark run?")).not.toBeInTheDocument();
+    });
+
+    it("leaves the run alone when the operator backs out", async () => {
+      render(<BenchmarkingPage />);
+      await screen.findByText("Qwen3 8B");
+
+      await userEvent.click(deleteButtons()[0]);
+      await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+      expect(screen.queryByText("Delete benchmark run?")).not.toBeInTheDocument();
+      expect(deleteBenchmark).not.toHaveBeenCalled();
+    });
+
+    /** The 409 the backend raises for a run still in progress is the one
+     *  reason an operator most needs to read, so it has to reach the page. */
+    it("says why a delete was refused", async () => {
+      vi.mocked(deleteBenchmark).mockRejectedValue(
+        new Error("API 409: benchmark bench-0001 is still running"),
+      );
+      render(<BenchmarkingPage />);
+      await screen.findByText("Qwen3 8B");
+
+      await userEvent.click(deleteButtons()[0]);
+      await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+      expect(
+        await screen.findByText("API 409: benchmark bench-0001 is still running"),
+      ).toBeInTheDocument();
+      expect(fetchBenchmarks).toHaveBeenCalledTimes(1);
+    });
+
+    it("says so when the run had already gone", async () => {
+      vi.mocked(deleteBenchmark).mockRejectedValue(new Error("API 404: Benchmark not found"));
+      render(<BenchmarkingPage />);
+      await screen.findByText("Qwen3 8B");
+
+      await userEvent.click(deleteButtons()[0]);
+      await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+      expect(await screen.findByText("API 404: Benchmark not found")).toBeInTheDocument();
+    });
+
+    /** A deleted run left in the selection would send the compare call an id
+     *  the backend no longer has, and it answers 404 for the whole set. */
+    it("drops the deleted run from a pending comparison selection", async () => {
+      render(<BenchmarkingPage />);
+      await screen.findByText("Qwen3 8B");
+
+      await userEvent.click(screen.getAllByRole("checkbox")[0]);
+      await userEvent.click(screen.getAllByRole("checkbox")[1]);
+      expect(screen.getByText("2 run(s) selected")).toBeInTheDocument();
+
+      await userEvent.click(deleteButtons()[0]);
+      await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+      await waitFor(() => expect(deleteBenchmark).toHaveBeenCalledWith("bench-0001"));
+      await waitFor(() =>
+        expect(screen.queryByText("2 run(s) selected")).not.toBeInTheDocument(),
+      );
+    });
   });
 
   describe("comparison", () => {
