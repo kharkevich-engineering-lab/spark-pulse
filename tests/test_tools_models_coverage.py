@@ -4,8 +4,8 @@
 well-formed, a download that completes, a node that answers.  This file covers
 what the module actually spends its code on: a ``config.json`` that is not
 JSON, a snapshot directory that cannot be read, a download cancelled between
-the queue and the thread, an ``HF_ENDPOINT`` that has to be put back, a node
-that verifies and then fails to rename.
+the queue and the thread, a mirror ``endpoint`` passed through to
+``snapshot_download``, a node that verifies and then fails to rename.
 
 Nothing here reaches the network or the developer's own ``~/.cache``: the hub
 is a ``tmp_path``, ``huggingface_hub`` is mocked at its own boundary, and SSH
@@ -729,15 +729,20 @@ class TestRunDownload:
 
         assert models_tool.get_download(job_id)["error"] == "KeyboardInterrupt"
 
-    def test_a_pre_existing_hf_endpoint_is_restored_afterwards(self, hub, monkeypatch):
-        """The env var is process-wide: a mirror download must not repoint
-        every later one."""
+    def test_a_mirror_endpoint_is_passed_straight_to_snapshot_download(
+        self, hub, monkeypatch
+    ):
+        """The endpoint is a call argument, not the process-global
+        ``HF_ENDPOINT`` env var: downloads run on concurrent daemon threads
+        sharing one process environment, so two simultaneous downloads from
+        different sources must not be able to clobber each other's
+        endpoint."""
         monkeypatch.setenv("HF_ENDPOINT", "http://original.local")
         job_id = _seed_job(status="queued")
-        seen: list[str] = []
+        seen: list[str | None] = []
 
-        def record(**_kwargs):
-            seen.append(os.environ["HF_ENDPOINT"])
+        def record(**kwargs):
+            seen.append(kwargs.get("endpoint"))
             return str(hub)
 
         with (
@@ -749,22 +754,58 @@ class TestRunDownload:
             )
 
         assert seen == ["http://mirror.local"]
+        # The environment is never touched.
         assert os.environ["HF_ENDPOINT"] == "http://original.local"
 
-    def test_a_source_with_no_endpoint_leaves_the_environment_clean(
-        self, hub, monkeypatch
-    ):
+    def test_a_source_with_no_endpoint_passes_none(self, hub, monkeypatch):
         monkeypatch.delenv("HF_ENDPOINT", raising=False)
         job_id = _seed_job(status="queued")
+        seen: list[str | None] = []
+
+        def record(**kwargs):
+            seen.append(kwargs.get("endpoint"))
+            return str(hub)
 
         with (
-            patch("huggingface_hub.snapshot_download", return_value=str(hub)),
+            patch("huggingface_hub.snapshot_download", side_effect=record),
             patch.object(models_tool, "_publish_job"),
         ):
             models_tool._run_download(job_id, self.SOURCE)
 
+        assert seen == [None]
         assert "HF_ENDPOINT" not in os.environ
         assert models_tool.get_download(job_id)["status"] == "completed"
+
+    def test_a_cancel_requested_mid_flight_cannot_stop_it_and_the_result_stands(
+        self, hub
+    ):
+        """``snapshot_download`` is one blocking call with no way to
+        interrupt it. A cancel requested while it is running still lets it
+        run to completion, and the model that arrived is a real, usable
+        model — reporting the job as "cancelled" would fail any scheduled
+        deploy waiting behind it for a model that is, in fact, on disk."""
+        job_id = _seed_job(status="queued")
+
+        def cancel_after_it_is_too_late(**_kwargs):
+            models_tool._cancelled.add(job_id)
+            return str(hub)
+
+        with (
+            patch(
+                "huggingface_hub.snapshot_download",
+                side_effect=cancel_after_it_is_too_late,
+            ),
+            patch.object(models_tool, "_publish_job") as publish,
+        ):
+            models_tool._run_download(job_id, self.SOURCE)
+
+        job = models_tool.get_download(job_id)
+        assert job["status"] == "completed"
+        assert job["path"] == str(hub)
+        assert models_tool.EVENT_COMPLETED in [
+            call.args[0] for call in publish.call_args_list
+        ]
+        assert job_id not in models_tool._cancelled
 
 
 class TestCancelDownload:
