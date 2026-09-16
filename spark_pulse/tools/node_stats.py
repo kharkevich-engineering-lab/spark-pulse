@@ -129,6 +129,26 @@ def _disks(stats: Any) -> list[dict[str, Any]]:
     ]
 
 
+def _process_gpu_uuid(gpus: Any) -> str:
+    """The GPU a process is on, or "" when that is not actually known.
+
+    ``GpuProcess`` (``agent.proto``) carries no GPU index or uuid of its own —
+    ``nvidia-smi --query-compute-apps`` is asked for pid/name/memory only —
+    so a process cannot be tied to a *specific* GPU here. A single-GPU node
+    has only one answer, so that is unambiguous. A multi-GPU node does not:
+    reporting every process against ``gpus[0]`` would put a process running
+    on GPU 1 onto GPU 0's card, which is worse than saying nothing, the same
+    reasoning `memory_supported: false` follows elsewhere in this module.
+    Fixing this for real needs the agent to report per-process GPU identity
+    (``nvidia-smi`` does support a ``gpu_uuid`` field on the compute-apps
+    query) — a proto and ``agent/src/executor/stats.rs`` change, not one that
+    belongs in this file.
+    """
+    if len(gpus) == 1:
+        return gpus[0].uuid
+    return ""
+
+
 def _processes(stats: Any, owners: dict[str, dict[str, str]]) -> list[dict[str, Any]]:
     """GPU processes, each said to be ours or not, and whose.
 
@@ -138,12 +158,13 @@ def _processes(stats: Any, owners: dict[str, dict[str, str]]) -> list[dict[str, 
     node. Each half is asked for what only it has.
     """
     rows = []
+    gpu_uuid = _process_gpu_uuid(stats.gpus)
     for process in stats.processes:
         container = (process.container_id or "")[:12]
         owner = owners.get(container) if container else None
         rows.append(
             {
-                "gpu_uuid": stats.gpus[0].uuid if stats.gpus else "",
+                "gpu_uuid": gpu_uuid,
                 "pid": process.pid,
                 "process_name": process.name,
                 "used_memory": (

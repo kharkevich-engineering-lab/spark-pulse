@@ -159,6 +159,35 @@ class TestWhoHoldsTheGpu:
         process.container_id = container_id
         return stats
 
+    def test_a_process_is_attributed_to_the_nodes_one_gpu(self):
+        service = FakeService(self._with_process())
+
+        block = node_stats.for_node(
+            tools.node_service.control_node(), services_for(service)
+        )
+
+        assert block["processes"][0]["gpu_uuid"] == "GPU-abc"
+
+    def test_a_process_on_a_multi_gpu_node_is_not_guessed_onto_gpu_zero(self):
+        """``GpuProcess`` carries no GPU identity of its own (see
+        ``node_stats._process_gpu_uuid``), so with more than one GPU on the
+        node there is no way to say which one actually holds this process —
+        reporting ``gpus[0]`` regardless would put a process running on GPU 1
+        onto GPU 0's card, which is a wrong answer, not a partial one."""
+        stats = self._with_process()
+        second = stats.gpus.add()
+        second.index = 1
+        second.name = "NVIDIA GB10"
+        second.uuid = "GPU-def"
+        service = FakeService(stats)
+
+        block = node_stats.for_node(
+            tools.node_service.control_node(), services_for(service)
+        )
+
+        assert len(block["gpu"]) == 2
+        assert block["processes"][0]["gpu_uuid"] == ""
+
     def test_a_process_in_a_container_we_started_names_its_deployment(self):
         service = FakeService(
             self._with_process(),
