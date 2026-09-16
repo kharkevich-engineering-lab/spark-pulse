@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Start backend in production mode (real tools, no simulation, no hot reload).
 # Usage: ./scripts/run-production.sh [--port 8100] [--workers 1]
+#
+# Binds loopback: with auth off (the default) the API answers unauthenticated
+# callers, so exposing it to the LAN needs a deliberate step. To reach it from
+# other hosts, enable auth (SPARK_PULSE_AUTH_ENABLED=true + OIDC config) and
+# bind a real interface, or set SPARK_PULSE_ALLOW_INSECURE_BIND=1 to accept the
+# exposure — the process refuses a non-loopback bind with auth off otherwise.
 set -euo pipefail
 
 port=8100
@@ -33,5 +39,5 @@ echo "  http://localhost:$port"
 echo "  http://localhost:$port/docs  (Swagger UI)"
 
 uvicorn spark_pulse.app:app \
-    --host 0.0.0.0 --port "$port" \
+    --host 127.0.0.1 --port "$port" \
     --workers "$workers"

@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 from spark_pulse.agent import runtime as agent_runtime
-from spark_pulse.config import config
+from spark_pulse.config import config, assert_safe_startup
 from spark_pulse.routers import (
     recipes,
     deployments,
@@ -310,6 +310,13 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
+    # Refuse to start in a posture that silently serves: auth turned on but
+    # not fully configured (fail-open), or a non-loopback bind with auth off
+    # (the whole mutating API exposed to the LAN unauthenticated). Checked here
+    # because every launch path — CLI, systemd, dev scripts, bare uvicorn —
+    # constructs the app through this factory.
+    assert_safe_startup()
+
     app = FastAPI(
         title="Spark Pulse",
         description="Web UI for spark-vllm-docker",

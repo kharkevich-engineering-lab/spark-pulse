@@ -16,7 +16,12 @@ from spark_pulse.service import (
     stop_server,
     get_status,
 )
-from spark_pulse.config import config
+from spark_pulse.config import (
+    config,
+    assert_bind_is_safe,
+    BIND_HOST_ENV,
+    InsecureBindError,
+)
 
 
 @click.group()
@@ -26,7 +31,12 @@ def main():
 
 
 @main.command()
-@click.option("--host", "host", default="0.0.0.0", help="Bind address")
+@click.option(
+    "--host",
+    "host",
+    default="127.0.0.1",
+    help="Bind address (default: loopback; a non-loopback bind requires auth)",
+)
 @click.option("--port", "port", default=config.webui_port, type=int, help="Bind port")
 @click.option("--workers", "workers", default=1, type=int, help="Number of workers")
 @click.option(
@@ -41,6 +51,17 @@ def start(host, port, workers, env_file, dry_run):
     """Start the Spark Manager web server."""
     if env_file:
         load_env(env_file)
+
+    # Tell the app factory which address uvicorn will bind: it cannot see
+    # uvicorn's --host itself. `create_app` refuses a non-loopback bind while
+    # auth is off. Check here too so the operator gets a clean message instead
+    # of a uvicorn import-time traceback.
+    os.environ[BIND_HOST_ENV] = host
+    try:
+        assert_bind_is_safe(host)
+    except InsecureBindError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
 
     cmd = f"uvicorn spark_pulse.app:app --host {host} --port {port} --workers {workers}"
 
@@ -64,7 +85,12 @@ def start(host, port, workers, env_file, dry_run):
 
 
 @main.command()
-@click.option("--host", "host", default="0.0.0.0", help="Systemd service bind address")
+@click.option(
+    "--host",
+    "host",
+    default="127.0.0.1",
+    help="Systemd service bind address (default: loopback; non-loopback requires auth)",
+)
 @click.option(
     "--port",
     "port",
@@ -84,6 +110,18 @@ def start(host, port, workers, env_file, dry_run):
 @click.option("--no-start", is_flag=True, help="Install but don't start")
 def install(host, port, service_user, use_user, no_start):
     """Install and enable the systemd service."""
+    # A non-loopback bind with auth off will refuse to start at runtime; warn
+    # at install time so the operator learns it now rather than from a service
+    # that flaps on start.
+    from spark_pulse.config import bind_is_loopback
+
+    if not bind_is_loopback(host) and not config.auth_enabled:
+        click.echo(
+            f"Warning: binding {host} with auth disabled. The service will "
+            "refuse to start unless you enable auth or set "
+            "SPARK_PULSE_ALLOW_INSECURE_BIND=1 in its environment file.",
+            err=True,
+        )
     scope = "user" if use_user else "system"
     try:
         install_systemd(

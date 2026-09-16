@@ -295,9 +295,16 @@ class AuthMiddleware(BaseHTTPMiddleware):
     }
 
     async def dispatch(self, request: Request, call_next):
-        if not _oidc_configured():
-            # Auth disabled — allow everything
+        if not config.auth_enabled:
+            # Auth disabled — allow everything (open by design on loopback).
             return await call_next(request)
+
+        # Auth is enabled. It gates on the flag, not on `_oidc_configured()`:
+        # keying on the latter meant a half-configured provider (a fumbled
+        # secret) read as "not configured" and let every request through —
+        # auth failing *open*. `create_app` already refuses to start in that
+        # state; this is the belt-and-suspenders so an incomplete config can
+        # never silently disable the wall it is standing behind.
 
         # Allow public paths
         path = request.url.path

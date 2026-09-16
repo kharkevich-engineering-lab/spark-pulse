@@ -24,6 +24,7 @@ Type=simple
 User={user}
 WorkingDirectory={work_dir}
 EnvironmentFile={env_file}
+Environment=SPARK_PULSE_BIND_HOST={host}
 ExecStart={python_exe} -m uvicorn spark_pulse.app:app --host {host} --port {port} --workers 1
 Restart=on-failure
 RestartSec=5
@@ -47,6 +48,7 @@ After=network.target docker.service
 Type=simple
 WorkingDirectory={work_dir}
 EnvironmentFile={env_file}
+Environment=SPARK_PULSE_BIND_HOST={host}
 ExecStart={python_exe} -m uvicorn spark_pulse.app:app --host {host} --port {port} --workers 1
 Restart=on-failure
 RestartSec=5
@@ -128,7 +130,7 @@ def _render_service_content(
 
 
 def install_systemd(
-    host: str = "0.0.0.0",
+    host: str = "127.0.0.1",
     port: int = 8100,
     user: str | None = None,
     start: bool = True,
