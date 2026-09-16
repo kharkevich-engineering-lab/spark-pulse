@@ -28,6 +28,7 @@ from spark_pulse.tools.native_runtime import (
     identity_labels as identity_labels,
     is_native as is_native,
     list_deployments as list_deployments,
+    logs_for_container as logs_for_container,
     persist_planned_record as persist_planned_record,
     plan as plan,
     probe_ready as probe_ready,

@@ -303,6 +303,17 @@ def hub_dir():
     return hf_home() / "hub"
 
 
+def local_repo_path(model_id: str):
+    """The simulated cache entry for ``model_id`` — under the mock ``hub_dir``.
+
+    Mirrors ``tools.models.local_repo_path`` so a caller reaching it through
+    the switch gets a path under this simulated host's hub rather than an
+    ``AttributeError``. It lines up with the ``repo_path`` the catalogue
+    entries carry.
+    """
+    return hub_dir() / repo_dir_name(model_id)
+
+
 def _recipe_index() -> dict[str, list[str]]:
     index: dict[str, list[str]] = {}
     try:
@@ -623,6 +634,7 @@ def presence(
     client: Any = None,
     revision: str | None = None,
     deep: bool = False,
+    services: Any | None = None,
 ) -> dict[str, Any]:
     entry = get_model(model_id)
     commit = revision or _revision_of(model_id)

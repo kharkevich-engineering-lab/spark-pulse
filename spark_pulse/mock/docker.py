@@ -14,10 +14,19 @@ from typing import Any
 
 from docker import errors as _docker_errors
 
-# Import real types so isinstance checks work across mock/real boundary
+# Import real types so isinstance checks work across mock/real boundary.
+# The metadata/exec shapes and the two pull-failure signals are pure types —
+# a caller reaching ``tools.docker`` through the switch expects the same
+# ``ContainerMetadata``/``ExecResult`` objects and catches the same
+# ``PullCancelled``/``PullStalled`` in both modes, so the mock re-exports the
+# real ones rather than growing look-alikes the ``except`` clauses would miss.
 from spark_pulse.tools.docker import (
     ContainerInfo,
+    ContainerMetadata as ContainerMetadata,
     DockerService,
+    ExecResult as ExecResult,
+    PullCancelled as PullCancelled,
+    PullStalled as PullStalled,
     prepare_labels as prepare_labels,
     split_ref,
 )
