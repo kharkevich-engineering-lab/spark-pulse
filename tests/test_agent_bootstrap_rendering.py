@@ -94,11 +94,32 @@ class TestRenderedFilesAreNotInjectable:
             with pytest.raises(BootstrapError):
                 render_sudoers(hostile)
 
-    def test_the_network_sudoers_grants_exactly_nmcli(self):
+    def test_the_network_sudoers_grants_only_the_fabric_verbs(self):
         from spark_pulse.agent.bootstrap import render_network_sudoers
 
         rule = render_network_sudoers("spark")
-        assert rule == "spark ALL=(root) NOPASSWD: /usr/bin/nmcli\n"
+        assert rule.endswith(
+            "spark ALL=(root) NOPASSWD: "
+            "/usr/bin/nmcli connection add *, "
+            "/usr/bin/nmcli connection modify *, "
+            "/usr/bin/nmcli connection up *, "
+            "/usr/bin/nmcli connection down *\n"
+        )
+
+    def test_the_network_sudoers_is_not_the_bare_unrestricted_nmcli(self):
+        """The bug this guards: an unscoped ``nmcli`` grant lets a caller run
+        any nmcli subcommand as root (``connection edit``'s shell,
+        ``connection import`` of an arbitrary VPN plugin, ``device``,
+        ``general``, ...), not just the four the fabric applier issues.
+        """
+        from spark_pulse.agent.bootstrap import render_network_sudoers
+
+        rule = render_network_sudoers("spark")
+        assert "NOPASSWD: /usr/bin/nmcli\n" not in rule
+        for verb in ("edit", "import", "delete"):
+            assert f"nmcli connection {verb}" not in rule
+        for other_object in ("device", "general", "monitor", "radio"):
+            assert f"nmcli {other_object}" not in rule
 
     def test_the_network_sudoers_refuses_a_hostile_username(self):
         from spark_pulse.agent.bootstrap import BootstrapError, render_network_sudoers
