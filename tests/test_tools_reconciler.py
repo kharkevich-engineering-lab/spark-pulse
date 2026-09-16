@@ -185,6 +185,33 @@ class TestSweep:
         # And the intent is spent: the next sweep must not stop it again.
         assert record["sync_intent"] == ""
 
+    def test_a_stop_with_orphans_stays_in_progress(self, records):
+        """A rank a node could not confirm gone keeps the stop unfinished.
+
+        `stop_deployment` returns the record with an `orphans` list when a
+        container could not be confirmed gone. Marking the stop settled then
+        would free the deployment's ports while a container may still hold
+        them — the orphan bug `_finish_delete` already guards against. The stop
+        stays in progress, so the next sweep (and the orphan reaper) retries.
+        """
+        _record(status="running")
+        rc.mark("d1", rc.SYNC_IN_PROGRESS, "stop requested", rc.INTENT_STOP)
+
+        with patch.object(
+            tools.deploy_dispatch,
+            "stop_deployment",
+            return_value={
+                "id": "d1",
+                "orphans": [{"rank": 0, "node": "10.0.0.2"}],
+            },
+        ):
+            rc.Reconciler().sweep()
+
+        record = tools.deployment_records.get("d1")
+        assert record["sync"] == rc.SYNC_IN_PROGRESS
+        assert record["sync_intent"] == rc.INTENT_STOP
+        assert "could not be confirmed gone" in record["sync_reason"]
+
     def test_a_stop_that_could_not_reach_a_node_keeps_its_intent(self, records):
         _record(status="running")
         rc.mark("d1", rc.SYNC_IN_PROGRESS, "stop requested", rc.INTENT_STOP)

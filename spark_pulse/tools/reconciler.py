@@ -228,6 +228,18 @@ class Reconciler:
         if result is None:
             # Removed underneath us — nothing left to converge.
             return {"id": deployment_id, "deleted": True}
+        if result.get("orphans"):
+            # A rank on a node that would not answer was never confirmed gone.
+            # Calling this settled would free the deployment's ports while a
+            # container may still hold them — the same orphan bug `_finish_delete`
+            # guards against. Keep the stop in flight so the next sweep, and the
+            # orphan reaper behind it, tries again.
+            return mark(
+                deployment_id,
+                SYNC_IN_PROGRESS,
+                "waiting for a rank whose container could not be confirmed gone",
+                INTENT_STOP,
+            )
         return mark(deployment_id, SYNC_OK)
 
     def _finish_delete(self, deployment_id: str) -> dict[str, Any] | None:
