@@ -49,6 +49,7 @@ vi.mock("@/lib/api", () => ({
   // there being any.
   fetchNodes: vi.fn(() => Promise.resolve([])),
   fetchModelPresence: vi.fn(),
+  syncModelToNodes: vi.fn(),
 }));
 
 import {
@@ -63,6 +64,7 @@ import {
   fetchNodes,
   saveModelSources,
   startModelDownload,
+  syncModelToNodes,
 } from "@/lib/api";
 
 const models: ModelEntry[] = [
@@ -656,5 +658,222 @@ describe("ModelsPage delete across nodes", () => {
     expect(fetchModelPresence).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Delete" }));
     await waitFor(() => expect(deleteModel).toHaveBeenCalledWith("acme/plain-7b", []));
+  });
+});
+
+/** Replicating a model to the nodes that do not yet have it.
+ *
+ * The inverse of delete: a node presence already reports as holding the
+ * model has nothing to gain from a transfer, so the dialog preselects the
+ * nodes that are missing it rather than the ones that already hold it.
+ */
+describe("ModelsPage replicate across nodes", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(fetchModels).mockResolvedValue(models);
+    vi.mocked(fetchModelSources).mockResolvedValue([{ name: "hf", type: "hf_hub" }]);
+    vi.mocked(fetchModelDownloads).mockResolvedValue([]);
+    vi.mocked(fetchScheduledDeploys).mockResolvedValue([]);
+    vi.mocked(fetchNodes).mockResolvedValue([
+      { is_control_plane: true, address: "192.168.1.100" },
+      { is_control_plane: false, address: "10.0.0.11" },
+      { is_control_plane: false, address: "10.0.0.12" },
+    ] as never);
+    vi.mocked(fetchModelPresence).mockResolvedValue({
+      model: "acme/plain-7b",
+      local: true,
+      nodes: [
+        { node: "10.0.0.11", present: true, error: null },
+        { node: "10.0.0.12", present: false, error: null },
+      ],
+    });
+  });
+
+  it("offers the other machines, and preselects the ones missing a copy", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByLabelText("Replicate acme/plain-7b to other nodes"));
+
+    const dialog = within(screen.getByRole("dialog"));
+    await waitFor(() => expect(dialog.getByText("10.0.0.11")).toBeInTheDocument());
+    // Unchecked where it is already there; checked where it is missing.
+    expect(dialog.getByRole("checkbox", { name: /10\.0\.0\.11/ })).not.toBeChecked();
+    expect(dialog.getByRole("checkbox", { name: /10\.0\.0\.12/ })).toBeChecked();
+    expect(dialog.getByText("already there")).toBeInTheDocument();
+  });
+
+  it("replicates to the nodes ticked, carrying the force flag", async () => {
+    vi.mocked(syncModelToNodes).mockResolvedValue({
+      model: "acme/plain-7b",
+      path: "/hub",
+      ok: true,
+      results: [{ node: "10.0.0.12", ok: true, error: null, duration_s: 1.2, skipped: false }],
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByLabelText("Replicate acme/plain-7b to other nodes"));
+    const dialog = within(screen.getByRole("dialog"));
+    await waitFor(() => expect(dialog.getByText("10.0.0.11")).toBeInTheDocument());
+    await user.click(dialog.getByLabelText("Re-transfer even if already present"));
+    await user.click(dialog.getByRole("button", { name: "Replicate" }));
+
+    await waitFor(() =>
+      expect(syncModelToNodes).toHaveBeenCalledWith(
+        "acme/plain-7b",
+        ["10.0.0.12"],
+        undefined,
+        { force: true },
+      ),
+    );
+    expect(await dialog.findByText("verified")).toBeInTheDocument();
+  });
+
+  it("shows a node the server skipped because it already verified", async () => {
+    vi.mocked(syncModelToNodes).mockResolvedValue({
+      model: "acme/plain-7b",
+      path: "/hub",
+      ok: true,
+      results: [{ node: "10.0.0.12", ok: true, error: null, duration_s: 0.1, skipped: true }],
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByLabelText("Replicate acme/plain-7b to other nodes"));
+    const dialog = within(screen.getByRole("dialog"));
+    await waitFor(() => expect(dialog.getByText("10.0.0.11")).toBeInTheDocument());
+    await user.click(dialog.getByRole("button", { name: "Replicate" }));
+
+    expect(await dialog.findByText("already verified — skipped")).toBeInTheDocument();
+  });
+
+  it("names the node that failed rather than claiming success", async () => {
+    vi.mocked(syncModelToNodes).mockResolvedValue({
+      model: "acme/plain-7b",
+      path: "/hub",
+      ok: false,
+      results: [{ node: "10.0.0.12", ok: false, error: "no space left on device", duration_s: 2, skipped: false }],
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByLabelText("Replicate acme/plain-7b to other nodes"));
+    const dialog = within(screen.getByRole("dialog"));
+    await waitFor(() => expect(dialog.getByText("10.0.0.11")).toBeInTheDocument());
+    await user.click(dialog.getByRole("button", { name: "Replicate" }));
+
+    expect(await dialog.findByText("no space left on device")).toBeInTheDocument();
+  });
+
+  it("surfaces a transport-level replication error inline", async () => {
+    vi.mocked(syncModelToNodes).mockRejectedValue(new Error("agent unreachable"));
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByLabelText("Replicate acme/plain-7b to other nodes"));
+    const dialog = within(screen.getByRole("dialog"));
+    await waitFor(() => expect(dialog.getByText("10.0.0.11")).toBeInTheDocument());
+    await user.click(dialog.getByRole("button", { name: "Replicate" }));
+
+    expect(await dialog.findByText("agent unreachable")).toBeInTheDocument();
+  });
+
+  it("re-reads presence after replicating so the checkboxes reflect the transfer", async () => {
+    vi.mocked(syncModelToNodes).mockResolvedValue({
+      model: "acme/plain-7b",
+      path: "/hub",
+      ok: true,
+      results: [{ node: "10.0.0.12", ok: true, error: null, duration_s: 1, skipped: false }],
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByLabelText("Replicate acme/plain-7b to other nodes"));
+    const dialog = within(screen.getByRole("dialog"));
+    await waitFor(() => expect(dialog.getByText("10.0.0.11")).toBeInTheDocument());
+    const before = vi.mocked(fetchModelPresence).mock.calls.length;
+
+    await user.click(dialog.getByRole("button", { name: "Replicate" }));
+
+    await waitFor(() =>
+      expect(vi.mocked(fetchModelPresence).mock.calls.length).toBeGreaterThan(before),
+    );
+  });
+
+  it("does not offer replication on a single-machine install", async () => {
+    vi.mocked(fetchNodes).mockResolvedValue([
+      { is_control_plane: true, address: "192.168.1.100" },
+    ] as never);
+    renderPage();
+
+    await screen.findByText("acme/plain-7b");
+    expect(screen.queryByLabelText("Replicate acme/plain-7b to other nodes")).not.toBeInTheDocument();
+  });
+
+  it("lets the operator override the preselection by hand", async () => {
+    vi.mocked(syncModelToNodes).mockResolvedValue({
+      model: "acme/plain-7b",
+      path: "/hub",
+      ok: true,
+      results: [],
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByLabelText("Replicate acme/plain-7b to other nodes"));
+    const dialog = within(screen.getByRole("dialog"));
+    await waitFor(() => expect(dialog.getByText("10.0.0.11")).toBeInTheDocument());
+
+    // Untick the preselected node and tick the one that already has it.
+    await user.click(dialog.getByRole("checkbox", { name: /10\.0\.0\.12/ }));
+    await user.click(dialog.getByRole("checkbox", { name: /10\.0\.0\.11/ }));
+    await user.click(dialog.getByRole("button", { name: "Replicate" }));
+
+    await waitFor(() =>
+      expect(syncModelToNodes).toHaveBeenCalledWith(
+        "acme/plain-7b",
+        ["10.0.0.11"],
+        undefined,
+        { force: false },
+      ),
+    );
+  });
+
+  it("keeps a node the operator ticked when presence answers late", async () => {
+    let settle: (value: never) => void = () => {};
+    vi.mocked(fetchModelPresence).mockReturnValue(
+      new Promise((resolve) => {
+        settle = resolve as never;
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByLabelText("Replicate acme/plain-7b to other nodes"));
+    const dialog = within(screen.getByRole("dialog"));
+    await user.click(dialog.getByRole("checkbox", { name: /10\.0\.0\.11/ }));
+    await act(async () => {
+      settle({
+        model: "acme/plain-7b",
+        local: true,
+        nodes: [{ node: "10.0.0.12", present: false, error: null }],
+      } as never);
+    });
+
+    // The operator's own tick on 10.0.0.11 survives the late-arriving answer.
+    expect(dialog.getByRole("checkbox", { name: /10\.0\.0\.11/ })).toBeChecked();
+  });
+
+  it("leaves presence unresolved when a node cannot be asked", async () => {
+    vi.mocked(fetchModelPresence).mockRejectedValue(new Error("agent unreachable"));
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByLabelText("Replicate acme/plain-7b to other nodes"));
+    const dialog = within(screen.getByRole("dialog"));
+
+    await waitFor(() => expect(dialog.queryByText("Loading…")).not.toBeInTheDocument());
+    expect(dialog.queryByText("already there")).not.toBeInTheDocument();
   });
 });

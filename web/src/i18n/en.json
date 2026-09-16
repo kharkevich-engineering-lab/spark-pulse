@@ -696,7 +696,17 @@
     "deleteConfirm": "Delete everywhere selected",
     "deleteFromNodes": "{count} node(s) still hold it",
     "removedFrom": "Removed from {count} node(s), freeing {size}",
-    "saveFailed": "Save failed"
+    "saveFailed": "Save failed",
+    "replicateModel": "Replicate {model} to other nodes",
+    "replicateTitle": "Replicate to nodes",
+    "replicateBody": "Copy the cached snapshot for \"{model}\" to the selected nodes.",
+    "replicateTo": "Replicate to",
+    "alreadyThere": "already there",
+    "forceOption": "Re-transfer even if already present",
+    "replicateConfirm": "Replicate",
+    "replicateVerified": "verified",
+    "replicateSkipped": "already verified — skipped",
+    "replicateNodeFailed": "failed"
   },
   "mcp": {
     "title": "MCP Server",

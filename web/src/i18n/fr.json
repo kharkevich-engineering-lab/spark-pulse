@@ -696,7 +696,17 @@
     "deleteConfirm": "Supprimer partout où c'est coché",
     "deleteFromNodes": "{count} nœud(s) le détiennent encore",
     "removedFrom": "Supprimé de {count} nœud(s), libérant {size}",
-    "saveFailed": "Échec de l'enregistrement"
+    "saveFailed": "Échec de l'enregistrement",
+    "replicateModel": "Répliquer {model} vers d'autres nœuds",
+    "replicateTitle": "Répliquer vers des nœuds",
+    "replicateBody": "Copier l'instantané en cache de « {model} » vers les nœuds sélectionnés.",
+    "replicateTo": "Répliquer vers",
+    "alreadyThere": "déjà présent",
+    "forceOption": "Retransférer même si déjà présent",
+    "replicateConfirm": "Répliquer",
+    "replicateVerified": "vérifié",
+    "replicateSkipped": "déjà vérifié — ignoré",
+    "replicateNodeFailed": "échec"
   },
   "mcp": {
     "title": "Serveur MCP",

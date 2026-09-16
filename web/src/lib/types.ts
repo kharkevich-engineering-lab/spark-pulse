@@ -839,6 +839,11 @@ export interface ModelSyncNodeResult {
   ok: boolean;
   error: string | null;
   duration_s: number;
+  /** True when the node already held a verified copy and nothing transferred. */
+  skipped?: boolean;
+  /** Why: "node already holds a verified copy of this revision", a transfer
+   *  failure, etc. Present whether or not the node succeeded. */
+  reason?: string;
 }
 
 export interface ModelSyncResult {
