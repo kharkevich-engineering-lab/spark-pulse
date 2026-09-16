@@ -241,17 +241,18 @@ describe("SettingsPage features tab", () => {
     expect(screen.queryByRole("switch", { name: /MCP/i })).toBeNull();
   });
 
-  /** The switch is real — the recipes page reads `cluster_enabled` to decide
-   *  whether a `cluster_only` recipe is offered — but it is a feature switch,
-   *  not a page of its own. What went away is the tab, and the second copy of
-   *  the value in `/api/config` that nothing read. */
-  it("keeps the cluster switch, on this tab, still writing what recipes read", async () => {
+  /** The switch is real — it forces a `cluster_only` recipe on below two
+   *  nodes — but it is a feature switch, not a page of its own. What decides
+   *  availability the rest of the time is the registry, which the settings
+   *  response derives into its `cluster` block. What went away is the tab, and
+   *  the second copy of the value in `/api/config` that nothing read. */
+  it("keeps the cluster override, on this tab, still writing what recipes read", async () => {
     const user = userEvent.setup();
     render(<SettingsPage />);
     await openTab(/features/i);
 
     expect(screen.queryByRole("tab", { name: /cluster/i })).toBeNull();
-    await user.click(await screen.findByRole("switch", { name: "Cluster mode" }));
+    await user.click(await screen.findByRole("switch", { name: "Force cluster mode" }));
     await user.click(screen.getByRole("button", { name: /save settings/i }));
 
     await waitFor(() =>

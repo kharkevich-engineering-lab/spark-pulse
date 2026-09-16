@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { Link } from "react-router-dom";
 import { useI18n } from "@/lib/i18n";
 import { fetchRecipes, fetchRecipe, fetchDeployments, createDeployment, scheduleDeploy, fetchSettings, fetchRecipeCustomization, saveRecipeCustomization, deleteRecipeCustomization, fetchMods, fetchMod, listCustomRecipes, saveCustomRecipe, deleteCustomRecipe, listCustomMods, getCustomModFiles, saveCustomModFiles, deleteCustomMod, ApiError } from "@/lib/api";
 import type { RecipeDetail, RecipeCustomization, RecipeSummary, ModSummary, ModDetail, CustomRecipeInfo, CustomModInfo, ModFileMap, PreflightReport } from "@/lib/types";
@@ -227,7 +228,13 @@ export default function RecipesPage() {
   const [showNewRecipe, setShowNewRecipe] = useState(false);
   const [showNewMod, setShowNewMod] = useState(false);
 
-  const clusterEnabled = settings?.cluster_enabled ?? false;
+  // What decides whether a `cluster_only` recipe is offered is the cluster the
+  // control plane actually has — `/api/settings` derives it from the registry
+  // — not the `cluster_enabled` switch, which only forces the recipes on below
+  // two nodes. An operator who had enrolled a second Spark used to be told
+  // every multi-node recipe was unavailable until they found that toggle.
+  const clusterAvailable = settings?.cluster?.available ?? settings?.cluster_enabled ?? false;
+  const clusterNodeCount = settings?.cluster?.node_count ?? 1;
 
   const runningIds = useMemo(() => {
     if (!deployments) return new Set<string>();
@@ -236,10 +243,10 @@ export default function RecipesPage() {
 
   const { available, unavailable } = useMemo(() => {
     if (!recipes) return { available: [], unavailable: [] };
-    const avail = recipes.filter(r => !(r.cluster_only && !clusterEnabled));
-    const unavail = recipes.filter(r => r.cluster_only && !clusterEnabled);
+    const avail = recipes.filter(r => !(r.cluster_only && !clusterAvailable));
+    const unavail = recipes.filter(r => r.cluster_only && !clusterAvailable);
     return { available: avail, unavailable: unavail };
-  }, [recipes, clusterEnabled]);
+  }, [recipes, clusterAvailable]);
 
 
   const loadCustomData = async () => {
@@ -603,8 +610,18 @@ export default function RecipesPage() {
                         className="flex items-center gap-2 text-sm text-text-muted hover:text-text transition-colors mb-3"
                       >
                         <ChevronDown size={16} className={`transition-transform ${showUnavailable ? "rotate-180" : ""}`} />
-                        {showUnavailable ? "Hide" : "Show"} {unavailable.length} unavailable recipe{unavailable.length > 1 ? "s" : ""} (cluster only)
+                        {plural(showUnavailable ? "recipes.hideUnavailable" : "recipes.showUnavailable", unavailable.length)}
                       </button>
+                      {/* Why they are unavailable, with the two things that
+                          would change it. A count the operator can check
+                          against the Cluster page beats "enable cluster
+                          mode", which names a setting and not a condition. */}
+                      <p className="text-sm text-text-muted mb-3">
+                        {t("recipes.clusterHint", { count: clusterNodeCount })}{" "}
+                        <Link to="/cluster" className="text-primary hover:underline">{t("recipes.clusterHintAddNode")}</Link>
+                        {" · "}
+                        <Link to="/settings" className="text-primary hover:underline">{t("recipes.clusterHintForce")}</Link>
+                      </p>
                       {showUnavailable && (
                         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                           {unavailable.map((r) => (
@@ -720,7 +737,7 @@ export default function RecipesPage() {
           recipe={selected.recipe}
           customization={selected.customization}
           isRunning={runningIds.has(selected.recipe.id)}
-          clusterEnabled={clusterEnabled}
+          clusterAvailable={clusterAvailable}
           onClose={() => setSelected(null)}
           onError={(msg) => setAlertModal({ title: t("common.error"), message: msg })}
           onDeploy={handleDeploy}
