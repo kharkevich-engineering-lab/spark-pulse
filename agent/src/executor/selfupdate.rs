@@ -85,8 +85,20 @@ pub fn install(request: &InstallBundle) -> Result<BundleInstalled, OpError> {
     let staged = root.join(format!(".{}.tar.gz", request.dir_name));
     std::fs::write(&staged, &request.tarball)
         .map_err(|e| err(format!("could not stage the bundle: {e}")))?;
+
+    // The bundle is only as trustworthy as the mTLS channel it arrived on, but
+    // a misrouted or malicious archive should not be able to write outside
+    // `target` regardless — so every member is checked before anything is
+    // unpacked, and `--no-absolute-names` is a second, redundant guard at
+    // extraction time against the one case (`tar -tzf` and `-xzf` disagreeing
+    // on what counts as absolute) that check can't see.
+    if let Err(e) = validate_tar_members(&staged) {
+        let _ = std::fs::remove_file(&staged);
+        return Err(e);
+    }
+
     let extract = Command::new("tar")
-        .args(["-xzf"])
+        .args(["--no-absolute-names", "-xzf"])
         .arg(&staged)
         .arg("-C")
         .arg(&target)
@@ -168,6 +180,42 @@ pub fn install(request: &InstallBundle) -> Result<BundleInstalled, OpError> {
     })
 }
 
+/// Reject a tar member whose path would land outside the extraction root: an
+/// absolute path, or any `..` component. `tar -xzf` alone would follow either
+/// straight through `-C target`.
+fn is_unsafe_member(name: &str) -> bool {
+    let path = Path::new(name);
+    path.is_absolute()
+        || path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+}
+
+/// List the staged archive's members and refuse it if any is unsafe, before
+/// `tar` is asked to extract a single byte.
+fn validate_tar_members(archive: &Path) -> Result<(), OpError> {
+    let listing = Command::new("tar")
+        .arg("-tzf")
+        .arg(archive)
+        .output()
+        .map_err(|e| err(format!("could not inspect the bundle: {e}")))?;
+    if !listing.status.success() {
+        return Err(err(format!(
+            "could not list the bundle's contents: {}",
+            String::from_utf8_lossy(&listing.stderr).trim()
+        )));
+    }
+    let names = String::from_utf8_lossy(&listing.stdout);
+    for name in names.lines() {
+        if is_unsafe_member(name) {
+            return Err(err(format!(
+                "the bundle contains an unsafe member path: {name:?}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Which systemctl scope manages this agent's unit: `Some("--user")`,
 /// `Some("")` (system), or `None` when neither knows it.
 ///
@@ -247,8 +295,28 @@ fn prune_old_versions(root: &Path, keep_new: &str, keep_prev: Option<&str>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{install, prune_old_versions};
+    use super::{install, prune_old_versions, validate_tar_members};
     use crate::proto::InstallBundle;
+
+    /// Build a `.tar.gz` at `path` containing one member named `member_name`,
+    /// writing the name straight into the header's raw bytes so a crafted
+    /// `..`/absolute path — which the crate's own `set_path` refuses to
+    /// produce, because it is meant for well-behaved archives — reaches the
+    /// archive exactly as an adversarial one would.
+    fn write_archive_with_member(path: &std::path::Path, member_name: &str) {
+        let file = std::fs::File::create(path).unwrap();
+        let enc = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+        let mut builder = tar::Builder::new(enc);
+        let data = b"x";
+        let mut header = tar::Header::new_gnu();
+        let name_field = &mut header.as_gnu_mut().unwrap().name;
+        let bytes = member_name.as_bytes();
+        name_field[..bytes.len()].copy_from_slice(bytes);
+        header.set_size(data.len() as u64);
+        header.set_cksum();
+        builder.append(&header, &data[..]).unwrap();
+        builder.into_inner().unwrap().finish().unwrap();
+    }
 
     #[test]
     fn pruning_keeps_the_new_and_previous_versions_and_deletes_the_rest() {
@@ -306,6 +374,35 @@ mod tests {
                 e.message
             );
         }
+    }
+
+    #[test]
+    fn a_tar_member_with_a_parent_dir_component_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("evil.tar.gz");
+        write_archive_with_member(&archive, "../evil");
+
+        let e = validate_tar_members(&archive).unwrap_err();
+        assert!(e.message.contains("unsafe member path"), "{}", e.message);
+    }
+
+    #[test]
+    fn a_tar_member_with_an_absolute_path_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("evil.tar.gz");
+        write_archive_with_member(&archive, "/etc/passwd");
+
+        let e = validate_tar_members(&archive).unwrap_err();
+        assert!(e.message.contains("unsafe member path"), "{}", e.message);
+    }
+
+    #[test]
+    fn a_tar_with_only_safe_members_passes_validation() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("fine.tar.gz");
+        write_archive_with_member(&archive, "bin/spark-pulse-agent");
+
+        validate_tar_members(&archive).unwrap();
     }
 
     #[test]

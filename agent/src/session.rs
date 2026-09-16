@@ -74,6 +74,22 @@ const KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(5);
 /// stop. Mirrors the Python agent's `cancel()` callable exactly.
 type CancelFlag = Arc<AtomicBool>;
 
+/// Lock a `Mutex`, recovering the guard rather than propagating poison.
+///
+/// A `std::sync::Mutex` poisons on any panic while held, and every later
+/// `.lock()` then panics too — for the identity lock that is every dial and
+/// every renewal, for the running-commands lock that is every heartbeat and
+/// every cancel, so one panic anywhere under the lock would cascade into every
+/// task that ever touches it again, session-wide. The data itself is never
+/// corrupted by a panic (`Mutex` isn't `catch_unwind`-aware of what the
+/// invariant it protects is, only that a panic happened), so recovering it is
+/// the same choice a non-poisoning mutex makes by default.
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 pub struct Agent {
     identity: Mutex<AgentIdentity>,
     target: String,
@@ -144,7 +160,7 @@ impl Agent {
     /// urgent.
     async fn connect(&self) -> Result<Channel> {
         let (bundle, certificate, key) = {
-            let identity = self.identity.lock().unwrap();
+            let identity = lock(&self.identity);
             (
                 identity.trust_bundle_pem.clone(),
                 identity.certificate_pem.clone(),
@@ -222,7 +238,7 @@ impl Agent {
         // result cannot be delivered must not be reported as anything.
         beat.abort();
         renew.abort();
-        for (_, flag) in self.running.lock().unwrap().drain() {
+        for (_, flag) in lock(&self.running).drain() {
             flag.store(true, Ordering::SeqCst);
         }
         result
@@ -260,7 +276,7 @@ impl Agent {
                     // one that already finished is dropped rather than
                     // remembered, so nothing accumulates for the life of the
                     // process.
-                    if let Some(flag) = self.running.lock().unwrap().get(&cancel.command_id) {
+                    if let Some(flag) = lock(&self.running).get(&cancel.command_id) {
                         tracing::debug!(command = %cancel.command_id, "cancelled");
                         flag.store(true, Ordering::SeqCst);
                     }
@@ -280,10 +296,7 @@ impl Agent {
     fn start_command(&self, command: Command, outbox: mpsc::Sender<AgentMessage>) {
         let id = command.command_id.clone();
         let flag: CancelFlag = Arc::new(AtomicBool::new(false));
-        self.running
-            .lock()
-            .unwrap()
-            .insert(id.clone(), Arc::clone(&flag));
+        lock(&self.running).insert(id.clone(), Arc::clone(&flag));
         let executor = Arc::clone(&self.executor);
         let running = Arc::clone(&self.running);
         let context = CommandContext {
@@ -292,7 +305,7 @@ impl Agent {
         };
         tokio::spawn(async move {
             let result = executor.execute(command, context).await;
-            running.lock().unwrap().remove(&id);
+            lock(&running).remove(&id);
             // A closed outbox means the stream went away while we worked. The
             // result is dropped rather than logged as an error: the caller has
             // already been told "unknown", which is the truth.
@@ -365,7 +378,7 @@ impl Agent {
         // Only meaningful once we know when the certificate expires. An
         // identity with no window recorded is one written before expiry was
         // tracked; renewing on a guess would be worse than leaving it.
-        let identity = self.identity.lock().unwrap();
+        let identity = lock(&self.identity);
         (identity.meta.not_after > 0.0).then(|| Arc::new(Mutex::new(identity.clone())))
     }
 }
@@ -384,7 +397,7 @@ async fn renewal_loop(channel: Channel, state: Option<Shared>) {
     let Some(state) = state else { return };
     loop {
         let delay = {
-            let identity = state.lock().unwrap();
+            let identity = lock(&state);
             renewal_delay(identity.meta.not_before, identity.meta.not_after)
         };
         tokio::time::sleep(delay).await;
@@ -414,7 +427,7 @@ async fn renew_once(channel: &Channel, state: &Shared) -> Result<String> {
         .map_err(|status| anyhow::anyhow!("the control plane refused: {}", status.message()))?
         .into_inner();
 
-    let mut identity = state.lock().unwrap();
+    let mut identity = lock(state);
     // The pin is *checked*, not replaced. A renewal that arrives carrying a
     // different trust bundle is the one thing a pin exists to catch, and
     // adopting it would delete the protection at exactly the moment it
