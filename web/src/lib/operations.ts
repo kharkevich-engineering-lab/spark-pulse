@@ -1,54 +1,14 @@
-// ── Operation State Machine (AF-1) ───────────────────────────────────────────
-// Canonical lifecycle for all long-running workflows: deployments of any node
-// count, mod applications, and reconciliation.
-
-export enum OperationState {
-  IDLE = "idle",
-  PENDING = "pending",
-  RUNNING = "running",
-  SUCCESS = "success",
-  FAILED = "failed",
-  ROLLING_BACK = "rolling_back",
-  ROLLED_BACK = "rolled_back",
-  CANCELLED = "cancelled",
-}
+// ── Shared deployment/event/health types ─────────────────────────────────────
+//
+// This file used to also hold an operation-lifecycle state machine
+// (OperationState/OperationStatus/canTransition), a lock manager, an audit
+// trail, a dry-run result shape and an SSH error classification — an entire
+// unbuilt "operation" subsystem with zero production imports, kept "covered"
+// only by its own dedicated tests. It is deleted rather than kept as an
+// aspiration; what remains below is what `useSSEConnection`, `EventStreamViewer`
+// and `HealthBadge` actually use.
 
 export type OperationResourceType = "cluster" | "deployment" | "mod" | "reconciliation";
-
-export interface OperationStatus {
-  operation_id: string;
-  resource: string;               // cluster name, deployment id, mod name
-  resource_type: OperationResourceType;
-  state: OperationState;
-  started_at: string;
-  completed_at?: string;
-  progress?: number;              // 0-100
-  current_step?: string;          // "ensure_ray_workers()", "validate_cluster()"
-  error?: string;
-  actor?: string;                 // Audit trail: who triggered the action
-  correlation_id?: string;        // Log correlation across deployment/docker/ray logs
-}
-
-// ── State Transitions ────────────────────────────────────────────────────────
-// IDLE → PENDING → RUNNING → SUCCESS
-//                       ↘ FAILED → ROLLING_BACK → ROLLED_BACK
-//                       ↘ FAILED → (retry) → RUNNING
-//                       ↘ CANCELLED (from RUNNING or PENDING)
-
-export const VALID_TRANSITIONS: Record<OperationState, OperationState[]> = {
-  [OperationState.IDLE]:       [OperationState.PENDING],
-  [OperationState.PENDING]:    [OperationState.RUNNING, OperationState.CANCELLED],
-  [OperationState.RUNNING]:    [OperationState.SUCCESS, OperationState.FAILED, OperationState.CANCELLED],
-  [OperationState.SUCCESS]:    [],
-  [OperationState.FAILED]:     [OperationState.ROLLING_BACK, OperationState.PENDING], // retry
-  [OperationState.ROLLING_BACK]: [OperationState.ROLLED_BACK],
-  [OperationState.ROLLED_BACK]: [],
-  [OperationState.CANCELLED]:  [],
-};
-
-export function canTransition(from: OperationState, to: OperationState): boolean {
-  return VALID_TRANSITIONS[from]?.includes(to) ?? false;
-}
 
 // ── SSE Connection State (AF-3) ──────────────────────────────────────────────
 
@@ -135,67 +95,6 @@ export interface DeploymentEvent {
   severity?: "info" | "warning" | "error";
 }
 
-// ── Audit Trail (AF-7) ───────────────────────────────────────────────────────
-
-export interface AuditEntry {
-  entry_id: string;
-  timestamp: string;
-  actor: string;
-  action: string;               // "cluster_start", "mod_apply", "rollback"
-  resource_type: string;
-  resource: string;
-  outcome: "success" | "failure" | "cancelled";
-  details?: Record<string, unknown>;
-  correlation_id?: string;
-}
-
-// ── Dry Run (AF-9) ───────────────────────────────────────────────────────────
-
-export interface DryRunResult {
-  script_analysis: {
-    path: string;
-    command_line: string | null;
-    parallelism: { tp: number; pp: number; dp: number };
-    backend: string | null;
-    has_model_flag: boolean;
-    is_valid: boolean;
-    validation: { healthy: boolean; warnings: string[]; errors: string[] } | null;
-  };
-  parallelism: { tp: number; pp: number; dp: number };
-  capacity_check: { valid: boolean; message: string };
-  mod_validation: { healthy: boolean; warnings: string[]; errors: string[] }[];
-  network_validation: ValidationResult;
-  estimated_duration_seconds: number;
-  warnings: string[];
-  errors: string[];
-}
-
-export interface ValidationResult {
-  valid: boolean;
-  message: string;
-  details?: Record<string, unknown>;
-}
-
-// ── Lock Manager (Phase 6.2) ─────────────────────────────────────────────────
-
-export enum LockType {
-  CLUSTER_START = "cluster_start",
-  CLUSTER_STOP = "cluster_stop",
-  MOD_APPLY = "mod_apply",
-  DEPLOYMENT_START = "deployment_start",
-  DEPLOYMENT_STOP = "deployment_stop",
-  RECONCILIATION = "reconciliation",
-}
-
-export interface LockInfo {
-  lock_id: string;
-  lock_type: LockType;
-  resource: string;
-  holder?: string;              // User who holds the lock
-  acquired_at: string;
-  expires_at?: string;
-}
-
 // ── Health ───────────────────────────────────────────────────────────────────
 //
 // The four words a deployment's status badge can say. This is derived from the
@@ -214,39 +113,4 @@ export enum HealthStatus {
   DEGRADED = "degraded",
   UNHEALTHY = "unhealthy",
   UNKNOWN = "unknown",
-}
-
-// ── SSH Error Classification (Phase 6.4) ─────────────────────────────────────
-
-export enum SSHErrorType {
-  CONNECTION_REFUSED = "connection_refused",
-  AUTHENTICATION_FAILED = "authentication_failed",
-  TIMEOUT = "timeout",
-  COMMAND_FAILED = "command_failed",
-  HOST_UNKNOWN = "host_unknown",
-  PERMISSION_DENIED = "permission_denied",
-}
-
-export interface SSHError {
-  error_type: SSHErrorType;
-  node: string;
-  message: string;
-  suggestion: string;
-  original_error?: string;
-}
-
-// ── Mod Security (Phase 6.5) ─────────────────────────────────────────────────
-
-export enum NetworkAccessPolicy {
-  ALLOW_ALL = "allow_all",
-  DENY_ALL = "deny_all",
-  ALLOW_LIST = "allow_list",
-  DENY_LIST = "deny_list",
-}
-
-export interface ModSecurityConfig {
-  network_policy: NetworkAccessPolicy;
-  allowed_domains?: string[];
-  denied_domains?: string[];
-  max_mod_size_mb: number;      // Default: 50
 }

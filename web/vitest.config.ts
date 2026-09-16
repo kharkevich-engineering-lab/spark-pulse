@@ -32,15 +32,18 @@ export default defineConfig({
         "src/main.tsx",
         "src/vite-env.d.ts",
       ],
-      // Set from what the suite actually reaches (97.2 lines / 94.8 statements
-      // / 92.7 functions / 86.6 branches), minus a point or two of headroom.
-      // They are a ratchet, not an aspiration: raise them when the suite
-      // earns it, and never lower one to make a red build green.
+      // Floored at what the suite actually reaches after removing the unused
+      // operation-subsystem code (96.64 lines / 94.27 statements / 92.04
+      // functions / 86.99 branches) that used to inflate this denominator
+      // with dead code kept "covered" only by its own tests. This is a
+      // ratchet floor at the honest post-cleanup baseline, not an
+      // aspiration: raise it when the suite earns it, never lower it to
+      // make a red build green.
       thresholds: {
-        lines: 95,
-        statements: 93,
-        functions: 90,
-        branches: 85,
+        lines: 96,
+        statements: 94,
+        functions: 92,
+        branches: 86,
       },
     },
   },
