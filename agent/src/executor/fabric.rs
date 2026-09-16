@@ -19,28 +19,49 @@
 //! plan assumed is a failed ping with the link named, not a success.
 
 use std::process::Command;
+use std::time::Duration;
 
+use super::bounded;
 use super::OpError;
 use crate::proto::{ConfigureFabric, FabricPing, FabricPortState, FabricResult};
 
 /// The one privileged program the agent runs, matching the sudoers grant.
 const NMCLI: &str = "nmcli";
 
+/// How long any `nmcli` invocation may run. A NetworkManager stuck mid-D-Bus
+/// transaction can leave `nmcli` waiting on a reply that never arrives; the
+/// `-n` on `sudo` already refuses to *prompt*, but nothing else bounds the
+/// call, so it runs through the timed runner. Bringing a connection up is the
+/// slowest thing here, so the window is generous.
+const NMCLI_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long the read-back helpers (`ip`, `ping`) may run. `ping` bounds itself
+/// with `-c 2 -W 2`, but a hung `ip` or a pathological kernel path should not
+/// hold the executor, so both go through the timed runner too.
+const READBACK_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Run `nmcli` as root via `sudo -n`. The `-n` never prompts: if the sudoers
 /// rule is missing the call fails fast rather than hanging on a password.
 fn sudo_nmcli(args: &[&str]) -> Result<String, OpError> {
-    let output = Command::new("sudo")
-        .arg("-n")
-        .arg(NMCLI)
-        .args(args)
-        .output()
-        .map_err(|error| {
-            OpError::new(
-                "NativeRuntimeError",
-                format!("could not run sudo nmcli ({error})"),
-            )
-        })?;
-    if !output.status.success() {
+    let mut command = Command::new("sudo");
+    command.arg("-n").arg(NMCLI).args(args);
+    let output = bounded::run(command, NMCLI_TIMEOUT).map_err(|error| {
+        OpError::new(
+            "NativeRuntimeError",
+            format!("could not run sudo nmcli ({error})"),
+        )
+    })?;
+    if output.timed_out() {
+        return Err(OpError::new(
+            "NativeRuntimeError",
+            format!(
+                "sudo nmcli {} timed out after {}s",
+                args.first().copied().unwrap_or(""),
+                NMCLI_TIMEOUT.as_secs()
+            ),
+        ));
+    }
+    if !output.status.map(|s| s.success()).unwrap_or(false) {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
         let text = if stderr.trim().is_empty() {
@@ -58,11 +79,18 @@ fn sudo_nmcli(args: &[&str]) -> Result<String, OpError> {
 
 /// Read-only `nmcli`, no privilege — listing connections needs none.
 fn nmcli(args: &[&str]) -> Result<String, String> {
-    let output = Command::new(NMCLI)
-        .args(args)
-        .output()
+    let mut command = Command::new(NMCLI);
+    command.args(args);
+    let output = bounded::run(command, NMCLI_TIMEOUT)
         .map_err(|error| format!("could not run nmcli ({error})"))?;
-    if !output.status.success() {
+    if output.timed_out() {
+        return Err(format!(
+            "nmcli {} timed out after {}s",
+            args.first().copied().unwrap_or(""),
+            NMCLI_TIMEOUT.as_secs()
+        ));
+    }
+    if !output.status.map(|s| s.success()).unwrap_or(false) {
         return Err(format!(
             "nmcli {}: {}",
             args.first().copied().unwrap_or(""),
@@ -98,11 +126,12 @@ fn parse_connections(listing: &str) -> Vec<(String, String)> {
 
 /// The IPv4 address currently on a device, `<ip>/<prefix>`, or empty.
 fn address_of(netdev: &str) -> String {
-    let output = Command::new("ip")
-        .args(["-o", "-f", "inet", "addr", "show", "dev", netdev])
-        .output();
-    let text = match output {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
+    let mut command = Command::new("ip");
+    command.args(["-o", "-f", "inet", "addr", "show", "dev", netdev]);
+    let text = match bounded::run(command, READBACK_TIMEOUT) {
+        Ok(o) if o.status.map(|s| s.success()).unwrap_or(false) => {
+            String::from_utf8_lossy(&o.stdout).into_owned()
+        }
         _ => return String::new(),
     };
     // `2: enp1s0f1np1    inet 192.168.177.11/24 brd ... scope global ...`
@@ -125,10 +154,12 @@ fn mtu_of(netdev: &str) -> u32 {
 
 /// Ping `address` from `netdev`; two packets, a short deadline.
 fn ping(netdev: &str, address: &str) -> bool {
-    Command::new("ping")
-        .args(["-c", "2", "-W", "2", "-I", netdev, address])
-        .output()
-        .map(|o| o.status.success())
+    let mut command = Command::new("ping");
+    command.args(["-c", "2", "-W", "2", "-I", netdev, address]);
+    // `-c 2 -W 2` already bounds ping to a few seconds; the outer timeout is a
+    // backstop so a wedged ping can never hold the executor open.
+    bounded::run(command, READBACK_TIMEOUT)
+        .map(|o| o.status.map(|s| s.success()).unwrap_or(false))
         .unwrap_or(false)
 }
 

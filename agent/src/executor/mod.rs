@@ -16,6 +16,7 @@
 //! since been replaced cannot act even if it is still in flight somewhere.
 //! There is no leader election to be on the wrong side of.
 
+pub mod bounded;
 pub mod containers;
 pub mod copy;
 pub mod fabric;
@@ -278,6 +279,30 @@ impl Executor {
                 }
             };
         }
+        // Run a synchronous, potentially-blocking operation off the runtime.
+        //
+        // `nvidia-smi`, `df`, `nmcli`, an install's `tar`, a snapshot walk —
+        // each can block for seconds (a wedged driver, a stuck mount) while
+        // holding the worker this task runs on. `/sse/metrics` polls every
+        // node's stats every few seconds, so an inline block here starves the
+        // read loop and heartbeat until a live node reads "unreachable".
+        // `spawn_blocking` moves the work to the blocking pool; a join error
+        // (a panic, or runtime shutdown) becomes a definite `CommandFailure`,
+        // never a panic escaping `execute`.
+        macro_rules! blocking {
+            ($work:expr) => {
+                match tokio::task::spawn_blocking(move || $work).await {
+                    Ok(value) => value,
+                    Err(error) => {
+                        return failure(
+                            id,
+                            "NativeRuntimeError",
+                            format!("a node operation did not complete: {error}"),
+                        )
+                    }
+                }
+            };
+        }
 
         let docker = match self.docker() {
             Ok(docker) => docker,
@@ -285,35 +310,45 @@ impl Executor {
                 // `get_facts` is the one thing a node with no daemon can still
                 // answer, and it is how an operator finds out *why* the node
                 // is useless. Answering it needs no daemon, so it is answered.
-                match &op {
+                //
+                // Matched by value (the `Err` arm always returns, so `op` is
+                // untouched on the path that reaches the main match below), and
+                // every blocking arm goes through `blocking!` so a hung probe
+                // on a daemonless node still cannot pin a worker.
+                match op {
                     Op::GetFacts(_) => {
                         return ok!(Outcome::Facts(self.collect_facts().await));
                     }
                     // Hardware and disk are readable without a daemon, and a
                     // node whose Docker is down is exactly when an operator
                     // wants to see its GPU and its free space.
-                    Op::GetNodeStats(_) => return ok!(Outcome::Stats(stats::collect())),
+                    Op::GetNodeStats(_) => {
+                        let stats = blocking!(stats::collect());
+                        return ok!(Outcome::Stats(stats));
+                    }
                     Op::ListSnapshot(req) => {
-                        let listing = attempt!(snapshots::list(req));
+                        let listing = attempt!(blocking!(snapshots::list(&req)));
                         return ok!(Outcome::Snapshot(listing));
                     }
                     Op::RemoveSnapshot(req) => {
-                        let removal = attempt!(snapshots::remove(req));
+                        let removal = attempt!(blocking!(snapshots::remove(&req)));
                         return ok!(Outcome::Removal(removal));
                     }
                     Op::TerminateProcess(req) => {
-                        return ok!(Outcome::Termination(processes::terminate(req)));
+                        let termination = blocking!(processes::terminate(&req));
+                        return ok!(Outcome::Termination(termination));
                     }
                     Op::ConfigureFabric(req) => {
-                        let result = attempt!(fabric::configure(req));
+                        let result = attempt!(blocking!(fabric::configure(&req)));
                         return ok!(Outcome::Fabric(result));
                     }
                     Op::InstallBundle(req) => {
-                        let installed = attempt!(selfupdate::install(req));
+                        let installed = attempt!(blocking!(selfupdate::install(&req)));
                         return ok!(Outcome::BundleInstalled(installed));
                     }
                     Op::RunHostProbe(req) => {
-                        return ok!(Outcome::HostProbe(probe::run(req)));
+                        let probe = blocking!(probe::run(&req));
+                        return ok!(Outcome::HostProbe(probe));
                     }
                     _ => {}
                 }
@@ -329,25 +364,34 @@ impl Executor {
             // processes. They are reached above only when a daemon *is*
             // present, which is the wrong gate for them — see the `docker`
             // binding, which lets `GetFacts` through for exactly this reason.
-            Op::GetNodeStats(_) => ok!(Outcome::Stats(stats::collect())),
+            Op::GetNodeStats(_) => {
+                let stats = blocking!(stats::collect());
+                ok!(Outcome::Stats(stats))
+            }
             Op::ListSnapshot(req) => {
-                let listing = attempt!(snapshots::list(&req));
+                let listing = attempt!(blocking!(snapshots::list(&req)));
                 ok!(Outcome::Snapshot(listing))
             }
             Op::RemoveSnapshot(req) => {
-                let removal = attempt!(snapshots::remove(&req));
+                let removal = attempt!(blocking!(snapshots::remove(&req)));
                 ok!(Outcome::Removal(removal))
             }
-            Op::TerminateProcess(req) => ok!(Outcome::Termination(processes::terminate(&req))),
+            Op::TerminateProcess(req) => {
+                let termination = blocking!(processes::terminate(&req));
+                ok!(Outcome::Termination(termination))
+            }
             Op::ConfigureFabric(req) => {
-                let result = attempt!(fabric::configure(&req));
+                let result = attempt!(blocking!(fabric::configure(&req)));
                 ok!(Outcome::Fabric(result))
             }
             Op::InstallBundle(req) => {
-                let installed = attempt!(selfupdate::install(&req));
+                let installed = attempt!(blocking!(selfupdate::install(&req)));
                 ok!(Outcome::BundleInstalled(installed))
             }
-            Op::RunHostProbe(req) => ok!(Outcome::HostProbe(probe::run(&req))),
+            Op::RunHostProbe(req) => {
+                let probe = blocking!(probe::run(&req));
+                ok!(Outcome::HostProbe(probe))
+            }
 
             Op::RunContainer(req) => {
                 let info = attempt!(containers::run_container(docker, req).await);
