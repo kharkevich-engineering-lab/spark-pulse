@@ -105,4 +105,4 @@ echo ""
 # ── Start dev server ─────────────────────────────────────────────────────────
 
 echo "Starting dev server..."
-python -m uvicorn spark_pulse.app:app --host 0.0.0.0 --port 8100 --reload
+python -m uvicorn spark_pulse.app:app --host 127.0.0.1 --port 8100 --reload
