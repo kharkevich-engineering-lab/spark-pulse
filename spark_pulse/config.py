@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -569,3 +570,131 @@ class _Config:
 
 
 config = _Config()
+
+
+# ── Startup safety guards ────────────────────────────────────────────────────
+#
+# Two facts about this control plane make an unguarded start dangerous:
+#
+#   * With ``auth_enabled`` false — the default — the API answers *every*
+#     caller. The "browser is the boundary" model (CORS + the CSRF origin
+#     check) only constrains cross-site *browser* requests; a non-browser
+#     client (curl, a script) sends no ``Origin`` and is allowed through by
+#     design. So the only thing keeping the whole mutating API off the network
+#     is that the socket is bound to loopback.
+#
+#   * Auth can be turned on but left half-configured (a fumbled provider URL or
+#     client secret). ``_oidc_configured()`` then reports "not configured" and
+#     the middleware used to pass every request through — auth failing *open*.
+#
+# These guards turn both into a refuse-to-start with an actionable message,
+# checked once in the app factory (``create_app``), which every launch path
+# constructs the app through. The auth guard reads config, so it holds on
+# every path. The bind guard is weaker by nature: the socket is uvicorn's, and
+# the ASGI app cannot see it, so the guard judges only the address a launcher
+# reports in ``SPARK_PULSE_BIND_HOST`` (the CLI and the systemd unit set it
+# from ``--host``). A bare ``uvicorn --host 0.0.0.0`` run without that env var
+# is therefore NOT caught — its bind is invisible here; the default 127.0.0.1
+# and the CLI/service paths are what the guard actually protects.
+
+#: Env var carrying the address uvicorn was told to bind. The socket is a
+#: uvicorn concern the ASGI app cannot introspect, so the launcher states it
+#: here; ``cli.py`` sets it from ``--host`` before exec'ing uvicorn. Unset is
+#: treated as loopback, matching the CLI/service default bind of 127.0.0.1.
+BIND_HOST_ENV = "SPARK_PULSE_BIND_HOST"
+
+#: Opt-out for an operator who really does want a non-loopback bind with auth
+#: off (e.g. behind a separate authenticating proxy or on a trusted, isolated
+#: network). Deliberately explicit: the default posture is to refuse.
+ALLOW_INSECURE_BIND_ENV = "SPARK_PULSE_ALLOW_INSECURE_BIND"
+
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+class InsecureBindError(RuntimeError):
+    """A non-loopback bind was requested while authentication is off."""
+
+
+class AuthConfigError(RuntimeError):
+    """``auth_enabled`` is true but the OIDC configuration is incomplete."""
+
+
+def bind_is_loopback(host: str | None) -> bool:
+    """Whether ``host`` keeps the socket on this machine only.
+
+    Empty / unset and ``localhost`` count as loopback (the safe default). A
+    literal address is classified by its own rules, so ``127.0.0.1``/``::1``
+    are loopback and ``0.0.0.0``/``::`` (all interfaces) are not. A name we
+    cannot resolve to an address is treated as *non*-loopback — a bind we
+    cannot prove is local is assumed exposed.
+    """
+    value = (host or "").strip()
+    if value == "" or value.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(value).is_loopback
+    except ValueError:
+        return False
+
+
+def _is_truthy(value: str | None) -> bool:
+    return (value or "").strip().lower() in _TRUTHY
+
+
+def assert_auth_config_complete() -> None:
+    """Refuse to start with authentication turned on but not fully configured.
+
+    ``auth_enabled`` true with a missing provider URL, client id or client
+    secret is the fail-*open* case: ``_oidc_configured()`` reports false and
+    nothing would enforce auth. Fail closed instead — an operator who asked
+    for auth and fumbled the config gets told, not a silently public API.
+    """
+    if not config.auth_enabled:
+        return
+    missing = [
+        name
+        for name, value in (
+            ("oidc_provider_url", config.oidc_provider_url),
+            ("oidc_client_id", config.oidc_client_id),
+            ("oidc_client_secret", config.oidc_client_secret),
+        )
+        if not value
+    ]
+    if missing:
+        raise AuthConfigError(
+            "auth_enabled is true but OIDC is not fully configured "
+            f"(missing: {', '.join(missing)}). Refusing to start rather than "
+            "serve every request unauthenticated. Set the missing values in "
+            "~/.config/spark-pulse/settings.json (client secret in secrets.json) "
+            "or set auth_enabled to false to run open on loopback."
+        )
+
+
+def assert_bind_is_safe(host: str | None = None) -> None:
+    """Refuse a non-loopback bind while authentication is disabled.
+
+    ``host`` defaults to the ``SPARK_PULSE_BIND_HOST`` env var (unset →
+    loopback). A loopback bind, or any bind once auth is enabled, is fine. A
+    non-loopback bind with auth off exposes the whole mutating API to the LAN
+    unauthenticated, so it is refused unless the operator sets
+    ``SPARK_PULSE_ALLOW_INSECURE_BIND``.
+    """
+    if host is None:
+        host = os.environ.get(BIND_HOST_ENV, "127.0.0.1")
+    if bind_is_loopback(host) or config.auth_enabled:
+        return
+    if _is_truthy(os.environ.get(ALLOW_INSECURE_BIND_ENV)):
+        return
+    raise InsecureBindError(
+        f"Refusing to bind {host!r} with authentication disabled: the API "
+        "answers unauthenticated callers, so a non-loopback bind exposes every "
+        "mutating endpoint to the network. Bind 127.0.0.1 (the default), enable "
+        f"auth (auth_enabled / SPARK_PULSE_AUTH_ENABLED), or set {ALLOW_INSECURE_BIND_ENV}=1 "
+        "to accept the exposure explicitly."
+    )
+
+
+def assert_safe_startup(host: str | None = None) -> None:
+    """Run the startup guards. Auth config first, so its message wins."""
+    assert_auth_config_complete()
+    assert_bind_is_safe(host)

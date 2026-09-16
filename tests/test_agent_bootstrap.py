@@ -333,7 +333,14 @@ async def test_offer_sudoers_installs_the_nmcli_grant_for_fabric_config(
     assert report.connected
     assert any("nmcli" in step for step in report.steps)
     installed = node.read("/etc/sudoers.d/spark-pulse-agent-nmcli").decode()
-    assert installed == f"{USER} ALL=(root) NOPASSWD: /usr/bin/nmcli\n"
+    assert installed.endswith(
+        f"{USER} ALL=(root) NOPASSWD: "
+        "/usr/bin/nmcli connection add *, "
+        "/usr/bin/nmcli connection modify *, "
+        "/usr/bin/nmcli connection up *, "
+        "/usr/bin/nmcli connection down *\n"
+    )
+    assert "NOPASSWD: /usr/bin/nmcli\n" not in installed
     assert not any(c.capability == "fabric-sudoers" for c in report.concessions)
 
 

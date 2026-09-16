@@ -201,6 +201,30 @@ def reset_simulated_preflight():
 
 
 @pytest.fixture(autouse=True)
+def default_auth_disabled(monkeypatch):
+    """Give every test a clean ``auth_enabled=false`` baseline on the shared
+    ``config`` singleton.
+
+    ``config._data`` is populated at import from the developer's own
+    ``~/.config/spark-pulse/settings.json``. A machine set up for the dev-OIDC
+    flow (``run-dev-oidc-full.sh``) has ``auth_enabled: true`` there, so
+    without this every test that builds the app through the singleton would do
+    so with auth on — and the startup guard now refuses to start when auth is
+    on but the OIDC secret (redirected to an empty tmp secrets file in tests)
+    is missing.
+
+    Only the singleton's stored flag is reset, and only to what CI (no
+    settings.json) already has. The env var is left alone, so a test that reads
+    ``auth_enabled`` from YAML or the env is unaffected; a test that wants auth
+    on sets it (env or ``config._data``) in its own body, overriding this; and
+    the OIDC e2e suite, which drives auth through the raw env, is untouched.
+    """
+    from spark_pulse.config import config
+
+    monkeypatch.setitem(config._data, "auth_enabled", False)
+
+
+@pytest.fixture(autouse=True)
 def isolate_the_control_planes_agent_state(tmp_path, monkeypatch):
     """Keep the CA, the enrolment ledger and this machine's identity out of
     the developer's real ``~/.config``.

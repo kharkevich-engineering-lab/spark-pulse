@@ -3,6 +3,7 @@
 import importlib
 import json
 import shutil
+import threading
 import time
 from pathlib import Path
 from unittest.mock import patch
@@ -357,6 +358,10 @@ class TestDownloadJobs:
         assert kwargs["revision"] == "v1"
         assert kwargs["allow_patterns"] == ["*.safetensors"]
         assert kwargs["cache_dir"] == str(models_tool.hub_dir())
+        # Passed straight to the call, not through the process-global
+        # HF_ENDPOINT env var — see TestRunDownload in
+        # test_tools_models_coverage.py for why.
+        assert kwargs["endpoint"] == "http://mirror.local"
 
     def test_local_path_source_cannot_download(self, hf_home):
         with patch.object(
@@ -371,8 +376,65 @@ class TestDownloadJobs:
         with pytest.raises(ValueError, match="model is required"):
             models_tool.start_download("  ")
 
-    def test_cancel_queued_job(self, hf_home):
-        release = __import__("threading").Event()
+    def test_cancel_queued_job(self, hf_home, monkeypatch):
+        """Cancelling before the download thread has even run must not let
+        it start — deterministically, not by winning a race against it.
+
+        ``start_download`` fires a real background thread, and that thread
+        can reach ``_run_download``'s "am I cancelled" check before this test
+        gets to call ``cancel_download`` at all: on a fast enough scheduler
+        the job would already be "running" by the time cancellation is
+        requested, which is a different scenario (see
+        ``test_a_download_finishing_after_a_cancel_request_is_not_reported_as_cancelled``
+        below) with a different correct outcome. Deferring the thread's
+        actual work until this test says so removes the race rather than
+        hoping to win it.
+        """
+
+        class DeferredThread:
+            """Stands in for ``threading.Thread``: records the call instead
+            of running it, so nothing happens until ``run_now`` is called."""
+
+            instances: list["DeferredThread"] = []
+
+            def __init__(self, *, target, args=(), name=None, daemon=None):
+                self._target = target
+                self._args = args
+                DeferredThread.instances.append(self)
+
+            def start(self) -> None:
+                pass
+
+            def run_now(self) -> None:
+                self._target(*self._args)
+
+        DeferredThread.instances = []
+        monkeypatch.setattr(models_tool.threading, "Thread", DeferredThread)
+
+        with (
+            patch.object(models_tool, "estimate_size", return_value=0),
+            patch("huggingface_hub.snapshot_download") as download,
+        ):
+            job = models_tool.start_download("acme/plain-7b")
+            cancelled = models_tool.cancel_download(job["id"])
+            assert cancelled["status"] == "cancelled"
+            # Running the deferred thread now must still be a no-op: the
+            # cancellation happened before any of its code ran.
+            DeferredThread.instances[0].run_now()
+
+        download.assert_not_called()
+        assert models_tool.get_download(job["id"])["status"] == "cancelled"
+
+    def test_a_download_finishing_after_a_cancel_request_is_not_reported_as_cancelled(
+        self, hf_home
+    ):
+        """``snapshot_download`` cannot be interrupted once it is running: a
+        cancel requested while it is in flight cannot stop it, and the model
+        it fetches is real and on disk. The job must say so — "cancelled"
+        here would be a real, usable download reported as if it never
+        happened, and would fail a scheduled deploy waiting on a model that
+        actually arrived."""
+        release = threading.Event()
 
         def _slow(**kwargs):
             release.wait(3)
@@ -383,10 +445,11 @@ class TestDownloadJobs:
             patch("huggingface_hub.snapshot_download", side_effect=_slow),
         ):
             job = models_tool.start_download("acme/plain-7b")
+            _wait_for(job["id"], ("running",))
             models_tool.cancel_download(job["id"])
             release.set()
             done = _wait_for(job["id"], ("cancelled", "completed", "failed"))
-        assert done["status"] == "cancelled"
+        assert done["status"] == "completed"
 
     def test_cancel_unknown_job(self):
         assert models_tool.cancel_download("nope") is None

@@ -179,9 +179,12 @@ jobs:
       - name: Run frontend build
         working-directory: web
         run: npm run build
+      # test:coverage (vitest run --coverage) rather than test:run: the
+      # thresholds in vitest.config.ts are a ratchet on real coverage, and a
+      # job that only ran the suite never evaluated them.
       - name: Run UI unit tests
         working-directory: web
-        run: npm run test:run
+        run: npm run test:coverage
 
   # The browser suite, once per storage backend.
   #
@@ -325,13 +328,25 @@ jobs:
         working-directory: agent
 
   agent-release-build:
-    name: Build the node agent for a node
-    # An aarch64 runner, so the build is *native*: the same compile takes 26
-    # minutes under emulation on an x86_64 runner, which is too long to sit in
-    # front of every merge. This is the only place the shipped artifact is
-    # produced at all, so it runs on every change rather than only at release
-    # time — a release path nothing exercises is one that breaks at a release.
-    runs-on: ubuntu-24.04-arm
+    name: Build the node agent for a node (${{ matrix.target }})
+    # A runner matching each target, so every build is *native*: the same
+    # compile takes 26 minutes under emulation on a mismatched runner, which
+    # is too long to sit in front of every merge. This is the only place the
+    # shipped artifacts are produced at all, so both targets run on every
+    # change rather than only at release time — aarch64 is the Spark, and
+    # x86_64 is for a control plane that is not one but still has to run an
+    # agent for itself. A release path nothing exercises is one that breaks
+    # at a release, and until this matrix existed the x86_64 leg was exactly
+    # that: built only in release.yml, so a break there surfaced only when a
+    # release did.
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-unknown-linux-musl
+            runs-on: ubuntu-24.04-arm
+          - target: x86_64-unknown-linux-musl
+            runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runs-on }}
     permissions:
       contents: read
     steps:
@@ -341,24 +356,29 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .agent-build-cache
-          key: agent-release-${{ hashFiles('agent/Cargo.lock') }}
-          restore-keys: agent-release-
+          key: agent-release-${{ matrix.target }}-${{ hashFiles('agent/Cargo.lock') }}
+          restore-keys: agent-release-${{ matrix.target }}-
       - name: Build
-        run: ./scripts/build-agent.sh
+        run: TARGET=${{ matrix.target }} ./scripts/build-agent.sh
       - name: Check what came out
         run: |
           set -euo pipefail
-          binary=spark_pulse/agent/bin/spark-pulse-agent-aarch64-unknown-linux-musl
+          binary="spark_pulse/agent/bin/spark-pulse-agent-${{ matrix.target }}"
           file "$binary"
-          file "$binary" | grep -q "ARM aarch64"
           # "static-pie linked" is the other spelling `file` uses for a static
-          # ELF; see the same check in release.yml.
+          # ELF; see the same check in release.yml. Which of the two a musl
+          # target produces is the toolchain's choice: aarch64 comes out
+          # static, x86_64 comes out static-pie.
           file "$binary" | grep -qE "statically linked|static-pie linked"
+          case "${{ matrix.target }}" in
+            aarch64-*) file "$binary" | grep -q "ARM aarch64" ;;
+            x86_64-*) file "$binary" | grep -q "x86-64" ;;
+          esac
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: spark-pulse-agent-aarch64-unknown-linux-musl
-          path: spark_pulse/agent/bin/spark-pulse-agent-*
+          name: spark-pulse-agent-${{ matrix.target }}
+          path: spark_pulse/agent/bin/spark-pulse-agent-${{ matrix.target }}
           if-no-files-found: error
 
   pre-commit:

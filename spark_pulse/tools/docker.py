@@ -312,7 +312,8 @@ def prepare_labels(
     the container-name label, the CLI path stamped neither, so a rank on a
     peer came back from reconciliation without the creation time the deployment
     list sorts by and without the name label
-    :func:`~spark_pulse.tools.reconciliation._reconstruct_deployment` reads.
+    :func:`~spark_pulse.tools.native_runtime.list_deployments` reads back when
+    it adopts a container.
     Labels are the only place any of this survives the process, so there is one
     function that makes them and both paths call it.
 

@@ -13,31 +13,31 @@ const statusConfig = {
     color: "var(--color-success)",
     bg: "bg-success/10",
     border: "border-success/30",
-    label: "Healthy",
+    labelKey: "health.healthy",
     icon: "●",
   },
   [HealthStatus.DEGRADED]: {
     color: "var(--color-warning)",
     bg: "bg-warning/10",
     border: "border-warning/30",
-    label: "Degraded",
+    labelKey: "health.degraded",
     icon: "●",
   },
   [HealthStatus.UNHEALTHY]: {
     color: "var(--color-danger)",
     bg: "bg-danger/10",
     border: "border-danger/30",
-    label: "Unhealthy",
+    labelKey: "health.unhealthy",
     icon: "●",
   },
   [HealthStatus.UNKNOWN]: {
     color: "var(--color-text-muted)",
     bg: "bg-surface-hover",
     border: "border-border",
-    label: "Unknown",
+    labelKey: "health.unknown",
     icon: "●",
   },
-};
+} as const;
 
 // The badge is derived from the deployment's own status — the container is
 // running, or it is not. It is deliberately not the output of a health check:
@@ -49,6 +49,7 @@ export default function HealthBadge({
   showLabel = true,
   className = "",
 }: HealthBadgeProps) {
+  const t = useT();
   const config = statusConfig[status];
   const sizeClasses = {
     sm: "w-2 h-2",
@@ -69,7 +70,7 @@ export default function HealthBadge({
           status === HealthStatus.UNHEALTHY ? "text-danger" :
           "text-text-muted"
         }`}>
-          {config.label}
+          {t(config.labelKey)}
         </span>
       )}
     </span>

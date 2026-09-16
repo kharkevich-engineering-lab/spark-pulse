@@ -457,7 +457,7 @@ Still open before the native path becomes the default:
 
 - ~~`cache.py` wheels target name mismatch.~~ Done in phase 4: the `hf-download.sh` branch it guarded is deleted, and the wheels directory is cleaned like any other cache entry.
 - ~~`routers/config.py` hardcoded simulation flag.~~ Done: it reports `is_simulation()`.
-- `AGENTS.md` architecture tree and pages list are stale.
+- ~~`AGENTS.md` architecture tree and pages list are stale.~~ Done: reduced to a pointer at `CLAUDE.md` and `docs/` so it cannot drift again.
 - `spark-pulse-recipes` README and Qwen skill describe tooling that does not exist.
 
 ## Appendix A. Ray topology (not implemented, kept for reference)

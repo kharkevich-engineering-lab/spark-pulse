@@ -3,6 +3,16 @@ on:
   push:
     branches: [main]
 
+# One release at a time: the `version` job bakes the next version into the
+# agent build *before* release.sh publishes it, and two runs interleaving
+# would let a later push's agent bake against an earlier push's
+# not-yet-published version (or vice versa). Never cancel a run in progress —
+# a cancelled release job can leave a tag pushed without a matching PyPI
+# publish.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   # The version this push will release, before anything is built with it.
   #

@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 from spark_pulse.agent import runtime as agent_runtime
-from spark_pulse.config import config
+from spark_pulse.config import config, assert_safe_startup
 from spark_pulse.routers import (
     recipes,
     deployments,
@@ -45,7 +45,6 @@ from spark_pulse.tools.oci_registry import (
     start_background_updater,
     stop_background_updater,
 )
-from spark_pulse.tools.reconciliation import reconcile_all
 from spark_pulse.version import get_version
 from spark_pulse.mcp_http import handle_mcp, MCP_PATH
 
@@ -228,16 +227,15 @@ async def lifespan(app: FastAPI):
         tools.agent_update.start_updater()
 
     # Recover deployment state from container labels: a restart loses nothing
-    # the containers still know.
+    # the containers still know. `native_runtime.list_deployments` asks every
+    # node through its own agent — the control node over loopback — adopts any
+    # container it has no record for, marks a record whose container is gone
+    # stopped, sweeps the orphans it can now confirm gone, and persists all of
+    # it. That is the agent-routed recovery; the old local-only reconciler
+    # only counted.
     try:
-        result = reconcile_all()
-        print(
-            f"Reconciliation complete: {result.deployments_reconciled} deployments, "
-            f"{result.orphaned_containers_cleaned} orphans cleaned"
-        )
-        if result.errors:
-            for err in result.errors:
-                print(f"Reconciliation warning: {err}")
+        recovered = tools.native_runtime.list_deployments()
+        print(f"Reconciliation complete: {len(recovered)} deployments")
     except Exception as e:
         print(f"Warning: reconciliation failed: {e}")
 
@@ -270,7 +268,7 @@ async def lifespan(app: FastAPI):
 
     # The reconciler, which is what makes a delete answer immediately: the
     # request records the intent, this thread converges the nodes. Started
-    # after `reconcile_all` so its first sweep sees a settled store.
+    # after the recovery pass above so its first sweep sees a settled store.
     try:
         tools.reconciler.start_reconciler()
         print(
@@ -310,6 +308,15 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
+    # Refuse to start in a posture that silently serves: auth turned on but
+    # not fully configured (fail-open), or a non-loopback bind with auth off
+    # (the whole mutating API exposed to the LAN unauthenticated). Checked here
+    # because every launch path constructs the app through this factory. The
+    # auth guard holds on all of them; the bind guard only sees the address a
+    # launcher reports in SPARK_PULSE_BIND_HOST (the CLI and systemd unit set
+    # it), so a bare `uvicorn --host 0.0.0.0` without that env var is not caught.
+    assert_safe_startup()
+
     app = FastAPI(
         title="Spark Pulse",
         description="Web UI for spark-vllm-docker",

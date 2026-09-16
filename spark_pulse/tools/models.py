@@ -653,26 +653,32 @@ def _run_download(job_id: str, source: dict[str, Any]) -> None:
     )
     monitor.start()
 
-    old_endpoint = os.environ.get("HF_ENDPOINT")
     try:
         from huggingface_hub import snapshot_download
 
-        endpoint = source.get("endpoint")
-        if endpoint:
-            os.environ["HF_ENDPOINT"] = endpoint
+        # ``endpoint`` is passed straight to the call rather than through the
+        # ``HF_ENDPOINT`` environment variable: the variable is process-global
+        # but downloads run on concurrent daemon threads, so two downloads
+        # from different sources racing each other would clobber each other's
+        # endpoint mid-flight.
         path = snapshot_download(
             repo_id=job["model"],
             revision=job.get("revision") or None,
             allow_patterns=job.get("allow_patterns") or None,
             cache_dir=str(hub_dir()),
             token=_source_token(source) or None,
+            endpoint=source.get("endpoint") or None,
         )
         stop.set()
-        if job_id in _cancelled:
-            finished = _set_job(job_id, status="cancelled", finished_at=_now())
-            if finished:
-                _publish_job(EVENT_CANCELLED, finished)
-            return
+        # ``snapshot_download`` is one blocking call with no way to interrupt
+        # it, so a cancel requested while it is running (``job_id in
+        # _cancelled`` here) cannot actually stop it — it always runs to
+        # completion. The bytes are on disk regardless of the request, so
+        # reporting this as "cancelled" would call a real, usable download a
+        # failure and would fail any scheduled deploy waiting on it for a
+        # model that has, in fact, arrived. Only a cancel made *before* the
+        # call started (checked above, and on the exception path below) keeps
+        # anything from actually happening.
         size, _ = _dir_stats(Path(path))
         finished = _set_job(
             job_id,
@@ -681,6 +687,7 @@ def _run_download(job_id: str, source: dict[str, Any]) -> None:
             bytes_done=size,
             bytes_total=max(size, job.get("bytes_total") or 0),
             current_file=None,
+            cancel_requested=False,
             finished_at=_now(),
         )
         if finished:
@@ -703,10 +710,6 @@ def _run_download(job_id: str, source: dict[str, Any]) -> None:
     finally:
         stop.set()
         _cancelled.discard(job_id)
-        if old_endpoint is None:
-            os.environ.pop("HF_ENDPOINT", None)
-        else:
-            os.environ["HF_ENDPOINT"] = old_endpoint
 
 
 def cancel_download(job_id: str) -> dict[str, Any] | None:

@@ -27,5 +27,5 @@ echo "  http://localhost:$port"
 echo "  http://localhost:$port/docs  (Swagger UI)"
 
 SIMULATION_MODE=1 uvicorn spark_pulse.app:app \
-    --host 0.0.0.0 --port "$port" \
+    --host 127.0.0.1 --port "$port" \
     $reload

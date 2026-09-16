@@ -7,10 +7,18 @@ spark-pulse --help
 ## Running it
 
 ```bash
-spark-pulse start [--host 0.0.0.0] [--port 8100] [--workers 1] [--env-file FILE] [--dry-run]
+spark-pulse start [--host 127.0.0.1] [--port 8100] [--workers 1] [--env-file FILE] [--dry-run]
 ```
 
 Starts the web app. `--dry-run` prints the command it would run and exits.
+
+`--host` defaults to loopback. With `auth_enabled` off (the default) the API
+answers unauthenticated callers, so a non-loopback bind exposes every mutating
+endpoint to the network — the process refuses to start in that posture. To
+serve other hosts, enable auth (`SPARK_PULSE_AUTH_ENABLED=true` plus the OIDC
+config) and pass a real bind address, or set `SPARK_PULSE_ALLOW_INSECURE_BIND=1`
+to accept the exposure explicitly. Turning auth on but leaving the OIDC provider,
+client id or client secret unset is likewise refused rather than served open.
 
 ## As a service
 

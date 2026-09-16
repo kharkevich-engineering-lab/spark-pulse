@@ -304,7 +304,7 @@ first branches on `node.is_self` and issues zero SSH for the control node.
 | orphan sweep | `native_runtime.py:2250` | 1 per outstanding orphan | piggybacks the list | only if orphans exist |
 | engine-metrics **sampler** | `engine_metrics.py:605` | **0 SSH** — `httpx` to loopback | 5 s, `SAMPLE_INTERVAL_SECONDS` | yes, continuous |
 | OCI updater | `oci_registry.py:132` | **0** — HTTPS to registries | 900 s | yes, continuous |
-| `reconcile_all()` | `app.py:179` | **0** — control node only | startup | — |
+| deployment recovery (`native_runtime.list_deployments`) | `app.py` lifespan | **0** — control node only | startup | — |
 | node registry / `register_self` | `node_registry.py:471` | **0** — a JSON file, no loop, **no heartbeat** | startup | — |
 | mDNS discovery | `discovery.py` | **0 SSH** — zeroconf | startup + on demand | — |
 | pre-flight | `preflight.py:553` | **≈13** (9 probes + image + 3 model) | on Preview / on deploy | no |

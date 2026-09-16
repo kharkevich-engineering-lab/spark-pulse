@@ -21,8 +21,22 @@
 
 use std::fs;
 use std::process::Command;
+use std::time::Duration;
 
+use super::bounded;
 use crate::proto::{DiskStat, GpuProcess, GpuStat, MemoryStat, NodeStats};
+
+/// How long `nvidia-smi` may run before it is killed and reported unavailable.
+///
+/// A wedged GPU driver leaves `nvidia-smi` blocked indefinitely; the monitoring
+/// page asks for stats every few seconds, so an unbounded call here is how one
+/// bad driver takes the whole node's stats — and eventually its heartbeat —
+/// down. A killed probe degrades to "GPUs: nvidia-smi timed out", not a hang.
+const NVIDIA_SMI_TIMEOUT: Duration = Duration::from_secs(8);
+
+/// How long `df` may run per mount. A stuck NFS or a dying disk can hang
+/// `statfs` forever; the free-space line is worth less than a live node.
+const DF_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Fields asked of `nvidia-smi`, in order.
 const GPU_QUERY: &str = "index,name,uuid,memory.total,memory.used,memory.free,\
@@ -81,13 +95,18 @@ pub fn collect() -> NodeStats {
 /// machines that run this agent have no NVIDIA driver, and they still have
 /// memory and disks worth reporting.
 fn nvidia_smi(args: &[&str]) -> Result<Vec<Vec<String>>, String> {
-    let output = Command::new("nvidia-smi")
-        .args(args)
-        .arg("--format=csv,noheader,nounits")
-        .output()
+    let mut command = Command::new("nvidia-smi");
+    command.args(args).arg("--format=csv,noheader,nounits");
+    let output = bounded::run(command, NVIDIA_SMI_TIMEOUT)
         .map_err(|error| format!("nvidia-smi could not be run ({error})"))?;
 
-    if !output.status.success() {
+    if output.timed_out() {
+        return Err(format!(
+            "nvidia-smi timed out after {}s (the driver may be wedged)",
+            NVIDIA_SMI_TIMEOUT.as_secs()
+        ));
+    }
+    if !output.status.map(|s| s.success()).unwrap_or(false) {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let first = stderr.lines().next().unwrap_or("no output").trim();
         return Err(format!("nvidia-smi failed: {first}"));
@@ -189,11 +208,12 @@ fn disks() -> Vec<DiskStat> {
 }
 
 fn disk(mount: &str) -> Option<DiskStat> {
-    let output = Command::new("df")
-        .args(["-B1", "--output=size,used,avail", mount])
-        .output()
-        .ok()?;
-    if !output.status.success() {
+    let mut command = Command::new("df");
+    command.args(["-B1", "--output=size,used,avail", mount]);
+    let output = bounded::run(command, DF_TIMEOUT).ok()?;
+    // A timeout (`status` is None) or a non-zero exit both mean "no reading for
+    // this mount", which the caller reports as its absence rather than a zero.
+    if !output.status.map(|s| s.success()).unwrap_or(false) {
         return None;
     }
     let text = String::from_utf8_lossy(&output.stdout);

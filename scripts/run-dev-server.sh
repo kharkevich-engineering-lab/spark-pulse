@@ -69,7 +69,7 @@ npm --prefix web run build
 
 # Backend (simulation mode — mock all tools, benchmarking enabled for dev)
 echo "Starting backend in SIMULATION mode (port 8100)..."
-SIMULATION_MODE=1 SPARK_PULSE_BENCHMARKING_ENABLED=true uvicorn spark_pulse.app:app --host 0.0.0.0 --port 8100 --reload &
+SIMULATION_MODE=1 SPARK_PULSE_BENCHMARKING_ENABLED=true uvicorn spark_pulse.app:app --host 127.0.0.1 --port 8100 --reload &
 BACKEND_PID=$!
 
 wait_server_ready localhost:8100/health

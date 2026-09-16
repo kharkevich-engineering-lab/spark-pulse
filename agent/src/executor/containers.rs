@@ -212,6 +212,14 @@ pub fn create_config(
 /// and its ports, so a redeploy of the same rank collides with the corpse of
 /// the last one. `missing` is the only state that frees a rank's ports, and
 /// this is what produces it.
+///
+/// This deliberately mirrors the Python `DockerService.stop_container`: a
+/// not-found container is `false` (distinct from `true` after an actual stop),
+/// and a genuine daemon failure is *logged and returned as `false`*, never
+/// raised — teardown must not raise, but it must not lie about succeeding
+/// either. `tests/test_container_service_contract.py` and
+/// `test_agent_rust_interop.py` hold the two agents to that shared contract;
+/// callers confirm removal via `get_container_status`, not this bool.
 pub async fn stop_container(docker: &Docker, name: &str, timeout: Option<i32>) -> bool {
     let options = StopContainerOptionsBuilder::default()
         .t(timeout.unwrap_or(30))

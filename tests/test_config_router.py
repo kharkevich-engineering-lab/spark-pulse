@@ -12,6 +12,11 @@ class TestApiConfigEndpoint:
     def test_config_no_auth_fields(self, monkeypatch):
         """Config should include auth_enabled so frontend can distinguish disabled vs not-authenticated."""
         monkeypatch.setenv("SPARK_PULSE_AUTH_ENABLED", "true")
+        # Auth on now demands a complete OIDC config — the app refuses to start
+        # half-configured rather than serve every request unauthenticated.
+        monkeypatch.setitem(config._data, "oidc_provider_url", "https://issuer.example")
+        monkeypatch.setitem(config._data, "oidc_client_id", "client-id")
+        monkeypatch.setitem(config._data, "oidc_client_secret", "secret")
 
         app = create_app()
         from fastapi.testclient import TestClient

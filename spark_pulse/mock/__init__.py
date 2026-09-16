@@ -14,7 +14,6 @@ from spark_pulse.mock import (
     parallelism as parallelism,
     launch_script as launch_script,
     engine_metrics as engine_metrics,
-    reconciliation as reconciliation,
     events as events,
     models as models,
     images as images,
