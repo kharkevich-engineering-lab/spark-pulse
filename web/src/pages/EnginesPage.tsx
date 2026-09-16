@@ -114,6 +114,15 @@ export function joinEngines(
   }));
 }
 
+/** An `engines` map entry as settings.json actually carries it: a dict once
+ * something has edited it, but still a bare bool for an engine nobody has
+ * touched since before the dict shape existed. Read either. */
+function normalizeEngineEntry(entry: unknown): { enabled?: boolean } {
+  if (typeof entry === "boolean") return { enabled: entry };
+  if (entry && typeof entry === "object") return entry as { enabled?: boolean };
+  return {};
+}
+
 export default function EnginesPage() {
   const { t } = useI18n();
   const { data: images, loading, error, refetch } = useQuery(fetchImages);
@@ -129,6 +138,11 @@ export default function EnginesPage() {
   const [deleteTarget, setDeleteTarget] = useState<EngineRow | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [alert, setAlert] = useState<{ title: string; message: string } | null>(null);
+  // Optimistic per-engine enabled state: set on click, cleared on success (the
+  // refetch below is then the source of truth) or on failure (which restores
+  // whatever the server last said by simply removing the override).
+  const [engineOverrides, setEngineOverrides] = useState<Record<string, boolean>>({});
+  const [togglingEngine, setTogglingEngine] = useState<string | null>(null);
 
   const reloadJobs = useCallback(() => {
     fetchImagePulls().then(setJobs).catch(() => {});
@@ -178,6 +192,68 @@ export default function EnginesPage() {
     () => (images ?? []).filter((i) => i.update_available).length,
     [images],
   );
+
+  // Enabled state is per engine name, not per image row: two variants of the
+  // same engine share one switch in config.engines. This is every engine the
+  // registry knows about, not just the ones with a row here, because the
+  // guard below has to see an engine nobody has pulled yet too.
+  const enabledByEngine = useMemo(() => {
+    const map: Record<string, boolean> = {};
+    for (const e of engineData?.engines ?? []) {
+      if (!(e.engine in map)) map[e.engine] = e.enabled;
+    }
+    return map;
+  }, [engineData]);
+
+  const effectiveEnabled = useCallback(
+    (engineName: string) => engineOverrides[engineName] ?? enabledByEngine[engineName] ?? true,
+    [engineOverrides, enabledByEngine],
+  );
+
+  const enabledEngineCount = useMemo(
+    () => Object.keys(enabledByEngine).filter((name) => effectiveEnabled(name)).length,
+    [enabledByEngine, effectiveEnabled],
+  );
+
+  /** Flip one engine on or off. Disabling the last enabled engine would leave
+   * no recipe deployable, so it is refused here — the backend does not guard
+   * this, it just returns a config an operator would have to notice broke
+   * everything. */
+  const toggleEngineEnabled = async (engineName: string, next: boolean) => {
+    if (!next && enabledEngineCount <= 1 && effectiveEnabled(engineName)) {
+      setAlert({ title: t("engines.lastEngineTitle"), message: t("engines.lastEngineMessage") });
+      return;
+    }
+    setTogglingEngine(engineName);
+    setEngineOverrides((current) => ({ ...current, [engineName]: next }));
+    try {
+      const currentEngines = settings?.engines ?? {};
+      const existing = normalizeEngineEntry(currentEngines[engineName]);
+      const merged = {
+        ...currentEngines,
+        [engineName]: { ...existing, enabled: next },
+      };
+      await updateSettings({ engines: merged });
+      await Promise.all([refetchSettings(), refetchEngines()]);
+      setEngineOverrides((current) => {
+        const rest = { ...current };
+        delete rest[engineName];
+        return rest;
+      });
+    } catch (err) {
+      setEngineOverrides((current) => {
+        const rest = { ...current };
+        delete rest[engineName];
+        return rest;
+      });
+      setAlert({
+        title: t("engines.toggleFailed"),
+        message: err instanceof Error ? err.message : "Unknown error",
+      });
+    } finally {
+      setTogglingEngine(null);
+    }
+  };
 
   /** Ask the nodes about one image, once, when its row is opened. */
   const toggleRow = async (row: EngineRow) => {
@@ -406,37 +482,53 @@ export default function EnginesPage() {
                 return [
                   <tr key={row.key} data-testid={`engine-${image.ref}`} className="border-b border-border last:border-0 hover:bg-surface-hover">
                     <td className="p-3">
-                      <button
-                        type="button"
-                        onClick={() => toggleRow(row)}
-                        aria-expanded={open}
-                        // Two rows can carry the same engine name at different
-                        // versions, so the reference is what distinguishes them
-                        // — for a screen reader as much as for a test.
-                        aria-label={`Details for ${image.ref}`}
-                        className="flex items-center gap-2 text-left hover:text-primary transition-colors"
-                      >
-                        {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                        <span className="flex items-center gap-2">
-                          {/* The catalogue knows the engine name even for a
-                              version the registry no longer advertises — a
-                              second tag of an engine we have is still that
-                              engine, not an unmanaged image. Only something
-                              with no engine at all is unmanaged. */}
-                          {image.engine
-                            ? <EngineBadge
-                                engine={image.engine}
-                                variant={image.variant}
-                                enabled={engine ? engine.enabled : true}
-                              />
-                            : <span className="text-text-muted">{t("engines.unmanaged")}</span>}
-                          {(engine?.version || image.version) && (
-                            <span className="text-xs text-text-muted font-mono">
-                              v{engine?.version || image.version}
-                            </span>
-                          )}
-                        </span>
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => toggleRow(row)}
+                          aria-expanded={open}
+                          // Two rows can carry the same engine name at different
+                          // versions, so the reference is what distinguishes them
+                          // — for a screen reader as much as for a test.
+                          aria-label={`Details for ${image.ref}`}
+                          className="flex items-center gap-2 text-left hover:text-primary transition-colors"
+                        >
+                          {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                          <span className="flex items-center gap-2">
+                            {/* The catalogue knows the engine name even for a
+                                version the registry no longer advertises — a
+                                second tag of an engine we have is still that
+                                engine, not an unmanaged image. Only something
+                                with no engine at all is unmanaged. */}
+                            {image.engine
+                              ? <EngineBadge
+                                  engine={image.engine}
+                                  variant={image.variant}
+                                  enabled={engine ? effectiveEnabled(engine.engine) : true}
+                                />
+                              : <span className="text-text-muted">{t("engines.unmanaged")}</span>}
+                            {(engine?.version || image.version) && (
+                              <span className="text-xs text-text-muted font-mono">
+                                v{engine?.version || image.version}
+                              </span>
+                            )}
+                          </span>
+                        </button>
+                        {/* Enable/disable is a per-engine setting, not a
+                            per-image one — two variants of the same engine
+                            share this switch, so it lives beside the badge
+                            rather than in the per-row action column. */}
+                        {engine && (
+                          <Toggle
+                            on={effectiveEnabled(engine.engine)}
+                            disabled={togglingEngine === engine.engine}
+                            onClick={() =>
+                              toggleEngineEnabled(engine.engine, !effectiveEnabled(engine.engine))
+                            }
+                            label={t("engines.toggleLabel", { engine: engine.engine })}
+                          />
+                        )}
+                      </div>
                     </td>
                     <td className="p-3 font-mono">
                       <span className="truncate">{image.repository}</span>
@@ -557,6 +649,35 @@ export default function EnginesPage() {
         <AlertModal open onClose={() => setAlert(null)} title={alert.title} message={alert.message} />
       )}
     </div>
+  );
+}
+
+/** Same switch as Settings', copied rather than shared: that one is not
+ * exported, and a component declared inside a render body would remount (and
+ * lose focus) every render. */
+function Toggle({
+  on,
+  onClick,
+  label,
+  disabled,
+}: {
+  on: boolean;
+  onClick: () => void;
+  label: string;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
+      disabled={disabled}
+      onClick={onClick}
+      className={`relative w-9 h-5 rounded-full transition-colors shrink-0 disabled:opacity-50 ${on ? "bg-primary" : "bg-border"}`}
+    >
+      <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${on ? "translate-x-4" : "translate-x-0"}`} />
+    </button>
   );
 }
 

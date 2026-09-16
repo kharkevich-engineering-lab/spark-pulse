@@ -426,6 +426,115 @@ describe("EnginesPage", () => {
   });
 });
 
+// ── Enabling and disabling an engine ─────────────────────────────────────────
+//
+// `config.engines` already gates which engines a recipe may pick; only the UI
+// to flip it was missing. The switch sits per engine name, not per image row
+// — two variants of "vllm" share one switch — and a save has to round-trip
+// through the *current* settings.engines map, because `config.update` replaces
+// the whole map rather than merging it itself.
+
+describe("EnginesPage engine enable/disable toggle", () => {
+  const TWO_ENGINES = [
+    engine({ engine: "vllm", key: "vllm/default", image_ref: PRESENT, enabled: true }),
+    engine({ engine: "sglang", key: "sglang/default", image_ref: DRIFTED, enabled: true }),
+  ];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    CapturingEventSource.instances = [];
+    vi.stubGlobal("EventSource", CapturingEventSource);
+    // Just the vllm and sglang rows — IMAGES also has a second, unpulled vllm
+    // tag, which would give this engine two rows and its switch two matches.
+    vi.mocked(fetchImages).mockResolvedValue([IMAGES[0], IMAGES[1]]);
+    vi.mocked(fetchImagePulls).mockResolvedValue([]);
+    vi.mocked(fetchNodes).mockResolvedValue([node("10.0.0.1", true), node("10.0.0.2")]);
+    vi.mocked(fetchSettings).mockResolvedValue(SETTINGS);
+  });
+
+  it("shows each engine's switch matching its enabled state", async () => {
+    vi.mocked(fetchEngines).mockResolvedValue({
+      default_engine: "vllm",
+      engines: [TWO_ENGINES[0], { ...TWO_ENGINES[1], enabled: false }],
+    });
+    renderPage();
+
+    const vllm = await screen.findByRole("switch", { name: "Enable or disable vllm" });
+    const sglang = screen.getByRole("switch", { name: "Enable or disable sglang" });
+    expect(vllm).toHaveAttribute("aria-checked", "true");
+    expect(sglang).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("saves the merged engines map, preserving the other engine untouched", async () => {
+    const user = userEvent.setup();
+    vi.mocked(fetchEngines).mockResolvedValue({ default_engine: "vllm", engines: TWO_ENGINES });
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...SETTINGS,
+      engines: { sglang: { enabled: true, note: "keep me" } },
+    } as unknown as Settings);
+    vi.mocked(updateSettings).mockResolvedValue(SETTINGS);
+    renderPage();
+
+    await user.click(await screen.findByRole("switch", { name: "Enable or disable vllm" }));
+
+    await waitFor(() =>
+      expect(updateSettings).toHaveBeenCalledWith({
+        engines: {
+          sglang: { enabled: true, note: "keep me" },
+          vllm: { enabled: false },
+        },
+      }),
+    );
+    // The list is re-read so the badge and any recipe engine-support reflect it.
+    await waitFor(() => expect(vi.mocked(fetchEngines).mock.calls.length).toBeGreaterThan(1));
+  });
+
+  it("normalizes a legacy bare-boolean entry for the engine being toggled", async () => {
+    const user = userEvent.setup();
+    vi.mocked(fetchEngines).mockResolvedValue({ default_engine: "vllm", engines: TWO_ENGINES });
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...SETTINGS,
+      engines: { sglang: true, vllm: true },
+    } as unknown as Settings);
+    vi.mocked(updateSettings).mockResolvedValue(SETTINGS);
+    renderPage();
+
+    await user.click(await screen.findByRole("switch", { name: "Enable or disable sglang" }));
+
+    await waitFor(() =>
+      expect(updateSettings).toHaveBeenCalledWith({
+        engines: { sglang: { enabled: false }, vllm: true },
+      }),
+    );
+  });
+
+  it("reverts the switch and shows an error when the save fails", async () => {
+    const user = userEvent.setup();
+    vi.mocked(fetchEngines).mockResolvedValue({ default_engine: "vllm", engines: TWO_ENGINES });
+    vi.mocked(updateSettings).mockRejectedValue(new Error("network down"));
+    renderPage();
+
+    const toggle = await screen.findByRole("switch", { name: "Enable or disable vllm" });
+    await user.click(toggle);
+
+    expect(await screen.findByText("network down")).toBeInTheDocument();
+    expect(screen.getByText("Could not change that engine")).toBeInTheDocument();
+    // Nothing was persisted, so the switch reads as it did before the click.
+    await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "true"));
+  });
+
+  it("refuses to disable the last enabled engine", async () => {
+    const user = userEvent.setup();
+    vi.mocked(fetchEngines).mockResolvedValue({ default_engine: "vllm", engines: [engine({ enabled: true })] });
+    renderPage();
+
+    await user.click(await screen.findByRole("switch", { name: "Enable or disable vllm" }));
+
+    expect(await screen.findByText("Can't disable the last engine")).toBeInTheDocument();
+    expect(updateSettings).not.toHaveBeenCalled();
+  });
+});
+
 // ── The registry settings, which used to be a Settings tab ──────────────────
 
 describe("EnginesPage registry settings", () => {
