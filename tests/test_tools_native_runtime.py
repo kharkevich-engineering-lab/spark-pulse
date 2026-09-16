@@ -502,6 +502,43 @@ class TestStart:
         record = native.start(plan, docker=docker, wait=False)
         assert record["status"] == "running"
 
+    def test_a_stop_during_readiness_is_not_overwritten_by_running(
+        self, native, docker, monkeypatch
+    ):
+        """A stop that settles the record while start() awaits readiness keeps
+        its verdict. start() releases the lifecycle lock for the wait, then
+        re-checks under it before the terminal write — so 'running' is never
+        written over a 'stopped' the stop set."""
+        plan = native.plan("qwen3-8b")
+
+        def settle_stopped(*_a, **_k):
+            native._update_record(
+                plan.deployment_id, status="stopped", stopped_at=native._now()
+            )
+
+        monkeypatch.setattr(native, "_wait_ready", settle_stopped)
+        record = native.start(plan, docker=docker, wait=True)
+        assert record["status"] == "stopped"
+        assert tools.deployment_records.load()[0]["status"] == "stopped"
+
+    def test_a_readiness_failure_after_a_stop_is_not_written_as_error(
+        self, native, docker, monkeypatch
+    ):
+        """A readiness timeout after a deliberate stop must not read as a crash:
+        the error write is guarded by the same teardown re-check."""
+        plan = native.plan("qwen3-8b")
+
+        def settle_then_fail(*_a, **_k):
+            native._update_record(
+                plan.deployment_id, status="stopped", stopped_at=native._now()
+            )
+            raise native.NativeRuntimeError("readiness timed out")
+
+        monkeypatch.setattr(native, "_wait_ready", settle_then_fail)
+        record = native.start(plan, docker=docker, wait=True)
+        assert record["status"] == "stopped"
+        assert tools.deployment_records.load()[0]["status"] == "stopped"
+
 
 # ── Image pull ──────────────────────────────────────────────────────────────
 
@@ -849,6 +886,24 @@ class TestLifecycle:
 
         listed = native.list_deployments(docker=docker)
         assert [d["status"] for d in listed] == ["stopped"]
+
+    def test_list_leaves_a_pulling_record_alone(self, native, docker):
+        """A record mid-creation has no container yet; the creator owns it
+        under the lifecycle lock. Reconciling must not mark it stopped on the
+        absence of a container that has not been created — that would race the
+        creator into aborting its own deploy."""
+        plan = native.plan("qwen3-8b")
+        native.persist_planned_record(plan, "pulling")
+
+        listed = native.list_deployments(docker=docker)
+        assert [d["status"] for d in listed] == ["pulling"]
+
+    def test_list_leaves_a_starting_record_alone(self, native, docker):
+        plan = native.plan("qwen3-8b")
+        native.persist_planned_record(plan, "starting")
+
+        listed = native.list_deployments(docker=docker)
+        assert [d["status"] for d in listed] == ["starting"]
 
     def test_list_adopts_an_unknown_labelled_container(self, native, docker, records):
         """Reconciliation: a managed container with no record is adopted."""

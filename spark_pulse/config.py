@@ -589,8 +589,13 @@ config = _Config()
 #
 # These guards turn both into a refuse-to-start with an actionable message,
 # checked once in the app factory (``create_app``), which every launch path
-# — the CLI, the systemd unit, the dev scripts, a bare ``uvicorn`` — goes
-# through.
+# constructs the app through. The auth guard reads config, so it holds on
+# every path. The bind guard is weaker by nature: the socket is uvicorn's, and
+# the ASGI app cannot see it, so the guard judges only the address a launcher
+# reports in ``SPARK_PULSE_BIND_HOST`` (the CLI and the systemd unit set it
+# from ``--host``). A bare ``uvicorn --host 0.0.0.0`` run without that env var
+# is therefore NOT caught — its bind is invisible here; the default 127.0.0.1
+# and the CLI/service paths are what the guard actually protects.
 
 #: Env var carrying the address uvicorn was told to bind. The socket is a
 #: uvicorn concern the ASGI app cannot introspect, so the launcher states it

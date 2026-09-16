@@ -2050,31 +2050,47 @@ def start(
             except NativeRuntimeError as exc:
                 return _abort(rank_plan, exc, "launch")
 
-    started = _now()
-    _update_record(dep_id, status="starting", started_at=started, warnings=warnings)
-    publish_event(
-        EventType.DEPLOYMENT_SERVING,
-        dep_id,
-        f"launch script running in {spec.name}",
-        {"command": plan_obj.launch_command},
-    )
+        # Write "starting" (and, for the fire-and-forget path, "running") while
+        # still holding the lock. A stop waiting on the lock then settles the
+        # record strictly after these writes and its "stopped" verdict stands —
+        # rather than this method releasing the lock, a stop tearing down and
+        # marking stopped, and then these writes resurrecting it to "running"
+        # over a gang that no longer exists.
+        started = _now()
+        _update_record(dep_id, status="starting", started_at=started, warnings=warnings)
+        publish_event(
+            EventType.DEPLOYMENT_SERVING,
+            dep_id,
+            f"launch script running in {spec.name}",
+            {"command": plan_obj.launch_command},
+        )
 
-    if not wait:
-        return _update_record(dep_id, status="running") or record
+        if not wait:
+            return _update_record(dep_id, status="running") or record
 
+    # Readiness is awaited without the lock, so a stop can interrupt a starting
+    # deployment. Each terminal write then re-checks teardown under the lock: a
+    # stop that settled the record while we waited keeps its verdict, because a
+    # readiness result reported after a deliberate stop reads as a crash.
     timeout = ready_timeout or config.deploy_ready_timeout_seconds
     try:
         _wait_ready(services, plan_obj, timeout)
     except NativeRuntimeError as exc:
-        return _fail(str(exc))
+        with _lifecycle_lock(dep_id):
+            if _is_torn_down(dep_id):
+                return get_deployment(dep_id) or {**record, "status": "stopped"}
+            return _fail(str(exc))
 
-    publish_event(
-        EventType.DEPLOYMENT_READY,
-        dep_id,
-        f"{plan_obj.recipe_id} is serving on port {plan_obj.port}",
-        {"port": plan_obj.port, "readiness_url": plan_obj.readiness_url},
-    )
-    return _update_record(dep_id, status="running", error_message=None) or record
+    with _lifecycle_lock(dep_id):
+        if _is_torn_down(dep_id):
+            return get_deployment(dep_id) or {**record, "status": "stopped"}
+        publish_event(
+            EventType.DEPLOYMENT_READY,
+            dep_id,
+            f"{plan_obj.recipe_id} is serving on port {plan_obj.port}",
+            {"port": plan_obj.port, "readiness_url": plan_obj.readiness_url},
+        )
+        return _update_record(dep_id, status="running", error_message=None) or record
 
 
 def create_deployment(
@@ -2418,7 +2434,13 @@ def list_deployments(docker: Any | None = None) -> list[dict[str, Any]]:
     changed = False
 
     for record in native:
-        if record.get("status") in ("stopped", "error"):
+        # "pulling" and "starting" are records mid-creation: their containers
+        # legitimately do not exist yet, and `start()` owns that transition
+        # under the lifecycle lock. Marking them "stopped" on the absence of a
+        # container that has not been created would race the creator into
+        # aborting itself — so this reconcile only judges records that should
+        # already have containers.
+        if record.get("status") in ("stopped", "error", "pulling", "starting"):
             continue
         # Only ranks on the machine we just enumerated produce evidence. A
         # rank on a node we did not ask about says nothing either way, and

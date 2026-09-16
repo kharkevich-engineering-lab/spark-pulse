@@ -133,10 +133,19 @@ fn wait_bounded(
     // KILL — having had to signal it *is* the timeout; only finishing on its
     // own before we signalled counts as a real exit.
     kill_group(pid, libc::SIGTERM);
-    if poll_for(child, KILL_GRACE).is_none() {
-        // Still there. SIGKILL cannot be caught, so this ends it for certain,
-        // and reaping the leader here means we — the only waiter — free the pid.
-        kill_group(pid, libc::SIGKILL);
+    let leader_exited = poll_for(child, KILL_GRACE);
+    // SIGKILL the whole group unconditionally — even when the leader exited on
+    // our TERM. A same-group child that outlived it (a double-fork, or one that
+    // re-traps TERM) still holds the write end of the output pipes, so the
+    // drain threads' `read_to_end` would never see EOF and their `join()` would
+    // block forever, pinning this worker — the exact hang this helper exists to
+    // prevent. SIGKILL cannot be caught, so it ends any survivor for certain
+    // and closes the pipes.
+    kill_group(pid, libc::SIGKILL);
+    if leader_exited.is_none() {
+        // We never reaped the leader — do so now, as its only waiter, so the
+        // pid is freed. A survivor that was not our direct child is reaped by
+        // init once SIGKILL lands; we only needed its pipe fds closed.
         let _ = child.wait();
     }
     None
@@ -222,6 +231,28 @@ mod tests {
         assert!(
             started.elapsed() < Duration::from_secs(5),
             "the group was not killed promptly: {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn a_survivor_of_a_term_killed_leader_still_frees_the_pipe() {
+        // The leader does NOT trap TERM, so it exits on our SIGTERM within the
+        // grace — but it first backgrounds a child that DOES trap TERM and
+        // keeps the output pipe open. If we only reaped the leader (because it
+        // exited) and skipped the group SIGKILL, the draining threads would
+        // block on that still-open pipe. The child sleeps a bounded 8s, so a
+        // regression is slow rather than a CI hang; the assertion catches it.
+        let started = Instant::now();
+        let out = run(
+            sh("(trap '' TERM; sleep 8) & sleep 30"),
+            Duration::from_millis(200),
+        )
+        .unwrap();
+        assert!(out.timed_out());
+        assert!(
+            started.elapsed() < Duration::from_secs(4),
+            "the surviving child held the pipe; group was not SIGKILLed: {:?}",
             started.elapsed()
         );
     }

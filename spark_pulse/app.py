@@ -311,8 +311,10 @@ def create_app() -> FastAPI:
     # Refuse to start in a posture that silently serves: auth turned on but
     # not fully configured (fail-open), or a non-loopback bind with auth off
     # (the whole mutating API exposed to the LAN unauthenticated). Checked here
-    # because every launch path — CLI, systemd, dev scripts, bare uvicorn —
-    # constructs the app through this factory.
+    # because every launch path constructs the app through this factory. The
+    # auth guard holds on all of them; the bind guard only sees the address a
+    # launcher reports in SPARK_PULSE_BIND_HOST (the CLI and systemd unit set
+    # it), so a bare `uvicorn --host 0.0.0.0` without that env var is not caught.
     assert_safe_startup()
 
     app = FastAPI(
