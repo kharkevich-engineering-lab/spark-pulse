@@ -23,6 +23,7 @@ agent, or a named refusal. Never a quietly wrong daemon.
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
 
@@ -39,6 +40,8 @@ from spark_pulse.tools.node_service import (
     reset_local_addresses,
     run_kwargs_from_docker_config,
     service_for,
+    transfer_address,
+    transfer_route,
 )
 
 PEER = "10.0.0.2"
@@ -252,3 +255,131 @@ class TestDockerConfigMapping:
 
     def test_an_empty_config_still_yields_the_defaults(self):
         assert run_kwargs_from_docker_config(None)["privileged"] is True
+
+
+# ── Where the bulk bytes go ─────────────────────────────────────────────────
+
+
+class TestTransferRoute:
+    """A node is reached at its registered address; its bytes are not.
+
+    Measured on a real pair: the registered address sat on Wi-Fi at 20 MB/s
+    while the ConnectX fabric this control plane had itself configured did
+    428-660 MB/s. A 22 GB model was fifteen minutes over the first and under a
+    minute over the second.
+    """
+
+    @staticmethod
+    def _registry(monkeypatch, **by_address):
+        """A registry answering with these ``address -> fabric_addresses``."""
+        from spark_pulse import tools
+
+        nodes = [
+            type("N", (), {"address": address, "fabric_addresses": tuple(fabric)})()
+            for address, fabric in by_address.items()
+        ]
+        monkeypatch.setattr(tools.node_registry, "list_nodes", lambda: nodes)
+
+    def test_the_fabric_address_wins_when_it_is_applied_and_answers(self, monkeypatch):
+        self._registry(monkeypatch, **{"192.168.29.152": ["192.168.177.12"]})
+        route = transfer_route("192.168.29.152", reachable=lambda _a: True)
+        assert route.address == "192.168.177.12"
+        assert route.via_fabric is True
+        assert "192.168.177.12" in route.reason
+
+    def test_without_a_verified_apply_there_is_no_fabric_address_to_prefer(
+        self, monkeypatch
+    ):
+        self._registry(monkeypatch, **{"192.168.29.152": []})
+        route = transfer_route(
+            "192.168.29.152",
+            reachable=lambda _a: pytest.fail("probed an address nobody recorded"),
+        )
+        assert route.address == "192.168.29.152"
+        assert route.via_fabric is False
+        assert "no fabric address" in route.reason
+
+    def test_a_node_the_registry_has_never_heard_of_keeps_its_address(
+        self, monkeypatch
+    ):
+        self._registry(monkeypatch)
+        assert transfer_address("10.9.9.9") == "10.9.9.9"
+
+    def test_a_cable_unplugged_after_the_apply_falls_back_rather_than_fails(
+        self, monkeypatch
+    ):
+        """Slow beats failed. The record says applied; the wire says otherwise."""
+        self._registry(monkeypatch, **{"192.168.29.152": ["192.168.177.12"]})
+        route = transfer_route("192.168.29.152", reachable=lambda _a: False)
+        assert route.address == "192.168.29.152"
+        assert route.via_fabric is False
+        assert "did not answer" in route.reason
+
+    def test_a_mesh_node_is_tried_address_by_address(self, monkeypatch):
+        """Three nodes in a ring means a different /24 with each peer.
+
+        Only one of a peer's addresses is on a subnet this machine shares, so
+        the first that answers is the one, not the first that is recorded.
+        """
+        self._registry(
+            monkeypatch,
+            **{"10.0.0.2": ["192.168.187.13", "192.168.197.13"]},
+        )
+        asked: list[str] = []
+
+        def probe(address: str) -> bool:
+            asked.append(address)
+            return address == "192.168.197.13"
+
+        route = transfer_route("10.0.0.2", reachable=probe)
+        assert route.address == "192.168.197.13"
+        assert asked == ["192.168.187.13", "192.168.197.13"]
+
+    def test_a_fabric_address_equal_to_the_registered_one_is_not_a_choice(
+        self, monkeypatch
+    ):
+        """A node registered *at* its fabric address is already on the fabric."""
+        self._registry(monkeypatch, **{"192.168.177.12": ["192.168.177.12"]})
+        route = transfer_route(
+            "192.168.177.12",
+            reachable=lambda _a: pytest.fail("probed the address we arrived on"),
+        )
+        assert route.address == "192.168.177.12"
+        assert route.via_fabric is False
+
+    def test_a_registry_that_cannot_be_read_does_not_stop_a_transfer(self, monkeypatch):
+        from spark_pulse import tools
+
+        def boom():
+            raise RuntimeError("the database is locked")
+
+        monkeypatch.setattr(tools.node_registry, "list_nodes", boom)
+        assert transfer_address("10.0.0.2") == "10.0.0.2"
+
+    def test_the_choice_is_logged_either_way(self, monkeypatch, caplog):
+        self._registry(monkeypatch, **{"192.168.29.152": ["192.168.177.12"]})
+        with caplog.at_level(logging.INFO):
+            transfer_route("192.168.29.152", reachable=lambda _a: True)
+        assert "192.168.177.12" in caplog.text
+        assert "fabric" in caplog.text
+
+    def test_the_probe_is_a_tcp_connect_to_the_ssh_port(self, monkeypatch):
+        """SSH, because SSH is what the transfer then uses."""
+        import socket
+
+        seen: list[tuple] = []
+
+        def create_connection(target, timeout):
+            seen.append((target, timeout))
+            raise OSError("refused")
+
+        monkeypatch.setattr(socket, "create_connection", create_connection)
+        # The real submodule by full name: under SIMULATION_MODE the attribute
+        # on ``spark_pulse.tools`` is the mock, which re-exports the resolver
+        # rather than defining its private probe.
+        import importlib
+
+        real_node_service = importlib.import_module("spark_pulse.tools.node_service")
+
+        assert real_node_service._answers("192.168.177.12") is False
+        assert seen == [(("192.168.177.12", 22), 1.5)]

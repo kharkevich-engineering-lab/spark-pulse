@@ -855,3 +855,75 @@ async def test_the_report_carries_the_probe_results(
     assert report.scope_reason
     assert report.bundle["version"]
     assert any("probed" in step for step in report.steps)
+
+
+# ── The confirmed host key, written where OpenSSH will look ─────────────────
+#
+# The confirmation happened inside AsyncSSH and ended there, so rsync — which
+# runs under OpenSSH with ``StrictHostKeyChecking=yes`` — refused every
+# bootstrapped node with *No ED25519 host key is known*. The workaround on a
+# real cluster was ``ssh-keyscan``, which trusts whatever answers; these tests
+# are that the key which was actually confirmed is the one recorded.
+
+
+async def test_a_successful_install_records_the_host_key_it_confirmed(
+    agent_server, agent_fleet, agent_bundle, tmp_path
+):
+    from spark_pulse.tools.ssh import trusted_entries
+
+    node = make_node(tmp_path)
+    report = await do_install(agent_server, agent_fleet, node, agent_bundle)
+
+    entries = trusted_entries(node.host)
+    assert entries, "the node's confirmed host key was not recorded"
+    # The fingerprint the operator saw is the fingerprint of what was written.
+    import base64
+    import hashlib
+
+    blob = base64.b64decode(entries[0].split(" ", 1)[1])
+    digest = base64.b64encode(hashlib.sha256(blob).digest()).decode().rstrip("=")
+    assert report.host_key_fingerprint == f"SHA256:{digest}"
+
+
+async def test_a_declined_host_key_is_never_recorded(
+    agent_server, agent_fleet, agent_bundle, tmp_path
+):
+    """Nothing was sent, so nothing is trusted — not even provisionally."""
+    from spark_pulse.tools.ssh import known_hosts_path
+
+    node = make_node(tmp_path)
+    agent_fleet.add(node)
+    with pytest.raises(HostKeyDeclined):
+        await install_agent(
+            agent_server,
+            host=node.host,
+            username=USER,
+            control_host="127.0.0.1",
+            connector=agent_fleet,
+            bundle=agent_bundle,
+            confirm_host_key=decline,
+            password_prompt=password_prompt(PASSWORD),
+        )
+    assert not known_hosts_path().exists()
+
+
+async def test_an_install_that_fails_records_nothing_either(
+    agent_server, agent_fleet, agent_bundle, tmp_path
+):
+    """The key is recorded on the way out, not on the way in."""
+    from spark_pulse.tools.ssh import known_hosts_path
+
+    node = make_node(tmp_path)
+    agent_fleet.add(node)
+    with pytest.raises(BootstrapError):
+        await install_agent(
+            agent_server,
+            host=node.host,
+            username=USER,
+            control_host="127.0.0.1",
+            connector=agent_fleet,
+            bundle=agent_bundle,
+            confirm_host_key=confirm,
+            password_prompt=password_prompt("not-the-password"),
+        )
+    assert not known_hosts_path().exists()

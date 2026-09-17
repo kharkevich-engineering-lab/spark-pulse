@@ -32,6 +32,8 @@ from typing import Any, Callable
 from spark_pulse.tools.docker import DockerService
 from spark_pulse.tools.node_service import (
     CONTROL_NODE_ID as CONTROL_NODE_ID,
+    FABRIC_PROBE_PORT as FABRIC_PROBE_PORT,
+    FABRIC_PROBE_TIMEOUT as FABRIC_PROBE_TIMEOUT,
     LOOPBACK_ADDRESSES as LOOPBACK_ADDRESSES,
     NODE_MACHINE_METHODS as NODE_MACHINE_METHODS,
     NODE_SERVICE_METHODS as NODE_SERVICE_METHODS,
@@ -40,6 +42,7 @@ from spark_pulse.tools.node_service import (
     Node as Node,
     NodeService as NodeService,
     NodeServices as _NodeServices,
+    TransferRoute as TransferRoute,
     control_node as control_node,
     is_local_address as is_local_address,
     local_addresses as local_addresses,
@@ -47,6 +50,8 @@ from spark_pulse.tools.node_service import (
     peer_node as peer_node,
     reset_local_addresses as reset_local_addresses,
     run_kwargs_from_docker_config as run_kwargs_from_docker_config,
+    transfer_address as transfer_address,
+    transfer_route as transfer_route,
 )
 
 DEFAULT_IMAGE_SIZE = 26_843_545_600

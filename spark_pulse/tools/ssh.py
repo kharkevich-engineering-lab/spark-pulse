@@ -27,6 +27,7 @@ import shutil
 import contextlib
 import subprocess
 import tempfile
+import threading
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -182,6 +183,148 @@ def ensure_control_dir() -> Path | None:
     return None
 
 
+# ── The control plane's own known_hosts ──────────────────────────────────────
+#
+# Bootstrap already verifies a node's host key: the browser shows the
+# fingerprint, the operator confirms it, and ``agent.bootstrap.install_agent``
+# refuses to send a byte if the node then offers a different one. That
+# verification lived entirely inside AsyncSSH's connection, so OpenSSH — which
+# is what rsync, scp and every later bulk transfer run under — had never heard
+# of the node and refused it under ``StrictHostKeyChecking=yes``. The
+# workaround on a real cluster was ``ssh-keyscan``, which trusts whatever
+# answers: the opposite of what had just been confirmed.
+#
+# So the confirmed key is written here, into a file this control plane owns.
+# **Ours is the only ``UserKnownHostsFile``** for a client that asks for it,
+# rather than ours plus the user's: OpenSSH takes several files only as one
+# space-separated value, and rsync splits its ``-e`` argument on whitespace, so
+# a two-file value cannot survive the one transport that matters most. Owning
+# the file outright is also the better boundary — it trusts exactly the nodes
+# this control plane onboarded and confirmed, not whatever a personal
+# ``~/.ssh/known_hosts`` has accumulated.
+
+#: The file, beside the multiplexing sockets in the directory we already own.
+KNOWN_HOSTS_NAME = "known_hosts"
+
+_KNOWN_HOSTS_LOCK = threading.Lock()
+
+
+def known_hosts_path() -> Path:
+    """Where this control plane records the host keys it has confirmed."""
+    return control_path_dir() / KNOWN_HOSTS_NAME
+
+
+def host_pattern(host: str, port: int = 22) -> str:
+    """The known_hosts hostname field for ``host``: ``[host]:port`` off 22."""
+    host = (host or "").strip()
+    return host if port == 22 else f"[{host}]:{port}"
+
+
+def _entry_key(entry: str) -> str:
+    """The algorithm half of a ``<algorithm> <base64>`` key, for replacement."""
+    return (entry or "").split(" ", 1)[0]
+
+
+def _read_known_hosts() -> list[str]:
+    try:
+        return known_hosts_path().read_text().splitlines()
+    except OSError:
+        return []
+
+
+def _write_known_hosts(lines: list[str]) -> None:
+    """Replace the file, 0600, through a temp file in the same directory."""
+    path = known_hosts_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.parent.chmod(0o700)
+    except OSError:  # pragma: no cover - a directory somebody else owns
+        pass
+    body = "\n".join(lines) + ("\n" if lines else "")
+    tmp = path.with_name(f".{path.name}.{os.getpid()}")
+    tmp.write_text(body)
+    tmp.chmod(0o600)
+    os.replace(tmp, path)
+
+
+def trusted_entries(host: str, port: int = 22) -> list[str]:
+    """The ``<algorithm> <base64>`` keys this control plane trusts for ``host``."""
+    pattern = host_pattern(host, port)
+    found = []
+    for line in _read_known_hosts():
+        name, _, key = line.strip().partition(" ")
+        if name == pattern and key:
+            found.append(key)
+    return found
+
+
+def trust_host_key(host: str, entry: str, port: int = 22) -> bool:
+    """Record ``entry`` as a host key to trust for ``host``.
+
+    ``entry`` is the ``<algorithm> <base64>`` half of a known_hosts line — what
+    :attr:`~spark_pulse.agent.bootstrap_transport.HostKey.openssh` returns for
+    the key an operator has just confirmed. Never a key from a blind scan:
+    every caller here has verified the fingerprint first.
+
+    Idempotent. A key for an algorithm already recorded is replaced, with a
+    warning — that is a node whose identity changed, and reaching this call at
+    all means somebody confirmed the new fingerprint by hand.
+
+    Returns:
+        Whether the file changed.
+    """
+    entry = (entry or "").strip()
+    if not host or not entry or " " not in entry:
+        raise ValueError(f"not a host key entry: {entry!r}")
+    pattern = host_pattern(host, port)
+    algorithm = _entry_key(entry)
+    line = f"{pattern} {entry}"
+    with _KNOWN_HOSTS_LOCK:
+        lines = _read_known_hosts()
+        kept: list[str] = []
+        changed = True
+        for existing in lines:
+            name, _, key = existing.strip().partition(" ")
+            if name == pattern and _entry_key(key) == algorithm:
+                if key == entry:
+                    changed = False
+                else:
+                    logger.warning(
+                        "%s now offers a different %s host key; replacing the "
+                        "one recorded for it",
+                        pattern,
+                        algorithm,
+                    )
+                continue
+            kept.append(existing)
+        if not changed:
+            return False
+        kept.append(line)
+        _write_known_hosts(kept)
+    logger.info("Trusting the confirmed %s host key for %s", algorithm, pattern)
+    return True
+
+
+def trust_alias(known_host: str, alias: str, port: int = 22) -> int:
+    """Trust ``known_host``'s recorded keys under ``alias`` as well.
+
+    One machine, two addresses — a node's management address and the fabric
+    address the control plane configured for it — and the same host key on
+    both. Copying what is already recorded is what keeps the fabric transfer
+    under strict checking without a second scan of anything.
+
+    Returns:
+        How many entries were added.
+    """
+    if not known_host or not alias or known_host == alias:
+        return 0
+    added = 0
+    for entry in trusted_entries(known_host, port):
+        if trust_host_key(alias, entry, port):
+            added += 1
+    return added
+
+
 class SSHClient:
     """SSH transport abstraction.
 
@@ -268,6 +411,7 @@ class OpenSSHClient(SSHClient):
         identity_file: str | None = None,
         host_key_policy: HostKeyPolicy = DEFAULT_HOST_KEY_POLICY,
         multiplex: bool = True,
+        known_hosts_file: str | None = None,
     ):
         """Initialize OpenSSH client.
 
@@ -279,6 +423,11 @@ class OpenSSHClient(SSHClient):
                 ``accept-new`` (trust on first use, still refuse a change), or
                 ``off`` (no verification, for tests and throwaway hosts only).
             multiplex: Reuse one connection across commands.
+            known_hosts_file: The file to verify host keys against, replacing
+                ssh's default. :func:`known_hosts_path` is what the control
+                plane's own transfers pass — the keys bootstrap confirmed.
+                ``None`` leaves ssh's default in place. Never a path with a
+                space in it: rsync splits the ``-e`` argument on whitespace.
 
         Raises:
             ValueError: host_key_policy is not one of the three values.
@@ -291,6 +440,7 @@ class OpenSSHClient(SSHClient):
         self._user = default_ssh_user() if user is None else user
         self._identity_file = identity_file
         self._host_key_policy: HostKeyPolicy = host_key_policy
+        self._known_hosts_file = known_hosts_file
         self._control_path: str | None = None
         if multiplex:
             control_dir = ensure_control_dir()
@@ -301,6 +451,11 @@ class OpenSSHClient(SSHClient):
     def host_key_policy(self) -> HostKeyPolicy:
         """The configured host key policy."""
         return self._host_key_policy
+
+    @property
+    def known_hosts_file(self) -> str | None:
+        """The known_hosts file every invocation verifies against, if any."""
+        return self._known_hosts_file
 
     @property
     def control_path(self) -> str | None:
@@ -321,6 +476,8 @@ class OpenSSHClient(SSHClient):
             "-o",
             f"ServerAliveCountMax={SERVER_ALIVE_COUNT_MAX}",
         ]
+        if self._known_hosts_file:
+            args.extend(["-o", f"UserKnownHostsFile={self._known_hosts_file}"])
         if self._control_path:
             args.extend(
                 [

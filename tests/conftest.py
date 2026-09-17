@@ -100,6 +100,18 @@ def _empty_every_table(db) -> None:
 
 
 @pytest.fixture(autouse=True)
+def isolate_the_ssh_directory(tmp_path, monkeypatch):
+    """Point the control plane's SSH directory at tmp_path.
+
+    It holds the multiplexing sockets and, since bootstrap started recording
+    the host key an operator confirmed, the control plane's own known_hosts.
+    Without this a test that onboards a node would write a host key into the
+    developer's real ``~/.config/spark-pulse/ssh``.
+    """
+    monkeypatch.setenv("SPARK_PULSE_SSH_CONTROL_DIR", str(tmp_path / "ssh"))
+
+
+@pytest.fixture(autouse=True)
 def isolate_the_legacy_import_sources(tmp_path, monkeypatch):
     """Point every JSON migration source at tmp_path.
 

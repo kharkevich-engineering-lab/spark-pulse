@@ -56,7 +56,10 @@ MAY_TOUCH_THE_FILESYSTEM = {
     "atomic_json.py": "the temp file it renames into place, by definition",
     "docker.py": "the executor itself — it runs *on* the node, as the agent",
     "launch_script.py": "a temp directory it owns, copied into containers",
-    "ssh.py": "its own control-socket directory under ~/.ssh",
+    "ssh.py": (
+        "its own directory under ~/.config/spark-pulse: the control sockets, "
+        "and the known_hosts holding the keys bootstrap confirmed"
+    ),
     "cache.py": "this host's own caches, which the Cache page is about",
     "custom_files.py": "the operator's own recipe and mod directories",
     "hub_cache.py": "a standalone layout/verification module with no node in it",

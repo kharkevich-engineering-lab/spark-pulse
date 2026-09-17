@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import getpass
+import logging
 import importlib
 import subprocess
 from unittest.mock import MagicMock, patch
@@ -527,3 +528,120 @@ class TestReverseTunnel:
             with pytest.raises(SSHError, match="reverse tunnel"):
                 with client.reverse_tunnel("node", remote_port=5000, local_port=5000):
                     pass
+
+
+# ── The control plane's own known_hosts ─────────────────────────────────────
+
+
+KEY_A = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+KEY_B = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+KEY_RSA = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCCCCCCCCCCCCCCCCCCCCCC"
+
+
+class TestKnownHosts:
+    """The keys bootstrap confirmed, written where OpenSSH will look.
+
+    Before this file existed, a node whose fingerprint an operator had just
+    confirmed in the browser was a complete stranger to rsync — strict checking
+    refused it with *No ED25519 host key is known* — and the only way through
+    was ``ssh-keyscan``, which trusts whatever answers.
+    """
+
+    def test_the_file_lives_in_the_directory_we_own(self, control_dir):
+        assert ssh_mod.known_hosts_path() == control_dir / "known_hosts"
+
+    def test_a_confirmed_key_is_written_and_readable_back(self, control_dir):
+        assert ssh_mod.trust_host_key("10.0.0.5", KEY_A) is True
+        assert ssh_mod.trusted_entries("10.0.0.5") == [KEY_A]
+        assert ssh_mod.known_hosts_path().read_text() == f"10.0.0.5 {KEY_A}\n"
+
+    def test_the_file_is_private(self, control_dir):
+        ssh_mod.trust_host_key("10.0.0.5", KEY_A)
+        assert ssh_mod.known_hosts_path().stat().st_mode & 0o777 == 0o600
+        assert control_dir.stat().st_mode & 0o777 == 0o700
+
+    def test_writing_the_same_key_twice_changes_nothing(self, control_dir):
+        assert ssh_mod.trust_host_key("10.0.0.5", KEY_A) is True
+        assert ssh_mod.trust_host_key("10.0.0.5", KEY_A) is False
+        assert ssh_mod.known_hosts_path().read_text().count(KEY_A) == 1
+
+    def test_a_second_algorithm_is_kept_alongside_the_first(self, control_dir):
+        ssh_mod.trust_host_key("10.0.0.5", KEY_A)
+        ssh_mod.trust_host_key("10.0.0.5", KEY_RSA)
+        assert sorted(ssh_mod.trusted_entries("10.0.0.5")) == sorted([KEY_A, KEY_RSA])
+
+    def test_a_changed_key_replaces_rather_than_accumulates(self, control_dir, caplog):
+        """Reaching this call means somebody confirmed the new fingerprint.
+
+        Two ed25519 lines for one host is a file ssh reads as a mismatch, so
+        the old one goes — loudly, because a node's identity changing is worth
+        a line in the log even when it was expected.
+        """
+        ssh_mod.trust_host_key("10.0.0.5", KEY_A)
+        with caplog.at_level(logging.WARNING):
+            assert ssh_mod.trust_host_key("10.0.0.5", KEY_B) is True
+        assert ssh_mod.trusted_entries("10.0.0.5") == [KEY_B]
+        assert "different" in caplog.text
+
+    def test_one_host_key_never_leaks_onto_another_host(self, control_dir):
+        ssh_mod.trust_host_key("10.0.0.5", KEY_A)
+        assert ssh_mod.trusted_entries("10.0.0.6") == []
+
+    def test_a_non_default_port_is_bracketed_as_ssh_writes_it(self, control_dir):
+        ssh_mod.trust_host_key("10.0.0.5", KEY_A, 2222)
+        assert ssh_mod.known_hosts_path().read_text() == f"[10.0.0.5]:2222 {KEY_A}\n"
+        assert ssh_mod.trusted_entries("10.0.0.5", 2222) == [KEY_A]
+        assert ssh_mod.trusted_entries("10.0.0.5") == []
+
+    @pytest.mark.parametrize("entry", ["", "   ", "ssh-ed25519", "nokeyhere"])
+    def test_something_that_is_not_a_host_key_is_refused(self, control_dir, entry):
+        with pytest.raises(ValueError, match="not a host key entry"):
+            ssh_mod.trust_host_key("10.0.0.5", entry)
+        assert not ssh_mod.known_hosts_path().exists()
+
+    def test_an_unknown_host_reads_back_as_nothing(self, control_dir):
+        assert ssh_mod.trusted_entries("10.0.0.5") == []
+
+
+class TestTrustingAnAlias:
+    """The same machine, under the second address the fabric gave it."""
+
+    def test_the_recorded_key_is_trusted_under_the_fabric_address(self, control_dir):
+        ssh_mod.trust_host_key("192.168.29.152", KEY_A)
+        assert ssh_mod.trust_alias("192.168.29.152", "192.168.177.12") == 1
+        assert ssh_mod.trusted_entries("192.168.177.12") == [KEY_A]
+
+    def test_every_algorithm_travels_with_it(self, control_dir):
+        ssh_mod.trust_host_key("192.168.29.152", KEY_A)
+        ssh_mod.trust_host_key("192.168.29.152", KEY_RSA)
+        assert ssh_mod.trust_alias("192.168.29.152", "192.168.177.12") == 2
+
+    def test_nothing_is_invented_for_a_host_we_have_no_key_for(self, control_dir):
+        assert ssh_mod.trust_alias("192.168.29.152", "192.168.177.12") == 0
+        assert ssh_mod.trusted_entries("192.168.177.12") == []
+
+    def test_aliasing_an_address_to_itself_is_a_no_op(self, control_dir):
+        ssh_mod.trust_host_key("192.168.29.152", KEY_A)
+        assert ssh_mod.trust_alias("192.168.29.152", "192.168.29.152") == 0
+
+
+class TestTheClientVerifiesAgainstIt:
+    def test_the_known_hosts_file_is_passed_to_ssh(self, control_dir):
+        client = OpenSSHClient(known_hosts_file="/c/known_hosts")
+        args = client._build_ssh_args()
+        assert "UserKnownHostsFile=/c/known_hosts" in args
+        assert "StrictHostKeyChecking=yes" in args
+
+    def test_scp_and_rsync_verify_against_the_same_file(self, control_dir):
+        client = OpenSSHClient(known_hosts_file="/c/known_hosts")
+        assert "UserKnownHostsFile=/c/known_hosts" in client._build_scp_args()
+        # rsync splits ``-e`` on whitespace, so the path must survive as one
+        # word — which is why this is one file and not ours plus the user's.
+        assert (
+            "UserKnownHostsFile=/c/known_hosts" in client._rsync_remote_shell().split()
+        )
+
+    def test_no_file_leaves_ssh_its_own_default(self, control_dir):
+        args = OpenSSHClient()._build_ssh_args()
+        assert not any(a.startswith("UserKnownHostsFile") for a in args)
+        assert OpenSSHClient().known_hosts_file is None
