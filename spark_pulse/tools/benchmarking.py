@@ -6,8 +6,13 @@ across different configurations and runs.
 
 from __future__ import annotations
 
+
 import json
 import logging
+import os
+import subprocess
+import sys
+import tempfile
 import threading
 import uuid
 from contextlib import AbstractContextManager, contextmanager
@@ -366,20 +371,7 @@ def execute_benchmark(benchmark_id: str) -> None:
         params = record.get("params", {})
 
         try:
-            try:
-                import llama_benchy  # noqa: PLC0415
-            except ImportError:
-                raise RuntimeError(
-                    "llama-benchy is not installed. Install it with: "
-                    "pip install spark-pulse[benchmarking]"
-                )
-
-            bench_results = llama_benchy.run(
-                target=f"http://localhost:{params.get('port', 8000)}",
-                model_name=params.get("model", "unknown"),
-                benchmarks=params.get("benchmarks", ["throughput", "latency"]),
-                context_length=params.get("context_length", 4096),
-            )
+            bench_results = _run_llama_benchy(record, params)
 
             record["status"] = "completed"
             record["completed_at"] = datetime.now(timezone.utc).isoformat()
@@ -399,6 +391,199 @@ def execute_benchmark(benchmark_id: str) -> None:
         # this call owns.
         _upsert_row(record)
         _cache_put(record)
+
+
+#: What a benchmark asks of the engine when the request names nothing. Modest
+#: on purpose — a run should finish in a couple of minutes on one GB10, and an
+#: operator who wants the long tail passes ``pp``/``tg``/``concurrency``.
+BENCHY_DEFAULTS: dict[str, Any] = {
+    "pp": [512, 2048],
+    "tg": [128],
+    "runs": 3,
+    "concurrency": [1, 4],
+    "depth": [0],
+    "timeout": 1800,
+}
+
+
+def _benchy_command(base_url: str, out_path: str, params: dict) -> list[str]:
+    """The ``llama-benchy`` invocation for one run.
+
+    Invoked as ``python -m llama_benchy`` with this process's interpreter, not
+    as the ``llama-benchy`` console script: the script lands in ``~/.local/bin``
+    for a user install, which the systemd unit's PATH never has, whereas the
+    module is importable wherever ``spark-pulse[benchmarking]`` was installed.
+    """
+
+    def _list(key: str) -> list[str]:
+        value = params.get(key, BENCHY_DEFAULTS[key])
+        if not isinstance(value, (list, tuple)):
+            value = [value]
+        return [str(int(v)) for v in value]
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "llama_benchy",
+        "--base-url",
+        base_url,
+        "--format",
+        "json",
+        "--save-result",
+        out_path,
+        # The coherence probe asks the model to reproduce a passage and grades
+        # it; a performance run does not need a grade, and a reasoning model
+        # can fail it on style alone.
+        "--skip-coherence",
+        "--runs",
+        str(int(params.get("runs", BENCHY_DEFAULTS["runs"]))),
+        "--pp",
+        *_list("pp"),
+        "--tg",
+        *_list("tg"),
+        "--depth",
+        *_list("depth"),
+        "--concurrency",
+        *_list("concurrency"),
+    ]
+    model = str(params.get("model") or "").strip()
+    if model and model != "unknown":
+        cmd += ["--model", model]
+    return cmd
+
+
+def _mean(entry: dict, key: str) -> float | None:
+    stat = entry.get(key)
+    if isinstance(stat, dict) and isinstance(stat.get("mean"), (int, float)):
+        return float(stat["mean"])
+    if isinstance(stat, (int, float)):
+        return float(stat)
+    return None
+
+
+def _summarize_benchy(raw: dict) -> dict:
+    """Flatten a llama-benchy report into the fields the page and compare read.
+
+    ``throughput`` and ``prefill_speed`` are tokens/s averaged over the
+    generation tests (the context-prefill phases are excluded: they measure a
+    different thing). ``latency_ms`` is the tool's own API round-trip probe,
+    ``ttft_ms`` the mean time to first token, ``decode_latency_ms`` the
+    per-token cost implied by the generation rate. The per-test table is kept
+    under ``tests`` and the whole report under ``raw`` minus its time series,
+    which are large and only meaningful in the tool's own plots.
+    """
+    tests = []
+    for entry in raw.get("benchmarks") or []:
+        if not isinstance(entry, dict):
+            continue
+        tests.append(
+            {
+                "concurrency": entry.get("concurrency"),
+                "prompt_size": entry.get("prompt_size"),
+                "response_size": entry.get("response_size"),
+                "context_size": entry.get("context_size"),
+                "prefill_phase": bool(entry.get("is_context_prefill_phase")),
+                "pp_tps": _mean(entry, "pp_throughput"),
+                "tg_tps": _mean(entry, "tg_throughput"),
+                "peak_tps": _mean(entry, "peak_throughput"),
+                "ttft_ms": _mean(entry, "e2e_ttft"),
+            }
+        )
+    generation = [t for t in tests if not t["prefill_phase"]] or tests
+
+    def _avg(key: str) -> float | None:
+        values = [t[key] for t in generation if isinstance(t.get(key), float)]
+        return round(sum(values) / len(values), 2) if values else None
+
+    throughput = _avg("tg_tps")
+    summary: dict[str, Any] = {
+        "tool": "llama-benchy",
+        "tool_version": raw.get("version"),
+        "model": raw.get("model"),
+        "throughput": throughput,
+        "prefill_speed": _avg("pp_tps"),
+        "peak_throughput": _avg("peak_tps"),
+        "ttft_ms": _avg("ttft_ms"),
+        "latency_ms": (
+            round(float(raw["latency_ms"]), 3)
+            if isinstance(raw.get("latency_ms"), (int, float))
+            else None
+        ),
+        "decode_latency_ms": round(1000.0 / throughput, 2) if throughput else None,
+        "tests": tests,
+        "raw": {
+            **{k: v for k, v in raw.items() if k != "benchmarks"},
+            "benchmarks": [
+                {k: v for k, v in e.items() if not str(k).endswith("_over_time")}
+                for e in (raw.get("benchmarks") or [])
+                if isinstance(e, dict)
+            ],
+        },
+    }
+    return summary
+
+
+def _run_llama_benchy(record: dict, params: dict) -> dict:
+    """Run llama-benchy against the deployment the record names, and summarise.
+
+    The endpoint is the deployment's own: its port from the record (a request
+    may override it), on this machine — rank zero of a native deployment runs
+    here, which is also what the readiness probe assumes.
+    """
+    # A plain import is the availability check: nothing is called on the
+    # module (the tool runs as a subprocess), and an import failure is the one
+    # signal that survives every way the package can be absent.
+    try:
+        import llama_benchy  # noqa: F401,PLC0415
+    except ImportError:
+        raise RuntimeError(
+            "llama-benchy is not installed. Install it with: "
+            "pip install spark-pulse[benchmarking]"
+        ) from None
+    from spark_pulse import tools  # noqa: PLC0415 — the switched package
+
+    deployment = tools.deploy_dispatch.get_deployment(record.get("deployment_id", ""))
+    deployment = deployment or {}
+    port = int(params.get("port") or deployment.get("port") or 8000)
+    base_url = f"http://127.0.0.1:{port}/v1"
+    run_params = dict(params)
+    run_params.setdefault("model", deployment.get("model") or "")
+
+    fd, out_path = tempfile.mkstemp(prefix="spark-pulse-benchy-", suffix=".json")
+    os.close(fd)
+    try:
+        cmd = _benchy_command(base_url, out_path, run_params)
+        logger.info("Running benchmark: %s", " ".join(cmd))
+        try:
+            done = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=int(params.get("timeout", BENCHY_DEFAULTS["timeout"])),
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"llama-benchy did not finish within {exc.timeout:.0f}s"
+            ) from exc
+        if done.returncode != 0:
+            tail = (done.stderr or done.stdout or "").strip().splitlines()[-6:]
+            raise RuntimeError(
+                f"llama-benchy exited {done.returncode}: " + " | ".join(tail)
+            )
+        try:
+            with open(out_path, encoding="utf-8") as fh:
+                raw = json.load(fh)
+        except (OSError, ValueError) as exc:
+            raise RuntimeError(f"llama-benchy wrote no readable result: {exc}") from exc
+    finally:
+        try:
+            os.unlink(out_path)
+        except OSError:
+            pass
+    if not isinstance(raw, dict):
+        raise RuntimeError("llama-benchy result is not a JSON object")
+    return _summarize_benchy(raw)
 
 
 def list_benchmarks() -> list[dict]:
