@@ -185,6 +185,7 @@ class AgentNodeService:
         cap_add: list[str] | None = None,
         ulimits: dict[str, str] | None = None,
         auto_remove: bool = True,
+        user: str | None = None,
     ) -> ContainerInfo:
         """Build and start a container carrying spark-pulse labels.
 
@@ -220,6 +221,7 @@ class AgentNodeService:
                 cap_add=cap_add,
                 ulimits=ulimits,
                 auto_remove=auto_remove,
+                user=user,
             )
         )
 
@@ -241,11 +243,12 @@ class AgentNodeService:
         command: str | list[str],
         detach: bool = False,
         timeout: int | None = None,
+        user: str | None = None,
     ) -> ExecResult:
         """Execute a command inside a running container."""
         name = getattr(container, "name", container)
         return self._run(
-            self.ops.exec_in_container(str(name), command, detach, timeout)
+            self.ops.exec_in_container(str(name), command, detach, timeout, user)
         )
 
     def get_logs(self, name: str, tail: int = 200) -> str:

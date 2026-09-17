@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -384,26 +385,36 @@ class TestVersionGuard:
         assert spec.network_host is True
         # Host networking publishes nothing: the engine binds the port itself.
         assert spec.port_mappings == []
-        assert spec.ulimits == {"nofile": "1048576:1048576"}
+        assert spec.ulimits == {"nofile": "1048576:1048576", "memlock": "-1"}
         assert spec.labels[MANAGED_LABEL] == "true"
+
+    def test_the_engine_runs_as_the_operator_not_as_root(self, native):
+        # The whole point: what the engine downloads into the bind-mounted hub
+        # cache must be owned by the user whose cache it is. The uid itself is
+        # resolved on the node, so the plan carries the sentinel.
+        assert native.plan("qwen3-8b").container.user == nr.ENGINE_USER
 
     def test_hf_cache_is_mounted_at_the_container_home(self, native):
         mounts = native.plan("qwen3-8b").container.mounts
-        assert "/root/.cache/huggingface" in mounts.values()
-        # Engine cache dirs land under /root, as upstream mounts them.
-        assert all(v.startswith("/root") or v.startswith("/") for v in mounts.values())
+        assert nr.HF_CACHE_IN_CONTAINER in mounts.values()
+        # Engine cache dirs land under the container home, which is *not*
+        # /root: a non-root engine cannot even traverse root's home.
+        assert all(not v.startswith("/root") for v in mounts.values())
+        assert nr.CONTAINER_HOME in mounts.values()
 
     def test_hf_cache_is_mounted_exactly_once(self, native):
         # The engine declares ~/.cache/huggingface itself and HF_HOME targets
         # the same container path; docker refuses duplicate destinations.
         mounts = native.plan("qwen3-8b").container.mounts
         targets = list(mounts.values())
-        assert targets.count("/root/.cache/huggingface") == 1
+        assert targets.count(nr.HF_CACHE_IN_CONTAINER) == 1
 
     def test_env_carries_engine_and_recipe_variables(self, native):
         env = native.plan("qwen3-8b").container.env
         assert env["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
-        assert env["HF_HOME"] == "/root/.cache/huggingface"
+        assert env["HF_HOME"] == "/home/spark/.cache/huggingface"
+        # An engine that is not root has no business being told $HOME is.
+        assert env["HOME"] == nr.CONTAINER_HOME
 
     def test_extra_args_are_appended_quoted(self, native):
         plan = native.plan("qwen3-8b", extra_args=["--enable-prefix-caching"])
@@ -1422,9 +1433,9 @@ class TestAllocatePort:
 
 
 class TestContainerPaths:
-    def test_home_prefix_becomes_root(self):
+    def test_home_prefix_becomes_the_container_home(self):
         home = str(Path.home())
-        assert nr._container_path(f"{home}/.cache/vllm") == "/root/.cache/vllm"
+        assert nr._container_path(f"{home}/.cache/vllm") == "/home/spark/.cache/vllm"
 
     def test_absolute_paths_outside_home_are_kept(self):
         assert nr._container_path("/data/models") == "/data/models"
@@ -1479,10 +1490,12 @@ class JournalDocker(MockDockerService):
         self._guard()
         return super().list_managed_containers(labels)
 
-    def exec_in_container(self, container, command, detach=False, timeout=None):
+    def exec_in_container(
+        self, container, command, detach=False, timeout=None, user=None
+    ):
         self._note("exec_in_container", str(container))
         return super().exec_in_container(
-            container, command, detach=detach, timeout=timeout
+            container, command, detach=detach, timeout=timeout, user=user
         )
 
     def copy_to_container(self, container, local_path, remote_path, timeout=120):
@@ -1714,6 +1727,34 @@ class TestStartOrder:
             "spark-pulse-dep1-r1-g1",
             "spark-pulse-dep1-r0-g1",
         ]
+
+    def test_every_rank_runs_as_the_operator_and_sets_up_as_root(self, native, fleet):
+        """The two halves of a deploy, and why they differ.
+
+        The container — and so the engine exec that inherits it — runs as the
+        operator, because what it writes into the bind-mounted Hugging Face
+        cache has to stay readable and lockable by the control plane. The
+        setup around it still runs as root: a mod patches the image's own
+        root-owned workspace, and the launch script arrives owned by root
+        because the daemon wrote it.
+        """
+        plan = native.plan(
+            "qwen3-8b-tp3", nodes=NODES, solo=False, deployment_id="dep1"
+        )
+        native.start(plan, services=fleet.services, wait=True)
+
+        expected = f"{os.geteuid()}:{os.getegid()}"
+        for rank, node in enumerate(NODES):
+            client = fleet.nodes[node].client
+            container = client.containers.get(f"spark-pulse-dep1-r{rank}-g1")
+            assert container.user == expected
+            users = dict(container.executed_as)
+            assert users[f"chmod 0755 {nr.SCRIPT_PATH}"] == "root"
+            # The engine itself: no user asked for, so the container's.
+            launch = next(
+                user for command, user in container.executed_as if "bash " in command
+            )
+            assert launch == ""
 
     def test_each_rank_lands_on_its_own_node(self, native, fleet):
         plan = native.plan(

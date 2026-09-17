@@ -25,7 +25,7 @@ runtime:
   ports: {api: 8000}
   cache_mounts: [~/.cache/huggingface]
   env:
-    HF_HOME: /root/.cache/huggingface
+    HF_HOME: /home/spark/.cache/huggingface
   container:
     privileged: false
     ipc_host: true

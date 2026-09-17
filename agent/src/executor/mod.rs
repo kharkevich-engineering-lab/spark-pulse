@@ -426,6 +426,7 @@ impl Executor {
                         &req.container,
                         command,
                         req.detach.unwrap_or(false),
+                        req.user.as_deref(),
                     )
                     .await
                 );

@@ -21,6 +21,7 @@ from docker import errors as _docker_errors
 # ``PullCancelled``/``PullStalled`` in both modes, so the mock re-exports the
 # real ones rather than growing look-alikes the ``except`` clauses would miss.
 from spark_pulse.tools.docker import (
+    AGENT_USER as AGENT_USER,
     ContainerInfo,
     ContainerMetadata as ContainerMetadata,
     DockerService,
@@ -28,6 +29,7 @@ from spark_pulse.tools.docker import (
     PullCancelled as PullCancelled,
     PullStalled as PullStalled,
     prepare_labels as prepare_labels,
+    resolve_user as resolve_user,
     split_ref,
 )
 
@@ -50,7 +52,13 @@ class MockContainer:
     image: str = ""
     labels: dict[str, str] = field(default_factory=dict)
     executed_commands: list[str] = field(default_factory=list)
+    #: ``(command, user)`` per exec. A daemon runs an exec as whoever it was
+    #: told to; a simulation that forgets the user cannot catch a deploy that
+    #: stops asking for one.
+    executed_as: list[tuple[str, str]] = field(default_factory=list)
     log_lines: list[str] = field(default_factory=list)
+    #: Docker's ``--user``, as resolved by the service before the call.
+    user: str | None = None
     _removed: bool = field(default=False, repr=False)
     attrs: dict[str, Any] = field(
         default_factory=lambda: {
@@ -86,11 +94,13 @@ class MockContainer:
         command: str | list[str],
         demux: bool = False,
         detach: bool = False,
+        user: str = "",
         **_kwargs: Any,
     ) -> "MockExecResult":
         """Simulate executing a command inside the container."""
         text = command if isinstance(command, str) else " ".join(command)
         self.executed_commands.append(text)
+        self.executed_as.append((text, user))
         self.log_lines.append(f"[mock] exec: {text}")
         output = f"{text.split()[-1] if text else ''}\n".encode()
         return MockExecResult(exit_code=0, output=(output, None) if demux else output)
@@ -287,6 +297,7 @@ class MockContainersManager:
         entrypoint: list[str] | None = None,
         remove: bool = True,
         command: str | list[str] | None = None,
+        user: str | None = None,
         **_kwargs: Any,
     ) -> MockContainer:
         """Simulate running a container."""
@@ -298,6 +309,7 @@ class MockContainersManager:
             image=image,
             labels=labels or {},
             log_lines=[f"[mock] started {name} from {image}"],
+            user=user,
         )
         container.attrs["Image"] = image
         self._containers[name] = container

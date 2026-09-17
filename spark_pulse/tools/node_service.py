@@ -382,6 +382,7 @@ class NodeService(Protocol):
         cap_add: list[str] | None = None,
         ulimits: dict[str, str] | None = None,
         auto_remove: bool = True,
+        user: str | None = None,
     ) -> ContainerInfo:
         """Build and start a container carrying spark-pulse labels."""
         ...
@@ -415,6 +416,7 @@ class NodeService(Protocol):
         command: str | list[str],
         detach: bool = False,
         timeout: int | None = None,
+        user: str | None = None,
     ) -> ExecResult:
         """Execute a command inside a running container."""
         ...

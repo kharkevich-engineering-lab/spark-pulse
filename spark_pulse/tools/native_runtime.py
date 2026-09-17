@@ -73,7 +73,12 @@ from spark_pulse.engines import (
     get_registry,
 )
 from spark_pulse.tools.discovery import FABRIC_MESH, MESH_RING_NODES
-from spark_pulse.tools.docker import ContainerMetadata, PullCancelled, PullStalled
+from spark_pulse.tools.docker import (
+    AGENT_USER,
+    ContainerMetadata,
+    PullCancelled,
+    PullStalled,
+)
 from spark_pulse.tools.events import DeploymentEvent, EventType
 from spark_pulse.tools.labels import (
     DEPLOYMENT_LABEL,
@@ -97,8 +102,36 @@ RUNTIME_NAME = "native"
 SCRIPT_PATH = "/workspace/exec-script.sh"
 MODS_DIR = "/workspace/mods"
 CONTAINER_PREFIX = "spark-pulse-"
-CONTAINER_HOME = "/root"
-HF_CACHE_IN_CONTAINER = "/root/.cache/huggingface"
+#: Where the engine's home lives *inside* the container, and why it is not
+#: ``/root`` any more.
+#:
+#: The container runs as the operator (:data:`ENGINE_USER`), so that everything
+#: the engine downloads into the bind-mounted Hugging Face cache is owned by
+#: the operator rather than by root. ``/root`` is mode 0700 in every engine
+#: image, so a non-root process cannot even *traverse* it — a cache mounted at
+#: ``/root/.cache/huggingface`` would be unreachable. A neutral home is what
+#: makes the two decisions compatible: docker creates the missing path
+#: components as mode 0755, and the leaves are the binds themselves.
+CONTAINER_HOME = "/home/spark"
+HF_CACHE_IN_CONTAINER = CONTAINER_HOME + "/.cache/huggingface"
+
+#: Who the engine container runs as. Resolved on the node — see
+#: :func:`spark_pulse.tools.docker.resolve_user` — because the control plane
+#: cannot know a peer's uid.
+#:
+#: This is the fix for a failure that took a ``sudo chown -R`` to clear on a
+#: real two-node cluster: the engine wrote the mounted hub cache as root, so
+#: the control-plane user could no longer read ``trees/<rev>.json``, could not
+#: take Hugging Face's ``.locks/`` lock on the next download, and replication
+#: shipped 3.6 GB that the node-side verify then refused.
+ENGINE_USER = AGENT_USER
+
+#: The container's ``$HOME``, on the host. A root-owned home would be
+#: traversable but not writable, and an engine writes more than its caches
+#: there (``~/.config/vllm/usage_stats.json``, matplotlib's font cache). One
+#: directory under the operator's own cache root makes the whole home theirs;
+#: the specific caches bind on top of it.
+ENGINE_HOME_ON_HOST = "~/.cache/spark-pulse/engine-home"
 
 #: How long to wait for evidence that a container is really gone, and how
 #: often to look. Removal is fast; the wait exists so the next generation
@@ -245,6 +278,9 @@ class ContainerSpec:
     nofile_limit: int = 1048576
     port_mappings: list[str] = field(default_factory=list)
     entrypoint_clear: bool = True
+    #: Docker's ``--user``. :data:`ENGINE_USER` is the sentinel the node
+    #: resolves to its own uid:gid; ``None`` would leave the image's root.
+    user: str | None = ENGINE_USER
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -477,8 +513,10 @@ def _expand(path: str) -> str:
 def _container_path(host_path: str) -> str:
     """Where a host cache dir lands inside the container.
 
-    Upstream mounts ``~/.cache/vllm`` at ``/root/.cache/vllm``: the container
-    runs as root, so the user's home prefix is rewritten.
+    Upstream mounts ``~/.cache/vllm`` at ``/root/.cache/vllm``, because its
+    container runs as root. Ours runs as the operator, so the home prefix is
+    rewritten to :data:`CONTAINER_HOME` instead — same shape, a home the
+    engine's uid can actually enter.
     """
     home = str(Path.home())
     if host_path == home:
@@ -737,6 +775,9 @@ def _build_env(
     # not inherit the other engine's variables.
     env.update(engine_obj.block_env(recipe))
     env.setdefault("HF_HOME", HF_CACHE_IN_CONTAINER)
+    # The image's own HOME is root's, and the container is not root's. Set
+    # after the recipe's block env, so a recipe that names one still wins.
+    env.setdefault("HOME", CONTAINER_HOME)
     token = config.hf_token
     if token:
         env["HF_TOKEN"] = token
@@ -760,6 +801,10 @@ def _build_mounts(engine_obj: Engine) -> tuple[dict[str, str], list[str]]:
         if target == HF_CACHE_IN_CONTAINER:
             del mounts[host]
     mounts[hf_home] = HF_CACHE_IN_CONTAINER
+    # The home itself, so ``$HOME`` is writable by the uid the engine runs as
+    # rather than a root-owned directory docker invented for the binds beneath
+    # it. Nested binds are fine — docker mounts them in path order.
+    mounts.setdefault(_expand(ENGINE_HOME_ON_HOST), CONTAINER_HOME)
     return mounts, declared
 
 
@@ -1288,6 +1333,12 @@ def _apply_mods(
     from ``$PWD``: mods drop files there and recipes reference them by bare
     name (``--chat-template unsloth.jinja``). Every rank runs the same mods —
     they patch the image's contents, and each rank has its own copy of it.
+
+    These execs run as **root**, explicitly, even though the container's own
+    user is the operator (:data:`ENGINE_USER`). A mod edits the image — a
+    site-packages patch, a template dropped in a root-owned workdir — and has
+    always done so as root; only the engine itself needs to be the operator,
+    and only because of what it writes into the mounted cache.
     """
     applied: list[str] = []
     workdir = plan_obj.workdir or "/workspace"
@@ -1295,13 +1346,14 @@ def _apply_mods(
         mod_dir = _resolve_mod_dir(mod)
         name = mod_dir.name
         remote = f"{MODS_DIR}/{name}"
-        docker.exec_in_container(container_name, ["mkdir", "-p", remote])
+        docker.exec_in_container(container_name, ["mkdir", "-p", remote], user="root")
         for path in sorted(mod_dir.iterdir()):
             # docker cp takes files and directories alike.
             docker.copy_to_container(container_name, str(path), f"{remote}/{path.name}")
         result = docker.exec_in_container(
             container_name,
             ["bash", "-lc", f"cd {remote} && WORKSPACE_DIR={workdir} bash run.sh"],
+            user="root",
         )
         if not result.ok:
             raise NativeRuntimeError(
@@ -1316,7 +1368,13 @@ def _deploy_script(docker: Any, rank_plan: RankPlan) -> None:
     """Copy this rank's rendered script in and exec it detached.
 
     Output is redirected to PID 1's stdout so ``docker logs`` on that rank's
-    container carries the serve output.
+    container carries the serve output. PID 1 is the keepalive, which runs as
+    the container's user — the operator — so the engine can open its stdout;
+    a root PID 1 under a non-root engine could not be written to at all.
+
+    The copy lands as root (the daemon does the writing), so the mode is set
+    to 0755 from root *before* the engine's exec: the launch reads the script
+    as the operator, and a 0600 temporary file would be unreadable to it.
     """
     name = rank_plan.container.name
     with tempfile.NamedTemporaryFile(
@@ -1333,7 +1391,7 @@ def _deploy_script(docker: Any, rank_plan: RankPlan) -> None:
         except OSError:  # pragma: no cover - defensive
             pass
 
-    docker.exec_in_container(name, ["chmod", "+x", SCRIPT_PATH])
+    docker.exec_in_container(name, ["chmod", "0755", SCRIPT_PATH], user="root")
     docker.exec_in_container(
         name,
         ["bash", "-lc", f"bash {shlex.quote(SCRIPT_PATH)} >> /proc/1/fd/1 2>&1"],
@@ -1965,6 +2023,7 @@ def _create_rank(
             cap_add=spec.cap_add,
             ulimits=spec.ulimits,
             auto_remove=False,
+            user=spec.user,
         )
     except Exception as exc:
         raise NativeRuntimeError(

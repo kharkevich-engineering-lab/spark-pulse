@@ -209,4 +209,4 @@ def test_the_smoke_recipe_renders_the_hardware_command(registry):
         " --chunked-prefill-size 2048"
     )
     assert "--enable-dp-attention" not in result.command
-    assert result.env["TIKTOKEN_ENCODINGS_BASE"] == "/root/tiktoken_encodings"
+    assert result.env["TIKTOKEN_ENCODINGS_BASE"] == "/home/spark/tiktoken_encodings"

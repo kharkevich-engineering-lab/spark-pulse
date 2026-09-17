@@ -244,6 +244,17 @@ message RunContainer {
   repeated string cap_add = 19;
   map<string, string> ulimits = 20;
   optional bool auto_remove = 21;
+  // Docker's `--user`: who the container's processes are. The engine writes
+  // into the operator's bind-mounted Hugging Face cache, so running as root
+  // leaves root-owned manifests, `.locks/` and `.no_exist/` behind that the
+  // control plane can then neither read nor lock.
+  //
+  // The control plane cannot know a peer node's uid — nothing in `NodeFacts`
+  // carries one, and inventing a number here would be a guess applied to
+  // somebody else's machine. So it sends the sentinel `agent`, and the node
+  // resolves it to the uid:gid the agent itself runs as: the operator whose
+  // caches are mounted in. Any other value is passed to Docker verbatim.
+  optional string user = 22;
 }
 
 message EnsureDirectories {
@@ -264,6 +275,13 @@ message ExecInContainer {
   Cmd command = 2;
   optional bool detach = 3;
   optional int32 timeout = 4;
+  // Docker's `--user` for this one exec, independent of the container's.
+  // The deploy needs both halves: the engine runs as the operator so the
+  // mounted cache stays theirs, while the setup steps around it — creating
+  // the mods directory, running a mod's `run.sh` against the image's
+  // root-owned workspace — still need root. Unset means the container's own
+  // user, which is the engine's.
+  optional string user = 5;
 }
 
 // The source file lives on the control node, so its *content* crosses the

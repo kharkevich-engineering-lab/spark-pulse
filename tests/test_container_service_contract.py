@@ -46,6 +46,7 @@ is the ratchet: adding a method without exercising it here fails, by name.
 from __future__ import annotations
 
 import importlib
+import os
 import subprocess
 import sys
 import threading
@@ -59,6 +60,7 @@ import pytest
 from spark_pulse.config import config
 from spark_pulse.mock.docker import MockDockerService, MockDockerClient
 from spark_pulse.tools.docker import (
+    AGENT_USER,
     ContainerInfo,
     ContainerMetadata,
     DockerService,
@@ -1062,6 +1064,78 @@ class TestMemorySwapDerivation:
         kwargs = _backing_service(service).client.containers.run.call_args.kwargs
         assert kwargs["mem_limit"] == 100 * 1024 * 1024 * 1024
         assert kwargs["memswap_limit"] == int(110 * 1024 * 1024 * 1024)
+
+
+class TestEngineUserResolution:
+    """Who the engine runs as, and where the uid is decided.
+
+    The deploy sends a sentinel rather than a number, because the control
+    plane cannot know a peer node's uid — nothing in ``NodeFacts`` carries
+    one. Each node resolves it to its own identity, which is the operator
+    whose Hugging Face cache is bind-mounted into the engine. Running as root
+    instead is what left root-owned manifests and ``.locks/`` behind that the
+    control plane could then neither read nor lock.
+    """
+
+    def test_the_sentinel_becomes_this_node_uid_and_gid(self):
+        client = _fake_sdk_client()
+        DockerService(client=client).run_container(
+            image=IMAGE,
+            name="contract-user",
+            env_vars={},
+            metadata=_metadata("contract-user"),
+            user=AGENT_USER,
+        )
+
+        kwargs = client.containers.run.call_args.kwargs
+        assert kwargs["user"] == f"{os.geteuid()}:{os.getegid()}"
+
+    def test_a_peer_resolves_the_sentinel_to_its_own_identity(self):
+        service = _sdk_service(NODES["peer"])
+        service.run_container(
+            image=IMAGE,
+            name="contract-user-remote",
+            env_vars={},
+            metadata=_metadata("contract-user-remote"),
+            user=AGENT_USER,
+        )
+
+        kwargs = _backing_service(service).client.containers.run.call_args.kwargs
+        assert kwargs["user"] == f"{os.geteuid()}:{os.getegid()}"
+
+    def test_no_user_leaves_the_image_alone(self):
+        client = _fake_sdk_client()
+        DockerService(client=client).run_container(
+            image=IMAGE,
+            name="contract-user-none",
+            env_vars={},
+            metadata=_metadata("contract-user-none"),
+        )
+
+        assert "user" not in client.containers.run.call_args.kwargs
+
+    def test_an_exec_can_ask_for_root_under_a_non_root_container(self, service):
+        """Both halves of the deploy, in one container.
+
+        A mod patches the image and needs root; the engine writes the mounted
+        cache and must not be root. The exec's user is independent of the
+        container's, and a simulation that forgets it cannot catch a deploy
+        that stops asking.
+        """
+        _run(service, "contract-exec-root", _metadata("contract-exec-root"))
+
+        assert service.exec_in_container(
+            "contract-exec-root", ["id", "-u"], user="root"
+        ).ok
+
+        container = _backing_service(service).client.containers.get(
+            "contract-exec-root"
+        )
+        recorded = getattr(container, "executed_as", None)
+        if isinstance(recorded, list):  # the simulation writes it down
+            assert ("id -u", "root") in recorded
+        else:  # the SDK path: the user reaches the daemon as a kwarg
+            assert container.exec_run.call_args.kwargs["user"] == "root"
 
 
 class TestStopRemoves:
