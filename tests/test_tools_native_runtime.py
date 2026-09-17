@@ -409,6 +409,16 @@ class TestVersionGuard:
         targets = list(mounts.values())
         assert targets.count(nr.HF_CACHE_IN_CONTAINER) == 1
 
+    def test_every_mounted_cache_is_one_the_doctor_looks_at(self, native):
+        # The doctor's engine-cache-ownership check reads `engine_cache_dirs()`
+        # to decide which directories to ask a node about. A cache the deploy
+        # binds but that list never named is a root-owned directory nothing
+        # reports — which is the whole defect it was written for.
+        import os
+
+        known = {os.path.expanduser(d) for d in nr.engine_cache_dirs()}
+        assert set(native.plan("qwen3-8b").container.mounts) <= known
+
     def test_env_carries_engine_and_recipe_variables(self, native):
         env = native.plan("qwen3-8b").container.env
         assert env["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"

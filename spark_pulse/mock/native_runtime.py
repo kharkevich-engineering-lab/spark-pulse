@@ -23,6 +23,7 @@ from spark_pulse.tools.native_runtime import (
     container_name_for as container_name_for,
     create_deployment as create_deployment,
     delete_deployment as delete_deployment,
+    engine_cache_dirs as engine_cache_dirs,
     get_deployment as get_deployment,
     get_logs as get_logs,
     identity_labels as identity_labels,
