@@ -54,6 +54,10 @@ MAY_TOUCH_DOCKER_DIRECTLY = {"docker.py", "node_service.py"}
 #: said it was gone.
 MAY_TOUCH_THE_FILESYSTEM = {
     "atomic_json.py": "the temp file it renames into place, by definition",
+    "benchmarking.py": (
+        "the temp file llama-benchy writes its JSON report to on this machine, "
+        "read back and deleted here"
+    ),
     "docker.py": "the executor itself — it runs *on* the node, as the agent",
     "launch_script.py": "a temp directory it owns, copied into containers",
     "ssh.py": "its own control-socket directory under ~/.ssh",
@@ -80,6 +84,10 @@ MAY_SIGNAL_A_PROCESS: dict[str, str] = {}
 #: hardware, its network, its SSH client, its registry daemon. A node-scoped
 #: operation belongs on the agent instead.
 MAY_USE_SUBPROCESS = {
+    "benchmarking.py": (
+        "the llama-benchy load generator: a client of a deployment's own "
+        "HTTP endpoint, run from this machine by design, never on a node"
+    ),
     "discovery.py": "this host's own interfaces and RoCE devices",
     "docker.py": "the Docker client itself",
     "registry.py": "the local registry container",

@@ -164,6 +164,94 @@ def benchy(monkeypatch):
     return _install
 
 
+def _benchy_report(**overrides) -> dict:
+    """A llama-benchy 0.4 JSON report, shaped exactly as the tool writes it."""
+    stat = lambda mean: {"mean": mean, "std": 1.0, "values": [mean]}  # noqa: E731
+    report = {
+        "version": "0.4.0",
+        "timestamp": "2026-09-17 14:38:22Z",
+        "latency_mode": "api",
+        "latency_ms": 2.5799,
+        "model": "RadixArk/Qwen3.8-27B-NVFP4",
+        "prefix_caching_enabled": False,
+        "max_concurrency": 1,
+        "benchmarks": [
+            {
+                "concurrency": 1,
+                "context_size": 0,
+                "prompt_size": 512,
+                "response_size": 64,
+                "is_context_prefill_phase": False,
+                "pp_throughput": stat(1293.59),
+                "tg_throughput": stat(63.56),
+                "peak_throughput": stat(68.91),
+                "ttfr": stat(400.57),
+                "e2e_ttft": stat(400.57),
+                "throughput_over_time": [[0.0, 10.0]],
+                "requests_throughput_over_time": [[0.0, 1.0]],
+            }
+        ],
+    }
+    report.update(overrides)
+    return report
+
+
+class _FakeBenchyRun:
+    """Stand-in for ``subprocess.run`` launching ``python -m llama_benchy``.
+
+    Records the argv, writes the report to the ``--save-result`` path the way
+    the real tool does, and answers with the exit code it was given.
+    """
+
+    def __init__(self, report=None, returncode=0, stderr="", exc=None):
+        self.report = report if report is not None else _benchy_report()
+        self.returncode = returncode
+        self.stderr = stderr
+        self.exc = exc
+        self.calls: list[list[str]] = []
+
+    def __call__(self, cmd, **_kwargs):
+        import json as _json
+        import subprocess as _subprocess
+
+        self.calls.append(list(cmd))
+        if self.exc is not None:
+            raise self.exc
+        if self.returncode == 0:
+            out = cmd[cmd.index("--save-result") + 1]
+            with open(out, "w", encoding="utf-8") as fh:
+                _json.dump(self.report, fh)
+        return _subprocess.CompletedProcess(
+            cmd, self.returncode, stdout="", stderr=self.stderr
+        )
+
+
+@pytest.fixture()
+def benchy_run(monkeypatch, benchy):
+    """A present llama_benchy package plus a fake subprocess launch of it."""
+
+    def _install(**kw) -> _FakeBenchyRun:
+        benchy()  # the import that checks the package is installed succeeds
+        fake = _FakeBenchyRun(**kw)
+        monkeypatch.setattr(benchmarking.subprocess, "run", fake)
+        return fake
+
+    return _install
+
+
+def _argv_value(cmd: list[str], flag: str) -> str:
+    return cmd[cmd.index(flag) + 1]
+
+
+def _argv_list(cmd: list[str], flag: str) -> list[str]:
+    out: list[str] = []
+    for item in cmd[cmd.index(flag) + 1 :]:
+        if item.startswith("--"):
+            break
+        out.append(item)
+    return out
+
+
 # ── create_benchmark ─────────────────────────────────────────────────────────
 
 
@@ -228,50 +316,102 @@ class TestCreateBenchmark:
 
 class TestExecuteBenchmark:
     def test_runs_llama_benchy_with_the_recorded_params_and_stores_results(
-        self, store, benchy
+        self, store, benchy_run
     ):
-        fake = benchy(result={"throughput": 51.5, "latency_ms": 9.4})
+        fake = benchy_run()
         record = benchmarking.create_benchmark(
             "dep-1",
             params={
                 "port": 8003,
                 "model": "Qwen/Qwen3-30B",
-                "benchmarks": ["throughput"],
-                "context_length": 8192,
+                "pp": [256],
+                "tg": [32],
+                "runs": 1,
+                "concurrency": [1],
             },
         )
 
         benchmarking.execute_benchmark(record["benchmark_id"])
 
-        assert fake.calls == [
-            {
-                "target": "http://localhost:8003",
-                "model_name": "Qwen/Qwen3-30B",
-                "benchmarks": ["throughput"],
-                "context_length": 8192,
-            }
-        ]
+        (cmd,) = fake.calls
+        # The tool is run as a module of this interpreter, never as a console
+        # script the service's PATH would not find.
+        assert cmd[:3] == [sys.executable, "-m", "llama_benchy"]
+        assert _argv_value(cmd, "--base-url") == "http://127.0.0.1:8003/v1"
+        assert _argv_value(cmd, "--model") == "Qwen/Qwen3-30B"
+        assert _argv_value(cmd, "--format") == "json"
+        assert "--skip-coherence" in cmd
+        assert _argv_value(cmd, "--runs") == "1"
+        assert _argv_list(cmd, "--pp") == ["256"]
+        assert _argv_list(cmd, "--tg") == ["32"]
+        assert _argv_list(cmd, "--concurrency") == ["1"]
+
         stored = _on_disk(store)[0]
         assert stored["status"] == "completed"
-        assert stored["results"] == {"throughput": 51.5, "latency_ms": 9.4}
         assert stored["completed_at"] is not None
+        results = stored["results"]
+        # The fields the page and compare read, flattened from the report.
+        assert results["tool"] == "llama-benchy"
+        assert results["tool_version"] == "0.4.0"
+        assert results["throughput"] == 63.56
+        assert results["prefill_speed"] == 1293.59
+        assert results["peak_throughput"] == 68.91
+        assert results["ttft_ms"] == 400.57
+        assert results["latency_ms"] == 2.58
+        assert results["decode_latency_ms"] == round(1000 / 63.56, 2)
+        assert results["tests"][0]["tg_tps"] == 63.56
+        assert results["tests"][0]["prompt_size"] == 512
+        # The report is kept, minus the per-run time series.
+        assert results["raw"]["version"] == "0.4.0"
+        assert "throughput_over_time" not in results["raw"]["benchmarks"][0]
+        assert "tg_throughput" in results["raw"]["benchmarks"][0]
         # and the update is visible through the read API, not just on disk
         assert benchmarking.get_benchmark(record["benchmark_id"])["status"] == (
             "completed"
         )
 
-    def test_falls_back_to_default_target_model_and_context(self, store, benchy):
-        fake = benchy()
+    def test_falls_back_to_the_defaults_and_the_deployments_port(
+        self, store, benchy_run
+    ):
+        fake = benchy_run()
         record = benchmarking.create_benchmark("dep-1")
 
         benchmarking.execute_benchmark(record["benchmark_id"])
 
-        assert fake.calls[0] == {
-            "target": "http://localhost:8000",
-            "model_name": "unknown",
-            "benchmarks": ["throughput", "latency"],
-            "context_length": 4096,
+        (cmd,) = fake.calls
+        # No deployment is registered as dep-1 here, so the port default holds
+        # and no model is named — llama-benchy auto-detects it from the endpoint.
+        assert _argv_value(cmd, "--base-url") == "http://127.0.0.1:8000/v1"
+        assert "--model" not in cmd
+        assert _argv_list(cmd, "--pp") == ["512", "2048"]
+        assert _argv_list(cmd, "--tg") == ["128"]
+        assert _argv_value(cmd, "--runs") == "3"
+        assert _argv_list(cmd, "--concurrency") == ["1", "4"]
+
+    def test_the_summary_excludes_context_prefill_phases(self, store, benchy_run):
+        prefill = {
+            "concurrency": 1,
+            "context_size": 4096,
+            "prompt_size": 4096,
+            "response_size": 1,
+            "is_context_prefill_phase": True,
+            "pp_throughput": {"mean": 5000.0, "std": 0, "values": [5000.0]},
+            "tg_throughput": {"mean": 1.0, "std": 0, "values": [1.0]},
+            "peak_throughput": {"mean": 1.0, "std": 0, "values": [1.0]},
+            "e2e_ttft": {"mean": 900.0, "std": 0, "values": [900.0]},
         }
+        report = _benchy_report()
+        report["benchmarks"].insert(0, prefill)
+        benchy_run(report=report)
+        record = benchmarking.create_benchmark("dep-1")
+
+        benchmarking.execute_benchmark(record["benchmark_id"])
+
+        results = _on_disk(store)[0]["results"]
+        # The prefill phase is listed but does not drag the headline numbers.
+        assert len(results["tests"]) == 2 and results["tests"][0]["prefill_phase"]
+        assert results["throughput"] == 63.56
+        assert results["prefill_speed"] == 1293.59
 
     def test_records_an_error_when_llama_benchy_is_not_installed(
         self, store, monkeypatch
@@ -288,20 +428,21 @@ class TestExecuteBenchmark:
         assert "spark-pulse[benchmarking]" in stored["results"]["error"]
         assert stored["completed_at"] is not None
 
-    def test_records_an_error_when_the_benchmark_run_raises(self, store, benchy):
-        benchy(exc=ConnectionError("connection refused"))
+    def test_records_an_error_when_the_tool_exits_non_zero(self, store, benchy_run):
+        benchy_run(returncode=2, stderr="ConnectionError: connection refused\n")
         record = benchmarking.create_benchmark("dep-1")
 
         benchmarking.execute_benchmark(record["benchmark_id"])
 
         stored = _on_disk(store)[0]
         assert stored["status"] == "error"
-        assert stored["results"] == {"error": "connection refused"}
+        assert "exited 2" in stored["results"]["error"]
+        assert "connection refused" in stored["results"]["error"]
 
     def test_propagates_keyboard_interrupt_and_leaves_the_record_running(
-        self, store, benchy
+        self, store, benchy_run
     ):
-        benchy(exc=KeyboardInterrupt())
+        benchy_run(exc=KeyboardInterrupt())
         record = benchmarking.create_benchmark("dep-1")
 
         with pytest.raises(KeyboardInterrupt):
@@ -715,8 +856,8 @@ class TestPerRowWrites:
 
         assert len(statements) == 1
 
-    def test_finishing_a_benchmark_writes_only_its_own_row(self, store, benchy):
-        benchy()
+    def test_finishing_a_benchmark_writes_only_its_own_row(self, store, benchy_run):
+        benchy_run()
         _seed(store, [_record("a"), _record("b")])
         record = benchmarking.create_benchmark("dep-1")
 
@@ -897,7 +1038,7 @@ class TestRetention:
         assert benchmarking.list_benchmarks() == []
         assert _on_disk(store) == []
 
-    def test_a_point_read_triggers_the_one_time_json_import(self, store, benchy):
+    def test_a_point_read_triggers_the_one_time_json_import(self, store, benchy_run):
         """``execute_benchmark`` reads one row now, so the import must happen there."""
         store.write_text(
             json.dumps(
@@ -913,7 +1054,7 @@ class TestRetention:
             )
         )
         benchmarking._reset_cache()
-        benchy(result={"throughput": 12.0})
+        benchy_run()
 
         benchmarking.execute_benchmark("from-json")
 
