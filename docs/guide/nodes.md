@@ -52,6 +52,8 @@ The control node is the one machine that cannot be surfaced to anybody — a den
 
 **Repair what is fixable** acts only on the first kind and checks again afterward. It is the one button that changes anything, and each repair says what it did — a docker-group add now restarts the user's service manager so the group is in effect, rather than sending you to log in again. The control node is diagnosed the same way over its own agent, but not repaired over SSH: upgrade and restart the control plane instead.
 
+One check is about the upgrade rather than the machine: **engine cache ownership**. Engines ran as root until 1.28.2 and run as the operator now, so a node that deployed before then has root-owned files under `~/.cache/vllm`, `~/.cache/flashinfer`, `~/.triton`, `~/.tilelang` and `~/.cache/huggingface`, and the next deploy fails with `Permission denied` on a temp file inside one of them. The doctor names the directories and the counts, repairs a peer with `chown -R`, and on the control node — which it reads over that node's own agent and never repairs over SSH — hands you the `sudo chown -R $USER …` line to run there.
+
 The API is `GET /api/nodes/{id}/doctor` (diagnose) and `POST /api/nodes/{id}/doctor` (treat).
 
 ## Diagnostics

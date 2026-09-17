@@ -35,6 +35,10 @@ the tests rather than promised here.
 **The control node is not a special case.** It runs an ordinary agent enrolled
 in the ordinary way, so it is diagnosed by this function with its own node id
 like any peer, and the agent-channel checks work on it with no SSH at all.
+That includes ``engine-cache-ownership``, which runs its ``find`` as a
+``RunHostProbe`` when there is no SSH session — unprivileged, which is why the
+control node's verdict is always ``needs-a-human-on-that-machine`` with the
+``chown`` line to run there, while a peer with a sudo path gets the repair.
 """
 
 from __future__ import annotations
@@ -78,6 +82,7 @@ __all__ = [
     "Repair",
     "REACHABILITY_PROBE",
     "BUILDKIT_INVALID_DATABASE_REMEDY",
+    "ENGINE_CACHE_CHECK",
     "diagnose",
     "treat",
 ]
@@ -123,6 +128,27 @@ BUILDKIT_INVALID_DATABASE_REMEDY = (
     "move /var/lib/docker/buildkit aside and restart docker "
     "(only build cache is lost)"
 )
+
+#: The engine caches on a node, and who owns what is in them.
+#:
+#: Engines ran as root until 1.28.2 and run as the operator now, so every
+#: install that deployed before the upgrade has root-owned files under the
+#: caches the engine binds — ``~/.cache/vllm``, ``~/.cache/flashinfer``,
+#: ``~/.triton``, ``~/.tilelang``, and the strays HF leaves in
+#: ``~/.cache/huggingface``. The first non-root deploy afterwards dies with
+#: ``PermissionError: [Errno 13]`` deep inside one of them and nothing in the
+#: product names the cause. This check is that name.
+ENGINE_CACHE_CHECK = "engine-cache-ownership"
+
+#: How far the count is allowed to walk. A cache with 17,980 foreign entries
+#: is as broken as one with 20,000 and the operator does not read the
+#: difference, so ``find`` is stopped at this many — ``head`` closing the pipe
+#: ends the walk rather than carrying a megabyte of paths back over the wire.
+FOREIGN_ENTRY_CAP = 10000
+
+#: Seconds a cache-ownership probe may run. A cold walk of a large cache is
+#: seconds, not minutes, and the agent kills anything past its timeout.
+CACHE_PROBE_TIMEOUT = 60
 
 #: docker.service and its journal are read with the plain system `systemctl`/
 #: `journalctl` regardless of the agent's own scope: the daemon these ask
@@ -241,6 +267,7 @@ async def diagnose(
     _check_certificate(entry, report)
 
     if access is None:
+        await _check_engine_caches_over_agent(server, node_id, connected, report)
         for check in (
             "unit",
             "linger",
@@ -268,6 +295,7 @@ async def diagnose(
         # host-level ones say plainly they could not be reached.
         reason = f"could not reach {access.host} over SSH: {str(exc)[:160]}"
         logger.info("doctor: %s", reason)
+        await _check_engine_caches_over_agent(server, node_id, connected, report)
         for check in (
             "unit",
             "linger",
@@ -618,6 +646,14 @@ async def _check_host(
     else:
         report.add(Finding("clock", "unknown", "date did not answer", "ssh"))
 
+    await _check_engine_caches(
+        _ssh_probe(session),
+        caps.user,
+        report,
+        channel="ssh",
+        repairable=_has_sudo_path(caps),
+    )
+
 
 async def _check_identity(
     server: ControlPlaneServer,
@@ -795,6 +831,198 @@ def _free_bytes(df_output: str) -> int | None:
         return None
 
 
+# ── The engine caches, and who owns them ────────────────────────────────────
+
+
+def _engine_cache_dirs() -> list[str]:
+    """The directories a deploy binds into the engine container.
+
+    Read from :func:`spark_pulse.tools.native_runtime.engine_cache_dirs`, never
+    restated here: a second list would be the one that goes out of date, and a
+    cache the deploy mounts but the doctor never looks at is exactly the gap
+    this check exists to close.
+    """
+    from spark_pulse import tools
+
+    return list(tools.native_runtime.engine_cache_dirs())
+
+
+def _shell_path(path: str) -> str:
+    """One path as an argument, with ``~`` left expandable by the far end.
+
+    ``shlex.quote`` would quote the tilde too, and a quoted tilde is a literal
+    directory named ``~``. The home that matters is the one on the node, so
+    the path travels as ``"$HOME/..."`` and the node's own shell resolves it.
+    """
+    if path == "~" or path.startswith("~/"):
+        return '"$HOME' + path[1:] + '"'
+    return shlex.quote(path)
+
+
+def _foreign_count_command(directory: str, user: str) -> str:
+    """Count entries under ``directory`` that ``user`` does not own, bounded.
+
+    ``-xdev`` keeps the walk off a mounted model share; ``2>/dev/null`` makes a
+    directory that is not there a count of zero rather than a finding; and
+    ``head`` caps both the walk and the bytes that come back.
+    """
+    return (
+        f"find {_shell_path(directory)} -xdev ! -user {shlex.quote(user)} "
+        f"2>/dev/null | head -n {FOREIGN_ENTRY_CAP + 1} | wc -l"
+    )
+
+
+def _entry_count(stdout: str) -> int | None:
+    """``wc -l``'s answer, or ``None`` when that is not what came back."""
+    for line in stdout.splitlines():
+        token = line.strip().split(" ")[0]
+        if token.isdigit():
+            return int(token)
+    return None
+
+
+async def _foreign_owned(
+    run: Any, dirs: list[str], user: str
+) -> tuple[list[tuple[str, int]], str]:
+    """``(directory, count)`` for each directory holding files ``user`` lacks.
+
+    The second value is why the channel could not answer, and it is kept apart
+    from "nothing was found": a cache nobody could look at is unknown, and
+    reporting unknown as clean is how an upgrade blocker stays invisible.
+    """
+    found: list[tuple[str, int]] = []
+    for directory in dirs:
+        stdout, error = await run(_foreign_count_command(directory, user))
+        if error:
+            return [], error
+        count = _entry_count(stdout)
+        if count is None:
+            return [], f"the node did not answer the count for {directory}"
+        if count:
+            found.append((directory, count))
+    return found, ""
+
+
+def _entries(count: int) -> str:
+    return (
+        f"{FOREIGN_ENTRY_CAP}+ entries"
+        if count > FOREIGN_ENTRY_CAP
+        else (f"{count} entries" if count != 1 else "1 entry")
+    )
+
+
+async def _check_engine_caches(
+    run: Any,
+    user: str,
+    report: DoctorReport,
+    *,
+    channel: str,
+    repairable: bool,
+) -> None:
+    """Whether the engine's caches are the operator's, on whichever channel."""
+    dirs = _engine_cache_dirs()
+    found, error = await _foreign_owned(run, dirs, user)
+    if error:
+        report.add(Finding(ENGINE_CACHE_CHECK, "unknown", error, channel=channel))
+        return
+    if not found:
+        report.add(
+            Finding(
+                ENGINE_CACHE_CHECK,
+                "ok",
+                f"{user} owns everything in the {len(dirs)} directories the "
+                "engine binds",
+                channel,
+            )
+        )
+        return
+    named = ", ".join(f"{directory} ({_entries(n)})" for directory, n in found)
+    remedy = "run: sudo chown -R $USER " + " ".join(d for d, _ in found)
+    report.add(
+        Finding(
+            ENGINE_CACHE_CHECK,
+            "broken",
+            f"the engine caches hold files {user} does not own: {named}. "
+            "Engines ran as root before 1.28.2 and run as the operator now, so "
+            "the next deploy fails with Permission denied inside a cache it "
+            "cannot write — and the traceback names a temp file, never this",
+            channel=channel,
+            verdict=FIXABLE if repairable else NEEDS_HUMAN,
+            remedy=remedy,
+        )
+    )
+
+
+def _ssh_probe(session: NodeSession) -> Any:
+    """The cache probe over SSH: a command, its stdout, and no transport error."""
+
+    async def run(command: str) -> tuple[str, str]:
+        result = await session.run(command, timeout=CACHE_PROBE_TIMEOUT)
+        return result.stdout, ""
+
+    return run
+
+
+async def _check_engine_caches_over_agent(
+    server: ControlPlaneServer, node_id: str, connected: bool, report: DoctorReport
+) -> None:
+    """The same check with no SSH at all — which is the control node's case.
+
+    The control node is diagnosed by its own agent and never treated over SSH,
+    so this half is read-only by construction: it says what is wrong and hands
+    back the ``chown`` line to run there. The transport is ``RunHostProbe``,
+    the same operation the pre-flight reads a node's host facts with, so the
+    command runs unprivileged under the agent's own user with a hard timeout.
+    """
+    if not connected:
+        report.add(
+            Finding(
+                ENGINE_CACHE_CHECK,
+                "unknown",
+                "neither SSH nor the agent could be asked about the engine caches",
+                channel="agent",
+            )
+        )
+        return
+
+    from spark_pulse.agent.operations import NodeOperations
+
+    ops = NodeOperations(server.hub, node_id)
+
+    async def run(command: str) -> tuple[str, str]:
+        try:
+            result = await ops.run_host_probe(
+                command, timeout_seconds=CACHE_PROBE_TIMEOUT
+            )
+        except Exception as exc:  # noqa: BLE001 — every transport failure alike
+            return "", f"the node's agent could not run the check: {str(exc)[:160]}"
+        return str(getattr(result, "stdout", "") or ""), ""
+
+    whoami, error = await run("id -un")
+    user = whoami.strip().splitlines()[0] if whoami.strip() else ""
+    if error or not user:
+        report.add(
+            Finding(
+                ENGINE_CACHE_CHECK,
+                "unknown",
+                error or "the agent did not say which user it runs as",
+                channel="agent",
+            )
+        )
+        return
+    # Never ``fixable-here``: the repair needs sudo, this channel is
+    # deliberately unprivileged, and the control node is not treated from here.
+    await _check_engine_caches(run, user, report, channel="agent", repairable=False)
+
+
+def _has_sudo_path(caps: NodeCapabilities) -> bool:
+    """Whether a privileged command could run at all on this node."""
+    sudo = caps.sudo
+    if sudo.is_root:
+        return True
+    return bool(sudo.present and sudo.permitted and not sudo.requiretty)
+
+
 # ── Treatment ───────────────────────────────────────────────────────────────
 
 
@@ -837,7 +1065,8 @@ async def treat(
         paths = await detect_installation(session, caps) or paths_for("user", caps)
         runner = PrivilegedRunner(session, caps, prompt=sudo_password_prompt)
         needs_elevation = any(
-            f.check in ("linger", "docker-socket") for f in actionable
+            f.check in ("linger", "docker-socket", ENGINE_CACHE_CHECK)
+            for f in actionable
         )
         if (
             needs_elevation
@@ -992,6 +1221,45 @@ async def _repair(
                     "needed"
                 )
             report.repairs.append(Repair(check, action, True, detail))
+            return
+
+        if check == ENGINE_CACHE_CHECK:
+            # Re-derived rather than read off the finding: the set to chown is
+            # whatever is foreign *now*, and a directory that came right in
+            # between the diagnosis and here is one this must not touch.
+            found, error = await _foreign_owned(
+                _ssh_probe(session), _engine_cache_dirs(), caps.user
+            )
+            if error or not found:
+                report.repairs.append(
+                    Repair(
+                        check,
+                        "none",
+                        False,
+                        error or "nothing foreign-owned is left in the caches",
+                    )
+                )
+                return
+            targets = " ".join(_shell_path(directory) for directory, _ in found)
+            action = (
+                f"chown -R {shlex.quote(caps.user)}:{shlex.quote(caps.user)} {targets}"
+            )
+            result = await runner.run(
+                action, why=f"give the engine caches back to {caps.user}"
+            )
+            report.repairs.append(
+                Repair(
+                    check,
+                    action,
+                    result.ok,
+                    (
+                        "the engine caches are the operator's again; a deploy "
+                        "can write them"
+                        if result.ok
+                        else result.stderr.strip()[:200]
+                    ),
+                )
+            )
             return
 
         if check == "identity-permissions":

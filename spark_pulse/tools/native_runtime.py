@@ -784,27 +784,88 @@ def _build_env(
     return env
 
 
+def _home_relative(path: str) -> str:
+    """``~``-relative when the path is under this user's home, as written.
+
+    The inverse of :func:`_expand`, and it exists because a cache directory is
+    sometimes read by another machine: the operator's home on a peer is that
+    node's, not this one's, so a list meant to travel says ``~/.cache/vllm``
+    and lets the far end expand it.
+    """
+    home = str(Path.home())
+    if path == home:
+        return "~"
+    if path.startswith(home + os.sep):
+        return "~" + path[len(home) :]
+    return path
+
+
+def _hf_home() -> str:
+    try:
+        return str(tools.models.hf_home())
+    except Exception:  # pragma: no cover - defensive
+        return _expand("~/.cache/huggingface")
+
+
+def engine_cache_dirs(engine_obj: Engine | None = None) -> list[str]:
+    """Every host directory a deploy bind-mounts into an engine container.
+
+    With an ``engine_obj``, exactly what that engine declares (plus the two
+    every engine gets: ``HF_HOME`` and the container's home). Without one, the
+    union over every engine this control plane knows — which is what a check
+    about what *past* deploys left behind has to look at, since the caches on
+    a node were written by whichever engines have run there.
+
+    This is the list :func:`_build_mounts` mounts from, deliberately: the
+    doctor's ``engine-cache-ownership`` check reads it to decide which
+    directories to look at, and a cache the deploy binds but the doctor never
+    heard of is precisely the failure this exists to prevent.
+
+    Returned as written — ``~``-relative under a home — because the reader may
+    be another machine. Order is stable: declared caches first, then
+    ``HF_HOME``, then the engine's home.
+    """
+    declared: list[str] = []
+    if engine_obj is not None:
+        declared.extend(engine_obj.cache_mounts())
+    else:
+        for spec in get_registry().list():
+            declared.extend(spec.runtime.cache_mounts)
+    declared.append(_home_relative(_hf_home()))
+    declared.append(ENGINE_HOME_ON_HOST)
+
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for raw in declared:
+        portable = _home_relative(_expand(raw))
+        if portable not in seen:
+            seen.add(portable)
+            ordered.append(portable)
+    return ordered
+
+
 def _build_mounts(engine_obj: Engine) -> tuple[dict[str, str], list[str]]:
     """Host->container bind mounts for the engine's caches plus ``HF_HOME``."""
     mounts: dict[str, str] = {}
     declared = list(engine_obj.cache_mounts())
-    for raw in declared:
+    engine_home = _expand(ENGINE_HOME_ON_HOST)
+    for raw in engine_cache_dirs(engine_obj):
         host = _expand(raw)
-        mounts[host] = _container_path(host)
-    try:
-        hf_home = str(tools.models.hf_home())
-    except Exception:  # pragma: no cover - defensive
-        hf_home = _expand("~/.cache/huggingface")
+        # The home is the container's ``$HOME``, not a cache under it, so it
+        # is pinned below rather than mapped by path like the others.
+        if host != engine_home:
+            mounts[host] = _container_path(host)
+    hf_home = _hf_home()
     # HF_HOME wins over any engine-declared cache that targets the same path;
     # docker refuses two binds on one container destination.
     for host, target in list(mounts.items()):
-        if target == HF_CACHE_IN_CONTAINER:
+        if target == HF_CACHE_IN_CONTAINER and host != hf_home:
             del mounts[host]
     mounts[hf_home] = HF_CACHE_IN_CONTAINER
     # The home itself, so ``$HOME`` is writable by the uid the engine runs as
     # rather than a root-owned directory docker invented for the binds beneath
     # it. Nested binds are fine — docker mounts them in path order.
-    mounts.setdefault(_expand(ENGINE_HOME_ON_HOST), CONTAINER_HOME)
+    mounts.setdefault(engine_home, CONTAINER_HOME)
     return mounts, declared
 
 
