@@ -808,6 +808,51 @@ def _build_mounts(engine_obj: Engine) -> tuple[dict[str, str], list[str]]:
     return mounts, declared
 
 
+def _engine_ulimits(declared: Any) -> dict[str, str]:
+    """The engine's ulimits, plus the one running as the operator needs.
+
+    A non-root process holds no ``CAP_IPC_LOCK`` even in a privileged
+    container, and NCCL over RoCE registers pinned memory; unlimited
+    ``memlock`` is the other way there. The bundled engine defaults set it,
+    but an engine loaded from an OCI index may predate that — the cluster's
+    vLLM did — and running the engine as the operator is this module's
+    decision, so the limit that decision needs is added here, not left to
+    every engine definition to remember. An engine that sets its own wins.
+    """
+    ulimits = {str(k): str(v) for k, v in (declared or {}).items()}
+    ulimits.setdefault("memlock", "-1")
+    return ulimits
+
+
+def _bind_sources_to_create(mounts: dict[str, str]) -> list[str]:
+    """Every host directory that must exist, as the operator, before the run.
+
+    The bind sources themselves, and one more set that is easy to miss: the
+    *destinations* nested inside the home bind. ``/home/spark`` is a bind of
+    ``engine-home`` on the host, and ``/home/spark/.cache/huggingface`` is a
+    bind beneath it. Docker mounts in path order, so when it reaches the
+    nested one its destination is a path *inside engine-home* — and if that
+    path is missing, docker creates it there, on the host, as root. Seen on
+    the two-node cluster the first time the engine ran as the operator:
+    ``engine-home/.cache`` came into being owned by root, and the engine
+    could not create ``.cache/flashinfer`` under it (``PermissionError``),
+    while every bind source was owned correctly. Creating the host-side path
+    of each nested destination first means there is nothing left for docker
+    to invent.
+    """
+    home_on_host = ""
+    for host, target in mounts.items():
+        if target == CONTAINER_HOME:
+            home_on_host = host
+    wanted = set(mounts)
+    if home_on_host:
+        prefix = CONTAINER_HOME + "/"
+        for target in mounts.values():
+            if target.startswith(prefix):
+                wanted.add(home_on_host + target[len(CONTAINER_HOME) :])
+    return sorted(wanted)
+
+
 def _check_constraints(recipe_id: str, recipe: dict[str, Any], nodes: int) -> None:
     """Enforce the recipe's topology constraints against the real node count.
 
@@ -1176,10 +1221,7 @@ def plan(
                     shm_size_gb=shm_size,
                     devices=[str(d) for d in (profile.get("devices") or [])],
                     cap_add=[str(c) for c in (profile.get("cap_add") or [])],
-                    ulimits={
-                        str(k): str(v)
-                        for k, v in (profile.get("ulimits") or {}).items()
-                    },
+                    ulimits=_engine_ulimits(profile.get("ulimits")),
                     memory_limit_gb=config.docker_memory_limit_gb,
                     pids_limit=config.docker_pids_limit,
                     nofile_limit=config.docker_nofile_limit,
@@ -1989,10 +2031,11 @@ def _create_rank(
     where = rank_plan.node or "this machine"
 
     # Bind sources have to exist before the container does, or docker creates
-    # them owned by root and every later write to the HF cache fails.
+    # them owned by root and every later write to the HF cache fails — and so
+    # do the destinations nested inside the home bind, for the same reason.
     if spec.mounts:
         try:
-            unmade = docker.ensure_directories(sorted(spec.mounts))
+            unmade = docker.ensure_directories(_bind_sources_to_create(spec.mounts))
         except Exception as exc:  # pragma: no cover — best effort
             logger.debug("could not create mount sources on %s: %s", where, exc)
             unmade = []

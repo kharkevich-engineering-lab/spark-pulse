@@ -755,7 +755,7 @@ class TestCacheDirectories:
         ]
         assert asked, "the peer was never asked to create its bind sources"
         made = list(asked[0]["args"][0])
-        assert set(made) == set(plan.rank_plans[1].container.mounts)
+        assert set(plan.rank_plans[1].container.mounts) <= set(made)
 
         operations = fleet.operations_on(PEERS[0])
         first_mkdir = operations.index("ensure_directories")
