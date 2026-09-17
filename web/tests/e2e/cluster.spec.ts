@@ -26,7 +26,7 @@ test("marks the cluster page and its nav entry experimental", async ({ page, req
   await expect(page.getByRole("heading", { name: "Cluster Orchestration" })).toBeVisible();
 
   const note = page.getByRole("note").filter({ hasText: "Multi-node is still experimental" });
-  const chip = page.getByRole("navigation").getByRole("link", { name: "Cluster" }).getByTitle(/never been run on two machines/i);
+  const chip = page.getByRole("navigation").getByRole("link", { name: "Cluster" }).getByTitle(/has run on two DGX Sparks/i);
 
   if (config.cluster_experimental) {
     await expect(note).toBeVisible();

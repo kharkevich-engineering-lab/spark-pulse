@@ -1,8 +1,10 @@
 # Cluster evidence
 
-Multi-node is implemented and has never been run on two machines. This document
-is the substitute for running it: for each decision we cannot test, what the
-authoritative source says, what we do, and whether they agree.
+Multi-node has run on two DGX Sparks since 2026-09-17 (see the hardware
+evidence in `upstream-cluster-parity.md`). This document was written before
+that as the substitute for running it, and it remains the record for every
+decision no run has yet measured: what the authoritative source says, what we
+do, and whether they agree.
 
 Every claim carries a citation — a URL, a file and line in this repository, or a
 file and line in `eugr/spark-vllm-docker` at `358bf26` (read on the Spark at

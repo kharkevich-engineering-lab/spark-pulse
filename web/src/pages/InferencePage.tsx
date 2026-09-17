@@ -83,7 +83,7 @@ export default function InferencePage() {
       }
     }
   }, [refetch]);
-  useSSEConnection("/sse/deployments", handleDeploymentEvent);
+  useSSEConnection("/sse/events/deployments", handleDeploymentEvent);
 
   const handleBenchmark = async () => {
     if (!benchmarkModal) return;

@@ -24,7 +24,7 @@ Three things make it worth more than a stack of mocks:
   assertion reads :attr:`SimulatedNode.commands` and finds the password in no
   ``command`` field, only in the stdin of a ``sudo -S``.
 
-The shell here understands ``&&``, ``||``, ``;``, ``>``/``>>`` and
+The shell here understands ``&&``, ``||``, ``;``, ``|``, ``>``/``>>`` and
 ``2>/dev/null`` and about twenty verbs. It is deliberately small: if the
 installer needs a command this cannot run, that is a signal the installer is
 doing something too clever to be understood on a node at 3am, and the fix
@@ -53,6 +53,7 @@ from spark_pulse.agent.bootstrap_transport import (
 
 __all__ = [
     "InProcessAgentRunner",
+    "host_probe_handler",
     "SimulatedFleet",
     "SimulatedNode",
     "SimulatedSession",
@@ -166,6 +167,12 @@ class SimulatedNode:
         can_reach_control_plane: bool = True,
         free_bytes: int = 400 * 1024**3,
         clock_skew: float = 0.0,
+        #: Directories holding entries the login user does not own, and how
+        #: many — the state every install that deployed before 1.28.2 is in,
+        #: when engines wrote the operator's caches as root. Ownership is not
+        #: something a temporary directory on somebody's laptop can have, so
+        #: it is modelled here rather than made.
+        foreign_owned: dict[str, int] | None = None,
         agent_runner: Callable[..., Awaitable[RunResult]] | None = None,
     ):
         self.host = host
@@ -200,6 +207,10 @@ class SimulatedNode:
         self.free_bytes = free_bytes
         #: Seconds this node's clock is ahead of the control plane's.
         self.clock_skew = clock_skew
+        #: path → how many entries under it somebody else owns. ``chown -R``
+        #: clears the ones it covers, which is what makes the doctor's repair
+        #: verifiable rather than asserted.
+        self.foreign_owned: dict[str, int] = dict(foreign_owned or {})
         self.agent_runner = agent_runner or InProcessAgentRunner()
         self.units: dict[str, UnitState] = {}
         #: How many times ``systemctl restart user@<uid>.service`` was run —
@@ -472,7 +483,7 @@ class SimulatedSession:
                 clause = clause[:index].strip()
                 append = is_append
                 break
-        result = await self._one(clause, stdin, as_root=as_root)
+        result = await self._piped(clause, stdin, as_root=as_root)
         if target and target != "/dev/null":
             path = self.node.path(target, self.user.name)
             if not _may_write(
@@ -487,6 +498,25 @@ class SimulatedSession:
             result = RunResult(result.returncode, "", result.stderr)
         if quiet:
             result = RunResult(result.returncode, result.stdout, "")
+        return result
+
+    async def _piped(
+        self, clause: str, stdin: str | None, *, as_root: bool
+    ) -> RunResult:
+        """``a | b``: each stage's stdout is the next one's stdin.
+
+        Enough of a pipeline for the one shape that needs it — a walk bounded
+        by ``head`` and counted by ``wc`` — and no more. The exit status is the
+        last stage's, as a shell's is.
+        """
+        stages = _split_pipeline(clause)
+        if len(stages) == 1:
+            return await self._one(clause, stdin, as_root=as_root)
+        result = RunResult(0, "", "")
+        feed = stdin
+        for stage in stages:
+            result = await self._one(stage, feed, as_root=as_root)
+            feed = result.stdout
         return result
 
     async def _one(self, clause: str, stdin: str | None, *, as_root: bool) -> RunResult:
@@ -761,6 +791,74 @@ class SimulatedSession:
             path = self.node.path(target, self.user.name)
             if path.exists():
                 path.chmod(mode)
+        return RunResult(0, "", "")
+
+    async def _cmd_find(self, parts, stdin, as_root) -> RunResult:
+        """Only ``find <dir> -xdev ! -user <login user>``: whose files are these.
+
+        This node's filesystem is a real temporary directory owned by whoever
+        runs the tests, so ownership cannot be read off it — it is modelled by
+        :attr:`SimulatedNode.foreign_owned` and answered from there. One line
+        per entry, the way find prints them, so a caller that pipes into
+        ``head``/``wc`` gets what it would get on a node.
+        """
+        node, user = self.node, self.user
+        if "-user" not in parts or "!" not in parts:
+            return RunResult(2, "", f"find: unsupported invocation: {parts}")
+        owner = parts[parts.index("-user") + 1]
+        if owner != user.name:
+            return RunResult(2, "", f"find: only '! -user {user.name}' is simulated")
+        targets: list[str] = []
+        for token in parts[1:]:
+            if token.startswith("-") or token == "!":
+                break
+            targets.append(token)
+        lines: list[str] = []
+        for target in targets:
+            if not node.path(target, user.name).is_dir():
+                return RunResult(1, "", f"find: '{target}': No such file or directory")
+            expanded = node.expand(target, user.name)
+            count = _foreign_under(node, user.name, target)
+            lines.extend(f"{expanded}/entry-{index}" for index in range(count))
+        return RunResult(0, "".join(line + "\n" for line in lines), "")
+
+    async def _cmd_head(self, parts, stdin, as_root) -> RunResult:
+        """``head -n N`` over its stdin — the bound on the ownership walk."""
+        count = 10
+        if "-n" in parts:
+            count = int(parts[parts.index("-n") + 1])
+        return RunResult(0, "".join((stdin or "").splitlines(True)[:count]), "")
+
+    async def _cmd_wc(self, parts, stdin, as_root) -> RunResult:
+        """``wc -l`` over its stdin."""
+        if "-l" not in parts:
+            return RunResult(1, "", "wc: only -l is simulated")
+        return RunResult(0, f"{len((stdin or '').splitlines())}\n", "")
+
+    async def _cmd_chown(self, parts, stdin, as_root) -> RunResult:
+        """``chown -R owner[:group] <dirs>`` — the doctor's cache repair.
+
+        Root only, as on a node, and it clears whatever :attr:`foreign_owned`
+        recorded beneath each directory — which is what makes the re-diagnosis
+        that follows a verification rather than an assertion.
+        """
+        node, user = self.node, self.user
+        if not as_root:
+            return RunResult(
+                1, "", "chown: changing ownership: Operation not permitted"
+            )
+        args = [p for p in parts[1:] if not p.startswith("-")]
+        if len(args) < 2:
+            return RunResult(1, "", "chown: missing operand")
+        if args[0].split(":")[0] not in node.users:
+            return RunResult(1, "", f"chown: invalid user: '{args[0]}'")
+        for target in args[1:]:
+            if not node.path(target, user.name).exists():
+                return RunResult(
+                    1, "", f"chown: cannot access '{target}': No such file or directory"
+                )
+            for recorded in _foreign_keys_under(node, user.name, target):
+                del node.foreign_owned[recorded]
         return RunResult(0, "", "")
 
     async def _cmd_cat(self, parts, stdin, as_root) -> RunResult:
@@ -1129,6 +1227,105 @@ class SimulatedSession:
         self._last_task = self.node._last_agent_task
         self._last_session = self.node._last_agent_session
         return result
+
+
+def host_probe_handler(node: "SimulatedNode", user: str) -> Any:
+    """Answer ``RunHostProbe`` the way this node's own agent would.
+
+    The stub a simulated unit starts answers ``get_facts`` and refuses
+    everything else, which is the right default — silence and refusal are
+    different things and a stub should never be silent by accident. This is
+    the one operation the doctor asks over the agent channel rather than over
+    SSH: the control node has no SSH user, so its engine caches are looked at
+    by ``id -un`` and a bounded ``find``, and both are answered here out of
+    the same :attr:`SimulatedNode.foreign_owned` model ``_cmd_find`` reads —
+    so the two channels cannot disagree about what is on the node.
+    """
+    from spark_pulse.agent import agent_pb2 as pb
+
+    def handler(command: Any) -> Any:
+        result = pb.CommandResult(command_id=command.command_id)
+        if command.WhichOneof("op") == "get_facts":
+            from spark_pulse.mock.agent_node import facts
+
+            result.facts.CopyFrom(facts())
+            return result
+        if command.WhichOneof("op") != "run_host_probe":
+            result.failure.CopyFrom(
+                pb.CommandFailure(
+                    type="NotImplementedError",
+                    message=f"the stub was not scripted for "
+                    f"{command.WhichOneof('op')}",
+                )
+            )
+            return result
+        code, stdout = _probe_answer(node, user, command.run_host_probe.command)
+        result.host_probe.CopyFrom(
+            pb.HostProbeResult(exit_code=code, stdout=stdout, stderr="")
+        )
+        return result
+
+    return handler
+
+
+def _probe_answer(node: "SimulatedNode", user: str, command: str) -> tuple[int, str]:
+    """The two shapes the cache check sends, and what the node would say."""
+    if command.strip() == "id -un":
+        return 0, user + "\n"
+    head = command.split("|", 1)[0]
+    parts = shlex.split(head)
+    if parts[:1] != ["find"] or "-user" not in parts:
+        return 127, ""
+    directory = parts[1]
+    if not node.path(directory, user).is_dir():
+        return 0, "0\n"
+    return 0, f"{_foreign_under(node, user, directory)}\n"
+
+
+def _foreign_keys_under(node: "SimulatedNode", user: str, directory: str) -> list[str]:
+    """The ``foreign_owned`` entries that live at or under ``directory``."""
+    prefix = node.expand(directory, user).rstrip("/")
+    found = []
+    for recorded in node.foreign_owned:
+        resolved = node.expand(recorded, user).rstrip("/")
+        if resolved == prefix or resolved.startswith(prefix + "/"):
+            found.append(recorded)
+    return found
+
+
+def _foreign_under(node: "SimulatedNode", user: str, directory: str) -> int:
+    """How many entries at or under ``directory`` somebody else owns."""
+    return sum(
+        node.foreign_owned[key] for key in _foreign_keys_under(node, user, directory)
+    )
+
+
+def _split_pipeline(clause: str) -> list[str]:
+    """Split on top-level ``|``, keeping quoted text alone.
+
+    ``&&`` and ``||`` are gone by the time this runs — :func:`_split_operators`
+    consumed them — so every bar left is a pipe.
+    """
+    stages: list[str] = []
+    current: list[str] = []
+    quote = ""
+    for char in clause:
+        if quote:
+            current.append(char)
+            if char == quote:
+                quote = ""
+            continue
+        if char in "'\"":
+            quote = char
+            current.append(char)
+            continue
+        if char == "|":
+            stages.append("".join(current).strip())
+            current = []
+            continue
+        current.append(char)
+    stages.append("".join(current).strip())
+    return [stage for stage in stages if stage]
 
 
 def _covered(command: str, allowed: tuple[str, ...]) -> bool:

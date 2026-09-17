@@ -162,18 +162,16 @@ RANK_STATUS_MAX_WORKERS = 4
 
 #: Attached to every plan above one node, and to the record it becomes.
 #:
-#: Multi-node is implemented and exercised end to end in simulation — every
-#: rank rendered, started worker-first, torn down head-first and accounted for.
-#: It has never been run on two machines, because there is only one DGX Spark.
-#: The full list of what a second machine would prove is in
-#: ``docs/cluster-agent-plan.md`` section 7 and in the UI banner; this is the
-#: one line that travels with the plan itself.
+#: Multi-node has run on two DGX Sparks (2026-09-17): vLLM tensor-parallel
+#: across the ConnectX fabric, rendezvous, NCCL transport and interface pinning
+#: all observed. What no run has yet measured — fabric bandwidth, three or four
+#: nodes, SGLang across machines — is listed in ``web/src/lib/experimental.ts``
+#: and ``docs/upstream-cluster-parity.md``; this is the one line that travels
+#: with the plan itself.
 MULTI_NODE_UNPROVEN = (
-    "multi-node has never been run on hardware: only one DGX Spark exists, so "
-    "the rendering, ordering and bookkeeping below are exercised in simulation "
-    "and nothing about the rendezvous forming across machines, NCCL transport "
-    "over the real fabric or interface pinning against real per-role names has "
-    "been observed"
+    "multi-node has run on two DGX Sparks with vLLM tensor-parallel over the "
+    "ConnectX fabric; fabric bandwidth, three or four nodes and SGLang across "
+    "machines have not yet been measured"
 )
 
 
@@ -784,28 +782,134 @@ def _build_env(
     return env
 
 
+def _home_relative(path: str) -> str:
+    """``~``-relative when the path is under this user's home, as written.
+
+    The inverse of :func:`_expand`, and it exists because a cache directory is
+    sometimes read by another machine: the operator's home on a peer is that
+    node's, not this one's, so a list meant to travel says ``~/.cache/vllm``
+    and lets the far end expand it.
+    """
+    home = str(Path.home())
+    if path == home:
+        return "~"
+    if path.startswith(home + os.sep):
+        return "~" + path[len(home) :]
+    return path
+
+
+def _hf_home() -> str:
+    try:
+        return str(tools.models.hf_home())
+    except Exception:  # pragma: no cover - defensive
+        return _expand("~/.cache/huggingface")
+
+
+def engine_cache_dirs(engine_obj: Engine | None = None) -> list[str]:
+    """Every host directory a deploy bind-mounts into an engine container.
+
+    With an ``engine_obj``, exactly what that engine declares (plus the two
+    every engine gets: ``HF_HOME`` and the container's home). Without one, the
+    union over every engine this control plane knows — which is what a check
+    about what *past* deploys left behind has to look at, since the caches on
+    a node were written by whichever engines have run there.
+
+    This is the list :func:`_build_mounts` mounts from, deliberately: the
+    doctor's ``engine-cache-ownership`` check reads it to decide which
+    directories to look at, and a cache the deploy binds but the doctor never
+    heard of is precisely the failure this exists to prevent.
+
+    Returned as written — ``~``-relative under a home — because the reader may
+    be another machine. Order is stable: declared caches first, then
+    ``HF_HOME``, then the engine's home.
+    """
+    declared: list[str] = []
+    if engine_obj is not None:
+        declared.extend(engine_obj.cache_mounts())
+    else:
+        for spec in get_registry().list():
+            declared.extend(spec.runtime.cache_mounts)
+    declared.append(_home_relative(_hf_home()))
+    declared.append(ENGINE_HOME_ON_HOST)
+
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for raw in declared:
+        portable = _home_relative(_expand(raw))
+        if portable not in seen:
+            seen.add(portable)
+            ordered.append(portable)
+    return ordered
+
+
 def _build_mounts(engine_obj: Engine) -> tuple[dict[str, str], list[str]]:
     """Host->container bind mounts for the engine's caches plus ``HF_HOME``."""
     mounts: dict[str, str] = {}
     declared = list(engine_obj.cache_mounts())
-    for raw in declared:
+    engine_home = _expand(ENGINE_HOME_ON_HOST)
+    for raw in engine_cache_dirs(engine_obj):
         host = _expand(raw)
-        mounts[host] = _container_path(host)
-    try:
-        hf_home = str(tools.models.hf_home())
-    except Exception:  # pragma: no cover - defensive
-        hf_home = _expand("~/.cache/huggingface")
+        # The home is the container's ``$HOME``, not a cache under it, so it
+        # is pinned below rather than mapped by path like the others.
+        if host != engine_home:
+            mounts[host] = _container_path(host)
+    hf_home = _hf_home()
     # HF_HOME wins over any engine-declared cache that targets the same path;
     # docker refuses two binds on one container destination.
     for host, target in list(mounts.items()):
-        if target == HF_CACHE_IN_CONTAINER:
+        if target == HF_CACHE_IN_CONTAINER and host != hf_home:
             del mounts[host]
     mounts[hf_home] = HF_CACHE_IN_CONTAINER
     # The home itself, so ``$HOME`` is writable by the uid the engine runs as
     # rather than a root-owned directory docker invented for the binds beneath
     # it. Nested binds are fine — docker mounts them in path order.
-    mounts.setdefault(_expand(ENGINE_HOME_ON_HOST), CONTAINER_HOME)
+    mounts.setdefault(engine_home, CONTAINER_HOME)
     return mounts, declared
+
+
+def _engine_ulimits(declared: Any) -> dict[str, str]:
+    """The engine's ulimits, plus the one running as the operator needs.
+
+    A non-root process holds no ``CAP_IPC_LOCK`` even in a privileged
+    container, and NCCL over RoCE registers pinned memory; unlimited
+    ``memlock`` is the other way there. The bundled engine defaults set it,
+    but an engine loaded from an OCI index may predate that — the cluster's
+    vLLM did — and running the engine as the operator is this module's
+    decision, so the limit that decision needs is added here, not left to
+    every engine definition to remember. An engine that sets its own wins.
+    """
+    ulimits = {str(k): str(v) for k, v in (declared or {}).items()}
+    ulimits.setdefault("memlock", "-1")
+    return ulimits
+
+
+def _bind_sources_to_create(mounts: dict[str, str]) -> list[str]:
+    """Every host directory that must exist, as the operator, before the run.
+
+    The bind sources themselves, and one more set that is easy to miss: the
+    *destinations* nested inside the home bind. ``/home/spark`` is a bind of
+    ``engine-home`` on the host, and ``/home/spark/.cache/huggingface`` is a
+    bind beneath it. Docker mounts in path order, so when it reaches the
+    nested one its destination is a path *inside engine-home* — and if that
+    path is missing, docker creates it there, on the host, as root. Seen on
+    the two-node cluster the first time the engine ran as the operator:
+    ``engine-home/.cache`` came into being owned by root, and the engine
+    could not create ``.cache/flashinfer`` under it (``PermissionError``),
+    while every bind source was owned correctly. Creating the host-side path
+    of each nested destination first means there is nothing left for docker
+    to invent.
+    """
+    home_on_host = ""
+    for host, target in mounts.items():
+        if target == CONTAINER_HOME:
+            home_on_host = host
+    wanted = set(mounts)
+    if home_on_host:
+        prefix = CONTAINER_HOME + "/"
+        for target in mounts.values():
+            if target.startswith(prefix):
+                wanted.add(home_on_host + target[len(CONTAINER_HOME) :])
+    return sorted(wanted)
 
 
 def _check_constraints(recipe_id: str, recipe: dict[str, Any], nodes: int) -> None:
@@ -1176,10 +1280,7 @@ def plan(
                     shm_size_gb=shm_size,
                     devices=[str(d) for d in (profile.get("devices") or [])],
                     cap_add=[str(c) for c in (profile.get("cap_add") or [])],
-                    ulimits={
-                        str(k): str(v)
-                        for k, v in (profile.get("ulimits") or {}).items()
-                    },
+                    ulimits=_engine_ulimits(profile.get("ulimits")),
                     memory_limit_gb=config.docker_memory_limit_gb,
                     pids_limit=config.docker_pids_limit,
                     nofile_limit=config.docker_nofile_limit,
@@ -1989,10 +2090,11 @@ def _create_rank(
     where = rank_plan.node or "this machine"
 
     # Bind sources have to exist before the container does, or docker creates
-    # them owned by root and every later write to the HF cache fails.
+    # them owned by root and every later write to the HF cache fails — and so
+    # do the destinations nested inside the home bind, for the same reason.
     if spec.mounts:
         try:
-            unmade = docker.ensure_directories(sorted(spec.mounts))
+            unmade = docker.ensure_directories(_bind_sources_to_create(spec.mounts))
         except Exception as exc:  # pragma: no cover — best effort
             logger.debug("could not create mount sources on %s: %s", where, exc)
             unmade = []

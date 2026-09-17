@@ -23,6 +23,7 @@ import pytest
 from spark_pulse.agent.bootstrap import NodeAccess
 from spark_pulse.agent.doctor import (
     BUILDKIT_INVALID_DATABASE_REMEDY,
+    ENGINE_CACHE_CHECK,
     FIXABLE,
     NEEDS_DECISION,
     NEEDS_HUMAN,
@@ -30,7 +31,11 @@ from spark_pulse.agent.doctor import (
     treat,
 )
 from spark_pulse.agent.local import start_local_agent
-from spark_pulse.mock.bootstrap_node import SudoPolicy, _split_operators
+from spark_pulse.mock.bootstrap_node import (
+    SudoPolicy,
+    _split_operators,
+    host_probe_handler,
+)
 from spark_pulse.mock.docker import MockDockerClient, MockDockerService
 from tests.agent_bootstrap_fixtures import (
     PASSWORD,
@@ -60,6 +65,10 @@ READ_ONLY = {
     "date",
     "df",
     "test",
+    # Counting what a user does not own is a read, and the walk is bounded by
+    # `head` before it is counted by `wc` — neither of which can appear as a
+    # clause's first verb, so only `find` needs naming here.
+    "find",
 }
 
 MUTATING_SYSTEMCTL = ("start", "stop", "restart", "enable", "disable", "daemon-reload")
@@ -591,6 +600,161 @@ async def test_a_partial_identity_directory_is_refused_not_repaired(
     assert identity.status == "broken"
     assert identity.verdict == NEEDS_DECISION
     assert "half an identity" in identity.detail
+
+
+# ── The engine caches, and who owns them ────────────────────────────────────
+
+
+def cache_dirs():
+    """The directories a deploy binds, as the doctor asks the node about them."""
+    from spark_pulse.tools.native_runtime import engine_cache_dirs
+
+    return engine_cache_dirs()
+
+
+def make_caches(node, user=USER):
+    """Create every engine cache directory on the node.
+
+    A directory that is not there is not a fault — the check skips it — so
+    "clean" has to mean present and owned rather than absent.
+    """
+    for directory in cache_dirs():
+        node.path(directory, user).mkdir(parents=True, exist_ok=True)
+
+
+async def test_a_node_whose_caches_are_its_operators_is_clean(
+    agent_server, agent_fleet, agent_bundle, tmp_path
+):
+    node = make_node(tmp_path)
+    report = await install(agent_server, agent_fleet, node, agent_bundle)
+    make_caches(node)
+    mark = len(node.commands)
+
+    found = await diagnose(
+        agent_server, report.node_id, access=access(), connector=agent_fleet
+    )
+    caches = found.get(ENGINE_CACHE_CHECK)
+    assert caches.status == "ok"
+    assert caches.channel == "ssh"
+    assert USER in caches.detail
+    assert found.healthy
+    assert mutations(node, mark) == []
+
+
+async def test_root_owned_engine_caches_are_named_and_given_back(
+    agent_server, agent_fleet, agent_bundle, tmp_path
+):
+    """The upgrade blocker 1.28.2 left behind, as it is on a real Spark.
+
+    Engines ran as root until 1.28.2 and run as the operator now, so a cache
+    written by the old ones is unreadable to the new ones and the deploy dies
+    on a temp file whose name says nothing. The counts here are the ones
+    measured on the control node of a two-node cluster.
+    """
+    node = make_node(tmp_path)
+    report = await install(agent_server, agent_fleet, node, agent_bundle)
+    make_caches(node)
+    node.foreign_owned.update({"~/.cache/vllm": 17980, "~/.triton": 2510})
+
+    found = await diagnose(
+        agent_server, report.node_id, access=access(), connector=agent_fleet
+    )
+    caches = found.get(ENGINE_CACHE_CHECK)
+    assert caches.status == "broken"
+    assert caches.verdict == FIXABLE
+    assert caches.remedy == "run: sudo chown -R $USER ~/.cache/vllm ~/.triton"
+    assert "~/.cache/vllm" in caches.detail and "~/.triton" in caches.detail
+    # Bounded, and it says so rather than claiming a count it stopped short of.
+    assert "10000+ entries" in caches.detail
+    assert "2510 entries" in caches.detail
+    # The cause, not just the symptom: an operator reading this knows why now.
+    assert "ran as root before 1.28.2" in caches.detail
+
+    treated = await treat(
+        agent_server,
+        report.node_id,
+        access=access(),
+        connector=agent_fleet,
+        sudo_password_prompt=password_prompt(PASSWORD),
+    )
+    repair = next(r for r in treated.repairs if r.check == ENGINE_CACHE_CHECK)
+    assert repair.applied, repair.detail
+    assert "chown -R alex:alex" in repair.action
+    # Exactly the two that were foreign, not every cache the engine binds.
+    assert '"$HOME/.cache/vllm"' in repair.action
+    assert '"$HOME/.triton"' in repair.action
+    assert "flashinfer" not in repair.action
+    assert node.foreign_owned == {}
+    # Re-verified on the node, not assumed from a zero exit code.
+    assert treated.get(ENGINE_CACHE_CHECK).status == "ok"
+
+
+async def test_without_sudo_the_cache_fault_is_a_line_to_run_on_that_machine(
+    agent_server, agent_fleet, agent_bundle, tmp_path
+):
+    """No sudo path, so no repair from here — and the remedy is runnable."""
+    node = make_node(tmp_path, sudo=SudoPolicy(mode="none"))
+    report = await install(agent_server, agent_fleet, node, agent_bundle)
+    make_caches(node)
+    node.foreign_owned.update({"~/.cache/flashinfer": 506})
+    mark = len(node.commands)
+
+    found = await diagnose(
+        agent_server, report.node_id, access=access(), connector=agent_fleet
+    )
+    caches = found.get(ENGINE_CACHE_CHECK)
+    assert caches.status == "broken"
+    assert caches.verdict == NEEDS_HUMAN
+    assert caches.remedy == "run: sudo chown -R $USER ~/.cache/flashinfer"
+
+    treated = await treat(
+        agent_server, report.node_id, access=access(), connector=agent_fleet
+    )
+    declined = next(r for r in treated.repairs if r.check == ENGINE_CACHE_CHECK)
+    assert not declined.applied
+    assert NEEDS_HUMAN in declined.detail
+    assert node.foreign_owned == {"~/.cache/flashinfer": 506}
+    assert not any("chown" in m for m in mutations(node, mark))
+
+
+async def test_the_control_nodes_caches_are_read_over_its_own_agent(
+    agent_server, agent_fleet, agent_bundle, tmp_path
+):
+    """No SSH at all — the shape the control node is diagnosed in.
+
+    It is the machine the 17,980 root-owned entries were found on, and it is
+    the one the doctor never treats over SSH, so the check has to reach it
+    some other way: `RunHostProbe`, unprivileged, and the verdict is the
+    `chown` line to run there.
+    """
+    node = make_node(tmp_path)
+    report = await install(agent_server, agent_fleet, node, agent_bundle)
+    make_caches(node)
+    node.foreign_owned.update({"~/.cache/huggingface": 12})
+    stub = node.agent_runner.agent_for(node.host)
+    stub.handler = host_probe_handler(node, USER)
+
+    found = await diagnose(agent_server, report.node_id)
+    caches = found.get(ENGINE_CACHE_CHECK)
+    assert caches.channel == "agent"
+    assert caches.status == "broken"
+    assert caches.verdict == NEEDS_HUMAN
+    assert caches.remedy == "run: sudo chown -R $USER ~/.cache/huggingface"
+    assert "12 entries" in caches.detail
+
+
+async def test_an_agent_that_cannot_run_the_probe_is_unknown_not_clean(
+    agent_server, agent_fleet, agent_bundle, tmp_path
+):
+    """The default stub refuses the probe, and unknown is not idle."""
+    node = make_node(tmp_path)
+    report = await install(agent_server, agent_fleet, node, agent_bundle)
+
+    found = await diagnose(agent_server, report.node_id)
+    caches = found.get(ENGINE_CACHE_CHECK)
+    assert caches.status == "unknown"
+    assert "could not run the check" in caches.detail
+    assert found.healthy, "unknown is not a fault"
 
 
 # ── Channels ────────────────────────────────────────────────────────────────

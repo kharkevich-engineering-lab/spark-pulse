@@ -47,19 +47,21 @@ describe("the multi-node copy", () => {
   it("names risks rather than repeating the word experimental", async () => {
     const { MULTI_NODE_UNPROVEN, MULTI_NODE_REASON } = await import("@/lib/experimental");
     expect(MULTI_NODE_UNPROVEN.length).toBeGreaterThan(0);
-    expect(MULTI_NODE_REASON).toMatch(/only one DGX Spark exists/i);
-    expect(MULTI_NODE_REASON).toMatch(/never run on two machines|has ever run on two machines/i);
+    expect(MULTI_NODE_REASON).toMatch(/has run on two machines/i);
+    expect(MULTI_NODE_REASON).toMatch(/two DGX Sparks/i);
     for (const item of MULTI_NODE_UNPROVEN) {
       expect(item.toLowerCase()).not.toBe("experimental");
       expect(item.length).toBeGreaterThan(30);
     }
   });
 
-  it("claims nothing about hardware verification", async () => {
+  it("claims the hardware run without claiming the rest of it", async () => {
     const module = await import("@/lib/experimental");
     const prose = [module.MULTI_NODE_REASON, module.MULTI_NODE_TITLE, ...module.MULTI_NODE_UNPROVEN]
       .join(" ")
       .toLowerCase();
-    expect(prose).not.toMatch(/verified on|tested on gb10|two machines ran/);
+    // One pair of Sparks under vLLM is what happened; anything wider is not.
+    expect(prose).not.toMatch(/fully verified|verified on real hardware/);
+    expect(prose).not.toMatch(/only one dgx spark/);
   });
 });
