@@ -60,7 +60,7 @@ function renderDrawer(props: Partial<React.ComponentProps<typeof RecipeDrawer>> 
       recipe={RECIPE}
       customization={{}}
       isRunning={false}
-      clusterEnabled={false}
+      clusterAvailable={false}
       onClose={onClose}
       onError={onError}
       onDeploy={onDeploy}
@@ -142,7 +142,7 @@ describe("RecipeDrawer", () => {
    *  the drawer is cheaper than a 400 after the operator has clicked. */
   it("explains a cluster-only recipe on a solo install instead of letting it fail", () => {
     const clusterOnly = { ...RECIPE, cluster_only: true } as RecipeDetail;
-    renderDrawer({ recipe: clusterOnly, clusterEnabled: false });
+    renderDrawer({ recipe: clusterOnly, clusterAvailable: false });
 
     expect(screen.getByText("This recipe requires cluster mode.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Deploy" })).toBeDisabled();
@@ -151,7 +151,7 @@ describe("RecipeDrawer", () => {
 
   it("allows a cluster-only recipe once the cluster is enabled", () => {
     const clusterOnly = { ...RECIPE, cluster_only: true } as RecipeDetail;
-    renderDrawer({ recipe: clusterOnly, clusterEnabled: true });
+    renderDrawer({ recipe: clusterOnly, clusterAvailable: true });
 
     expect(screen.queryByText("This recipe requires cluster mode.")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Deploy" })).toBeEnabled();

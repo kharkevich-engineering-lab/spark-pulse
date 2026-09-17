@@ -67,6 +67,7 @@ class TestGetSettings:
             "mod",
             "env_managed",
             "environment",
+            "cluster",
         }
 
     def test_a_field_the_environment_owns_is_named_as_such(self, client, monkeypatch):
@@ -418,3 +419,104 @@ class TestTheEnvironmentReport:
             ]
             == ""
         )
+
+
+# ── The cluster this control plane actually has ──────────────────────────────
+
+
+class TestClusterAvailability:
+    """Whether cluster-only recipes are offered.
+
+    The switch used to be the whole answer, so an operator who had enrolled a
+    second Spark still saw every multi-node recipe filed under "unavailable"
+    until they found a toggle on a page they had no reason to open. The
+    registry decides now; the switch is an override that can only add.
+    """
+
+    @staticmethod
+    def _peer(name: str, state: str):
+        from spark_pulse import tools
+
+        return tools.node_registry.NodeRecord(id=f"id-{name}", name=name, state=state)
+
+    @staticmethod
+    def _registry(monkeypatch, *peers):
+        """The registry this control plane reads, control node included."""
+        from spark_pulse import tools
+
+        control = tools.node_registry.NodeRecord(
+            id="c0ntr01", name="spark-01", is_control_plane=True, state="healthy"
+        )
+        monkeypatch.setattr(
+            tools.node_registry, "list_nodes", lambda: [control, *peers]
+        )
+
+    def test_a_second_node_is_what_makes_cluster_recipes_available(
+        self, client, monkeypatch
+    ):
+        self._registry(monkeypatch, self._peer("spark-02", "healthy"))
+        config._data["cluster_enabled"] = False
+
+        block = client.get("/api/settings").json()["cluster"]
+
+        assert block == {"available": True, "node_count": 2, "forced": False}
+
+    def test_one_node_alone_is_not_a_cluster(self, client, monkeypatch):
+        self._registry(monkeypatch)
+        config._data["cluster_enabled"] = False
+
+        block = client.get("/api/settings").json()["cluster"]
+
+        assert block == {"available": False, "node_count": 1, "forced": False}
+
+    def test_the_flag_forces_the_recipes_on_below_two_nodes(self, client, monkeypatch):
+        """The override a cluster still being built is for: read the recipe
+        before the second machine arrives."""
+        self._registry(monkeypatch)
+        config._data["cluster_enabled"] = True
+
+        block = client.get("/api/settings").json()["cluster"]
+
+        assert block == {"available": True, "node_count": 1, "forced": True}
+
+    def test_a_peer_out_of_contact_still_counts(self, client, monkeypatch):
+        """Unknown is not gone. Availability that flickers with a heartbeat
+        would fold the recipes away mid-session."""
+        self._registry(monkeypatch, self._peer("spark-02", "unknown"))
+        config._data["cluster_enabled"] = False
+
+        assert client.get("/api/settings").json()["cluster"]["available"] is True
+
+    def test_a_dead_peer_is_not_a_node_to_deploy_across(self, client, monkeypatch):
+        self._registry(monkeypatch, self._peer("spark-02", "dead"))
+        config._data["cluster_enabled"] = False
+
+        block = client.get("/api/settings").json()["cluster"]
+
+        assert block == {"available": False, "node_count": 1, "forced": False}
+
+    def test_a_registry_that_cannot_be_read_does_not_fail_the_page(
+        self, client, monkeypatch
+    ):
+        from spark_pulse import tools
+
+        def boom():
+            raise RuntimeError("no database here")
+
+        monkeypatch.setattr(tools.node_registry, "list_nodes", boom)
+        config._data["cluster_enabled"] = False
+
+        assert client.get("/api/settings").json()["cluster"]["available"] is False
+
+    def test_the_derived_block_is_reported_never_written(
+        self, client, private_config_files
+    ):
+        """The settings form PUTs back everything it was given. A report that
+        round-trips into settings.json would be a fact frozen into config."""
+        response = client.put(
+            "/api/settings",
+            json={"cluster": {"available": True, "node_count": 9}, "webui_port": 8100},
+        )
+
+        assert response.status_code == 200
+        assert "cluster" not in json.loads(private_config_files["settings"].read_text())

@@ -96,7 +96,7 @@ The full table lives in the [configuration reference](https://kharkevich-enginee
 | `default_port_range_end` | int | `9100` | End of that range. |
 | `job_retention_days` | int | `7` | Days to retain finished deployment records. |
 | `default_engine` | string | `vllm` | Engine used when a recipe does not name one. |
-| `cluster_enabled` | bool | `false` | Offers recipes marked `cluster_only`. |
+| `cluster_enabled` | bool | `false` | Forces recipes marked `cluster_only` on. They are offered anyway once a second node is enrolled. |
 | `cluster_experimental` | bool | `true` | Marks multi-node as unproven in the UI. |
 | `database_url` | string | *(empty)* | Empty means SQLite under `~/.config/spark-pulse`; any SQLAlchemy URL otherwise. |
 | `cors_allowed_origins` | list | `[]` | Browser origins allowed to call this API. Never `*`. |

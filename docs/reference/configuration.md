@@ -30,7 +30,7 @@ Later wins. Secrets live apart, in `~/.config/spark-pulse/secrets.json` (mode `0
 
 | Key | Default | What it does |
 |---|---|---|
-| `cluster_enabled` | `false` | Offers recipes marked `cluster_only` on the Recipes page. |
+| `cluster_enabled` | `false` | Forces recipes marked `cluster_only` on the Recipes page. They are offered anyway once a second node is enrolled, so this is an override for a cluster still being built. |
 | `cluster_experimental` | `true` | Marks multi-node as unproven in the UI. Turn it off once a two-node bring-up has verified it yourself. |
 | `benchmarking_enabled` | `false` | Shows the Benchmarking route. |
 

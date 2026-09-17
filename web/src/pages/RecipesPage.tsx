@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
+import { Link } from "react-router-dom";
 import { useI18n } from "@/lib/i18n";
-import { fetchRecipes, fetchRecipe, fetchDeployments, createDeployment, scheduleDeploy, fetchSettings, fetchRecipeCustomization, saveRecipeCustomization, deleteRecipeCustomization, fetchMods, fetchMod, listCustomRecipes, saveCustomRecipe, deleteCustomRecipe, listCustomMods, getCustomModFiles, saveCustomModFiles, deleteCustomMod, ApiError } from "@/lib/api";
+import { fetchRecipes, fetchRecipe, fetchDeployments, createDeployment, scheduleDeploy, fetchSettings, fetchRecipeCustomization, saveRecipeCustomization, deleteRecipeCustomization, fetchMods, fetchMod, listCustomRecipes, saveCustomRecipe, deleteCustomRecipe, listCustomMods, getCustomModFiles, saveCustomModFiles, deleteCustomMod, uninstallOciRecipe, ApiError } from "@/lib/api";
 import type { RecipeDetail, RecipeCustomization, RecipeSummary, ModSummary, ModDetail, CustomRecipeInfo, CustomModInfo, ModFileMap, PreflightReport } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
 import { AlertModal, ConfirmModal } from "@/components/Modal";
@@ -62,6 +63,15 @@ function blockingPreflight(payload: unknown): PreflightReport | null {
   if (!detail || typeof detail !== "object") return null;
   const preflight = (detail as { preflight?: unknown }).preflight;
   return preflight && typeof preflight === "object" ? (preflight as PreflightReport) : null;
+}
+
+/** ``oci-`` is the id prefix ``recipe_sources.py`` mints for a recipe an OCI
+ *  collection installed — the stem after it is the filename ``uninstall_oci_
+ *  recipe`` (and the OCI Registry page) expect, with or without ``.yaml``. */
+const OCI_ID_PREFIX = "oci-";
+
+function ociRecipeName(recipeId: string): string {
+  return recipeId.startsWith(OCI_ID_PREFIX) ? recipeId.slice(OCI_ID_PREFIX.length) : recipeId;
 }
 
 // ── File-kind badge colours ──────────────────────────────────────────────────
@@ -220,14 +230,20 @@ export default function RecipesPage() {
   // Confirmation modal state for reset
   const [resetConfirm, setResetConfirm] = useState<{ recipeId: string; recipeName: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<
-    { kind: "recipe" | "mod"; id: string; name: string } | null
+    { kind: "recipe" | "mod" | "oci"; id: string; name: string } | null
   >(null);
 
   // New recipe/mod modal state
   const [showNewRecipe, setShowNewRecipe] = useState(false);
   const [showNewMod, setShowNewMod] = useState(false);
 
-  const clusterEnabled = settings?.cluster_enabled ?? false;
+  // What decides whether a `cluster_only` recipe is offered is the cluster the
+  // control plane actually has — `/api/settings` derives it from the registry
+  // — not the `cluster_enabled` switch, which only forces the recipes on below
+  // two nodes. An operator who had enrolled a second Spark used to be told
+  // every multi-node recipe was unavailable until they found that toggle.
+  const clusterAvailable = settings?.cluster?.available ?? settings?.cluster_enabled ?? false;
+  const clusterNodeCount = settings?.cluster?.node_count ?? 1;
 
   const runningIds = useMemo(() => {
     if (!deployments) return new Set<string>();
@@ -236,10 +252,10 @@ export default function RecipesPage() {
 
   const { available, unavailable } = useMemo(() => {
     if (!recipes) return { available: [], unavailable: [] };
-    const avail = recipes.filter(r => !(r.cluster_only && !clusterEnabled));
-    const unavail = recipes.filter(r => r.cluster_only && !clusterEnabled);
+    const avail = recipes.filter(r => !(r.cluster_only && !clusterAvailable));
+    const unavail = recipes.filter(r => r.cluster_only && !clusterAvailable);
     return { available: avail, unavailable: unavail };
-  }, [recipes, clusterEnabled]);
+  }, [recipes, clusterAvailable]);
 
 
   const loadCustomData = async () => {
@@ -290,8 +306,17 @@ export default function RecipesPage() {
    * two clicks and a scroll away from the card, so the list looked as though
    * what it created could not be removed.
    */
-  const confirmDelete = (kind: "recipe" | "mod", id: string, name: string) =>
+  const confirmDelete = (kind: "recipe" | "mod" | "oci", id: string, name: string) =>
     setDeleteTarget({ kind, id, name });
+
+  /** OCI recipes are not read from `~/.config/spark-pulse/custom-recipes`, so
+   *  removing one is not a delete on the custom-recipe list — it never
+   *  appears there, and `refetch()` (the bundled/upstream/OCI listing) is
+   *  what makes it disappear from the card the operator just clicked. */
+  const handleUninstallOciRecipe = async (recipeId: string) => {
+    await uninstallOciRecipe(ociRecipeName(recipeId));
+    await refetch();
+  };
 
   const runDelete = async () => {
     if (!deleteTarget) return;
@@ -299,10 +324,14 @@ export default function RecipesPage() {
     setDeleteTarget(null);
     try {
       if (kind === "recipe") await handleDeleteCustomRecipe(id);
-      else await handleDeleteCustomMod(id);
+      else if (kind === "mod") await handleDeleteCustomMod(id);
+      else await handleUninstallOciRecipe(id);
     } catch (e) {
       setAlertModal({
-        title: t("recipes.deleteFailed", { name }),
+        title:
+          kind === "oci"
+            ? t("recipes.uninstallFailed", { name })
+            : t("recipes.deleteFailed", { name }),
         message: e instanceof Error ? e.message : t("common.unknownError"),
       });
     }
@@ -592,6 +621,7 @@ export default function RecipesPage() {
                         clusterBlocked={false}
                         onSelect={() => handleSelect(r)}
                         onReset={() => openResetConfirm(r)}
+                        onUninstall={() => confirmDelete("oci", r.id, r.name)}
                       />
                     ))}
                   </div>
@@ -603,8 +633,18 @@ export default function RecipesPage() {
                         className="flex items-center gap-2 text-sm text-text-muted hover:text-text transition-colors mb-3"
                       >
                         <ChevronDown size={16} className={`transition-transform ${showUnavailable ? "rotate-180" : ""}`} />
-                        {showUnavailable ? "Hide" : "Show"} {unavailable.length} unavailable recipe{unavailable.length > 1 ? "s" : ""} (cluster only)
+                        {plural(showUnavailable ? "recipes.hideUnavailable" : "recipes.showUnavailable", unavailable.length)}
                       </button>
+                      {/* Why they are unavailable, with the two things that
+                          would change it. A count the operator can check
+                          against the Cluster page beats "enable cluster
+                          mode", which names a setting and not a condition. */}
+                      <p className="text-sm text-text-muted mb-3">
+                        {t("recipes.clusterHint", { count: clusterNodeCount })}{" "}
+                        <Link to="/cluster" className="text-primary hover:underline">{t("recipes.clusterHintAddNode")}</Link>
+                        {" · "}
+                        <Link to="/settings" className="text-primary hover:underline">{t("recipes.clusterHintForce")}</Link>
+                      </p>
                       {showUnavailable && (
                         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                           {unavailable.map((r) => (
@@ -615,6 +655,7 @@ export default function RecipesPage() {
                               clusterBlocked={true}
                               onSelect={() => {}}
                               onReset={() => openResetConfirm(r)}
+                              onUninstall={() => confirmDelete("oci", r.id, r.name)}
                             />
                           ))}
                         </div>
@@ -720,7 +761,7 @@ export default function RecipesPage() {
           recipe={selected.recipe}
           customization={selected.customization}
           isRunning={runningIds.has(selected.recipe.id)}
-          clusterEnabled={clusterEnabled}
+          clusterAvailable={clusterAvailable}
           onClose={() => setSelected(null)}
           onError={(msg) => setAlertModal({ title: t("common.error"), message: msg })}
           onDeploy={handleDeploy}
@@ -889,10 +930,16 @@ export default function RecipesPage() {
           title={
             deleteTarget.kind === "recipe"
               ? t("recipes.deleteRecipeTitle")
-              : t("recipes.deleteModTitle")
+              : deleteTarget.kind === "mod"
+                ? t("recipes.deleteModTitle")
+                : t("recipes.uninstallRecipeTitle")
           }
-          message={t("recipes.deleteBody", { name: deleteTarget.name })}
-          confirmLabel={t("common.delete")}
+          message={
+            deleteTarget.kind === "oci"
+              ? t("recipes.uninstallBody", { name: deleteTarget.name })
+              : t("recipes.deleteBody", { name: deleteTarget.name })
+          }
+          confirmLabel={deleteTarget.kind === "oci" ? t("common.uninstall") : t("common.delete")}
           confirmVariant="danger"
         />
       )}

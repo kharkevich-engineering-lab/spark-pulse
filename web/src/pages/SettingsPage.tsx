@@ -16,10 +16,12 @@ import { AlertModal } from "@/components/Modal";
  * what the tabs are for.
  *
  * There is deliberately no Cluster tab. Its switch survives — `cluster_enabled`
- * is what the recipes page reads to decide whether a `cluster_only` recipe is
- * offered — but it is a feature switch, so it sits with the others. The rest of
- * that tab described the machines, which are managed on the Cluster page, and
- * network discovery moved there with them.
+ * forces a `cluster_only` recipe on below two nodes — but it is a feature
+ * switch, so it sits with the others. It is only an override: what normally
+ * decides whether those recipes are offered is the registry, which
+ * `/api/settings` derives into its `cluster` block. The rest of that tab
+ * described the machines, which are managed on the Cluster page, and network
+ * discovery moved there with them.
  *
  * There is no Engines tab either: an engine is its image, and the page that
  * lists images now lists both, with the registry settings that govern where

@@ -89,28 +89,21 @@ pub fn install(request: &InstallBundle) -> Result<BundleInstalled, OpError> {
     // The bundle is only as trustworthy as the mTLS channel it arrived on, but
     // a misrouted or malicious archive should not be able to write outside
     // `target` regardless — so every member is checked before anything is
-    // unpacked, and `--no-absolute-names` is a second, redundant guard at
-    // extraction time against the one case (`tar -tzf` and `-xzf` disagreeing
-    // on what counts as absolute) that check can't see.
+    // unpacked. That listing check is the whole guard: extraction below uses
+    // only `-xzf`, which every tar the agent meets (GNU on DGX OS, bsdtar on a
+    // developer Mac) accepts. GNU tar also strips a leading `/` by default.
+    // An earlier revision added `--no-absolute-names` here as a belt-and-braces
+    // flag; it is not a GNU tar option, and on the node it made every
+    // self-update fail with "unrecognized option" — a portable flag set matters
+    // more than a redundant one.
     if let Err(e) = validate_tar_members(&staged) {
         let _ = std::fs::remove_file(&staged);
         return Err(e);
     }
 
-    let extract = Command::new("tar")
-        .args(["--no-absolute-names", "-xzf"])
-        .arg(&staged)
-        .arg("-C")
-        .arg(&target)
-        .output()
-        .map_err(|e| err(format!("could not run tar: {e}")))?;
+    let extracted = extract_bundle(&staged, &target);
     let _ = std::fs::remove_file(&staged);
-    if !extract.status.success() {
-        return Err(err(format!(
-            "unpacking the bundle failed: {}",
-            String::from_utf8_lossy(&extract.stderr).trim()
-        )));
-    }
+    extracted?;
 
     // The new binary must actually run before we point `current` at it: a
     // bundle for the wrong architecture would otherwise brick the node on the
@@ -178,6 +171,32 @@ pub fn install(request: &InstallBundle) -> Result<BundleInstalled, OpError> {
         path: target.to_string_lossy().into_owned(),
         restarting,
     })
+}
+
+/// Unpack the staged archive into `target` with `tar -xzf`.
+///
+/// Factored out so a test can run the real command: the flag set here must
+/// be one every tar the agent meets accepts, and the only way to know is to
+/// execute it — CI does, on GNU tar. (`--no-absolute-names` once lived here;
+/// GNU tar has no such option and every self-update on a node failed.)
+fn extract_bundle(staged: &Path, target: &Path) -> Result<(), OpError> {
+    let extract = Command::new("tar")
+        .args(["-xzf"])
+        .arg(staged)
+        .arg("-C")
+        .arg(target)
+        .output()
+        .map_err(|e| OpError::new("NativeRuntimeError", format!("could not run tar: {e}")))?;
+    if !extract.status.success() {
+        return Err(OpError::new(
+            "NativeRuntimeError",
+            format!(
+                "unpacking the bundle failed: {}",
+                String::from_utf8_lossy(&extract.stderr).trim()
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /// Reject a tar member whose path would land outside the extraction root: an
@@ -295,7 +314,7 @@ fn prune_old_versions(root: &Path, keep_new: &str, keep_prev: Option<&str>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{install, prune_old_versions, validate_tar_members};
+    use super::{extract_bundle, install, prune_old_versions, validate_tar_members};
     use crate::proto::InstallBundle;
 
     /// Build a `.tar.gz` at `path` containing one member named `member_name`,
@@ -403,6 +422,23 @@ mod tests {
         write_archive_with_member(&archive, "bin/spark-pulse-agent");
 
         validate_tar_members(&archive).unwrap();
+    }
+
+    #[test]
+    fn extraction_runs_with_flags_every_tar_accepts() {
+        // Executes the real `tar` command, so this fails on CI's GNU tar if a
+        // flag it does not know ever creeps back in — the exact regression
+        // that broke self-update on every node when `--no-absolute-names`
+        // (not a GNU tar option) was added as a "redundant" guard.
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("bundle.tar.gz");
+        write_archive_with_member(&archive, "bin/spark-pulse-agent");
+        let target = dir.path().join("out");
+        std::fs::create_dir(&target).unwrap();
+
+        extract_bundle(&archive, &target).unwrap();
+
+        assert!(target.join("bin/spark-pulse-agent").is_file());
     }
 
     #[test]
