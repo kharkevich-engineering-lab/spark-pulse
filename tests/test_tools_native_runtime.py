@@ -402,6 +402,34 @@ class TestVersionGuard:
         assert all(not v.startswith("/root") for v in mounts.values())
         assert nr.CONTAINER_HOME in mounts.values()
 
+    def test_nested_home_destinations_are_created_on_the_host_first(self, native):
+        # /home/spark is a bind of engine-home; the caches are binds *beneath*
+        # it. Docker mounts in path order and invents any missing nested
+        # destination inside engine-home as root — which is how the operator's
+        # engine came to find a root-owned ~/.cache on the real cluster. Each
+        # of those paths is created, as the operator, before docker can.
+        mounts = native.plan("qwen3-8b").container.mounts
+        home_on_host = next(h for h, t in mounts.items() if t == nr.CONTAINER_HOME)
+        wanted = nr._bind_sources_to_create(mounts)
+        assert set(mounts) <= set(wanted)
+        assert home_on_host + "/.cache/huggingface" in wanted
+        assert wanted == sorted(wanted)
+
+    def test_memlock_is_unlimited_even_when_the_engine_forgot_it(self):
+        # The engine profile on the real cluster came from an OCI index that
+        # predates memlock; running as the operator is our decision, so the
+        # limit that needs is ours to add. An engine's own value wins.
+        assert nr._engine_ulimits({"nofile": "1048576:1048576"}) == {
+            "nofile": "1048576:1048576",
+            "memlock": "-1",
+        }
+        assert nr._engine_ulimits({"memlock": "65536"})["memlock"] == "65536"
+        assert nr._engine_ulimits(None) == {"memlock": "-1"}
+
+    def test_without_a_home_bind_only_the_sources_are_created(self):
+        mounts = {"/srv/a": "/data/a", "/srv/b": "/home/spark/.cache/x"}
+        assert nr._bind_sources_to_create(mounts) == ["/srv/a", "/srv/b"]
+
     def test_hf_cache_is_mounted_exactly_once(self, native):
         # The engine declares ~/.cache/huggingface itself and HF_HOME targets
         # the same container path; docker refuses duplicate destinations.
