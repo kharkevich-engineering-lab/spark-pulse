@@ -3,19 +3,31 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#06101d" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f4f7fb" media="(prefers-color-scheme: light)" />
     <title>Spark Pulse</title>
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512' fill='none' stroke='%232563eb' stroke-width='32' stroke-linecap='round' stroke-linejoin='round'><polyline points='48 320 112 320 176 64 240 448 304 224 336 320 400 320'/><circle cx='432' cy='320' r='32'/></svg>" />
+    <link
+      rel="preload"
+      href="/assets/fonts/inter-latin-variable.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
     <script>
-      // Apply theme before first paint to prevent flash
-      (function() {
-        var mode = localStorage.getItem('spark-pulse-theme') || 'system';
-        var isDark;
-        if (mode === 'system') {
-          isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-        } else {
-          isDark = mode === 'dark';
-        }
-        document.documentElement.className = isDark ? 'dark' : 'light';
+      // First paint only: put the theme class on <html> before any CSS lands,
+      // so the page does not flash the wrong palette. src/lib/theme.ts owns
+      // the decision from then on (initTheme, called from main.tsx, re-applies
+      // it and subscribes to the OS preference) — this reads the same
+      // localStorage key and must stay a two-line reader of it, never a
+      // second implementation.
+      (function () {
+        var mode = localStorage.getItem("spark-pulse-theme") || "system";
+        var dark =
+          mode === "system"
+            ? window.matchMedia("(prefers-color-scheme: dark)").matches
+            : mode === "dark";
+        document.documentElement.className = dark ? "dark" : "light";
       })();
     </script>
   </head>
