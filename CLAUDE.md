@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Spark Pulse is a FastAPI + React control plane and CLI for [spark-vllm-docker](https://github.com/eugr/spark-vllm-docker) on NVIDIA DGX Spark. `AGENTS.md` is now just a pointer back to this file and to `docs/`; `docs/development.md` documents the dev scripts in depth.
+Spark Pulse is a FastAPI + React control plane and CLI for NVIDIA DGX Spark, compatible with [spark-vllm-docker](https://github.com/eugr/spark-vllm-docker) — its recipes, mods, engine images and fabric addressing scheme — while running a cluster its own way, through an agent on every node (`docs/upstream-cluster-parity.md` states the stance). `AGENTS.md` is now just a pointer back to this file and to `docs/`; `docs/development.md` documents the dev scripts in depth.
 
 ## Commands
 

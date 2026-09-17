@@ -26,7 +26,7 @@ import {
 } from "@/lib/experimental";
 
 describe("the unproven list", () => {
-  it("is not empty, because nothing has been observed on hardware yet", () => {
+  it("is not empty, because the two-node run did not settle everything", () => {
     expect(MULTI_NODE_UNPROVEN.length).toBeGreaterThan(0);
   });
 
@@ -40,15 +40,28 @@ describe("the unproven list", () => {
     }
   });
 
-  it("names the subsystems that have never met a second machine", () => {
+  it("names what the run on two machines did not settle", () => {
     const prose = MULTI_NODE_UNPROVEN.join(" ").toLowerCase();
     // Each of these is a distinct failure mode with its own remedy. Striking
     // one is a hardware claim, so it must be a deliberate edit here too.
     expect(prose).toMatch(/rendezvous/);
     expect(prose).toMatch(/nccl/);
-    expect(prose).toMatch(/interface pinning/);
+    expect(prose).toMatch(/bandwidth/);
     expect(prose).toMatch(/ssh/);
     expect(prose).toMatch(/three or four nodes/);
+  });
+
+  it("no longer claims what the two Sparks proved", () => {
+    const prose = MULTI_NODE_UNPROVEN.join(" ").toLowerCase();
+    // Interface pinning was written against real per-role names on the pair
+    // and NCCL formed over them. It is evidence now, not a risk.
+    expect(prose).not.toMatch(/interface pinning/);
+    // The rendezvous is only open for the engine that has not crossed a
+    // machine boundary, so the item has to name that engine.
+    const rendezvous = MULTI_NODE_SPECIFIED.filter((i) => /rendezvous/i.test(i));
+    expect(rendezvous).toHaveLength(1);
+    expect(rendezvous[0]).toMatch(/sglang/i);
+    expect(rendezvous[0]).not.toMatch(/either engine/i);
   });
 
   it("repeats no item, because the banner keys its list by the text", () => {
@@ -99,14 +112,21 @@ describe("unproven and unknown are shown as different things", () => {
 });
 
 describe("the reason", () => {
-  it("says why nothing has been run: there is only one machine", () => {
-    expect(MULTI_NODE_REASON).toMatch(/only one DGX Spark/i);
-    expect(MULTI_NODE_REASON).toMatch(/two machines/i);
+  it("says what has been run: two DGX Sparks, tensor-parallel over the fabric", () => {
+    expect(MULTI_NODE_REASON).toMatch(/has run on two machines/i);
+    expect(MULTI_NODE_REASON).toMatch(/two DGX Sparks/i);
+    expect(MULTI_NODE_REASON).toMatch(/vLLM/);
+    expect(MULTI_NODE_REASON).toMatch(/tensor-parallel/i);
   });
 
-  it("distinguishes what is exercised in simulation from what is observed", () => {
-    expect(MULTI_NODE_REASON).toMatch(/simulation/i);
-    expect(MULTI_NODE_REASON).toMatch(/observed/i);
+  it("no longer says a second machine does not exist", () => {
+    expect(MULTI_NODE_REASON).not.toMatch(/only one DGX Spark/i);
+    expect(MULTI_NODE_REASON).not.toMatch(/never (been )?run on two machines/i);
+  });
+
+  it("separates what that run covered from what is still open", () => {
+    expect(MULTI_NODE_REASON).toMatch(/exercised/i);
+    expect(MULTI_NODE_REASON).toMatch(/nothing below was run or measured/i);
   });
 
   it("explains the two groups before the list starts", () => {
@@ -120,22 +140,24 @@ describe("the reason", () => {
 });
 
 describe("the title and the tooltip", () => {
-  it("admits the feature is unverified rather than calling it verified", () => {
+  it("says what has run and that the rest has not", () => {
+    expect(MULTI_NODE_TITLE).toMatch(/two Sparks/i);
     expect(MULTI_NODE_TITLE).toMatch(/unverified|not verified|unproven/i);
-    expect(MULTI_NODE_TITLE).toMatch(/implemented/i);
   });
 
-  it("gives the one-line tooltip the same reason as the banner", () => {
-    expect(MULTI_NODE_BADGE_TITLE).toMatch(/never been run on two machines/i);
-    expect(MULTI_NODE_BADGE_TITLE).toMatch(/no second DGX Spark/i);
+  it("gives the one-line tooltip the same account as the banner", () => {
+    expect(MULTI_NODE_BADGE_TITLE).toMatch(/has run on two DGX Sparks/i);
+    expect(MULTI_NODE_BADGE_TITLE).toMatch(/still unproven/i);
+    expect(MULTI_NODE_BADGE_TITLE).not.toMatch(/never been run/i);
   });
 
-  it("claims hardware verification nowhere", () => {
+  it("claims no more of the hardware than the pair actually did", () => {
     const prose = [MULTI_NODE_TITLE, MULTI_NODE_BADGE_TITLE, MULTI_NODE_REASON]
       .join(" ")
       .toLowerCase();
-    expect(prose).not.toMatch(/verified on (real )?hardware/);
-    expect(prose).not.toMatch(/tested on two machines/);
+    // Two machines ran it, not three, and nobody measured the fabric.
+    expect(prose).not.toMatch(/fully verified|verified on (real )?hardware/);
+    expect(prose).not.toMatch(/three nodes|full bandwidth confirmed/);
   });
 });
 

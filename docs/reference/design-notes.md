@@ -11,7 +11,7 @@ Longer pieces written while the decisions were being made. They are kept as they
 | [Health history](../health-history.md) | What can honestly be charted, what a DGX Spark's `nvidia-smi` refuses to report, and why there are no percentiles. |
 | [Engine metrics](../engine-metrics.md) | The sampler, its window, and the `HealthMonitor` that was removed rather than repaired. |
 | [Cluster evidence](../cluster-evidence.md) | Sources for every multi-node claim, and which of them are unverified. |
-| [Upstream cluster parity](../upstream-cluster-parity.md) | Feature-by-feature comparison with `spark-vllm-docker`'s cluster path, and where the two deliberately differ. |
+| [Upstream cluster compatibility](../upstream-cluster-parity.md) | What stays interchangeable with `spark-vllm-docker` — recipes, mods, engine flags, fabric addressing — where the two deliberately differ, and what has now been observed on two Sparks. |
 | [Authentication](../authentication.md) | OIDC, sessions, and what is protected when auth is off. |
 | [Development](../development.md) | The dev scripts, the test layers and what each one is for. |
 

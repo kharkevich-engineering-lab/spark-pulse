@@ -1,6 +1,23 @@
-# Cluster parity with `eugr/spark-vllm-docker`
+# Cluster compatibility with `eugr/spark-vllm-docker`
 
-Status: 2026-09-04. Reference read at commit `358bf26`.
+Status: 2026-09-17, hardware evidence added. Reference read at commit `358bf26` on 2026-09-04.
+
+## The stance: compatibility, not parity
+
+**Upstream is the reference for what an engine, a recipe, a mod and the fabric
+addressing scheme should look like — not for how a cluster is run.** A recipe,
+a mod, an engine image and its flags, the Hugging Face cache layout and
+`NETWORKING.md`'s addressing (a `/24` per cable, `.11`/`.12`/`.13`, MTU 9000)
+stay **interchangeable between the two tools**, and where a row below is about
+one of those, matching upstream is the point.
+
+How the cluster itself is run is ours by design: an agent on every node over
+mTLS, a control plane that coordinates rather than executes, the reconciler,
+the pre-flight, per-node model presence and the doctor. Upstream's SSH loop
+over `launch-cluster.sh` is cited here for **engine and NCCL behaviour** — what
+flags a rank needs, in what order, with what environment — and is never
+matched line by line. A **D** row that exists because of that architectural
+choice says so; it is a decision, not a debt.
 
 Spark Pulse drives Docker from Python; `spark-vllm-docker` is a bash wrapper.
 This document exists so a reviewer can check us against it **without reading
@@ -9,17 +26,50 @@ what we do, and carries a status.
 
 ## How to read the status column
 
-Three states, and they carry very different risk. Do not collapse them.
+Four states, and they carry very different risk. Do not collapse them.
 
 | | Meaning |
 |---|---|
 | **S — specified** | A source establishes the required behaviour: upstream by file and line, or NVIDIA/NCCL/vLLM/SGLang documentation or source. We implemented what the source says. Hardware would confirm that it *works*, not discover what it should *be*. |
+| **H — observed on hardware** | It ran on two DGX Sparks, on the date below. The row says what was seen. **H** is only ever written from a run somebody watched; it is never inferred from a neighbouring row. |
 | **U — unspecified** | Nobody documents it. The row says which sources were checked and what question they failed to answer. These are the genuinely unknown ones. There are six. |
-| **D — divergence** | Upstream does it for a reason that does not apply to us, or two sources disagree and we chose. The row says why. |
+| **D — divergence** | Upstream does it for a reason that does not apply to us, two sources disagree and we chose, or the agent architecture above makes it somebody else's job. The row says which. |
 
-**Nothing in this document is hardware evidence.** One DGX Spark exists. Every
-behaviour below is rendered, ordered, refused and recorded in simulation and
-none of it has run on two machines.
+### Hardware evidence, 2026-09-17
+
+**Most of this document is still not hardware evidence, but some of it now
+is.** A two-node DGX Spark cluster — GB10, aarch64, control node `gx10-ced2`
+and peer `gx10-b90f`, both cables of the QSFP pair connected, fabric mode
+reported `direct`, addresses `192.168.177.11/.12` and `192.168.178.11/.12`,
+MTU 9000 — ran the following through Spark Pulse on released 1.28.2 plus the
+two fixes in PR #111:
+
+* **vLLM tensor-parallel across the two machines** (v0.29.1rc1, NCCL 2.31.2,
+  `tensor_parallel=2`). The rendezvous formed —
+  `distributed_init_method=tcp://192.168.29.60:29501 backend=nccl`,
+  `world_size=2` — `RadixArk/Qwen3.8-27B-NVFP4` with its DFlash2 speculative
+  draft loaded on both ranks, the engine became ready and answered inference,
+  and a llama-benchy run completed: **≈63 tok/s** generation at c=1, **≈1390
+  tok/s** prefill, **TTFT 423 ms** at pp=512. This settles §4.4 **for vLLM
+  only**. SGLang has still never been run across two machines.
+* **Interface pinning against real per-role names.** The fabric apply wrote
+  `ethernet_interface=enp1s0f1np1`,
+  `infiniband_interfaces=[rocep1s0f1, roceP2p1s0f1]`, `fabric_mode=direct` and
+  `fabric_addresses` onto **both** registry records; the deploy pinned NCCL
+  from them and NCCL formed over the fabric (§1.2, §1.5, §2.2, §2.3).
+* **Ordering, bookkeeping and the machinery around the deploy.** Workers
+  started before rank zero, teardown ran head-first, the orphan bookkeeping
+  held, the pre-flight returned `ready` across both nodes, and the reconciler
+  stopped and deleted across both (§4.9, §4.10, §4.11). These rows previously
+  said "exercised in simulation"; they were observed. **Whether the start
+  order *matters* is still unknown** — that is §5.4, and it stays there.
+
+What that run did **not** establish: no perftest or NCCL bandwidth number was
+taken, so §5.3 is untouched; the pair was two cables between two nodes, which
+gets none of the ring settings (§2.9) and produces no ring evidence at all;
+nothing at three or four nodes was cabled; and an unreachable peer over a real
+SSH transport — a half-open connection rather than a clean refusal — was not
+exercised. Every row not marked **H** is still what it was.
 
 ## A second evidence pass
 
@@ -52,16 +102,16 @@ and deliberately not acted on: §5.6 and §2.12.
 | # | Behaviour | Reference | Spark Pulse | Status |
 |---|---|---|---|---|
 | 1.1 | Read `ibdev2netdev`, keep the ports it reports **Up**, in printed order | `autodiscover.sh:72` | `discovery.parse_ibdev2netdev`, `FabricConfig.up_ports` — same order, same filter | **S** |
-| 1.2 | **Both RoCE twins of a cabled port go into `NCCL_IB_HCA`**, comma-joined | `autodiscover.sh:128`; `NETWORKING.md:38` gives the literal `NCCL_IB_HCA=rocep1s0f1,roceP2p1s0f1` | `FabricConfig.ib_hca` is every up RoCE device; `NodeRecord.infiniband_interfaces` holds them; the plan joins them | **S** — and see §7.1, this was broken |
+| 1.2 | **Both RoCE twins of a cabled port go into `NCCL_IB_HCA`**, comma-joined | `autodiscover.sh:128`; `NETWORKING.md:38` gives the literal `NCCL_IB_HCA=rocep1s0f1,roceP2p1s0f1` | `FabricConfig.ib_hca` is every up RoCE device; `NodeRecord.infiniband_interfaces` holds them; the plan joins them | **H** — `[rocep1s0f1, roceP2p1s0f1]` written onto both records and read back by the deploy on 2026-09-17; and see §7.1, this was broken |
 | 1.3 | Four ports up ⇒ mesh; two ⇒ single cable; anything else refused by number | `autodiscover.sh:121,160,192` | `build_fabric_config` — same three branches, same refusal naming the count | **S** |
 | 1.4 | Mesh names all four RoCE devices | `autodiscover.sh:167` (hardcoded `rocep1s0f0,roceP2p1s0f0,rocep1s0f1,roceP2p1s0f1`) | Every up device, discovered rather than hardcoded. Identical on the documented hardware; correct elsewhere. Order differs (`ibdev2netdev` order vs upstream's literal) and `NCCL_IB_HCA` is a filter, so order does not select differently | **S** |
-| 1.5 | Single cable: management link is the addressed twin **without a capital P**, else the first addressed one | `autodiscover.sh:132-155`; `NETWORKING.md:37` | `build_fabric_config`, `_has_capital_p` | **S** |
+| 1.5 | Single cable: management link is the addressed twin **without a capital P**, else the first addressed one | `autodiscover.sh:132-155`; `NETWORKING.md:37` | `build_fabric_config`, `_has_capital_p` | **H** — `enp1s0f1np1` on both nodes on 2026-09-17 |
 | 1.6 | Mesh: management link is `enP7s7`, else `wlP9s9` with a warning, else refuse | `autodiscover.sh:171-184`; `NETWORKING.md:434` "*we have to use 10G interface for OOB*" — and NVIDIA's own ring playbook exports `NCCL_SOCKET_IFNAME=enP7s7` | `MESH_MANAGEMENT_INTERFACES`, same order, same warning | **S** |
 | 1.7 | Every up `enp*` (no capital P) must carry an IP, else refuse | `autodiscover.sh:94-101` | `build_fabric_config` error; pre-flight `CHECK_FABRIC` FAIL | **S** |
 | 1.8 | No two CX7 links may share a subnet, else refuse | `autodiscover.sh:103-117`; `NETWORKING.md:133` in bold | `build_fabric_config` error; pre-flight FAIL | **S** |
-| 1.9 | Peer discovery by SSH-sweeping the subnet for `nvidia-smi` reporting `NVIDIA GB10` | `autodiscover.sh:223-254` | mDNS `_spark-pulse._tcp` and `_ssh._tcp` browse plus manual entry (`discovery.browse_peers`). No subnet sweep | **D** — a sweep SSHes into every host on the LAN. `cluster-agent-plan.md` §3.1 chose mDNS, which DGX OS already advertises, and typing an address always works |
-| 1.10 | Interactive per-node confirmation, saved to `.env` | `autodiscover.sh:364-442` (`read -p`) | Node registry (`nodes.json`), REST `POST /api/nodes`. Never prompts | **D** — a service cannot answer `read -p`; `native-runtime-plan.md` §1.4 records this |
-| 1.11 | Read the *head's* interfaces and hand the same `ETH_IF`/`IB_IF` to every node | `launch-cluster.sh:957-974` — one `get_env_flags` over globals | Each rank is pinned from **its own** registry record | **D** — correct only while every Spark is cabled identically. Ours is per node, and the pre-flight asks each node rather than assuming |
+| 1.9 | Peer discovery by SSH-sweeping the subnet for `nvidia-smi` reporting `NVIDIA GB10` | `autodiscover.sh:223-254` | mDNS `_spark-pulse._tcp` and `_ssh._tcp` browse plus manual entry (`discovery.browse_peers`). No subnet sweep | **D, by architecture** — a sweep SSHes into every host on the LAN, which is the transport we replaced. `cluster-agent-plan.md` §3.1 chose mDNS, which DGX OS already advertises, and typing an address always works |
+| 1.10 | Interactive per-node confirmation, saved to `.env` | `autodiscover.sh:364-442` (`read -p`) | Node registry (`nodes.json`), REST `POST /api/nodes`. Never prompts | **D, by architecture** — a service cannot answer `read -p`, and enrolment is the agent's, not a launcher's; `native-runtime-plan.md` §1.4 records this |
+| 1.11 | Read the *head's* interfaces and hand the same `ETH_IF`/`IB_IF` to every node | `launch-cluster.sh:957-974` — one `get_env_flags` over globals | Each rank is pinned from **its own** registry record | **D, by architecture** — upstream's shape is correct only while every Spark is cabled identically. Each node has an agent that answers for itself, so ours is per node and the pre-flight asks rather than assuming |
 
 ### 1a. Where we ask a node what upstream assumes
 
@@ -104,13 +154,13 @@ set, per rank, from `engines/vllm.py:_fabric_env` and `engines/base.py`.
 | # | Variable | Reference | Spark Pulse | Status |
 |---|---|---|---|---|
 | 2.1 | `VLLM_HOST_IP=<node ip>` | `:960` | Same, per rank | **S** |
-| 2.2 | `NCCL_SOCKET_IFNAME`, `GLOO_SOCKET_IFNAME` | `:965,969` | Same, from that node's record | **S** |
-| 2.3 | `NCCL_IB_HCA` | `:966` | Same, both twins | **S** |
+| 2.2 | `NCCL_SOCKET_IFNAME`, `GLOO_SOCKET_IFNAME` | `:965,969` | Same, from that node's record | **H** — pinned per rank from each node's own record on 2026-09-17 and NCCL formed over the fabric |
+| 2.3 | `NCCL_IB_HCA` | `:966` | Same, both twins | **H** — both twins named, rendezvous formed; the *bandwidth* that naming both is for remains unmeasured (§5.3) |
 | 2.4 | `NCCL_IB_DISABLE=0` | `:967` | Same. NCCL's default is already 0 (`NCCL_PARAM(IbDisable, …, 0)`), undocumented in the env guide; setting it explicitly is harmless | **S** |
 | 2.5 | `NCCL_IGNORE_CPU_AFFINITY=1` | `:10` | Same, from `vllm.yaml` `runtime.env` | **S** for the value NCCL gives it; **U** for *why on GB10* — see §5.1 |
 | 2.6 | `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` | `:11` | Same, from `vllm.yaml` | **S** |
 | 2.7 | `MN_IF_NAME`, `UCX_NET_DEVICES`, `OMPI_MCA_btl_tcp_if_include`, `TP_SOCKET_IFNAME` | `:963,964,968,970` | Same, and **inert in our launch**. `UCX_NET_DEVICES` is read by libucp on UCX context creation, `OMPI_MCA_*` by Open MPI in `MPI_Init`, `TP_SOCKET_IFNAME` by PyTorch's TensorPipe RPC agent — a `vllm serve` over NCCL and Gloo constructs none of them. Upstream needs them because the same names drive its `mpirun` NCCL tests | **D** — kept for parity. Zero cost, correct if a `ucc` backend is ever selected, and dropping them would be a divergence with no benefit |
-| 2.8 | Ray variables (`RAY_NODE_IP_ADDRESS`, `RAY_OVERRIDE_NODE_IP_ADDRESS`, `RAY_memory_monitor_refresh_ms`, `RAY_num_prestart_python_workers`, `RAY_object_store_memory`) | `:961,962,971-973` | Not emitted | **D** — we have no Ray path. `native-runtime-plan.md` appendix A keeps the whole specification |
+| 2.8 | Ray variables (`RAY_NODE_IP_ADDRESS`, `RAY_OVERRIDE_NODE_IP_ADDRESS`, `RAY_memory_monitor_refresh_ms`, `RAY_num_prestart_python_workers`, `RAY_object_store_memory`) | `:961,962,971-973` | Not emitted | **D, by architecture** — we have no Ray path: the control plane schedules ranks itself. `native-runtime-plan.md` appendix A keeps the whole specification |
 | 2.9 | Mesh: `NCCL_NET_PLUGIN=none`, `NCCL_IB_SUBNET_AWARE_ROUTING=1` | `autodiscover.sh:188-189`; `NETWORKING.md:444`; **and NVIDIA's own ring playbook exports exactly these two** | `MESH_NCCL_ENV`, emitted per rank when the node's `fabric_mode` is `mesh` | **S** |
 | 2.10 | Mesh: `NCCL_IB_MERGE_NICS=0` | `autodiscover.sh:190`. **NVIDIA sets it nowhere** — zero occurrences in the whole playbooks repo | Emitted. We follow the reference | **D, two sources disagree** — see below |
 | 2.11 | `GLOO_SOCKET_IFNAME=lo` at one node | Upstream has no size-one path at all | Emitted below two nodes | **S** — Gloo otherwise calls `gethostname()` and resolves it (`ProcessGroupGloo.cpp`, `createDefaultDevice`), warning and falling back to loopback if that fails. `lo` is right only when every rank is on one host, which is exactly the gate |
@@ -175,18 +225,18 @@ Upstream's `docker run` is assembled at `launch-cluster.sh:1075-1108`; the
 | 4.1 | Required nodes = `tp × pp × dp` | `:1259` | `_check_capacity`, same product | **S** — and vLLM enforces it: above one node `--nnodes` must divide the world size exactly (`engine/arg_utils.py`) |
 | 4.2 | More nodes than the parallelism needs ⇒ **trim peers silently** | `:1265-1268` | **Refuse**, naming both numbers | **D** — vLLM raises "must evenly divide the total world size" on every rank, so trimming does not serve on a subset, it fails N containers later than we can say so |
 | 4.3 | Fewer nodes than needed ⇒ refuse | `:1262-1264` | Same | **S** |
-| 4.4 | Rendezvous flags: `--nnodes N --node-rank R --master-addr HEAD --master-port 29501`, `--headless` above rank 0 | `:903-904`, `:1214,1231` | Identical, at **every** size | **S** — stock `vllm serve` flags since 0.11.1 ([PR #23691](https://github.com/vllm-project/vllm/pull/23691)). At `nnodes=1, dp=1` they are provably unread: `init_distributed_environment` only substitutes `tcp://master_addr:master_port` when `nnodes > 1 or data_parallel_size > 1`, and the executor's `file://` store survives otherwise |
+| 4.4 | Rendezvous flags: `--nnodes N --node-rank R --master-addr HEAD --master-port 29501`, `--headless` above rank 0 | `:903-904`, `:1214,1231` | Identical, at **every** size | **H for vLLM** — `world_size=2` over `tcp://…:29501`, NCCL backend, both ranks serving on 2026-09-17; **S** for SGLang, which has not crossed a machine boundary. Stock `vllm serve` flags since 0.11.1 ([PR #23691](https://github.com/vllm-project/vllm/pull/23691)). At `nnodes=1, dp=1` they are provably unread: `init_distributed_environment` only substitutes `tcp://master_addr:master_port` when `nnodes > 1 or data_parallel_size > 1`, and the executor's `file://` store survives otherwise |
 | 4.5 | `--distributed-executor-backend` stripped when not using Ray | `:908,1213,1230` | Always stripped | **S** — with `--nnodes > 1` on CUDA, vLLM resolves the backend to `mp` unconditionally, ahead of any Ray detection (`config/parallel.py`), and refuses `ray` outright above one node |
 | 4.6 | Mesh is a property of the **cabling** (four ports up), not of the node count | `autodiscover.sh:121-195` | Same: `fabric_mode` per node, from its own ports. Plus two refusals upstream has no equivalent for — nodes that disagree about their cabling, and a ring at any size other than three | **S** for the ring size (NVIDIA's `nccl/assets/launch.sh` refuses "ring requires exactly 3 nodes"; its Sync assistant routes four nodes to a switch); **D** for the disagreement refusal, which is ours |
 | 4.7 | Engine capability gate: 3+ nodes need `capabilities.mesh` | No equivalent | Kept | **D** — stricter than upstream, which gates on nothing. Three nodes behind a switch is legitimate and we refuse it on a `mesh: false` engine. Conservative rather than wrong, and it costs an engine-spec edit to lift |
 | 4.8 | Ceiling of four nodes | Upstream has none; `NETWORKING.md:86` points at a switch above two | `MAX_CLUSTER_NODES = 4`, **and a switchless ring is refused at any size but three** | **S** — see the decision below |
-| 4.9 | **Create every container first, then launch** — all `docker run`s, then all mods, then the serve command | `:1097-1121` then `:1201-1242` | Same two phases: `_create_rank` for every rank (head first, upstream's order), then `_launch_rank` | **S** — and see §7.3, we used to interleave |
-| 4.10 | Launch workers first (background), rank zero last | `:1207-1241` | Same | **U** for *why* — neither vLLM nor SGLang documents a required start order; see §5.4 |
-| 4.11 | Teardown: head first, then workers | `:640-646` | Same, `DeployPlan.teardown_order` | **S** for the order upstream uses; the reason (collapse the rendezvous rather than leave workers in a collective timeout) is ours |
+| 4.9 | **Create every container first, then launch** — all `docker run`s, then all mods, then the serve command | `:1097-1121` then `:1201-1242` | Same two phases: `_create_rank` for every rank (head first, upstream's order), then `_launch_rank` | **H** — both phases ran across two machines on 2026-09-17; and see §7.3, we used to interleave |
+| 4.10 | Launch workers first (background), rank zero last | `:1207-1241` | Same | **H** that it works — workers first, then rank zero, served on two machines on 2026-09-17; **U** for *why* — neither vLLM nor SGLang documents a required start order and the run does not show the order is needed; see §5.4 |
+| 4.11 | Teardown: head first, then workers | `:640-646` | Same, `DeployPlan.teardown_order` | **H** — head-first teardown and the orphan bookkeeping ran across the pair on 2026-09-17; **S** for the order upstream uses; the reason (collapse the rendezvous rather than leave workers in a collective timeout) is ours |
 | 4.12 | Image identity must match across nodes before anything starts | `:1006-1049` (`docker image inspect --format '{{.Id}}'`, head vs each worker) | Stronger: every node pulls the **digest-pinned** reference the plan resolved, and the pre-flight compares each node's digest to the plan's | **S** |
-| 4.13 | Refuse to start when passwordless SSH to a worker fails | `:586-598` | Pre-flight `CHECK_REACHABILITY`; a deploy that skips the pre-flight fails at the first docker command with a typed `SSHError` | **D** — same information, one step later, on the path where an operator chose to skip the check |
-| 4.14 | Already-running container ⇒ skip the launch | `:691-713` | Deterministic per-rank names carrying a generation, plus `_reap_earlier_generations`; Docker's atomic name reservation is the idempotency primitive | **D** — `cluster-agent-plan.md` §3.3 |
-| 4.15 | Ray head/worker start, `ray status` polling | `:977-994`, `:1166-1186` | Deleted | **D** — never wired into a deploy; specification kept in `native-runtime-plan.md` appendix A |
+| 4.13 | Refuse to start when passwordless SSH to a worker fails | `:586-598` | Pre-flight `CHECK_REACHABILITY`; a deploy that skips the pre-flight fails at the first docker command with a typed `SSHError` | **D, by architecture** — reachability is the agent channel's to report, and the pre-flight reports it; same information, one step later, on the path where an operator chose to skip the check |
+| 4.14 | Already-running container ⇒ skip the launch | `:691-713` | Deterministic per-rank names carrying a generation, plus `_reap_earlier_generations`; Docker's atomic name reservation is the idempotency primitive | **D, by architecture** — the reconciler owns convergence, so idempotency is a naming property rather than a pre-launch probe; `cluster-agent-plan.md` §3.3 |
+| 4.15 | Ray head/worker start, `ray status` polling | `:977-994`, `:1166-1186` | Deleted | **D, by architecture** — never wired into a deploy, and the agents do what Ray was there for; specification kept in `native-runtime-plan.md` appendix A |
 
 ### 4.8 in full: the four-node decision
 
@@ -227,7 +277,10 @@ reports four ports up and the mesh-settings check fires.
 ## 5. Unspecified — the six genuinely unknown
 
 These are the rows where no source consulted answers the question. Each names
-what was checked.
+what was checked. **The 2026-09-17 two-node run measured none of them**: it
+took no bandwidth figure, cabled no ring, ran no SGLang across machines, and
+varied neither the start order nor the affinity setting. Nothing in this
+section changed.
 
 ### 5.1 Why `NCCL_IGNORE_CPU_AFFINITY=1` on GB10
 
@@ -453,25 +506,38 @@ refuses a legal value is worse than none.
 
 ---
 
-## 8. What a second Spark would settle
+## 8. What the second Spark settled, and what is left
 
 Split by the taxonomy above, because these carry different risk.
+
+**Settled on 2026-09-17** — see the hardware-evidence section at the top for
+what was actually seen:
+
+* the rendezvous forming across machines **under vLLM** (4.4);
+* interface pinning against real per-role names (1.2, 1.5, 2.2, 2.3, 7.1–7.3);
+* worker-first start, head-first teardown, the orphan bookkeeping, the
+  pre-flight across two nodes and the reconciler stopping and deleting across
+  them (4.9, 4.10, 4.11).
 
 **Specified, awaiting confirmation only** — the source says what to do, we did
 it, and hardware would confirm it works:
 
-* the rendezvous forming across machines, for either engine (4.4);
-* interface pinning against real per-role names (1.2, 1.5, 1.6, 7.1–7.3);
+* the rendezvous forming across machines **for SGLang**, which has not yet run
+  on two (4.4);
 * both RoCE twins reaching NVIDIA's ~190 Gbps aggregate (5.3, and the perftest
-  number is NVIDIA's own);
-* the ring's two NVIDIA-published NCCL settings behaving as documented (2.9);
-* an unreachable peer over a real SSH transport rather than a simulated one.
+  number is NVIDIA's own) — the two-node run took no bandwidth measurement;
+* the ring's two NVIDIA-published NCCL settings behaving as documented (2.9) —
+  two cables between two nodes gets none of them;
+* an unreachable peer over a real SSH transport rather than a simulated one;
+* anything at three or four nodes, neither of which has been cabled here.
 
 **Unspecified, where hardware would discover the answer rather than confirm
-it** — nobody documents these and a measurement is the only way to know:
+it** — nobody documents these, a measurement is the only way to know, and the
+two-node run took none:
 
 * whether `NCCL_IB_MERGE_NICS=0` helps or costs on this fabric (2.10);
-* whether workers-first ordering matters at all (4.10, 5.4);
+* whether workers-first ordering *matters* at all — it works, which is a
+  different claim (4.10, 5.4);
 * whether a ring really sustains 100G per pair (5.5);
 * whether SGLang needs `--enable-dp-attention` across nodes (5.6);
 * whether `NCCL_IGNORE_CPU_AFFINITY=1` is the right direction on GB10 (5.1).
