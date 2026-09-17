@@ -98,7 +98,7 @@ describe("InferencePage multi-node marking", () => {
     await expand("gang job");
 
     const note = within(screen.getByTestId("deployment-gang")).getByRole("note");
-    expect(note).toHaveTextContent(/implemented but unverified/i);
+    expect(note).toHaveTextContent(/runs on two Sparks; some of it is still unproven/i);
     for (const item of MULTI_NODE_UNPROVEN) {
       expect(note).toHaveTextContent(item);
     }

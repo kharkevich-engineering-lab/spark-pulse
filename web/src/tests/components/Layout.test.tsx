@@ -79,7 +79,8 @@ describe("Layout nav", () => {
     );
     const explanation = chip.getAttribute("title") ?? "";
     // The chip itself is three letters; the tooltip has to carry the reason.
-    expect(explanation).toMatch(/never been run on two machines/i);
+    expect(explanation).toMatch(/has run on two DGX Sparks/i);
+    expect(explanation).toMatch(/still unproven/i);
     expect(explanation.length).toBeGreaterThan(chip.textContent!.length * 5);
     expect(explanation.toLowerCase()).not.toBe("experimental");
   });
