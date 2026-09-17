@@ -27,13 +27,31 @@ export default defineConfig({
   use: {
     baseURL: process.env.E2E_BASE_URL || "http://127.0.0.1:8100",
     trace: "on-first-retry",
-    // The suite asserts on desktop layout: the sidebar nav is `lg:` and up.
+    // The default project asserts on desktop layout: the header nav shows at
+    // 900px and up, the menu button below it.
     viewport: { width: 1280, height: 900 },
   },
   projects: [
     {
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
+    },
+    // A phone, at the width the audit measured. Chromium at an iPhone 13's
+    // viewport rather than `devices["iPhone 13"]`, which is WebKit: CI installs
+    // chromium alone, and the shell is a layout question rather than an engine
+    // one. Scoped to the specs whose page bodies already survive 390px — the
+    // wide tables on Engines, Models, Cluster and OCI are PRs 5-7's work, and a
+    // mobile project that fails on them from the day it lands is a project
+    // nobody runs.
+    {
+      name: "mobile",
+      testMatch: /(app-shell|recipes|jobs|settings)\.spec\.ts$/,
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 390, height: 844 },
+        isMobile: false,
+        hasTouch: true,
+      },
     },
   ],
 });

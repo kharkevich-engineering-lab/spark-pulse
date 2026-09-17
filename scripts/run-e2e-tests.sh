@@ -12,6 +12,7 @@
 #   --ui            Run with Playwright UI mode
 #   --debug         Run in Playwright debug mode
 #   --file FILE     Run one spec (e.g. --file tests/e2e/jobs.spec.ts)
+#   --project NAME  Run one project: chromium (1280x900) or mobile (390x844)
 #   --port N        Backend port (default 8100, or $E2E_PORT)
 #   --help, -h      Show this help
 
@@ -35,6 +36,9 @@ while test $i -le (count $argv)
     case --file
       set i (math $i + 1)
       set -a pw_args $argv[$i]
+    case --project
+      set i (math $i + 1)
+      set -a pw_args --project $argv[$i]
     case --port
       set i (math $i + 1)
       set port $argv[$i]

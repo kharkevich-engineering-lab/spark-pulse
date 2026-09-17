@@ -37,6 +37,7 @@ import {
   Field,
   IconButton,
   Input,
+  PageHeader,
   Spinner,
   Tabs,
   Toggle,
@@ -362,18 +363,11 @@ export default function OciRegistryPage() {
 
   return (
     <div className="space-y-8">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Package size={24} className="text-blue2" />
-            OCI Recipe Registry
-          </h1>
-          <p className="text-text-muted text-sm">
-            Browse, install, and update recipe collections from OCI registries
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        eyebrow={t("nav.library")}
+        title={t("oci.heading")}
+        description={t("oci.subtitle")}
+      />
 
       {/* Tabs */}
       <Tabs
@@ -640,8 +634,8 @@ export default function OciRegistryPage() {
                   />
                 </div>
 
-                <div className="flex items-end gap-4">
-                  <Field label={t("oci.schedule")} className="flex-1">
+                <div className="flex flex-col gap-3 min-[520px]:flex-row min-[520px]:items-end min-[520px]:gap-4">
+                  <Field label={t("oci.schedule")} className="min-[520px]:flex-1">
                     {(control) => (
                       <Input
                         {...control}
@@ -653,7 +647,12 @@ export default function OciRegistryPage() {
                       />
                     )}
                   </Field>
-                  <Button variant="primary" loading={autoUpdating} onClick={handleRunAutoUpdate}>
+                  <Button
+                    variant="primary"
+                    loading={autoUpdating}
+                    onClick={handleRunAutoUpdate}
+                    className="max-[519px]:w-full"
+                  >
                     Run Now
                   </Button>
                 </div>

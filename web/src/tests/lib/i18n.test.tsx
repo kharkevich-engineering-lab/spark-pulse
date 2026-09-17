@@ -99,6 +99,11 @@ describe("the dictionaries", () => {
     "mcp.cursor",
     "benchmarking.recipeIdPlaceholder",
     "oci.url",
+    // "Menu", "Cache" and "MCP" are the same word — or the same initialism —
+    // in both languages, and the page titles are those words with a full stop.
+    "a11y.menu",
+    "cache.heading",
+    "mcp.heading",
   ]);
 
   /** A French dictionary that is a copy of the English one is not a

@@ -3,7 +3,7 @@ import { useI18n } from "@/lib/i18n";
 import { useState } from "react";
 import { fetchSettings } from "@/lib/api";
 import { useQuery } from "@/hooks/useQuery";
-import { Code } from "@/ui";
+import { Code, PageHeader } from "@/ui";
 import { getConfig, useConfig } from "@/lib/config";
 
 const TOOLS = [
@@ -75,9 +75,12 @@ export default function MCPPage() {
 
   return (
     <div className="space-y-6">
+      <PageHeader
+        eyebrow={t("nav.settings")}
+        title={t("mcp.heading")}
+        description={t("mcp.subtitle")}
+      />
       <div>
-        <h2 className="text-2xl font-bold">{t("mcp.title")}</h2>
-        <p className="text-text-muted mt-1">{t("mcp.subtitle")}</p>
         {enabled && (
           <p className="text-xs text-text-muted mt-2">
             In the packaged app, the frontend and MCP endpoint are served by the same FastAPI process on port {port}.

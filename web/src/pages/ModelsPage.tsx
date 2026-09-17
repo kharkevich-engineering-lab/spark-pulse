@@ -29,6 +29,7 @@ import {
   IconButton,
   Input,
   NodeScopedDialog,
+  PageHeader,
   ProgressRow,
   Select,
   Spinner,
@@ -292,19 +293,22 @@ export default function ModelsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h2 className="text-2xl font-bold">{t("models.title")}</h2>
-          <p className="text-text-muted mt-1">
+      <PageHeader
+        eyebrow={t("nav.library")}
+        title={t("models.heading")}
+        description={
+          <>
             {t("models.subtitle")}{" "}
-            <Link to="/cache" className="text-blue2 hover:underline">{t("models.cacheLink")}</Link>
-          </p>
-        </div>
-        <div className="text-right">
-          <p className="text-xs text-text-muted uppercase tracking-wide">{t("models.totalOnDisk")}</p>
-          <p className="text-2xl font-bold">{formatSize(totalSize)}</p>
-        </div>
-      </div>
+            <Link to="/cache" className="text-blue2">{t("models.cacheLink")}</Link>
+          </>
+        }
+        actions={
+          <div className="min-[900px]:text-right">
+            <p className="text-[11px] text-text-muted uppercase tracking-[0.14em] font-semibold">{t("models.totalOnDisk")}</p>
+            <p className="text-[22px] font-bold">{formatSize(totalSize)}</p>
+          </div>
+        }
+      />
 
       {/* Download form */}
       <form onSubmit={submit} className="p-5 rounded-md bg-surface border border-line space-y-3">

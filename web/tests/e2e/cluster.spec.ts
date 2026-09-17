@@ -17,16 +17,19 @@
  */
 
 import { expect, test } from "@playwright/test";
-import { expectNoCrash, gotoPage, readConfig } from "./helpers";
+import { expectNoCrash, gotoPage, openNav, readConfig } from "./helpers";
 
 test("marks the cluster page and its nav entry experimental", async ({ page, request }) => {
   const config = await readConfig(request);
   await gotoPage(page, "/cluster");
 
-  await expect(page.getByRole("heading", { name: "Cluster Orchestration" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "The machines." })).toBeVisible();
 
   const note = page.getByRole("note").filter({ hasText: "Multi-node is still experimental" });
-  const chip = page.getByRole("navigation").getByRole("link", { name: "Cluster" }).getByTitle(/has run on two DGX Sparks/i);
+  // The mark moved to the Fleet group, which is where the cluster now lives.
+  const chip = (await openNav(page))
+    .getByRole("link", { name: "Fleet" })
+    .getByTitle(/has run on two DGX Sparks/i);
 
   if (config.cluster_experimental) {
     await expect(note).toBeVisible();

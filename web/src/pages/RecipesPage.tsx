@@ -4,7 +4,7 @@ import { useI18n } from "@/lib/i18n";
 import { fetchRecipes, fetchRecipe, fetchDeployments, createDeployment, scheduleDeploy, fetchSettings, fetchRecipeCustomization, saveRecipeCustomization, deleteRecipeCustomization, fetchMods, fetchMod, listCustomRecipes, saveCustomRecipe, deleteCustomRecipe, listCustomMods, getCustomModFiles, saveCustomModFiles, deleteCustomMod, uninstallOciRecipe, ApiError } from "@/lib/api";
 import type { RecipeDetail, RecipeCustomization, RecipeSummary, ModSummary, ModDetail, CustomRecipeInfo, CustomModInfo, ModFileMap, PreflightReport } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
-import { AlertModal, Button, ConfirmModal, ErrorLine, Modal, Spinner, Tabs, Toggle } from "@/ui";
+import { AlertModal, Button, ConfirmModal, ErrorLine, Modal, PageHeader, Spinner, Tabs, Toggle } from "@/ui";
 import PreflightPanel from "@/components/PreflightPanel";
 import { Loader2, AlertCircle, ChevronDown, X, Copy, Check, Wrench, FileCode2, FileText, FileCode, Plus, Download } from "lucide-react";
 import RecipeCard from "@/components/RecipeCard";
@@ -498,15 +498,14 @@ export default function RecipesPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold">{t("recipes.title")}</h2>
-        <p className="text-text-muted mt-1">
-          {showCustom ? t("recipes.subtitleCustom") : t("recipes.subtitleBundled")}
-        </p>
-      </div>
+      <PageHeader
+        eyebrow={t("nav.deploy")}
+        title={t("recipes.heading")}
+        description={showCustom ? t("recipes.subtitleCustom") : t("recipes.subtitleBundled")}
+      />
 
       {/* Tabs + Toggle */}
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
         <Tabs
           label={t("recipes.title")}
           value={tab}

@@ -16,7 +16,7 @@ test("lists the cached model catalogue", async ({ page, request }) => {
   expect(models.length, "simulation mode should serve a model catalogue").toBeGreaterThan(0);
 
   await gotoPage(page, "/models");
-  await expect(page.getByRole("heading", { name: "Models", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "What is on disk.", exact: true })).toBeVisible();
 
   const table = page.getByRole("table");
   await expect(table).toBeVisible();

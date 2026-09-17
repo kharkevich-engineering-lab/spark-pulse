@@ -57,6 +57,7 @@ import {
   Input,
   NodeScopedDialog,
   NodeState,
+  PageHeader,
   ProgressRow,
   Spinner,
   Textarea,
@@ -371,24 +372,27 @@ export default function EnginesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h2 className="text-2xl font-bold">{t("engines.title")}</h2>
-          <p className="text-text-muted mt-1">
+      <PageHeader
+        eyebrow={t("nav.library")}
+        title={t("engines.heading")}
+        description={
+          <>
             {t("engines.subtitle")}{" "}
-            <Link to="/models" className="text-blue2 hover:underline">
+            <Link to="/models" className="text-blue2">
               {t("engines.modelsLink")}
             </Link>
-          </p>
-        </div>
-        <div className="text-right">
-          <p className="text-xs text-text-muted uppercase tracking-wide">{t("engines.onDisk")}</p>
-          <p className="text-2xl font-bold">{formatSize(onDisk)}</p>
-          {needsAttention > 0 && (
-            <p className="text-xs text-warning mt-1">{t("engines.needAttention", { count: needsAttention })}</p>
-          )}
-        </div>
-      </div>
+          </>
+        }
+        actions={
+          <div className="min-[900px]:text-right">
+            <p className="text-[11px] text-text-muted uppercase tracking-[0.14em] font-semibold">{t("engines.onDisk")}</p>
+            <p className="text-[22px] font-bold">{formatSize(onDisk)}</p>
+            {needsAttention > 0 && (
+              <p className="text-xs text-warning mt-1">{t("engines.needAttention", { count: needsAttention })}</p>
+            )}
+          </div>
+        }
+      />
 
       {/* Pull by reference. Kept from the Images page: an engine index is the
           usual way an image arrives, but not the only one. */}

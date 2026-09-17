@@ -6,6 +6,7 @@ import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
 import { PulseIcon } from "@/components/BrandIcons";
 import { BrandFooter } from "@/components/BrandFooter";
+import { Button, PageHeader } from "@/ui";
 
 export default function LoginPage() {
   const { isAuthenticated, login } = useAuth();
@@ -26,16 +27,16 @@ export default function LoginPage() {
           <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
             <PulseIcon className="text-blue2" size={32} />
           </div>
-          <div className="mb-2 text-2xl font-bold text-foreground">{t("brand.product")}</div>
-          <div className="mb-6 text-sm text-text-muted">{t("login.prompt")}</div>
+          <PageHeader
+            eyebrow={t("brand.product")}
+            title={t("login.heading")}
+            className="min-[900px]:grid-cols-1 mb-4 justify-items-center"
+          />
+          <p className="mb-6 text-[15px] text-muted">{t("login.prompt")}</p>
 
-          <button
-            onClick={login}
-            className="px-6 py-2.5 rounded-sm bg-blue-cta hover:bg-primary-hover text-white font-semibold text-[14px] transition-colors"
-            type="button"
-          >
+          <Button variant="primary" onClick={login}>
             {t("login.signIn")}
-          </button>
+          </Button>
         </div>
       </div>
       <BrandFooter />
