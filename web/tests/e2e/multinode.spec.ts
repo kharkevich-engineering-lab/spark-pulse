@@ -95,7 +95,7 @@ test("a two-node plan renders one rank per machine, and says it is unproven", as
     // Interface pinning, which a solo plan does not get at all.
     expect(entry.env.NCCL_SOCKET_IFNAME).toBeTruthy();
   }
-  expect(body.warnings.join(" ")).toContain("never been run on hardware");
+  expect(body.warnings.join(" ")).toContain("has run on two DGX Sparks");
 });
 
 test("a solo plan is unchanged: no pinning, no warning", async ({ request }) => {
@@ -171,7 +171,7 @@ test("the deploy form marks its node selector, and names the risks once used", a
 
   const note = selector.getByRole("note");
   await expect(note).toBeVisible();
-  await expect(note).toContainText("Only one DGX Spark exists");
+  await expect(note).toContainText("Multi-node has run on two machines");
   await expect(note).toContainText("rendezvous forms across machines");
   await expectNoCrash(page);
 });

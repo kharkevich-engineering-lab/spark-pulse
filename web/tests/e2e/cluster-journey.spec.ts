@@ -200,7 +200,7 @@ test("enrol, select, preview, deploy, see the ranks, stop", async ({ page, reque
   await expect(command).toContainText(CATALOGUED_MODEL);
   await expect(command).toContainText("--node-rank 0");
   await expect(command).toContainText(`--master-addr ${CONTROL}`);
-  await expect(plan).toContainText("never been run on hardware");
+  await expect(plan).toContainText("has run on two DGX Sparks");
 
   const preflight = page.getByTestId("preflight");
   await expect(preflight).toBeVisible();
