@@ -8,6 +8,7 @@ are only consulted to annotate which of them reference a given model.
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 import logging
 import os
@@ -632,6 +633,30 @@ def _progress_monitor(job_id: str, repo_path: Path, stop: threading.Event) -> No
         _publish_job(EVENT_PROGRESS, job)
 
 
+def _download_error(exc: BaseException) -> str:
+    """The job's ``error``, with the remedy when the cache is not ours.
+
+    ``[Errno 13] Permission denied: …/.locks/models--…`` is what a download
+    against a hub cache an engine container wrote as root looks like: Hugging
+    Face cannot take its own lock. The errno alone sends the operator looking
+    for a bug in the downloader. Naming the directory and the command is the
+    difference between a report and an instruction.
+    """
+    message = str(exc) or type(exc).__name__
+    errno_value = getattr(exc, "errno", None)
+    if not isinstance(exc, PermissionError) and errno_value not in (
+        errno.EACCES,
+        errno.EPERM,
+    ):
+        return message
+    hub = str(hub_dir())
+    return (
+        f"{message} — the Hugging Face cache at {hub} is not writable by the "
+        f"user running spark-pulse, which is what an engine container that ran "
+        f"as root leaves behind; {hub_cache.chown_remedy(hub)}"
+    )
+
+
 def _run_download(job_id: str, source: dict[str, Any]) -> None:
     job = get_download(job_id)
     if job is None:
@@ -702,7 +727,7 @@ def _run_download(job_id: str, source: dict[str, Any]) -> None:
         finished = _set_job(
             job_id,
             status="failed",
-            error=str(exc) or type(exc).__name__,
+            error=_download_error(exc),
             finished_at=_now(),
         )
         if finished:

@@ -41,6 +41,7 @@ import argparse
 import hashlib
 import json
 import os
+import shlex
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -149,16 +150,32 @@ def manifest_path(repo: str, commit: str) -> str:
     return os.path.join(repo, "trees", f"{commit}.json")
 
 
-def manifest_unreadable_reason(repo: str, commit: str) -> str | None:
-    """Why the manifest could not be read, when it is there but unusable.
+def chown_remedy(path: str) -> str:
+    """The command that gives a root-owned cache back to the user running us.
+
+    One sentence, and it is the whole point of reporting a permissions
+    problem at all: an operator who is told "not readable" learns nothing they
+    could not see, and an operator who is told which directory and which
+    command has already fixed it.
+    """
+    return f"run: sudo chown -R $USER {shlex.quote(path)}"
+
+
+def manifest_unreadable(repo: str, commit: str) -> dict[str, Any] | None:
+    """Why the manifest is there but unusable — path, owner, and the remedy.
 
     ``None`` means either it was read fine or it genuinely does not exist.
-    This distinction matters on a real host: engine containers run as root and
-    write into the bind-mounted hub cache, so the manifest routinely lands as
-    root-owned mode 600 and the control-plane user cannot read it. Reporting
-    that as "no manifest" hides a fixable permissions problem behind what looks
-    like a missing feature, and silently drops verification to its weakest
-    evidence.
+    This distinction matters on a real host: an engine container that runs as
+    root writes into the bind-mounted hub cache, so the manifest lands
+    root-owned (or uid 65534) and the control-plane user cannot read it.
+    Reporting that as "no manifest" hides a fixable permissions problem behind
+    what looks like a missing feature, and silently drops verification to its
+    weakest evidence — which is how a replica gets published on structural
+    evidence and then fails its node-side verify.
+
+    Deploys started by a current spark-pulse run the engine as the operator, so
+    nothing new arrives this way; what is already on disk from before still
+    does, and this is what names it.
     """
     path = manifest_path(repo, commit)
     if not os.path.exists(path):
@@ -171,12 +188,24 @@ def manifest_unreadable_reason(repo: str, commit: str) -> str | None:
             owner = os.stat(path).st_uid
         except OSError:  # pragma: no cover - defensive
             owner = -1
-        return (
-            f"manifest trees/{commit}.json is not readable by this user "
-            f"(owned by uid {owner}); engine containers write the cache as root"
-        )
+        hub = os.path.dirname(os.path.abspath(repo)) or os.path.abspath(repo)
+        remedy = chown_remedy(hub)
+        return {
+            "path": path,
+            "owner": owner,
+            "remedy": remedy,
+            "reason": (
+                f"manifest {path} is not readable by this user "
+                f"(owned by uid {owner}); {remedy}"
+            ),
+        }
     except OSError as exc:
-        return f"manifest trees/{commit}.json could not be read: {exc}"
+        return {
+            "path": path,
+            "owner": None,
+            "remedy": None,
+            "reason": f"manifest {path} could not be read: {exc}",
+        }
     return None
 
 
@@ -266,6 +295,10 @@ def _blank_report(state: str, reason: str, revision: str | None) -> dict[str, An
         "dangling": [],
         "dangling_count": 0,
         "marker": None,
+        # What the operator would have to do about it, when there is something
+        # to do. Present on every report so a caller can render it without
+        # asking which kind of failure it is looking at.
+        "remedy": None,
         "verified_at": None,
         "checked_at": _now(),
     }
@@ -662,13 +695,25 @@ def _verify_structurally(
         report["state"] = STATE_PARTIAL
         report["reason"] = "snapshot is empty"
         return report
-    report["state"] = STATE_VERIFIED
-    unreadable = manifest_unreadable_reason(repo, commit)
+
+    unreadable = manifest_unreadable(repo, commit)
     if unreadable:
-        report["manifest_unreadable"] = unreadable
-        report["reason"] = f"{present} file(s) resolve, but the {unreadable}"
-    else:
-        report["reason"] = f"{present} file(s) resolve, but no manifest to check them"
+        # Not ``verified``. The manifest is right there and says what this
+        # snapshot should contain; we simply cannot read it. Calling that
+        # "verified on structural evidence" is the report that let a replica
+        # ship and fail its node-side verify an hour later, and it is not
+        # something the operator can act on. ``partial`` with the path, the
+        # owner and the command is.
+        report["state"] = STATE_PARTIAL
+        report["manifest_unreadable"] = unreadable["reason"]
+        report["manifest_path"] = unreadable["path"]
+        report["manifest_owner"] = unreadable["owner"]
+        report["remedy"] = unreadable["remedy"]
+        report["reason"] = unreadable["reason"]
+        return report
+
+    report["state"] = STATE_VERIFIED
+    report["reason"] = f"{present} file(s) resolve, but no manifest to check them"
     return report
 
 

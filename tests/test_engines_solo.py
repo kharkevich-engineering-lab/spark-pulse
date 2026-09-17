@@ -164,7 +164,7 @@ def test_a_single_node_launch_carries_no_fabric_pinning():
     assert "NCCL_SOCKET_IFNAME" not in env
     assert "NCCL_IB_HCA" not in env
     assert env["GLOO_SOCKET_IFNAME"] == "lo"
-    assert env["HF_HOME"] == "/root/.cache/huggingface"
+    assert env["HF_HOME"] == "/home/spark/.cache/huggingface"
 
 
 def test_the_recipes_own_env_and_args_still_reach_the_launch():

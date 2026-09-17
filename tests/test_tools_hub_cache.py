@@ -369,8 +369,8 @@ def test_the_verifier_imports_only_the_standard_library():
 class TestUnreadableManifest:
     """A manifest that exists but cannot be read is not a missing manifest.
 
-    Engine containers run as root and write into the bind-mounted hub cache,
-    so on a real host the manifest lands root-owned mode 600 and the
+    An engine container that ran as root wrote into the bind-mounted hub
+    cache, so on a real host the manifest lands root-owned mode 600 and the
     control-plane user cannot read it. Verified on a DGX Spark. Reporting that
     as absent hides a fixable permissions problem and silently drops
     verification to its weakest evidence.
@@ -379,26 +379,51 @@ class TestUnreadableManifest:
     def test_an_absent_manifest_is_not_reported_as_unreadable(self, tmp_path):
         repo = tmp_path / "models--org--name"
         (repo / "trees").mkdir(parents=True)
-        assert hub_cache.manifest_unreadable_reason(str(repo), "abc") is None
+        assert hub_cache.manifest_unreadable(str(repo), "abc") is None
 
-    def test_an_unreadable_manifest_says_so_and_names_the_owner(self, tmp_path):
-        repo = tmp_path / "models--org--name"
+    def test_an_unreadable_manifest_names_the_path_owner_and_remedy(self, tmp_path):
+        repo = tmp_path / "hub" / "models--org--name"
         (repo / "trees").mkdir(parents=True)
         manifest = repo / "trees" / "abc.json"
         manifest.write_text("{}")
         manifest.chmod(0o000)
         try:
-            reason = hub_cache.manifest_unreadable_reason(str(repo), "abc")
+            detail = hub_cache.manifest_unreadable(str(repo), "abc")
         finally:
             manifest.chmod(0o600)
         if os.geteuid() == 0:  # root reads anything; the check cannot fire
             pytest.skip("running as root")
-        assert reason is not None
-        assert "not readable" in reason
-        assert "uid" in reason
+        assert detail is not None
+        assert detail["path"] == str(manifest)
+        assert detail["owner"] == os.geteuid()
+        # The remedy names the hub directory, not the single file: the whole
+        # tree was written by the same root process.
+        assert detail["remedy"] == f"run: sudo chown -R $USER {repo.parent}"
+        assert "not readable" in detail["reason"]
+        assert detail["remedy"] in detail["reason"]
 
     def test_a_readable_manifest_reports_nothing(self, tmp_path):
         repo = tmp_path / "models--org--name"
         (repo / "trees").mkdir(parents=True)
         (repo / "trees" / "abc.json").write_text("{}")
-        assert hub_cache.manifest_unreadable_reason(str(repo), "abc") is None
+        assert hub_cache.manifest_unreadable(str(repo), "abc") is None
+
+    def test_an_unreadable_manifest_is_never_reported_as_verified(self, tmp_path):
+        # The failure this whole exercise exists to stop: a snapshot whose
+        # files all resolve, whose manifest is right there, and which the
+        # verifier called "verified" on structural evidence — so replication
+        # shipped it and the node-side verify refused it an hour later.
+        repo = sample_entry(tmp_path / "hub")
+        manifest = repo / "trees" / f"{SAMPLE_COMMIT}.json"
+        manifest.chmod(0o000)
+        try:
+            report = hub_cache.verify_snapshot(str(repo))
+        finally:
+            manifest.chmod(0o600)
+        if os.geteuid() == 0:
+            pytest.skip("running as root")
+        assert report["state"] == hub_cache.STATE_PARTIAL
+        assert report["manifest_path"] == str(manifest)
+        assert report["manifest_owner"] == os.geteuid()
+        assert report["remedy"] == f"run: sudo chown -R $USER {repo.parent}"
+        assert "not readable" in report["reason"]

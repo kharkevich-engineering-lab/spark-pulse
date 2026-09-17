@@ -53,7 +53,14 @@ runtime:
     privileged: true
     ipc_host: true
     network_host: true
-    ulimits: {nofile: "1048576:1048576"}
+    # memlock, not just nofile. The container runs as the operator rather
+    # than as root (so the mounted Hugging Face cache stays theirs), and a
+    # non-root process holds no CAP_IPC_LOCK even in a privileged
+    # container — the cap is what lets root exceed RLIMIT_MEMLOCK. An
+    # unlimited memlock is the other way to get there, and NCCL over RoCE
+    # needs one of the two to register pinned memory. SGLang already sets
+    # it for the same reason.
+    ulimits: {nofile: "1048576:1048576", memlock: "-1"}
     keepalive: sleep infinity
   multi_node:
     style: torchrun

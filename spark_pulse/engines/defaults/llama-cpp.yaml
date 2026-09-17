@@ -41,8 +41,8 @@ runtime:
   cache_mounts: [~/.cache/huggingface, ~/.cache/llama.cpp]
   env:
     LLAMA_ARG_HOST: 0.0.0.0
-    LLAMA_CACHE: /root/.cache/llama.cpp
-    HF_HOME: /root/.cache/huggingface
+    LLAMA_CACHE: /home/spark/.cache/llama.cpp
+    HF_HOME: /home/spark/.cache/huggingface
   container:
     privileged: false
     ipc_host: true

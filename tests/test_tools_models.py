@@ -332,6 +332,28 @@ class TestDownloadJobs:
         assert done["status"] == "failed"
         assert done["error"] == "boom"
 
+    def test_a_permission_denied_carries_the_remedy(self, hf_home):
+        """``[Errno 13] … /.locks/models--…`` is not a downloader bug.
+
+        It is a hub cache an engine container wrote as root, so Hugging Face
+        cannot take its own lock. The errno on its own sends the operator
+        looking in the wrong place; the job says which directory and which
+        command instead.
+        """
+        lock = models_tool.hub_dir() / ".locks" / "models--acme--plain-7b"
+        with (
+            patch.object(models_tool, "estimate_size", return_value=0),
+            patch(
+                "huggingface_hub.snapshot_download",
+                side_effect=PermissionError(13, "Permission denied", str(lock)),
+            ),
+        ):
+            job = models_tool.start_download("acme/plain-7b")
+            done = _wait_for(job["id"], ("failed", "completed"))
+        assert done["status"] == "failed"
+        assert str(models_tool.hub_dir()) in done["error"]
+        assert "sudo chown -R $USER" in done["error"]
+
     def test_snapshot_download_receives_source_settings(self, hf_home):
         source = {
             "name": "mirror",

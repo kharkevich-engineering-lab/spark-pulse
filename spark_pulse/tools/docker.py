@@ -209,6 +209,35 @@ def _pull_percent(layers: dict[str, dict[str, int]]) -> tuple[int, int, float]:
     return done, total, round(min(percent, 100.0), 2)
 
 
+#: What the control plane sends for "whoever the agent on that node runs as".
+#:
+#: The engine writes into the operator's bind-mounted Hugging Face cache, so a
+#: container running as root leaves root-owned manifests, ``.locks/`` and
+#: ``.no_exist/`` behind — and the control plane, which is not root, can then
+#: neither read the manifest nor take HF's lock. Running the container as the
+#: operator is what keeps the cache theirs.
+#:
+#: The uid is resolved *here*, on the node, because the control plane cannot
+#: know a peer's uid: nothing in ``NodeFacts`` carries one and a guess would be
+#: applied to somebody else's machine. The agent runs as the operator, so its
+#: own euid is the answer.
+AGENT_USER = "agent"
+
+
+def resolve_user(spec: str | None) -> str | None:
+    """Turn a ``run_container`` user spec into what Docker's ``User`` wants.
+
+    ``None`` stays ``None`` — the image's own user, unchanged. :data:`AGENT_USER`
+    becomes this process's ``uid:gid``. Anything else is passed through: an
+    operator who writes ``1000:1000`` or ``vllm`` in a recipe means it.
+    """
+    if spec is None:
+        return None
+    if spec != AGENT_USER:
+        return spec
+    return f"{os.geteuid()}:{os.getegid()}"
+
+
 @dataclass
 class ContainerMetadata:
     """Self-describing metadata stored as Docker labels.
@@ -408,6 +437,7 @@ class DockerService:
         cap_add: list[str] | None = None,
         ulimits: dict[str, str] | None = None,
         auto_remove: bool = True,
+        user: str | None = None,
     ) -> ContainerInfo:
         """Build and start a container with spark-pulse labels.
 
@@ -437,6 +467,9 @@ class DockerService:
             ulimits: Extra ulimits as ``{name: "soft[:hard]"}``.
             auto_remove: Remove the container when it exits. The native
                 runtime turns this off so ``docker logs`` survives a crash.
+            user: Docker's ``--user``. :data:`AGENT_USER` means "the user this
+                agent runs as" and is resolved here, on the node; ``None``
+                leaves the image's own user alone.
 
         Returns:
             ContainerInfo for the created container.
@@ -523,6 +556,9 @@ class DockerService:
                 }
             if command is not None:
                 kwargs["command"] = command
+            resolved_user = resolve_user(user)
+            if resolved_user is not None:
+                kwargs["user"] = resolved_user
             container = client.containers.run(image, **kwargs)
         except docker.errors.ImageNotFound:
             raise RuntimeError(f"Image not found: {image}")
@@ -814,6 +850,7 @@ class DockerService:
         command: str | list[str],
         detach: bool = False,
         timeout: int | None = None,
+        user: str | None = None,
     ) -> ExecResult:
         """Execute a command inside a running container.
 
@@ -826,6 +863,11 @@ class DockerService:
                 The Docker SDK's exec has no per-call deadline — the client's
                 own socket timeout is all there is — so it is advisory here
                 and accepted only so the signatures match.
+
+            user: Docker's ``--user`` for this exec. ``None`` means the
+                container's own user — the engine's. :data:`AGENT_USER`
+                resolves here, on the node, exactly as it does for
+                :meth:`run_container`.
 
         Returns:
             ExecResult with returncode, stdout and stderr. A detached exec
@@ -840,7 +882,10 @@ class DockerService:
         if isinstance(command, (list, tuple)):
             command = list(command)
 
-        result = container.exec_run(command, demux=True, detach=detach)
+        resolved_user = resolve_user(user)
+        result = container.exec_run(
+            command, demux=True, detach=detach, user=resolved_user or ""
+        )
         if detach:
             return ExecResult(returncode=0, stdout="", stderr="")
 

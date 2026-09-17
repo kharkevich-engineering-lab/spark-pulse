@@ -298,6 +298,7 @@ RUN_OPTIONAL_FIELDS: tuple[str, ...] = (
     "network_host",
     "ipc_host",
     "auto_remove",
+    "user",
 )
 
 #: Repeated and map kwargs. These carry no presence bit because

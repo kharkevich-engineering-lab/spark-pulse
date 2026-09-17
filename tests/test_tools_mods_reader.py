@@ -305,7 +305,9 @@ class _Service:
         self._host = host
         self._failing = failing_hosts
 
-    def exec_in_container(self, container, command, detach=False, timeout=None):
+    def exec_in_container(
+        self, container, command, detach=False, timeout=None, user=None
+    ):
         if self._host in self._failing:
             raise RuntimeError(f"{self._host} is unreachable")
         self._calls.append(("exec", self._host, container, tuple(command)))
