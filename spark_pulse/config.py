@@ -280,10 +280,13 @@ class _Config:
 
         docker-py sets no timeout on a pull, so without this a registry that
         goes quiet mid-transfer holds a worker thread until the process dies.
-        Sized for a slow uplink, not a fast one: a 26 GB image on a bad link
-        still emits progress far more often than this. Zero disables it.
+        This is a *silence* budget, never a speed limit: a pull moving at a
+        trickle resets it on every chunk, and only a transfer that sends
+        nothing at all for the whole window is failed. Sized for a slow
+        uplink — ten minutes covers the quiet gap between a multi-gigabyte
+        layer finishing and its extraction reporting in. Zero disables it.
         """
-        return int(self._data.get("docker_pull_stall_timeout_seconds", 300))
+        return int(self._data.get("docker_pull_stall_timeout_seconds", 600))
 
     @property
     def thread_pool_size(self) -> int:

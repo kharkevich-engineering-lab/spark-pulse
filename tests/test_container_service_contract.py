@@ -49,6 +49,7 @@ import importlib
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -883,6 +884,41 @@ class TestPullWatchdog:
         docker = DockerService(client=_fake_sdk_client())
 
         assert docker.pull_image(MISSING_IMAGE, stall_timeout=0)["percent"] == 100.0
+
+    def test_a_slow_but_progressing_pull_is_not_a_stall(self):
+        """The watchdog bounds silence, never duration.
+
+        A 26 GB image over a link that manages a trickle takes many times any
+        stall window and must still arrive. What fails a pull is a gap between
+        chunks; the total time they take to turn up is not the watchdog's
+        business, and treating it as one fails healthy transfers on exactly
+        the slow links this timeout exists for.
+        """
+        client = _fake_sdk_client()
+        total = 1_000_000
+
+        def _pull(repository, tag="latest", **_kwargs):
+            def _stream():
+                for step in range(1, 7):
+                    # Each gap is under the window; six of them are not.
+                    time.sleep(0.05)
+                    yield {
+                        "status": "Downloading",
+                        "id": "layer-a",
+                        "progressDetail": {
+                            "current": total // 6 * step,
+                            "total": total,
+                        },
+                    }
+
+            return _stream()
+
+        client.api.pull.side_effect = _pull
+        docker = DockerService(client=client)
+
+        result = docker.pull_image(MISSING_IMAGE, stall_timeout=0.2)
+
+        assert result["bytes_total"] == total
 
 
 class TestPullCancellation:

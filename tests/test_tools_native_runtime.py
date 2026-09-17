@@ -23,7 +23,7 @@ from spark_pulse import tools
 from spark_pulse.config import config
 from spark_pulse.engines import EngineRegistry, Topology, reset_registry
 from spark_pulse.mock.docker import MockDockerClient, MockDockerService
-from spark_pulse.tools.docker import PullCancelled
+from spark_pulse.tools.docker import PullCancelled, PullStalled
 from spark_pulse.tools.labels import (
     DEPLOYMENT_LABEL,
     GENERATION_LABEL,
@@ -555,6 +555,18 @@ def _forget_image(docker, ref: str) -> None:
         pass
 
 
+@contextmanager
+def _no_pull_backoff():
+    """Retry without the wait, so a retry test costs milliseconds.
+
+    The backoff is real seconds in production on purpose — the point is to
+    outlast a network hiccup — and a test that slept through three of them
+    would add a minute to the suite to prove nothing about the waiting.
+    """
+    with patch.object(nr, "PULL_RETRY_BACKOFF_SECONDS", (0.0, 0.0)):
+        yield
+
+
 class TestImagePull:
     """The pull is explicit and visible — the worst of the first hardware run."""
 
@@ -627,13 +639,162 @@ class TestImagePull:
         """A pull failure surfaces as an errored deployment, not a stuck one."""
         plan = native.plan("qwen3-8b")
         _forget_image(docker, plan.container.image)
-        with patch.object(
-            docker, "pull_image", side_effect=RuntimeError("registry unreachable")
-        ):
-            record = native.start(plan, docker=docker, wait=True)
+        with _no_pull_backoff():
+            with patch.object(
+                docker, "pull_image", side_effect=RuntimeError("registry unreachable")
+            ):
+                record = native.start(plan, docker=docker, wait=True)
 
         assert record["status"] == "error"
         assert "registry unreachable" in record["error_message"]
+
+    def test_a_stalled_pull_leaves_pulling_for_error(self, native, docker):
+        """The defect: the stall fired on the node and the record never moved.
+
+        The peer pulled 2.9 GB over a slow link, its watchdog gave up, docker
+        discarded the partial download — and the deployment sat in "pulling"
+        with no error, no stopped_at and no pull behind it, indefinitely.
+        """
+        plan = native.plan("qwen3-8b")
+        _forget_image(docker, plan.container.image)
+        stall = PullStalled("no pull progress for 600s")
+
+        def _stalls(ref, progress=None, **_kwargs):
+            if progress is not None:
+                progress(
+                    {
+                        "ref": ref,
+                        "bytes_done": 2_900_000_000,
+                        "bytes_total": 26_000_000_000,
+                        "percent": 11.15,
+                    }
+                )
+            raise stall
+
+        events: list[str] = []
+        with _no_pull_backoff():
+            with patch.object(
+                nr,
+                "publish_event",
+                side_effect=lambda t, *a, **kw: events.append(t.value),
+            ):
+                with patch.object(docker, "pull_image", side_effect=_stalls):
+                    record = native.start(
+                        plan, docker=docker, wait=True, initial_status="pulling"
+                    )
+
+        assert record["status"] == "error"
+        assert record["stopped_at"]
+        message = record["error_message"]
+        assert "went silent" in message
+        assert "no pull progress for 600s" in message
+        assert "2.90 GB of 26.00 GB" in message
+        assert "this machine" in message
+        assert "deployment_error" in events
+        # And the persisted record agrees — nothing is left in "pulling".
+        assert nr.get_deployment(plan.deployment_id)["status"] == "error"
+
+    def test_a_stalled_pull_names_the_node_it_stalled_on(self, native, docker):
+        """Which machine could not reach the registry is half the answer."""
+        plan = native.plan("qwen3-8b")
+        _forget_image(docker, plan.container.image)
+
+        with _no_pull_backoff():
+            with patch.object(
+                docker,
+                "pull_image",
+                side_effect=PullStalled("no pull progress for 600s"),
+            ):
+                record = native.start(
+                    plan,
+                    docker=docker,
+                    wait=True,
+                    services=lambda _address: docker,
+                )
+
+        assert record["status"] == "error"
+        assert "no bytes transferred" in record["error_message"]
+
+    def test_a_pull_is_retried_before_the_deploy_is_failed(self, native, docker):
+        """Docker keeps the layers it has, so attempt two resumes."""
+        plan = native.plan("qwen3-8b")
+        _forget_image(docker, plan.container.image)
+        real_pull = docker.pull_image
+        attempts: list[int] = []
+
+        def _flaky(ref, progress=None, **kwargs):
+            attempts.append(1)
+            if len(attempts) < nr.PULL_ATTEMPTS:
+                raise PullStalled("no pull progress for 600s")
+            return real_pull(ref, progress, **kwargs)
+
+        with _no_pull_backoff():
+            with patch.object(docker, "pull_image", side_effect=_flaky):
+                record = native.start(plan, docker=docker, wait=True)
+
+        assert len(attempts) == nr.PULL_ATTEMPTS
+        assert record["status"] == "running"
+
+    def test_the_retries_are_bounded(self, native, docker):
+        """Three attempts, then the failure is real and is reported."""
+        plan = native.plan("qwen3-8b")
+        _forget_image(docker, plan.container.image)
+        attempts: list[int] = []
+
+        def _always_stalls(ref, progress=None, **_kwargs):
+            attempts.append(1)
+            raise PullStalled("no pull progress for 600s")
+
+        with _no_pull_backoff():
+            with patch.object(docker, "pull_image", side_effect=_always_stalls):
+                record = native.start(plan, docker=docker, wait=True)
+
+        assert len(attempts) == nr.PULL_ATTEMPTS
+        assert record["status"] == "error"
+        assert f"{nr.PULL_ATTEMPTS} attempts" in record["error_message"]
+
+    def test_a_teardown_during_a_retry_is_not_retried(self, native, docker):
+        """A cancelled pull is a teardown, not a flaky link to try again."""
+        plan = native.plan("qwen3-8b")
+        _forget_image(docker, plan.container.image)
+        dep_id = plan.deployment_id
+        attempts: list[int] = []
+
+        def _fails_then_is_cancelled(ref, progress=None, **_kwargs):
+            attempts.append(1)
+            nr.cancel_pull(dep_id)
+            raise RuntimeError("registry unreachable")
+
+        with _no_pull_backoff():
+            with patch.object(
+                docker, "pull_image", side_effect=_fails_then_is_cancelled
+            ):
+                record = native.start(plan, docker=docker, wait=True)
+
+        assert len(attempts) == 1
+        assert record["status"] == "stopped"
+
+    def test_an_unreachable_node_does_not_strand_the_record_in_pulling(
+        self, native, docker
+    ):
+        """Anything the pull phase raises settles the record, not just ours.
+
+        The resolver itself can fail — a node that is not registered, an agent
+        that stopped answering — and that used to escape ``start`` entirely,
+        killing the background thread and leaving "pulling" behind forever.
+        """
+        plan = native.plan("qwen3-8b")
+        _forget_image(docker, plan.container.image)
+
+        def _unreachable(_address):
+            raise RuntimeError("no agent is connected")
+
+        record = native.start(plan, docker=docker, wait=True, services=_unreachable)
+
+        assert record["status"] == "error"
+        assert "no agent is connected" in record["error_message"]
+        assert nr.get_deployment(plan.deployment_id)["status"] == "error"
+        assert record["stopped_at"]
 
     def test_the_record_shows_pulling_while_the_pull_runs(self, native, docker):
         """GET /api/deployments/{id} tells the truth during a long pull."""
@@ -879,6 +1040,44 @@ class TestLifecycle:
 
         state = native.status(plan.deployment_id, docker=docker)
         assert state["status"] == "stopped"
+
+    def test_status_of_a_pulling_record_is_pulling(self, native, docker):
+        """A record mid-creation has no container yet *by design*.
+
+        The list endpoint was guarded; this one was not, so every deploy that
+        had to pull reported itself stopped for the whole download — the very
+        first symptom this project ever recorded.
+        """
+        plan = native.plan("qwen3-8b")
+        native.persist_planned_record(plan, "pulling")
+
+        state = native.status(plan.deployment_id, docker=docker)
+
+        assert state["status"] == "pulling"
+        assert state["container"]["status"] == "missing"
+
+    def test_status_of_a_starting_record_with_no_container_is_starting(
+        self, native, docker
+    ):
+        """The gang is about to be created under the lifecycle lock."""
+        plan = native.plan("qwen3-8b")
+        native.persist_planned_record(plan, "starting")
+
+        state = native.status(plan.deployment_id, docker=docker)
+
+        assert state["status"] == "starting"
+        assert state["container"]["status"] == "missing"
+
+    def test_logs_of_a_pulling_deployment_say_so(self, native, docker):
+        """ "Container ... not found" answers a question nobody asked."""
+        plan = native.plan("qwen3-8b")
+        native.persist_planned_record(plan, "pulling")
+
+        text = native.get_logs(plan.deployment_id, docker=docker)
+
+        assert "still being pulled" in text
+        assert plan.image_ref in text
+        assert "not found" not in text
 
     def test_list_marks_records_whose_container_vanished(self, native, docker):
         plan = self._running(native, docker)
