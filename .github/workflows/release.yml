@@ -2,6 +2,11 @@ name: Release
 on:
   push:
     branches: [main]
+  # Run by hand when GitHub drops the push event for a merge — it happened
+  # for #102: the merge landed on main and neither Release nor Docs ran.
+  # A manual run releases exactly what a push would: semantic-release
+  # versions from the conventional commits since the last tag.
+  workflow_dispatch:
 
 # One release at a time: the `version` job bakes the next version into the
 # agent build *before* release.sh publishes it, and two runs interleaving
