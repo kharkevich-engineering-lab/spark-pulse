@@ -162,18 +162,16 @@ RANK_STATUS_MAX_WORKERS = 4
 
 #: Attached to every plan above one node, and to the record it becomes.
 #:
-#: Multi-node is implemented and exercised end to end in simulation — every
-#: rank rendered, started worker-first, torn down head-first and accounted for.
-#: It has never been run on two machines, because there is only one DGX Spark.
-#: The full list of what a second machine would prove is in
-#: ``docs/cluster-agent-plan.md`` section 7 and in the UI banner; this is the
-#: one line that travels with the plan itself.
+#: Multi-node has run on two DGX Sparks (2026-09-17): vLLM tensor-parallel
+#: across the ConnectX fabric, rendezvous, NCCL transport and interface pinning
+#: all observed. What no run has yet measured — fabric bandwidth, three or four
+#: nodes, SGLang across machines — is listed in ``web/src/lib/experimental.ts``
+#: and ``docs/upstream-cluster-parity.md``; this is the one line that travels
+#: with the plan itself.
 MULTI_NODE_UNPROVEN = (
-    "multi-node has never been run on hardware: only one DGX Spark exists, so "
-    "the rendering, ordering and bookkeeping below are exercised in simulation "
-    "and nothing about the rendezvous forming across machines, NCCL transport "
-    "over the real fabric or interface pinning against real per-role names has "
-    "been observed"
+    "multi-node has run on two DGX Sparks with vLLM tensor-parallel over the "
+    "ConnectX fabric; fabric bandwidth, three or four nodes and SGLang across "
+    "machines have not yet been measured"
 )
 
 
