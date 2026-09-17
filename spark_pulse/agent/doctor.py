@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import shlex
 import time
 from dataclasses import asdict, dataclass, field
@@ -76,6 +77,7 @@ __all__ = [
     "Finding",
     "Repair",
     "REACHABILITY_PROBE",
+    "BUILDKIT_INVALID_DATABASE_REMEDY",
     "diagnose",
     "treat",
 ]
@@ -104,6 +106,29 @@ REACHABILITY_PROBE = (
     "python3 -c 'import socket,sys; "
     "socket.create_connection((sys.argv[1], int(sys.argv[2])), 3).close()'"
 )
+
+#: Buildkit's own BoltDB, left corrupt by an unclean shutdown, refuses to
+#: initialize and takes the whole daemon down with it — seen on a real node
+#: as ``error initializing buildkit: error creating buildkit instance: invalid
+#: database``. Recognised from the journal because ``docker version`` only
+#: ever says the socket is unreachable, never why.
+_BUILDKIT_INVALID_DATABASE = re.compile(
+    r"initializing buildkit.{0,200}invalid database", re.IGNORECASE | re.DOTALL
+)
+
+#: Moving the corrupt database aside is the fix journalctl points to for this
+#: signature: buildkit rebuilds it from nothing on the next start, at the cost
+#: of the build cache alone — nothing a running deployment holds.
+BUILDKIT_INVALID_DATABASE_REMEDY = (
+    "move /var/lib/docker/buildkit aside and restart docker "
+    "(only build cache is lost)"
+)
+
+#: docker.service and its journal are read with the plain system `systemctl`/
+#: `journalctl` regardless of the agent's own scope: the daemon these ask
+#: about is always a system service, never the user-scoped unit `paths`
+#: describes for the agent itself.
+_DOCKER_UNIT = "docker"
 
 
 @dataclass(frozen=True)
@@ -470,17 +495,42 @@ async def _check_host(
             )
         )
     elif "cannot connect to the docker daemon" in caps.docker_error.lower():
-        report.add(
-            Finding(
-                "docker-socket",
-                "broken",
-                f"the Docker daemon is not answering on this node: {caps.docker_error[:160]}",
-                channel="ssh",
-                verdict=NEEDS_HUMAN,
-                remedy="the daemon itself is down; restarting it from here would "
-                "kill whatever it is still running",
-            )
+        unit_state, journal_tail, journal_note = await _docker_daemon_journal(session)
+        detail = (
+            f"the Docker daemon is not answering on this node: "
+            f"{caps.docker_error[:160]}; systemctl reports docker.service is "
+            f"{unit_state}"
         )
+        last_line = next(
+            (line for line in reversed(journal_tail.splitlines()) if line.strip()), ""
+        )
+        if last_line:
+            detail += f"; journalctl's last line: {last_line.strip()[:200]}"
+        elif journal_note:
+            detail += f"; {journal_note}"
+        if _BUILDKIT_INVALID_DATABASE.search(journal_tail):
+            report.add(
+                Finding(
+                    "docker-socket",
+                    "broken",
+                    detail,
+                    channel="ssh",
+                    verdict=FIXABLE,
+                    remedy=BUILDKIT_INVALID_DATABASE_REMEDY,
+                )
+            )
+        else:
+            report.add(
+                Finding(
+                    "docker-socket",
+                    "broken",
+                    detail,
+                    channel="ssh",
+                    verdict=NEEDS_HUMAN,
+                    remedy="the daemon itself is down; restarting it from here would "
+                    "kill whatever it is still running",
+                )
+            )
     else:
         report.add(
             Finding(
@@ -698,6 +748,41 @@ async def _control_target(session: NodeSession, paths: InstallPaths) -> str:
     return ""
 
 
+async def _docker_daemon_journal(session: NodeSession) -> tuple[str, str, str]:
+    """What the daemon itself last said, best effort.
+
+    ``systemctl is-active`` needs no privilege, so it always answers.
+    ``journalctl -u docker`` needs membership in ``systemd-journal`` or
+    ``adm`` — the DGX OS login user has the latter, but a node is not
+    guaranteed to — so a refusal is reported rather than raised: one
+    unreadable line does not take down every other finding.
+
+    Returns ``(unit_state, journal_tail, note)``: ``journal_tail`` is the last
+    ~20 lines when they could be read, empty otherwise, with ``note``
+    explaining why in that case.
+    """
+    unit = await session.run(f"systemctl is-active {_DOCKER_UNIT}", timeout=20)
+    unit_state = (unit.stdout.strip() or unit.stderr.strip() or "unknown").splitlines()[
+        0
+    ]
+
+    journal = await session.run(
+        f"journalctl -u {_DOCKER_UNIT} --no-pager -n 20", timeout=20
+    )
+    output = (journal.stdout or "").strip()
+    if journal.ok and output:
+        return unit_state, output, ""
+
+    problem = (journal.stderr or journal.stdout or "").strip()
+    if "permission" in problem.lower() or "denied" in problem.lower():
+        note = f"could not read the docker journal: {problem[:160]}"
+    elif problem:
+        note = f"journalctl reported: {problem[:160]}"
+    else:
+        note = "journalctl -u docker returned nothing"
+    return unit_state, "", note
+
+
 def _free_bytes(df_output: str) -> int | None:
     """``df -Pk``'s available column, in bytes. POSIX output is one line."""
     lines = [line for line in df_output.splitlines() if line.strip()]
@@ -825,6 +910,48 @@ async def _repair(
                     action,
                     result.ok,
                     "lingering enabled" if result.ok else result.stderr.strip()[:200],
+                )
+            )
+            return
+
+        if (
+            check == "docker-socket"
+            and finding.remedy == BUILDKIT_INVALID_DATABASE_REMEDY
+        ):
+            # Guarded to exactly this signature: a corrupt buildkit database is
+            # the one docker-daemon failure whose fix is safe to automate — it
+            # costs the build cache and nothing a running container holds.
+            # Anything else under "docker-socket" that reaches here is a
+            # daemon down for an unrecognised reason, which stays
+            # needs-a-human and is never attempted.
+            moved = f"/var/lib/docker/buildkit.doctor-{int(time.time())}"
+            action = f"mv /var/lib/docker/buildkit {shlex.quote(moved)}"
+            result = await runner.run(
+                action, why="move the corrupt buildkit database aside"
+            )
+            if not result.ok:
+                report.repairs.append(
+                    Repair(check, action, False, result.stderr.strip()[:200])
+                )
+                return
+            # Two separate elevated calls, not one chained with `&&`: `sudo -n`
+            # only covers the command it is given, so the restart needs its
+            # own grant exactly like the docker-group repair's two steps do.
+            restart = f"systemctl restart {_DOCKER_UNIT}"
+            restarted = await runner.run(
+                restart, why="restart docker with a fresh buildkit database"
+            )
+            report.repairs.append(
+                Repair(
+                    check,
+                    f"{action} && {restart}",
+                    restarted.ok,
+                    (
+                        "moved buildkit's database aside and restarted docker; "
+                        "only the build cache was lost"
+                        if restarted.ok
+                        else restarted.stderr.strip()[:200]
+                    ),
                 )
             )
             return
