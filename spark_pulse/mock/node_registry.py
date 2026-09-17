@@ -165,6 +165,10 @@ def update_node(node_id: str, **changes: Any) -> NodeRecord:
         raise ValueError(f"state must be one of {', '.join(NODE_STATES)}")
     if "infiniband_interfaces" in changes:
         changes["infiniband_interfaces"] = tuple(changes["infiniband_interfaces"])
+    if "fabric_addresses" in changes:
+        changes["fabric_addresses"] = _real._clean_addresses(
+            changes["fabric_addresses"]
+        )
     if "fabric_mode" in changes:
         raw = changes["fabric_mode"]
         changes["fabric_mode"] = _real._valid_fabric_mode(raw)

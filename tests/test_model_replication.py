@@ -872,3 +872,123 @@ class TestReplicationIdentity:
         options = client._common_options()
         assert "IdentitiesOnly=yes" in options
         assert "/k/id_ed25519" in options
+
+
+class TestTheTransferPrefersTheFabric:
+    """The node is named by its registered address; its bytes take the fabric.
+
+    On a real pair the registered address was a Wi-Fi NIC at 20 MB/s and the
+    fabric address the control plane had itself configured did 428-660 MB/s —
+    fifteen minutes against under one for the same 22 GB model. Nothing about
+    *which node this is* changes; only which wire the bytes use.
+    """
+
+    @staticmethod
+    def _over(monkeypatch, address: str, *, via_fabric: bool = True):
+        from spark_pulse.tools.node_service import TransferRoute
+
+        route = TransferRoute("n1", address, via_fabric, "because the test says so")
+        monkeypatch.setattr(models_tool, "_transfer_route", lambda _n: route)
+
+    @requires_rsync
+    def test_every_byte_and_every_command_goes_to_the_chosen_address(
+        self, hub, nodes, monkeypatch, tmp_path
+    ):
+        fabric = "192.168.177.12"
+        nodes.roots[fabric] = tmp_path / "node-n1"
+        self._over(monkeypatch, fabric)
+
+        result = models_tool.replicate_to_nodes(SAMPLE_MODEL, ["n1"], client=nodes)
+
+        entry = result["results"][0]
+        assert entry["ok"] is True
+        # Reported under the node an operator registered...
+        assert entry["node"] == "n1"
+        # ...and moved over the one the fabric gave it.
+        assert entry["transfer_address"] == fabric
+        assert entry["transfer_via_fabric"] is True
+        assert entry["transfer_reason"]
+        assert {host for _local, host, _remote in nodes.copy_dirs} == {fabric}
+        assert {host for host, _command in nodes.execs} == {fabric}
+        assert {host for _local, host, _remote in nodes.copies} == {fabric}
+
+    @requires_rsync
+    def test_without_a_fabric_the_registered_address_is_used_and_said_so(
+        self, hub, nodes, monkeypatch
+    ):
+        self._over(monkeypatch, "n1", via_fabric=False)
+
+        entry = models_tool.replicate_to_nodes(SAMPLE_MODEL, ["n1"], client=nodes)[
+            "results"
+        ][0]
+
+        assert entry["ok"] is True
+        assert entry["transfer_address"] == "n1"
+        assert entry["transfer_via_fabric"] is False
+        assert {host for _local, host, _remote in nodes.copy_dirs} == {"n1"}
+
+    @requires_rsync
+    def test_a_node_that_already_holds_the_revision_still_reports_its_route(
+        self, hub, nodes, monkeypatch, tmp_path
+    ):
+        """The skip path builds its own result; it must not lose the field."""
+        fabric = "192.168.177.12"
+        nodes.roots[fabric] = tmp_path / "node-n1"
+        self._over(monkeypatch, fabric)
+
+        models_tool.replicate_to_nodes(SAMPLE_MODEL, ["n1"], client=nodes)
+        entry = models_tool.replicate_to_nodes(SAMPLE_MODEL, ["n1"], client=nodes)[
+            "results"
+        ][0]
+
+        assert entry["skipped"] is True
+        assert entry["transfer_address"] == fabric
+        assert entry["transfer_via_fabric"] is True
+
+    def test_the_route_is_decided_once_per_node_not_once_per_command(
+        self, hub, nodes, monkeypatch, tmp_path
+    ):
+        """A TCP probe per SSH call would be a probe per progress poll."""
+        fabric = "192.168.177.12"
+        nodes.roots[fabric] = tmp_path / "node-n1"
+        asked: list[str] = []
+
+        from spark_pulse.tools.node_service import TransferRoute
+
+        def route(node: str):
+            asked.append(node)
+            return TransferRoute(node, fabric, True, "one decision")
+
+        monkeypatch.setattr(models_tool, "_transfer_route", route)
+        models_tool.replicate_to_nodes(SAMPLE_MODEL, ["n1"], client=nodes)
+        assert asked == ["n1"]
+
+    def test_the_resolver_is_the_node_services_one(self, monkeypatch):
+        """No second implementation of the decision in this module."""
+        from spark_pulse import tools
+
+        monkeypatch.setattr(
+            tools.node_service, "transfer_route", lambda node: f"route for {node}"
+        )
+        assert models_tool._transfer_route("n1") == "route for n1"
+
+
+class TestTheTransferTrustsWhatBootstrapConfirmed:
+    def test_the_client_verifies_against_the_control_planes_known_hosts(self):
+        """Strict checking, against the keys an operator actually confirmed.
+
+        Replication used to fail on every bootstrapped node with *No ED25519
+        host key is known … strict checking*, because the confirmation lived
+        inside AsyncSSH and OpenSSH had never heard of the node.
+        """
+        from spark_pulse.tools.ssh import known_hosts_path
+
+        client = models_tool._make_ssh_client("ubuntu")
+        assert client.host_key_policy == "strict"
+        assert client.known_hosts_file == str(known_hosts_path())
+
+    def test_the_known_hosts_path_survives_rsyncs_whitespace_split(self):
+        """rsync splits ``-e`` on spaces, so the path must be one word."""
+        from spark_pulse.tools.ssh import known_hosts_path
+
+        assert " " not in str(known_hosts_path())

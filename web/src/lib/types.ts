@@ -963,6 +963,9 @@ export interface ClusterNode {
   ssh_key_path: string;
   ethernet_interface: string;
   infiniband_interfaces: string[];
+  /** Addresses on the ConnectX fabric, written by a verified fabric apply.
+   * What a bulk transfer prefers over `address`. */
+  fabric_addresses?: string[];
   state: NodeState;
   last_seen: string | null;
   machine_id: string;
@@ -1180,7 +1183,7 @@ export interface FabricNode {
   /** Whether the wired 10G port has link; a mesh coordinates over it. */
   wired_management_up?: boolean | null;
   /** What the registry would pin a deploy on this node with, right now. */
-  pinned?: { ethernet_interface: string; infiniband_interfaces: string[]; fabric_mode: string };
+  pinned?: { ethernet_interface: string; infiniband_interfaces: string[]; fabric_addresses?: string[]; fabric_mode: string };
 }
 
 export interface FabricAssignment {
@@ -1241,13 +1244,13 @@ export interface FabricApplyReport {
   pings: { netdev: string; peer: string; address: string; reachable: boolean }[];
   privileged_calls: { why: string; command: string; via: string; returncode: number }[];
   /** What was written onto the registry record once the node verified. */
-  pinned?: { ethernet_interface: string; infiniband_interfaces: string[]; fabric_mode: string };
+  pinned?: { ethernet_interface: string; infiniband_interfaces: string[]; fabric_addresses?: string[]; fabric_mode: string };
 }
 
 export interface FabricApplyResponse {
   mode: string;
   reports: FabricApplyReport[];
   /** Nodes that were already configured and were pinned without a login. */
-  pinned?: Record<string, { ethernet_interface: string; infiniband_interfaces: string[]; fabric_mode: string }>;
+  pinned?: Record<string, { ethernet_interface: string; infiniband_interfaces: string[]; fabric_addresses?: string[]; fabric_mode: string }>;
 }
 

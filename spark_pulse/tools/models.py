@@ -26,7 +26,12 @@ from typing import Any, Callable
 from spark_pulse.config import config
 from spark_pulse.tools import hub_cache
 from spark_pulse.tools.events import DeploymentEvent, EventType
-from spark_pulse.tools.ssh import OpenSSHClient, SSHClient, SSHError
+from spark_pulse.tools.ssh import (
+    OpenSSHClient,
+    SSHClient,
+    SSHError,
+    known_hosts_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -779,11 +784,21 @@ def _control_plane_identity() -> str | None:
 
 
 def _make_ssh_client(ssh_user: str | None) -> SSHClient:
-    """Build the SSH client used for distribution (overridable in tests)."""
+    """Build the SSH client used for distribution (overridable in tests).
+
+    Strict host-key checking, verified against the control plane's own
+    known_hosts — the keys an operator confirmed during bootstrap, written
+    there by ``agent.bootstrap.install_agent``. Before that file existed this
+    client had never heard of any node and every rsync failed on
+    ``No ED25519 host key is known``, which is what made ``ssh-keyscan`` the
+    workaround on a real cluster; trusting whatever answers is the opposite of
+    what the fingerprint confirmation is for.
+    """
     return OpenSSHClient(
         user=ssh_user or None,
         host_key_policy="strict",
         identity_file=_control_plane_identity(),
+        known_hosts_file=str(known_hosts_path()),
     )
 
 
@@ -1001,9 +1016,15 @@ class _ProgressPoller:
         bytes_total: int,
         on_progress: Callable[[dict[str, Any]], None] | None = None,
         interval: float | None = None,
+        host: str = "",
     ):
         self._ssh = ssh
         self._node = node
+        # Which node this is about, and which address to ask, are two things:
+        # the poll goes over the transfer's own connection (the fabric, when
+        # there is one) while every event still names the node the operator
+        # registered.
+        self._host = host or node
         self._path = path
         self._model = model_id
         self._total = bytes_total
@@ -1030,7 +1051,7 @@ class _ProgressPoller:
 
     def _run(self) -> None:
         while not self._stop.wait(self._interval):
-            done = _remote_bytes(self._ssh, self._node, self._path)
+            done = _remote_bytes(self._ssh, self._host, self._path)
             if done <= 0:
                 continue
             self.bytes_done = done
@@ -1125,14 +1146,25 @@ def replicate_to_nodes(
 
     def _one(node: str) -> dict[str, Any]:
         started = time.monotonic()
+        # Which address the bytes travel over is decided here, once per node,
+        # and reported: a 22 GB model over a Wi-Fi management NIC is fifteen
+        # minutes and over the ConnectX fabric it is under one, and an
+        # operator watching the slow one deserves to be told which they got.
+        route = _transfer_route(node)
         publish_event(
             EVENT_REPLICATION_STARTED,
             model_id,
-            {"model": model_id, "node": node, "bytes_total": bytes_total},
+            {
+                "model": model_id,
+                "node": node,
+                "bytes_total": bytes_total,
+                "transfer_address": route.address,
+            },
         )
         entry = _replicate_one(
             ssh=ssh,
             node=node,
+            route=route,
             model_id=model_id,
             local_repo=repo_path,
             final_dir=final_dir,
@@ -1169,6 +1201,17 @@ def replicate_to_nodes(
     }
 
 
+def _transfer_route(node: str) -> Any:
+    """Where this node's bytes should go, through the switch.
+
+    A thin wrapper so the decision is one name in this module and a test can
+    replace it without reaching into the node-service package.
+    """
+    from spark_pulse import tools
+
+    return tools.node_service.transfer_route(node)
+
+
 def _control_hostname() -> str:
     """Best-effort name of this control node, recorded in the marker."""
     try:
@@ -1198,6 +1241,11 @@ def _node_result(node: str, **fields: Any) -> dict[str, Any]:
         "skipped": False,
         # Stated rather than implied: a node is never handed a hub credential.
         "token_sent": False,
+        # Which address the bytes actually travelled over, and why that one.
+        # Empty until a route has been chosen.
+        "transfer_address": "",
+        "transfer_via_fabric": False,
+        "transfer_reason": "",
     }
     base.update(fields)
     return base
@@ -1207,6 +1255,7 @@ def _replicate_one(
     *,
     ssh: SSHClient,
     node: str,
+    route: Any = None,
     model_id: str,
     local_repo: Path,
     final_dir: str,
@@ -1220,11 +1269,26 @@ def _replicate_one(
     timeout: int,
     on_progress: Callable[[dict[str, Any]], None] | None,
 ) -> dict[str, Any]:
-    """Stage, transfer, verify and publish one node's replica."""
-    result = _node_result(node, revision=commit, bytes_total=bytes_total)
+    """Stage, transfer, verify and publish one node's replica.
+
+    ``node`` is the address the node is registered at — what every event and
+    every result is keyed on. ``route`` says which address the bytes go over,
+    which is the fabric's when there is one. They are the same machine and two
+    different links.
+    """
+    route = route if route is not None else _transfer_route(node)
+    host = route.address
+    result = _node_result(
+        node,
+        revision=commit,
+        bytes_total=bytes_total,
+        transfer_address=host,
+        transfer_via_fabric=route.via_fabric,
+        transfer_reason=route.reason,
+    )
     try:
         prepared = ssh.exec(
-            node,
+            host,
             f"mkdir -p {_q(_staging_root())}",
             timeout=CONTROL_COMMAND_TIMEOUT,
         )
@@ -1236,7 +1300,7 @@ def _replicate_one(
             return result
         ssh.copy(
             str(_helper_source()),
-            node,
+            host,
             _remote_helper_path(),
             timeout=CONTROL_COMMAND_TIMEOUT,
         )
@@ -1244,7 +1308,7 @@ def _replicate_one(
         if not force:
             already = _remote_verify(
                 ssh,
-                node,
+                host,
                 final_dir,
                 commit,
                 require_manifest=require_manifest,
@@ -1263,22 +1327,31 @@ def _replicate_one(
                     bytes_total=bytes_total,
                     bytes_verified=int(already.get("bytes_present") or 0),
                     verified_at=already.get("verified_at"),
+                    transfer_address=host,
+                    transfer_via_fabric=route.via_fabric,
+                    transfer_reason=route.reason,
                 )
 
         with _ProgressPoller(
-            ssh, node, staging_dir, model_id, bytes_total, on_progress
+            ssh,
+            node,
+            staging_dir,
+            model_id,
+            bytes_total,
+            on_progress,
+            host=host,
         ) as poller:
             # One rsync run for the whole entry — blobs, snapshots, refs and
             # trees — with symlinks intact, resumable and uncompressed. See
             # OpenSSHClient.copy_dir for the flags and why each is there.
-            ssh.copy_dir(str(local_repo), node, staging_dir, timeout=timeout)
+            ssh.copy_dir(str(local_repo), host, staging_dir, timeout=timeout)
         result["bytes_done"] = poller.bytes_done or _remote_bytes(
-            ssh, node, staging_dir
+            ssh, host, staging_dir
         )
 
         report = _remote_verify(
             ssh,
-            node,
+            host,
             staging_dir,
             commit,
             require_manifest=require_manifest,
@@ -1305,7 +1378,7 @@ def _replicate_one(
             return result
 
         published = ssh.exec(
-            node,
+            host,
             _publish_command(staging_dir, final_dir),
             timeout=CONTROL_COMMAND_TIMEOUT,
         )

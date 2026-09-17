@@ -304,6 +304,7 @@ class TestShapesAndPinning:
         assert peer["pinned"] == {
             "ethernet_interface": "eth0",
             "infiniband_interfaces": ["ib0", "ib1"],
+            "fabric_addresses": [],
             "fabric_mode": "",
         }
 
@@ -322,12 +323,15 @@ class TestShapesAndPinning:
         assert body["reports"][0]["pinned"] == {
             "ethernet_interface": "enp1s0f1np1",
             "infiniband_interfaces": ["rocep1s0f1", "roceP2p1s0f1"],
+            "fabric_addresses": ["192.168.177.11", "192.168.178.11"],
             "fabric_mode": "direct",
         }
         node = mock_registry.get_node(PEER_ID)
         assert node.ethernet_interface == "enp1s0f1np1"
         assert list(node.infiniband_interfaces) == ["rocep1s0f1", "roceP2p1s0f1"]
         assert node.fabric_mode == "direct"
+        # The addresses a bulk transfer will prefer over the management NIC.
+        assert list(node.fabric_addresses) == ["192.168.177.11", "192.168.178.11"]
 
     async def test_an_unverified_apply_pins_nothing(self, client, running, monkeypatch):
         connect(running, PEER_ID, facts())
@@ -364,3 +368,56 @@ class TestShapesAndPinning:
         assert body["reports"] == []
         assert body["pinned"][PEER_ID]["fabric_mode"] == "direct"
         assert mock_registry.get_node(PEER_ID).ethernet_interface == "enp1s0f1np1"
+
+
+class TestTheFabricAddressIsTrustedToo:
+    """One machine, two links, one host key.
+
+    Bootstrap recorded the key an operator confirmed against the node's
+    management address. A transfer that now dials the fabric address is a
+    first sighting to OpenSSH and strict checking refuses it — so the entry
+    that is already there is copied, and nothing new is trusted.
+    """
+
+    KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
+    async def test_the_confirmed_key_is_trusted_under_every_fabric_address(
+        self, client, running, monkeypatch
+    ):
+        from spark_pulse.tools.ssh import trust_host_key, trusted_entries
+
+        trust_host_key("10.0.0.11", self.KEY)
+        connect(running, PEER_ID, facts())
+        patch_service(monkeypatch, [])
+
+        await client.post("/api/fabric/apply", json={})
+
+        assert trusted_entries("192.168.177.11") == [self.KEY]
+        assert trusted_entries("192.168.178.11") == [self.KEY]
+
+    async def test_an_unverified_apply_trusts_nothing_new(
+        self, client, running, monkeypatch
+    ):
+        from spark_pulse.tools.ssh import trust_host_key, trusted_entries
+
+        trust_host_key("10.0.0.11", self.KEY)
+        connect(running, PEER_ID, facts())
+        patch_service(monkeypatch, [], address_ok=False)
+
+        await client.post("/api/fabric/apply", json={})
+
+        assert trusted_entries("192.168.177.11") == []
+
+    async def test_a_node_with_no_recorded_key_gets_none_invented_for_it(
+        self, client, running, monkeypatch
+    ):
+        """Never a blind scan: what is copied is what was already confirmed."""
+        from spark_pulse.tools.ssh import known_hosts_path
+
+        connect(running, PEER_ID, facts())
+        patch_service(monkeypatch, [])
+
+        body = (await client.post("/api/fabric/apply", json={})).json()
+
+        assert body["reports"][0]["verified"] is True
+        assert not known_hosts_path().exists()
