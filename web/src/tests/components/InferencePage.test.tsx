@@ -445,7 +445,7 @@ describe("InferencePage expanded detail", () => {
 
 /** The deployment event stream.
  *
- * `/sse/deployments` is how the page learns that something happened to a
+ * `/sse/events/deployments` is how the page learns that something happened to a
  * deployment it is not tailing the log of. The events are filtered per
  * deployment, so a frame for one job must not appear under another — that
  * filter is the whole reason the viewer is inside the expanded row.
@@ -489,7 +489,7 @@ describe("InferencePage event stream", () => {
   });
 
   const stream = () =>
-    CapturingEventSource.instances.find((s) => s.url === "/sse/deployments")!;
+    CapturingEventSource.instances.find((s) => s.url === "/sse/events/deployments")!;
 
   it("shows an event under the deployment it belongs to, and not under another", async () => {
     render(<InferencePage />);
@@ -944,9 +944,9 @@ describe("InferencePage convergence", () => {
     render(<InferencePage />);
     await screen.findByTestId("deployment-go1");
     await waitFor(() =>
-      expect(CapturingEventSource.instances.find((s) => s.url === "/sse/deployments")).toBeDefined(),
+      expect(CapturingEventSource.instances.find((s) => s.url === "/sse/events/deployments")).toBeDefined(),
     );
-    const stream = CapturingEventSource.instances.find((s) => s.url === "/sse/deployments")!;
+    const stream = CapturingEventSource.instances.find((s) => s.url === "/sse/events/deployments")!;
     const before = vi.mocked(fetchDeployments).mock.calls.length;
 
     act(() =>
@@ -969,9 +969,9 @@ describe("InferencePage convergence", () => {
     render(<InferencePage />);
     await screen.findByTestId("deployment-go1");
     await waitFor(() =>
-      expect(CapturingEventSource.instances.find((s) => s.url === "/sse/deployments")).toBeDefined(),
+      expect(CapturingEventSource.instances.find((s) => s.url === "/sse/events/deployments")).toBeDefined(),
     );
-    const stream = CapturingEventSource.instances.find((s) => s.url === "/sse/deployments")!;
+    const stream = CapturingEventSource.instances.find((s) => s.url === "/sse/events/deployments")!;
     const before = vi.mocked(fetchDeployments).mock.calls.length;
 
     act(() =>
