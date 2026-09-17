@@ -243,7 +243,7 @@ class CommandFailure(_message.Message):
     def __init__(self, type: _Optional[str] = ..., message: _Optional[str] = ...) -> None: ...
 
 class RunContainer(_message.Message):
-    __slots__ = ("image", "name", "env_vars", "metadata", "privileged", "memory_limit_gb", "shm_size_gb", "pids_limit", "nofile_limit", "cache_dirs", "port_mappings", "entrypoint_clear", "detach", "command", "mounts", "network_host", "ipc_host", "devices", "cap_add", "ulimits", "auto_remove")
+    __slots__ = ("image", "name", "env_vars", "metadata", "privileged", "memory_limit_gb", "shm_size_gb", "pids_limit", "nofile_limit", "cache_dirs", "port_mappings", "entrypoint_clear", "detach", "command", "mounts", "network_host", "ipc_host", "devices", "cap_add", "ulimits", "auto_remove", "user")
     class EnvVarsEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -286,6 +286,7 @@ class RunContainer(_message.Message):
     CAP_ADD_FIELD_NUMBER: _ClassVar[int]
     ULIMITS_FIELD_NUMBER: _ClassVar[int]
     AUTO_REMOVE_FIELD_NUMBER: _ClassVar[int]
+    USER_FIELD_NUMBER: _ClassVar[int]
     image: str
     name: str
     env_vars: _containers.ScalarMap[str, str]
@@ -307,7 +308,8 @@ class RunContainer(_message.Message):
     cap_add: _containers.RepeatedScalarFieldContainer[str]
     ulimits: _containers.ScalarMap[str, str]
     auto_remove: bool
-    def __init__(self, image: _Optional[str] = ..., name: _Optional[str] = ..., env_vars: _Optional[_Mapping[str, str]] = ..., metadata: _Optional[_Union[ContainerMetadata, _Mapping]] = ..., privileged: _Optional[bool] = ..., memory_limit_gb: _Optional[float] = ..., shm_size_gb: _Optional[float] = ..., pids_limit: _Optional[int] = ..., nofile_limit: _Optional[int] = ..., cache_dirs: _Optional[_Iterable[str]] = ..., port_mappings: _Optional[_Iterable[str]] = ..., entrypoint_clear: _Optional[bool] = ..., detach: _Optional[bool] = ..., command: _Optional[_Union[Cmd, _Mapping]] = ..., mounts: _Optional[_Mapping[str, str]] = ..., network_host: _Optional[bool] = ..., ipc_host: _Optional[bool] = ..., devices: _Optional[_Iterable[str]] = ..., cap_add: _Optional[_Iterable[str]] = ..., ulimits: _Optional[_Mapping[str, str]] = ..., auto_remove: _Optional[bool] = ...) -> None: ...
+    user: str
+    def __init__(self, image: _Optional[str] = ..., name: _Optional[str] = ..., env_vars: _Optional[_Mapping[str, str]] = ..., metadata: _Optional[_Union[ContainerMetadata, _Mapping]] = ..., privileged: _Optional[bool] = ..., memory_limit_gb: _Optional[float] = ..., shm_size_gb: _Optional[float] = ..., pids_limit: _Optional[int] = ..., nofile_limit: _Optional[int] = ..., cache_dirs: _Optional[_Iterable[str]] = ..., port_mappings: _Optional[_Iterable[str]] = ..., entrypoint_clear: _Optional[bool] = ..., detach: _Optional[bool] = ..., command: _Optional[_Union[Cmd, _Mapping]] = ..., mounts: _Optional[_Mapping[str, str]] = ..., network_host: _Optional[bool] = ..., ipc_host: _Optional[bool] = ..., devices: _Optional[_Iterable[str]] = ..., cap_add: _Optional[_Iterable[str]] = ..., ulimits: _Optional[_Mapping[str, str]] = ..., auto_remove: _Optional[bool] = ..., user: _Optional[str] = ...) -> None: ...
 
 class EnsureDirectories(_message.Message):
     __slots__ = ("paths",)
@@ -330,16 +332,18 @@ class GetContainerStatus(_message.Message):
     def __init__(self, name: _Optional[str] = ...) -> None: ...
 
 class ExecInContainer(_message.Message):
-    __slots__ = ("container", "command", "detach", "timeout")
+    __slots__ = ("container", "command", "detach", "timeout", "user")
     CONTAINER_FIELD_NUMBER: _ClassVar[int]
     COMMAND_FIELD_NUMBER: _ClassVar[int]
     DETACH_FIELD_NUMBER: _ClassVar[int]
     TIMEOUT_FIELD_NUMBER: _ClassVar[int]
+    USER_FIELD_NUMBER: _ClassVar[int]
     container: str
     command: Cmd
     detach: bool
     timeout: int
-    def __init__(self, container: _Optional[str] = ..., command: _Optional[_Union[Cmd, _Mapping]] = ..., detach: _Optional[bool] = ..., timeout: _Optional[int] = ...) -> None: ...
+    user: str
+    def __init__(self, container: _Optional[str] = ..., command: _Optional[_Union[Cmd, _Mapping]] = ..., detach: _Optional[bool] = ..., timeout: _Optional[int] = ..., user: _Optional[str] = ...) -> None: ...
 
 class CopyToContainer(_message.Message):
     __slots__ = ("container", "remote_path", "content", "mode", "timeout", "source_name")

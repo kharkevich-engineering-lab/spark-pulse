@@ -41,6 +41,32 @@ fn memory_swap(memory_limit_gb: f64) -> i64 {
     gb_to_bytes(memory_limit_gb + 10.0)
 }
 
+/// What the control plane sends for "whoever the agent on this node runs as".
+///
+/// Kept byte-for-byte with `docker.AGENT_USER` in the Python service: the two
+/// resolve the same sentinel, and the control plane sends one string to both.
+pub const AGENT_USER: &str = "agent";
+
+/// Turn a `run_container` user spec into what Docker's `User` field wants.
+///
+/// The control plane cannot name a peer's uid — nothing in `NodeFacts` carries
+/// one — so it sends [`AGENT_USER`] and the resolution happens here, where the
+/// answer is simply this process's own identity. The agent runs as the
+/// operator whose caches are bind-mounted into the engine, so running the
+/// engine as that uid is what keeps the Hugging Face cache theirs instead of
+/// leaving root-owned manifests and `.locks/` the control plane cannot use.
+///
+/// Anything that is not the sentinel is passed through: an operator who wrote
+/// `1000:1000`, or a user name the image defines, meant it.
+fn resolve_user(spec: &str) -> String {
+    if spec != AGENT_USER {
+        return spec.to_string();
+    }
+    // SAFETY: `geteuid`/`getegid` cannot fail and touch no memory.
+    let (uid, gid) = unsafe { (libc::geteuid(), libc::getegid()) };
+    format!("{uid}:{gid}")
+}
+
 /// Create and start a container carrying spark-pulse labels.
 pub async fn run_container(docker: &Docker, req: RunContainer) -> DockerResult<ContainerInfo> {
     let mut metadata = req.metadata.clone().unwrap_or_default();
@@ -201,6 +227,7 @@ pub fn create_config(
         // native runtime start an idle container and exec into it.
         entrypoint: req.entrypoint_clear.unwrap_or(true).then(Vec::new),
         cmd: req.command.as_ref().and_then(super::decode_cmd),
+        user: req.user.as_deref().map(resolve_user),
         host_config: Some(host_config),
         ..Default::default()
     }
@@ -303,11 +330,16 @@ pub async fn exec_in_container(
     container: &str,
     command: Vec<String>,
     detach: bool,
+    user: Option<&str>,
 ) -> DockerResult<ExecOutcome> {
     let config = bollard::models::ExecConfig {
         cmd: Some(command),
         attach_stdout: Some(!detach),
         attach_stderr: Some(!detach),
+        // Unset means the container's own user. The sentinel resolves the
+        // same way it does for `run_container`, so "the operator" means one
+        // thing across both.
+        user: user.map(resolve_user),
         ..Default::default()
     };
     let created = docker
@@ -518,6 +550,29 @@ mod tests {
 
     fn host(req: &RunContainer) -> HostConfig {
         config_for(req).0.host_config.unwrap()
+    }
+
+    #[test]
+    fn no_user_asked_for_leaves_the_image_alone() {
+        assert_eq!(config_for(&request("c")).0.user, None);
+    }
+
+    #[test]
+    fn the_agent_sentinel_becomes_this_process_identity() {
+        // The control plane cannot know a peer's uid, so it sends the
+        // sentinel and the node answers with its own — the operator whose
+        // Hugging Face cache is bind-mounted into the engine.
+        let mut req = request("c");
+        req.user = Some(AGENT_USER.into());
+        let expected = unsafe { format!("{}:{}", libc::geteuid(), libc::getegid()) };
+        assert_eq!(config_for(&req).0.user, Some(expected));
+    }
+
+    #[test]
+    fn an_explicit_user_is_passed_through_verbatim() {
+        let mut req = request("c");
+        req.user = Some("1000:1000".into());
+        assert_eq!(config_for(&req).0.user.as_deref(), Some("1000:1000"));
     }
 
     #[test]

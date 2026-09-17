@@ -170,12 +170,14 @@ class NodeOperations:
         command: str | list[str],
         detach: bool | None = None,
         timeout: int | None = None,
+        user: str | None = None,
     ) -> ExecResult:
         message = pb.ExecInContainer(
             container=container, command=codec.encode_cmd(command)
         )
         codec.set_optional(message, "detach", detach)
         codec.set_optional(message, "timeout", timeout)
+        codec.set_optional(message, "user", user)
         request = self.hub.new_command(exec_in_container=message)
         return codec.decode_exec_result(await self._call(request, "exec"))
 

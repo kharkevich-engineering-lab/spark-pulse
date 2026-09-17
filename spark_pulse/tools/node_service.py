@@ -45,6 +45,7 @@ place the two are joined.
 from __future__ import annotations
 
 import logging
+import socket
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol
@@ -203,6 +204,149 @@ def node_for(
     return peer_node(address, ssh_user=ssh_user, interfaces=interfaces)
 
 
+# ── Where the bulk bytes go ──────────────────────────────────────────────────
+#
+# A node is *reached* at its registered address — that is where its agent
+# stream and every control operation go, and none of that moves here. But a
+# registered address is whatever the operator typed when they added the node,
+# and on a DGX Spark that is very often the Wi-Fi NIC: measured on a real pair,
+# 20 MB/s over Wi-Fi against 428-660 MB/s over the ConnectX fabric the control
+# plane itself configured. A 22 GB model took fifteen minutes on the first and
+# under a minute on the second. Bulk bytes belong on the fabric.
+#
+# The fabric address is not guessed. ``routers/fabric.py`` writes
+# ``fabric_addresses`` onto the node's registry record when — and only when —
+# an apply came back verified, so "this node has a fabric address" means "this
+# control plane configured one and read it back". Reachability is still
+# checked, because a cable can be pulled after an apply, and the fallback is
+# the registered address: slow beats failed.
+
+#: What a fabric address is probed on. SSH, because SSH is what the transfer
+#: then uses; a port that answers for something else would prove nothing.
+FABRIC_PROBE_PORT = 22
+
+#: Seconds allowed for that probe. A fabric peer is one cable away and answers
+#: in milliseconds; this budget only ever gets spent on an address that is not
+#: going to answer at all.
+FABRIC_PROBE_TIMEOUT = 1.5
+
+
+@dataclass(frozen=True, slots=True)
+class TransferRoute:
+    """Which address a bulk transfer should use, and why that one.
+
+    The reason is a field rather than a log line alone because it travels back
+    in the replication result: an operator watching a transfer crawl needs to
+    be told it is on the management NIC, not left to infer it from the rate.
+    """
+
+    #: The address the node is registered at — where its agent is reached.
+    registered: str
+    #: The address to move bytes over. The fabric's, or the registered one.
+    address: str
+    via_fabric: bool
+    reason: str
+
+
+def _fabric_addresses_for(address: str) -> tuple[str, ...]:
+    """The fabric addresses recorded for the node registered at ``address``."""
+    try:
+        from spark_pulse import tools
+
+        for node in tools.node_registry.list_nodes():
+            if node.address == address:
+                return tuple(node.fabric_addresses)
+    except Exception as exc:  # the registry is best effort, never a blocker
+        logger.debug("Could not read the registry for %s: %s", address, exc)
+    return ()
+
+
+def _answers(address: str) -> bool:
+    """Whether ``address`` accepts a TCP connection on the SSH port."""
+    try:
+        with socket.create_connection(
+            (address, FABRIC_PROBE_PORT), timeout=FABRIC_PROBE_TIMEOUT
+        ):
+            return True
+    except OSError as exc:
+        logger.debug("Fabric address %s did not answer: %s", address, exc)
+        return False
+
+
+def transfer_route(
+    address: str,
+    *,
+    reachable: Callable[[str], bool] | None = None,
+) -> TransferRoute:
+    """Decide which address bulk bytes to ``address`` should travel over.
+
+    The node's fabric address when a verified fabric apply recorded one *and*
+    it answers on the SSH port right now; the registered address otherwise. A
+    mesh node holds one address per peer and only one of them shares a subnet
+    with this control plane, so every recorded address is tried in turn and the
+    first that answers wins.
+
+    Args:
+        address: The node's registered address.
+        reachable: Reachability probe, for tests. Defaults to a TCP connect.
+
+    Returns:
+        The chosen address with the reason it was chosen, ready to be logged
+        and reported.
+    """
+    registered = (address or "").strip()
+    candidates = [a for a in _fabric_addresses_for(registered) if a != registered]
+    if not candidates:
+        route = TransferRoute(
+            registered,
+            registered,
+            False,
+            "no fabric address is recorded for this node; a verified fabric "
+            "apply is what records one",
+        )
+    else:
+        probe = reachable or _answers
+        chosen = next((a for a in candidates if probe(a)), "")
+        route = (
+            TransferRoute(
+                registered,
+                chosen,
+                True,
+                f"{chosen} is on the ConnectX fabric and answers on port "
+                f"{FABRIC_PROBE_PORT}",
+            )
+            if chosen
+            else TransferRoute(
+                registered,
+                registered,
+                False,
+                f"the fabric address(es) {', '.join(candidates)} did not answer "
+                f"on port {FABRIC_PROBE_PORT} within {FABRIC_PROBE_TIMEOUT}s",
+            )
+        )
+    logger.info(
+        "Bulk transfer to %s goes over %s (%s): %s",
+        registered or "an unnamed node",
+        route.address,
+        "fabric" if route.via_fabric else "the registered address",
+        route.reason,
+    )
+    return route
+
+
+def transfer_address(
+    address: str,
+    *,
+    reachable: Callable[[str], bool] | None = None,
+) -> str:
+    """The address bulk bytes to ``address`` should travel over.
+
+    :func:`transfer_route` without the reasoning, for a caller that only needs
+    somewhere to point rsync.
+    """
+    return transfer_route(address, reachable=reachable).address
+
+
 # ── The interface ────────────────────────────────────────────────────────────
 
 
@@ -238,6 +382,7 @@ class NodeService(Protocol):
         cap_add: list[str] | None = None,
         ulimits: dict[str, str] | None = None,
         auto_remove: bool = True,
+        user: str | None = None,
     ) -> ContainerInfo:
         """Build and start a container carrying spark-pulse labels."""
         ...
@@ -271,6 +416,7 @@ class NodeService(Protocol):
         command: str | list[str],
         detach: bool = False,
         timeout: int | None = None,
+        user: str | None = None,
     ) -> ExecResult:
         """Execute a command inside a running container."""
         ...

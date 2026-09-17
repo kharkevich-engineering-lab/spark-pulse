@@ -108,6 +108,20 @@ def _valid_fabric_mode(value: Any) -> str:
     return mode if mode in FABRIC_MODES else ""
 
 
+def _clean_addresses(values: Any) -> tuple[str, ...]:
+    """Fabric addresses as bare IPs, in order, without blanks or duplicates.
+
+    A caller hands these straight out of the plan, where they carry a prefix
+    (``192.168.177.12/24``); what anything dials is the address alone.
+    """
+    cleaned: list[str] = []
+    for value in values or ():
+        address = str(value).strip().split("/")[0]
+        if address and address not in cleaned:
+            cleaned.append(address)
+    return tuple(cleaned)
+
+
 def mint_node_id() -> str:
     """Mint a fresh node id.
 
@@ -140,6 +154,14 @@ class NodeRecord:
             of every cabled port: one QSFP port is two RoCE devices sharing a
             PCIe x4 pair, and naming one halves the bandwidth silently
             (``spark-vllm-docker`` ``docs/NETWORKING.md`` lines 15-40).
+        fabric_addresses: Every address this machine holds on the ConnectX
+            fabric, in the order the plan assigned them, written by a verified
+            fabric apply. This is the source of truth for *whether a node has a
+            fabric address, and which*, and it is a list because a mesh node
+            sits on a different ``/24`` with each of its peers: only one of
+            them is on a subnet any given other node shares. Bulk transfers
+            prefer these over :attr:`address` — see
+            :func:`spark_pulse.tools.node_service.transfer_route`.
         fabric_mode: How this machine is cabled, from
             :data:`~spark_pulse.tools.discovery.FABRIC_MODES` — ``direct`` for
             one cable (a pair, or a QSFP switch), ``mesh`` for the switchless
@@ -160,6 +182,7 @@ class NodeRecord:
     ssh_key_path: str = ""
     ethernet_interface: str = ""
     infiniband_interfaces: tuple[str, ...] = ()
+    fabric_addresses: tuple[str, ...] = ()
     fabric_mode: str = ""
     state: str = "unknown"
     last_seen: str | None = None
@@ -173,6 +196,7 @@ class NodeRecord:
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data["infiniband_interfaces"] = list(self.infiniband_interfaces)
+        data["fabric_addresses"] = list(self.fabric_addresses)
         return data
 
     @classmethod
@@ -183,6 +207,7 @@ class NodeRecord:
         losing a node because a file was hand-edited is worse than minting.
         """
         interfaces = data.get("infiniband_interfaces") or ()
+        fabric_addresses = data.get("fabric_addresses") or ()
         state = str(data.get("state") or "unknown")
         return cls(
             id=str(data.get("id") or mint_node_id()),
@@ -193,6 +218,7 @@ class NodeRecord:
             ssh_key_path=str(data.get("ssh_key_path") or ""),
             ethernet_interface=str(data.get("ethernet_interface") or ""),
             infiniband_interfaces=tuple(str(name) for name in interfaces),
+            fabric_addresses=tuple(str(a) for a in fabric_addresses if a),
             fabric_mode=_valid_fabric_mode(data.get("fabric_mode")),
             state=state if state in NODE_STATES else "unknown",
             last_seen=data.get("last_seen") or None,
@@ -517,6 +543,7 @@ _UPDATABLE = frozenset(
         "ssh_key_path",
         "ethernet_interface",
         "infiniband_interfaces",
+        "fabric_addresses",
         "fabric_mode",
         "state",
         "last_seen",
@@ -539,6 +566,8 @@ def update_node(node_id: str, **changes: Any) -> NodeRecord:
         raise ValueError(f"state must be one of {', '.join(NODE_STATES)}")
     if "infiniband_interfaces" in changes:
         changes["infiniband_interfaces"] = tuple(changes["infiniband_interfaces"])
+    if "fabric_addresses" in changes:
+        changes["fabric_addresses"] = _clean_addresses(changes["fabric_addresses"])
     if "fabric_mode" in changes:
         raw = changes["fabric_mode"]
         changes["fabric_mode"] = _valid_fabric_mode(raw)

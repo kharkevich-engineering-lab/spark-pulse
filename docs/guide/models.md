@@ -34,6 +34,8 @@ Now the node lists its snapshot through its agent and the verdict is reached on 
 
 Replication rsyncs the whole cache entry — blobs, snapshots, refs and trees — with symlinks intact, resumable, uncompressed. All four directories travel together or none of them do: copy the snapshot without the blobs and every link dangles; copy the blobs without the manifest and nothing can ever prove the copy is complete.
 
+**The bytes take the fabric, not the management NIC.** A node is reached at the address it is registered at, and on a Spark that is very often Wi-Fi: measured on a real pair, 20 MB/s there against 428–660 MB/s over the ConnectX fabric — fifteen minutes for a 22 GB model, or under one. So once a fabric apply has come back verified, the node's fabric addresses are on its registry record, and each transfer prefers whichever of them answers on the SSH port right now, falling back to the registered address when none does. Slow beats failed, and the result says which address was used and why, so a transfer that crawls tells you it is on the management link rather than leaving you to infer it from the rate. Nothing else moves: the agent stream, every command, and every event still name the node's registered address.
+
 After the transfer the node's copy is verified against the manifest, and only then renamed into place. A verified replica gets a completion marker recording the revision, the byte count and when it was proven.
 
 Your Hugging Face token never leaves the control plane. Worker containers are handed `HF_HUB_OFFLINE=1`, so a worker missing a file fails loudly instead of quietly re-downloading it over the uplink from every node at once.

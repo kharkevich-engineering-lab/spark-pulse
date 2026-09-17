@@ -103,6 +103,7 @@ __all__ = [
     "remove_node_and_identity",
     "render_sudoers",
     "render_unit",
+    "trust_host_key_for",
     "uninstall_agent_keep_identity",
 ]
 
@@ -475,6 +476,43 @@ class AgentInstallation:
     bundle_name: str
 
 
+def trust_host_key_for(
+    host: str,
+    host_key: HostKey,
+    *,
+    port: int = 22,
+    report: InstallReport | None = None,
+) -> bool:
+    """Record a host key this control plane has *just verified*, for OpenSSH.
+
+    The confirmation happens inside AsyncSSH — the browser shows the
+    fingerprint, the operator confirms it, and the connection pins it — and
+    that knowledge used to end there. OpenSSH is what rsync, scp and every
+    later bulk transfer run under, and under ``StrictHostKeyChecking=yes`` it
+    refused every bootstrapped node with *No ED25519 host key is known*. The
+    workaround on a real cluster was ``ssh-keyscan``, which trusts whatever
+    answers; this writes the key that was actually confirmed instead.
+
+    Never called before the confirmation passes: a declined or mismatched key
+    raises out of :func:`install_agent` long before this line is reached.
+
+    Returns:
+        Whether the control plane's known_hosts changed.
+    """
+    from spark_pulse.tools.ssh import trust_host_key
+
+    try:
+        changed = trust_host_key(host, host_key.openssh, port)
+    except (OSError, ValueError) as exc:  # a read-only config dir, say
+        logger.warning("could not record the host key for %s: %s", host, exc)
+        if report is not None:
+            report.note(f"could not record the host key for {host}: {exc}")
+        return False
+    if changed and report is not None:
+        report.note(f"recorded the confirmed host key for {host}")
+    return changed
+
+
 async def install_agent(
     server: ControlPlaneServer,
     *,
@@ -575,7 +613,7 @@ async def install_agent(
             )
             report.note("verified passwordless SSH")
 
-        return await _install_over(
+        installed = await _install_over(
             server,
             session,
             report=report,
@@ -592,6 +630,8 @@ async def install_agent(
             offer_sudoers=offer_sudoers,
             connect_timeout=connect_timeout,
         )
+        trust_host_key_for(host, host_key, port=port, report=installed)
+        return installed
     finally:
         # The password's whole life is this function.
         password = None

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -23,7 +24,7 @@ from spark_pulse import tools
 from spark_pulse.config import config
 from spark_pulse.engines import EngineRegistry, Topology, reset_registry
 from spark_pulse.mock.docker import MockDockerClient, MockDockerService
-from spark_pulse.tools.docker import PullCancelled
+from spark_pulse.tools.docker import PullCancelled, PullStalled
 from spark_pulse.tools.labels import (
     DEPLOYMENT_LABEL,
     GENERATION_LABEL,
@@ -384,26 +385,36 @@ class TestVersionGuard:
         assert spec.network_host is True
         # Host networking publishes nothing: the engine binds the port itself.
         assert spec.port_mappings == []
-        assert spec.ulimits == {"nofile": "1048576:1048576"}
+        assert spec.ulimits == {"nofile": "1048576:1048576", "memlock": "-1"}
         assert spec.labels[MANAGED_LABEL] == "true"
+
+    def test_the_engine_runs_as_the_operator_not_as_root(self, native):
+        # The whole point: what the engine downloads into the bind-mounted hub
+        # cache must be owned by the user whose cache it is. The uid itself is
+        # resolved on the node, so the plan carries the sentinel.
+        assert native.plan("qwen3-8b").container.user == nr.ENGINE_USER
 
     def test_hf_cache_is_mounted_at_the_container_home(self, native):
         mounts = native.plan("qwen3-8b").container.mounts
-        assert "/root/.cache/huggingface" in mounts.values()
-        # Engine cache dirs land under /root, as upstream mounts them.
-        assert all(v.startswith("/root") or v.startswith("/") for v in mounts.values())
+        assert nr.HF_CACHE_IN_CONTAINER in mounts.values()
+        # Engine cache dirs land under the container home, which is *not*
+        # /root: a non-root engine cannot even traverse root's home.
+        assert all(not v.startswith("/root") for v in mounts.values())
+        assert nr.CONTAINER_HOME in mounts.values()
 
     def test_hf_cache_is_mounted_exactly_once(self, native):
         # The engine declares ~/.cache/huggingface itself and HF_HOME targets
         # the same container path; docker refuses duplicate destinations.
         mounts = native.plan("qwen3-8b").container.mounts
         targets = list(mounts.values())
-        assert targets.count("/root/.cache/huggingface") == 1
+        assert targets.count(nr.HF_CACHE_IN_CONTAINER) == 1
 
     def test_env_carries_engine_and_recipe_variables(self, native):
         env = native.plan("qwen3-8b").container.env
         assert env["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
-        assert env["HF_HOME"] == "/root/.cache/huggingface"
+        assert env["HF_HOME"] == "/home/spark/.cache/huggingface"
+        # An engine that is not root has no business being told $HOME is.
+        assert env["HOME"] == nr.CONTAINER_HOME
 
     def test_extra_args_are_appended_quoted(self, native):
         plan = native.plan("qwen3-8b", extra_args=["--enable-prefix-caching"])
@@ -555,6 +566,18 @@ def _forget_image(docker, ref: str) -> None:
         pass
 
 
+@contextmanager
+def _no_pull_backoff():
+    """Retry without the wait, so a retry test costs milliseconds.
+
+    The backoff is real seconds in production on purpose — the point is to
+    outlast a network hiccup — and a test that slept through three of them
+    would add a minute to the suite to prove nothing about the waiting.
+    """
+    with patch.object(nr, "PULL_RETRY_BACKOFF_SECONDS", (0.0, 0.0)):
+        yield
+
+
 class TestImagePull:
     """The pull is explicit and visible — the worst of the first hardware run."""
 
@@ -627,13 +650,162 @@ class TestImagePull:
         """A pull failure surfaces as an errored deployment, not a stuck one."""
         plan = native.plan("qwen3-8b")
         _forget_image(docker, plan.container.image)
-        with patch.object(
-            docker, "pull_image", side_effect=RuntimeError("registry unreachable")
-        ):
-            record = native.start(plan, docker=docker, wait=True)
+        with _no_pull_backoff():
+            with patch.object(
+                docker, "pull_image", side_effect=RuntimeError("registry unreachable")
+            ):
+                record = native.start(plan, docker=docker, wait=True)
 
         assert record["status"] == "error"
         assert "registry unreachable" in record["error_message"]
+
+    def test_a_stalled_pull_leaves_pulling_for_error(self, native, docker):
+        """The defect: the stall fired on the node and the record never moved.
+
+        The peer pulled 2.9 GB over a slow link, its watchdog gave up, docker
+        discarded the partial download — and the deployment sat in "pulling"
+        with no error, no stopped_at and no pull behind it, indefinitely.
+        """
+        plan = native.plan("qwen3-8b")
+        _forget_image(docker, plan.container.image)
+        stall = PullStalled("no pull progress for 600s")
+
+        def _stalls(ref, progress=None, **_kwargs):
+            if progress is not None:
+                progress(
+                    {
+                        "ref": ref,
+                        "bytes_done": 2_900_000_000,
+                        "bytes_total": 26_000_000_000,
+                        "percent": 11.15,
+                    }
+                )
+            raise stall
+
+        events: list[str] = []
+        with _no_pull_backoff():
+            with patch.object(
+                nr,
+                "publish_event",
+                side_effect=lambda t, *a, **kw: events.append(t.value),
+            ):
+                with patch.object(docker, "pull_image", side_effect=_stalls):
+                    record = native.start(
+                        plan, docker=docker, wait=True, initial_status="pulling"
+                    )
+
+        assert record["status"] == "error"
+        assert record["stopped_at"]
+        message = record["error_message"]
+        assert "went silent" in message
+        assert "no pull progress for 600s" in message
+        assert "2.90 GB of 26.00 GB" in message
+        assert "this machine" in message
+        assert "deployment_error" in events
+        # And the persisted record agrees — nothing is left in "pulling".
+        assert nr.get_deployment(plan.deployment_id)["status"] == "error"
+
+    def test_a_stalled_pull_names_the_node_it_stalled_on(self, native, docker):
+        """Which machine could not reach the registry is half the answer."""
+        plan = native.plan("qwen3-8b")
+        _forget_image(docker, plan.container.image)
+
+        with _no_pull_backoff():
+            with patch.object(
+                docker,
+                "pull_image",
+                side_effect=PullStalled("no pull progress for 600s"),
+            ):
+                record = native.start(
+                    plan,
+                    docker=docker,
+                    wait=True,
+                    services=lambda _address: docker,
+                )
+
+        assert record["status"] == "error"
+        assert "no bytes transferred" in record["error_message"]
+
+    def test_a_pull_is_retried_before_the_deploy_is_failed(self, native, docker):
+        """Docker keeps the layers it has, so attempt two resumes."""
+        plan = native.plan("qwen3-8b")
+        _forget_image(docker, plan.container.image)
+        real_pull = docker.pull_image
+        attempts: list[int] = []
+
+        def _flaky(ref, progress=None, **kwargs):
+            attempts.append(1)
+            if len(attempts) < nr.PULL_ATTEMPTS:
+                raise PullStalled("no pull progress for 600s")
+            return real_pull(ref, progress, **kwargs)
+
+        with _no_pull_backoff():
+            with patch.object(docker, "pull_image", side_effect=_flaky):
+                record = native.start(plan, docker=docker, wait=True)
+
+        assert len(attempts) == nr.PULL_ATTEMPTS
+        assert record["status"] == "running"
+
+    def test_the_retries_are_bounded(self, native, docker):
+        """Three attempts, then the failure is real and is reported."""
+        plan = native.plan("qwen3-8b")
+        _forget_image(docker, plan.container.image)
+        attempts: list[int] = []
+
+        def _always_stalls(ref, progress=None, **_kwargs):
+            attempts.append(1)
+            raise PullStalled("no pull progress for 600s")
+
+        with _no_pull_backoff():
+            with patch.object(docker, "pull_image", side_effect=_always_stalls):
+                record = native.start(plan, docker=docker, wait=True)
+
+        assert len(attempts) == nr.PULL_ATTEMPTS
+        assert record["status"] == "error"
+        assert f"{nr.PULL_ATTEMPTS} attempts" in record["error_message"]
+
+    def test_a_teardown_during_a_retry_is_not_retried(self, native, docker):
+        """A cancelled pull is a teardown, not a flaky link to try again."""
+        plan = native.plan("qwen3-8b")
+        _forget_image(docker, plan.container.image)
+        dep_id = plan.deployment_id
+        attempts: list[int] = []
+
+        def _fails_then_is_cancelled(ref, progress=None, **_kwargs):
+            attempts.append(1)
+            nr.cancel_pull(dep_id)
+            raise RuntimeError("registry unreachable")
+
+        with _no_pull_backoff():
+            with patch.object(
+                docker, "pull_image", side_effect=_fails_then_is_cancelled
+            ):
+                record = native.start(plan, docker=docker, wait=True)
+
+        assert len(attempts) == 1
+        assert record["status"] == "stopped"
+
+    def test_an_unreachable_node_does_not_strand_the_record_in_pulling(
+        self, native, docker
+    ):
+        """Anything the pull phase raises settles the record, not just ours.
+
+        The resolver itself can fail — a node that is not registered, an agent
+        that stopped answering — and that used to escape ``start`` entirely,
+        killing the background thread and leaving "pulling" behind forever.
+        """
+        plan = native.plan("qwen3-8b")
+        _forget_image(docker, plan.container.image)
+
+        def _unreachable(_address):
+            raise RuntimeError("no agent is connected")
+
+        record = native.start(plan, docker=docker, wait=True, services=_unreachable)
+
+        assert record["status"] == "error"
+        assert "no agent is connected" in record["error_message"]
+        assert nr.get_deployment(plan.deployment_id)["status"] == "error"
+        assert record["stopped_at"]
 
     def test_the_record_shows_pulling_while_the_pull_runs(self, native, docker):
         """GET /api/deployments/{id} tells the truth during a long pull."""
@@ -879,6 +1051,44 @@ class TestLifecycle:
 
         state = native.status(plan.deployment_id, docker=docker)
         assert state["status"] == "stopped"
+
+    def test_status_of_a_pulling_record_is_pulling(self, native, docker):
+        """A record mid-creation has no container yet *by design*.
+
+        The list endpoint was guarded; this one was not, so every deploy that
+        had to pull reported itself stopped for the whole download — the very
+        first symptom this project ever recorded.
+        """
+        plan = native.plan("qwen3-8b")
+        native.persist_planned_record(plan, "pulling")
+
+        state = native.status(plan.deployment_id, docker=docker)
+
+        assert state["status"] == "pulling"
+        assert state["container"]["status"] == "missing"
+
+    def test_status_of_a_starting_record_with_no_container_is_starting(
+        self, native, docker
+    ):
+        """The gang is about to be created under the lifecycle lock."""
+        plan = native.plan("qwen3-8b")
+        native.persist_planned_record(plan, "starting")
+
+        state = native.status(plan.deployment_id, docker=docker)
+
+        assert state["status"] == "starting"
+        assert state["container"]["status"] == "missing"
+
+    def test_logs_of_a_pulling_deployment_say_so(self, native, docker):
+        """ "Container ... not found" answers a question nobody asked."""
+        plan = native.plan("qwen3-8b")
+        native.persist_planned_record(plan, "pulling")
+
+        text = native.get_logs(plan.deployment_id, docker=docker)
+
+        assert "still being pulled" in text
+        assert plan.image_ref in text
+        assert "not found" not in text
 
     def test_list_marks_records_whose_container_vanished(self, native, docker):
         plan = self._running(native, docker)
@@ -1223,9 +1433,9 @@ class TestAllocatePort:
 
 
 class TestContainerPaths:
-    def test_home_prefix_becomes_root(self):
+    def test_home_prefix_becomes_the_container_home(self):
         home = str(Path.home())
-        assert nr._container_path(f"{home}/.cache/vllm") == "/root/.cache/vllm"
+        assert nr._container_path(f"{home}/.cache/vllm") == "/home/spark/.cache/vllm"
 
     def test_absolute_paths_outside_home_are_kept(self):
         assert nr._container_path("/data/models") == "/data/models"
@@ -1280,10 +1490,12 @@ class JournalDocker(MockDockerService):
         self._guard()
         return super().list_managed_containers(labels)
 
-    def exec_in_container(self, container, command, detach=False, timeout=None):
+    def exec_in_container(
+        self, container, command, detach=False, timeout=None, user=None
+    ):
         self._note("exec_in_container", str(container))
         return super().exec_in_container(
-            container, command, detach=detach, timeout=timeout
+            container, command, detach=detach, timeout=timeout, user=user
         )
 
     def copy_to_container(self, container, local_path, remote_path, timeout=120):
@@ -1515,6 +1727,34 @@ class TestStartOrder:
             "spark-pulse-dep1-r1-g1",
             "spark-pulse-dep1-r0-g1",
         ]
+
+    def test_every_rank_runs_as_the_operator_and_sets_up_as_root(self, native, fleet):
+        """The two halves of a deploy, and why they differ.
+
+        The container — and so the engine exec that inherits it — runs as the
+        operator, because what it writes into the bind-mounted Hugging Face
+        cache has to stay readable and lockable by the control plane. The
+        setup around it still runs as root: a mod patches the image's own
+        root-owned workspace, and the launch script arrives owned by root
+        because the daemon wrote it.
+        """
+        plan = native.plan(
+            "qwen3-8b-tp3", nodes=NODES, solo=False, deployment_id="dep1"
+        )
+        native.start(plan, services=fleet.services, wait=True)
+
+        expected = f"{os.geteuid()}:{os.getegid()}"
+        for rank, node in enumerate(NODES):
+            client = fleet.nodes[node].client
+            container = client.containers.get(f"spark-pulse-dep1-r{rank}-g1")
+            assert container.user == expected
+            users = dict(container.executed_as)
+            assert users[f"chmod 0755 {nr.SCRIPT_PATH}"] == "root"
+            # The engine itself: no user asked for, so the container's.
+            launch = next(
+                user for command, user in container.executed_as if "bash " in command
+            )
+            assert launch == ""
 
     def test_each_rank_lands_on_its_own_node(self, native, fleet):
         plan = native.plan(

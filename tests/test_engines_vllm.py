@@ -285,5 +285,7 @@ def test_declarative_accessors(engine):
     profile = engine.container_profile()
     assert profile["privileged"] is True
     assert profile["network_host"] is True
-    assert profile["ulimits"] == {"nofile": "1048576:1048576"}
+    # memlock is unlimited because the container runs as the operator, not as
+    # root, and a non-root process holds no CAP_IPC_LOCK to exceed the default.
+    assert profile["ulimits"] == {"nofile": "1048576:1048576", "memlock": "-1"}
     assert engine.default_image().endswith("/vllm:0.1.0")

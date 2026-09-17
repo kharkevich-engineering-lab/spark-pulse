@@ -6,6 +6,7 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519, rsa
 
+from spark_pulse.agent import bootstrap
 from spark_pulse.agent.bootstrap_transport import (
     UnusableKey,
     generate_keypair,
@@ -186,3 +187,60 @@ class TestParseRequest:
     def test_refusals_name_the_field(self, body, message):
         with pytest.raises(ValueError, match=message):
             parse_request(body)
+
+
+# ── The confirmed host key, written where OpenSSH will look ─────────────────
+#
+# The browser shows a fingerprint, the operator confirms it, and the installer
+# refuses to send a byte if the node then offers a different key. That
+# knowledge used to end inside AsyncSSH, so rsync — OpenSSH, strict checking —
+# refused every bootstrapped node with *No ED25519 host key is known* and the
+# workaround on a real cluster was ``ssh-keyscan``, which trusts whatever
+# answers. What follows is the key that was actually confirmed being recorded.
+
+
+def _host_key(host: str = "10.0.0.7", port: int = 22, blob: bytes = b"a-host-key"):
+    from spark_pulse.agent.bootstrap_transport import HostKey
+
+    return HostKey(host=host, port=port, algorithm="ssh-ed25519", blob=blob)
+
+
+class TestTheConfirmedHostKeyIsRecorded:
+    def test_the_key_lands_in_the_control_planes_known_hosts(self):
+        from spark_pulse.tools.ssh import trusted_entries
+
+        key = _host_key()
+        assert bootstrap.trust_host_key_for("10.0.0.7", key) is True
+        assert trusted_entries("10.0.0.7") == [key.openssh]
+
+    def test_recording_it_again_is_not_a_change(self):
+        assert bootstrap.trust_host_key_for("10.0.0.7", _host_key()) is True
+        assert bootstrap.trust_host_key_for("10.0.0.7", _host_key()) is False
+
+    def test_the_report_says_it_happened(self):
+        report = bootstrap.InstallReport(host="10.0.0.7", username="alex", name="n")
+        bootstrap.trust_host_key_for("10.0.0.7", _host_key(), report=report)
+        assert any("host key" in step for step in report.steps)
+
+    def test_a_file_that_cannot_be_written_is_a_note_not_a_failure(self, monkeypatch):
+        """An install that worked is not undone by a known_hosts we cannot write."""
+        import importlib
+
+        ssh_mod = importlib.import_module("spark_pulse.tools.ssh")
+
+        def refuse(*_a, **_k):
+            raise OSError("read-only file system")
+
+        monkeypatch.setattr(ssh_mod, "_write_known_hosts", refuse)
+        report = bootstrap.InstallReport(host="10.0.0.7", username="alex", name="n")
+        assert (
+            bootstrap.trust_host_key_for("10.0.0.7", _host_key(), report=report)
+            is False
+        )
+        assert any("could not record" in step for step in report.steps)
+
+    def test_a_non_default_port_is_recorded_as_ssh_writes_it(self):
+        from spark_pulse.tools.ssh import known_hosts_path
+
+        bootstrap.trust_host_key_for("10.0.0.7", _host_key(port=2222), port=2222)
+        assert known_hosts_path().read_text().startswith("[10.0.0.7]:2222 ")

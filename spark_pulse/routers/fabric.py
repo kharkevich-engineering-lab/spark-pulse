@@ -7,16 +7,24 @@ of it is written. ``POST /api/fabric/apply`` writes the proposed nodes' files
 over SSH with the control plane's key, applies them, and reads each port back.
 The only secret in the request is an optional sudo password, used for that
 call and kept nowhere.
+
+A verified apply leaves two records behind: what a deploy pins NCCL with, and
+the node's fabric addresses — which is what a bulk transfer then prefers over
+the management NIC. The node's confirmed host key is trusted under those
+addresses too, so the transfer passes strict checking without a second scan.
 """
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException
 
 from spark_pulse import tools
 from spark_pulse.agent import runtime as agent_runtime
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/fabric", tags=["fabric"])
 
@@ -71,18 +79,52 @@ def _pin_record(node_plan: Any, mode: str) -> dict[str, Any]:
     ``fabric_mode`` from the registry — ``register_self`` fills them for the
     control node and nothing filled them for a peer — so a peer whose fabric
     was verified here still deployed unpinned. This is the missing write.
+
+    ``fabric_addresses`` is written here for a second reason: it is the record
+    that this control plane configured a fabric address for this node and read
+    it back, which is what lets a bulk transfer prefer it over the registered
+    management address (:func:`spark_pulse.tools.node_service.transfer_route`).
+    Every assigned address is kept, not just the first — a mesh node sits on a
+    different ``/24`` with each peer and only one of them faces this machine.
     """
     assignments = list(node_plan.assignments)
     if not assignments:
         return {}
     lowercase = [a for a in assignments if "P" not in a.netdev]
+    addresses = [a.cidr.split("/")[0] for a in assignments if a.cidr]
     changes = {
         "ethernet_interface": (lowercase or assignments)[0].netdev,
         "infiniband_interfaces": [a.hca for a in assignments],
+        "fabric_addresses": addresses,
         "fabric_mode": mode,
     }
     tools.node_registry.update_node(node_plan.node_id, **changes)
+    _trust_on_the_fabric(node_plan.node_id, addresses)
     return changes
+
+
+def _trust_on_the_fabric(node_id: str, addresses: list[str]) -> None:
+    """Trust this node's confirmed host key under its fabric addresses too.
+
+    One machine, two links, one host key. Bootstrap recorded the key an
+    operator confirmed against the node's *management* address; a transfer
+    that now dials the fabric address is a first sighting to OpenSSH and
+    strict checking refuses it. Copying the entry that is already there is
+    what avoids that without scanning anything: nothing new is trusted, the
+    same key is trusted under a second name.
+    """
+    node = tools.node_registry.get_node(node_id)
+    if node is None or not node.address:
+        return
+    from spark_pulse.tools.ssh import trust_alias
+
+    for address in addresses:
+        try:
+            trust_alias(node.address, address)
+        except OSError as exc:  # a read-only config directory, say
+            logger.warning(
+                "could not trust %s's host key for %s: %s", node.address, address, exc
+            )
 
 
 def _current(fabrics: list[Any]) -> list[dict[str, Any]]:
@@ -129,6 +171,7 @@ def _pinned(node_id: str) -> dict[str, Any]:
     return {
         "ethernet_interface": node.ethernet_interface,
         "infiniband_interfaces": list(node.infiniband_interfaces),
+        "fabric_addresses": list(node.fabric_addresses),
         "fabric_mode": node.fabric_mode,
     }
 

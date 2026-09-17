@@ -42,6 +42,7 @@ from typing import Any, Callable, Coroutine
 from spark_pulse.agent.errors import NodeOperationError
 from spark_pulse.agent.hub import DEFAULT_COMMAND_TIMEOUT, AgentHub
 from spark_pulse.agent.operations import NodeOperations
+from spark_pulse.config import config
 from spark_pulse.tools.docker import (
     PULL_PROGRESS_INTERVAL,
     ContainerInfo,
@@ -53,7 +54,7 @@ from spark_pulse.tools.docker import (
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["AgentNodeService", "CONTRACT_EXCEPTIONS", "RESULT_MARGIN"]
+__all__ = ["AgentNodeService", "CONTRACT_EXCEPTIONS", "PULL_TIMEOUT", "RESULT_MARGIN"]
 
 #: Remote failures that are part of the container service's published
 #: contract, and the local class each is re-raised as. Callers already catch
@@ -77,6 +78,13 @@ RESULT_MARGIN = 30.0
 #: nmcli apply plus per-port readback and peer pings takes longer than a
 #: normal command; give the fabric op its own budget.
 FABRIC_TIMEOUT = 120.0
+#: A pull is the one command whose honest duration is hours. A 26 GB engine
+#: image over a 20 MB/s link is half an hour, over a bad Wi-Fi link several;
+#: against the 900s default the control plane gave up on pulls that were
+#: still moving and filed a *progressing* download as a failed node. What
+#: bounds a dead pull is the node's stall watchdog below — silence, not
+#: slowness — so this only has to be longer than any pull that is working.
+PULL_TIMEOUT = 4 * 60 * 60.0
 
 
 class AgentNodeService:
@@ -177,6 +185,7 @@ class AgentNodeService:
         cap_add: list[str] | None = None,
         ulimits: dict[str, str] | None = None,
         auto_remove: bool = True,
+        user: str | None = None,
     ) -> ContainerInfo:
         """Build and start a container carrying spark-pulse labels.
 
@@ -212,6 +221,7 @@ class AgentNodeService:
                 cap_add=cap_add,
                 ulimits=ulimits,
                 auto_remove=auto_remove,
+                user=user,
             )
         )
 
@@ -233,11 +243,12 @@ class AgentNodeService:
         command: str | list[str],
         detach: bool = False,
         timeout: int | None = None,
+        user: str | None = None,
     ) -> ExecResult:
         """Execute a command inside a running container."""
         name = getattr(container, "name", container)
         return self._run(
-            self.ops.exec_in_container(str(name), command, detach, timeout)
+            self.ops.exec_in_container(str(name), command, detach, timeout, user)
         )
 
     def get_logs(self, name: str, tail: int = 200) -> str:
@@ -302,7 +313,16 @@ class AgentNodeService:
         not this one. Every current callback publishes an event or updates a
         dict, which is safe; a callback that blocks would stall the loop, so
         it must not.
+
+        ``stall_timeout`` defaults to ``config.docker_pull_stall_timeout_seconds``,
+        exactly as :class:`~spark_pulse.tools.docker.DockerService` does it.
+        Leaving it unset sent no watchdog to the node at all, so a remote pull
+        had nothing bounding silence and was instead cut off by the command
+        deadline — which a slow but perfectly healthy pull also trips. Silence
+        is what the node fails on; duration is not.
         """
+        if stall_timeout is None:
+            stall_timeout = float(config.docker_pull_stall_timeout_seconds)
         return self._run(
             self.ops.pull_image(
                 ref,
@@ -310,7 +330,9 @@ class AgentNodeService:
                 interval=interval,
                 stall_timeout=stall_timeout,
                 cancel=cancel,
-            )
+                timeout=PULL_TIMEOUT,
+            ),
+            timeout=PULL_TIMEOUT,
         )
 
     def remove_image(self, ref: str, force: bool = False) -> bool:

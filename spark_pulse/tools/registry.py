@@ -36,6 +36,20 @@ plain HTTP on the LAN, so a node's Docker daemon will refuse it until
 writes a node's ``daemon.json``; that belongs with the node registry and
 pre-flight of the plan's phase C, which is where a node's configuration first
 becomes something we own.
+
+The same restriction bites the *control node's own* push, and it was found on
+a real two-node cluster: with ``address`` a LAN IP rather than loopback,
+``docker push`` to ``<address>:5000`` fails with "server gave HTTP response to
+HTTPS client" — Docker's insecure defaults are exactly ``127.0.0.0/8``. A
+single-node install never hit this because its cluster-facing address falls
+back to loopback (:func:`cluster_address`). :func:`seed` therefore always
+pushes to :attr:`RegistrySettings.push_base` (loopback), which
+:attr:`RegistrySettings.publish_binds` guarantees the registry container also
+listens on; :attr:`RegistrySettings.base` — what a node is told to pull from —
+is untouched. The registry does not care which host:port prefix reached it,
+so the digest a node ends up with after a re-push is unaffected: `_image_rows`
+in ``tools/preflight.py`` and the images catalogue in ``tools/images.py`` both
+compare by the digest substring after ``@``, never by the registry host.
 """
 
 from __future__ import annotations
@@ -70,6 +84,11 @@ CONTAINER_NAME = "spark-pulse-registry"
 DEFAULT_PORT = 5000
 #: The port the registry listens on *inside* its container.
 INTERNAL_PORT = 5000
+#: Docker's own insecure-registry default is exactly this block (and
+#: ``::1/128``), verified on a DGX Spark — see :meth:`SSHClient.reverse_tunnel`.
+#: The control node's own push has to land here regardless of what address
+#: nodes are told to pull from.
+LOOPBACK = "127.0.0.1"
 #: ``proxy.ttl = 0`` disables blob expiry outright. A cached layer that expires
 #: mid-cluster is exactly the non-determinism this whole path exists to avoid.
 PROXY_TTL_NEVER = "0"
@@ -203,6 +222,35 @@ class RegistrySettings:
     def publish(self) -> str:
         """The ``-p`` argument: bound to the cluster-facing address only."""
         return f"{self.address}:{self.port}:{INTERNAL_PORT}"
+
+    @property
+    def push_base(self) -> str:
+        """Where *this host's own* docker/skopeo must push.
+
+        ``base`` is what nodes are told to pull from — the cluster-facing
+        address, unchanged by any of this — but the control node's own Docker
+        refuses to push to a plain-HTTP registry unless the address is
+        loopback (``127.0.0.0/8``, Docker's own insecure-registry default).
+        The push always happens on this machine, so it always targets
+        loopback, which :attr:`publish_binds` guarantees is listening.
+        """
+        return f"{LOOPBACK}:{self.port}"
+
+    @property
+    def publish_binds(self) -> list[str]:
+        """Every ``-p`` argument the container needs.
+
+        The cluster-facing bind is what nodes reach; loopback is what this
+        host's own push (:attr:`push_base`) reaches. Both name the same
+        container port, so Docker is asked to publish it twice rather than on
+        every interface — the registry is still for the LAN and loopback,
+        nothing broader.
+        """
+        binds = [self.publish]
+        loopback = f"{LOOPBACK}:{self.port}:{INTERNAL_PORT}"
+        if loopback not in binds:
+            binds.append(loopback)
+        return binds
 
     @property
     def is_proxy(self) -> bool:
@@ -486,6 +534,9 @@ def start(
         return status(settings, runner)
 
     Path(settings.data_dir).expanduser().mkdir(parents=True, exist_ok=True)
+    publish_args: list[str] = []
+    for bind in settings.publish_binds:
+        publish_args += ["-p", bind]
     argv = [
         "docker",
         "run",
@@ -494,10 +545,10 @@ def start(
         "unless-stopped",
         "--name",
         settings.container_name,
-        # Bound to the cluster-facing address: the registry is for the LAN,
-        # not for anything that can reach any other interface.
-        "-p",
-        settings.publish,
+        # Bound to the cluster-facing address, plus loopback: the registry is
+        # for the LAN and for this host's own push (see `push_base`), not for
+        # anything that can reach any other interface.
+        *publish_args,
         "-v",
         f"{Path(settings.data_dir).expanduser()}:/var/lib/registry",
         *_env_args(settings),
@@ -664,7 +715,13 @@ def seed(
         raise ValueError(f"could not parse a repository out of {ref!r}")
     advertised = (digest or "").strip() or (reference if is_digest(reference) else "")
     tag = seed_tag(advertised, reference)
-    destination = f"{settings.base}/{path}:{tag}"
+    # The push itself always targets loopback (`push_base`): it runs on this
+    # host, and this host's Docker refuses a plain-HTTP registry anywhere
+    # else. `settings.base` — which may be a LAN address — is only ever used
+    # below to compose what a *node* pulls; the registry content is the same
+    # either way, so the digest checks that follow hold regardless of which
+    # host:port prefix reached it.
+    destination = f"{settings.push_base}/{path}:{tag}"
 
     if _skopeo_available(runner):
         tool = "skopeo"
@@ -779,6 +836,7 @@ __all__ = [
     "DEFAULT_PORT",
     "DEFAULT_UPSTREAM",
     "INTERNAL_PORT",
+    "LOOPBACK",
     "MODES",
     "MODE_LOCAL",
     "MODE_PROXY",

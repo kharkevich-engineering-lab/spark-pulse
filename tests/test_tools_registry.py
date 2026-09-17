@@ -114,6 +114,31 @@ class TestLifecycle:
         assert state["base"] == "10.0.0.1:5000"
         assert settings.image == "registry:3"
 
+    def test_start_also_binds_loopback_for_the_control_node_s_own_push(
+        self, sim, settings
+    ):
+        """Docker refuses a plain-HTTP registry unless it is loopback, and the
+        control node's own push always has to reach one — see `push_base`."""
+        registry.start(settings, sim.run)
+
+        run = next(c for c in sim.commands if c[:2] == ["docker", "run"])
+        binds = [run[i + 1] for i, arg in enumerate(run) if arg == "-p"]
+        assert binds == ["10.0.0.1:5000:5000", "127.0.0.1:5000:5000"]
+
+    def test_a_registry_already_on_loopback_is_not_bound_twice(self, sim, tmp_path):
+        loopback_settings = registry.RegistrySettings(
+            mode=registry.MODE_LOCAL,
+            address="127.0.0.1",
+            port=5000,
+            data_dir=str(tmp_path / "registry"),
+        )
+
+        registry.start(loopback_settings, sim.run)
+
+        run = next(c for c in sim.commands if c[:2] == ["docker", "run"])
+        binds = [run[i + 1] for i, arg in enumerate(run) if arg == "-p"]
+        assert binds == ["127.0.0.1:5000:5000"]
+
     def test_start_is_idempotent(self, sim, settings):
         registry.start(settings, sim.run)
         runs_before = [c for c in sim.commands if c[:2] == ["docker", "run"]]
@@ -296,6 +321,50 @@ class TestSeeding:
     def test_an_empty_ref_is_refused(self, sim, settings):
         with pytest.raises(ValueError):
             _seed(sim, settings, ref="")
+
+    def test_the_push_targets_loopback_regardless_of_the_registered_address(
+        self, sim, settings
+    ):
+        """The reported registry address is the LAN one nodes pull from; the
+        push this host performs is a different address, and Docker refuses a
+        plain-HTTP registry that is not loopback — the defect hit on a real
+        two-node cluster, where `settings.address` is a LAN IP."""
+        result = _seed(sim, settings)
+
+        copy = next(c for c in sim.commands if c[:2] == ["skopeo", "copy"])
+        destination = copy[-1]
+        assert destination.startswith("docker://127.0.0.1:5000/")
+        assert "10.0.0.1" not in destination
+        # What nodes are told to pull is untouched by the push address.
+        assert result["registry_base"] == "10.0.0.1:5000"
+        assert result["pull_ref"].startswith("10.0.0.1:5000/")
+
+    def test_the_docker_fallback_push_also_targets_loopback(self, settings):
+        sim = SimulatedRegistry(skopeo=False)
+
+        result = _seed(sim, settings)
+
+        push = next(c for c in sim.commands if c[:2] == ["docker", "push"])
+        tag = next(c for c in sim.commands if c[:2] == ["docker", "tag"])
+        assert push[-1].startswith("127.0.0.1:5000/")
+        assert tag[-1].startswith("127.0.0.1:5000/")
+        assert result["registry_base"] == "10.0.0.1:5000"
+
+    def test_a_digest_pinned_ref_pushes_and_resolves_by_digest(self, sim, settings):
+        """A registry cannot be pushed to by digest — `seed_tag` names a tag —
+        but the digest the node ends up with still has to be the one asked
+        for, whichever host:port prefix reached the registry."""
+        pinned = f"{REPO}@{DIGEST}"
+
+        result = _seed(sim, settings, ref=pinned, digest="")
+
+        assert result["digest"] == DIGEST
+        assert result["pull_ref"] == f"10.0.0.1:5000/{REPO.split('/', 1)[1]}@{DIGEST}"
+        copy = next(c for c in sim.commands if c[:2] == ["skopeo", "copy"])
+        assert (
+            copy[-1]
+            == f"docker://127.0.0.1:5000/{REPO.split('/', 1)[1]}:sha256-{'a1' * 32}"
+        )
 
 
 # ── Composing a node's reference ─────────────────────────────────────────────

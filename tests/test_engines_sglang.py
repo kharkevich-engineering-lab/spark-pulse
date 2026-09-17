@@ -172,7 +172,9 @@ def test_models_endpoint_is_separate_from_readiness(engine):
 
 def test_tiktoken_files_are_mounted_and_pointed_at(engine):
     assert "~/tiktoken_encodings" in engine.cache_mounts()
-    assert engine.base_env()["TIKTOKEN_ENCODINGS_BASE"] == "/root/tiktoken_encodings"
+    assert (
+        engine.base_env()["TIKTOKEN_ENCODINGS_BASE"] == "/home/spark/tiktoken_encodings"
+    )
 
 
 def test_render_refuses_v1_recipe(engine):
@@ -182,12 +184,12 @@ def test_render_refuses_v1_recipe(engine):
 
 def test_base_env_and_script(engine):
     result = engine.render(RECIPE, topology=TWO_NODES, node_rank=0)
-    assert result.env["HF_HOME"] == "/root/.cache/huggingface"
+    assert result.env["HF_HOME"] == "/home/spark/.cache/huggingface"
     assert result.env["NCCL_IB_DISABLE"] == "0"
     assert result.env["NCCL_SOCKET_IFNAME"] == "enp1s0f0np0"
     assert result.env["GLOO_SOCKET_IFNAME"] == "enp1s0f0np0"
     assert result.env["NCCL_IB_HCA"] == "mlx5_0"
-    assert 'export HF_HOME="/root/.cache/huggingface"' in result.script
+    assert 'export HF_HOME="/home/spark/.cache/huggingface"' in result.script
 
 
 def test_one_node_pins_no_interface(engine):

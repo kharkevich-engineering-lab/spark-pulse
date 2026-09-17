@@ -22,12 +22,13 @@ runtime:
   models_endpoint: /v1/models
   metrics: /metrics
   ports: {api: 30000, rendezvous: 50000}
-  # ~/tiktoken_encodings is mounted at /root/tiktoken_encodings; gpt-oss needs
-  # the encoding files offline, and an empty directory costs nothing otherwise.
+  # ~/tiktoken_encodings is mounted at /home/spark/tiktoken_encodings; gpt-oss
+  # needs the encoding files offline, and an empty directory costs nothing
+  # otherwise.
   cache_mounts: [~/.cache/huggingface, ~/tiktoken_encodings]
   env:
-    HF_HOME: /root/.cache/huggingface
-    TIKTOKEN_ENCODINGS_BASE: /root/tiktoken_encodings
+    HF_HOME: /home/spark/.cache/huggingface
+    TIKTOKEN_ENCODINGS_BASE: /home/spark/tiktoken_encodings
     NCCL_IB_DISABLE: "0"
     NCCL_NET_GDR_LEVEL: "5"
     NCCL_TIMEOUT: "1200000"

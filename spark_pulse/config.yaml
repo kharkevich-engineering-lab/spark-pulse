@@ -12,9 +12,13 @@ job_retention_days: 7
 # future runtime would be selected here.
 runtime: native
 deploy_ready_timeout_seconds: 900
-# Seconds of silence from a docker pull before it is failed rather than
-# left holding a worker thread. 0 disables the watchdog.
-docker_pull_stall_timeout_seconds: 300
+# Seconds of *silence* from a docker pull — no bytes at all, not merely slow
+# — before it is failed rather than left holding a worker thread. Ten minutes,
+# because the gap between a large layer finishing its download and its
+# extraction reporting anything is minutes on a busy disk, and failing a pull
+# that was about to continue costs the whole transfer. 0 disables the
+# watchdog.
+docker_pull_stall_timeout_seconds: 600
 # Worker threads for sync request handlers (anyio's default limiter).
 thread_pool_size: 40
 default_port_range_end: 9100

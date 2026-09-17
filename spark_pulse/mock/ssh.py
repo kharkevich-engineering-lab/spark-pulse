@@ -8,15 +8,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-# The error vocabulary and the paths are shared: a caller reaching
-# ``tools.ssh`` through the switch must catch the same exception type and read
-# the same control-socket directory in either mode.
+# The error vocabulary, the paths and the known-hosts store are shared: a
+# caller reaching ``tools.ssh`` through the switch must catch the same
+# exception type, read the same control-socket directory and record a
+# confirmed host key in the same file in either mode.
 from spark_pulse.tools.ssh import (
+    KNOWN_HOSTS_NAME as KNOWN_HOSTS_NAME,
     SSHError as SSHError,
     SSHErrorType as SSHErrorType,
     control_path_dir as control_path_dir,
     default_ssh_user as default_ssh_user,
     ensure_control_dir as ensure_control_dir,
+    host_pattern as host_pattern,
+    known_hosts_path as known_hosts_path,
+    trust_alias as trust_alias,
+    trust_host_key as trust_host_key,
+    trusted_entries as trusted_entries,
 )
 
 

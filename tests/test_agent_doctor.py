@@ -22,6 +22,7 @@ import pytest
 
 from spark_pulse.agent.bootstrap import NodeAccess
 from spark_pulse.agent.doctor import (
+    BUILDKIT_INVALID_DATABASE_REMEDY,
     FIXABLE,
     NEEDS_DECISION,
     NEEDS_HUMAN,
@@ -48,6 +49,7 @@ READ_ONLY = {
     "printf",
     "hostname",
     "docker",
+    "journalctl",
     "sudo",
     "loginctl",
     "systemctl",
@@ -236,6 +238,10 @@ async def test_a_docker_daemon_that_is_down_needs_a_human_on_that_machine(
     node = make_node(tmp_path)
     report = await install(agent_server, agent_fleet, node, agent_bundle)
     node.docker_running = False
+    node.docker_journal_tail = (
+        'dockerd[512]: level=fatal msg="failed to start daemon: error '
+        'initializing graphdriver: driver not supported"'
+    )
     mark = len(node.commands)
 
     found = await diagnose(
@@ -245,6 +251,10 @@ async def test_a_docker_daemon_that_is_down_needs_a_human_on_that_machine(
     assert socket.status == "broken"
     assert socket.verdict == NEEDS_HUMAN
     assert "not answering" in socket.detail
+    # The daemon's own last word, from `journalctl -u docker`, not just "it
+    # is not answering" — that is the whole point of asking further.
+    assert "graphdriver" in socket.detail
+    assert "docker.service is failed" in socket.detail
 
     treated = await treat(
         agent_server, report.node_id, access=access(), connector=agent_fleet
@@ -253,6 +263,94 @@ async def test_a_docker_daemon_that_is_down_needs_a_human_on_that_machine(
     assert declined and not declined[0].applied
     assert NEEDS_HUMAN in declined[0].detail
     # No doomed attempt: restarting somebody's daemon is not a repair.
+    assert not any("docker" in m for m in mutations(node, mark))
+
+
+async def test_a_corrupt_buildkit_database_is_recognised_and_repaired(
+    agent_server, agent_fleet, agent_bundle, tmp_path
+):
+    """The one docker-daemon failure specific enough to automate.
+
+    Moving the corrupt database aside costs only the build cache — nothing a
+    running container holds — which is exactly why this signature, and only
+    this one, gets a `fixable-here` verdict instead of `needs-a-human`.
+    """
+    node = make_node(tmp_path)
+    report = await install(agent_server, agent_fleet, node, agent_bundle)
+    node.docker_running = False
+    node.docker_journal_tail = (
+        "dockerd[912]: failed to start daemon: error initializing buildkit: "
+        "error creating buildkit instance: invalid database"
+    )
+    # The mock's `mv` needs something there to move, the way a real node does.
+    (node.root / "var/lib/docker/buildkit").mkdir(parents=True)
+
+    found = await diagnose(
+        agent_server, report.node_id, access=access(), connector=agent_fleet
+    )
+    socket = found.get("docker-socket")
+    assert socket.status == "broken"
+    assert socket.verdict == FIXABLE
+    assert socket.remedy == BUILDKIT_INVALID_DATABASE_REMEDY
+    assert "invalid database" in socket.detail
+
+    treated = await treat(
+        agent_server,
+        report.node_id,
+        access=access(),
+        connector=agent_fleet,
+        sudo_password_prompt=password_prompt(PASSWORD),
+    )
+    repair = next(r for r in treated.repairs if r.check == "docker-socket")
+    assert repair.applied
+    assert "only the build cache was lost" in repair.detail
+    # Re-verified, not assumed: the daemon actually answers now.
+    assert treated.get("docker-socket").status == "ok"
+    assert node.docker_running is True
+    assert not (node.root / "var/lib/docker/buildkit").exists()
+
+
+async def test_a_docker_daemon_down_for_an_unrecognised_reason_stays_a_human_problem(
+    agent_server, agent_fleet, agent_bundle, tmp_path
+):
+    """The automated repair is guarded to exactly the buildkit signature."""
+    node = make_node(tmp_path)
+    report = await install(agent_server, agent_fleet, node, agent_bundle)
+    node.docker_running = False
+    node.docker_journal_tail = "dockerd[1]: panic: runtime error"
+
+    found = await diagnose(
+        agent_server, report.node_id, access=access(), connector=agent_fleet
+    )
+    socket = found.get("docker-socket")
+    assert socket.verdict == NEEDS_HUMAN
+    assert socket.remedy != BUILDKIT_INVALID_DATABASE_REMEDY
+    assert "panic: runtime error" in socket.detail
+
+
+async def test_a_journal_permission_denial_degrades_gracefully(
+    agent_server, agent_fleet, agent_bundle, tmp_path
+):
+    """A node where the login user cannot read the journal is not a crash —
+    the doctor's other findings still stand, and this one says why it does
+    not know more."""
+    node = make_node(tmp_path)
+    report = await install(agent_server, agent_fleet, node, agent_bundle)
+    node.docker_running = False
+    node.docker_journal_denied = True
+    mark = len(node.commands)
+
+    found = await diagnose(
+        agent_server, report.node_id, access=access(), connector=agent_fleet
+    )
+    socket = found.get("docker-socket")
+    assert socket.status == "broken"
+    assert socket.verdict == NEEDS_HUMAN
+    assert "could not read the docker journal" in socket.detail
+    # Every other check still ran; a permission denial on one line is not a
+    # failure of the whole diagnosis.
+    assert found.get("disk") is not None
+    assert found.get("disk").status != "unknown"
     assert not any("docker" in m for m in mutations(node, mark))
 
 

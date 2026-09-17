@@ -73,7 +73,12 @@ from spark_pulse.engines import (
     get_registry,
 )
 from spark_pulse.tools.discovery import FABRIC_MESH, MESH_RING_NODES
-from spark_pulse.tools.docker import ContainerMetadata, PullCancelled
+from spark_pulse.tools.docker import (
+    AGENT_USER,
+    ContainerMetadata,
+    PullCancelled,
+    PullStalled,
+)
 from spark_pulse.tools.events import DeploymentEvent, EventType
 from spark_pulse.tools.labels import (
     DEPLOYMENT_LABEL,
@@ -97,8 +102,36 @@ RUNTIME_NAME = "native"
 SCRIPT_PATH = "/workspace/exec-script.sh"
 MODS_DIR = "/workspace/mods"
 CONTAINER_PREFIX = "spark-pulse-"
-CONTAINER_HOME = "/root"
-HF_CACHE_IN_CONTAINER = "/root/.cache/huggingface"
+#: Where the engine's home lives *inside* the container, and why it is not
+#: ``/root`` any more.
+#:
+#: The container runs as the operator (:data:`ENGINE_USER`), so that everything
+#: the engine downloads into the bind-mounted Hugging Face cache is owned by
+#: the operator rather than by root. ``/root`` is mode 0700 in every engine
+#: image, so a non-root process cannot even *traverse* it — a cache mounted at
+#: ``/root/.cache/huggingface`` would be unreachable. A neutral home is what
+#: makes the two decisions compatible: docker creates the missing path
+#: components as mode 0755, and the leaves are the binds themselves.
+CONTAINER_HOME = "/home/spark"
+HF_CACHE_IN_CONTAINER = CONTAINER_HOME + "/.cache/huggingface"
+
+#: Who the engine container runs as. Resolved on the node — see
+#: :func:`spark_pulse.tools.docker.resolve_user` — because the control plane
+#: cannot know a peer's uid.
+#:
+#: This is the fix for a failure that took a ``sudo chown -R`` to clear on a
+#: real two-node cluster: the engine wrote the mounted hub cache as root, so
+#: the control-plane user could no longer read ``trees/<rev>.json``, could not
+#: take Hugging Face's ``.locks/`` lock on the next download, and replication
+#: shipped 3.6 GB that the node-side verify then refused.
+ENGINE_USER = AGENT_USER
+
+#: The container's ``$HOME``, on the host. A root-owned home would be
+#: traversable but not writable, and an engine writes more than its caches
+#: there (``~/.config/vllm/usage_stats.json``, matplotlib's font cache). One
+#: directory under the operator's own cache root makes the whole home theirs;
+#: the specific caches bind on top of it.
+ENGINE_HOME_ON_HOST = "~/.cache/spark-pulse/engine-home"
 
 #: How long to wait for evidence that a container is really gone, and how
 #: often to look. Removal is fast; the wait exists so the next generation
@@ -245,6 +278,9 @@ class ContainerSpec:
     nofile_limit: int = 1048576
     port_mappings: list[str] = field(default_factory=list)
     entrypoint_clear: bool = True
+    #: Docker's ``--user``. :data:`ENGINE_USER` is the sentinel the node
+    #: resolves to its own uid:gid; ``None`` would leave the image's root.
+    user: str | None = ENGINE_USER
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -477,8 +513,10 @@ def _expand(path: str) -> str:
 def _container_path(host_path: str) -> str:
     """Where a host cache dir lands inside the container.
 
-    Upstream mounts ``~/.cache/vllm`` at ``/root/.cache/vllm``: the container
-    runs as root, so the user's home prefix is rewritten.
+    Upstream mounts ``~/.cache/vllm`` at ``/root/.cache/vllm``, because its
+    container runs as root. Ours runs as the operator, so the home prefix is
+    rewritten to :data:`CONTAINER_HOME` instead — same shape, a home the
+    engine's uid can actually enter.
     """
     home = str(Path.home())
     if host_path == home:
@@ -737,6 +775,9 @@ def _build_env(
     # not inherit the other engine's variables.
     env.update(engine_obj.block_env(recipe))
     env.setdefault("HF_HOME", HF_CACHE_IN_CONTAINER)
+    # The image's own HOME is root's, and the container is not root's. Set
+    # after the recipe's block env, so a recipe that names one still wins.
+    env.setdefault("HOME", CONTAINER_HOME)
     token = config.hf_token
     if token:
         env["HF_TOKEN"] = token
@@ -760,6 +801,10 @@ def _build_mounts(engine_obj: Engine) -> tuple[dict[str, str], list[str]]:
         if target == HF_CACHE_IN_CONTAINER:
             del mounts[host]
     mounts[hf_home] = HF_CACHE_IN_CONTAINER
+    # The home itself, so ``$HOME`` is writable by the uid the engine runs as
+    # rather than a root-owned directory docker invented for the binds beneath
+    # it. Nested binds are fine — docker mounts them in path order.
+    mounts.setdefault(_expand(ENGINE_HOME_ON_HOST), CONTAINER_HOME)
     return mounts, declared
 
 
@@ -1288,6 +1333,12 @@ def _apply_mods(
     from ``$PWD``: mods drop files there and recipes reference them by bare
     name (``--chat-template unsloth.jinja``). Every rank runs the same mods —
     they patch the image's contents, and each rank has its own copy of it.
+
+    These execs run as **root**, explicitly, even though the container's own
+    user is the operator (:data:`ENGINE_USER`). A mod edits the image — a
+    site-packages patch, a template dropped in a root-owned workdir — and has
+    always done so as root; only the engine itself needs to be the operator,
+    and only because of what it writes into the mounted cache.
     """
     applied: list[str] = []
     workdir = plan_obj.workdir or "/workspace"
@@ -1295,13 +1346,14 @@ def _apply_mods(
         mod_dir = _resolve_mod_dir(mod)
         name = mod_dir.name
         remote = f"{MODS_DIR}/{name}"
-        docker.exec_in_container(container_name, ["mkdir", "-p", remote])
+        docker.exec_in_container(container_name, ["mkdir", "-p", remote], user="root")
         for path in sorted(mod_dir.iterdir()):
             # docker cp takes files and directories alike.
             docker.copy_to_container(container_name, str(path), f"{remote}/{path.name}")
         result = docker.exec_in_container(
             container_name,
             ["bash", "-lc", f"cd {remote} && WORKSPACE_DIR={workdir} bash run.sh"],
+            user="root",
         )
         if not result.ok:
             raise NativeRuntimeError(
@@ -1316,7 +1368,13 @@ def _deploy_script(docker: Any, rank_plan: RankPlan) -> None:
     """Copy this rank's rendered script in and exec it detached.
 
     Output is redirected to PID 1's stdout so ``docker logs`` on that rank's
-    container carries the serve output.
+    container carries the serve output. PID 1 is the keepalive, which runs as
+    the container's user — the operator — so the engine can open its stdout;
+    a root PID 1 under a non-root engine could not be written to at all.
+
+    The copy lands as root (the daemon does the writing), so the mode is set
+    to 0755 from root *before* the engine's exec: the launch reads the script
+    as the operator, and a 0600 temporary file would be unreadable to it.
     """
     name = rank_plan.container.name
     with tempfile.NamedTemporaryFile(
@@ -1333,7 +1391,7 @@ def _deploy_script(docker: Any, rank_plan: RankPlan) -> None:
         except OSError:  # pragma: no cover - defensive
             pass
 
-    docker.exec_in_container(name, ["chmod", "+x", SCRIPT_PATH])
+    docker.exec_in_container(name, ["chmod", "0755", SCRIPT_PATH], user="root")
     docker.exec_in_container(
         name,
         ["bash", "-lc", f"bash {shlex.quote(SCRIPT_PATH)} >> /proc/1/fd/1 2>&1"],
@@ -1706,7 +1764,130 @@ def _image_missing(services: Callable[[str], Any], plan_obj: DeployPlan) -> bool
     return False
 
 
-def _pull_image_if_missing(docker: Any, plan_obj: DeployPlan) -> bool:
+#: How many times one node's pull is attempted before the deploy is failed.
+#:
+#: A pull crossing a slow link is the one step of a deploy that fails for
+#: reasons that have nothing to do with the deployment — a registry that drops
+#: a connection, a Wi-Fi link that goes away for a minute. Docker keeps the
+#: layers it already finished, so attempt two resumes rather than restarts,
+#: which is what makes retrying cheap enough to be the default. Three is a
+#: bound, not a hope: past it the failure is real and the operator is told.
+PULL_ATTEMPTS = 3
+
+#: Seconds to wait before each retry, indexed by the attempt just lost.
+#:
+#: Short, because the common cause is one dropped connection rather than an
+#: outage; long enough that three attempts do not all land inside the same
+#: half-minute network hiccup.
+PULL_RETRY_BACKOFF_SECONDS = (10.0, 30.0)
+
+
+def _bytes_transferred(snapshot: dict[str, Any]) -> str:
+    """How far the pull got, from the last progress snapshot we saw.
+
+    An operator reading a failed pull asks exactly this: a pull that died at
+    2.9 GB of 26 GB is a link that gave out, and one that died at zero is a
+    registry that never answered. They need different actions, so the message
+    has to tell them apart.
+    """
+    done = int(snapshot.get("bytes_done") or 0)
+    total = int(snapshot.get("bytes_total") or 0)
+    if not done and not total:
+        return "no bytes transferred"
+    if not total:
+        return f"{done / 1e9:.2f} GB transferred"
+    return (
+        f"{done / 1e9:.2f} GB of {total / 1e9:.2f} GB "
+        f"({snapshot.get('percent', 0)}%) transferred"
+    )
+
+
+def _pull_failure_message(
+    ref: str, where: str, attempts: int, progress: dict[str, Any], exc: Exception
+) -> str:
+    """Why the pull failed, in the terms the operator can act on."""
+    got = _bytes_transferred(progress)
+    tried = "1 attempt" if attempts == 1 else f"{attempts} attempts"
+    if isinstance(exc, PullStalled):
+        # The node's watchdog fired: no bytes *at all* for the window, which
+        # is a dead connection rather than a slow one. Say which, because
+        # "the pull failed" about a link that had been moving for twenty
+        # minutes reads as a transfer that was too slow, and it was not.
+        return (
+            f"could not pull image {ref} on {where} after {tried}: the registry "
+            f"went silent — {exc} — with {got}"
+        )
+    return f"could not pull image {ref} on {where} after {tried}: {exc} — {got}"
+
+
+def _pull_with_retries(
+    docker: Any,
+    dep_id: str,
+    ref: str,
+    where: str,
+    progress: Callable[[dict[str, Any]], None],
+    last: dict[str, Any],
+) -> Any:
+    """Pull ``ref``, retrying a failure up to :data:`PULL_ATTEMPTS` times.
+
+    Returns the pull outcome, or raises :class:`NativeRuntimeError` once the
+    attempts are spent — never both, and never neither.
+    """
+    for attempt in range(1, PULL_ATTEMPTS + 1):
+        try:
+            return docker.pull_image(
+                ref, progress, cancel=lambda: _pull_cancel_requested(dep_id)
+            )
+        except PullCancelled:
+            publish_event(
+                EventType.IMAGE_PULL_CANCELLED,
+                dep_id,
+                f"pull of {ref} cancelled",
+                {"image_ref": ref, "node": where},
+            )
+            raise
+        except Exception as exc:
+            # A teardown that arrived mid-pull is not a failure to retry: the
+            # record is already on its way out, and attempt two would pull an
+            # image for a deployment nobody wants.
+            if _teardown_requested(dep_id):
+                raise PullCancelled(f"pull of {ref} cancelled") from exc
+            if attempt < PULL_ATTEMPTS:
+                delay = PULL_RETRY_BACKOFF_SECONDS[
+                    min(attempt - 1, len(PULL_RETRY_BACKOFF_SECONDS) - 1)
+                ]
+                message = (
+                    f"pull of {ref} on {where} failed ({exc}); retrying in "
+                    f"{delay:g}s — attempt {attempt + 1} of {PULL_ATTEMPTS}"
+                )
+                logger.warning(message)
+                publish_event(
+                    EventType.IMAGE_PULL_PROGRESS,
+                    dep_id,
+                    message,
+                    {
+                        **last,
+                        "image_ref": ref,
+                        "node": where,
+                        "attempt": attempt + 1,
+                        "attempts": PULL_ATTEMPTS,
+                    },
+                )
+                time.sleep(delay)
+                continue
+            message = _pull_failure_message(ref, where, attempt, last, exc)
+            publish_event(
+                EventType.IMAGE_PULL_FAILED,
+                dep_id,
+                message,
+                {**last, "image_ref": ref, "node": where},
+            )
+            raise NativeRuntimeError(message) from exc
+    # Unreachable: the loop either returns or raises on every path.
+    raise NativeRuntimeError(f"could not pull image {ref} on {where}")
+
+
+def _pull_image_if_missing(docker: Any, plan_obj: DeployPlan, node: str = "") -> bool:
     """Pull the plan's image before the container is created, with progress.
 
     ``containers.run`` pulls implicitly and silently, so a deploy against an
@@ -1715,10 +1896,15 @@ def _pull_image_if_missing(docker: Any, plan_obj: DeployPlan) -> bool:
     goes to ``pulling`` and aggregated progress events flow over SSE.
 
     Returns True when a pull actually ran. Raises :class:`NativeRuntimeError`
-    when the pull fails, or :class:`PullCancelled` when a teardown stopped it.
+    when every attempt fails — naming the node, how far the last one got and,
+    for a stall, that the registry went silent — or :class:`PullCancelled`
+    when a teardown stopped it. What it must never do is return without
+    either an image or a raised failure: the record sits in ``pulling``, and
+    a caller that is told neither leaves it there with no pull behind it.
     """
     dep_id = plan_obj.deployment_id
     ref = plan_obj.container.image
+    where = node or getattr(docker, "label", "") or "this machine"
     try:
         if docker.image_exists(ref):
             return False
@@ -1729,35 +1915,24 @@ def _pull_image_if_missing(docker: Any, plan_obj: DeployPlan) -> bool:
     publish_event(
         EventType.IMAGE_PULL_STARTED,
         dep_id,
-        f"pulling {ref}",
-        {"image_ref": ref, "percent": 0.0},
+        f"pulling {ref} on {where}",
+        {"image_ref": ref, "percent": 0.0, "node": where},
     )
 
+    last: dict[str, Any] = {}
+
     def _progress(snapshot: dict[str, Any]) -> None:
+        last.update(snapshot)
         publish_event(
             EventType.IMAGE_PULL_PROGRESS,
             dep_id,
             f"pulling {ref}: {snapshot.get('percent', 0)}%",
-            {"image_ref": ref, **snapshot},
+            {"image_ref": ref, "node": where, **snapshot},
         )
 
     _register_pull(dep_id)
     try:
-        result = docker.pull_image(
-            ref, _progress, cancel=lambda: _pull_cancel_requested(dep_id)
-        )
-    except PullCancelled:
-        publish_event(
-            EventType.IMAGE_PULL_CANCELLED,
-            dep_id,
-            f"pull of {ref} cancelled",
-            {"image_ref": ref},
-        )
-        raise
-    except Exception as exc:
-        message = f"could not pull image {ref}: {exc}"
-        publish_event(EventType.IMAGE_PULL_FAILED, dep_id, message, {"image_ref": ref})
-        raise NativeRuntimeError(message) from exc
+        result = _pull_with_retries(docker, dep_id, ref, where, _progress, last)
     finally:
         _unregister_pull(dep_id)
 
@@ -1765,7 +1940,11 @@ def _pull_image_if_missing(docker: Any, plan_obj: DeployPlan) -> bool:
         EventType.IMAGE_PULL_COMPLETED,
         dep_id,
         f"pulled {ref}",
-        {"image_ref": ref, **(result if isinstance(result, dict) else {})},
+        {
+            "image_ref": ref,
+            "node": where,
+            **(result if isinstance(result, dict) else {}),
+        },
     )
     _update_record(dep_id, status="starting", image_present=True)
     return True
@@ -1844,6 +2023,7 @@ def _create_rank(
             cap_add=spec.cap_add,
             ulimits=spec.ulimits,
             auto_remove=False,
+            user=spec.user,
         )
     except Exception as exc:
         raise NativeRuntimeError(
@@ -1960,10 +2140,18 @@ def start(
         _reap_earlier_generations(services, plan_obj)
     except NativeRuntimeError as exc:
         return _fail(str(exc))
+    except Exception as exc:
+        # Resolving a node's service can fail outright — it is not registered,
+        # its agent is not connected — and that is not a NativeRuntimeError.
+        # It used to leave this function without settling the record it had
+        # just written, which on the background path is a deployment stuck at
+        # its initial status with nothing working on it.
+        logger.exception("could not reap earlier generations of %s", dep_id)
+        return _fail(f"could not reach the nodes for {dep_id}: {exc}")
 
     try:
         for address in _pull_targets(plan_obj):
-            _pull_image_if_missing(services(address), plan_obj)
+            _pull_image_if_missing(services(address), plan_obj, address)
     except PullCancelled:
         # A stop or delete reached into the pull. That is not a failure to
         # report: the record is already being torn down, and marking it
@@ -1976,6 +2164,17 @@ def start(
         }
     except NativeRuntimeError as exc:
         return _fail(str(exc))
+    except Exception as exc:
+        # Everything else the pull phase can raise — a node that is not
+        # registered, an agent that stops answering, a bug in the resolver —
+        # used to escape this function entirely. On the background path that
+        # killed the thread and left the record in "pulling" with no pull
+        # behind it, forever: no error, no stopped_at, and a Jobs page saying
+        # a deploy was still downloading hours after nothing was. A record
+        # mid-creation has exactly one owner, and it is this call; it does
+        # not get to return without settling it.
+        logger.exception("the pull phase of %s failed", dep_id)
+        return _fail(f"could not pull image {spec.image}: {exc}")
 
     # Two phases, as upstream has them. Every container is created and
     # modded before any of them is launched, so an image that is missing on
@@ -2164,9 +2363,27 @@ def create_deployment(
         record = persist_planned_record(plan_obj, "pulling")
 
         def _pull_then_start() -> None:
-            started = start(
-                plan_obj, services=services, wait=False, initial_status="pulling"
-            )
+            dep_id = plan_obj.deployment_id
+            try:
+                started = start(
+                    plan_obj, services=services, wait=False, initial_status="pulling"
+                )
+            except BaseException as exc:  # noqa: BLE001 — the record outlives us
+                # This thread is the only thing that will ever move this record
+                # out of "pulling". If it dies here the record stays there with
+                # no pull behind it and nothing to notice, which is how a
+                # stalled pull became a deployment that downloaded forever.
+                logger.exception("the background start of %s failed", dep_id)
+                if not _is_torn_down(dep_id):
+                    message = f"the deploy of {dep_id} failed to start: {exc}"
+                    publish_event(EventType.DEPLOYMENT_ERROR, dep_id, message)
+                    _update_record(
+                        dep_id,
+                        status="error",
+                        error_message=message,
+                        stopped_at=_now(),
+                    )
+                return
             if started.get("status") in ("error", "stopped"):
                 return
             _watch()
@@ -2290,6 +2507,15 @@ def get_logs(
     record = get_deployment(deployment_id)
     if record is None:
         return "Deployment not found"
+    if str(record.get("status") or "") in ("pulling", "pending"):
+        # There is no container yet, and that is the plan. "Container ... not
+        # found" answers a question nobody asked and reads as a dead deploy;
+        # what the operator wants to know is that the image is still coming.
+        image = str(record.get("image_ref") or "the image")
+        return (
+            f"No container yet: {image} is still being pulled. "
+            "Logs start when the container does."
+        )
     services = services or rank_services(docker)
     entry = next(
         (e for e in rank_entries(record) if int(e.get("rank", 0)) == rank), None
@@ -2400,6 +2626,15 @@ def _derive_status(
 ) -> str:
     if record.get("status") in ("stopped", "error"):
         return str(record["status"])
+    # A record mid-creation has no container yet *by design*: the image is
+    # still being pulled, or the gang is about to be created under the
+    # lifecycle lock. Reading "no running container" as "stopped" here made
+    # every deploy that needed a pull report itself stopped for the whole
+    # pull. The record's own status is the truth until a container exists.
+    if record.get("status") in ("pulling", "pending"):
+        return str(record["status"])
+    if record.get("status") == "starting" and container.get("status") == "missing":
+        return "starting"
     if not container.get("running"):
         return "stopped"
     return "running" if ready else "starting"

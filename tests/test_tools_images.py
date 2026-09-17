@@ -552,6 +552,37 @@ class TestSync:
         assert by_node["n2"]["ok"] is False
         assert "unreachable" in by_node["n2"]["error"]
 
+    def test_the_seed_pushes_to_loopback_not_the_registered_address(
+        self, catalogue, nodes
+    ):
+        """The control node's own push must land on loopback regardless of the
+        LAN address nodes are told to pull from — the defect hit on a real
+        two-node cluster, where Docker refused the push at that LAN address
+        with "server gave HTTP response to HTTPS client"."""
+        result = images.sync_to_nodes(VLLM_REF, ["n1"], services=nodes.services)
+
+        copies = [c for c in nodes.registry.commands if c[:2] == ["skopeo", "copy"]]
+        assert copies, "expected a skopeo copy into the local registry"
+        destination = copies[-1][-1]
+        assert destination.startswith("docker://127.0.0.1:5000/")
+        # Nodes still pull from the registered (LAN) address, unchanged.
+        assert result["registry_base"] != "127.0.0.1:5000"
+        assert result["pull_ref"].startswith(f"{result['registry_base']}/")
+
+    def test_a_digest_pinned_ref_syncs(self, catalogue, nodes):
+        advertised = images.local_digest(catalogue.image_info(VLLM_REF), VLLM_REPO)
+        pinned = f"{VLLM_REPO}@{advertised}"
+        # The catalogue only seeds the tagged form; register the digest-pinned
+        # alias too, the way a daemon that pulled by digest would hold it.
+        catalogue.client.images.add(pinned, image_id=advertised)
+
+        result = images.sync_to_nodes(pinned, ["n1"], services=nodes.services)
+
+        assert result["ok"] is True
+        assert result["digest"]
+        assert result["pull_ref"].endswith(f"@{result['digest']}")
+        assert nodes.pulled("n1") == [result["pull_ref"]]
+
     def test_save_and_load_is_gone(self):
         """No fallback: a silently wrong transfer is worse than no transfer."""
         source = Path(images.__file__).read_text()

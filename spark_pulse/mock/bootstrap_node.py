@@ -146,6 +146,14 @@ class SimulatedNode:
         docker_running: bool = True,
         docker_socket_users: set[str] | None = None,
         docker_version: str = "29.2.1",
+        #: The last ~20 lines ``journalctl -u docker`` would show, for a node
+        #: whose daemon is down. Empty means a generic crash with no known
+        #: signature; a test sets this to reproduce a specific one (e.g. the
+        #: buildkit-database corruption the doctor recognises).
+        docker_journal_tail: str = "",
+        #: Whether reading the journal is refused, the way it is on a node
+        #: where the login user is in neither ``systemd-journal`` nor ``adm``.
+        docker_journal_denied: bool = False,
         linger: dict[str, bool] | None = None,
         loginctl: bool = True,
         linger_settable: bool = True,
@@ -175,6 +183,8 @@ class SimulatedNode:
             else {u for u in self.users}
         )
         self.docker_version = docker_version
+        self.docker_journal_tail = docker_journal_tail
+        self.docker_journal_denied = docker_journal_denied
         self.linger = linger or {}
         self.loginctl = loginctl
         self.linger_settable = linger_settable
@@ -656,6 +666,28 @@ class SimulatedSession:
             )
         return RunResult(0, node.docker_version + "\n", "")
 
+    async def _cmd_journalctl(self, parts, stdin, as_root) -> RunResult:
+        """Only ``-u docker`` is simulated — the one unit the doctor reads."""
+        node = self.node
+        args = parts[1:]
+        unit = args[args.index("-u") + 1] if "-u" in args else ""
+        if unit != "docker":
+            return RunResult(0, "-- No entries --\n", "")
+        # Reading the system journal needs `systemd-journal` or `adm`
+        # membership; a node where the login user has neither refuses it —
+        # the doctor has to degrade gracefully rather than treat it as broken.
+        if node.docker_journal_denied and not as_root:
+            return RunResult(
+                1, "", "No journal files were opened due to insufficient permissions."
+            )
+        if node.docker_running:
+            return RunResult(0, "-- No entries --\n", "")
+        tail = node.docker_journal_tail or (
+            'dockerd[987]: time="…" level=error msg="failed to start daemon: '
+            'error initializing graphdriver: driver not supported"'
+        )
+        return RunResult(0, tail.rstrip("\n") + "\n", "")
+
     async def _cmd_loginctl(self, parts, stdin, as_root) -> RunResult:
         node = self.node
         if not node.loginctl:
@@ -791,6 +823,30 @@ class SimulatedSession:
             if target.startswith("-"):
                 continue
             self.node.path(target, self.user.name).unlink(missing_ok=True)
+        return RunResult(0, "", "")
+
+    async def _cmd_mv(self, parts, stdin, as_root) -> RunResult:
+        node, user = self.node, self.user
+        args = [p for p in parts[1:] if not p.startswith("-")]
+        if len(args) != 2:
+            return RunResult(1, "", "mv: unsupported invocation")
+        source, destination = args
+        src_path = node.path(source, user.name)
+        if not (src_path.exists() or src_path.is_symlink()):
+            return RunResult(
+                1, "", f"mv: cannot stat '{source}': No such file or directory"
+            )
+        if not _may_write(
+            node, user, node.expand(destination, user.name), as_root
+        ) or not _may_write(node, user, node.expand(source, user.name), as_root):
+            return RunResult(
+                1,
+                "",
+                f"mv: cannot move '{source}' to '{destination}': Permission denied",
+            )
+        dst_path = node.path(destination, user.name)
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
+        src_path.rename(dst_path)
         return RunResult(0, "", "")
 
     async def _cmd_ln(self, parts, stdin, as_root) -> RunResult:
@@ -965,6 +1021,14 @@ class SimulatedSession:
             node.user_manager_restarts += 1
             return RunResult(0, "", "")
 
+        # `docker.service` is the OS's own unit too, not one the installer
+        # wrote — restarting it is exactly the doctor's buildkit repair, and
+        # simulating it as always recovering docker is what makes that repair
+        # verifiable rather than a call into a unit file that never existed.
+        if unit_name == "docker" and verb in ("enable", "start", "restart"):
+            node.docker_running = True
+            return RunResult(0, "", "")
+
         if verb == "is-system-running":
             return RunResult(1, "degraded\n", "")
         if verb == "daemon-reload":
@@ -982,6 +1046,15 @@ class SimulatedSession:
                     unit.enabled = False
             return RunResult(0, "", "")
         if verb == "is-active":
+            # `docker.service` is the OS's own unit, not one the installer
+            # wrote, so it is not tracked in `node.units` — its state mirrors
+            # `docker_running` directly, the same fact `_cmd_docker` answers.
+            if unit_name == "docker":
+                return RunResult(
+                    0 if node.docker_running else 3,
+                    ("active" if node.docker_running else "failed") + "\n",
+                    "",
+                )
             unit = node.units.get(unit_name)
             active = bool(unit and unit.active)
             return RunResult(
