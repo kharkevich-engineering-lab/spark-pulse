@@ -63,7 +63,7 @@ export default function RankList({ ranks, orphans, className = "" }: RankListPro
               <li
                 key={orphan.rank}
                 data-testid="rank-orphan"
-                className="flex items-start gap-2 p-2 rounded-lg bg-danger/5 border border-danger/30 text-xs"
+                className="flex items-start gap-2 p-2 rounded-sm bg-danger/5 border border-danger/30 text-xs"
               >
                 <AlertTriangle size={14} className="shrink-0 mt-0.5 text-danger" />
                 <div className="min-w-0 space-y-0.5">
@@ -94,14 +94,14 @@ export default function RankList({ ranks, orphans, className = "" }: RankListPro
               <li
                 key={rank.rank}
                 data-testid={`rank-row-${rank.rank}`}
-                className={`flex items-center gap-2 px-2 py-1 rounded-lg text-xs ${
+                className={`flex items-center gap-2 px-2 py-1 rounded-md text-xs ${
                   unhealthy ? "bg-danger/5 border border-danger/30" : "bg-surface border border-border"
                 }`}
               >
                 {unhealthy && <AlertTriangle size={12} className="shrink-0 text-danger" />}
                 <span className="font-mono shrink-0">rank {rank.rank}</span>
                 {rank.is_head && (
-                  <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wide bg-primary/15 text-primary border border-primary/30">
+                  <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wide bg-primary/15 text-blue2 border border-primary/30">
                     head
                   </span>
                 )}

@@ -127,8 +127,17 @@ const AUTO: OciAutoUpdateSettings = {
   overwrite_local: false,
 };
 
+// The sub-nav is a real tablist now, so the pills are tabs rather than bare
+// buttons — the selector moves, the coverage does not.
+// The sub-nav is a real tablist now, so the pills are tabs rather than bare
+// buttons — the selector moves, the coverage does not.
 const openTab = (name: string) =>
-  userEvent.click(screen.getByRole("button", { name: new RegExp(`^${name}`) }));
+  userEvent.click(screen.getByRole("tab", { name: new RegExp(`^${name}`) }));
+
+/** Destructive actions confirm. Two of the three uninstall paths used to act on
+ *  the first click and report afterwards. */
+const confirmDialog = async (label: string) =>
+  userEvent.click(await screen.findByRole("button", { name: label }));
 
 describe("OciRegistryPage", () => {
   beforeEach(() => {
@@ -385,6 +394,7 @@ describe("OciRegistryPage", () => {
       await screen.findByText("qwen3-8b");
 
       await userEvent.click(screen.getByRole("button", { name: "Uninstall this recipe" }));
+      await confirmDialog("Uninstall");
 
       await waitFor(() => expect(uninstallOciRecipe).toHaveBeenCalledWith("qwen3-8b"));
       expect(await screen.findByText("Uninstalled qwen3-8b")).toBeInTheDocument();
@@ -397,6 +407,7 @@ describe("OciRegistryPage", () => {
       await screen.findByText("qwen3-8b");
 
       await userEvent.click(screen.getByRole("button", { name: "Uninstall this recipe" }));
+      await confirmDialog("Uninstall");
 
       expect(await screen.findByText("recipe is deployed")).toBeInTheDocument();
     });
@@ -654,6 +665,7 @@ describe("OciRegistryPage", () => {
       await openTab("Settings");
 
       await userEvent.click(await screen.findByRole("button", { name: "Remove registry" }));
+      await confirmDialog("Delete");
 
       await waitFor(() => expect(removeOciRegistry).toHaveBeenCalledWith("ghcr"));
     });
@@ -664,6 +676,7 @@ describe("OciRegistryPage", () => {
       await openTab("Settings");
 
       await userEvent.click(await screen.findByRole("button", { name: "Remove registry" }));
+      await confirmDialog("Delete");
 
       expect(await screen.findByText("cannot remove the default")).toBeInTheDocument();
     });

@@ -5,8 +5,8 @@
 // trail, a dry-run result shape and an SSH error classification — an entire
 // unbuilt "operation" subsystem with zero production imports, kept "covered"
 // only by its own dedicated tests. It is deleted rather than kept as an
-// aspiration; what remains below is what `useSSEConnection`, `EventStreamViewer`
-// and `HealthBadge` actually use.
+// aspiration; what remains below is what `useSSEConnection` and
+// `EventStreamViewer` actually use.
 
 export type OperationResourceType = "cluster" | "deployment" | "mod" | "reconciliation";
 
@@ -108,9 +108,3 @@ export interface DeploymentEvent {
 // the deployment record keeps one `started_at` and overwrites it on every
 // transition. They are deleted rather than left as an aspiration.
 
-export enum HealthStatus {
-  HEALTHY = "healthy",
-  DEGRADED = "degraded",
-  UNHEALTHY = "unhealthy",
-  UNKNOWN = "unknown",
-}

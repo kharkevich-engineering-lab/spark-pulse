@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useI18n } from "@/lib/i18n";
 import { Save, Upload, Trash2, X } from "lucide-react";
-import { ConfirmModal } from "@/components/Modal";
+import { Button, ConfirmModal, IconButton } from "@/ui";
 import type { CustomRecipeInfo } from "@/lib/types";
 import { getCustomRecipeContent } from "@/lib/api";
 import LazyCodeEditor from "./LazyCodeEditor";
@@ -99,23 +99,29 @@ export default function CustomRecipeDrawer({
       }
       actions={
         <>
-          <button type="button" onClick={() => setShowDelete(true)}
-            className="px-3 py-1.5 rounded-lg border border-border hover:border-danger text-sm font-medium transition-colors text-danger flex items-center gap-1.5">
-            <Trash2 size={14} /> Delete
-          </button>
+          <Button size="sm" variant="danger" icon={Trash2} onClick={() => setShowDelete(true)}>
+            Delete
+          </Button>
           <input type="file" accept=".yaml,.yml" ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
-          <button type="button" onClick={() => fileInputRef.current?.click()} disabled={uploading}
-            className="px-3 py-1.5 rounded-lg border border-border hover:border-primary/50 text-sm font-medium transition-colors flex items-center gap-1.5 disabled:opacity-50">
-            <Upload size={14} /> Upload
-          </button>
-          <button type="button" onClick={handleSave} disabled={saving || !content.trim() || loadingContent}
-            className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover disabled:opacity-50 text-white font-medium text-sm transition-colors flex items-center gap-1.5">
-            <Save size={14} />
+          <Button
+            size="sm"
+            icon={Upload}
+            loading={uploading}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            Upload
+          </Button>
+          <Button
+            size="sm"
+            variant="primary"
+            icon={Save}
+            loading={saving}
+            disabled={!content.trim() || loadingContent}
+            onClick={handleSave}
+          >
             {saving ? "Saving..." : "Save"}
-          </button>
-          <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover:bg-surface-hover transition-colors">
-            <X size={18} />
-          </button>
+          </Button>
+          <IconButton size="sm" icon={X} label={t("common.close")} onClick={onClose} className="border-transparent text-muted hover:text-text hover:border-line" />
         </>
       }
     >

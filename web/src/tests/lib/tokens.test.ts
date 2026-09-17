@@ -52,7 +52,7 @@ const TAILWIND = new Set([
   "yellow", "lime", "green", "emerald", "teal", "cyan", "sky", "blue",
   "indigo", "violet", "purple", "fuchsia", "pink", "rose",
   "black", "white", "transparent", "current", "inherit",
-  // sizes (text-sm, shadow-lg, ring-2, border-2, rounded-*)
+  // sizes (text-sm, ring-2, border-2, rounded-*)
   "xs", "sm", "base", "md", "lg", "xl", "2xl", "3xl", "4xl", "5xl", "6xl",
   "7xl", "8xl", "9xl", "0", "1", "2", "3", "4", "6", "8", "inner", "outline",
   // border/divide sides and their widths

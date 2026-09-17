@@ -1,54 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
-import HealthBadge, {
+import {
   HealthHistoryChart,
   medianInterval,
   sparklineBreaks,
   sparklineGapBands,
   sparklinePath,
   type HealthSample,
-} from "@/components/HealthBadge";
-import { HealthStatus } from "@/lib/operations";
-
-describe("HealthBadge", () => {
-  it("renders healthy status with label", () => {
-    render(<HealthBadge status={HealthStatus.HEALTHY} />);
-    expect(screen.getByText("Healthy")).toBeInTheDocument();
-  });
-
-  it("renders degraded status with label", () => {
-    render(<HealthBadge status={HealthStatus.DEGRADED} />);
-    expect(screen.getByText("Degraded")).toBeInTheDocument();
-  });
-
-  it("renders unhealthy status with label", () => {
-    render(<HealthBadge status={HealthStatus.UNHEALTHY} />);
-    expect(screen.getByText("Unhealthy")).toBeInTheDocument();
-  });
-
-  it("renders unknown status with label", () => {
-    render(<HealthBadge status={HealthStatus.UNKNOWN} />);
-    expect(screen.getByText("Unknown")).toBeInTheDocument();
-  });
-
-  it("hides label when showLabel is false", () => {
-    render(<HealthBadge status={HealthStatus.HEALTHY} showLabel={false} />);
-    expect(screen.queryByText("Healthy")).not.toBeInTheDocument();
-  });
-
-  it("applies size classes correctly", () => {
-    const { container } = render(<HealthBadge status={HealthStatus.HEALTHY} size="sm" />);
-    const dot = container.querySelector("span.rounded-full") as HTMLElement;
-    expect(dot).toHaveClass("w-2", "h-2");
-  });
-
-  it("applies custom className", () => {
-    const { container } = render(
-      <HealthBadge status={HealthStatus.HEALTHY} className="custom-class" />
-    );
-    expect(container.firstChild).toHaveClass("custom-class");
-  });
-});
+} from "@/components/HealthHistoryChart";
 
 // ── HealthHistoryChart ───────────────────────────────────────────────────────
 //

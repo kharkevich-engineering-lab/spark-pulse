@@ -13,7 +13,7 @@
 
 import { useEffect, useState } from "react";
 import { useI18n } from "@/lib/i18n";
-import { Modal } from "@/components/Modal";
+import { Button, Modal } from "@/ui";
 import type { OciRegistry, OciRegistryAuthUpdate, OciRegistryUpdate } from "@/lib/types";
 
 type AuthType = "none" | "token" | "username_password";
@@ -116,20 +116,12 @@ export default function EditRegistryDialog({
       title={t("oci.editRegistry", { name: reg.name })}
       actions={
         <>
-          <button
-            onClick={onClose}
-            disabled={saving}
-            className="px-4 py-2 rounded-lg border border-border hover:border-border-hover disabled:opacity-50 transition-colors"
-          >
+          <Button size="sm" onClick={onClose} disabled={saving}>
             {t("common.cancel")}
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="px-4 py-2 rounded-lg text-white font-medium bg-primary hover:bg-primary-hover disabled:opacity-50 transition-colors"
-          >
+          </Button>
+          <Button size="sm" variant="primary" loading={saving} onClick={handleSave}>
             {saving ? t("common.saving") : t("common.save")}
-          </button>
+          </Button>
         </>
       }
     >
@@ -143,7 +135,7 @@ export default function EditRegistryDialog({
             type="text"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
-            className="w-full px-3 py-2 rounded-lg border border-border bg-surface text-sm"
+            className="w-full px-3 py-2 rounded-md border border-border bg-surface text-sm"
           />
         </div>
 
@@ -155,7 +147,7 @@ export default function EditRegistryDialog({
             id="edit-registry-auth-type"
             value={authType}
             onChange={(e) => setAuthType(e.target.value as AuthType)}
-            className="w-full px-3 py-2 rounded-lg border border-border bg-surface text-sm"
+            className="w-full px-3 py-2 rounded-md border border-border bg-surface text-sm"
           >
             <option value="none">{t("oci.authNone")}</option>
             <option value="token">{t("oci.authToken")}</option>
@@ -174,7 +166,7 @@ export default function EditRegistryDialog({
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               placeholder={t("oci.usernamePlaceholder")}
-              className="w-full px-3 py-2 rounded-lg border border-border bg-surface text-sm"
+              className="w-full px-3 py-2 rounded-md border border-border bg-surface text-sm"
             />
           </div>
         )}
@@ -190,7 +182,7 @@ export default function EditRegistryDialog({
               value={secret}
               onChange={(e) => setSecret(e.target.value)}
               autoComplete="new-password"
-              className="w-full px-3 py-2 rounded-lg border border-border bg-surface text-sm"
+              className="w-full px-3 py-2 rounded-md border border-border bg-surface text-sm"
             />
           </div>
         )}

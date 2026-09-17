@@ -16,11 +16,11 @@ import { useEffect } from "react";
 import { useI18n } from "@/lib/i18n";
 import { fetchDeployments } from "@/lib/api";
 import { useQuery } from "@/hooks/useQuery";
-import StatusBadge from "@/components/StatusBadge";
+import { EmptyState, ErrorLine, Spinner, StatusBadge } from "@/ui";
 import NodeRegistry from "@/components/NodeRegistry";
 import NetworkDiscovery from "@/components/NetworkDiscovery";
 import FabricCard from "@/components/FabricCard";
-import { Server, AlertCircle, Loader2 } from "lucide-react";
+import { Server } from "lucide-react";
 import type { Deployment } from "@/lib/types";
 import { ExperimentalBadge, ExperimentalNote } from "@/components/Experimental";
 import { MULTI_NODE_BADGE_TITLE, nodeCount } from "@/lib/experimental";
@@ -69,26 +69,21 @@ export default function ClusterPage() {
       <NetworkDiscovery />
 
       {/* Deployments, which is what "cluster status" became. */}
-      <div className="rounded-xl bg-surface border border-border p-4 space-y-3" data-testid="cluster-deployments">
+      <div className="rounded-md bg-surface border border-line p-4 space-y-3" data-testid="cluster-deployments">
         <div className="flex items-center gap-2">
-          <Server size={18} className="text-primary" />
+          <Server size={18} className="text-blue2" />
           <h3 className="text-lg font-semibold">{t("cluster.deployments")}</h3>
         </div>
 
         {loading && (
           <div className="flex justify-center py-10">
-            <Loader2 className="animate-spin text-primary" size={28} />
+            <Spinner size="lg" label={t("common.loading")} />
           </div>
         )}
-        {error && (
-          <div className="p-4 rounded-lg bg-danger/10 border border-danger/30 text-danger flex items-center gap-3">
-            <AlertCircle size={20} />
-            <span>{error}</span>
-          </div>
-        )}
+        <ErrorLine>{error}</ErrorLine>
 
         {!loading && !error && live.length === 0 && (
-          <p className="text-sm text-text-muted py-6 text-center">{t("cluster.nothingRunning")}</p>
+          <EmptyState icon={Server}>{t("cluster.nothingRunning")}</EmptyState>
         )}
 
         {live.length > 0 && (
@@ -105,7 +100,7 @@ export default function ClusterPage() {
               </thead>
               <tbody>
                 {live.map((deployment) => (
-                  <tr key={deployment.id} className="border-t border-border">
+                  <tr key={deployment.id} className="border-t border-line">
                     <td className="py-2 pr-4">
                       <p className="font-medium">{deployment.name}</p>
                       <p className="text-xs text-text-muted">{deployment.recipe_id}</p>

@@ -417,7 +417,7 @@ export default function DeployOptions({
       </button>
 
       {open && (
-        <div className="mt-4 space-y-4 p-4 rounded-xl bg-bg border border-border">
+        <div className="mt-4 space-y-4 p-4 rounded-sm bg-bg border border-border">
           <div>
             <label htmlFor="deploy-engine" className="block text-sm font-medium mb-1">
               Engine
@@ -426,7 +426,7 @@ export default function DeployOptions({
               id="deploy-engine"
               value={value.engine ?? ""}
               onChange={(e) => onChange({ ...value, engine: e.target.value || undefined })}
-              className="w-full px-3 py-2 rounded-lg bg-surface border border-border focus:border-primary focus:outline-none font-mono text-sm"
+              className="w-full px-3 py-2 rounded-md bg-surface border border-border focus:border-primary focus:outline-none font-mono text-sm"
             >
               <option value="">{t("deployOptions.recipeDefault")}</option>
               {available.map(({ engine }) => (
@@ -465,7 +465,7 @@ export default function DeployOptions({
               value={value.model ?? ""}
               placeholder={recipe.model || "leave empty for the recipe's model"}
               onChange={(e) => onChange({ ...value, model: e.target.value || undefined })}
-              className="w-full px-3 py-2 rounded-lg bg-surface border border-border focus:border-primary focus:outline-none font-mono text-sm"
+              className="w-full px-3 py-2 rounded-md bg-surface border border-border focus:border-primary focus:outline-none font-mono text-sm"
             />
             <datalist id="deploy-model-options">
               {models.map((id) => (
@@ -487,7 +487,7 @@ export default function DeployOptions({
                 setExtraArgsText(e.target.value);
                 onChange({ ...value, extra_args: parseExtraArgs(e.target.value) });
               }}
-              className="w-full px-3 py-2 rounded-lg bg-surface border border-border focus:border-primary focus:outline-none font-mono text-sm"
+              className="w-full px-3 py-2 rounded-md bg-surface border border-border focus:border-primary focus:outline-none font-mono text-sm"
             />
             <p className="text-xs text-text-muted mt-1">{t("deployOptions.extraArgsNote")}</p>
           </div>
@@ -508,7 +508,7 @@ export default function DeployOptions({
                   min={1}
                   value={tpText}
                   onChange={(e) => editParallelism("tensor_parallel", e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg bg-surface border border-border focus:border-primary focus:outline-none font-mono text-sm"
+                  className="w-full px-3 py-2 rounded-md bg-surface border border-border focus:border-primary focus:outline-none font-mono text-sm"
                 />
               </div>
               <div>
@@ -524,7 +524,7 @@ export default function DeployOptions({
                   min={1}
                   value={ppText}
                   onChange={(e) => editParallelism("pipeline_parallel", e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg bg-surface border border-border focus:border-primary focus:outline-none font-mono text-sm"
+                  className="w-full px-3 py-2 rounded-md bg-surface border border-border focus:border-primary focus:outline-none font-mono text-sm"
                 />
               </div>
             </div>
@@ -543,7 +543,7 @@ export default function DeployOptions({
                 <ExperimentalBadge title={MULTI_NODE_BADGE_TITLE} />
               </label>
               <div
-                className="space-y-1.5 p-2 rounded-lg bg-surface border border-border"
+                className="space-y-1.5 p-2 rounded-md bg-surface border border-border"
                 data-testid="deploy-nodes"
               >
                 {controlNode && (
@@ -588,7 +588,7 @@ export default function DeployOptions({
             type="button"
             onClick={preview}
             disabled={planning}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border hover:border-primary/50 text-sm font-medium transition-colors disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-sm border border-border hover:border-primary/50 text-sm font-medium transition-colors disabled:opacity-50"
           >
             {planning ? <Loader2 size={14} className="animate-spin" /> : <Eye size={14} />}
             Preview
@@ -596,7 +596,7 @@ export default function DeployOptions({
 
           {planError && (
             <div
-              className="flex items-start gap-2 p-3 rounded-lg bg-danger/10 border border-danger/30 text-danger text-sm"
+              className="flex items-start gap-2 p-3 rounded-sm bg-danger/10 border border-danger/30 text-danger text-sm"
               data-testid="deploy-plan-error"
             >
               <AlertCircle size={16} className="shrink-0 mt-0.5" />
@@ -650,7 +650,7 @@ export default function DeployOptions({
 
               <div>
                 <p className="text-xs uppercase tracking-wide text-text-muted mb-1">{t("deployOptions.command")}</p>
-                <pre className="p-3 rounded-lg bg-surface border border-border text-xs font-mono overflow-x-auto whitespace-pre-wrap">
+                <pre className="p-3 rounded-md bg-surface border border-border text-xs font-mono overflow-x-auto whitespace-pre-wrap">
                   {plan.launch_command}
                 </pre>
               </div>

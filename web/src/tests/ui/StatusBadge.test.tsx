@@ -3,7 +3,8 @@
  *
  * The badge is the only place several lists say what a deployment is doing, so
  * the text has to be right for a status the frontend has never heard of too —
- * a new backend state must read as itself, not as blank.
+ * a new backend state must read as itself, not as blank and not as a
+ * translation key.
  *
  * `sync` is the second question. Since deletes became asynchronous the record
  * outlives the request that asked for it to go, and *running · deleting* is a
@@ -12,10 +13,11 @@
 
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
-import StatusBadge, { isSettling } from "@/components/StatusBadge";
+import { I18nProvider } from "@/lib/i18n";
+import StatusBadge, { isSettling, statusTone } from "@/ui/StatusBadge";
 
-/** The dot is the pill's own first child, not the wrapper's. */
-const dot = (container: HTMLElement) => container.querySelector("span > span > span");
+/** The dot is the first child of the pill, and it is `aria-hidden`. */
+const dots = (container: HTMLElement) => container.querySelectorAll("span[aria-hidden]");
 
 describe("StatusBadge", () => {
   it.each([
@@ -24,29 +26,57 @@ describe("StatusBadge", () => {
     ["error", "Error"],
     ["pending", "Pending"],
     ["pulling", "Pulling"],
+    ["ready", "Ready"],
+    ["starting", "Starting"],
+    ["unknown", "Unknown"],
   ])("renders %s as %s", (status, label) => {
     render(<StatusBadge status={status} />);
     expect(screen.getByText(label)).toBeInTheDocument();
   });
 
-  /** A status with no colour of its own still has to name itself. */
-  it("names a status it has no colour for rather than showing nothing", () => {
+  /** Through `t()`, so the French page is in French — it used to capitalise
+   *  whatever the API sent, which is English whichever language you chose. */
+  it("says the status in the reader's own language", () => {
+    render(
+      <I18nProvider>
+        <StatusBadge status="running" />
+      </I18nProvider>,
+    );
+
+    expect(screen.getByText("Running")).toBeInTheDocument();
+  });
+
+  /** A status this build has never heard of has no key to look up, and
+   *  `status.quiescing` on screen would be worse than "Quiescing". */
+  it("names a status it has no key for rather than showing the key", () => {
     render(<StatusBadge status="quiescing" />);
     expect(screen.getByText("Quiescing")).toBeInTheDocument();
   });
 
   it("matches a status whatever case it arrives in", () => {
     render(<StatusBadge status="RUNNING" />);
-    expect(screen.getByText("RUNNING")).toBeInTheDocument();
+    expect(screen.getByText("Running")).toBeInTheDocument();
   });
 
+  it("colours each status from the one vocabulary", () => {
+    expect(statusTone("running")).toBe("good");
+    expect(statusTone("pulling")).toBe("warn");
+    expect(statusTone("error")).toBe("bad");
+    expect(statusTone("stopped")).toBe("muted");
+    // Anything unrecognised is muted rather than alarming.
+    expect(statusTone("quiescing")).toBe("muted");
+  });
+
+  /** Tailwind's own keyframe, not a `pulse` this app never defined: the
+   *  inline `animation: pulse 2s infinite` depended on a keyframe nothing in
+   *  the stylesheet declared, so the dot never moved. */
   it("animates only the running dot", () => {
     const { container, unmount } = render(<StatusBadge status="running" />);
-    expect(dot(container)).toHaveStyle({ animation: "pulse 2s infinite" });
+    expect(dots(container)[0]).toHaveClass("animate-pulse");
     unmount();
 
     const stopped = render(<StatusBadge status="stopped" />);
-    expect(dot(stopped.container)).toHaveStyle({ animation: "none" });
+    expect(dots(stopped.container)[0]).not.toHaveClass("animate-pulse");
   });
 
   describe("convergence", () => {
@@ -70,14 +100,14 @@ describe("StatusBadge", () => {
       render(<StatusBadge status="running" sync="in_progress" />);
 
       expect(screen.getByText("Running")).toBeInTheDocument();
-      expect(screen.getByTestId("sync-in_progress")).toHaveTextContent("in progress");
+      expect(screen.getByTestId("sync-in_progress")).toHaveTextContent("In progress");
     });
 
     it("shows a record being cleared", () => {
       render(<StatusBadge status="stopped" sync="deleting" />);
 
       expect(screen.getByText("Stopped")).toBeInTheDocument();
-      expect(screen.getByTestId("sync-deleting")).toHaveTextContent("deleting");
+      expect(screen.getByTestId("sync-deleting")).toHaveTextContent("Deleting");
     });
 
     /** A node that could not be asked has not said no. The chip says the
@@ -86,7 +116,7 @@ describe("StatusBadge", () => {
       render(<StatusBadge status="running" sync="unknown" syncReason="a node could not be asked" />);
 
       const chip = screen.getByTestId("sync-unknown");
-      expect(chip).toHaveTextContent("unverified");
+      expect(chip).toHaveTextContent("Unverified");
       expect(chip).toHaveAttribute("title", "a node could not be asked");
     });
 

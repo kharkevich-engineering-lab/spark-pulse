@@ -293,7 +293,7 @@ describe("RecipesPage", () => {
       expect(await screen.findByText("Qwen3 8B")).toBeInTheDocument();
       expect(screen.getByText("Qwen3 at 8B, one GPU")).toBeInTheDocument();
       expect(screen.getByText("vllm-node")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /Recipes \(1\)/ })).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: /Recipes \(1\)/ })).toBeInTheDocument();
     });
 
     it("marks a recipe that is already running", async () => {
@@ -436,7 +436,7 @@ describe("RecipesPage", () => {
   describe("mods tab", () => {
     it("lists the mods with their assets", async () => {
       renderPage();
-      await userEvent.click(await screen.findByRole("button", { name: /Mods \(1\)/ }));
+      await userEvent.click(await screen.findByRole("tab", { name: /Mods \(1\)/ }));
 
       expect(screen.getByText("flash-attn")).toBeInTheDocument();
       expect(screen.getByText("Swap in the fused attention kernel")).toBeInTheDocument();
@@ -447,7 +447,7 @@ describe("RecipesPage", () => {
     it("says there are no mods rather than showing an empty grid", async () => {
       vi.mocked(fetchMods).mockResolvedValue([]);
       renderPage();
-      await userEvent.click(await screen.findByRole("button", { name: /Mods \(0\)/ }));
+      await userEvent.click(await screen.findByRole("tab", { name: /Mods \(0\)/ }));
 
       expect(screen.getByText("No mods found")).toBeInTheDocument();
     });
@@ -456,7 +456,7 @@ describe("RecipesPage", () => {
      *  drawer exists so an operator can read it before applying it. */
     it("opens a mod and shows the script it would run", async () => {
       renderPage();
-      await userEvent.click(await screen.findByRole("button", { name: /Mods \(1\)/ }));
+      await userEvent.click(await screen.findByRole("tab", { name: /Mods \(1\)/ }));
       await userEvent.click(screen.getByText("flash-attn"));
 
       await waitFor(() => expect(fetchMod).toHaveBeenCalledWith("flash-attn"));
@@ -466,7 +466,7 @@ describe("RecipesPage", () => {
     it("reports a mod whose script could not be read", async () => {
       vi.mocked(fetchMod).mockRejectedValue(new Error("mod dir vanished"));
       renderPage();
-      await userEvent.click(await screen.findByRole("button", { name: /Mods \(1\)/ }));
+      await userEvent.click(await screen.findByRole("tab", { name: /Mods \(1\)/ }));
       await userEvent.click(screen.getByText("flash-attn"));
 
       expect(await screen.findByText(/mod dir vanished/)).toBeInTheDocument();
@@ -478,7 +478,7 @@ describe("RecipesPage", () => {
       const writeText = vi.fn().mockResolvedValue(undefined);
       vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
       renderPage();
-      await userEvent.click(await screen.findByRole("button", { name: /Mods \(1\)/ }));
+      await userEvent.click(await screen.findByRole("tab", { name: /Mods \(1\)/ }));
       await userEvent.click(screen.getByText("flash-attn"));
       await screen.findByText(/echo patched/);
 
@@ -835,7 +835,7 @@ describe("RecipesPage", () => {
 
   describe("custom mode", () => {
     const enterCustomMode = async () => {
-      await userEvent.click(await screen.findByRole("button", { name: "Toggle custom mode" }));
+      await userEvent.click(await screen.findByRole("switch", { name: "Toggle custom mode" }));
       await waitFor(() => expect(listCustomRecipes).toHaveBeenCalled());
     };
 
@@ -860,7 +860,7 @@ describe("RecipesPage", () => {
       await enterCustomMode();
 
       expect(await screen.findByText("No custom recipes")).toBeInTheDocument();
-      await userEvent.click(screen.getByRole("button", { name: /Mods \(0\)/ }));
+      await userEvent.click(screen.getByRole("tab", { name: /Mods \(0\)/ }));
       expect(screen.getByText("No custom mods")).toBeInTheDocument();
     });
 
@@ -887,7 +887,7 @@ describe("RecipesPage", () => {
       await screen.findByText("Qwen3 8B");
       await enterCustomMode();
 
-      await userEvent.click(screen.getByRole("button", { name: /Mods \(0\)/ }));
+      await userEvent.click(screen.getByRole("tab", { name: /Mods \(0\)/ }));
 
       expect(screen.getByText("No custom mods")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /New Mod/ })).toBeInTheDocument();
@@ -908,7 +908,7 @@ describe("RecipesPage", () => {
       renderPage();
       await screen.findByText("Qwen3 8B");
 
-      await userEvent.click(screen.getByRole("button", { name: "Toggle custom mode" }));
+      await userEvent.click(screen.getByRole("switch", { name: "Toggle custom mode" }));
 
       expect(await screen.findByText("config dir missing")).toBeInTheDocument();
     });
@@ -976,7 +976,7 @@ describe("RecipesPage", () => {
       renderPage();
       await screen.findByText("Qwen3 8B");
       await enterCustomMode();
-      await userEvent.click(screen.getByRole("button", { name: /Mods \(1\)/ }));
+      await userEvent.click(screen.getByRole("tab", { name: /Mods \(1\)/ }));
 
       await userEvent.click(await screen.findByText("My Mod"));
 
@@ -998,7 +998,7 @@ describe("RecipesPage", () => {
       renderPage();
       await screen.findByText("Qwen3 8B");
       await enterCustomMode();
-      await userEvent.click(screen.getByRole("button", { name: /Mods \(1\)/ }));
+      await userEvent.click(screen.getByRole("tab", { name: /Mods \(1\)/ }));
 
       await userEvent.click(await screen.findByText("My Mod"));
 
@@ -1009,7 +1009,7 @@ describe("RecipesPage", () => {
       renderPage();
       await screen.findByText("Qwen3 8B");
       await enterCustomMode();
-      await userEvent.click(screen.getByRole("button", { name: /Mods \(1\)/ }));
+      await userEvent.click(screen.getByRole("tab", { name: /Mods \(1\)/ }));
       await userEvent.click(await screen.findByText("My Mod"));
       await screen.findByRole("textbox");
 
@@ -1099,7 +1099,7 @@ describe("RecipesPage", () => {
       renderPage();
       await screen.findByText("Qwen3 8B");
       await enterCustomMode();
-      await userEvent.click(screen.getByRole("button", { name: /Mods \(1\)/ }));
+      await userEvent.click(screen.getByRole("tab", { name: /Mods \(1\)/ }));
       const before = vi.mocked(listCustomMods).mock.calls.length;
 
       await userEvent.click(await screen.findByRole("button", { name: /New Mod/ }));
@@ -1117,7 +1117,7 @@ describe("RecipesPage", () => {
       renderPage();
       await screen.findByText("Qwen3 8B");
       await enterCustomMode();
-      await userEvent.click(screen.getByRole("button", { name: /Mods \(1\)/ }));
+      await userEvent.click(screen.getByRole("tab", { name: /Mods \(1\)/ }));
 
       await userEvent.click(await screen.findByRole("button", { name: /New Mod/ }));
       expect(screen.getByRole("heading", { name: "New Mod" })).toBeInTheDocument();

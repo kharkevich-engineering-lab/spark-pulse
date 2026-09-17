@@ -1,6 +1,7 @@
 import React, { Component, ErrorInfo, ReactNode } from "react";
 import { translate, useT } from "@/lib/i18n";
 import { AlertCircle, RefreshCw } from "lucide-react";
+import { Button } from "@/ui";
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -46,13 +47,9 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
             <p className="text-text-muted mb-4">
               {this.state.error?.message || translate("en", "errorBoundary.unexpected")}
             </p>
-            <button
-              onClick={this.resetErrorBoundary}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
-            >
-              <RefreshCw size={16} />
+            <Button variant="primary" icon={RefreshCw} onClick={this.resetErrorBoundary}>
               {translate("en", "errorBoundary.tryAgain")}
-            </button>
+            </Button>
           </div>
         </div>
       );
@@ -72,13 +69,9 @@ export const DefaultErrorFallback: React.FC = () => {
       <AlertCircle size={48} className="mx-auto mb-4 text-danger" />
       <h2 className="text-xl font-bold mb-2">{t("errorBoundary.heading")}</h2>
       <p className="text-text-muted mb-4">{t("errorBoundary.pageBody")}</p>
-      <button
-        onClick={() => window.location.reload()}
-        className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
-      >
-        <RefreshCw size={16} />
+      <Button variant="primary" icon={RefreshCw} onClick={() => window.location.reload()}>
         {t("errorBoundary.reload")}
-      </button>
+      </Button>
     </div>
   </div>
   );

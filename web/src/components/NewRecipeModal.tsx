@@ -2,14 +2,38 @@
 
 import { useState, useCallback, useRef } from "react";
 import { useI18n } from "@/lib/i18n";
-import { Save, Upload, X, AlertCircle, FileCode } from "lucide-react";
-import { AlertModal } from "@/components/Modal";
+import { Save, Upload, FileCode } from "lucide-react";
+import { AlertModal, Button, ErrorLine, Field, Input, Modal, Textarea } from "@/ui";
 
 type EntryMode = "upload" | "manual";
 
 interface ValidationIssue {
   field: string;
   message: string;
+}
+
+/** Each problem on its own red line under the editor, in place of the bordered
+ *  block that read like an outage for one missing field. */
+function ValidationErrors({
+  issues,
+  label,
+  className,
+}: {
+  issues: ValidationIssue[];
+  label: string;
+  className?: string;
+}) {
+  if (issues.length === 0) return null;
+  return (
+    <div className={className}>
+      <ErrorLine>{label}</ErrorLine>
+      <ul className="mt-0.5 space-y-0.5 text-[13px] text-bad">
+        {issues.map((err, i) => (
+          <li key={i}>{err.message}</li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 /** The recipe starters, one per format.
@@ -251,30 +275,43 @@ export default function NewRecipeModal({
 
   return (
     <>
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="absolute inset-0 bg-black/60" onClick={handleCancel} />
-        <div className="relative w-full max-w-3xl max-h-[90vh] overflow-auto rounded-xl bg-surface border border-border shadow-2xl">
-          {/* Header */}
-          <div className="sticky top-0 bg-surface border-b border-border px-6 py-4 flex items-center justify-between">
-            <h3 className="text-lg font-bold">
-              {step === "upload"
-                ? (mode === "upload" ? "Upload Recipe" : "Manual Recipe")
-                : "Preview Recipe"}
-            </h3>
-            <button onClick={handleCancel} className="p-1.5 rounded-lg hover:bg-surface-hover transition-colors">
-              <X size={18} />
-            </button>
-          </div>
-
+      <Modal
+        open
+        onClose={handleCancel}
+        size="lg"
+        title={
+          step === "upload" ? (mode === "upload" ? "Upload Recipe" : "Manual Recipe") : "Preview Recipe"
+        }
+        actions={
+          <>
+            <Button size="sm" onClick={handleCancel}>
+              {step === "preview" ? "Back" : "Cancel"}
+            </Button>
+            {step === "preview" && !validationErrors.length && (
+              <Button
+                size="sm"
+                variant="primary"
+                icon={Save}
+                loading={saving}
+                disabled={!recipeName.trim()}
+                onClick={handleSave}
+              >
+                {saving ? "Saving..." : "Save Recipe"}
+              </Button>
+            )}
+          </>
+        }
+      >
+        <>
           {/* Body */}
           {step === "upload" ? (
-            <div className="p-6">
+            <div>
               {/* Mode toggle */}
-              <div className="flex items-center gap-2 mb-6 p-1 rounded-lg bg-bg border border-border w-fit">
+              <div className="flex items-center gap-2 mb-6 p-1 rounded-sm bg-bg border border-border w-fit">
                 <button
                   onClick={() => { setMode("upload"); setStep("upload"); setFilename(""); }}
                   className={`px-3 py-1.5 text-sm font-medium rounded transition-colors flex items-center gap-1.5 ${
-                    mode === "upload" ? "bg-primary/10 text-primary" : "text-text-muted hover:text-text"
+                    mode === "upload" ? "bg-primary/10 text-blue2" : "text-text-muted hover:text-text"
                   }`}
                 >
                   <Upload size={14} />
@@ -283,7 +320,7 @@ export default function NewRecipeModal({
                 <button
                   onClick={() => { setMode("manual"); setStep("upload"); }}
                   className={`px-3 py-1.5 text-sm font-medium rounded transition-colors flex items-center gap-1.5 ${
-                    mode === "manual" ? "bg-primary/10 text-primary" : "text-text-muted hover:text-text"
+                    mode === "manual" ? "bg-primary/10 text-blue2" : "text-text-muted hover:text-text"
                   }`}
                 >
                   <FileCode size={14} />
@@ -298,7 +335,7 @@ export default function NewRecipeModal({
                     onDragOver={handleDragOver}
                     onDragLeave={handleDragLeave}
                     onDrop={handleDrop}
-                    className={`border-2 border-dashed rounded-xl p-12 text-center transition-colors ${
+                    className={`border-2 border-dashed rounded-md p-12 text-center transition-colors ${
                       dragOver
                         ? "border-primary bg-primary/5"
                         : "border-border hover:border-primary/50 hover:bg-surface-hover"
@@ -308,7 +345,7 @@ export default function NewRecipeModal({
                     <p className="text-sm font-medium text-text mb-1">
                       Drag and drop a YAML file here, or{" "}
                       <span
-                        className="text-primary underline cursor-pointer"
+                        className="text-blue2 underline cursor-pointer"
                         onClick={(e) => {
                           e.stopPropagation();
                           fileInputRef.current?.click();
@@ -339,28 +376,17 @@ export default function NewRecipeModal({
                   <div className="text-center">
                     <button
                       onClick={handleSwitchToManual}
-                      className="text-sm text-primary hover:text-primary-hover underline"
+                      className="text-sm text-blue2 hover:text-blue2 underline"
                     >
                       Enter YAML manually
                     </button>
                   </div>
 
-                  {/* Validation errors */}
-                  {validationErrors.length > 0 && (
-                    <div className="mt-4 p-4 rounded-lg bg-danger/10 border border-danger/30">
-                      <div className="flex items-start gap-3">
-                        <AlertCircle size={16} className="text-danger mt-0.5 shrink-0" />
-                        <div>
-                          <p className="text-sm font-medium text-danger">{t("newRecipe.validationFailed")}</p>
-                          <ul className="text-xs text-danger mt-1 space-y-0.5">
-                            {validationErrors.map((err, i) => (
-                              <li key={i}>{err.message}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      </div>
-                    </div>
-                  )}
+                  <ValidationErrors
+                    issues={validationErrors}
+                    label={t("newRecipe.validationFailed")}
+                    className="mt-4"
+                  />
                 </>
               )}
               {mode === "manual" && (
@@ -376,7 +402,7 @@ export default function NewRecipeModal({
                             are described in. Switching only replaces an
                             untouched starter — nobody's edits are thrown away
                             by a click on a format button. */}
-                        <div className="flex items-center rounded-lg border border-border overflow-hidden text-xs">
+                        <div className="flex items-center rounded-sm border border-line overflow-hidden text-[13px]">
                           {(["2", "1"] as const).map((v) => (
                             <button
                               key={v}
@@ -388,26 +414,21 @@ export default function NewRecipeModal({
                                 if (untouched) setContent(TEMPLATES[v]);
                               }}
                               className={`px-2.5 py-1 transition-colors ${
-                                format === v
-                                  ? "bg-primary/15 text-primary font-medium"
-                                  : "text-text-muted hover:text-text"
+                                format === v ? "bg-bg2 text-text font-medium" : "text-muted hover:text-text"
                               }`}
                             >
                               v{v}
                             </button>
                           ))}
                         </div>
-                        <button
-                          onClick={handleSaveManual}
-                          disabled={!content.trim()}
-                          className="px-3 py-1 rounded-lg bg-primary/20 text-primary hover:bg-primary/30 text-sm font-medium transition-colors disabled:opacity-50"
-                        >
+                        <Button size="sm" onClick={handleSaveManual} disabled={!content.trim()}>
                           Validate recipe
-                        </button>
+                        </Button>
                       </div>
                     </div>
-                    <textarea
+                    <Textarea
                       id="recipe-yaml"
+                      mono
                       value={content}
                       onChange={(e) => {
                         setContent(e.target.value);
@@ -416,11 +437,11 @@ export default function NewRecipeModal({
                         const nameMatch = e.target.value.match(/^name:\s*(.+)$/m);
                         if (nameMatch) setRecipeName(nameMatch[1].trim());
                       }}
-                      className="w-full h-[400px] px-4 py-3 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm resize-y"
+                      className="h-[400px]"
                       spellCheck={false}
                       placeholder={TEMPLATES["2"]}
                     />
-                    <p className="text-xs text-text-muted mt-1.5">
+                    <p className="text-[13px] text-muted mt-1.5">
                       Both recipe formats are accepted. Validation reports each problem against
                       the field it belongs to.
                     </p>
@@ -429,84 +450,41 @@ export default function NewRecipeModal({
               )}
             </div>
           ) : (
-            <div className="p-6">
-              {/* Name */}
-              <div className="mb-3">
-                <label className="block text-sm font-medium mb-1">{t("newRecipe.name")}</label>
-                <input
-                  type="text"
-                  value={recipeName}
-                  onChange={(e) => setRecipeName(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm"
-                />
-              </div>
+            <div>
+              <Field label={t("newRecipe.name")} className="mb-3">
+                {(control) => (
+                  <Input
+                    {...control}
+                    mono
+                    type="text"
+                    value={recipeName}
+                    onChange={(e) => setRecipeName(e.target.value)}
+                  />
+                )}
+              </Field>
               {mode === "upload" && filename && (
-                <div className="mb-3">
-                  <span className="text-xs text-text-muted">Source: {filename}</span>
-                </div>
+                <p className="mb-3 text-[13px] text-muted">Source: {filename}</p>
               )}
 
-              {/* Validation errors */}
-              {validationErrors.length > 0 && (
-                <div className="mb-4 p-4 rounded-lg bg-danger/10 border border-danger/30">
-                  <div className="flex items-start gap-3">
-                    <AlertCircle size={16} className="text-danger mt-0.5 shrink-0" />
-                    <div>
-                      <p className="text-sm font-medium text-danger">{t("newRecipe.validationFailed")}</p>
-                      <ul className="text-xs text-danger mt-1 space-y-0.5">
-                        {validationErrors.map((err, i) => (
-                          <li key={i}>{err.message}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  </div>
-                </div>
-              )}
+              <ValidationErrors issues={validationErrors} label={t("newRecipe.validationFailed")} />
 
               {/* YAML Preview */}
-              <div>
-                <label className="block text-sm font-medium mb-1">{t("newRecipe.yamlContent")}</label>
-                <textarea
-                  value={content}
-                  readOnly
-                  className="w-full h-[300px] px-4 py-3 rounded-lg bg-bg border border-border font-mono text-sm resize-y"
-                  spellCheck={false}
-                />
-              </div>
+              <Field label={t("newRecipe.yamlContent")}>
+                {(control) => (
+                  <Textarea
+                    {...control}
+                    mono
+                    value={content}
+                    readOnly
+                    className="h-[300px]"
+                    spellCheck={false}
+                  />
+                )}
+              </Field>
             </div>
           )}
-
-          {/* Footer */}
-          <div className="flex items-center justify-between px-6 py-4 border-t border-border bg-surface sticky bottom-0">
-            <button
-              onClick={handleCancel}
-              className="px-4 py-2 rounded-lg border border-border hover:bg-surface-hover text-sm font-medium transition-colors"
-            >
-              {step === "preview" ? "Back" : "Cancel"}
-            </button>
-            <div className="flex items-center gap-3">
-              {step === "preview" && !validationErrors.length && (
-                <button
-                  onClick={handleSave}
-                  disabled={saving || !recipeName.trim()}
-                  className="px-4 py-2 rounded-lg bg-primary hover:bg-primary-hover disabled:opacity-50 text-white font-medium text-sm transition-colors flex items-center gap-1.5"
-                >
-                  <Save size={14} />
-                  {saving ? "Saving..." : "Save Recipe"}
-                </button>
-              )}
-              {step === "upload" && mode === "upload" && (
-                <button
-                  onClick={onClose}
-                  className="px-4 py-2 rounded-lg bg-primary hover:bg-primary-hover text-white font-medium text-sm transition-colors"
-                >
-                  Cancel
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
+        </>
+      </Modal>
 
       {/* Error modal */}
       {errorModal && (

@@ -4,9 +4,9 @@ import { useI18n } from "@/lib/i18n";
 import { fetchRecipes, fetchRecipe, fetchDeployments, createDeployment, scheduleDeploy, fetchSettings, fetchRecipeCustomization, saveRecipeCustomization, deleteRecipeCustomization, fetchMods, fetchMod, listCustomRecipes, saveCustomRecipe, deleteCustomRecipe, listCustomMods, getCustomModFiles, saveCustomModFiles, deleteCustomMod, uninstallOciRecipe, ApiError } from "@/lib/api";
 import type { RecipeDetail, RecipeCustomization, RecipeSummary, ModSummary, ModDetail, CustomRecipeInfo, CustomModInfo, ModFileMap, PreflightReport } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
-import { AlertModal, ConfirmModal } from "@/components/Modal";
+import { AlertModal, Button, ConfirmModal, ErrorLine, Modal, Spinner, Tabs, Toggle } from "@/ui";
 import PreflightPanel from "@/components/PreflightPanel";
-import { Loader2, AlertCircle, ChevronDown, X, Copy, Check, Wrench, Zap, FileCode2, FileText, FileCode, Plus, Download } from "lucide-react";
+import { Loader2, AlertCircle, ChevronDown, X, Copy, Check, Wrench, FileCode2, FileText, FileCode, Plus, Download } from "lucide-react";
 import RecipeCard from "@/components/RecipeCard";
 import RecipeDrawer from "@/components/RecipeDrawer";
 import SlideDrawer from "@/components/SlideDrawer";
@@ -78,7 +78,7 @@ function ociRecipeName(recipeId: string): string {
 
 const KIND_STYLE: Record<string, string> = {
   patch: "bg-warning/15 text-warning border-warning/30",
-  template: "bg-primary/15 text-primary border-primary/30",
+  template: "bg-primary/15 text-blue2 border-primary/30",
   python: "bg-success/15 text-success border-success/30",
   script: "bg-tag-bg text-text-muted border-border",
   yaml: "bg-tag-bg text-text-muted border-border",
@@ -135,20 +135,20 @@ function ModDrawer({ modId, onClose }: { modId: string; onClose: () => void }) {
       header={
         <div>
           <div className="flex items-center gap-2">
-            <Wrench size={18} className="text-primary" />
+            <Wrench size={18} className="text-blue2" />
             <span className="text-xl font-mono font-bold truncate">{modId}</span>
           </div>
         </div>
       }
       actions={
-        <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover:bg-surface-hover transition-colors">
+        <button type="button" onClick={onClose} className="p-1.5 rounded-md hover:bg-surface-hover transition-colors">
           <X size={18} />
         </button>
       }
     >
       {loading && (
         <div className="flex-1 flex items-center justify-center">
-          <Loader2 className="animate-spin text-primary" size={32} />
+          <Loader2 className="animate-spin text-blue2" size={32} />
         </div>
       )}
       {error && (
@@ -162,7 +162,7 @@ function ModDrawer({ modId, onClose }: { modId: string; onClose: () => void }) {
       {detail && !loading && (
         <div className="p-6 space-y-5">
           {detail.description && (
-            <div className="p-4 rounded-xl bg-bg border border-border">
+            <div className="p-4 rounded-sm bg-bg border border-border">
               <p className="text-sm text-text-muted leading-relaxed">{detail.description}</p>
             </div>
           )}
@@ -187,7 +187,7 @@ function ModDrawer({ modId, onClose }: { modId: string; onClose: () => void }) {
                 {copied ? "Copied" : "Copy"}
               </button>
             </div>
-            <div className="rounded-xl bg-bg border border-border overflow-hidden">
+            <div className="rounded-md bg-bg border border-border overflow-hidden">
               <pre className="p-4 text-xs font-mono overflow-x-auto leading-relaxed whitespace-pre">
                 {detail.script || "(empty)"}
               </pre>
@@ -506,42 +506,33 @@ export default function RecipesPage() {
       </div>
 
       {/* Tabs + Toggle */}
-      <div className="flex items-center justify-between border-b border-border">
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setTab("recipes")}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              tab === "recipes"
-                ? "border-primary text-primary"
-                : "border-transparent text-text-muted hover:text-text"
-            }`}
-          >
-            <Zap size={14} className="inline mr-1.5" />
-            {t("recipes.tabRecipes")} ({showCustom ? customRecipes.length : (recipes?.length ?? 0)})
-          </button>
-          <button
-            onClick={() => setTab("mods")}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              tab === "mods"
-                ? "border-primary text-primary"
-                : "border-transparent text-text-muted hover:text-text"
-            }`}
-          >
-            <Wrench size={14} className="inline mr-1.5" />
-            {t("recipes.tabMods")} ({showCustom ? customMods.length : (mods?.length ?? 0)})
-          </button>
-        </div>
+      <div className="flex items-center justify-between gap-4">
+        <Tabs
+          label={t("recipes.title")}
+          value={tab}
+          onChange={(id) => setTab(id as "recipes" | "mods")}
+          tabs={[
+            {
+              id: "recipes",
+              label: t("recipes.tabRecipes"),
+              count: showCustom ? customRecipes.length : (recipes?.length ?? 0),
+            },
+            {
+              id: "mods",
+              label: t("recipes.tabMods"),
+              count: showCustom ? customMods.length : (mods?.length ?? 0),
+            },
+          ]}
+        />
         {/* Toggle + label */}
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleToggleCustom}
+        <div className="flex items-center gap-2 shrink-0">
+          <Toggle
+            on={showCustom}
+            onChange={handleToggleCustom}
             disabled={customLoading || toggling}
-            className={`relative w-11 h-6 rounded-full transition-colors ${showCustom ? "bg-primary" : "bg-border"}`}
-            aria-label={t("recipes.toggleCustom")}
-          >
-            <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${showCustom ? "translate-x-5" : ""}`} />
-          </button>
-          <span className={`text-sm font-medium ${showCustom ? "text-primary" : "text-text-muted"}`}>
+            label={t("recipes.toggleCustom")}
+          />
+          <span className={`text-[13px] font-medium ${showCustom ? "text-text" : "text-muted"}`}>
             {t("recipes.customMode")}
           </span>
         </div>
@@ -550,14 +541,11 @@ export default function RecipesPage() {
       {/* Loading / error overlay */}
       {isAnyLoading && (
         <div className="flex justify-center py-20">
-          <Loader2 className="animate-spin text-primary" size={32} />
+          <Spinner size="lg" label={t("common.loading")} />
         </div>
       )}
       {isError && !isAnyLoading && (
-        <div className="p-4 rounded-lg bg-danger/10 border border-danger/30 text-danger flex items-center gap-3">
-          <AlertCircle size={20} />
-          <span>{combinedError}</span>
-        </div>
+        <ErrorLine>{combinedError}</ErrorLine>
       )}
 
       {/* ── Recipes tab ─────────────────────────────────────────────────── */}
@@ -578,7 +566,7 @@ export default function RecipesPage() {
                 </p>
                 <button
                   onClick={() => setShowNewRecipe(true)}
-                  className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium flex items-center gap-1.5 transition-colors"
+                  className="px-3 py-1.5 rounded-sm bg-primary hover:bg-primary-hover text-white text-sm font-medium flex items-center gap-1.5 transition-colors"
                 >
                   <Plus size={14} />
                   {t("recipes.newRecipe")}
@@ -589,7 +577,7 @@ export default function RecipesPage() {
                   {customRecipes.map((r) => (
                     <BaseCard
                       key={r.id}
-                      icon={<FileText size={16} className="shrink-0 text-primary" />}
+                      icon={<FileText size={16} className="shrink-0 text-blue2" />}
                       title={r.name}
                       subtitle={r.filename}
                       onClick={() => handleOpenCustomRecipe(r)}
@@ -641,9 +629,9 @@ export default function RecipesPage() {
                           mode", which names a setting and not a condition. */}
                       <p className="text-sm text-text-muted mb-3">
                         {t("recipes.clusterHint", { count: clusterNodeCount })}{" "}
-                        <Link to="/cluster" className="text-primary hover:underline">{t("recipes.clusterHintAddNode")}</Link>
+                        <Link to="/cluster" className="text-blue2 hover:underline">{t("recipes.clusterHintAddNode")}</Link>
                         {" · "}
-                        <Link to="/settings" className="text-primary hover:underline">{t("recipes.clusterHintForce")}</Link>
+                        <Link to="/settings" className="text-blue2 hover:underline">{t("recipes.clusterHintForce")}</Link>
                       </p>
                       {showUnavailable && (
                         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -691,7 +679,7 @@ export default function RecipesPage() {
                 </p>
                 <button
                   onClick={() => setShowNewMod(true)}
-                  className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium flex items-center gap-1.5 transition-colors"
+                  className="px-3 py-1.5 rounded-sm bg-primary hover:bg-primary-hover text-white text-sm font-medium flex items-center gap-1.5 transition-colors"
                 >
                   <Plus size={14} />
                   {t("recipes.newMod")}
@@ -714,7 +702,7 @@ export default function RecipesPage() {
                     {customMods.map((m) => (
                       <BaseCard
                         key={m.id}
-                        icon={<Wrench size={16} className="shrink-0 text-primary" />}
+                        icon={<Wrench size={16} className="shrink-0 text-blue2" />}
                         title={m.name}
                         description={m.description}
                         onDelete={() => confirmDelete("mod", m.id, m.name)}
@@ -834,91 +822,63 @@ export default function RecipesPage() {
       )}
 
       {blockedDeploy && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" role="dialog" aria-modal="true">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setBlockedDeploy(null)} />
-          <div
-            className="relative w-full max-w-lg rounded-xl bg-surface border border-border shadow-2xl p-5 space-y-4"
-            data-testid="preflight-block-modal"
+        <div data-testid="preflight-block-modal">
+          <Modal
+            open
+            size="md"
+            onClose={() => setBlockedDeploy(null)}
+            title={t("recipes.preflightBlocked")}
+            actions={
+              <>
+                <Button size="sm" onClick={() => setBlockedDeploy(null)}>
+                  {t("common.cancel")}
+                </Button>
+                <Button size="sm" variant="danger" onClick={handleDeployAnyway}>
+                  {t("recipes.deployAnyway")}
+                </Button>
+              </>
+            }
           >
-            <div className="flex items-start justify-between gap-3">
-              <h3 className="text-lg font-bold">{t("recipes.preflightBlocked")}</h3>
-              <button
-                type="button"
-                onClick={() => setBlockedDeploy(null)}
-                className="p-1 rounded-lg hover:bg-surface-hover transition-colors"
-                title={t("common.close")}
-              >
-                <X size={18} />
-              </button>
-            </div>
             <PreflightPanel report={blockedDeploy.preflight} />
-            <div className="flex items-center justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => setBlockedDeploy(null)}
-                className="px-4 py-2 rounded-lg border border-border hover:border-border-hover transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleDeployAnyway}
-                className="px-4 py-2 rounded-lg bg-danger hover:bg-danger/80 text-white font-medium transition-colors"
-              >
-                {t("recipes.deployAnyway")}
-              </button>
-            </div>
-          </div>
+          </Modal>
         </div>
       )}
 
       {missingModelDeploy && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" role="dialog" aria-modal="true">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setMissingModelDeploy(null)} />
-          <div
-            className="relative w-full max-w-lg rounded-xl bg-surface border border-border shadow-2xl p-5 space-y-4"
-            data-testid="missing-model-modal"
+        <div data-testid="missing-model-modal">
+          <Modal
+            open
+            size="md"
+            onClose={() => setMissingModelDeploy(null)}
+            title={t("recipes.missingModelTitle")}
+            actions={
+              <>
+                <Button size="sm" onClick={() => setMissingModelDeploy(null)}>
+                  {t("common.cancel")}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="primary"
+                  icon={Download}
+                  loading={scheduling}
+                  onClick={handleDownloadAndDeploy}
+                >
+                  {t("recipes.downloadAndDeploy")}
+                </Button>
+              </>
+            }
           >
-            <div className="flex items-start justify-between gap-3">
-              <h3 className="text-lg font-bold">{t("recipes.missingModelTitle")}</h3>
-              <button
-                type="button"
-                onClick={() => setMissingModelDeploy(null)}
-                className="p-1 rounded-lg hover:bg-surface-hover transition-colors"
-                title={t("common.close")}
-              >
-                <X size={18} />
-              </button>
-            </div>
-            <div className="space-y-3 text-sm">
-              <p className="text-text-secondary">
+            <div className="space-y-3 text-[14px]">
+              <p className="text-muted">
                 <span className="font-mono text-text break-all">{missingModelDeploy.model}</span> is not in the
                 local catalogue, so <span className="font-medium text-text">{missingModelDeploy.name}</span> cannot start.
               </p>
-              <p className="text-text-secondary">
+              <p className="text-muted">
                 Downloading it can take a while. You do not have to wait here — the deployment is recorded and
                 starts on its own when the model lands, and you can cancel it from the Models page at any point.
               </p>
             </div>
-            <div className="flex items-center justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => setMissingModelDeploy(null)}
-                className="px-4 py-2 rounded-lg border border-border hover:border-border-hover transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleDownloadAndDeploy}
-                disabled={scheduling}
-                className="px-4 py-2 rounded-lg bg-primary hover:bg-primary/80 text-white font-medium transition-colors disabled:opacity-50 inline-flex items-center gap-2"
-              >
-                {scheduling ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
-                {t("recipes.downloadAndDeploy")}
-              </button>
-            </div>
-          </div>
+          </Modal>
         </div>
       )}
 
@@ -977,7 +937,7 @@ function ModCard({ mod, onClick }: { mod: ModSummary; onClick: () => void }) {
 
   return (
     <BaseCard
-      icon={<Wrench size={16} className="shrink-0 text-primary" />}
+      icon={<Wrench size={16} className="shrink-0 text-blue2" />}
       title={mod.id}
       description={mod.description}
       badges={badges}

@@ -10,8 +10,7 @@ import {
 } from "@/lib/api";
 import { useQuery } from "@/hooks/useQuery";
 import { useSSEConnection } from "@/hooks/useSSEConnection";
-import StatusBadge, { isSettling } from "@/components/StatusBadge";
-import HealthBadge from "@/components/HealthBadge";
+import { Button, ErrorLine, IconButton, Spinner, StatusBadge, isSettling } from "@/ui";
 import EventStreamViewer from "@/components/EventStreamViewer";
 import RankList from "@/components/RankList";
 import EngineMetricsPanel from "@/components/EngineMetrics";
@@ -23,7 +22,7 @@ import {
   MULTI_NODE_UNPROVEN,
 } from "@/lib/experimental";
 import { ConfirmModal, AlertModal, Modal } from "@/components/Modal";
-import { Square, X, Trash2, Loader2, AlertCircle, Terminal, Flame } from "lucide-react";
+import { Square, X, Trash2, Terminal, Flame } from "lucide-react";
 import type { DeploymentEvent } from "@/lib/operations";
 import type { Deployment, EngineMetricsWindow } from "@/lib/types";
 
@@ -239,15 +238,18 @@ export default function InferencePage() {
         <p className="text-text-muted mt-1">{t("inference.subtitle")}</p>
       </div>
 
-      {loading && <div className="flex justify-center py-20"><Loader2 className="animate-spin text-primary" size={32} /></div>}
-      {error && <div className="p-4 rounded-lg bg-danger/10 border border-danger/30 text-danger flex items-center gap-3"><AlertCircle size={20} /><span>{error}</span></div>}
+      {loading && (
+        <div className="flex justify-center py-20">
+          <Spinner size="lg" label={t("common.loading")} />
+        </div>
+      )}
+      <ErrorLine>{error}</ErrorLine>
 
       {deployments && deployments.length > 0 && (
         <div className="space-y-2">
           {deployments.map((dep) => (
-            <div key={dep.id} data-testid={`deployment-${dep.id}`} className="rounded-xl bg-surface border border-border overflow-hidden">
+            <div key={dep.id} data-testid={`deployment-${dep.id}`} className="rounded-md bg-surface border border-line overflow-hidden">
               <div className="flex items-center gap-4 p-4 cursor-pointer hover:bg-surface-hover" onClick={() => toggle(dep.id)}>
-                <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: dep.status === "running" ? "var(--color-success)" : dep.status === "error" ? "var(--color-danger)" : dep.status === "pending" ? "var(--color-warning)" : "var(--color-text-muted)" }} />
                 <div className="flex-1 min-w-0">
                   <p className="font-medium truncate">{dep.name}</p>
                   <p className="text-xs text-text-muted truncate">
@@ -257,7 +259,7 @@ export default function InferencePage() {
                 </div>
                 {dep.runtime === "native" && (
                   <span
-                    className="hidden md:inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono bg-primary/15 text-primary border border-primary/30 shrink-0"
+                    className="hidden md:inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono bg-primary/15 text-blue2 border border-primary/30 shrink-0"
                     title={dep.image_ref || undefined}
                   >
                     {dep.engine || "native"}
@@ -275,15 +277,36 @@ export default function InferencePage() {
                   </span>
                 )}
                 {dep.port && <span className="text-sm font-mono text-text-muted shrink-0">:{dep.port}</span>}
-                <HealthBadge status={dep.status === "running" ? "healthy" as any : dep.status === "error" ? "unhealthy" as any : "unknown" as any} size="sm" />
                 <StatusBadge status={dep.status} sync={dep.sync} syncReason={dep.sync_reason} />
                 {dep.pid && <span className="text-xs font-mono text-text-muted shrink-0">PID: {dep.pid}</span>}
                 <span className="text-xs text-text-muted shrink-0">{new Date(dep.created_at).toLocaleString()}</span>
-                {["stopped", "error"].includes(dep.status)
-                  ? <button onClick={(e) => { e.stopPropagation(); setStopTarget({ id: dep.id, name: dep.name }); }} disabled={isSettling(dep.sync)} className="p-2 rounded-lg hover:bg-danger/10 text-text-muted hover:text-danger transition-colors disabled:opacity-30 shrink-0" title={isSettling(dep.sync) ? t("inference.settling") : t("inference.removeFromHistory")}><Trash2 size={14} /></button>
-                  : <button onClick={(e) => { e.stopPropagation(); setStopTarget({ id: dep.id, name: dep.name }); }} disabled={isSettling(dep.sync) || (dep.status !== "running" && dep.status !== "pending")} className="p-2 rounded-lg hover:bg-danger/10 text-text-muted hover:text-danger transition-colors disabled:opacity-30 shrink-0" title={isSettling(dep.sync) ? t("inference.settling") : dep.status === "pending" ? t("inference.cancel") : t("inference.stop")}>{dep.status === "pending" ? <X size={14} /> : <Square size={14} />}</button>}
+                {["stopped", "error"].includes(dep.status) ? (
+                  <IconButton
+                    size="sm"
+                    icon={Trash2}
+                    label={isSettling(dep.sync) ? t("inference.settling") : t("inference.removeFromHistory")}
+                    disabled={isSettling(dep.sync)}
+                    onClick={(e) => { e.stopPropagation(); setStopTarget({ id: dep.id, name: dep.name }); }}
+                    className="border-transparent text-muted hover:text-bad hover:border-line"
+                  />
+                ) : (
+                  <IconButton
+                    size="sm"
+                    icon={dep.status === "pending" ? X : Square}
+                    label={isSettling(dep.sync) ? t("inference.settling") : dep.status === "pending" ? t("inference.cancel") : t("inference.stop")}
+                    disabled={isSettling(dep.sync) || (dep.status !== "running" && dep.status !== "pending")}
+                    onClick={(e) => { e.stopPropagation(); setStopTarget({ id: dep.id, name: dep.name }); }}
+                    className="border-transparent text-muted hover:text-bad hover:border-line"
+                  />
+                )}
                 {dep.status === "running" && (
-                  <button onClick={(e) => { e.stopPropagation(); setBenchmarkModal({ id: dep.id, name: dep.name, recipeId: dep.recipe_id, recipeName: dep.recipe_id }); }} className="p-2 rounded-lg hover:bg-primary/10 text-text-muted hover:text-primary transition-colors shrink-0" title={t("inference.runBenchmark")}><Flame size={14} /></button>
+                  <IconButton
+                    size="sm"
+                    icon={Flame}
+                    label={t("inference.runBenchmark")}
+                    onClick={(e) => { e.stopPropagation(); setBenchmarkModal({ id: dep.id, name: dep.name, recipeId: dep.recipe_id, recipeName: dep.recipe_id }); }}
+                    className="border-transparent text-muted hover:text-blue2 hover:border-line"
+                  />
                 )}
               </div>
               {expandedId === dep.id && (
@@ -320,7 +343,7 @@ export default function InferencePage() {
                   />
                   <div className="flex items-center gap-2 px-4 py-2 bg-bg text-xs text-text-muted">
                     {streaming[dep.id] ? <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />{t("inference.streaming")}</span> : <span>{t("inference.streamStopped")}</span>}
-                    <button onClick={() => toggle(dep.id)} className="ml-auto text-primary hover:underline">{t("inference.hide")}</button>
+                    <button onClick={() => toggle(dep.id)} className="ml-auto text-blue2 hover:underline">{t("inference.hide")}</button>
                   </div>
                   <div ref={(el) => { logRef.current[dep.id] = el; }} onScroll={() => handleLogScroll(dep.id)} className="p-4 bg-bg font-mono text-sm text-text h-[calc(100vh-20rem)] overflow-auto whitespace-pre-wrap">
                     {(logs[dep.id] || ["No logs yet..."]).map((line, i) => <div key={i} className="leading-relaxed text-text-muted last:text-text">{line}</div>)}
@@ -379,24 +402,15 @@ export default function InferencePage() {
           open={benchmarkModal !== null}
           onClose={() => !isBenchmarking && setBenchmarkModal(null)}
           title={t("inference.runBenchmark")}
-          icon={<Flame size={20} className="text-primary" />}
+          icon={<Flame size={20} className="text-blue2" />}
           actions={
             <>
-              <button
-                onClick={() => setBenchmarkModal(null)}
-                disabled={isBenchmarking}
-                className="px-4 py-2 rounded-lg border border-border text-sm hover:bg-surface-hover disabled:opacity-50 transition-colors"
-              >
+              <Button size="sm" onClick={() => setBenchmarkModal(null)} disabled={isBenchmarking}>
                 {t("common.cancel")}
-              </button>
-              <button
-                onClick={handleBenchmark}
-                disabled={isBenchmarking}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-colors disabled:opacity-50"
-              >
-                {isBenchmarking && <Loader2 size={16} className="animate-spin" />}
+              </Button>
+              <Button size="sm" variant="primary" loading={isBenchmarking} onClick={handleBenchmark}>
                 {isBenchmarking ? t("common.working") : t("inference.benchmarkConfirm")}
-              </button>
+              </Button>
             </>
           }
         >

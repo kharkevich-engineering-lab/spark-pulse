@@ -142,7 +142,7 @@ export default function PreflightPanel({ report }: { report: PreflightReport }) 
             return (
               <li
                 key={`${check.node_id}-${check.id}-${check.title}`}
-                className="flex items-start gap-2 p-2 rounded-lg bg-surface border border-border"
+                className="flex items-start gap-2 p-2 rounded-md bg-surface border border-border"
                 data-testid={`preflight-check-${check.status}`}
               >
                 <Icon size={14} className={`shrink-0 mt-0.5 ${STATUS_TONE[check.status]}`} />

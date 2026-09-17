@@ -11,7 +11,7 @@ export function ExperimentalBadge({ className, title }: { className?: string; ti
     <span
       title={title ?? "Experimental: not yet verified on real hardware"}
       className={cn(
-        "inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+        "inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
         "bg-warning/15 text-warning",
         className,
       )}
@@ -67,7 +67,7 @@ export function ExperimentalBanner({
     <div
       role="note"
       className={cn(
-        "flex items-start gap-3 rounded-xl border border-warning/30 bg-warning/10 p-4",
+        "flex items-start gap-3 rounded-md border border-warning/30 bg-warning/10 p-4",
         className,
       )}
     >

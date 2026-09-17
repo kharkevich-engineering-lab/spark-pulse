@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useI18n } from "@/lib/i18n";
 import RecipeForm from "./RecipeForm";
 import DeployOptions, { deployParams, type DeployOptionsValue } from "./DeployOptions";
-import { ConfirmModal } from "@/components/Modal";
+import { Button, ConfirmModal } from "@/ui";
 import { X } from "lucide-react";
 import SlideDrawer from "./SlideDrawer";
 import type { RecipeDetail, RecipeCustomization, RecipeFormRef } from "@/lib/types";
@@ -80,21 +80,21 @@ export default function RecipeDrawer({ recipe, customization, isRunning, cluster
           {!isEditing && (
             <>
               {onDeploy && (
-                <button
-                  type="button"
+                <Button
+                  size="sm"
+                  variant="primary"
                   onClick={handleDeploy}
                   disabled={deploying || isRunning || clusterBlocked}
-                  className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium text-sm transition-colors"
                 >
                   {deploying ? "…" : "Deploy"}
-                </button>
+                </Button>
               )}
               {onSaveCustomization && !hasCustomization && (
                 <button
                   type="button"
                   onClick={() => setIsEditing(true)}
                   disabled={isRunning || clusterBlocked}
-                  className="px-3 py-1.5 rounded-lg border border-border hover:border-primary/50 text-sm font-medium transition-colors"
+                  className="px-3 py-1.5 rounded-sm border border-border hover:border-primary/50 text-sm font-medium transition-colors"
                 >
                   Customize
                 </button>
@@ -104,7 +104,7 @@ export default function RecipeDrawer({ recipe, customization, isRunning, cluster
                   type="button"
                   onClick={() => setIsEditing(true)}
                   disabled={isRunning || clusterBlocked}
-                  className="px-3 py-1.5 rounded-lg border border-border hover:border-primary/50 text-sm font-medium transition-colors"
+                  className="px-3 py-1.5 rounded-sm border border-border hover:border-primary/50 text-sm font-medium transition-colors"
                 >
                   Edit Custom
                 </button>
@@ -114,25 +114,21 @@ export default function RecipeDrawer({ recipe, customization, isRunning, cluster
           {/* Editing: Save + Reset */}
           {isEditing && (
             <>
-              <button
-                type="button"
-                onClick={() => formRef.current?.save()}
-                className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-white font-medium text-sm transition-colors"
-              >
+              <Button size="sm" variant="primary" onClick={() => formRef.current?.save()}>
                 Save
-              </button>
+              </Button>
               {hasCustomization && onSaveCustomization && (
                 <button
                   type="button"
                   onClick={() => setResetConfirm(true)}
-                  className="px-3 py-1.5 rounded-lg border border-border hover:border-warning/50 text-sm font-medium transition-colors text-warning"
+                  className="px-3 py-1.5 rounded-sm border border-border hover:border-warning/50 text-sm font-medium transition-colors text-warning"
                 >
                   Reset
                 </button>
               )}
             </>
           )}
-          <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover:bg-surface-hover transition-colors">
+          <button type="button" onClick={onClose} className="p-1.5 rounded-md hover:bg-surface-hover transition-colors">
             <X size={18} />
           </button>
         </>
@@ -140,7 +136,7 @@ export default function RecipeDrawer({ recipe, customization, isRunning, cluster
     >
       {clusterBlocked && (
         <div className="px-6 py-3 border-b border-border">
-          <div className="flex items-start gap-3 p-3 rounded-lg bg-warning/10 border border-warning/30">
+          <div className="flex items-start gap-3 p-3 rounded-sm bg-warning/10 border border-warning/30">
             <p className="text-sm text-warning">{t("recipeCard.clusterRequired")}</p>
           </div>
         </div>

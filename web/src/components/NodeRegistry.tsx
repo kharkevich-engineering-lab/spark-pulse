@@ -42,7 +42,18 @@ import {
   removeNode,
 } from "@/lib/api";
 import { useQuery } from "@/hooks/useQuery";
-import { ConfirmModal, Modal } from "@/components/Modal";
+import {
+  Button,
+  ConfirmModal,
+  ErrorLine,
+  Field,
+  Input,
+  Modal,
+  NodeState as NodeStateBadge,
+  Spinner,
+  Textarea,
+  type NodeCondition,
+} from "@/ui";
 import NodeDoctor from "@/components/NodeDoctor";
 import type {
   ClusterNode,
@@ -67,40 +78,15 @@ import {
   Radar,
   Server,
   Trash2,
-  X,
 } from "lucide-react";
 
-/** How each state reads, and why. `unknown` is the one that matters. */
-const STATE_STYLE: Record<NodeState, { label: string; className: string; title: string }> = {
-  healthy: {
-    label: "Healthy",
-    className: "bg-success/20 text-success border-success/30",
-    title: "Reached and responding.",
-  },
-  unknown: {
-    label: "Unknown",
-    className: "bg-warning/20 text-warning border-warning/30",
-    title: "Status unverified — we could not reach it, which is not the same as failed.",
-  },
-  dead: {
-    label: "Dead",
-    className: "bg-danger/20 text-danger border-danger/30",
-    title: "Confirmed unreachable.",
-  },
+/** The registry's three words in the one node vocabulary. `unknown` is the one
+ *  that matters: a node we could not reach has not failed. */
+const STATE_CONDITION: Record<NodeState, NodeCondition> = {
+  healthy: "ok",
+  unknown: "unknown",
+  dead: "bad",
 };
-
-function NodeStateBadge({ state }: { state: NodeState }) {
-  const style = STATE_STYLE[state] ?? STATE_STYLE.unknown;
-  return (
-    <span
-      title={style.title}
-      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium ${style.className}`}
-    >
-      <span className="h-1.5 w-1.5 rounded-full bg-current" />
-      {style.label}
-    </span>
-  );
-}
 
 function interfaceSummary(node: ClusterNode): string {
   const names = [node.ethernet_interface, ...node.infiniband_interfaces].filter(Boolean);
@@ -119,7 +105,7 @@ function Diagnostics({ findings }: { findings: NodeFinding[] }) {
           <div
             key={finding.code}
             role="note"
-            className={`flex items-start gap-3 rounded-lg border p-3 text-sm ${
+            className={`flex items-start gap-3 rounded-md border p-3 text-sm ${
               warning
                 ? "border-warning/30 bg-warning/10"
                 : "border-border bg-surface-hover"
@@ -193,173 +179,119 @@ function AddNodeDialog({ onClose, onAdded }: AddNodeDialogProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div
-        role="dialog"
-        aria-label={t("nodes.addNode")}
-        className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-surface p-6 shadow-2xl"
-      >
-        <div className="mb-6 flex items-center justify-between">
-          <h3 className="flex items-center gap-2 text-lg font-bold">
-            <Server size={20} className="text-primary" />
-            {t("nodes.addNode")}
-          </h3>
-          <button
-            onClick={onClose}
-            aria-label={t("common.close")}
-            className="rounded-lg p-1 hover:bg-surface-hover"
+    <Modal
+      open
+      onClose={onClose}
+      size="md"
+      title={t("nodes.addNode")}
+      icon={<Server size={20} className="text-blue2" />}
+      actions={
+        <>
+          <Button size="sm" onClick={onClose}>
+            {t("common.cancel")}
+          </Button>
+          <Button
+            size="sm"
+            variant="primary"
+            icon={Plus}
+            loading={submitting}
+            disabled={!address.trim()}
+            onClick={submit}
           >
-            <X size={18} />
-          </button>
-        </div>
-
-        <div className="space-y-4">
-          <div>
-            <label
-              htmlFor="node-address"
-              className="mb-1 block text-sm font-medium text-text-muted"
-            >
-              {t("nodes.address")}
-            </label>
-            <input
-              id="node-address"
+            {t("nodes.addNode")}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <Field label={t("nodes.address")}>
+          {(control) => (
+            <Input
+              {...control}
               type="text"
               autoFocus
               value={address}
               onChange={(e) => setAddress(e.target.value)}
               placeholder={t("nodes.addressPlaceholder")}
-              className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-text focus:outline-none focus:ring-2 focus:ring-primary/50"
             />
-          </div>
+          )}
+        </Field>
 
-          <div>
-            <label
-              htmlFor="node-name"
-              className="mb-1 block text-sm font-medium text-text-muted"
-            >
-              {t("nodes.name")}
-            </label>
-            <input
-              id="node-name"
+        <Field label={t("nodes.name")}>
+          {(control) => (
+            <Input
+              {...control}
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder={t("nodes.namePlaceholder")}
-              className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-text focus:outline-none focus:ring-2 focus:ring-primary/50"
             />
-          </div>
+          )}
+        </Field>
 
-          <div>
-            <label
-              htmlFor="node-ssh-user"
-              className="mb-1 block text-sm font-medium text-text-muted"
-            >
-              {t("nodes.sshUser")}
-            </label>
-            <input
-              id="node-ssh-user"
+        <Field label={t("nodes.sshUser")} hint={t("nodes.addNote")}>
+          {(control) => (
+            <Input
+              {...control}
               type="text"
               value={sshUser}
               onChange={(e) => setSshUser(e.target.value)}
               placeholder={t("nodes.sshUserPlaceholder")}
-              className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-text focus:outline-none focus:ring-2 focus:ring-primary/50"
             />
-          </div>
-          <p className="text-xs text-text-muted">{t("nodes.addNote")}</p>
+          )}
+        </Field>
 
-          {/* Discovery is an aid, never a gate: the address field above always works. */}
-          <div className="rounded-lg border border-border p-3">
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-sm font-medium">{t("nodes.find")}</p>
-              <button
-                onClick={scan}
-                disabled={scanning}
-                className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm transition-colors hover:bg-surface-hover disabled:opacity-50"
-              >
-                {scanning ? (
-                  <Loader2 size={14} className="animate-spin" />
-                ) : (
-                  <Radar size={14} />
-                )}
-                {t("nodes.scan")}
-              </button>
-            </div>
-
-            {peers !== null && !mdnsAvailable && (
-              <p className="mt-2 text-sm text-text-muted">
-                {t("nodes.mdnsUnavailable")}
-              </p>
-            )}
-            {peers !== null && mdnsAvailable && peers.length === 0 && (
-              <p className="mt-2 text-sm text-text-muted">
-                {t("nodes.noResponders")}
-              </p>
-            )}
-            {peers !== null && peers.length > 0 && (
-              <ul className="mt-2 space-y-1">
-                {peers.map((peer) => (
-                  <li key={`${peer.address}-${peer.service}`}>
-                    <button
-                      onClick={() => {
-                        setAddress(peer.address);
-                        if (!name) setName(peer.hostname.replace(/\.local$/, ""));
-                      }}
-                      disabled={peer.registered}
-                      className="flex w-full items-center justify-between gap-3 rounded-md px-2 py-1.5 text-left text-sm hover:bg-surface-hover disabled:opacity-50"
-                    >
-                      <span className="min-w-0 truncate">
-                        <span className="font-medium">{peer.address}</span>
-                        <span className="text-text-muted"> · {peer.hostname || "unnamed"}</span>
-                      </span>
-                      <span className="shrink-0 text-xs text-text-muted">
-                        {peer.registered
-                          ? "already registered"
-                          : peer.is_spark_pulse
-                            ? `Spark Pulse ${peer.version}`
-                            : "SSH only"}
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
+        {/* Discovery is an aid, never a gate: the address field above always works. */}
+        <div className="rounded-md border border-line p-3">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-[14px] font-medium">{t("nodes.find")}</p>
+            <Button size="sm" icon={Radar} loading={scanning} onClick={scan}>
+              {t("nodes.scan")}
+            </Button>
           </div>
 
-          {error && (
-            <div
-              role="alert"
-              className="flex items-center gap-2 rounded-lg border border-danger/30 bg-danger/10 p-3 text-sm text-danger"
-            >
-              <AlertCircle size={16} className="shrink-0" />
-              <span>{error}</span>
-            </div>
+          {peers !== null && !mdnsAvailable && (
+            <p className="mt-2 text-[14px] text-muted">{t("nodes.mdnsUnavailable")}</p>
+          )}
+          {peers !== null && mdnsAvailable && peers.length === 0 && (
+            <p className="mt-2 text-[14px] text-muted">{t("nodes.noResponders")}</p>
+          )}
+          {peers !== null && peers.length > 0 && (
+            <ul className="mt-2 space-y-1">
+              {peers.map((peer) => (
+                <li key={`${peer.address}-${peer.service}`}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAddress(peer.address);
+                      if (!name) setName(peer.hostname.replace(/\.local$/, ""));
+                    }}
+                    disabled={peer.registered}
+                    className="flex w-full items-center justify-between gap-3 rounded-sm px-2 py-1.5 text-left text-[14px] hover:bg-surface-hover disabled:opacity-50"
+                  >
+                    <span className="min-w-0 truncate">
+                      <span className="font-medium">{peer.address}</span>
+                      <span className="text-muted"> · {peer.hostname || "unnamed"}</span>
+                    </span>
+                    <span className="shrink-0 text-[13px] text-muted">
+                      {peer.registered
+                        ? "already registered"
+                        : peer.is_spark_pulse
+                          ? `Spark Pulse ${peer.version}`
+                          : "SSH only"}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
           )}
         </div>
 
-        <div className="mt-6 flex items-center justify-end gap-3 border-t border-border pt-4">
-          <button
-            onClick={onClose}
-            className="rounded-lg border border-border px-4 py-2 transition-colors hover:bg-surface-hover"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={submit}
-            disabled={submitting || !address.trim()}
-            className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
-          >
-            {submitting ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
-            Add node
-          </button>
-        </div>
+        <ErrorLine>{error}</ErrorLine>
       </div>
-    </div>
+    </Modal>
   );
 }
-
-const INPUT =
-  "w-full rounded-lg border border-border bg-bg px-3 py-2 text-text focus:outline-none focus:ring-2 focus:ring-primary/50";
-const LABEL = "mb-1 block text-sm font-medium text-text-muted";
 
 interface EditNodeDialogProps {
   node: ClusterNode;
@@ -419,85 +351,68 @@ function EditNodeDialog({ node, onClose, onSaved }: EditNodeDialogProps) {
       open
       onClose={onClose}
       title={t("nodes.edit.title", { name: node.name })}
-      icon={<Pencil size={20} className="text-primary" />}
+      icon={<Pencil size={20} className="text-blue2" />}
       actions={
         <>
-          <button
-            onClick={onClose}
-            disabled={submitting}
-            className="rounded-lg border border-border px-4 py-2 transition-colors hover:bg-surface-hover disabled:opacity-50"
-          >
+          <Button size="sm" onClick={onClose} disabled={submitting}>
             {t("common.cancel")}
-          </button>
-          <button
+          </Button>
+          <Button
+            size="sm"
+            variant="primary"
+            loading={submitting}
+            disabled={!canSave}
             onClick={submit}
-            disabled={submitting || !canSave}
-            className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
           >
-            {submitting && <Loader2 size={16} className="animate-spin" />}
             {submitting ? t("common.saving") : t("common.save")}
-          </button>
+          </Button>
         </>
       }
     >
       <div className="space-y-4">
-        <div>
-          <label htmlFor="edit-node-name" className={LABEL}>
-            {t("nodes.name")}
-          </label>
-          <input
-            id="edit-node-name"
-            type="text"
-            autoFocus
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            disabled={submitting}
-            className={INPUT}
-          />
-        </div>
+        <Field label={t("nodes.name")}>
+          {(control) => (
+            <Input
+              {...control}
+              type="text"
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              disabled={submitting}
+            />
+          )}
+        </Field>
 
         {node.is_control_plane ? (
-          <p className="text-xs text-text-muted">{t("nodes.edit.controlPlaneNote")}</p>
+          <p className="text-[13px] text-muted">{t("nodes.edit.controlPlaneNote")}</p>
         ) : (
           <>
-            <div>
-              <label htmlFor="edit-node-address" className={LABEL}>
-                {t("nodes.address")}
-              </label>
-              <input
-                id="edit-node-address"
-                type="text"
-                value={address}
-                onChange={(e) => setAddress(e.target.value)}
-                disabled={submitting}
-                className={INPUT}
-              />
-            </div>
-            <div>
-              <label htmlFor="edit-node-ssh-user" className={LABEL}>
-                {t("nodes.sshUser")}
-              </label>
-              <input
-                id="edit-node-ssh-user"
-                type="text"
-                value={sshUser}
-                onChange={(e) => setSshUser(e.target.value)}
-                disabled={submitting}
-                className={INPUT}
-              />
-            </div>
+            <Field label={t("nodes.address")}>
+              {(control) => (
+                <Input
+                  {...control}
+                  type="text"
+                  value={address}
+                  onChange={(e) => setAddress(e.target.value)}
+                  disabled={submitting}
+                />
+              )}
+            </Field>
+            <Field label={t("nodes.sshUser")}>
+              {(control) => (
+                <Input
+                  {...control}
+                  type="text"
+                  value={sshUser}
+                  onChange={(e) => setSshUser(e.target.value)}
+                  disabled={submitting}
+                />
+              )}
+            </Field>
           </>
         )}
 
-        {error && (
-          <div
-            role="alert"
-            className="flex items-center gap-2 rounded-lg border border-danger/30 bg-danger/10 p-3 text-sm text-danger"
-          >
-            <AlertCircle size={16} className="shrink-0" />
-            <span>{error}</span>
-          </div>
-        )}
+        <ErrorLine>{error}</ErrorLine>
       </div>
     </Modal>
   );
@@ -591,31 +506,43 @@ function InstallAgentDialog({ node, onClose, onInstalled }: InstallAgentDialogPr
     : t("nodes.install.title", { name: node.name || node.address });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div
-        role="dialog"
-        aria-label={title}
-        className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-surface p-6 shadow-2xl"
-      >
-        <div className="mb-4 flex items-center justify-between">
-          <h3 className="flex items-center gap-2 text-lg font-bold">
-            <KeyRound size={20} className="text-primary" />
-            {title}
-          </h3>
-          <button
-            onClick={onClose}
-            aria-label={t("common.close")}
-            className="rounded-lg p-1 hover:bg-surface-hover"
-          >
-            <X size={18} />
-          </button>
-        </div>
-
+    <Modal
+      open
+      onClose={onClose}
+      size="md"
+      title={title}
+      icon={<KeyRound size={20} className="text-blue2" />}
+      actions={
+        report ? (
+          <Button size="sm" variant="primary" onClick={onClose}>
+            {t("nodes.install.close")}
+          </Button>
+        ) : (
+          <>
+            <Button size="sm" onClick={onClose} disabled={installing}>
+              {t("nodes.install.later")}
+            </Button>
+            <Button
+              size="sm"
+              variant="primary"
+              icon={Download}
+              loading={installing}
+              disabled={!hostKey || !credentialsReady}
+              title={hostKey ? undefined : t("nodes.install.runHint")}
+              onClick={install}
+            >
+              {t("nodes.install.run")}
+            </Button>
+          </>
+        )
+      }
+    >
+      <>
         {report ? (
           <InstallOutcome report={report} />
         ) : (
           <div className="space-y-4">
-            <p className="text-sm text-text-muted">
+            <p className="text-[14px] text-muted">
               {updating
                 ? t("nodes.install.updateHint", {
                     version: node.agent?.version || "?",
@@ -625,45 +552,43 @@ function InstallAgentDialog({ node, onClose, onInstalled }: InstallAgentDialogPr
             </p>
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_7rem]">
-              <div>
-                <label htmlFor="install-username" className={LABEL}>
-                  {t("nodes.install.username")}
-                </label>
-                <input
-                  id="install-username"
-                  type="text"
-                  autoFocus
-                  autoComplete="username"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  placeholder={t("nodes.sshUserPlaceholder")}
-                  disabled={installing}
-                  className={INPUT}
-                />
-              </div>
-              <div>
-                <label htmlFor="install-port" className={LABEL}>
-                  {t("nodes.install.port")}
-                </label>
-                <input
-                  id="install-port"
-                  type="number"
-                  min={1}
-                  max={65535}
-                  value={port}
-                  onChange={(e) => {
-                    setPort(e.target.value);
-                    setHostKey(null);
-                  }}
-                  disabled={installing}
-                  className={INPUT}
-                />
-              </div>
+              <Field label={t("nodes.install.username")}>
+                {(control) => (
+                  <Input
+                    {...control}
+                    type="text"
+                    autoFocus
+                    autoComplete="username"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    placeholder={t("nodes.sshUserPlaceholder")}
+                    disabled={installing}
+                  />
+                )}
+              </Field>
+              <Field label={t("nodes.install.port")}>
+                {(control) => (
+                  <Input
+                    {...control}
+                    type="number"
+                    min={1}
+                    max={65535}
+                    value={port}
+                    onChange={(e) => {
+                      setPort(e.target.value);
+                      setHostKey(null);
+                    }}
+                    disabled={installing}
+                  />
+                )}
+              </Field>
             </div>
 
             <fieldset>
-              <legend className={LABEL}>{t("nodes.install.auth")}</legend>
-              <div className="flex flex-wrap gap-4 text-sm">
+              <legend className="block text-[13px] font-medium text-text mb-1.5">
+                {t("nodes.install.auth")}
+              </legend>
+              <div className="flex flex-wrap gap-4 text-[14px]">
                 {(
                   [
                     ["password", t("nodes.install.authPassword")],
@@ -687,113 +612,106 @@ function InstallAgentDialog({ node, onClose, onInstalled }: InstallAgentDialogPr
             </fieldset>
 
             {auth === "password" && (
-              <div>
-                <label htmlFor="install-password" className={LABEL}>
-                  {t("nodes.install.password")}
-                </label>
-                <input
-                  id="install-password"
-                  type="password"
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  disabled={installing}
-                  className={INPUT}
-                />
-                <p className="mt-1 text-xs text-text-muted">{t("nodes.install.passwordNote")}</p>
-              </div>
+              <Field label={t("nodes.install.password")} hint={t("nodes.install.passwordNote")}>
+                {(control) => (
+                  <Input
+                    {...control}
+                    type="password"
+                    autoComplete="current-password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    disabled={installing}
+                  />
+                )}
+              </Field>
             )}
 
             {auth === "key" && (
               <div className="space-y-3">
-                <div>
-                  <label htmlFor="install-key" className={LABEL}>
-                    {t("nodes.install.key")}
-                  </label>
-                  <textarea
-                    id="install-key"
-                    rows={4}
-                    value={privateKey}
-                    onChange={(e) => setPrivateKey(e.target.value)}
-                    placeholder={t("nodes.install.keyPlaceholder")}
-                    spellCheck={false}
-                    disabled={installing}
-                    className={`${INPUT} font-mono text-xs`}
-                  />
-                  <label className="mt-2 inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-surface-hover">
-                    <Download size={14} />
-                    {t("nodes.install.keyFile")}
-                    <input
-                      type="file"
-                      aria-label={t("nodes.install.keyFile")}
-                      className="sr-only"
-                      onChange={(e) => void readKeyFile(e.target.files?.[0])}
+                <Field label={t("nodes.install.key")} hint={t("nodes.install.keyNote")}>
+                  {(control) => (
+                    <>
+                      <Textarea
+                        {...control}
+                        mono
+                        rows={4}
+                        value={privateKey}
+                        onChange={(e) => setPrivateKey(e.target.value)}
+                        placeholder={t("nodes.install.keyPlaceholder")}
+                        spellCheck={false}
+                        disabled={installing}
+                      />
+                      <label className="mt-2 inline-flex cursor-pointer items-center gap-1.5 rounded-sm border border-line px-3 py-[7px] text-[13px] font-semibold hover:border-line-strong">
+                        <Download size={14} />
+                        {t("nodes.install.keyFile")}
+                        <input
+                          type="file"
+                          aria-label={t("nodes.install.keyFile")}
+                          className="sr-only"
+                          onChange={(e) => void readKeyFile(e.target.files?.[0])}
+                          disabled={installing}
+                        />
+                      </label>
+                    </>
+                  )}
+                </Field>
+                <Field
+                  label={t("nodes.install.passphrase")}
+                  hint={t("nodes.install.passphraseNote")}
+                >
+                  {(control) => (
+                    <Input
+                      {...control}
+                      type="password"
+                      autoComplete="off"
+                      value={passphrase}
+                      onChange={(e) => setPassphrase(e.target.value)}
                       disabled={installing}
                     />
-                  </label>
-                  <p className="mt-1 text-xs text-text-muted">{t("nodes.install.keyNote")}</p>
-                </div>
-                <div>
-                  <label htmlFor="install-passphrase" className={LABEL}>
-                    {t("nodes.install.passphrase")}
-                  </label>
-                  <input
-                    id="install-passphrase"
-                    type="password"
-                    autoComplete="off"
-                    value={passphrase}
-                    onChange={(e) => setPassphrase(e.target.value)}
-                    disabled={installing}
-                    className={INPUT}
-                  />
-                  <p className="mt-1 text-xs text-text-muted">{t("nodes.install.passphraseNote")}</p>
-                </div>
+                  )}
+                </Field>
               </div>
             )}
 
             {auth === "control_plane_key" && (
-              <p className="text-xs text-text-muted">{t("nodes.install.controlPlaneKeyNote")}</p>
+              <p className="text-[13px] text-muted">{t("nodes.install.controlPlaneKeyNote")}</p>
             )}
 
-            <div>
-              <label htmlFor="install-sudo" className={LABEL}>
-                {t("nodes.install.sudoPassword")}
-              </label>
-              <input
-                id="install-sudo"
-                type="password"
-                autoComplete="off"
-                value={sudoPassword}
-                onChange={(e) => setSudoPassword(e.target.value)}
-                disabled={installing}
-                className={INPUT}
-              />
-              <p className="mt-1 text-xs text-text-muted">{t("nodes.install.sudoNote")}</p>
-            </div>
+            <Field label={t("nodes.install.sudoPassword")} hint={t("nodes.install.sudoNote")}>
+              {(control) => (
+                <Input
+                  {...control}
+                  type="password"
+                  autoComplete="off"
+                  value={sudoPassword}
+                  onChange={(e) => setSudoPassword(e.target.value)}
+                  disabled={installing}
+                />
+              )}
+            </Field>
 
             {/* The host key, before any secret. This is ssh's own first-contact
                 prompt, with the fingerprint where the operator can read it. */}
-            <div className="rounded-lg border border-border p-3" data-testid="host-key">
+            <div className="rounded-md border border-line p-3" data-testid="host-key">
               <div className="flex items-center justify-between gap-3">
-                <p className="text-sm font-medium">{t("nodes.install.hostKey")}</p>
-                <button
+                <p className="text-[14px] font-medium">{t("nodes.install.hostKey")}</p>
+                <Button
+                  size="sm"
+                  icon={KeyRound}
+                  loading={checking}
+                  disabled={installing || !portValid}
                   onClick={checkHostKey}
-                  disabled={checking || installing || !portValid}
-                  className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm transition-colors hover:bg-surface-hover disabled:opacity-50"
                 >
-                  {checking ? <Loader2 size={14} className="animate-spin" /> : <KeyRound size={14} />}
                   {t("nodes.install.checkHostKey")}
-                </button>
+                </Button>
               </div>
-              {checking && (
-                <p className="mt-2 text-sm text-text-muted">{t("nodes.install.checking")}</p>
-              )}
+              {checking && <p className="mt-2 text-[14px] text-muted">{t("nodes.install.checking")}</p>}
               {hostKey && (
                 <div className="mt-2 space-y-1">
-                  <p className="break-all font-mono text-xs" data-testid="host-key-fingerprint">
+                  <p className="break-all font-mono text-[12.5px]" data-testid="host-key-fingerprint">
                     {hostKey.algorithm} {hostKey.fingerprint}
                   </p>
-                  <p className="text-xs text-text-muted">
+                  <p className="text-[13px] text-muted">
                     {t("nodes.install.hostKeyHint", {
                       command: "ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub",
                     })}
@@ -803,55 +721,17 @@ function InstallAgentDialog({ node, onClose, onInstalled }: InstallAgentDialogPr
             </div>
 
             {installing && (
-              <p className="flex items-center gap-2 text-sm text-text-muted" role="status">
-                <Loader2 size={14} className="animate-spin" />
+              <p className="flex items-center gap-2 text-[14px] text-muted" role="status">
+                <Spinner size="sm" />
                 {t("nodes.install.running")}
               </p>
             )}
 
-            {error && (
-              <div
-                role="alert"
-                className="flex items-center gap-2 rounded-lg border border-danger/30 bg-danger/10 p-3 text-sm text-danger"
-              >
-                <AlertCircle size={16} className="shrink-0" />
-                <span>{error}</span>
-              </div>
-            )}
+            <ErrorLine>{error}</ErrorLine>
           </div>
         )}
-
-        <div className="mt-6 flex items-center justify-end gap-3 border-t border-border pt-4">
-          {report ? (
-            <button
-              onClick={onClose}
-              className="rounded-lg bg-primary px-4 py-2 text-primary-foreground transition-colors hover:bg-primary/90"
-            >
-              {t("nodes.install.close")}
-            </button>
-          ) : (
-            <>
-              <button
-                onClick={onClose}
-                disabled={installing}
-                className="rounded-lg border border-border px-4 py-2 transition-colors hover:bg-surface-hover disabled:opacity-50"
-              >
-                {t("nodes.install.later")}
-              </button>
-              <button
-                onClick={install}
-                disabled={installing || !hostKey || !credentialsReady}
-                title={hostKey ? undefined : t("nodes.install.runHint")}
-                className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
-              >
-                {installing ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
-                {t("nodes.install.run")}
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
+      </>
+    </Modal>
   );
 }
 
@@ -862,7 +742,7 @@ function InstallOutcome({ report }: { report: InstallReport }) {
   return (
     <div className="space-y-4" data-testid="install-report">
       <div
-        className={`flex items-start gap-3 rounded-lg border p-3 text-sm ${
+        className={`flex items-start gap-3 rounded-sm border p-3 text-sm ${
           report.connected
             ? "border-success/30 bg-success/10"
             : "border-warning/30 bg-warning/10"
@@ -894,7 +774,7 @@ function InstallOutcome({ report }: { report: InstallReport }) {
               <div
                 key={c.capability}
                 role="note"
-                className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm"
+                className="rounded-sm border border-warning/30 bg-warning/10 p-3 text-sm"
               >
                 <p className="font-medium">{c.detail}</p>
                 <p className="mt-1 text-text-muted">{c.cost}</p>
@@ -979,12 +859,12 @@ export default function NodeRegistry() {
   return (
     <section
       data-testid="node-registry"
-      className="rounded-xl border border-border bg-surface p-4"
+      className="rounded-md border border-border bg-surface p-4"
     >
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
           <h3 className="flex items-center gap-2 text-lg font-bold">
-            <Network size={18} className="text-primary" />
+            <Network size={18} className="text-blue2" />
             {t("nodes.heading")}
           </h3>
           <p className="mt-0.5 text-sm text-text-muted">
@@ -993,7 +873,7 @@ export default function NodeRegistry() {
         </div>
         <button
           onClick={() => setShowAdd(true)}
-          className="flex shrink-0 items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-sm transition-colors hover:bg-surface-hover"
+          className="flex shrink-0 items-center gap-2 rounded-md border border-border px-3 py-1.5 text-sm transition-colors hover:bg-surface-hover"
         >
           <Plus size={14} />
           Add node
@@ -1008,14 +888,14 @@ export default function NodeRegistry() {
 
       {loading && (
         <div className="flex justify-center py-10">
-          <Loader2 className="animate-spin text-primary" size={24} />
+          <Loader2 className="animate-spin text-blue2" size={24} />
         </div>
       )}
 
       {error && (
         <div
           role="alert"
-          className="flex items-center gap-3 rounded-lg border border-danger/30 bg-danger/10 p-3 text-danger"
+          className="flex items-center gap-3 rounded-sm border border-danger/30 bg-danger/10 p-3 text-danger"
         >
           <AlertCircle size={18} />
           <span>{error}</span>
@@ -1025,7 +905,7 @@ export default function NodeRegistry() {
       {updateError && (
         <div
           role="alert"
-          className="mb-3 flex items-center gap-3 rounded-lg border border-danger/30 bg-danger/10 p-3 text-danger"
+          className="mb-3 flex items-center gap-3 rounded-sm border border-danger/30 bg-danger/10 p-3 text-danger"
         >
           <AlertCircle size={18} />
           <span>{updateError}</span>
@@ -1035,7 +915,7 @@ export default function NodeRegistry() {
       {removeError && (
         <div
           role="alert"
-          className="mb-3 flex items-center gap-3 rounded-lg border border-danger/30 bg-danger/10 p-3 text-danger"
+          className="mb-3 flex items-center gap-3 rounded-sm border border-danger/30 bg-danger/10 p-3 text-danger"
         >
           <AlertCircle size={18} />
           <span>{removeError}</span>
@@ -1074,7 +954,7 @@ export default function NodeRegistry() {
                   <td className="py-2.5 pr-4">
                     <div className="flex flex-col items-start gap-1">
                       {node.is_control_plane ? (
-                        <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-primary/15 text-primary">
+                        <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-primary/15 text-blue2">
                           Control plane
                         </span>
                       ) : (
@@ -1093,7 +973,7 @@ export default function NodeRegistry() {
                   </td>
                   <td className="py-2.5 pr-4">
                     <div className="flex flex-col items-start gap-1">
-                      <NodeStateBadge state={node.state} />
+                      <NodeStateBadge state={STATE_CONDITION[node.state] ?? "unknown"} />
                       {node.agent && !node.agent.enrolled && (
                         <span className="text-xs text-text-muted">{t("nodes.noAgent")}</span>
                       )}
@@ -1106,7 +986,7 @@ export default function NodeRegistry() {
                         disabled={updating === node.id}
                         aria-label={t("nodes.install.actionFor", { name: node.name })}
                         title={t("nodes.install.update")}
-                        className="mr-1 inline-flex items-center gap-1.5 rounded-lg border border-warning/40 bg-warning/10 px-2.5 py-1 text-xs font-medium text-warning transition-colors hover:bg-warning/20 disabled:opacity-50"
+                        className="mr-1 inline-flex items-center gap-1.5 rounded-sm border border-warning/40 bg-warning/10 px-2.5 py-1 text-xs font-medium text-warning transition-colors hover:bg-warning/20 disabled:opacity-50"
                       >
                         {updating === node.id ? (
                           <Loader2 size={13} className="animate-spin" />
@@ -1125,7 +1005,7 @@ export default function NodeRegistry() {
                               ? t("nodes.install.reinstall")
                               : t("nodes.install.action")
                           }
-                          className="rounded-lg p-1.5 text-text-muted transition-colors hover:bg-primary/10 hover:text-primary"
+                          className="rounded-sm p-1.5 text-text-muted transition-colors hover:bg-primary/10 hover:text-blue2"
                         >
                           <Download size={14} />
                         </button>
@@ -1135,7 +1015,7 @@ export default function NodeRegistry() {
                       onClick={() => setEditing(node)}
                       aria-label={t("nodes.edit.actionFor", { name: node.name })}
                       title={t("nodes.edit.action")}
-                      className="rounded-lg p-1.5 text-text-muted transition-colors hover:bg-primary/10 hover:text-primary"
+                      className="rounded-sm p-1.5 text-text-muted transition-colors hover:bg-primary/10 hover:text-blue2"
                     >
                       <Pencil size={14} />
                     </button>
@@ -1143,7 +1023,7 @@ export default function NodeRegistry() {
                       onClick={() => setDiagnosing(node)}
                       aria-label={t("nodes.doctor.actionFor", { name: node.name })}
                       title={t("nodes.doctor.action")}
-                      className="rounded-lg p-1.5 text-text-muted transition-colors hover:bg-primary/10 hover:text-primary"
+                      className="rounded-sm p-1.5 text-text-muted transition-colors hover:bg-primary/10 hover:text-blue2"
                     >
                       <Stethoscope size={14} />
                     </button>
@@ -1155,7 +1035,7 @@ export default function NodeRegistry() {
                         }}
                         aria-label={`Forget ${node.name}`}
                         title={t("nodes.forget")}
-                        className="rounded-lg p-1.5 text-text-muted transition-colors hover:bg-danger/10 hover:text-danger"
+                        className="rounded-sm p-1.5 text-text-muted transition-colors hover:bg-danger/10 hover:text-danger"
                       >
                         <Trash2 size={14} />
                       </button>

@@ -1,8 +1,9 @@
-/** Registry card — displays a single OCI registry with status, versions and actions. */
+/** Registry card — one OCI registry with its state, versions and actions. */
 
 import { useState } from "react";
 import { useI18n } from "@/lib/i18n";
-import { CheckCircle2, XCircle, Loader2, Power, PowerOff, ChevronDown, GitBranch, Pencil } from "lucide-react";
+import { CheckCircle2, XCircle, Power, PowerOff, ChevronDown, GitBranch, Pencil } from "lucide-react";
+import { IconButton, NodeState, Select, type NodeCondition } from "@/ui";
 import type { OciRegistry } from "@/lib/types";
 
 export default function RegistryCard({
@@ -26,40 +27,45 @@ export default function RegistryCard({
   const [expanded, setExpanded] = useState(false);
   const [selectedVersion, setSelectedVersion] = useState<string>("");
 
-  const statusIcon = reg.connected
-    ? <CheckCircle2 size={14} className="text-success" />
-    : reg.enabled
-      ? <XCircle size={14} className="text-destructive" />
-      : <XCircle size={14} className="text-text-muted" />;
-
-  const statusColor = reg.connected
-    ? "text-success"
-    : reg.enabled
-      ? "text-destructive"
-      : "text-text-muted";
+  /** Connected, refused, or turned off — in the one node vocabulary.
+   *
+   *  The "test connection" button used to render a **permanent spinner** for
+   *  any registry that was not connected: nothing was in flight, so it span
+   *  until the page was closed, saying "working on it" about a registry that
+   *  had already failed. It says which of the three it is instead. */
+  const state: NodeCondition = reg.connected ? "ok" : reg.enabled ? "bad" : "unknown";
 
   const hasVersions = versions && versions.length > 0;
 
   return (
-    <div className="rounded-xl border border-border bg-surface hover:bg-surface-hover transition-colors">
+    <div className="rounded-md border border-line bg-surface hover:border-line-strong transition-colors">
       {/* Header row */}
       <div className="flex items-center justify-between p-4">
         <div className="flex items-center gap-3 min-w-0 flex-1">
-          <div className={`shrink-0 ${statusColor}`}>
-            {statusIcon}
-          </div>
+          <NodeState
+            state={state}
+            dotOnly
+            label={
+              reg.connected
+                ? t("registry.connected")
+                : reg.enabled
+                  ? t("registry.notConnected")
+                  : t("common.disabled")
+            }
+          />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <span className="font-mono font-semibold truncate">{reg.name}</span>
               {reg.default && (
-                <span className="text-xs px-1.5 py-0.5 rounded bg-primary/15 text-primary font-medium">
+                <span className="text-[13px] px-1.5 py-0.5 rounded-full border border-line text-muted font-medium">
                   default
                 </span>
               )}
               {hasVersions && (
                 <button
+                  type="button"
                   onClick={() => setExpanded(!expanded)}
-                  className="flex items-center gap-1 px-2 py-0.5 rounded bg-surface-pressed border border-border text-xs hover:bg-surface-pressed/80 transition-colors"
+                  className="flex items-center gap-1 px-2 py-0.5 rounded-sm bg-bg2 border border-line text-[13px] hover:border-line-strong transition-colors"
                 >
                   <GitBranch size={12} />
                   <span>{versions?.length} versions</span>
@@ -67,69 +73,65 @@ export default function RegistryCard({
                 </button>
               )}
             </div>
-            <div className="text-xs text-text-muted truncate font-mono mt-1">{reg.url}</div>
+            <div className="text-[13px] text-muted truncate font-mono mt-1">{reg.url}</div>
           </div>
         </div>
         <div className="flex items-center gap-1.5 shrink-0 ml-4">
-          <button
+          <IconButton
+            size="sm"
+            icon={reg.connected ? CheckCircle2 : XCircle}
+            label={t("registry.testConnection")}
             onClick={onTest}
-            className="p-1.5 rounded hover:bg-surface-pressed transition-colors"
-            title={t("registry.testConnection")}
             disabled={reg.connected}
-          >
-            {reg.connected ? (
-              <CheckCircle2 size={16} className="text-success" />
-            ) : (
-              <Loader2 size={16} className="animate-spin text-text-muted" />
-            )}
-          </button>
-          <button
+            className={`border-transparent hover:border-line ${reg.connected ? "text-good" : "text-muted"}`}
+          />
+          <IconButton
+            size="sm"
+            icon={reg.enabled ? Power : PowerOff}
+            label={reg.enabled ? "Disable" : "Enable"}
             onClick={onToggle}
-            className="p-1.5 rounded hover:bg-surface-pressed transition-colors"
-            title={reg.enabled ? "Disable" : "Enable"}
-          >
-            {reg.enabled ? (
-              <Power size={16} className="text-success" />
-            ) : (
-              <PowerOff size={16} className="text-text-muted" />
-            )}
-          </button>
-          <button
+            className={`border-transparent hover:border-line ${reg.enabled ? "text-good" : "text-muted"}`}
+          />
+          <IconButton
+            size="sm"
+            icon={Pencil}
+            label={t("oci.editRegistryButton")}
             onClick={onEdit}
-            className="p-1.5 rounded hover:bg-surface-pressed transition-colors"
-            title={t("oci.editRegistryButton")}
-          >
-            <Pencil size={16} className="text-text-muted hover:text-foreground" />
-          </button>
+            className="border-transparent text-muted hover:text-text hover:border-line"
+          />
           {!reg.default && (
-            <button
+            <IconButton
+              size="sm"
+              icon={XCircle}
+              label={t("registry.remove")}
               onClick={onRemove}
-              className="p-1.5 rounded hover:bg-destructive/15 transition-colors"
-              title={t("registry.remove")}
-            >
-              <XCircle size={16} className="text-text-muted hover:text-destructive" />
-            </button>
+              className="border-transparent text-muted hover:text-bad hover:border-line"
+            />
           )}
         </div>
       </div>
 
       {/* Version dropdown (expanded) */}
       {hasVersions && expanded && (
-        <div className="px-4 pb-4 border-t border-border pt-3">
-          <label className="block text-xs text-text-muted mb-2 font-medium">{t("registry.versions")}</label>
-          <select
+        <div className="px-4 pb-4 border-t border-line pt-3">
+          <label className="block text-[13px] text-muted mb-2 font-medium" htmlFor={`versions-${reg.name}`}>
+            {t("registry.versions")}
+          </label>
+          <Select
+            id={`versions-${reg.name}`}
             value={selectedVersion}
-            onChange={e => {
+            onChange={(e) => {
               setSelectedVersion(e.target.value);
               onVersionChange?.(e.target.value);
             }}
-            className="w-full px-3 py-2 rounded-lg border border-border bg-surface text-sm font-mono"
           >
             <option value="">{t("registry.selectVersion")}</option>
-            {versions?.map(v => (
-              <option key={v} value={v}>{v}</option>
+            {versions?.map((v) => (
+              <option key={v} value={v}>
+                {v}
+              </option>
             ))}
-          </select>
+          </Select>
         </div>
       )}
     </div>

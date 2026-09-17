@@ -12,10 +12,11 @@ import { useEffect, useMemo, useState } from "react";
 import { translate, useI18n, type Language } from "@/lib/i18n";
 import { connectMetricsStream, fetchMemory, killGpuProcess } from "@/lib/api";
 import { useQuery } from "@/hooks/useQuery";
-import { Activity, Cpu, HardDrive, Loader2, AlertCircle, Zap, Workflow, OctagonX, Server, CloudOff } from "lucide-react";
+import { Activity, Cpu, HardDrive, Zap, Workflow, OctagonX, Server } from "lucide-react";
+import { Button, ErrorLine, NodeState, Spinner } from "@/ui";
 import type { GPUProcess, GPUStats, MemoryResponse, NodeStats } from "@/lib/types";
 import { AlertModal, ConfirmModal } from "@/components/Modal";
-import { HealthHistoryChart, type HealthSeries } from "@/components/HealthBadge";
+import { HealthHistoryChart, type HealthSeries } from "@/components/HealthHistoryChart";
 
 /** One reading of a GPU, as the metrics stream reported it. */
 interface GPUSample {
@@ -137,8 +138,12 @@ export default function MemoryPage() {
         <p className="text-text-muted mt-1">{t("monitoring.subtitle")}</p>
       </div>
 
-      {loading && !sse && <div className="flex justify-center py-20"><Loader2 className="animate-spin text-primary" size={32} /></div>}
-      {error && !sse && <div className="p-4 rounded-lg bg-danger/10 border border-danger/30 text-danger flex items-center gap-3"><AlertCircle size={20} /><span>{error}</span></div>}
+      {loading && !sse && (
+        <div className="flex justify-center py-20">
+          <Spinner size="lg" label={t("common.loading")} />
+        </div>
+      )}
+      {!sse && <ErrorLine>{error}</ErrorLine>}
       {!d && !loading && <div className="text-center py-20 text-text-muted"><Activity size={40} className="mx-auto mb-4 opacity-50" /><p>{t("monitoring.noData")}</p></div>}
 
       {nodes.map((node) => (
@@ -193,14 +198,13 @@ function NodeSection({
         <h3 className="font-semibold">{label}</h3>
         {node.address && <span className="text-xs font-mono text-text-muted">{node.address}</span>}
         {node.is_control_plane && (
-          <span className="text-xs px-2 py-0.5 rounded-full bg-primary/15 text-primary border border-primary/30">
+          <span className="text-[13px] px-2 py-0.5 rounded-full border border-line text-muted">
             {t("monitoring.controlPlane")}
           </span>
         )}
         {!node.reachable && (
-          <span data-testid={`unreachable-${node.id || node.address}`} className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-warning/15 text-warning border border-warning/30">
-            <CloudOff size={11} />
-            {t("monitoring.unreachable")}
+          <span data-testid={`unreachable-${node.id || node.address}`}>
+            <NodeState state="unknown" label={t("monitoring.unreachable")} title={node.error ?? undefined} />
           </span>
         )}
       </div>
@@ -208,13 +212,13 @@ function NodeSection({
       {!node.reachable ? (
         // Unknown, not empty: the node did not answer, and pretending it
         // answered with nothing is how a page reports a busy machine as idle.
-        <div className="rounded-xl bg-surface border border-border p-5 text-sm text-text-muted">
+        <div className="rounded-md bg-surface border border-line p-5 text-[14px] text-muted">
           {node.error}
         </div>
       ) : (
         <>
           {node.unavailable.length > 0 && (
-            <div className="rounded-lg bg-warning/10 border border-warning/30 text-warning text-xs px-3 py-2 space-y-1">
+            <div className="rounded-sm border border-warn/40 text-warn text-[13px] px-3 py-2 space-y-1">
               {node.unavailable.map((what) => (
                 <div key={what}>{t("monitoring.couldNotRead", { what })}</div>
               ))}
@@ -258,9 +262,9 @@ function GPUCard({
   const gpuProcs = node.processes.filter((p) => p.gpu_uuid === gpu.uuid);
 
   return (
-    <div className="rounded-xl bg-surface border border-border p-5">
+    <div className="rounded-md bg-surface border border-line p-5">
       <div className="flex items-center gap-2 mb-4">
-        <Zap size={18} className="text-primary" /><h3 className="font-semibold">{gpu.name || gpu.gpu}</h3>
+        <Zap size={18} className="text-blue2" /><h3 className="font-semibold">{gpu.name || gpu.gpu}</h3>
         {gpu.temperature && <span className={`text-xs px-2 py-0.5 rounded-full ${(gpu.temperature ?? 0) > 80 ? "bg-danger/20 text-danger" : (gpu.temperature ?? 0) > 65 ? "bg-warning/20 text-warning" : "bg-success/20 text-success"}`}>{gpu.temperature}°C</span>}
       </div>
       <div className="text-xs text-text-muted mb-3 font-mono break-all">{gpu.uuid}</div>
@@ -289,7 +293,7 @@ function GPUCard({
       />
       {gpuProcs.length > 0 && (
         <div className="mt-4 pt-4 border-t border-border">
-          <div className="flex items-center gap-2 mb-3"><Workflow size={14} className="text-primary" /><span className="text-sm font-semibold">{t("monitoring.gpuProcesses")}</span></div>
+          <div className="flex items-center gap-2 mb-3"><Workflow size={14} className="text-blue2" /><span className="text-sm font-semibold">{t("monitoring.gpuProcesses")}</span></div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="text-text-muted text-xs uppercase">
@@ -312,29 +316,33 @@ function GPUCard({
                           container for. A container of ours with no
                           deployment label is still ours — an older build's,
                           or a rank from before the label existed. */}
-                      {p.is_tracked ? (
-                        <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-primary/15 text-primary border border-primary/30">
-                          {p.deployment
-                            ? t("monitoring.heldBy", { deployment: p.deployment })
-                            : t("monitoring.tracked")}
-                        </span>
-                      ) : (
-                        <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-warning/15 text-warning border border-warning/30">
-                          {t("monitoring.untracked")}
-                        </span>
-                      )}
+                      <span className="ml-2 inline-flex">
+                        {p.is_tracked ? (
+                          <NodeState
+                            state="ok"
+                            label={
+                              p.deployment
+                                ? t("monitoring.heldBy", { deployment: p.deployment })
+                                : t("monitoring.tracked")
+                            }
+                          />
+                        ) : (
+                          <NodeState state="warn" label={t("monitoring.untracked")} />
+                        )}
+                      </span>
                     </td>
                     <td className="py-1.5 pr-4 font-mono text-xs">{p.used_memory} MB</td>
                     <td className="py-1.5">
-                      <button
-                        onClick={() => onKill(p)}
-                        disabled={killing === p.pid}
-                        className="flex items-center gap-1 px-2 py-1 text-xs rounded bg-danger/10 text-danger border border-danger/30 hover:bg-danger/20 transition-colors disabled:opacity-50"
+                      <Button
+                        size="sm"
+                        variant="danger"
+                        icon={OctagonX}
+                        loading={killing === p.pid}
                         title={t("monitoring.killProcess")}
+                        onClick={() => onKill(p)}
                       >
-                        {killing === p.pid ? <Loader2 size={12} className="animate-spin" /> : <OctagonX size={12} />}
                         {t("monitoring.kill")}
-                      </button>
+                      </Button>
                     </td>
                   </tr>
                 ))}
@@ -371,8 +379,8 @@ function CPUCard({ cpu }: { cpu: { total: number; used: number; free: number; av
   const { t } = useI18n();
   const pct = cpu.total > 0 ? (cpu.used / cpu.total) * 100 : 0;
   return (
-    <div className="rounded-xl bg-surface border border-border p-5">
-      <div className="flex items-center gap-2 mb-4"><Cpu size={18} className="text-primary" /><h3 className="font-semibold">{t("monitoring.cpuMemory")}</h3></div>
+    <div className="rounded-md bg-surface border border-line p-5">
+      <div className="flex items-center gap-2 mb-4"><Cpu size={18} className="text-blue2" /><h3 className="font-semibold">{t("monitoring.cpuMemory")}</h3></div>
       <div className="mb-3">
         <div className="flex justify-between text-sm mb-1"><span className="text-text-muted">{t("monitoring.ram")}</span><span className="font-mono">{(cpu.used / 1024).toFixed(1)} / {(cpu.total / 1024).toFixed(1)} GB</span></div>
         <div className="h-3 rounded-full bg-bg overflow-hidden"><div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, backgroundColor: pct > 90 ? "var(--color-danger)" : pct > 70 ? "var(--color-warning)" : "var(--color-primary)" }} /></div>
@@ -390,8 +398,8 @@ function DiskCard({ disk }: { disk: { mount: string; total: number; used: number
   const { t } = useI18n();
   const gb = (b: number) => (b / (1024 ** 3)).toFixed(1);
   return (
-    <div className="rounded-xl bg-surface border border-border p-5">
-      <div className="flex items-center gap-2 mb-4"><HardDrive size={18} className="text-primary" /><h3 className="font-semibold">{disk.mount}</h3></div>
+    <div className="rounded-md bg-surface border border-line p-5">
+      <div className="flex items-center gap-2 mb-4"><HardDrive size={18} className="text-blue2" /><h3 className="font-semibold">{disk.mount}</h3></div>
       <div className="mb-3">
         <div className="flex justify-between text-sm mb-1"><span className="text-text-muted">{t("monitoring.usage")}</span><span className="font-mono">{disk.usage_percent}%</span></div>
         <div className="h-3 rounded-full bg-bg overflow-hidden"><div className="h-full rounded-full transition-all duration-500" style={{ width: `${disk.usage_percent}%`, backgroundColor: disk.usage_percent > 90 ? "var(--color-danger)" : disk.usage_percent > 70 ? "var(--color-warning)" : "var(--color-primary)" }} /></div>
