@@ -14,12 +14,19 @@ export interface ErrorLineProps {
   className?: string;
   /** So a `Field` can point the control's `aria-describedby` at it. */
   id?: string;
+  /** For a caller whose tests already name this line. */
+  "data-testid"?: string;
 }
 
-export function ErrorLine({ children, className, id }: ErrorLineProps) {
+export function ErrorLine({ children, className, id, ...rest }: ErrorLineProps) {
   if (!children) return null;
   return (
-    <p id={id} role="alert" className={cn("text-[13px] leading-snug text-bad", className)}>
+    <p
+      id={id}
+      role="alert"
+      className={cn("text-[13px] leading-snug text-bad", className)}
+      {...rest}
+    >
       {children}
     </p>
   );

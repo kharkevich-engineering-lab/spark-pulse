@@ -2,7 +2,7 @@
  *
  * The e2e suite checks for "Something went wrong" as its crash detector, so
  * the wording here is load-bearing. The other property worth holding is that
- * "Try Again" actually re-renders the subtree rather than only clearing the
+ * "Try again" actually re-renders the subtree rather than only clearing the
  * message — a boundary that cannot recover is a reload button with extra
  * steps.
  */
@@ -82,9 +82,9 @@ describe("ErrorBoundary", () => {
     expect(screen.queryByText("Something went wrong")).not.toBeInTheDocument();
   });
 
-  /** Recovery, not just dismissal: after Try Again the subtree renders for
+  /** Recovery, not just dismissal: after Try again the subtree renders for
    *  real, which is only visible if the child has stopped throwing. */
-  it("re-renders the subtree when Try Again is pressed", () => {
+  it("re-renders the subtree when Try again is pressed", () => {
     const { rerender } = render(
       <ErrorBoundary>
         <Boom throws />
@@ -97,7 +97,7 @@ describe("ErrorBoundary", () => {
         <Boom throws={false} />
       </ErrorBoundary>,
     );
-    fireEvent.click(screen.getByRole("button", { name: /Try Again/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Try again/ }));
 
     expect(screen.getByText("the page")).toBeInTheDocument();
     expect(screen.queryByText("Something went wrong")).not.toBeInTheDocument();
@@ -115,7 +115,7 @@ describe("DefaultErrorFallback", () => {
     render(<DefaultErrorFallback />);
     expect(screen.getByRole("heading", { name: "Something went wrong" })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /Refresh Page/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Refresh page/ }));
     expect(reload).toHaveBeenCalledTimes(1);
   });
 });

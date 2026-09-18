@@ -82,7 +82,7 @@ function CodeBlock({ code, label }: { code: string; label: string }) {
           className="flex shrink-0 items-center gap-1.5 text-[13px] text-muted transition-colors hover:text-text"
         >
           {copied ? <Check size={13} className="text-good" /> : <Copy size={13} />}
-          {copied ? t("settingsPage.copied") : t("settingsPage.copy")}
+          {copied ? t("common.copied") : t("common.copy")}
         </button>
       </div>
       <pre className="overflow-x-auto p-4 font-mono text-[12.5px] leading-relaxed">

@@ -44,7 +44,7 @@ export default function RecipeDrawer({ recipe, customization, isRunning, cluster
       // would start something other than what the operator was shown.
       await onDeploy(name, deployParams(recipe, deployOptions), deployOptions);
       onClose();
-    } catch (e) { onError(e instanceof Error ? e.message : "Failed to deploy"); }
+    } catch (e) { onError(e instanceof Error ? e.message : t("recipes.deployFailed")); }
     finally { setDeploying(false); }
   };
 
@@ -53,7 +53,7 @@ export default function RecipeDrawer({ recipe, customization, isRunning, cluster
     try {
       await onSaveCustomization(fields);
       setIsEditing(false);
-    } catch (e) { onError(e instanceof Error ? e.message : "Failed to save customization"); }
+    } catch (e) { onError(e instanceof Error ? e.message : t("recipes.saveCustomizationFailed")); }
   };
 
   const handleReset = useCallback(async () => {
@@ -86,28 +86,18 @@ export default function RecipeDrawer({ recipe, customization, isRunning, cluster
                   onClick={handleDeploy}
                   disabled={deploying || isRunning || clusterBlocked}
                 >
-                  {deploying ? "…" : "Deploy"}
+                  {deploying ? "…" : t("recipes.deploy")}
                 </Button>
               )}
               {onSaveCustomization && !hasCustomization && (
-                <button
-                  type="button"
-                  onClick={() => setIsEditing(true)}
-                  disabled={isRunning || clusterBlocked}
-                  className="px-3 py-1.5 rounded-sm border border-border hover:border-primary/50 text-sm font-medium transition-colors"
-                >
-                  Customize
-                </button>
+                <Button size="sm" onClick={() => setIsEditing(true)} disabled={isRunning || clusterBlocked}>
+                  {t("common.customize")}
+                </Button>
               )}
               {onSaveCustomization && hasCustomization && (
-                <button
-                  type="button"
-                  onClick={() => setIsEditing(true)}
-                  disabled={isRunning || clusterBlocked}
-                  className="px-3 py-1.5 rounded-sm border border-border hover:border-primary/50 text-sm font-medium transition-colors"
-                >
-                  Edit Custom
-                </button>
+                <Button size="sm" onClick={() => setIsEditing(true)} disabled={isRunning || clusterBlocked}>
+                  {t("recipeCard.editCustom")}
+                </Button>
               )}
             </>
           )}
@@ -115,16 +105,15 @@ export default function RecipeDrawer({ recipe, customization, isRunning, cluster
           {isEditing && (
             <>
               <Button size="sm" variant="primary" onClick={() => formRef.current?.save()}>
-                Save
+                {t("common.save")}
               </Button>
+              {/* Ghost, not a colour of its own: `cn` is clsx, so a `text-warn`
+                  here would sit beside `Button`'s own `text-text` and the
+                  stylesheet's order would decide which won. */}
               {hasCustomization && onSaveCustomization && (
-                <button
-                  type="button"
-                  onClick={() => setResetConfirm(true)}
-                  className="px-3 py-1.5 rounded-sm border border-border hover:border-warning/50 text-sm font-medium transition-colors text-warning"
-                >
-                  Reset
-                </button>
+                <Button size="sm" onClick={() => setResetConfirm(true)}>
+                  {t("common.reset")}
+                </Button>
               )}
             </>
           )}

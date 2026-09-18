@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { useI18n } from "@/lib/i18n";
+import { useI18n, useT } from "@/lib/i18n";
 import {
   EventType,
   type DeploymentEvent,
@@ -243,8 +243,8 @@ export default function EventStreamViewer({
       </div>
 
       {/* Retention Policy */}
-      <div className="text-xs text-text-muted/50 border-t border-border pt-2">
-        Events older than 30 days are automatically archived. Maximum 1000 events per resource.
+      <div className="text-[13px] text-muted border-t border-line pt-2">
+        {t("eventStream.retention")}
       </div>
     </div>
   );
@@ -258,6 +258,7 @@ interface EventTimelineProps {
 }
 
 export function EventTimeline({ events, className = "" }: EventTimelineProps) {
+  const t = useT();
   const lifecycleEvents = events.filter((e) =>
     [
       EventType.SCRIPT_DISTRIBUTION_START,
@@ -275,7 +276,7 @@ export function EventTimeline({ events, className = "" }: EventTimelineProps) {
   return (
     <div className={`space-y-3 ${className}`}>
       <h3 className="text-sm font-semibold text-text-muted uppercase tracking-wider">
-        Deployment Timeline
+        {t("eventStream.timeline")}
       </h3>
       <div className="relative pl-6 border-l-2 border-border space-y-4">
         {lifecycleEvents.map((event) => {

@@ -269,7 +269,7 @@ describe("SettingsLibrary auto-update", () => {
     const user = userEvent.setup();
     render(<Harness />);
 
-    await user.click(await screen.findByRole("switch", { name: "Enable Auto-Update" }));
+    await user.click(await screen.findByRole("switch", { name: "Enable auto-update" }));
 
     await waitFor(() =>
       expect(updateOciAutoUpdateSettings).toHaveBeenCalledWith({ enabled: true }),
@@ -281,7 +281,7 @@ describe("SettingsLibrary auto-update", () => {
     vi.mocked(updateOciAutoUpdateSettings).mockRejectedValue(new Error("no scheduler"));
     render(<Harness />);
 
-    await user.click(await screen.findByRole("switch", { name: "Enable Auto-Update" }));
+    await user.click(await screen.findByRole("switch", { name: "Enable auto-update" }));
 
     expect(await screen.findByText("no scheduler")).toBeInTheDocument();
   });

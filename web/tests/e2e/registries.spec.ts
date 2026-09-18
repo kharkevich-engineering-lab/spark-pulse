@@ -91,7 +91,7 @@ test("confirms before installing a whole collection", async ({ page, request }) 
 
   await gotoPage(page, "/oci");
   await page.getByText(collection.name, { exact: true }).first().click();
-  await page.getByRole("button", { name: /Install All Recipes/ }).click();
+  await page.getByRole("button", { name: /Install all recipes/ }).click();
 
   const dialog = page.getByRole("dialog");
   await expect(dialog).toContainText(collection.name);

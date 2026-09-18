@@ -148,27 +148,27 @@ describe("SettingsPage tabs", () => {
   it("opens on Deployment and shows only that tab's controls", async () => {
     renderPage();
 
-    expect(await screen.findByRole("heading", { name: "Deployment Defaults" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Run defaults" })).toBeInTheDocument();
     // Container limits live on another tab; showing them all at once is the
     // thing the tabs exist to stop.
-    expect(screen.queryByRole("heading", { name: "Container Limits" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Container limits" })).toBeNull();
   });
 
   it("switches to the tab that was clicked", async () => {
     renderPage();
-    await screen.findByRole("heading", { name: "Deployment Defaults" });
+    await screen.findByRole("heading", { name: "Run defaults" });
 
     await openTab(/containers/i);
 
-    expect(await screen.findByRole("heading", { name: "Container Limits" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Deployment Defaults" })).toBeNull();
+    expect(await screen.findByRole("heading", { name: "Container limits" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Run defaults" })).toBeNull();
   });
 
   /** A save re-reads the settings, which re-renders the page. Landing back on
    *  the first tab after every save would make editing anything else a chore. */
   it("comes back to the tab the operator was last on", async () => {
     const { unmount } = renderPage();
-    await screen.findByRole("heading", { name: "Deployment Defaults" });
+    await screen.findByRole("heading", { name: "Run defaults" });
     await openTab(/features/i);
     await screen.findByRole("heading", { name: "Optional features" });
     unmount();
@@ -186,14 +186,14 @@ describe("SettingsPage tabs", () => {
 
     renderPage("/settings#mcp");
 
-    expect(await screen.findByRole("heading", { name: "Server Status" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Container Limits" })).toBeNull();
+    expect(await screen.findByRole("heading", { name: "Server status" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Container limits" })).toBeNull();
   });
 
   it("ignores a hash that names no tab", async () => {
     renderPage("/settings#nothing-is-called-this");
 
-    expect(await screen.findByRole("heading", { name: "Deployment Defaults" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Run defaults" })).toBeInTheDocument();
   });
 
   it("still renders when the browser refuses to remember anything", async () => {
@@ -202,7 +202,7 @@ describe("SettingsPage tabs", () => {
     });
     try {
       renderPage();
-      expect(await screen.findByRole("heading", { name: "Deployment Defaults" })).toBeInTheDocument();
+      expect(await screen.findByRole("heading", { name: "Run defaults" })).toBeInTheDocument();
     } finally {
       boom.mockRestore();
     }
@@ -214,9 +214,9 @@ describe("SettingsPage tabs", () => {
     });
     try {
       renderPage();
-      await screen.findByRole("heading", { name: "Deployment Defaults" });
+      await screen.findByRole("heading", { name: "Run defaults" });
       await openTab(/containers/i);
-      expect(await screen.findByRole("heading", { name: "Container Limits" })).toBeInTheDocument();
+      expect(await screen.findByRole("heading", { name: "Container limits" })).toBeInTheDocument();
     } finally {
       boom.mockRestore();
     }
@@ -388,7 +388,7 @@ describe("SettingsPage containers tab", () => {
     const user = userEvent.setup();
     renderPage();
     await openTab(/containers/i);
-    await screen.findByRole("heading", { name: "Container Limits" });
+    await screen.findByRole("heading", { name: "Container limits" });
 
     const replace = (el: HTMLElement, value: string) => fireEvent.change(el, { target: { value } });
     replace(screen.getByDisplayValue("110"), "96");
@@ -420,7 +420,7 @@ describe("SettingsPage containers tab", () => {
     const user = userEvent.setup();
     renderPage();
     await openTab(/containers/i);
-    await screen.findByRole("heading", { name: "Container Limits" });
+    await screen.findByRole("heading", { name: "Container limits" });
 
     fireEvent.change(screen.getByDisplayValue("110"), { target: { value: "" } });
     await user.click(saveButton());
@@ -487,7 +487,7 @@ describe("SettingsPage containers tab", () => {
   it("no longer offers the cluster image, Ray port or GPU count", async () => {
     renderPage();
     await openTab(/containers/i);
-    await screen.findByRole("heading", { name: "Container Limits" });
+    await screen.findByRole("heading", { name: "Container limits" });
 
     expect(screen.queryByPlaceholderText("eugr/spark-vllm-docker:latest")).toBeNull();
     expect(screen.queryByPlaceholderText("29501")).toBeNull();
@@ -728,7 +728,7 @@ describe("SettingsPage saving", () => {
       /preferences/i,
       /secrets/i,
       /environment/i,
-      /deployment/i,
+      /runs/i,
     ]) {
       await openTab(tab);
       expect(saveButton()).toBeVisible();
@@ -761,7 +761,7 @@ describe("SettingsPage saving", () => {
     await openTab(/containers/i);
     fireEvent.change(await screen.findByDisplayValue("4096"), { target: { value: "8192" } });
 
-    await openTab(/deployment/i);
+    await openTab(/runs/i);
     fireEvent.change(await screen.findByLabelText("Port range end"), { target: { value: "9600" } });
     await user.click(saveButton());
 
@@ -795,7 +795,7 @@ describe("SettingsPage saving", () => {
    *  it reset on every reload. */
   it("no longer offers a health-monitoring switch that does nothing", async () => {
     renderPage();
-    await screen.findByRole("heading", { name: "Deployment Defaults" });
+    await screen.findByRole("heading", { name: "Run defaults" });
 
     expect(screen.queryByText("Health Monitoring:")).toBeNull();
     expect(screen.queryByRole("heading", { name: "Health Monitoring" })).toBeNull();

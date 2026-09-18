@@ -7,7 +7,7 @@
  * `StatusBadge` is the one status; the chart, which nothing duplicates, stays.
  */
 
-import { useT } from "@/lib/i18n";
+import { useI18n } from "@/lib/i18n";
 
 // ── Health History Chart ─────────────────────────────────────────────────────
 //
@@ -169,6 +169,7 @@ function formatValue(value: number, unit: string): string {
 }
 
 function Sparkline({ series }: { series: HealthSeries }) {
+  const { t, plural } = useI18n();
   const values = series.samples.map((s) => s.value);
   const latest = values[values.length - 1];
   const low = Math.min(...values);
@@ -177,17 +178,18 @@ function Sparkline({ series }: { series: HealthSeries }) {
   const span = formatSpan(spanMs);
   const bands = sparklineGapBands(series.samples, series.breaks);
   const gapNote =
-    bands.length === 0
-      ? ""
-      : `, ${bands.length} gap${bands.length === 1 ? "" : "s"} where nothing was measured`;
+    bands.length === 0 ? "" : `, ${plural("health.gapsMeasured", bands.length)}`;
 
   return (
     <div className="space-y-1">
       <div className="flex items-baseline justify-between gap-3 text-xs">
         <span className="font-medium">{series.label}</span>
         <span className="text-text-muted font-mono">
-          now {formatValue(latest, series.unit)} · low {formatValue(low, series.unit)} · peak{" "}
-          {formatValue(peak, series.unit)}
+          {t("health.nowLowPeak", {
+            now: formatValue(latest, series.unit),
+            low: formatValue(low, series.unit),
+            peak: formatValue(peak, series.unit),
+          })}
         </span>
       </div>
       <svg
@@ -195,7 +197,9 @@ function Sparkline({ series }: { series: HealthSeries }) {
         preserveAspectRatio="none"
         className="w-full h-10"
         role="img"
-        aria-label={`${series.label}, ${series.samples.length} samples over the last ${span}, now ${formatValue(latest, series.unit)}${gapNote}`}
+        aria-label={`${series.label}, ${plural("health.samplesOver", series.samples.length, {
+          span,
+        })}, ${t("health.now", { value: formatValue(latest, series.unit) })}${gapNote}`}
       >
         {bands.map((band, i) => (
           <rect
@@ -219,10 +223,9 @@ function Sparkline({ series }: { series: HealthSeries }) {
           vectorEffect="non-scaling-stroke"
         />
       </svg>
-      <p className="text-[0.65rem] text-text-muted/70">
-        {series.samples.length} samples over the last {span}
-        {bands.length > 0 &&
-          ` · ${bands.length} gap${bands.length === 1 ? "" : "s"} with no measurement`}
+      <p className="text-[13px] text-muted">
+        {plural("health.samplesOver", series.samples.length, { span })}
+        {bands.length > 0 && ` · ${plural("health.gapsNoMeasurement", bands.length)}`}
       </p>
     </div>
   );
@@ -230,11 +233,11 @@ function Sparkline({ series }: { series: HealthSeries }) {
 
 export function HealthHistoryChart({
   series,
-  title = "Health history",
+  title,
   caption,
   className = "",
 }: HealthHistoryChartProps) {
-  const t = useT();
+  const { t, plural } = useI18n();
   const drawable = series.filter((s) => s.samples.length >= MIN_SAMPLES);
   const collected = series.reduce((most, s) => Math.max(most, s.samples.length), 0);
 
@@ -248,10 +251,10 @@ export function HealthHistoryChart({
           <path d="M7 16l4-8 4 4 4-6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
         <span className="text-sm text-text-muted">{t("health.notEnoughHistory")}</span>
-        <span className="text-xs text-text-muted/70 mt-1">
+        <span className="text-[13px] text-muted mt-1">
           {collected === 0
-            ? "Nothing has arrived on the stream since this page was opened."
-            : `${collected} sample${collected === 1 ? "" : "s"} so far — two are needed to draw a line.`}
+            ? t("health.nothingYet")
+            : plural("health.samplesSoFar", collected)}
         </span>
       </div>
     );
@@ -260,7 +263,7 @@ export function HealthHistoryChart({
   return (
     <div className={`rounded-sm border border-border p-4 space-y-4 ${className}`}>
       <div>
-        <h4 className="text-sm font-semibold">{title}</h4>
+        <h4 className="text-sm font-semibold">{title ?? t("health.title")}</h4>
         {caption && <p className="text-xs text-text-muted mt-0.5">{caption}</p>}
       </div>
       {drawable.map((s) => (

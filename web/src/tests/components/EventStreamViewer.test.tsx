@@ -46,7 +46,7 @@ describe("EventStreamViewer", () => {
 
   it("renders the component with header", () => {
     render(<EventStreamViewer events={mockEvents} resource="cluster-1" />);
-    expect(screen.getByText("Event Stream")).toBeInTheDocument();
+    expect(screen.getByText("Event stream")).toBeInTheDocument();
   });
 
   it("renders all events", () => {
@@ -97,7 +97,7 @@ describe("EventStreamViewer", () => {
   it("narrows the list to one severity", () => {
     render(<EventStreamViewer events={mockEvents} resource="cluster-1" />);
 
-    fireEvent.change(screen.getByDisplayValue("All Severities"), { target: { value: "error" } });
+    fireEvent.change(screen.getByDisplayValue("All severities"), { target: { value: "error" } });
 
     expect(screen.getByText("Deployment failed")).toBeInTheDocument();
     expect(screen.queryByText("Cluster starting")).not.toBeInTheDocument();
@@ -107,7 +107,7 @@ describe("EventStreamViewer", () => {
   it("narrows the list to one node, offering only the nodes that spoke", () => {
     render(<EventStreamViewer events={mockEvents} resource="cluster-1" />);
 
-    const nodePicker = screen.getByDisplayValue("All Nodes");
+    const nodePicker = screen.getByDisplayValue("All nodes");
     expect(within(nodePicker).getByRole("option", { name: "10.0.0.1" })).toBeInTheDocument();
     expect(within(nodePicker).getByRole("option", { name: "10.0.0.2" })).toBeInTheDocument();
 
@@ -120,7 +120,7 @@ describe("EventStreamViewer", () => {
   it("says the filters matched nothing rather than looking broken", () => {
     render(<EventStreamViewer events={mockEvents} resource="cluster-1" />);
 
-    fireEvent.change(screen.getByDisplayValue("All Severities"), { target: { value: "warning" } });
+    fireEvent.change(screen.getByDisplayValue("All severities"), { target: { value: "warning" } });
 
     expect(screen.getByText("No events to display")).toBeInTheDocument();
     expect(screen.getByText("0 events")).toBeInTheDocument();
@@ -218,7 +218,7 @@ describe("EventTimeline", () => {
       />
     );
 
-    expect(screen.getByText("Deployment Timeline")).toBeInTheDocument();
+    expect(screen.getByText("Run timeline")).toBeInTheDocument();
     expect(screen.getByText("Cluster starting")).toBeInTheDocument();
     expect(screen.getByText("served")).toBeInTheDocument();
     expect(screen.queryByText("probe ok")).not.toBeInTheDocument();

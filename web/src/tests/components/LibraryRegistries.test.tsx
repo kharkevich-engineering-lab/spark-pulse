@@ -275,7 +275,7 @@ describe("Library — registries", () => {
       renderPage();
       await userEvent.click(await screen.findByText("spark-recipes"));
 
-      await userEvent.click(await screen.findByRole("button", { name: /Install All Recipes/ }));
+      await userEvent.click(await screen.findByRole("button", { name: /Install all recipes/ }));
       await confirmDialog("Install");
 
       await waitFor(() =>
@@ -288,7 +288,7 @@ describe("Library — registries", () => {
       vi.mocked(installOciCollection).mockRejectedValue(new Error("registry unreachable"));
       renderPage();
       await userEvent.click(await screen.findByText("spark-recipes"));
-      await userEvent.click(await screen.findByRole("button", { name: /Install All Recipes/ }));
+      await userEvent.click(await screen.findByRole("button", { name: /Install all recipes/ }));
       await confirmDialog("Install");
 
       expect(await screen.findByText("registry unreachable")).toBeInTheDocument();
@@ -326,21 +326,21 @@ describe("Library — registries", () => {
       renderPage();
       await openTab("Installed");
 
-      expect(await screen.findByText("Available Updates")).toBeInTheDocument();
+      expect(await screen.findByText("Available updates")).toBeInTheDocument();
       expect(screen.getByText("1.1.0 → 1.2.0")).toBeInTheDocument();
       expect(screen.getByText("+1")).toBeInTheDocument();
       expect(screen.getByText("~1")).toBeInTheDocument();
     });
 
     /** Applying an update overwrites the file; a collection the operator has
-     *  edited locally would lose that edit, so Apply All is held back. */
-    it("holds back Apply All while any collection carries local changes", async () => {
+     *  edited locally would lose that edit, so Apply all is held back. */
+    it("holds back Apply all while any collection carries local changes", async () => {
       vi.mocked(checkOciUpdates).mockResolvedValue([{ ...UPDATE, local_changes: true }]);
       renderPage();
       await openTab("Installed");
 
-      await screen.findByText("Available Updates");
-      expect(screen.getByRole("button", { name: "Apply All" })).toBeDisabled();
+      await screen.findByText("Available updates");
+      expect(screen.getByRole("button", { name: "Apply all" })).toBeDisabled();
       expect(screen.getByText("Local changes")).toBeInTheDocument();
     });
 
@@ -351,9 +351,9 @@ describe("Library — registries", () => {
       ]);
       renderPage();
       await openTab("Installed");
-      await screen.findByText("Available Updates");
+      await screen.findByText("Available updates");
 
-      await userEvent.click(screen.getByRole("button", { name: "Apply All" }));
+      await userEvent.click(screen.getByRole("button", { name: "Apply all" }));
 
       await waitFor(() =>
         expect(applyOciUpdates).toHaveBeenCalledWith([
@@ -367,9 +367,9 @@ describe("Library — registries", () => {
       vi.mocked(applyOciUpdates).mockRejectedValue(new Error("registry unreachable"));
       renderPage();
       await openTab("Installed");
-      await screen.findByText("Available Updates");
+      await screen.findByText("Available updates");
 
-      await userEvent.click(screen.getByRole("button", { name: "Apply All" }));
+      await userEvent.click(screen.getByRole("button", { name: "Apply all" }));
 
       expect(await screen.findByText("registry unreachable")).toBeInTheDocument();
     });
@@ -377,7 +377,7 @@ describe("Library — registries", () => {
     it("re-asks the registry when the operator checks for updates", async () => {
       renderPage();
       await openTab("Installed");
-      await screen.findByText("Available Updates");
+      await screen.findByText("Available updates");
       const before = vi.mocked(checkOciUpdates).mock.calls.length;
 
       await userEvent.click(screen.getByRole("button", { name: "Check" }));
@@ -432,7 +432,7 @@ describe("Library — registries", () => {
     it("adds a registry, enabled, and clears the form", async () => {
       renderPage();
 
-      await userEvent.click(await screen.findByRole("button", { name: /Add Registry/ }));
+      await userEvent.click(await screen.findByRole("button", { name: /Add registry/ }));
       await userEvent.type(screen.getByPlaceholderText("my-registry"), "internal");
       await userEvent.type(screen.getByPlaceholderText("ghcr.io/owner/recipe-repo"), "reg.acme/x");
       await userEvent.click(screen.getByRole("button", { name: "Add" }));
@@ -452,7 +452,7 @@ describe("Library — registries", () => {
     it("will not add a registry missing a name or a URL", async () => {
       renderPage();
 
-      await userEvent.click(await screen.findByRole("button", { name: /Add Registry/ }));
+      await userEvent.click(await screen.findByRole("button", { name: /Add registry/ }));
       await userEvent.type(screen.getByPlaceholderText("my-registry"), "internal");
 
       expect(screen.getByRole("button", { name: "Add" })).toBeDisabled();
@@ -462,7 +462,7 @@ describe("Library — registries", () => {
       vi.mocked(addOciRegistry).mockRejectedValue(new Error("that name is taken"));
       renderPage();
 
-      await userEvent.click(await screen.findByRole("button", { name: /Add Registry/ }));
+      await userEvent.click(await screen.findByRole("button", { name: /Add registry/ }));
       await userEvent.type(screen.getByPlaceholderText("my-registry"), "internal");
       await userEvent.type(screen.getByPlaceholderText("ghcr.io/owner/recipe-repo"), "reg.acme/x");
       await userEvent.click(screen.getByRole("button", { name: "Add" }));
@@ -473,7 +473,7 @@ describe("Library — registries", () => {
     it("abandons the add form without writing anything", async () => {
       renderPage();
 
-      await userEvent.click(await screen.findByRole("button", { name: /Add Registry/ }));
+      await userEvent.click(await screen.findByRole("button", { name: /Add registry/ }));
       await userEvent.type(screen.getByPlaceholderText("my-registry"), "internal");
       await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
 

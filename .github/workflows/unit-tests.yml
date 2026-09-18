@@ -422,5 +422,9 @@ jobs:
           cd web && npx eslint src/ && cd ..
 
       - name: Run TypeScript type check
+        # `-b`, not `--noEmit`: the root tsconfig is `files: []` with project
+        # references, so `--noEmit` compiles nothing at all and this job passed
+        # over every type error in the tree. `-b` builds the three referenced
+        # projects — app, node and the Playwright specs.
         run: |
-          cd web && npx tsc --noEmit && cd ..
+          cd web && npx tsc -b && cd ..

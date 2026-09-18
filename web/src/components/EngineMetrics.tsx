@@ -1,5 +1,5 @@
 import { HealthHistoryChart, type HealthSeries } from "@/components/HealthHistoryChart";
-import { useI18n } from "@/lib/i18n";
+import { useI18n, type Translator } from "@/lib/i18n";
 import type { EngineMetricsWindow, EngineMetricSample } from "@/lib/types";
 
 /**
@@ -22,12 +22,6 @@ import type { EngineMetricsWindow, EngineMetricSample } from "@/lib/types";
  *   restart, so the rate across that interval is unknown, not zero: the sample
  *   carries no value and the chart breaks and shades the interval.
  */
-
-/** Where the window lives, said plainly rather than implied. */
-const VOLATILE_CAPTION =
-  "Read from the engine's own /metrics endpoint and held in the control " +
-  "plane's memory only. Restarting Spark Pulse loses this window; nothing " +
-  "here is written to disk.";
 
 /** Two samples is the least that can be drawn as a line. */
 const MIN_SAMPLES = 2;
@@ -58,18 +52,18 @@ function resetBreaks(samples: EngineMetricSample[]): number[] {
   return samples.filter((s) => s.counter_reset).map((s) => s.t * 1000);
 }
 
-export function engineSeries(window: EngineMetricsWindow): HealthSeries[] {
+export function engineSeries(window: EngineMetricsWindow, t: Translator["t"]): HealthSeries[] {
   const s = window.samples;
   const breaks = resetBreaks(s);
   return [
     {
-      label: "Requests running",
+      label: t("engineMetrics.requestsRunning"),
       unit: "",
       color: "var(--color-primary)",
       samples: points(s, (x) => x.running),
     },
     {
-      label: "Queue depth",
+      label: t("engineMetrics.queueDepth"),
       unit: "",
       color: "var(--color-warning)",
       samples: points(s, (x) => x.waiting),
@@ -77,20 +71,20 @@ export function engineSeries(window: EngineMetricsWindow): HealthSeries[] {
     {
       // A fraction from 0 to 1 at the wire; shown as a percentage, which is a
       // change of unit, not of value.
-      label: "KV cache used",
+      label: t("engineMetrics.kvUsed"),
       unit: "%",
       color: "var(--color-success)",
       samples: points(s, (x) => x.kv_fraction, 100),
     },
     {
-      label: "Output tokens/s",
+      label: t("engineMetrics.outputTokens"),
       unit: "",
       color: "var(--color-primary)",
       samples: points(s, (x) => x.generation_tokens_per_second),
       breaks,
     },
     {
-      label: "Prompt tokens/s",
+      label: t("engineMetrics.promptTokens"),
       unit: "",
       color: "var(--color-text-muted)",
       samples: points(s, (x) => x.prompt_tokens_per_second),
@@ -101,32 +95,31 @@ export function engineSeries(window: EngineMetricsWindow): HealthSeries[] {
 
 /** The newest value of each gauge — the "is it struggling right now" row. */
 function LiveGauges({ latest }: { latest: EngineMetricSample }) {
+  const { t } = useI18n();
   const cells: { label: string; value: string; title: string }[] = [
     {
-      label: "Running",
+      label: t("engineMetrics.running"),
       value: latest.running === null ? "—" : String(latest.running),
-      title: "Requests the engine is decoding right now.",
+      title: t("engineMetrics.runningHint"),
     },
     {
-      label: "Queued",
+      label: t("engineMetrics.queued"),
       value: latest.waiting === null ? "—" : String(latest.waiting),
-      title: "Requests accepted but not yet running. A deep queue is the "
-        + "clearest sign the model is saturated.",
+      title: t("engineMetrics.queuedHint"),
     },
     {
-      label: "KV cache",
+      label: t("engineMetrics.kvCache"),
       value:
         latest.kv_fraction === null
           ? "—"
           : `${(latest.kv_fraction * 100).toFixed(1)}%`,
-      title: "How full the KV cache is. Near 100% the engine starts preempting.",
+      title: t("engineMetrics.kvCacheHint"),
     },
     {
-      label: "Preemptions",
+      label: t("engineMetrics.preemptions"),
       value:
         latest.preemptions_total === null ? "—" : String(latest.preemptions_total),
-      title: "Requests evicted and restarted since the engine last started. "
-        + "Cumulative, not a rate.",
+      title: t("engineMetrics.preemptionsHint"),
     },
   ];
   return (
@@ -163,7 +156,7 @@ export default function EngineMetricsPanel({
   loading = false,
   className = "",
 }: EngineMetricsPanelProps) {
-  const { t } = useI18n();
+  const { t, plural } = useI18n();
   if (!w) {
     return (
       <div className={`text-xs text-text-muted ${className}`}>
@@ -181,7 +174,7 @@ export default function EngineMetricsPanel({
   }
 
   const latest = w.samples[w.samples.length - 1];
-  const series = engineSeries(w);
+  const series = engineSeries(w, t);
   const resets = w.samples.filter((s) => s.counter_reset).length;
 
   return (
@@ -189,8 +182,9 @@ export default function EngineMetricsPanel({
       <div className="flex items-baseline justify-between gap-3">
         <h4 className="text-sm font-semibold">{t("engineMetrics.heading")}</h4>
         <span className="text-xs text-text-muted">
-          {w.samples.length} sample{w.samples.length === 1 ? "" : "s"}, every{" "}
-          {w.sample_interval_seconds}s
+          {plural("engineMetrics.sampleCount", w.samples.length, {
+            seconds: w.sample_interval_seconds,
+          })}
         </span>
       </div>
 
@@ -201,29 +195,21 @@ export default function EngineMetricsPanel({
           data-testid="engine-metrics-reset"
           className="text-xs text-warning"
         >
-          The engine's counters restarted {resets} time
-          {resets === 1 ? "" : "s"} in this window. Token rates across those
-          intervals are unknown rather than zero, so the lines break there.
+          {plural("engineMetrics.counterResets", resets)}
         </p>
       )}
 
       {w.samples.length < MIN_SAMPLES ? (
-        <p className="text-xs text-text-muted">
-          One sample so far — a second is needed before a rate or a line exists.
-        </p>
+        <p className="text-xs text-text-muted">{t("engineMetrics.oneSample")}</p>
       ) : (
         <HealthHistoryChart
           title={t("engineMetrics.recentLoad")}
-          caption={VOLATILE_CAPTION}
+          caption={t("engineMetrics.volatileCaption")}
           series={series}
         />
       )}
 
-      <p className="text-[0.65rem] text-text-muted/70">
-        Latency percentiles are not shown: both engines publish histograms and
-        no pre-computed percentile, so an honest p95 needs Prometheus querying
-        this same endpoint.
-      </p>
+      <p className="text-[13px] text-muted">{t("engineMetrics.noPercentiles")}</p>
     </div>
   );
 }

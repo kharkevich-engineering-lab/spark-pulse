@@ -255,7 +255,7 @@ describe("MonitoringTab", () => {
     await user.click(within(row).getByRole("button", { name: /kill/i }));
 
     expect(
-      within(screen.getByRole("dialog")).getByText(/belongs to a deployment this page is tracking/),
+      within(screen.getByRole("dialog")).getByText(/belongs to a run this page is tracking/),
     ).toBeInTheDocument();
   });
 
@@ -387,8 +387,8 @@ describe("MonitoringTab", () => {
 
     expect(await screen.findByText("/")).toBeInTheDocument();
     expect(screen.getByText("64.9%")).toBeInTheDocument();
-    expect(screen.getByText("CPU Memory")).toBeInTheDocument();
-    expect(screen.queryByText("GPU Processes")).toBeNull();
+    expect(screen.getByText("CPU memory")).toBeInTheDocument();
+    expect(screen.queryByText("GPU processes")).toBeNull();
   });
 });
 
@@ -454,7 +454,7 @@ describe("MonitoringTab across nodes", () => {
     expect(peer.getByText("Could not be asked")).toBeInTheDocument();
     expect(peer.getByText("10.0.0.11 has no enrolled agent")).toBeInTheDocument();
     // Unknown, not idle: no zeroed panels under a machine nobody reached.
-    expect(peer.queryByText("CPU Memory")).toBeNull();
+    expect(peer.queryByText("CPU memory")).toBeNull();
   });
 
   it("sends a kill to the node the process is on", async () => {
@@ -512,7 +512,7 @@ describe("MonitoringTab across nodes", () => {
     render(<MonitoringTab />);
 
     expect(await screen.findByText("NVIDIA GB10")).toBeInTheDocument();
-    expect(screen.getByText("CPU Memory")).toBeInTheDocument();
+    expect(screen.getByText("CPU memory")).toBeInTheDocument();
   });
 
   it("gives each node its own history chart rather than one shared series", async () => {

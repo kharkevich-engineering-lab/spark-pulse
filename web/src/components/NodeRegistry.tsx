@@ -162,7 +162,7 @@ function AddNodeDialog({ onClose, onAdded }: AddNodeDialogProps) {
       onAdded(added);
       onClose();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not add the node");
+      setError(e instanceof Error ? e.message : t("nodes.addFailed"));
     } finally {
       setSubmitting(false);
     }
@@ -330,7 +330,7 @@ function EditNodeDialog({ node, onClose, onSaved }: EditNodeDialogProps) {
       onSaved();
       onClose();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not update the node");
+      setError(e instanceof Error ? e.message : t("nodes.updateNodeFailed"));
     } finally {
       setSubmitting(false);
     }
@@ -452,7 +452,7 @@ function InstallAgentDialog({ node, onClose, onInstalled }: InstallAgentDialogPr
     try {
       setHostKey(await fetchNodeHostKey(node.id, portValid ? portNumber : 22));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not read the host key");
+      setError(e instanceof Error ? e.message : t("nodes.hostKeyFailed"));
     } finally {
       setChecking(false);
     }
@@ -482,7 +482,7 @@ function InstallAgentDialog({ node, onClose, onInstalled }: InstallAgentDialogPr
       setReport(result);
       onInstalled();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "The install failed");
+      setError(e instanceof Error ? e.message : t("nodes.installFailed"));
       // A refused host key means the fingerprint shown is no longer what the
       // node offers; it has to be fetched and looked at again.
       if (e instanceof Error && /host key/i.test(e.message)) setHostKey(null);
@@ -1025,13 +1025,13 @@ export default function NodeRegistry({ addOpen, onAddOpenChange }: NodeRegistryP
           return;
         }
         if (!result.updated) {
-          setUpdateError(`${node.name}: ${result.detail || "update failed"}`);
+          setUpdateError(`${node.name}: ${result.detail || t("nodes.updateFailed")}`);
         }
         // The agent restarts onto the new binary; give it a moment, then reload
         // so the row reflects the new version once it reconnects.
         setTimeout(reload, 4000);
       } catch (e) {
-        setUpdateError(e instanceof Error ? e.message : "Update failed");
+        setUpdateError(e instanceof Error ? e.message : t("nodes.updateFailed"));
       } finally {
         setUpdating(null);
       }
@@ -1145,7 +1145,7 @@ export default function NodeRegistry({ addOpen, onAddOpenChange }: NodeRegistryP
               reload();
             } catch (e) {
               setForgetting(null);
-              setRemoveError(e instanceof Error ? e.message : "Could not forget the node");
+              setRemoveError(e instanceof Error ? e.message : t("nodes.forgetFailed"));
             }
           }}
         />

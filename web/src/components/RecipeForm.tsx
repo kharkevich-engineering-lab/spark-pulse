@@ -120,7 +120,7 @@ const RecipeForm = forwardRef<RecipeFormRef, {
       if (!onSaveCustomization) return;
       if (editAsYaml && rawYaml.trim()) {
         const parsed = parseYaml(rawYaml);
-        if (!parsed) { setYamlError("Failed to parse YAML"); return; }
+        if (!parsed) { setYamlError(t("recipeForm.parseFailed")); return; }
         onSaveCustomization({
           model: parsed.model as string, container: parsed.container as string,
           command: parsed.command as string, defaults: parsed.defaults as Record<string, unknown>,
@@ -321,12 +321,12 @@ const RecipeForm = forwardRef<RecipeFormRef, {
         <div className="flex items-center gap-2 mb-4">
           <button onClick={() => setEditAsYaml(false)}
             className={`px-3 py-1.5 text-sm font-medium rounded transition-colors ${!editAsYaml ? "bg-primary/10 text-blue2" : "text-text-muted hover:text-text"}`}>
-            Form
+            {t("recipeForm.form")}
           </button>
           <button onClick={() => setEditAsYaml(true)}
             className={`px-3 py-1.5 text-sm font-medium rounded transition-colors flex items-center gap-1.5 ${editAsYaml ? "bg-primary/10 text-blue2" : "text-text-muted hover:text-text"}`}>
             <Code2 size={14} />
-            Edit as YAML
+            {t("recipeForm.editAsYaml")}
           </button>
         </div>
       )}

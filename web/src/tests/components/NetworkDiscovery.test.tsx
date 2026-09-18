@@ -35,7 +35,7 @@ const DISCOVERY: DiscoveryResponse = {
 async function open() {
   const user = userEvent.setup();
   await user.click(
-    await screen.findByRole("button", { name: "Discover peers on this network" }),
+    await screen.findByRole("button", { name: "Find nodes on this network" }),
   );
 }
 
@@ -74,7 +74,7 @@ describe("NetworkDiscovery", () => {
 
     const pointer = await screen.findByText(/Interface pinning is per node, not global/i);
     expect(pointer).toHaveTextContent(/registry/i);
-    expect(pointer).toHaveTextContent(/Cluster page/i);
+    expect(pointer).toHaveTextContent(/Fleet page/i);
   });
 
   it("surfaces a failed discovery instead of pretending nothing was detected", async () => {

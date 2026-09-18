@@ -16,6 +16,11 @@ import DeployOptions, {
   type DeployOptionsValue,
 } from "@/components/DeployOptions";
 import type { ClusterNode, EngineSummary, RecipeDetail } from "@/lib/types";
+import { translatorFor } from "@/lib/i18n";
+
+/** The helpers below take a translator; the dictionary they read is the one
+ *  these assertions quote. */
+const EN = translatorFor("en");
 import { MULTI_NODE_TITLE, MULTI_NODE_UNPROVEN } from "@/lib/experimental";
 
 vi.mock("@/lib/api", () => ({
@@ -224,22 +229,22 @@ describe("parseExtraArgs", () => {
 describe("eligibleEngines", () => {
   it("limits a v1 command recipe to vLLM", () => {
     const engines = [engine("vllm"), engine("sglang")];
-    expect(eligibleEngines(engines, V1_RECIPE).map((e) => e.engine)).toEqual(["vllm"]);
+    expect(eligibleEngines(engines, V1_RECIPE, EN).map((e) => e.engine)).toEqual(["vllm"]);
   });
 
   it("offers every enabled engine for a recipe without a command", () => {
     const engines = [engine("vllm"), engine("sglang")];
-    expect(eligibleEngines(engines, V2_RECIPE).map((e) => e.engine)).toEqual(["vllm", "sglang"]);
+    expect(eligibleEngines(engines, V2_RECIPE, EN).map((e) => e.engine)).toEqual(["vllm", "sglang"]);
   });
 
   it("hides disabled engines", () => {
     const engines = [engine("vllm"), engine("sglang", { enabled: false })];
-    expect(eligibleEngines(engines, V2_RECIPE).map((e) => e.engine)).toEqual(["vllm"]);
+    expect(eligibleEngines(engines, V2_RECIPE, EN).map((e) => e.engine)).toEqual(["vllm"]);
   });
 
   it("follows the API's per-engine verdict over the command heuristic", () => {
     const engines = [engine("vllm"), engine("sglang")];
-    expect(eligibleEngines(engines, DUAL_ENGINE_RECIPE).map((e) => e.engine)).toEqual([
+    expect(eligibleEngines(engines, DUAL_ENGINE_RECIPE, EN).map((e) => e.engine)).toEqual([
       "vllm",
       "sglang",
     ]);
@@ -247,7 +252,7 @@ describe("eligibleEngines", () => {
 
   it("drops an engine the API reports as unsupported, keeping its reason", () => {
     const engines = [engine("vllm"), engine("sglang")];
-    const choices = engineChoices(engines, REPORTED_V1_RECIPE);
+    const choices = engineChoices(engines, REPORTED_V1_RECIPE, EN);
 
     expect(choices.filter((c) => c.supported).map((c) => c.engine.engine)).toEqual(["vllm"]);
     const refused = choices.find((c) => c.engine.engine === "sglang");
@@ -259,7 +264,7 @@ describe("eligibleEngines", () => {
     // Not hidden: "the engine I read about is missing from the list" is the
     // harder question to answer than "here it is, and here is why not".
     const engines = [engine("vllm"), engine("llama-cpp", { available: false })];
-    const shown = engineChoices(engines, V2_RECIPE).find(
+    const shown = engineChoices(engines, V2_RECIPE, EN).find(
       (c) => c.engine.engine === "llama-cpp",
     );
 
@@ -270,7 +275,7 @@ describe("eligibleEngines", () => {
   it("does not second-guess an older payload that reports no availability", () => {
     const engines = [engine("vllm"), engine("sglang")];
 
-    expect(eligibleEngines(engines, V2_RECIPE).map((e) => e.engine)).toEqual([
+    expect(eligibleEngines(engines, V2_RECIPE, EN).map((e) => e.engine)).toEqual([
       "vllm",
       "sglang",
     ]);
@@ -278,7 +283,7 @@ describe("eligibleEngines", () => {
 
   it("falls back to the command heuristic when no verdict is reported", () => {
     const engines = [engine("vllm"), engine("sglang")];
-    const refused = engineChoices(engines, V1_RECIPE).find((c) => c.engine.engine === "sglang");
+    const refused = engineChoices(engines, V1_RECIPE, EN).find((c) => c.engine.engine === "sglang");
     expect(refused?.supported).toBe(false);
     expect(refused?.reason).toContain("engine-specific command");
   });
@@ -406,33 +411,33 @@ describe("DeployOptions", () => {
 
 describe("describeImagePresence", () => {
   it("says how much will download when the image is absent", () => {
-    expect(describeImagePresence({ image_present: false, image_size_bytes: null })).toBe(
+    expect(describeImagePresence({ image_present: false, image_size_bytes: null }, EN)).toBe(
       "image not pulled, several GB will download first",
     );
   });
 
   it("quotes the known size when the plan has one", () => {
     expect(
-      describeImagePresence({ image_present: false, image_size_bytes: 26_843_545_600 }),
+      describeImagePresence({ image_present: false, image_size_bytes: 26_843_545_600 }, EN),
     ).toBe("image not pulled, 25.0 GB will download first");
   });
 
   it("says the image is pulled, with its size", () => {
     expect(
-      describeImagePresence({ image_present: true, image_size_bytes: 26_843_545_600 }),
+      describeImagePresence({ image_present: true, image_size_bytes: 26_843_545_600 }, EN),
     ).toBe("pulled · 25.0 GB");
   });
 });
 
 describe("describeModelPresence", () => {
   it("says the model has to be fetched, and that Deploy will offer to", () => {
-    expect(describeModelPresence({ model_present: false })).toBe(
+    expect(describeModelPresence({ model_present: false }, EN)).toBe(
       "not downloaded — Deploy will offer to fetch it",
     );
   });
 
   it("says nothing alarming when the model is here", () => {
-    expect(describeModelPresence({ model_present: true })).toBe("downloaded");
+    expect(describeModelPresence({ model_present: true }, EN)).toBe("downloaded");
   });
 });
 
@@ -672,14 +677,14 @@ describe("proposeParallelism", () => {
 
 describe("describeOccupancy", () => {
   it("says a matching shape occupies exactly the nodes selected", () => {
-    const fit = describeOccupancy({ tensor_parallel: 2, pipeline_parallel: 1 }, 2);
+    const fit = describeOccupancy({ tensor_parallel: 2, pipeline_parallel: 1 }, 2, EN);
     expect(fit.fits).toBe(true);
     expect(fit.text).toContain("tp=2 pp=1");
     expect(fit.text).toContain("occupies 2 nodes");
   });
 
   it("uses the singular for a solo deployment", () => {
-    expect(describeOccupancy({ tensor_parallel: 1, pipeline_parallel: 1 }, 1).text).toContain(
+    expect(describeOccupancy({ tensor_parallel: 1, pipeline_parallel: 1 }, 1, EN).text).toContain(
       "occupies 1 node —",
     );
   });
@@ -687,7 +692,7 @@ describe("describeOccupancy", () => {
   /** The words are the server's on purpose: an operator who ignores this line
    *  meets `_check_capacity` next, and two wordings read as two rules. */
   it("says what the server would say when the shape is too small", () => {
-    const fit = describeOccupancy({ tensor_parallel: 1, pipeline_parallel: 1 }, 2);
+    const fit = describeOccupancy({ tensor_parallel: 1, pipeline_parallel: 1 }, 2, EN);
     expect(fit.fits).toBe(false);
     expect(fit.text).toContain("only occupies 1 of the 2 nodes selected");
     expect(fit.text).toContain("nothing to hold");
@@ -696,7 +701,7 @@ describe("describeOccupancy", () => {
   });
 
   it("says what the server would say when the shape is too large", () => {
-    const fit = describeOccupancy({ tensor_parallel: 4, pipeline_parallel: 1 }, 2);
+    const fit = describeOccupancy({ tensor_parallel: 4, pipeline_parallel: 1 }, 2, EN);
     expect(fit.fits).toBe(false);
     expect(fit.text).toContain("does not fit 2 nodes: it needs 4");
     expect(fit.text).toContain("one GPU per node");

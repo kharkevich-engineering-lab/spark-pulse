@@ -36,7 +36,7 @@ All scripts live in `scripts/` and are executable (`chmod +x`).
 | [run-dev-server.sh](#run-dev-serversh) | Simulation | ✅ | Vite dev server | None | Full dev (frontend + backend, no auth) |
 | [run-dev-oidc.sh](#run-dev-oidcsh) | Simulation | ✅ | Backend serves built UI | Mock OIDC | Backend + SSO dev (frontend on backend) |
 | [run-dev-oidc-full.sh](#run-dev-oidc-fullsh) | Simulation | ✅ | Backend serves built UI | Mock OIDC | Full dev with backend reload |
-| [run-backend.sh](#run-backends) | Simulation | ✅ | — | None | Backend only (API testing, `localhost:8100`) |
+| [run-backend.sh](#run-backends) | Simulation | ✅ | — | Forced off | Backend only (API testing, screenshots, `localhost:8100`) |
 | [run-production.sh](#run-productionsh) | Production | ❌ | Built UI bundled | Configurable | Real environment (production mode) |
 | [build-ui.sh](#build-uish) | N/A | N/A | N/A | N/A | Build frontend bundle only |
 | [release.sh](#releasesh) | N/A | N/A | N/A | N/A | Bump version and build distributable |
@@ -72,12 +72,21 @@ The script creates the Python venv and installs frontend dependencies if missing
 **Best for:** Backend-only development or API testing without a frontend.
 
 - Starts **backend** in simulation mode on port **8100** (mocks all tool calls)
-- No frontend, no authentication
+- No frontend. Auth is forced off with `SPARK_PULSE_AUTH_ENABLED=false`, so a
+  `~/.config/spark-pulse/settings.json` left behind by `run-dev-oidc-full.sh`
+  cannot turn it on here — with auth on this backend answers 401 to everything,
+  and the documentation screenshot capture hangs on a login page it has no
+  credentials for.
 
 ```bash
 ./scripts/run-backend.sh              # port 8100, hot-reload
 ./scripts/run-backend.sh --port 9000  # custom port
 ./scripts/run-backend.sh --no-reload  # disable auto-reload
+
+# What the documentation screenshots are captured against:
+npm --prefix web run build
+./scripts/run-backend.sh --port 8123 --no-reload &
+node web/scripts/capture-screenshots.mjs --base http://127.0.0.1:8123
 ```
 
 **Open:** http://localhost:8100/docs (Swagger UI)
@@ -227,6 +236,7 @@ running.
 ./scripts/run-e2e-tests.sh --headed                       # watch it happen
 ./scripts/run-e2e-tests.sh --ui                           # Playwright UI mode
 ./scripts/run-e2e-tests.sh --debug                        # step through it
+./scripts/run-e2e-tests.sh --project mobile               # one viewport
 ./scripts/run-e2e-tests.sh --port 8111                    # a different port
 ./scripts/run-e2e-tests.sh --help
 ```
@@ -251,7 +261,17 @@ a report behind, viewable with `cd web; and npx playwright show-report`.
 - Specs are independent and run in any order. Anything that mutates backend
   state — the deploy journey, a model download — arranges and cleans up after
   itself over the REST API.
-- `web/tests/e2e` is type-checked by `npm run build` via `tsconfig.e2e.json`.
+- **Two projects, one spec set.** `chromium` runs at 1280x900 and `mobile` at
+  390x844, and both match every spec: a page that stops working on a phone
+  fails rather than going unmeasured. `--project chromium` or
+  `--project mobile` runs one of them — useful while reshaping a page, since
+  the whole suite is twice the tests.
+- `--port N` (or `$E2E_PORT`) moves the backend and the base URL together, so
+  a run does not collide with a dev server already on 8100.
+- `web/tests/e2e` is type-checked by `npx tsc -b` (and by `npm run build`) via
+  `tsconfig.e2e.json`. `tsc --noEmit` checks nothing at all here — the root
+  `tsconfig.json` is `files: []` with project references — so `-b` is the
+  command, and it is what CI runs.
 - The Monitoring page runs against the simulated cluster: each node's agent
   answers `GetNodeStats` with a GB10's numbers, so there is a real path to
   assert on. `page.route` still stubs the two shapes that cluster cannot

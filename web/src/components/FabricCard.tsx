@@ -74,7 +74,7 @@ function ApplyDialog({ plan, onClose, onApplied }: ApplyDialogProps) {
       setReports(result.reports);
       onApplied();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "The apply failed");
+      setError(e instanceof Error ? e.message : t("fabric.applyFailed"));
     } finally {
       setRunning(false);
     }
@@ -299,7 +299,7 @@ export default function FabricCard() {
     try {
       setData(await fetchFabric());
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not read the fabric");
+      setError(e instanceof Error ? e.message : t("fabric.readFailed"));
     } finally {
       setLoading(false);
     }

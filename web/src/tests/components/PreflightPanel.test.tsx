@@ -9,6 +9,11 @@ import PreflightPanel, {
   memoryLine,
 } from "@/components/PreflightPanel";
 import type { PreflightCheck, PreflightReport } from "@/lib/types";
+import { translatorFor } from "@/lib/i18n";
+
+/** `describeCost` returns a sentence, so it is handed a translator; the
+ *  dictionary these assertions quote is the English one. */
+const EN = translatorFor("en");
 
 const check = (over: Partial<PreflightCheck> = {}): PreflightCheck => ({
   id: "image",
@@ -79,6 +84,7 @@ describe("describeCost", () => {
           delaying: [check()],
           estimated_transfer_bytes: 26_843_545_600,
         }),
+        EN,
       ),
     ).toBe("25.0 GB has to transfer to spark-02 before this starts");
   });
@@ -91,6 +97,7 @@ describe("describeCost", () => {
           delaying: [check({ delay_bytes: 0 })],
           estimated_transfer_bytes: 0,
         }),
+        EN,
       ),
     ).toContain("data of unreported size");
   });
@@ -103,6 +110,7 @@ describe("describeCost", () => {
           can_proceed: false,
           blocking: [check({ status: "fail", node: "spark-03" })],
         }),
+        EN,
       ),
     ).toBe("1 check failed on spark-03");
   });

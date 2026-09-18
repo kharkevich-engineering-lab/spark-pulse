@@ -33,7 +33,7 @@ import { useQuery, type UseQueryResult } from "@/hooks/useQuery";
 import { useWideLayout } from "@/hooks/useMediaQuery";
 import { useSSEConnection } from "@/hooks/useSSEConnection";
 import { SSEConnectionState } from "@/lib/operations";
-import { useI18n } from "@/lib/i18n";
+import { useI18n, type Translator } from "@/lib/i18n";
 import { formatSize } from "@/lib/utils";
 import {
   ACTIVE_STATES,
@@ -85,9 +85,9 @@ export function shortImageTag(tag: string): string {
 }
 
 /** Why this image wants attention, or "" when it does not. */
-export function updateReason(image: ImageEntry): string {
-  if (image.digest_drift) return "newer digest published";
-  if (!image.present) return "not pulled";
+export function updateReason(image: ImageEntry, t: Translator["t"]): string {
+  if (image.digest_drift) return t("engines.digestDrift");
+  if (!image.present) return t("engines.notPulled");
   return "";
 }
 
@@ -345,7 +345,7 @@ export default function EnginesTab({ images: imagesQuery }: EnginesTabProps) {
    *  the same set in the table and in the card. */
   const actionsFor = (row: EngineRow) => {
     const { image } = row;
-    const reason = updateReason(image);
+    const reason = updateReason(image, t);
     return (
       <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-[13px] max-[899px]:justify-start">
         {reason && (
@@ -459,7 +459,7 @@ export default function EnginesTab({ images: imagesQuery }: EnginesTabProps) {
         )}
         {image.digest_drift && (
           <span className="whitespace-nowrap px-1.5 py-0.5 rounded-sm border border-warn text-warn">
-            {updateReason(image)}
+            {updateReason(image, t)}
           </span>
         )}
       </div>

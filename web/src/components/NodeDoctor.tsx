@@ -84,7 +84,7 @@ export default function NodeDoctor({ node, onChanged }: Props) {
     try {
       setReport(await fetchNodeDoctor(node.id));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not diagnose the node");
+      setError(e instanceof Error ? e.message : t("nodes.doctor.diagnoseFailed"));
     } finally {
       setLoading(false);
     }
@@ -101,7 +101,7 @@ export default function NodeDoctor({ node, onChanged }: Props) {
       setReport(await treatNode(node.id, sudoPassword || undefined));
       onChanged();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "The repair failed");
+      setError(e instanceof Error ? e.message : t("nodes.doctor.repairFailed"));
     } finally {
       setRepairing(false);
     }

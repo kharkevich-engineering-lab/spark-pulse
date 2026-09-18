@@ -22,7 +22,7 @@ test("marks the cluster page and its nav entry experimental", async ({ page, req
   const config = await readConfig(request);
   await gotoPage(page, "/cluster");
 
-  await expect(page.getByRole("heading", { name: "The machines." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "The nodes." })).toBeVisible();
 
   const note = page.getByRole("note").filter({ hasText: "Multi-node is still experimental" });
   // The mark moved to the Fleet group, which is where the cluster now lives.

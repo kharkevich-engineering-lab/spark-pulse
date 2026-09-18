@@ -52,7 +52,7 @@ export default function CustomRecipeDrawer({
         const data = await getCustomRecipeContent(recipe.id);
         if (!cancelled) setContent(data.content);
       } catch (e) {
-        if (!cancelled) onErrorRef.current(e instanceof Error ? e.message : "Failed to load recipe");
+        if (!cancelled) onErrorRef.current(e instanceof Error ? e.message : t("customFiles.loadFailed"));
       } finally {
         if (!cancelled) setLoadingContent(false);
       }
@@ -64,24 +64,24 @@ export default function CustomRecipeDrawer({
     if (!recipe || !content.trim()) return;
     setSaving(true);
     try { await onSave(recipe.id, content); onClose(); }
-    catch (e) { onError(e instanceof Error ? e.message : "Failed to save"); }
+    catch (e) { onError(e instanceof Error ? e.message : t("customFiles.saveFailed")); }
     finally { setSaving(false); }
   }, [recipe, content, onSave, onClose, onError]);
 
   const handleDeleteConfirm = useCallback(async () => {
     if (!recipe) return;
     try { await onDelete(recipe.id); onClose(); }
-    catch (e) { onError(e instanceof Error ? e.message : "Failed to delete"); }
+    catch (e) { onError(e instanceof Error ? e.message : t("customFiles.deleteFailed")); }
     finally { setShowDelete(false); }
   }, [recipe, onDelete, onClose, onError]);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !recipe) return;
-    if (file.size > 1024 * 1024) { onError("File too large (max 1MB)"); return; }
+    if (file.size > 1024 * 1024) { onError(t("customFiles.tooLarge1MB")); return; }
     setUploading(true);
     try { setContent(await file.text()); }
-    catch { onError("Failed to read file"); }
+    catch { onError(t("customFiles.readFailed")); }
     finally { setUploading(false); e.target.value = ""; }
   };
 
@@ -100,7 +100,7 @@ export default function CustomRecipeDrawer({
       actions={
         <>
           <Button size="sm" variant="danger" icon={Trash2} onClick={() => setShowDelete(true)}>
-            Delete
+            {t("common.delete")}
           </Button>
           <input type="file" accept=".yaml,.yml" ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
           <Button
@@ -109,7 +109,7 @@ export default function CustomRecipeDrawer({
             loading={uploading}
             onClick={() => fileInputRef.current?.click()}
           >
-            Upload
+            {t("common.upload")}
           </Button>
           <Button
             size="sm"
@@ -119,7 +119,7 @@ export default function CustomRecipeDrawer({
             disabled={!content.trim() || loadingContent}
             onClick={handleSave}
           >
-            {saving ? "Saving..." : "Save"}
+            {saving ? t("common.saving") : t("common.save")}
           </Button>
           <IconButton size="sm" icon={X} label={t("common.close")} onClick={onClose} className="border-transparent text-muted hover:text-text hover:border-line" />
         </>

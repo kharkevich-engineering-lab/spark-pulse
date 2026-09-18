@@ -44,7 +44,7 @@ describe("NotFoundPage", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole("link", { name: /Back to Recipes/ })).toHaveAttribute("href", "/");
+    expect(screen.getByRole("link", { name: /Back to recipes/ })).toHaveAttribute("href", "/");
   });
 
   /** The footer is the hub's now — one row, the project links and the legal

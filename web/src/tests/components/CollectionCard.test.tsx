@@ -48,7 +48,7 @@ describe("CollectionCard", () => {
         onInstall={vi.fn()}
       />,
     );
-    expect(screen.getByText("No description available")).toBeInTheDocument();
+    expect(screen.getByText("No description.")).toBeInTheDocument();
   });
 
   it("omits the vendor and licence badges when the collection declares neither", () => {

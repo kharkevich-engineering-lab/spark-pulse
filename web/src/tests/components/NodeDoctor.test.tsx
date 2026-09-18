@@ -67,7 +67,7 @@ describe("NodeDoctor", () => {
     const findings = await screen.findByTestId("doctor-findings");
     expect(within(findings).getByText("docker-socket")).toBeInTheDocument();
     expect(findings).toHaveTextContent("Fixable from here");
-    expect(findings).toHaveTextContent("Needs someone on that machine");
+    expect(findings).toHaveTextContent("Needs someone on that node");
     expect(findings).toHaveTextContent("usermod -aG docker spark");
     expect(screen.getByText("2 to look at")).toBeInTheDocument();
     expect(fetchNodeDoctor).toHaveBeenCalledWith("peer");

@@ -116,16 +116,16 @@ describe("RegistryCard", () => {
   it("collapses the version list again", () => {
     render(<RegistryCard reg={registry()} versions={["1.0.0"]} {...handlers()} />);
 
-    fireEvent.click(screen.getByRole("button", { name: /1 versions/ }));
+    fireEvent.click(screen.getByRole("button", { name: /1 version/ }));
     expect(screen.getByRole("combobox")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /1 versions/ }));
+    fireEvent.click(screen.getByRole("button", { name: /1 version/ }));
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
   });
 
   it("selects a version even when no page is listening", () => {
     render(<RegistryCard reg={registry()} versions={["1.0.0"]} {...handlers()} />);
 
-    fireEvent.click(screen.getByRole("button", { name: /1 versions/ }));
+    fireEvent.click(screen.getByRole("button", { name: /1 version/ }));
     fireEvent.change(screen.getByRole("combobox"), { target: { value: "1.0.0" } });
     expect(screen.getByRole("combobox")).toHaveValue("1.0.0");
   });

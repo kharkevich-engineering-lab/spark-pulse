@@ -42,14 +42,14 @@ export default function CustomModDrawer({
     if (!mod) return;
     setSaving(true);
     try { await onSave(mod.id, { ...fileMap }); onClose(); }
-    catch (e) { onError(e instanceof Error ? e.message : "Failed to save"); }
+    catch (e) { onError(e instanceof Error ? e.message : t("customFiles.saveFailed")); }
     finally { setSaving(false); }
   }, [mod, fileMap, onSave, onClose, onError]);
 
   const handleDeleteConfirm = useCallback(async () => {
     if (!mod) return;
     try { await onDelete(mod.id); onClose(); }
-    catch (e) { onError(e instanceof Error ? e.message : "Failed to delete"); }
+    catch (e) { onError(e instanceof Error ? e.message : t("customFiles.deleteFailed")); }
     finally { setShowDelete(false); }
   }, [mod, onDelete, onClose, onError]);
 
@@ -74,10 +74,10 @@ export default function CustomModDrawer({
       actions={
         <>
           <Button size="sm" variant="danger" icon={Trash2} onClick={() => setShowDelete(true)}>
-            Delete
+            {t("common.delete")}
           </Button>
           <Button size="sm" variant="primary" icon={Save} loading={saving} onClick={handleSave}>
-            {saving ? "Saving..." : "Save"}
+            {saving ? t("common.saving") : t("common.save")}
           </Button>
           <IconButton size="sm" icon={X} label={t("common.close")} onClick={onClose} className="border-transparent text-muted hover:text-text hover:border-line" />
         </>
@@ -118,8 +118,8 @@ export default function CustomModDrawer({
                   placeholder={t("customFiles.scriptPlaceholder")}
                 />
               ) : (
-                <div className="flex items-center justify-center h-full text-text-muted text-sm">
-                  Select a file to edit
+                <div className="flex items-center justify-center h-full text-muted text-[14px]">
+                  {t("customFiles.selectFile")}
                 </div>
               )}
             </div>

@@ -1,5 +1,6 @@
 import { FlaskConical } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useT } from "@/lib/i18n";
 
 /** A small "experimental" chip, for nav entries and section headings.
  *
@@ -7,16 +8,17 @@ import { cn } from "@/lib/utils";
  * up as an error, because the feature still works as far as it has been taken.
  */
 export function ExperimentalBadge({ className, title }: { className?: string; title?: string }) {
+  const t = useT();
   return (
     <span
-      title={title ?? "Experimental: not yet verified on real hardware"}
+      title={title ?? t("experimental.tooltip")}
       className={cn(
         "inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
         "bg-warning/15 text-warning",
         className,
       )}
     >
-      exp
+      {t("experimental.chip")}
     </span>
   );
 }
@@ -53,7 +55,7 @@ export function ExperimentalNote({ text, className }: { text: string; className?
  * into a paragraph read as a disclaimer nobody finishes.
  */
 export function ExperimentalBanner({
-  title = "Experimental feature",
+  title,
   reason,
   items,
   className,
@@ -63,6 +65,7 @@ export function ExperimentalBanner({
   items?: readonly string[];
   className?: string;
 }) {
+  const t = useT();
   return (
     <div
       role="note"
@@ -73,7 +76,7 @@ export function ExperimentalBanner({
     >
       <FlaskConical size={18} className="mt-0.5 shrink-0 text-warning" />
       <div className="min-w-0">
-        <p className="text-sm font-semibold text-warning">{title}</p>
+        <p className="text-sm font-semibold text-warning">{title ?? t("experimental.feature")}</p>
         <p className="mt-1 text-sm text-text-muted">{reason}</p>
         {items && items.length > 0 && (
           <ul className="mt-2 space-y-1 text-sm text-text-muted list-disc pl-5">

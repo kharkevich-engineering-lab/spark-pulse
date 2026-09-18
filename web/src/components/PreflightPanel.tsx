@@ -19,22 +19,25 @@
  */
 
 import { AlertTriangle, CheckCircle2, Info, XCircle } from "lucide-react";
-import { useT } from "@/lib/i18n";
+import { useI18n, type Translator } from "@/lib/i18n";
 import type { PreflightCheck, PreflightReport, PreflightVerdict } from "@/lib/types";
 import { formatSize } from "@/lib/utils";
 
-/** How each verdict reads, and the tone it is shown in. */
+/** How each verdict reads, and the tone it is shown in.
+ *
+ * The three are kept apart on purpose — `blocked` and `slow` are not shades of
+ * one red — so each carries its own key and its own colour. */
 export const VERDICT_STYLE: Record<
   PreflightVerdict,
-  { label: string; className: string }
+  { labelKey: string; className: string }
 > = {
-  ready: { label: "Ready", className: "bg-success/20 text-success border-success/30" },
+  ready: { labelKey: "preflight.ready", className: "bg-success/20 text-success border-success/30" },
   slow: {
-    label: "Ready, but slow",
+    labelKey: "preflight.slow",
     className: "bg-warning/20 text-warning border-warning/30",
   },
   blocked: {
-    label: "Blocked",
+    labelKey: "preflight.blocked",
     className: "bg-danger/20 text-danger border-danger/30",
   },
 };
@@ -49,16 +52,18 @@ export function checksToShow(report: PreflightReport): PreflightCheck[] {
 }
 
 /** One line under the verdict: what it will cost, in the units time is in. */
-export function describeCost(report: PreflightReport): string {
+export function describeCost(report: PreflightReport, i18n: Translator): string {
   if (report.verdict === "blocked") {
     const nodes = new Set(report.blocking.map((c) => c.node));
-    return `${report.blocking.length} check${report.blocking.length === 1 ? "" : "s"} failed on ${[...nodes].join(", ")}`;
+    return i18n.plural("preflight.checksFailed", report.blocking.length, {
+      nodes: [...nodes].join(", "),
+    });
   }
   if (report.delaying.length === 0) return report.summary;
   const bytes = report.estimated_transfer_bytes;
-  const moved = bytes > 0 ? formatSize(bytes) : "data of unreported size";
+  const moved = bytes > 0 ? formatSize(bytes) : i18n.t("preflight.unreportedSize");
   const nodes = new Set(report.delaying.map((c) => c.node));
-  return `${moved} has to transfer to ${[...nodes].join(", ")} before this starts`;
+  return i18n.t("preflight.transferFirst", { moved, nodes: [...nodes].join(", ") });
 }
 
 /** The memory estimate, shown even when it passes.
@@ -98,7 +103,8 @@ const STATUS_TONE = {
 } as const;
 
 export default function PreflightPanel({ report }: { report: PreflightReport }) {
-  const t = useT();
+  const i18n = useI18n();
+  const { t, plural } = i18n;
   const rows = checksToShow(report);
   const memory = memoryLine(report);
   const style = VERDICT_STYLE[report.verdict];
@@ -111,16 +117,17 @@ export default function PreflightPanel({ report }: { report: PreflightReport }) 
           className={`px-2 py-0.5 rounded-full border text-xs font-medium ${style.className}`}
           data-testid="preflight-verdict"
         >
-          {style.label}
+          {t(style.labelKey)}
         </span>
         <span className="text-xs text-text-muted" data-testid="preflight-summary">
-          {describeCost(report)}
+          {describeCost(report, i18n)}
         </span>
       </div>
 
       <p className="text-xs text-text-muted">
-        {report.counts.pass} check{report.counts.pass === 1 ? "" : "s"} passed across{" "}
-        {report.nodes.length} node{report.nodes.length === 1 ? "" : "s"}
+        {plural("preflight.checksPassed", report.counts.pass, {
+          nodes: plural("preflight.nodeWord", report.nodes.length),
+        })}
         {report.nodes.length > 0 ? ` (${report.nodes.map((n) => n.label).join(", ")})` : ""}.
       </p>
 
@@ -133,7 +140,7 @@ export default function PreflightPanel({ report }: { report: PreflightReport }) 
       {rows.length === 0 ? (
         <p className="flex items-center gap-1.5 text-xs text-success">
           <CheckCircle2 size={13} className="shrink-0" />
-          Nothing to fix and nothing to download first.
+          {t("preflight.nothingToFix")}
         </p>
       ) : (
         <ul className="space-y-2" data-testid="preflight-checks">

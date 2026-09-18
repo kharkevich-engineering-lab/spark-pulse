@@ -9,10 +9,11 @@ recipe carries a vLLM `command` template and therefore pins itself to vLLM.
 */
 
 import { useEffect, useMemo, useState } from "react";
-import { useI18n } from "@/lib/i18n";
+import { useI18n, type Translator } from "@/lib/i18n";
 import { fetchEngines, fetchModels, fetchNodes, planDeployment, runPreflight } from "@/lib/api";
 import type { ClusterNode, DeployPlan, EngineSummary, PreflightReport, RecipeDetail } from "@/lib/types";
-import { AlertCircle, ChevronDown, Eye, Loader2 } from "lucide-react";
+import { AlertCircle, ChevronDown, Eye } from "lucide-react";
+import { Button, ErrorLine, Field, Input, Select } from "@/ui";
 import { formatSize } from "@/lib/utils";
 import PreflightPanel from "@/components/PreflightPanel";
 import { ExperimentalBadge, ExperimentalBanner } from "@/components/Experimental";
@@ -102,32 +103,38 @@ export function proposeParallelism(nodeCount: number, current: Parallelism): Par
 export function describeOccupancy(
   shape: Parallelism,
   nodeCount: number,
+  i18n: Translator,
 ): { fits: boolean; text: string } {
   const needed = occupancy(shape);
   const flags = `tp=${shape.tensor_parallel} pp=${shape.pipeline_parallel}`;
-  const nodeWord = (n: number) => `${n} node${n === 1 ? "" : "s"}`;
+  const nodeWord = (n: number) => i18n.plural("deployOptions.nodeWord", n);
   if (needed === nodeCount) {
-    return { fits: true, text: `${flags} occupies ${nodeWord(nodeCount)} — the nodes selected.` };
+    return {
+      fits: true,
+      text: i18n.t("deployOptions.occupancyFits", { flags, nodes: nodeWord(nodeCount) }),
+    };
   }
   if (needed > nodeCount) {
     return {
       fits: false,
-      text:
-        `${flags} does not fit ${nodeWord(nodeCount)}: it needs ${needed}. ` +
-        `This hardware has one GPU per node, so either lower the parallelism ` +
-        `or deploy across ${nodeWord(needed)}.`,
+      text: i18n.t("deployOptions.occupancyTooMany", {
+        flags,
+        nodes: nodeWord(nodeCount),
+        needed,
+        needs: nodeWord(needed),
+      }),
     };
   }
   return {
     fits: false,
-    text:
-      `${flags} only occupies ${needed} of the ${nodeWord(nodeCount)} selected. ` +
-      `One GPU per node means the world size is the node count, so the extra ` +
-      `${nodeCount - needed} would join the rendezvous with nothing to hold and ` +
-      `and vLLM refuses a --nnodes that does not divide it exactly, so this ` +
-      `would fail on every rank rather than serve on a subset. ` +
-      `Deploy on ${nodeWord(needed)}, or raise the ` +
-      `parallelism until tp*pp is ${nodeCount}.`,
+    text: i18n.t("deployOptions.occupancyTooFew", {
+      flags,
+      needed,
+      nodes: nodeWord(nodeCount),
+      spare: nodeCount - needed,
+      needs: nodeWord(needed),
+      count: nodeCount,
+    }),
   };
 }
 
@@ -188,7 +195,11 @@ export interface EngineChoice {
  * back to the one rule the frontend can apply on its own: a `command:`
  * template is written in vLLM's flags.
  */
-export function engineChoices(engines: EngineSummary[], recipe: RecipeDetail): EngineChoice[] {
+export function engineChoices(
+  engines: EngineSummary[],
+  recipe: RecipeDetail,
+  i18n: Translator,
+): EngineChoice[] {
   const support = new Map((recipe.engine_support ?? []).map((e) => [e.engine, e]));
   const hasCommand = Boolean(recipe.command && recipe.command.trim());
 
@@ -203,7 +214,7 @@ export function engineChoices(engines: EngineSummary[], recipe: RecipeDetail): E
         return {
           engine,
           supported: false,
-          reason: "no image has been published for this engine yet",
+          reason: i18n.t("deployOptions.noImagePublished"),
         };
       }
       const reported = support.get(engine.engine);
@@ -214,7 +225,7 @@ export function engineChoices(engines: EngineSummary[], recipe: RecipeDetail): E
       return {
         engine,
         supported,
-        reason: supported ? "" : "recipe carries an engine-specific command for 'vllm'",
+        reason: supported ? "" : i18n.t("deployOptions.commandPinsVllm"),
       };
     });
 }
@@ -224,12 +235,19 @@ export function engineChoices(engines: EngineSummary[], recipe: RecipeDetail): E
  * An absent image used to mean a silent multi-minute download once the deploy
  * had started; saying so here is the whole point of asking the plan.
  */
-export function describeImagePresence(plan: Pick<DeployPlan, "image_present" | "image_size_bytes">): string {
+export function describeImagePresence(
+  plan: Pick<DeployPlan, "image_present" | "image_size_bytes">,
+  i18n: Translator,
+): string {
   if (plan.image_present) {
-    return plan.image_size_bytes ? `pulled · ${formatSize(plan.image_size_bytes)}` : "pulled";
+    return plan.image_size_bytes
+      ? i18n.t("deployOptions.imagePulledSize", { size: formatSize(plan.image_size_bytes) })
+      : i18n.t("deployOptions.imagePulled");
   }
-  const size = plan.image_size_bytes ? formatSize(plan.image_size_bytes) : "several GB";
-  return `image not pulled, ${size} will download first`;
+  const size = plan.image_size_bytes
+    ? formatSize(plan.image_size_bytes)
+    : i18n.t("deployOptions.severalGb");
+  return i18n.t("deployOptions.imageMissing", { size });
 }
 
 /** What the plan says about the model being on this host, in one line.
@@ -240,13 +258,20 @@ export function describeImagePresence(plan: Pick<DeployPlan, "image_present" | "
  * blocking condition the preview stayed silent about, and the operator met it
  * as a 400 after pressing Deploy.
  */
-export function describeModelPresence(plan: Pick<DeployPlan, "model_present">): string {
-  return plan.model_present ? "downloaded" : "not downloaded — Deploy will offer to fetch it";
+export function describeModelPresence(
+  plan: Pick<DeployPlan, "model_present">,
+  i18n: Translator,
+): string {
+  return i18n.t(plan.model_present ? "deployOptions.modelHere" : "deployOptions.modelMissing");
 }
 
 /** Engines that may actually run this recipe. */
-export function eligibleEngines(engines: EngineSummary[], recipe: RecipeDetail): EngineSummary[] {
-  return engineChoices(engines, recipe)
+export function eligibleEngines(
+  engines: EngineSummary[],
+  recipe: RecipeDetail,
+  i18n: Translator,
+): EngineSummary[] {
+  return engineChoices(engines, recipe, i18n)
     .filter((c) => c.supported)
     .map((c) => c.engine);
 }
@@ -260,7 +285,8 @@ export default function DeployOptions({
   value: DeployOptionsValue;
   onChange: (next: DeployOptionsValue) => void;
 }) {
-  const { t } = useI18n();
+  const i18n = useI18n();
+  const { t, plural } = i18n;
   const [engines, setEngines] = useState<EngineSummary[]>([]);
   const [models, setModels] = useState<string[]>([]);
   const [nodes, setNodes] = useState<ClusterNode[]>([]);
@@ -315,7 +341,7 @@ export default function DeployOptions({
     pipeline_parallel: value.pipeline_parallel ?? declared.pipeline_parallel,
   };
 
-  const choices = useMemo(() => engineChoices(engines, recipe), [engines, recipe]);
+  const choices = useMemo(() => engineChoices(engines, recipe, i18n), [engines, recipe, i18n]);
   const available = useMemo(() => choices.filter((c) => c.supported), [choices]);
   const unavailable = useMemo(() => choices.filter((c) => !c.supported), [choices]);
 
@@ -328,7 +354,7 @@ export default function DeployOptions({
   const worldSize = 1 + otherNodes.filter((n) => selectedAddresses.has(n.address)).length;
   // Live, so the mismatch is on screen before Preview is pressed rather than
   // arriving as a 400 afterwards. The server is still the one that decides.
-  const fit = describeOccupancy(shape, worldSize);
+  const fit = describeOccupancy(shape, worldSize, i18n);
 
   const toggleNode = (address: string) => {
     const next = new Set(selectedAddresses);
@@ -388,7 +414,7 @@ export default function DeployOptions({
       const result = await planDeployment(body);
       setPlan(result);
     } catch (e) {
-      setPlanError(e instanceof Error ? e.message : "Preview failed");
+      setPlanError(e instanceof Error ? e.message : t("deployOptions.previewFailed"));
       setPlanning(false);
       return;
     }
@@ -403,133 +429,134 @@ export default function DeployOptions({
       setPlanning(false);
     }
   };
-
   return (
     <div className="px-6 pt-5">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 text-sm font-medium text-text-muted hover:text-text transition-colors"
+        className="flex items-center gap-2 text-[14px] font-medium text-muted hover:text-text transition-colors"
         aria-expanded={open}
       >
         <ChevronDown size={16} className={`transition-transform ${open ? "rotate-180" : ""}`} />
-        Deploy options
+        {t("deployOptions.heading")}
       </button>
 
       {open && (
-        <div className="mt-4 space-y-4 p-4 rounded-sm bg-bg border border-border">
-          <div>
-            <label htmlFor="deploy-engine" className="block text-sm font-medium mb-1">
-              Engine
-            </label>
-            <select
-              id="deploy-engine"
-              value={value.engine ?? ""}
-              onChange={(e) => onChange({ ...value, engine: e.target.value || undefined })}
-              className="w-full px-3 py-2 rounded-md bg-surface border border-border focus:border-primary focus:outline-none font-mono text-sm"
-            >
-              <option value="">{t("deployOptions.recipeDefault")}</option>
-              {available.map(({ engine }) => (
-                <option key={engine.key} value={engine.key}>
-                  {engineLabel(engine)}
-                </option>
-              ))}
-            </select>
+        <div className="mt-4 space-y-5 p-4 rounded-sm bg-bg border border-line">
+          {/* Two columns on a laptop, one on a phone: every field here is a
+              single control, so a wide window fits two side by side and a
+              390px one fits exactly one. */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Field label={t("deployOptions.engine")}>
+              {(control) => (
+                <Select
+                  {...control}
+                  data-testid="deploy-engine"
+                  value={value.engine ?? ""}
+                  onChange={(e) => onChange({ ...value, engine: e.target.value || undefined })}
+                  className="font-mono text-[13px]"
+                >
+                  <option value="">{t("deployOptions.recipeDefault")}</option>
+                  {available.map(({ engine }) => (
+                    <option key={engine.key} value={engine.key}>
+                      {engineLabel(engine)}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+
+            <Field label={t("deployOptions.modelOverride")}>
+              {(control) => (
+                <>
+                  <Input
+                    {...control}
+                    mono
+                    list="deploy-model-options"
+                    type="text"
+                    data-testid="deploy-model"
+                    value={value.model ?? ""}
+                    placeholder={recipe.model || t("deployOptions.modelPlaceholder")}
+                    onChange={(e) => onChange({ ...value, model: e.target.value || undefined })}
+                  />
+                  <datalist id="deploy-model-options">
+                    {models.map((id) => (
+                      <option key={id} value={id} />
+                    ))}
+                  </datalist>
+                </>
+              )}
+            </Field>
 
             {unavailable.length > 0 && (
-              <ul className="mt-2 space-y-1" data-testid="engines-unavailable">
+              <ul className="md:col-span-2 space-y-1" data-testid="engines-unavailable">
                 {unavailable.map(({ engine, reason }) => (
-                  <li
-                    key={engine.key}
-                    className="flex items-start gap-1.5 text-xs text-text-muted"
-                  >
+                  <li key={engine.key} className="flex items-start gap-1.5 text-[13px] text-muted">
                     <AlertCircle size={13} className="shrink-0 mt-0.5" />
                     <span>
-                      <span className="font-mono">{engine.key}</span> unavailable
-                      {reason ? `: ${reason}` : ""}
+                      {reason
+                        ? t("deployOptions.unavailableWhy", { engine: engine.key, reason })
+                        : t("deployOptions.unavailable", { engine: engine.key })}
                     </span>
                   </li>
                 ))}
               </ul>
             )}
-          </div>
 
-          <div>
-            <label htmlFor="deploy-model" className="block text-sm font-medium mb-1">
-              Model override
-            </label>
-            <input
-              id="deploy-model"
-              list="deploy-model-options"
-              type="text"
-              value={value.model ?? ""}
-              placeholder={recipe.model || "leave empty for the recipe's model"}
-              onChange={(e) => onChange({ ...value, model: e.target.value || undefined })}
-              className="w-full px-3 py-2 rounded-md bg-surface border border-border focus:border-primary focus:outline-none font-mono text-sm"
-            />
-            <datalist id="deploy-model-options">
-              {models.map((id) => (
-                <option key={id} value={id} />
-              ))}
-            </datalist>
-          </div>
-
-          <div>
-            <label htmlFor="deploy-extra-args" className="block text-sm font-medium mb-1">
-              Extra args
-            </label>
-            <input
-              id="deploy-extra-args"
-              type="text"
-              value={extraArgsText}
-              placeholder={t("deployOptions.extraArgsPlaceholder")}
-              onChange={(e) => {
-                setExtraArgsText(e.target.value);
-                onChange({ ...value, extra_args: parseExtraArgs(e.target.value) });
-              }}
-              className="w-full px-3 py-2 rounded-md bg-surface border border-border focus:border-primary focus:outline-none font-mono text-sm"
-            />
-            <p className="text-xs text-text-muted mt-1">{t("deployOptions.extraArgsNote")}</p>
-          </div>
-
-          <div data-testid="deploy-parallelism">
-            <span className="block text-sm font-medium mb-1">{t("deployOptions.parallelism")}</span>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label
-                  htmlFor="deploy-tensor-parallel"
-                  className="block text-xs text-text-muted mb-1"
-                >
-                  Tensor parallel
-                </label>
-                <input
-                  id="deploy-tensor-parallel"
-                  type="number"
-                  min={1}
-                  value={tpText}
-                  onChange={(e) => editParallelism("tensor_parallel", e.target.value)}
-                  className="w-full px-3 py-2 rounded-md bg-surface border border-border focus:border-primary focus:outline-none font-mono text-sm"
+            <Field
+              className="md:col-span-2"
+              label={t("deployOptions.extraArgs")}
+              hint={t("deployOptions.extraArgsNote")}
+            >
+              {(control) => (
+                <Input
+                  {...control}
+                  mono
+                  type="text"
+                  data-testid="deploy-extra-args"
+                  value={extraArgsText}
+                  placeholder={t("deployOptions.extraArgsPlaceholder")}
+                  onChange={(e) => {
+                    setExtraArgsText(e.target.value);
+                    onChange({ ...value, extra_args: parseExtraArgs(e.target.value) });
+                  }}
                 />
-              </div>
-              <div>
-                <label
-                  htmlFor="deploy-pipeline-parallel"
-                  className="block text-xs text-text-muted mb-1"
-                >
-                  Pipeline parallel
-                </label>
-                <input
-                  id="deploy-pipeline-parallel"
-                  type="number"
-                  min={1}
-                  value={ppText}
-                  onChange={(e) => editParallelism("pipeline_parallel", e.target.value)}
-                  className="w-full px-3 py-2 rounded-md bg-surface border border-border focus:border-primary focus:outline-none font-mono text-sm"
-                />
-              </div>
+              )}
+            </Field>
+          </div>
+
+          <div data-testid="deploy-parallelism" className="space-y-2">
+            <span className="block text-[13px] font-medium">{t("deployOptions.parallelism")}</span>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Field label={t("deployOptions.tensorParallel")}>
+                {(control) => (
+                  <Input
+                    {...control}
+                    mono
+                    type="number"
+                    min={1}
+                    data-testid="deploy-tensor-parallel"
+                    value={tpText}
+                    onChange={(e) => editParallelism("tensor_parallel", e.target.value)}
+                  />
+                )}
+              </Field>
+              <Field label={t("deployOptions.pipelineParallel")}>
+                {(control) => (
+                  <Input
+                    {...control}
+                    mono
+                    type="number"
+                    min={1}
+                    data-testid="deploy-pipeline-parallel"
+                    value={ppText}
+                    onChange={(e) => editParallelism("pipeline_parallel", e.target.value)}
+                  />
+                )}
+              </Field>
             </div>
             <p
-              className={`text-xs mt-1 ${fit.fits ? "text-text-muted" : "text-warning"}`}
+              className={`text-[13px] leading-snug ${fit.fits ? "text-muted" : "text-warn"}`}
               data-testid="deploy-occupancy"
             >
               {fit.text}
@@ -537,41 +564,50 @@ export default function DeployOptions({
           </div>
 
           {nodes.length >= 2 && (
-            <div data-testid="deploy-node-selector">
-              <label className="flex items-center gap-2 text-sm font-medium mb-1">
-                Nodes
+            <div data-testid="deploy-node-selector" className="space-y-2">
+              <span className="flex items-center gap-2 text-[13px] font-medium">
+                {t("deployOptions.nodes")}
                 <ExperimentalBadge title={MULTI_NODE_BADGE_TITLE} />
-              </label>
+              </span>
+              {/* A node is a name and an address, which together are wider
+                  than a phone: each row wraps rather than clipping. */}
               <div
-                className="space-y-1.5 p-2 rounded-md bg-surface border border-border"
+                className="flex flex-col gap-2 p-2 rounded-sm bg-surface border border-line"
                 data-testid="deploy-nodes"
               >
                 {controlNode && (
-                  <label className="flex items-center gap-2 text-sm opacity-70">
-                    <input type="checkbox" checked disabled className="shrink-0" />
-                    <span>
-                      {controlNode.name}{" "}
-                      <span className="font-mono text-text-muted">{controlNode.address}</span>{" "}
-                      · control node
+                  <label className="flex items-start gap-2 text-[14px] opacity-70">
+                    <input type="checkbox" checked disabled className="shrink-0 mt-1" />
+                    <span className="flex flex-wrap items-baseline gap-x-2 min-w-0">
+                      <span className="break-words">{controlNode.name}</span>
+                      <span className="font-mono text-[13px] text-muted break-all">
+                        {controlNode.address}
+                      </span>
+                      <span className="text-[13px] text-muted">
+                        {t("deployOptions.controlNode")}
+                      </span>
                     </span>
                   </label>
                 )}
                 {otherNodes.map((node) => (
-                  <label key={node.id} className="flex items-center gap-2 text-sm">
+                  <label key={node.id} className="flex items-start gap-2 text-[14px]">
                     <input
                       type="checkbox"
-                      className="shrink-0"
+                      className="shrink-0 mt-1"
                       checked={selectedAddresses.has(node.address)}
                       onChange={() => toggleNode(node.address)}
                     />
-                    <span>
-                      {node.name} <span className="font-mono text-text-muted">{node.address}</span>
+                    <span className="flex flex-wrap items-baseline gap-x-2 min-w-0">
+                      <span className="break-words">{node.name}</span>
+                      <span className="font-mono text-[13px] text-muted break-all">
+                        {node.address}
+                      </span>
                     </span>
                   </label>
                 ))}
               </div>
-              <p className="text-xs text-text-muted mt-1" data-testid="deploy-world-size">
-                {worldSize} node{worldSize === 1 ? "" : "s"}, ranks 0-{worldSize - 1}
+              <p className="text-[13px] text-muted" data-testid="deploy-world-size">
+                {plural("deployOptions.worldSize", worldSize, { last: worldSize - 1 })}
               </p>
               {worldSize > 1 && (
                 <ExperimentalBanner
@@ -584,64 +620,56 @@ export default function DeployOptions({
             </div>
           )}
 
-          <button
-            type="button"
-            onClick={preview}
-            disabled={planning}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-sm border border-border hover:border-primary/50 text-sm font-medium transition-colors disabled:opacity-50"
-          >
-            {planning ? <Loader2 size={14} className="animate-spin" /> : <Eye size={14} />}
-            Preview
-          </button>
+          <Button size="sm" icon={Eye} loading={planning} onClick={preview}>
+            {t("deployOptions.preview")}
+          </Button>
 
-          {planError && (
-            <div
-              className="flex items-start gap-2 p-3 rounded-sm bg-danger/10 border border-danger/30 text-danger text-sm"
-              data-testid="deploy-plan-error"
-            >
-              <AlertCircle size={16} className="shrink-0 mt-0.5" />
-              <span>{planError}</span>
-            </div>
-          )}
+          {planError && <ErrorLine data-testid="deploy-plan-error">{planError}</ErrorLine>}
 
           {plan && (
-            <div className="space-y-3 text-sm" data-testid="deploy-plan">
-              <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1">
-                <dt className="text-text-muted">{t("deployOptions.engine")}</dt>
-                <dd className="font-mono truncate">
-                  {plan.engine}/{plan.variant}
-                </dd>
-                <dt className="text-text-muted">{t("deployOptions.image")}</dt>
-                <dd className="font-mono truncate">{plan.image_ref}</dd>
-                <dt className="text-text-muted">{t("deployOptions.onThisHost")}</dt>
-                <dd className={plan.image_present ? "font-mono" : "font-mono text-warning"}>
-                  {describeImagePresence(plan)}
-                </dd>
-                <dt className="text-text-muted">{t("deployOptions.model")}</dt>
-                <dd className="font-mono truncate">{plan.model || "(from the command)"}</dd>
-                {plan.model && (
-                  <>
-                    <dt className="text-text-muted">{t("deployOptions.inCatalogue")}</dt>
-                    <dd
-                      className={plan.model_present ? "font-mono" : "font-mono text-warning"}
-                      data-testid="deploy-plan-model-presence"
-                    >
-                      {describeModelPresence(plan)}
-                    </dd>
-                  </>
-                )}
-                <dt className="text-text-muted">{t("deployOptions.port")}</dt>
-                <dd className="font-mono">{plan.port}</dd>
-                {plan.mods.length > 0 && (
-                  <>
-                    <dt className="text-text-muted">{t("deployOptions.mods")}</dt>
-                    <dd className="font-mono truncate">{plan.mods.join(", ")}</dd>
-                  </>
-                )}
-              </dl>
+            <div className="space-y-3 text-[14px]" data-testid="deploy-plan">
+              {/* References and commands are long and unbreakable, so the plan
+                  scrolls inside its own box rather than widening the drawer. */}
+              <div className="overflow-x-auto">
+                <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 min-w-[18rem]">
+                  <dt className="text-muted">{t("deployOptions.engine")}</dt>
+                  <dd className="font-mono">
+                    {plan.engine}/{plan.variant}
+                  </dd>
+                  <dt className="text-muted">{t("deployOptions.image")}</dt>
+                  <dd className="font-mono break-all">{plan.image_ref}</dd>
+                  <dt className="text-muted">{t("deployOptions.onThisHost")}</dt>
+                  <dd className={plan.image_present ? "font-mono" : "font-mono text-warn"}>
+                    {describeImagePresence(plan, i18n)}
+                  </dd>
+                  <dt className="text-muted">{t("deployOptions.model")}</dt>
+                  <dd className="font-mono break-all">
+                    {plan.model || t("deployOptions.fromCommand")}
+                  </dd>
+                  {plan.model && (
+                    <>
+                      <dt className="text-muted">{t("deployOptions.inCatalogue")}</dt>
+                      <dd
+                        className={plan.model_present ? "font-mono" : "font-mono text-warn"}
+                        data-testid="deploy-plan-model-presence"
+                      >
+                        {describeModelPresence(plan, i18n)}
+                      </dd>
+                    </>
+                  )}
+                  <dt className="text-muted">{t("deployOptions.port")}</dt>
+                  <dd className="font-mono">{plan.port}</dd>
+                  {plan.mods.length > 0 && (
+                    <>
+                      <dt className="text-muted">{t("deployOptions.mods")}</dt>
+                      <dd className="font-mono break-all">{plan.mods.join(", ")}</dd>
+                    </>
+                  )}
+                </dl>
+              </div>
 
               {plan.warnings.map((warning) => (
-                <p key={warning} className="text-xs text-warning">
+                <p key={warning} className="text-[13px] text-warn">
                   {warning}
                 </p>
               ))}
@@ -649,19 +677,27 @@ export default function DeployOptions({
               {preflight && <PreflightPanel report={preflight} />}
 
               <div>
-                <p className="text-xs uppercase tracking-wide text-text-muted mb-1">{t("deployOptions.command")}</p>
-                <pre className="p-3 rounded-md bg-surface border border-border text-xs font-mono overflow-x-auto whitespace-pre-wrap">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted mb-1">
+                  {t("deployOptions.command")}
+                </p>
+                <pre className="p-3 rounded-sm bg-surface border border-line text-[12.5px] font-mono overflow-x-auto whitespace-pre-wrap break-words">
                   {plan.launch_command}
                 </pre>
               </div>
 
               <div>
-                <p className="text-xs uppercase tracking-wide text-text-muted mb-1">{t("deployOptions.container")}</p>
-                <p className="font-mono text-xs text-text-muted">
-                  {plan.container.privileged ? "privileged" : "unprivileged"}
-                  {plan.container.network_host ? " · network host" : ""}
-                  {plan.container.ipc_host ? " · ipc host" : ""}
-                  {` · shm ${plan.container.shm_size_gb}g`}
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted mb-1">
+                  {t("deployOptions.container")}
+                </p>
+                <p className="font-mono text-[13px] text-muted">
+                  {t(
+                    plan.container.privileged
+                      ? "deployOptions.privileged"
+                      : "deployOptions.unprivileged",
+                  )}
+                  {plan.container.network_host ? ` · ${t("deployOptions.networkHost")}` : ""}
+                  {plan.container.ipc_host ? ` · ${t("deployOptions.ipcHost")}` : ""}
+                  {` · ${t("deployOptions.shm", { gb: plan.container.shm_size_gb })}`}
                 </p>
               </div>
             </div>

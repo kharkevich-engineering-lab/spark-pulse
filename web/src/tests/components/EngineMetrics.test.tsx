@@ -11,6 +11,11 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import EngineMetricsPanel, { engineSeries } from "@/components/EngineMetrics";
+import { translatorFor } from "@/lib/i18n";
+
+/** The series name themselves through the dictionary, so the helper takes a
+ *  translator; these assertions quote the English one. */
+const T = translatorFor("en").t;
 import type { EngineMetricSample, EngineMetricsWindow } from "@/lib/types";
 
 const T0 = 1_700_000_000;
@@ -246,7 +251,7 @@ describe("a counter reset", () => {
   });
 
   it("breaks the rate line at the reset", () => {
-    const [outputs] = engineSeries(reset).filter((s) => s.label === "Output tokens/s");
+    const [outputs] = engineSeries(reset, T).filter((s) => s.label === "Output tokens/s");
 
     // The reset sample carries no rate, so it is not a point at all; the
     // series declares the instant so the line is cut rather than bridged.
@@ -257,13 +262,13 @@ describe("a counter reset", () => {
 
 describe("engineSeries", () => {
   it("puts the timestamps in milliseconds, because the chart's axis is", () => {
-    const [running] = engineSeries(window());
+    const [running] = engineSeries(window(), T);
 
     expect(running.samples[0].t).toBe(T0 * 1000);
   });
 
   it("scales the KV fraction to a percentage and leaves the counts alone", () => {
-    const series = engineSeries(window());
+    const series = engineSeries(window(), T);
     const kv = series.find((s) => s.label === "KV cache used")!;
     const running = series.find((s) => s.label === "Requests running")!;
 
@@ -279,6 +284,7 @@ describe("engineSeries", () => {
           sample({ t: T0 + 5, waiting: null, kv_fraction: null }),
         ],
       }),
+      T,
     );
 
     expect(series.map((s) => s.label)).not.toContain("Queue depth");
@@ -291,6 +297,7 @@ describe("engineSeries", () => {
       window({
         samples: [sample({ waiting: 0 }), sample({ t: T0 + 5, waiting: 0 })],
       }),
+      T,
     );
 
     expect(series.find((s) => s.label === "Queue depth")!.samples).toHaveLength(2);

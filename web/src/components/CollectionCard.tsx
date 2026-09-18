@@ -3,6 +3,7 @@
 import { Package } from "lucide-react";
 import BaseCard from "./BaseCard";
 import type { OciCollection } from "@/lib/types";
+import { useI18n } from "@/lib/i18n";
 
 export default function CollectionCard({
   collection,
@@ -13,6 +14,7 @@ export default function CollectionCard({
   onView: () => void;
   onInstall: () => void;
 }) {
+  const { t, plural } = useI18n();
   return (
     <BaseCard
       icon={
@@ -22,11 +24,11 @@ export default function CollectionCard({
         </div>
       }
       title={collection.name}
-      description={collection.description || "No description available"}
+      description={collection.description || t("oci.noDescription")}
       badges={
         <>
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-tag-bg text-text-muted">
-            {collection.recipe_count} recipes
+            {plural("oci.recipeCount", collection.recipe_count)}
           </span>
           {collection.vendor && (
             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-tag-bg text-text-muted">
