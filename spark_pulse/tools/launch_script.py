@@ -228,10 +228,9 @@ class LaunchScriptManager:
     def resolve(self, path: str) -> Path:
         """Resolve a launch script path.
 
-        Absolute only. A bare name used to be looked up in the ``examples/``
-        directory of a spark-vllm-docker checkout; there is no checkout, and
-        resolving a relative name against the process's working directory
-        would read whatever the server happened to be started from.
+        Absolute only: resolving a relative name against the process's
+        working directory would read whatever the server happened to be
+        started from.
         """
         p = Path(path)
         if not p.is_absolute():

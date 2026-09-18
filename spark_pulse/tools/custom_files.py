@@ -6,12 +6,6 @@ and ``~/.config/spark-pulse/custom-mods/``, and are read from there directly:
 source and :mod:`spark_pulse.tools.mods` lists the mods, both under a
 ``custom-`` id prefix.
 
-They used to be reachable only through symlinks planted in a
-spark-vllm-docker checkout (``recipes/custom-*``, ``mods/custom-*``), so that
-upstream's ``run-recipe.sh`` could see them. The runner, the symlinks and the
-checkout are all gone; the operator's config directory is the only place these
-files live.
-
 Real-only: the router imports this module directly and there is no simulated
 behaviour here — only files under the operator's config directory.
 """

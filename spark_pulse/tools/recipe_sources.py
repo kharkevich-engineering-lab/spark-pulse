@@ -14,15 +14,9 @@ Sources, in listing order:
 * ``~/.config/spark-pulse/recipes``, where OCI collections install
   (ids prefixed ``oci-``).
 
-Those three are the whole list, and every one of them is ours. There were two
-more once, both reading a spark-vllm-docker checkout — its ``recipes/``
-directory, and an ``imported/recipes`` copy of it — with the custom and OCI
-directories reachable only through symlinks planted in that checkout so
-upstream's runner could see them. The runner, the symlinks and the checkout
-have all gone; the recipe *format* is still upstream's, which is the only
-thing the two projects share. Ids are exactly what the symlinks produced, so
-recipe ids, saved customizations and existing deployment records all keep
-resolving.
+Those three are the whole list. The recipe *format* is ``spark-vllm-docker``'s,
+which is the one thing the two projects share; the id prefixes are part of
+the id, so saved customizations and deployment records resolve by them.
 
 Every payload carries a ``source`` label so the UI can tell them apart.
 """

@@ -112,10 +112,8 @@ def _mod_info(mod_dir: Path, include_script: bool = False) -> dict[str, Any]:
 def list_mods() -> list[dict[str, Any]]:
     """The operator's own mods, under ``custom-`` ids.
 
-    One directory: ``~/.config/spark-pulse/custom-mods``. Mods used to be read
-    out of a spark-vllm-docker checkout as well, with the operator's own
-    reachable only through a ``mods/custom-x`` symlink planted there. The
-    checkout is gone; the ids it minted are what recipes name, so they stayed.
+    One directory: ``~/.config/spark-pulse/custom-mods``; the ``custom-``
+    prefix is part of the id a recipe names.
     """
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
