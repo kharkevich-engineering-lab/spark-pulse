@@ -57,7 +57,12 @@
   "a11y": {
     "openMenu": "Open navigation menu",
     "closeMenu": "Close navigation menu",
-    "logout": "Logout"
+    "logout": "Logout",
+    "primaryNav": "Primary",
+    "menu": "Menu",
+    "home": "Spark Pulse home",
+    "theme": "Colour theme: {mode}",
+    "language": "Language: {language}"
   },
   "nav": {
     "benchmarking": "Benchmarking",
@@ -70,20 +75,26 @@
     "monitoring": "Monitoring",
     "oci": "OCI Registry",
     "recipes": "Recipes & Mods",
-    "settings": "Settings"
+    "settings": "Settings",
+    "deploy": "Deploy",
+    "runs": "Runs",
+    "fleet": "Fleet",
+    "library": "Library"
   },
   "brand": {
     "product": "Spark Pulse",
     "company": "Kharkevich Engineering Lab",
     "github": "GitHub",
-    "pypi": "PyPI"
+    "pypi": "PyPI",
+    "tagline": "A control plane for DGX Spark."
   },
   "login": {
     "prompt": "Sign in to continue",
-    "signIn": "Sign In"
+    "signIn": "Sign In",
+    "heading": "Sign in."
   },
   "notFound": {
-    "heading": "This page does not exist",
+    "heading": "Not here.",
     "body": "Spark Pulse has no page at this address. If you followed a link from somewhere inside the application, the route it pointed at has been renamed or removed.",
     "home": "Back to Recipes"
   },
@@ -117,7 +128,8 @@
     "confirmAllBody": "This will clean ALL caches. This cannot be undone.",
     "confirmOneTitle": "Clean Cache",
     "confirmOneBody": "Clean cache \"{name}\"? This cannot be undone.",
-    "failed": "Failed"
+    "failed": "Failed",
+    "heading": "Caches."
   },
   "errorBoundary": {
     "heading": "Something went wrong",
@@ -187,7 +199,8 @@
     "toggleLabel": "Enable or disable {engine}",
     "unmanaged": "not from an index",
     "unpublished": "no image published",
-    "verifiedCount": "verified on hardware {count} time(s)"
+    "verifiedCount": "verified on hardware {count} time(s)",
+    "heading": "Engines and images."
   },
   "preflight": {
     "label": "Pre-flight",
@@ -206,7 +219,8 @@
     "colPlacement": "Placement",
     "colEngine": "Engine",
     "colStatus": "Status",
-    "experimental": "Multi-node is still experimental."
+    "experimental": "Multi-node is still experimental.",
+    "heading": "The machines."
   },
   "inference": {
     "title": "Inference",
@@ -231,7 +245,8 @@
     "cancelBody": "Cancel \"{name}\" before it starts?",
     "stopBody": "Stop \"{name}\"? This will terminate the running process.",
     "benchmarkOn": "Run a benchmark on \"{name}\"? This will measure throughput, latency, and memory usage.",
-    "benchmarkConfirm": "Run"
+    "benchmarkConfirm": "Run",
+    "heading": "What is serving."
   },
   "monitoring": {
     "title": "Monitoring",
@@ -269,7 +284,8 @@
     "killOnNode": "It is running on {node}.",
     "noProcesses": "No GPU processes.",
     "tracked": "started here",
-    "kill": "Kill"
+    "kill": "Kill",
+    "heading": "What they are doing."
   },
   "recipes": {
     "assets": "Assets",
@@ -331,7 +347,8 @@
     "uninstallBody": "{name} is removed from disk. Reinstall it from the OCI Registry page if you need it again.",
     "uninstallFailed": "Could not uninstall {name}",
     "uninstallRecipe": "Uninstall {name}",
-    "uninstallRecipeTitle": "Uninstall this recipe"
+    "uninstallRecipeTitle": "Uninstall this recipe",
+    "heading": "Recipes and mods."
   },
   "recipeCard": {
     "running": "Running",
@@ -676,7 +693,8 @@
     "workerThreads": "Worker threads",
     "workerThreadsHelp": "Blocking work is offloaded here rather than run on the event loop.",
     "agentAutoUpdate": "Automatically update agents",
-    "agentAutoUpdateHelp": "Keep each node's agent on the version this control plane ships. A peer running an older binary is updated over its own stream, no SSH. On by default."
+    "agentAutoUpdateHelp": "Keep each node's agent on the version this control plane ships. A peer running an older binary is updated over its own stream, no SSH. On by default.",
+    "heading": "Settings."
   },
   "models": {
     "title": "Models",
@@ -743,7 +761,8 @@
     "replicateConfirm": "Replicate",
     "replicateVerified": "verified",
     "replicateSkipped": "already verified — skipped",
-    "replicateNodeFailed": "failed"
+    "replicateNodeFailed": "failed",
+    "heading": "What is on disk."
   },
   "mcp": {
     "title": "MCP Server",
@@ -770,7 +789,8 @@
     "python": "Python client",
     "curl": "curl — quick test",
     "addToYour": "Add to your",
-    "toolsNote": "These are what MCP would expose. None of them can be called while it is disabled."
+    "toolsNote": "These are what MCP would expose. None of them can be called while it is disabled.",
+    "heading": "MCP."
   },
   "benchmarking": {
     "title": "Benchmarking",
@@ -809,7 +829,8 @@
     "delete": "Delete this run",
     "deleteTitle": "Delete benchmark run?",
     "deleteMessage": "\"{name}\" and its measurements are removed for good. Nothing else changes.",
-    "deleteFailed": "Failed to delete the benchmark"
+    "deleteFailed": "Failed to delete the benchmark",
+    "heading": "Benchmarks."
   },
   "oci": {
     "noCollections": "No collections found",
@@ -843,7 +864,7 @@
     "uninstallFailed": "Uninstall Failed",
     "unknownError": "Unknown error",
     "title": "OCI Recipe Registry",
-    "subtitle": "Browse, install, and update recipe collections from OCI registries",
+    "subtitle": "Browse, install and update recipe collections from OCI registries.",
     "applyAll": "Apply All",
     "installAllRecipes": "Install All Recipes",
     "noRecipesInCollection": "No recipes found for this collection",
@@ -867,7 +888,8 @@
     "registryUpdateFailed": "Failed to update registry",
     "uninstallConfirm": "Remove {name} from this control plane? The collection stays in its registry.",
     "removeRegistry": "Forget registry",
-    "removeRegistryConfirm": "Forget {name}? Collections already installed from it stay where they are."
+    "removeRegistryConfirm": "Forget {name}? Collections already installed from it stay where they are.",
+    "heading": "Recipe registries."
   },
   "fabric": {
     "heading": "ConnectX fabric",

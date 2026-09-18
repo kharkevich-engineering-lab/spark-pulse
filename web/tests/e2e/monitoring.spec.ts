@@ -26,7 +26,7 @@ import {
 test("asks every node, and says which one runs the control plane", async ({ page }) => {
   await gotoPage(page, "/monitoring");
 
-  await expect(page.getByRole("heading", { name: "Monitoring", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "What they are doing.", exact: true })).toBeVisible();
   // The registry's two Sparks, each with its own section.
   await expect(page.getByRole("heading", { name: "spark-01" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "spark-02" })).toBeVisible();
@@ -82,7 +82,7 @@ test("renders host CPU and disk without a GPU at all", async ({ page }) => {
   });
   await gotoPage(page, "/monitoring");
 
-  await expect(page.getByRole("heading", { name: "Monitoring", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "What they are doing.", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "CPU Memory" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "/", exact: true })).toBeVisible();
   await expect(page.getByText("64.9%", { exact: true })).toBeVisible();

@@ -176,17 +176,19 @@ function ApplyDialog({ plan, onClose, onApplied }: ApplyDialogProps) {
                   <summary className="cursor-pointer text-sm font-medium">
                     {t("fabric.showPlan", { name: n.name })}
                   </summary>
-                  <table className="mt-2 w-full text-xs">
-                    <tbody>
-                      {n.assignments.map((a) => (
-                        <tr key={a.netdev}>
-                          <td className="py-0.5 pr-3 font-mono">{a.netdev}</td>
-                          <td className="py-0.5 pr-3 font-mono">{a.cidr || "—"}</td>
-                          <td className="py-0.5 font-mono text-text-muted">MTU {a.mtu}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <div className="mt-2 overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <tbody>
+                        {n.assignments.map((a) => (
+                          <tr key={a.netdev}>
+                            <td className="py-0.5 pr-3 font-mono">{a.netdev}</td>
+                            <td className="py-0.5 pr-3 font-mono">{a.cidr || "—"}</td>
+                            <td className="py-0.5 font-mono text-text-muted">MTU {a.mtu}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </details>
               ))}
 

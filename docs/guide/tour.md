@@ -2,6 +2,14 @@
 
 Every screenshot here comes out of simulation mode, captured by `web/scripts/capture-screenshots.mjs` against a simulated two-node cluster. Re-run it and you get these images again — a page that changes and a screenshot that does not is documentation that lies.
 
+## The shell
+
+One sticky header carries everything: the brand and the running version on the left, five groups in the middle, and the language, theme and — when auth is on — who you are and the way out on the right. The groups are **Deploy**, **Runs**, **Fleet**, **Library** and **Settings**; the routes are unchanged, and a group is marked for any page it covers, so `/monitoring` lights up Fleet rather than nothing.
+
+Under 900px the groups fold into a menu button. The menu opens beneath the header — it never covers the page — closes on Escape or on a choice, and carries the same language, theme and sign-out controls, which is why signing out now works on a phone.
+
+![Runs at phone width](../assets/screenshots/mobile-runs.png)
+
 ## Recipes & Mods
 
 ![Recipes and mods](../assets/screenshots/recipes.png)
@@ -10,9 +18,9 @@ A recipe is a model, an engine and its arguments in one file. The card says whic
 
 **Custom mode** switches the page to what you wrote yourself: your own recipes and mods, with an editor and a delete on each card rather than buried inside a drawer.
 
-## Inference
+## Runs
 
-![The Inference page with a deployment expanded](../assets/screenshots/jobs.png)
+![The Runs page with a deployment expanded](../assets/screenshots/jobs.png)
 
 What is running, and what each one is doing. A row carries the engine, the port, health, lifecycle status and — while a change is being applied — a second chip saying *in progress* or *deleting*, because a deployment being torn down is still running until a node says otherwise.
 

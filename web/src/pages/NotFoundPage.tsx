@@ -12,6 +12,7 @@ import { Home } from "lucide-react";
 import { PulseIcon } from "@/components/BrandIcons";
 import { useT } from "@/lib/i18n";
 import { BrandFooter } from "@/components/BrandFooter";
+import { PageHeader } from "@/ui";
 
 export default function NotFoundPage() {
   const t = useT();
@@ -22,9 +23,12 @@ export default function NotFoundPage() {
           <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
             <PulseIcon className="text-blue2" size={32} />
           </div>
-          <p className="text-5xl font-bold text-text">404</p>
-          <h1 className="mt-2 text-xl font-semibold">{t("notFound.heading")}</h1>
-          <p className="mt-2 max-w-md text-sm text-text-muted">{t("notFound.body")}</p>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-brand-accent">404</p>
+          <PageHeader
+            title={t("notFound.heading")}
+            className="mt-2 mb-0 min-[900px]:grid-cols-1 justify-items-center"
+          />
+          <p className="mt-3 max-w-md text-[15px] text-muted">{t("notFound.body")}</p>
           <Link
             to="/"
             className="mt-6 inline-flex items-center gap-2 px-[18px] py-[11px] rounded-sm bg-blue-cta hover:bg-primary-hover text-white font-semibold text-[14px] transition-colors"

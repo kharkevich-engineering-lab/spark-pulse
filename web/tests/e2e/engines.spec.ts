@@ -50,7 +50,7 @@ test("shows the engines the registry knows about", async ({ page, request }) => 
   expect(engines.length, "simulation mode should serve an engine registry").toBeGreaterThan(0);
 
   await gotoPage(page, "/engines");
-  await expect(page.getByRole("heading", { name: "Engines", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Engines and images.", exact: true })).toBeVisible();
 
   for (const engine of engines) {
     // The row is keyed by the image reference, which is what the catalogue and
@@ -82,7 +82,7 @@ test("lists every engine image the backend knows about", async ({ page, request 
   expect(images.length, "simulation mode should serve an image catalogue").toBeGreaterThan(0);
 
   await gotoPage(page, "/engines");
-  await expect(page.getByRole("heading", { name: "Engines", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Engines and images.", exact: true })).toBeVisible();
 
   for (const image of images) {
     const row = page.getByTestId(`engine-${image.ref}`);

@@ -4,6 +4,7 @@ import { useQuery } from "@/hooks/useQuery";
 import { formatSize } from "@/lib/utils";
 import { Database, Trash2, Loader2, AlertCircle, FolderOpen, FileStack } from "lucide-react";
 import { ConfirmModal, AlertModal } from "@/components/Modal";
+import { Button, PageHeader } from "@/ui";
 import { useI18n } from "@/lib/i18n";
 
 export default function CachePage() {
@@ -30,17 +31,32 @@ export default function CachePage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold">{t("cache.title")}</h2>
-        <p className="text-text-muted mt-1">{t("cache.subtitle")}</p>
-      </div>
+      <PageHeader
+        eyebrow={t("nav.library")}
+        title={t("cache.heading")}
+        description={t("cache.subtitle")}
+        actions={
+          cacheData && (
+            <Button
+              variant="danger"
+              icon={Trash2}
+              loading={cleaning === "all"}
+              disabled={!!cleaning}
+              onClick={() => setCleanTarget("all")}
+            >
+              {t("cache.cleanAll")}
+            </Button>
+          )
+        }
+      />
 
       {cacheData && (
-        <div className="p-4 rounded-md bg-surface border border-border flex items-center justify-between">
-          <div className="flex items-center gap-3"><Database size={20} className="text-blue2" /><div><p className="font-medium">{t("cache.total")}</p><p className="text-2xl font-bold">{formatSize(totalSize)}</p></div></div>
-          <button onClick={() => setCleanTarget("all")} disabled={!!cleaning} className="px-4 py-2 rounded-sm bg-danger/10 text-danger border border-danger/30 hover:bg-danger/20 disabled:opacity-50 transition-colors flex items-center gap-2">
-            {cleaning === "all" ? <Loader2 className="animate-spin" size={16} /> : <Trash2 size={16} />}{t("cache.cleanAll")}
-          </button>
+        <div className="p-4 rounded-md bg-surface border border-border flex items-center gap-3">
+          <Database size={20} className="text-blue2" />
+          <div>
+            <p className="font-medium">{t("cache.total")}</p>
+            <p className="text-2xl font-bold">{formatSize(totalSize)}</p>
+          </div>
         </div>
       )}
 

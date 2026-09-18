@@ -57,7 +57,12 @@
   "a11y": {
     "openMenu": "Ouvrir le menu de navigation",
     "closeMenu": "Fermer le menu de navigation",
-    "logout": "Se déconnecter"
+    "logout": "Se déconnecter",
+    "primaryNav": "Principale",
+    "menu": "Menu",
+    "home": "Accueil Spark Pulse",
+    "theme": "Thème de couleurs : {mode}",
+    "language": "Langue : {language}"
   },
   "nav": {
     "benchmarking": "Analyse comparative",
@@ -70,20 +75,26 @@
     "monitoring": "Surveillance",
     "oci": "Registre OCI",
     "recipes": "Recettes et mods",
-    "settings": "Paramètres"
+    "settings": "Paramètres",
+    "deploy": "Déployer",
+    "runs": "Exécutions",
+    "fleet": "Parc",
+    "library": "Bibliothèque"
   },
   "brand": {
     "product": "Spark Pulse",
     "company": "Kharkevich Engineering Lab",
     "github": "GitHub",
-    "pypi": "PyPI"
+    "pypi": "PyPI",
+    "tagline": "Un plan de contrôle pour DGX Spark."
   },
   "login": {
     "prompt": "Connectez-vous pour continuer",
-    "signIn": "Se connecter"
+    "signIn": "Se connecter",
+    "heading": "Connexion."
   },
   "notFound": {
-    "heading": "Cette page n'existe pas",
+    "heading": "Rien ici.",
     "body": "Spark Pulse n'a aucune page à cette adresse. Si vous avez suivi un lien depuis l'application, la route qu'il visait a été renommée ou supprimée.",
     "home": "Retour aux recettes"
   },
@@ -117,7 +128,8 @@
     "confirmAllBody": "Cela videra TOUS les caches. Cette action est irréversible.",
     "confirmOneTitle": "Vider le cache",
     "confirmOneBody": "Vider le cache « {name} » ? Cette action est irréversible.",
-    "failed": "Échec"
+    "failed": "Échec",
+    "heading": "Caches."
   },
   "errorBoundary": {
     "heading": "Une erreur est survenue",
@@ -187,7 +199,8 @@
     "toggleLabel": "Activer ou désactiver {engine}",
     "unmanaged": "hors index",
     "unpublished": "aucune image publiée",
-    "verifiedCount": "vérifié {count} fois sur du matériel"
+    "verifiedCount": "vérifié {count} fois sur du matériel",
+    "heading": "Moteurs et images."
   },
   "preflight": {
     "label": "Pré-vol",
@@ -206,7 +219,8 @@
     "colPlacement": "Placement",
     "colEngine": "Moteur",
     "colStatus": "État",
-    "experimental": "Le multi-nœud est encore expérimental."
+    "experimental": "Le multi-nœud est encore expérimental.",
+    "heading": "Les machines."
   },
   "inference": {
     "title": "Inférence",
@@ -231,7 +245,8 @@
     "cancelBody": "Annuler « {name} » avant son démarrage ?",
     "stopBody": "Arrêter « {name} » ? Cela mettra fin au processus en cours.",
     "benchmarkOn": "Lancer une analyse sur « {name} » ? Cela mesurera le débit, la latence et l'utilisation de la mémoire.",
-    "benchmarkConfirm": "Lancer"
+    "benchmarkConfirm": "Lancer",
+    "heading": "Ce qui tourne."
   },
   "monitoring": {
     "title": "Surveillance",
@@ -269,7 +284,8 @@
     "killOnNode": "Il s'exécute sur {node}.",
     "noProcesses": "Aucun processus GPU.",
     "tracked": "démarré ici",
-    "kill": "Terminer"
+    "kill": "Terminer",
+    "heading": "Ce qu'elles font."
   },
   "recipes": {
     "assets": "Ressources",
@@ -331,7 +347,8 @@
     "uninstallBody": "{name} est retiré du disque. Réinstallez-le depuis la page Registre OCI si besoin.",
     "uninstallFailed": "Désinstallation de {name} impossible",
     "uninstallRecipe": "Désinstaller {name}",
-    "uninstallRecipeTitle": "Désinstaller cette recette"
+    "uninstallRecipeTitle": "Désinstaller cette recette",
+    "heading": "Recettes et mods."
   },
   "recipeCard": {
     "running": "En cours",
@@ -676,7 +693,8 @@
     "workerThreads": "Fils de travail",
     "workerThreadsHelp": "Le travail bloquant est déporté ici plutôt qu'exécuté sur la boucle d'événements.",
     "agentAutoUpdate": "Mettre à jour les agents automatiquement",
-    "agentAutoUpdateHelp": "Garder l'agent de chaque nœud sur la version livrée par ce plan de contrôle. Un pair exécutant un binaire plus ancien est mis à jour via son propre flux, sans SSH. Activé par défaut."
+    "agentAutoUpdateHelp": "Garder l'agent de chaque nœud sur la version livrée par ce plan de contrôle. Un pair exécutant un binaire plus ancien est mis à jour via son propre flux, sans SSH. Activé par défaut.",
+    "heading": "Paramètres."
   },
   "models": {
     "title": "Modèles",
@@ -743,7 +761,8 @@
     "replicateConfirm": "Répliquer",
     "replicateVerified": "vérifié",
     "replicateSkipped": "déjà vérifié — ignoré",
-    "replicateNodeFailed": "échec"
+    "replicateNodeFailed": "échec",
+    "heading": "Ce qui est sur le disque."
   },
   "mcp": {
     "title": "Serveur MCP",
@@ -770,7 +789,8 @@
     "python": "Client Python",
     "curl": "curl — test rapide",
     "addToYour": "À ajouter dans votre",
-    "toolsNote": "Voici ce que MCP exposerait. Aucun de ces outils ne peut être appelé tant qu'il est désactivé."
+    "toolsNote": "Voici ce que MCP exposerait. Aucun de ces outils ne peut être appelé tant qu'il est désactivé.",
+    "heading": "MCP."
   },
   "benchmarking": {
     "title": "Analyse comparative",
@@ -809,7 +829,8 @@
     "delete": "Supprimer cette analyse",
     "deleteTitle": "Supprimer cette analyse ?",
     "deleteMessage": "« {name} » et ses mesures seront supprimés définitivement. Rien d'autre ne change.",
-    "deleteFailed": "Échec de la suppression de l'analyse"
+    "deleteFailed": "Échec de la suppression de l'analyse",
+    "heading": "Analyses comparatives."
   },
   "oci": {
     "noCollections": "Aucune collection trouvée",
@@ -843,7 +864,7 @@
     "uninstallFailed": "Échec de la désinstallation",
     "unknownError": "Erreur inconnue",
     "title": "Registre de recettes OCI",
-    "subtitle": "Parcourir, installer et mettre à jour des collections de recettes depuis des registres OCI",
+    "subtitle": "Parcourez, installez et mettez à jour des collections de recettes depuis des registres OCI.",
     "applyAll": "Tout appliquer",
     "installAllRecipes": "Installer toutes les recettes",
     "noRecipesInCollection": "Aucune recette trouvée pour cette collection",
@@ -867,7 +888,8 @@
     "registryUpdateFailed": "Échec de la mise à jour du registre",
     "uninstallConfirm": "Retirer {name} de ce plan de contrôle ? La collection reste dans son registre.",
     "removeRegistry": "Oublier le registre",
-    "removeRegistryConfirm": "Oublier {name} ? Les collections déjà installées depuis ce registre restent en place."
+    "removeRegistryConfirm": "Oublier {name} ? Les collections déjà installées depuis ce registre restent en place.",
+    "heading": "Registres de recettes."
   },
   "fabric": {
     "heading": "Fabric ConnectX",

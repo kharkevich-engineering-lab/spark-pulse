@@ -16,7 +16,7 @@ import { useEffect } from "react";
 import { useI18n } from "@/lib/i18n";
 import { fetchDeployments } from "@/lib/api";
 import { useQuery } from "@/hooks/useQuery";
-import { EmptyState, ErrorLine, Spinner, StatusBadge } from "@/ui";
+import { EmptyState, ErrorLine, PageHeader, Spinner, StatusBadge } from "@/ui";
 import NodeRegistry from "@/components/NodeRegistry";
 import NetworkDiscovery from "@/components/NetworkDiscovery";
 import FabricCard from "@/components/FabricCard";
@@ -45,16 +45,22 @@ export default function ClusterPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <h2 className="text-2xl font-bold">{t("cluster.title")}</h2>
-        <p className="text-text-muted mt-1">{t("cluster.subtitle")}</p>
-        {/* One line, not the full banner. This page is read rather than acted
-            on; what is unproven and why belongs where an operator is about to
-            deploy across machines, which is the deploy form and the expanded
-            row on Inference. */}
-        {experimental && <ExperimentalNote className="mt-2" text={t("cluster.experimental")} />}
-      </div>
+      {/* One line, not the full banner. This page is read rather than acted
+          on; what is unproven and why belongs where an operator is about to
+          deploy across machines, which is the deploy form and the expanded
+          row on Inference. */}
+      <PageHeader
+        eyebrow={t("nav.fleet")}
+        title={t("cluster.heading")}
+        description={
+          <>
+            {t("cluster.subtitle")}
+            {experimental && (
+              <ExperimentalNote className="mt-2" text={t("cluster.experimental")} />
+            )}
+          </>
+        }
+      />
 
       {/* The node registry — what used to be two free-text IP boxes. */}
       <NodeRegistry />

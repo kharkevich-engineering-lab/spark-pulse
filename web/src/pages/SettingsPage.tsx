@@ -15,6 +15,7 @@ import {
   IconButton,
   Input,
   Select,
+  PageHeader,
   Spinner,
   Tabs,
   Textarea,
@@ -283,10 +284,11 @@ export default function SettingsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold">{t("settings.title")}</h2>
-        <p className="text-text-muted mt-1">{t("settings.subtitle")}</p>
-      </div>
+      <PageHeader
+        eyebrow={t("nav.settings")}
+        title={t("settings.heading")}
+        description={t("settings.subtitle")}
+      />
 
       {/* ── Tabs ─────────────────────────────────────────────────────────── */}
       <Tabs

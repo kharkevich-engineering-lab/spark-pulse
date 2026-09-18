@@ -13,7 +13,7 @@ import { translate, useI18n, type Language } from "@/lib/i18n";
 import { connectMetricsStream, fetchMemory, killGpuProcess } from "@/lib/api";
 import { useQuery } from "@/hooks/useQuery";
 import { Activity, Cpu, HardDrive, Zap, Workflow, OctagonX, Server } from "lucide-react";
-import { Button, ErrorLine, NodeState, Spinner } from "@/ui";
+import { Button, ErrorLine, NodeState, PageHeader, Spinner } from "@/ui";
 import type { GPUProcess, GPUStats, MemoryResponse, NodeStats } from "@/lib/types";
 import { AlertModal, ConfirmModal } from "@/components/Modal";
 import { HealthHistoryChart, type HealthSeries } from "@/components/HealthHistoryChart";
@@ -133,10 +133,11 @@ export default function MemoryPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold">{t("monitoring.title")}</h2>
-        <p className="text-text-muted mt-1">{t("monitoring.subtitle")}</p>
-      </div>
+      <PageHeader
+        eyebrow={t("nav.fleet")}
+        title={t("monitoring.heading")}
+        description={t("monitoring.subtitle")}
+      />
 
       {loading && !sse && (
         <div className="flex justify-center py-20">

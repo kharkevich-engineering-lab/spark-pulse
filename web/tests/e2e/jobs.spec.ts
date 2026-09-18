@@ -8,7 +8,7 @@
  */
 
 import { expect, test } from "@playwright/test";
-import { escapeRegExp, expectNoCrash, gotoPage, listDeployments, purgeDeployments } from "./helpers";
+import { escapeRegExp, expectNoCrash, gotoPage, listDeployments, openNav, purgeDeployments } from "./helpers";
 
 const RECIPE_ID = "bundled/qwen3.8-27b";
 const RECIPE_NAME = "Qwen3.8-27B";
@@ -43,8 +43,8 @@ test("deploys a recipe, shows it on the Inference page and stops it", async ({ p
   // sitting in a status nothing ever advances.
   expect(deployment.status).toBe("running");
 
-  await page.getByRole("navigation").getByRole("link", { name: "Inference" }).click();
-  await expect(page.getByRole("heading", { name: "Inference", exact: true })).toBeVisible();
+  await (await openNav(page)).getByRole("link", { name: "Runs" }).click();
+  await expect(page.getByRole("heading", { name: "What is serving.", exact: true })).toBeVisible();
 
   const row = page.getByTestId(`deployment-${deployment.id}`);
   await expect(row).toBeVisible();

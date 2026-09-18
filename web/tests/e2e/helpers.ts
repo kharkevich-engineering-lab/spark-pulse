@@ -5,7 +5,7 @@
  * depending on whatever a previous spec left behind.
  */
 
-import { expect, type APIRequestContext, type Page } from "@playwright/test";
+import { expect, type APIRequestContext, type Locator, type Page } from "@playwright/test";
 
 /** The subset of `/api/config` the suite reasons about. */
 export interface AppConfig {
@@ -25,31 +25,27 @@ export interface Deployment {
   status: string;
 }
 
-/** Nav entries as `Layout.tsx` declares them, in order. */
-export const NAV_ITEMS = [
-  { href: "/", label: "Recipes & Mods", heading: "Recipes & Mods" },
-  { href: "/jobs", label: "Inference", heading: "Inference" },
-  { href: "/cluster", label: "Cluster", heading: "Cluster Orchestration" },
-  { href: "/benchmarking", label: "Benchmarking", heading: "Benchmarking" },
-  { href: "/monitoring", label: "Monitoring", heading: "Monitoring" },
-  { href: "/models", label: "Models", heading: "Models" },
-  { href: "/engines", label: "Engines", heading: "Engines" },
-  { href: "/cache", label: "Cache", heading: "Cache Manager" },
-  { href: "/mcp", label: "MCP", heading: "MCP Server" },
-  { href: "/oci", label: "OCI Registry", heading: "OCI Recipe Registry" },
-  { href: "/settings", label: "Settings", heading: "Settings" },
+/** The header groups as `Layout.tsx` declares them, in order.
+ *
+ * Five, not eleven: the routes are unchanged, but the nav names groups and a
+ * group lights up for any route it speaks for. `heading` is the hub title on
+ * the group's own page.
+ */
+export const NAV_GROUPS = [
+  { href: "/", label: "Deploy", heading: "Recipes and mods." },
+  { href: "/jobs", label: "Runs", heading: "What is serving." },
+  { href: "/cluster", label: "Fleet", heading: "The machines." },
+  { href: "/models", label: "Library", heading: "What is on disk." },
+  { href: "/settings", label: "Settings", heading: "Settings." },
 ] as const;
 
-/** Nav entries the running backend should actually show.
+/** The labels the header should carry.
  *
- * Benchmarking is the one route a config flag hides, so the expected nav is
- * derived from `/api/config` rather than hard-coded — the same rule the
- * frontend applies.
+ * Nothing hides a group any more: benchmarking is reached through Runs, so the
+ * flag that used to remove a nav entry removes a tab instead.
  */
-export function expectedNavLabels(config: AppConfig): string[] {
-  return NAV_ITEMS.filter(
-    (item) => item.href !== "/benchmarking" || config.benchmarking_enabled,
-  ).map((item) => item.label);
+export function expectedNavLabels(): string[] {
+  return NAV_GROUPS.map((item) => item.label);
 }
 
 export async function readConfig(request: APIRequestContext): Promise<AppConfig> {
@@ -82,10 +78,31 @@ export async function purgeDeployments(
   }
 }
 
-/** Open a page and wait for the shell to have rendered. */
+/** Open a page and wait for the shell to have rendered.
+ *
+ * The brand lockup rather than the nav: under 900px the nav lives inside the
+ * menu and is not on the page until the menu button is pressed.
+ */
 export async function gotoPage(page: Page, path: string): Promise<void> {
   await page.goto(path);
-  await expect(page.getByRole("navigation")).toBeVisible();
+  await expect(page.getByRole("link", { name: /Spark Pulse home/ })).toBeVisible();
+}
+
+/** The nav, at whatever width the project runs at.
+ *
+ * Above 900px it is in the header. Below it the menu button has to be pressed
+ * first — so a spec that navigates through the nav works on a phone without
+ * knowing which project it is running under.
+ */
+export async function openNav(page: Page): Promise<Locator> {
+  const menuButton = page.getByRole("button", { name: "Menu" });
+  if (await menuButton.isVisible()) {
+    if ((await menuButton.getAttribute("aria-expanded")) !== "true") {
+      await menuButton.click();
+    }
+    return page.getByTestId("mobile-nav");
+  }
+  return page.getByTestId("primary-nav");
 }
 
 /** Fail loudly if the React error boundary swallowed a render crash. */
@@ -98,7 +115,7 @@ export function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** The nav label of a link, with the "exp" chip the Cluster entry carries. */
+/** The nav label of a link, with the "exp" chip the Fleet entry carries. */
 export function navLabel(text: string): string {
   return text.split("\n")[0].replace(/\s*exp$/i, "").trim();
 }

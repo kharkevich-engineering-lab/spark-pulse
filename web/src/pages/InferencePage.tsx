@@ -10,7 +10,7 @@ import {
 } from "@/lib/api";
 import { useQuery } from "@/hooks/useQuery";
 import { useSSEConnection } from "@/hooks/useSSEConnection";
-import { Button, ErrorLine, IconButton, Spinner, StatusBadge, isSettling } from "@/ui";
+import { Button, ErrorLine, IconButton, PageHeader, Spinner, StatusBadge, isSettling } from "@/ui";
 import EventStreamViewer from "@/components/EventStreamViewer";
 import RankList from "@/components/RankList";
 import EngineMetricsPanel from "@/components/EngineMetrics";
@@ -233,10 +233,11 @@ export default function InferencePage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold">{t("inference.title")}</h2>
-        <p className="text-text-muted mt-1">{t("inference.subtitle")}</p>
-      </div>
+      <PageHeader
+        eyebrow={t("nav.runs")}
+        title={t("inference.heading")}
+        description={t("inference.subtitle")}
+      />
 
       {loading && (
         <div className="flex justify-center py-20">
@@ -249,37 +250,45 @@ export default function InferencePage() {
         <div className="space-y-2">
           {deployments.map((dep) => (
             <div key={dep.id} data-testid={`deployment-${dep.id}`} className="rounded-md bg-surface border border-line overflow-hidden">
-              <div className="flex items-center gap-4 p-4 cursor-pointer hover:bg-surface-hover" onClick={() => toggle(dep.id)}>
-                <div className="flex-1 min-w-0">
+              {/* Ten controls on one line fitted a 1280px window and nothing
+                  narrower: below that the date squeezed the name to three
+                  characters and the actions slid off the right edge. The row
+                  wraps now — the name takes the whole first line under 900px,
+                  the chips the second, the actions stay on the right. */}
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 p-4 cursor-pointer hover:bg-surface-hover" onClick={() => toggle(dep.id)}>
+                <div className="basis-full min-w-0 min-[900px]:basis-auto min-[900px]:flex-1">
                   <p className="font-medium truncate">{dep.name}</p>
                   <p className="text-xs text-text-muted truncate">
                     {dep.recipe_id}
                     {dep.model ? ` · ${dep.model}` : ""}
                   </p>
                 </div>
-                {dep.runtime === "native" && (
-                  <span
-                    className="hidden md:inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono bg-primary/15 text-blue2 border border-primary/30 shrink-0"
-                    title={dep.image_ref || undefined}
-                  >
-                    {dep.engine || "native"}
-                  </span>
-                )}
-                {dep.node_count != null && dep.node_count > 1 && (
-                  <span className="hidden md:inline-flex items-center gap-1.5 shrink-0">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 min-w-0">
+                  {dep.runtime === "native" && (
                     <span
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono bg-surface-hover text-text-muted border border-border"
-                      title={`Spans ${dep.node_count} nodes, one container per rank`}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono bg-primary/15 text-blue2 border border-primary/30 shrink-0"
+                      title={dep.image_ref || undefined}
                     >
-                      {dep.node_count} nodes
+                      {dep.engine || "native"}
                     </span>
-                    <ExperimentalBadge title={MULTI_NODE_BADGE_TITLE} />
-                  </span>
-                )}
-                {dep.port && <span className="text-sm font-mono text-text-muted shrink-0">:{dep.port}</span>}
-                <StatusBadge status={dep.status} sync={dep.sync} syncReason={dep.sync_reason} />
-                {dep.pid && <span className="text-xs font-mono text-text-muted shrink-0">PID: {dep.pid}</span>}
-                <span className="text-xs text-text-muted shrink-0">{new Date(dep.created_at).toLocaleString()}</span>
+                  )}
+                  {dep.node_count != null && dep.node_count > 1 && (
+                    <span className="inline-flex items-center gap-1.5 shrink-0">
+                      <span
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono bg-surface-hover text-text-muted border border-border"
+                        title={`Spans ${dep.node_count} nodes, one container per rank`}
+                      >
+                        {dep.node_count} nodes
+                      </span>
+                      <ExperimentalBadge title={MULTI_NODE_BADGE_TITLE} />
+                    </span>
+                  )}
+                  {dep.port && <span className="text-sm font-mono text-text-muted shrink-0">:{dep.port}</span>}
+                  <StatusBadge status={dep.status} sync={dep.sync} syncReason={dep.sync_reason} />
+                  {dep.pid && <span className="text-xs font-mono text-text-muted shrink-0">PID: {dep.pid}</span>}
+                  <span className="text-xs text-text-muted shrink-0">{new Date(dep.created_at).toLocaleString()}</span>
+                </div>
+                <div className="flex items-center gap-1 ml-auto shrink-0">
                 {["stopped", "error"].includes(dep.status) ? (
                   <IconButton
                     size="sm"
@@ -308,6 +317,7 @@ export default function InferencePage() {
                     className="border-transparent text-muted hover:text-blue2 hover:border-line"
                   />
                 )}
+                </div>
               </div>
               {expandedId === dep.id && (
                 <div className="border-t border-border">
@@ -345,7 +355,7 @@ export default function InferencePage() {
                     {streaming[dep.id] ? <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />{t("inference.streaming")}</span> : <span>{t("inference.streamStopped")}</span>}
                     <button onClick={() => toggle(dep.id)} className="ml-auto text-blue2 hover:underline">{t("inference.hide")}</button>
                   </div>
-                  <div ref={(el) => { logRef.current[dep.id] = el; }} onScroll={() => handleLogScroll(dep.id)} className="p-4 bg-bg font-mono text-sm text-text h-[calc(100vh-20rem)] overflow-auto whitespace-pre-wrap">
+                  <div ref={(el) => { logRef.current[dep.id] = el; }} onScroll={() => handleLogScroll(dep.id)} className="p-4 bg-bg font-mono text-sm text-text min-h-[240px] max-h-[60vh] overflow-auto whitespace-pre-wrap">
                     {(logs[dep.id] || ["No logs yet..."]).map((line, i) => <div key={i} className="leading-relaxed text-text-muted last:text-text">{line}</div>)}
                   </div>
                   {/* Event Stream Viewer */}

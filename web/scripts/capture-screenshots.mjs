@@ -33,21 +33,30 @@ const theme = args.includes("--theme") ? args[args.indexOf("--theme") + 1] : "da
  * `settle` is a selector rather than a timeout because these pages fill in
  * from several requests — a fixed wait either flakes or is always too long. */
 const SHOTS = [
-  { name: "recipes", path: "/", settle: "text=Recipes" },
+  { name: "recipes", path: "/", settle: "text=Recipes and mods." },
   // Expanded, because a collapsed row shows a name and a badge; what the
   // page is *for* — the ranks, the engine's own metrics, the live log — is
-  // what opens underneath it.
-  { name: "jobs", path: "/jobs", settle: "text=Inference", expand: "text=qwen3.8-27b" },
-  { name: "cluster", path: "/cluster", settle: "text=Cluster" },
+  // what opens underneath it. Needs a deployment to exist: POST one to
+  // /api/deployments against the simulation backend first.
+  { name: "jobs", path: "/jobs", settle: "text=What is serving.", expand: "text=qwen3.8-27b" },
+  { name: "cluster", path: "/cluster", settle: "text=The machines." },
   // Full page: the answer covers every node, and one node in a viewport is
   // the picture this page was rebuilt to stop showing.
-  { name: "monitoring", path: "/monitoring", settle: "text=Monitoring", fullPage: true },
-  { name: "models", path: "/models", settle: "text=Models" },
-  { name: "engines", path: "/engines", settle: "text=Engines" },
+  { name: "monitoring", path: "/monitoring", settle: "text=What they are doing.", fullPage: true },
+  { name: "models", path: "/models", settle: "text=What is on disk." },
+  { name: "engines", path: "/engines", settle: "text=Engines and images." },
   { name: "oci", path: "/oci", settle: "text=Collections" },
-  { name: "cache", path: "/cache", settle: "text=Cache" },
-  { name: "mcp", path: "/mcp", settle: "text=MCP" },
-  { name: "settings", path: "/settings", settle: "text=Settings" },
+  { name: "cache", path: "/cache", settle: "text=Caches." },
+  { name: "mcp", path: "/mcp", settle: "text=MCP." },
+  { name: "settings", path: "/settings", settle: "text=Settings." },
+  // One phone-width shot, because the shell is the change a reader most needs
+  // to see at 390: the header collapses to a menu button and nothing overlaps.
+  {
+    name: "mobile-runs",
+    path: "/jobs",
+    settle: "text=What is serving.",
+    viewport: { width: 390, height: 844 },
+  },
 ];
 
 const browser = await chromium.launch();
@@ -68,9 +77,14 @@ await mkdir(OUT, { recursive: true });
 const page = await context.newPage();
 const failures = [];
 
+const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
+
 for (const shot of SHOTS) {
   const url = `${base}${shot.path}`;
   try {
+    // A shot that asks for its own width gets it; everything else is reset to
+    // the desktop one, so the order of this list cannot change an image.
+    await page.setViewportSize(shot.viewport ?? DESKTOP_VIEWPORT);
     // Not `networkidle`: Monitoring, Models and Engines hold an SSE stream
     // open for as long as the page is up, so the network is never idle and a
     // wait for it is a wait for the timeout.

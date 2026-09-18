@@ -18,6 +18,7 @@ import {
   IconButton,
   Input,
   Modal,
+  PageHeader,
   Spinner,
   StatusBadge,
   Tabs,
@@ -285,15 +286,16 @@ export default function BenchmarkingPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold">{t("benchmarking.title")}</h2>
-          <p className="text-text-muted mt-1">{t("benchmarking.subtitle")}</p>
-        </div>
-        <Button variant="primary" icon={Play} onClick={() => setShowRunModal(true)}>
-          {t("benchmarking.run")}
-        </Button>
-      </div>
+      <PageHeader
+        eyebrow={t("nav.runs")}
+        title={t("benchmarking.heading")}
+        description={t("benchmarking.subtitle")}
+        actions={
+          <Button variant="primary" icon={Play} onClick={() => setShowRunModal(true)}>
+            {t("benchmarking.run")}
+          </Button>
+        }
+      />
 
       {/* Tabs */}
       <Tabs

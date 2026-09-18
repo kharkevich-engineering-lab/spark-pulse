@@ -32,7 +32,7 @@ describe("NotFoundPage", () => {
     );
 
     expect(screen.getByText("404")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "This page does not exist" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Not here." })).toBeInTheDocument();
   });
 
   /** A dead end is the failure this page exists to fix: the browser's own back
@@ -47,9 +47,9 @@ describe("NotFoundPage", () => {
     expect(screen.getByRole("link", { name: /Back to Recipes/ })).toHaveAttribute("href", "/");
   });
 
-  /** Login and this page render outside `Layout`, so they carry no sidebar and
-   *  had no attribution at all — and they are the two pages most likely to be
-   *  someone's first view of the product. */
+  /** The footer is the hub's now — one row, the project links and the legal
+   *  line — and it is on every page rather than only on the two that render
+   *  outside `Layout`. */
   it("names who made this, and links to them", () => {
     render(
       <MemoryRouter>
@@ -59,7 +59,7 @@ describe("NotFoundPage", () => {
 
     const link = screen.getByRole("link", { name: /Kharkevich Engineering Lab/ });
     expect(link).toHaveAttribute("href", "https://kharkevich.com");
-    expect(screen.getByAltText("Kharkevich Engineering Lab")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /GitHub/ })).toBeInTheDocument();
   });
 });
 
