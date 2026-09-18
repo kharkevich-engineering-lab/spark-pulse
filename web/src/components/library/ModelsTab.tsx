@@ -351,9 +351,17 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
     [scheduled],
   );
 
-  const actionsFor = (model: ModelEntry) => (
+  /** Replicate is offered only while there is somewhere for the bytes to go.
+   *
+   *  `where.state === "ok"` is the one verdict that means every node answered
+   *  and every node holds a verified copy, so replicating would send 200 GB to
+   *  produce a row of "skipped". Every other verdict keeps the action: `warn`
+   *  is a node short of a copy, `bad` is a partial one worth re-sending, and
+   *  `unknown` is a node that could not be asked — which is not evidence it
+   *  has the model, so the operator must still be able to send it. */
+  const actionsFor = (model: ModelEntry, where: WhereVerdict) => (
     <div className="flex items-center gap-3 text-[13px]">
-      {peers.length > 0 && (
+      {peers.length > 0 && where.state !== "ok" && (
         <button
           type="button"
           onClick={() => setReplicateTarget(model.id)}
@@ -545,7 +553,7 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
                     <td className="p-3">
                       <NodeState state={where.state} label={where.label} title={where.title} />
                     </td>
-                    <td className="p-3 text-right whitespace-nowrap">{actionsFor(m)}</td>
+                    <td className="p-3 text-right whitespace-nowrap">{actionsFor(m, where)}</td>
                   </tr>
                 );
               })}
@@ -569,7 +577,7 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
                   {formatSize(m.size_bytes)} · {describePrecision(m)}
                 </p>
                 <NodeState state={where.state} label={where.label} title={where.title} />
-                {actionsFor(m)}
+                {actionsFor(m, where)}
               </div>
             );
           })}
