@@ -1,5 +1,4 @@
 import { SiGithub, SiPypi } from "@icons-pack/react-simple-icons";
-import logoUrl from "@/assets/kharkevich-logo.svg";
 import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
@@ -7,8 +6,12 @@ import { cn } from "@/lib/utils";
  *
  * It was a stack inside the sidebar on the eleven pages that had one and a
  * centred block on the two that did not, which is two footers. This is the
- * hub's: one row, name on the left, links on the right, a 1px rule above it,
- * stacking to a column under 900px.
+ * hub's: one row, the copyright on the left, links on the right, a 1px rule
+ * above it, stacking to a column under 900px. The lab's name lives here and
+ * nowhere else in the shell — the header lockup had it too, which put the
+ * same words twice on one screen — and there is no logo and no tagline: the
+ * product is not "for DGX Spark" any more, and a footer that repeats the
+ * header's mark reads as clutter, not identity.
  */
 export function BrandFooter({ className }: { className?: string }) {
   const t = useT();
@@ -22,16 +25,14 @@ export function BrandFooter({ className }: { className?: string }) {
         className,
       )}
     >
-      <div className="flex items-center gap-3 max-w-[60ch]">
-        <img
-          src={logoUrl}
-          alt=""
-          className="h-7 w-7 opacity-80 shrink-0"
-          width={28}
-          height={28}
-        />
-        <span>{t("brand.tagline")}</span>
-      </div>
+      <a
+        href="https://kharkevich.com"
+        target="_blank"
+        rel="noopener"
+        className="whitespace-nowrap text-muted no-underline hover:text-text hover:no-underline transition-colors"
+      >
+        © {new Date().getFullYear()} {t("brand.company")}
+      </a>
       <div className="flex items-center gap-4">
         <a
           href="https://github.com/kharkevich-engineering-lab/spark-pulse"
@@ -50,14 +51,6 @@ export function BrandFooter({ className }: { className?: string }) {
         >
           <SiPypi size={12} />
           {t("brand.pypi")}
-        </a>
-        <a
-          href="https://kharkevich.com"
-          target="_blank"
-          rel="noopener"
-          className="whitespace-nowrap text-muted no-underline hover:text-text hover:no-underline transition-colors"
-        >
-          © {new Date().getFullYear()} {t("brand.company")}
         </a>
       </div>
     </footer>

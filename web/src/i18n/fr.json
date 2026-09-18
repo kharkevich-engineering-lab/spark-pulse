@@ -76,8 +76,7 @@
     "product": "Spark Pulse",
     "company": "Kharkevich Engineering Lab",
     "github": "GitHub",
-    "pypi": "PyPI",
-    "tagline": "Un plan de contrôle pour DGX Spark."
+    "pypi": "PyPI"
   },
   "login": {
     "prompt": "Connectez-vous pour continuer",
