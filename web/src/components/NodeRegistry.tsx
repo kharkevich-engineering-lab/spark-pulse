@@ -28,13 +28,14 @@
  *   the control plane's public key.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useI18n } from "@/lib/i18n";
 import {
   addNode,
   updateNode,
   updateNodeAgent,
   discoverNodes,
+  fetchFabric,
   fetchNodeDiagnostics,
   fetchNodeHostKey,
   fetchNodes,
@@ -45,6 +46,7 @@ import { useQuery } from "@/hooks/useQuery";
 import {
   Button,
   ConfirmModal,
+  EmptyState,
   ErrorLine,
   Field,
   Input,
@@ -55,9 +57,11 @@ import {
   type NodeCondition,
 } from "@/ui";
 import NodeDoctor from "@/components/NodeDoctor";
+import { NodeFabricPorts } from "@/components/FabricCard";
 import type {
   ClusterNode,
   DiscoveredPeer,
+  FabricResponse,
   InstallReport,
   NodeAuthMethod,
   NodeFinding,
@@ -67,13 +71,11 @@ import type {
 import {
   AlertCircle,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   Download,
-  Info,
   KeyRound,
-  Loader2,
-  Network,
   Pencil,
-  Stethoscope,
   Plus,
   Radar,
   Server,
@@ -93,37 +95,25 @@ function interfaceSummary(node: ClusterNode): string {
   return names.length > 0 ? names.join(", ") : "—";
 }
 
-/** Findings with their remedy. Never rendered as errors: each one is a
- * condition the cluster runs with, and each costs an afternoon when unnamed. */
-function Diagnostics({ findings }: { findings: NodeFinding[] }) {
-  if (findings.length === 0) return null;
+/** A finding, as one line.
+ *
+ * Never an error and never a yellow box: each of these is a condition the
+ * cluster *runs with*, and each costs an afternoon when it is not named. A
+ * warning is the warn colour and an informational one is muted — the same
+ * vocabulary the node's own state uses, so an operator is not learning a
+ * second palette to read the same list.
+ *
+ * A finding that names nodes is rendered on each of those nodes' rows, where
+ * the machine it is about is; one that names none is rendered above the list,
+ * because it is about the fleet rather than a machine. */
+function FindingLine({ finding }: { finding: NodeFinding }) {
   return (
-    <div className="space-y-2" data-testid="node-diagnostics">
-      {findings.map((finding) => {
-        const warning = finding.severity === "warning";
-        return (
-          <div
-            key={finding.code}
-            role="note"
-            className={`flex items-start gap-3 rounded-md border p-3 text-sm ${
-              warning
-                ? "border-warning/30 bg-warning/10"
-                : "border-border bg-surface-hover"
-            }`}
-          >
-            {warning ? (
-              <AlertCircle size={16} className="mt-0.5 shrink-0 text-warning" />
-            ) : (
-              <Info size={16} className="mt-0.5 shrink-0 text-text-muted" />
-            )}
-            <div className="min-w-0">
-              <p className="font-medium">{finding.summary}</p>
-              <p className="mt-1 text-text-muted">{finding.remedy}</p>
-            </div>
-          </div>
-        );
-      })}
-    </div>
+    <p
+      role="note"
+      className={`text-[13px] ${finding.severity === "warning" ? "text-warn" : "text-muted"}`}
+    >
+      {finding.summary} <span className="text-muted">{finding.remedy}</span>
+    </p>
   );
 }
 
@@ -271,14 +261,14 @@ function AddNodeDialog({ onClose, onAdded }: AddNodeDialogProps) {
                   >
                     <span className="min-w-0 truncate">
                       <span className="font-medium">{peer.address}</span>
-                      <span className="text-muted"> · {peer.hostname || "unnamed"}</span>
+                      <span className="text-muted"> · {peer.hostname || t("fleet.peerUnnamed")}</span>
                     </span>
                     <span className="shrink-0 text-[13px] text-muted">
                       {peer.registered
-                        ? "already registered"
+                        ? t("fleet.peerRegistered")
                         : peer.is_spark_pulse
-                          ? `Spark Pulse ${peer.version}`
-                          : "SSH only"}
+                          ? t("fleet.peerSparkPulse", { version: peer.version })
+                          : t("fleet.peerSshOnly")}
                     </span>
                   </button>
                 </li>
@@ -799,18 +789,197 @@ function InstallOutcome({ report }: { report: InstallReport }) {
   );
 }
 
-export default function NodeRegistry() {
+/** The rule that separates one section of the page from the next. */
+const SECTION = "border-t border-line pt-12 mt-10 first:border-t-0 first:pt-0 first:mt-0";
+
+export interface NodeRegistryProps {
+  /** The add dialog, when the page owns the button. Left undefined the
+   *  registry renders its own — which is what a test, or any other caller,
+   *  gets. */
+  addOpen?: boolean;
+  onAddOpenChange?: (open: boolean) => void;
+}
+
+/** One machine: two lines and its actions, with the detail folded away.
+ *
+ * Line one is the name and whether it is answering — the two things an
+ * operator scans a list of machines for. Line two is everything that
+ * identifies it: address, role, interfaces, agent version. What a node's
+ * cables are doing and what the doctor makes of it are a fold below, because
+ * they are a question about one machine and this list is about all of them.
+ */
+function NodeRow({
+  node,
+  findings,
+  expanded,
+  onToggle,
+  fabric,
+  updating,
+  onUpdate,
+  onInstall,
+  onEdit,
+  onForget,
+  onChanged,
+}: {
+  node: ClusterNode;
+  findings: NodeFinding[];
+  expanded: boolean;
+  onToggle: () => void;
+  fabric: FabricResponse | null;
+  updating: boolean;
+  onUpdate: () => void;
+  onInstall: () => void;
+  onEdit: () => void;
+  onForget: () => void;
+  onChanged: () => void;
+}) {
+  const { t } = useI18n();
+  const stale = node.agent?.current === false;
+  const fabricNode = fabric?.nodes.find((n) => n.node_id === node.id);
+  const fabricPlan = fabric?.plan?.nodes.find((n) => n.node_id === node.id);
+
+  return (
+    <div
+      role="listitem"
+      aria-label={node.name}
+      data-testid={`node-row-${node.id}`}
+      className="py-4 space-y-3"
+    >
+      {/* Line 1 — who, and whether it answers. */}
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={expanded}
+          aria-label={t("fleet.detailsFor", { name: node.name })}
+          className="inline-flex items-center gap-1.5 text-[17px] font-semibold tracking-[-0.02em] hover:text-blue2 transition-colors duration-200"
+        >
+          {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+          {node.name}
+        </button>
+        <NodeStateBadge state={STATE_CONDITION[node.state] ?? "unknown"} />
+      </div>
+
+      {/* Whatever the fleet diagnostic says about *this* machine — a warn
+          line under its name, not a box at the top of a list of machines it
+          may not even be about. */}
+      {findings.length > 0 && (
+        <div className="space-y-1" data-testid={`node-finding-${node.id}`}>
+          {findings.map((finding) => (
+            <FindingLine key={finding.code} finding={finding} />
+          ))}
+        </div>
+      )}
+
+      {/* Line 2 — what identifies it. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[13px] text-muted">
+        <span className="font-mono">{node.address || "—"}</span>
+        <span className="rounded-full border border-line px-2 py-0.5">
+          {node.is_control_plane ? t("nodes.controlPlane") : t("nodes.peer")}
+        </span>
+        <span className="font-mono">{interfaceSummary(node)}</span>
+        {node.agent?.version && (
+          <span data-testid={`agent-version-${node.id}`} className={stale ? "text-warn" : undefined}>
+            {t("nodes.agentVersion", { version: node.agent.version })}
+            {" · "}
+            {stale ? t("nodes.agentStale") : t("fleet.agentCurrent")}
+          </span>
+        )}
+        {node.agent && !node.agent.enrolled && <span>{t("nodes.noAgent")}</span>}
+      </div>
+
+      {/* The actions: full-width thirds under 900 so a thumb has a target, and
+          one column under 520, where a third of the screen is narrower than
+          the word "Install agent" and the row would scroll sideways. */}
+      <div className="grid grid-cols-1 gap-2 min-[520px]:grid-cols-3 min-[900px]:flex min-[900px]:flex-wrap">
+        {!node.is_control_plane &&
+          (stale ? (
+            <Button
+              size="sm"
+              icon={Download}
+              loading={updating}
+              onClick={onUpdate}
+              aria-label={t("nodes.install.actionFor", { name: node.name })}
+              title={t("nodes.install.update")}
+            >
+              {updating ? t("nodes.updating") : t("nodes.updateAction")}
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              icon={Download}
+              onClick={onInstall}
+              aria-label={t("nodes.install.actionFor", { name: node.name })}
+              title={node.agent?.enrolled ? t("nodes.install.reinstall") : t("nodes.install.action")}
+            >
+              {node.agent?.enrolled ? t("nodes.install.reinstall") : t("nodes.install.action")}
+            </Button>
+          ))}
+        <Button
+          size="sm"
+          icon={Pencil}
+          onClick={onEdit}
+          aria-label={t("nodes.edit.actionFor", { name: node.name })}
+          title={t("nodes.edit.action")}
+        >
+          {t("nodes.edit.action")}
+        </Button>
+        {!node.is_control_plane && (
+          <Button
+            size="sm"
+            variant="danger"
+            icon={Trash2}
+            onClick={onForget}
+            aria-label={t("fleet.forgetFor", { name: node.name })}
+            title={t("nodes.forget")}
+          >
+            {t("nodes.forgetConfirm")}
+          </Button>
+        )}
+      </div>
+
+      {expanded && (
+        <div className="space-y-6 pt-2">
+          <div className="space-y-2">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">
+              {t("fleet.fabricPorts")}
+            </p>
+            <NodeFabricPorts node={fabricNode} plan={fabricPlan} />
+          </div>
+          <div className="space-y-2">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">
+              {t("fleet.doctorSection")}
+            </p>
+            {/* The doctor runs because the row was opened. Diagnosis changes
+                nothing, so there is no reason to make an operator press a
+                second button to be told what is wrong. */}
+            <NodeDoctor node={node} onChanged={onChanged} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function NodeRegistry({ addOpen, onAddOpenChange }: NodeRegistryProps = {}) {
   const { t } = useI18n();
   const { data: nodes, loading, error, refetch } = useQuery<ClusterNode[]>(fetchNodes);
   const [findings, setFindings] = useState<NodeFinding[]>([]);
-  const [showAdd, setShowAdd] = useState(false);
+  const [ownAdd, setOwnAdd] = useState(false);
   const [installing, setInstalling] = useState<ClusterNode | null>(null);
   const [editing, setEditing] = useState<ClusterNode | null>(null);
-  const [diagnosing, setDiagnosing] = useState<ClusterNode | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [fabric, setFabric] = useState<FabricResponse | null>(null);
   const [updating, setUpdating] = useState<string | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [forgetting, setForgetting] = useState<ClusterNode | null>(null);
   const [removeError, setRemoveError] = useState<string | null>(null);
+
+  // Controlled when the page owns the button, uncontrolled otherwise, so the
+  // same component works with a page header above it and on its own.
+  const controlled = addOpen !== undefined;
+  const showAdd = addOpen ?? ownAdd;
+  const setShowAdd = onAddOpenChange ?? setOwnAdd;
 
   const loadDiagnostics = useCallback(() => {
     fetchNodeDiagnostics()
@@ -826,6 +995,20 @@ export default function NodeRegistry() {
     refetch();
     loadDiagnostics();
   }, [refetch, loadDiagnostics]);
+
+  /** The fabric is read the first time a row is opened, and not before: a
+   *  list of machines does not need to know what every cable is doing. */
+  const fabricAsked = useRef(false);
+  const toggle = useCallback((id: string) => {
+    setExpanded((current) => (current === id ? null : id));
+    if (fabricAsked.current) return;
+    fabricAsked.current = true;
+    fetchFabric()
+      .then(setFabric)
+      .catch(() => {
+        // A fabric nobody can read is said so by the ports section itself.
+      });
+  }, []);
 
   const runUpdate = useCallback(
     async (node: ClusterNode) => {
@@ -856,195 +1039,66 @@ export default function NodeRegistry() {
     [reload],
   );
 
+  /** A finding that names no node is about the fleet, not a machine. */
+  const fleetFindings = findings.filter((f) => f.node_ids.length === 0);
+
   return (
-    <section
-      data-testid="node-registry"
-      className="rounded-md border border-border bg-surface p-4"
-    >
-      <div className="mb-4 flex items-center justify-between gap-3">
+    <section data-testid="node-registry" className={SECTION}>
+      <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h3 className="flex items-center gap-2 text-lg font-bold">
-            <Network size={18} className="text-blue2" />
-            {t("nodes.heading")}
-          </h3>
-          <p className="mt-0.5 text-sm text-text-muted">
-            {t("nodes.subtitle")}
-          </p>
+          <h2 className="text-[22px] font-bold tracking-[-0.02em]">{t("nodes.heading")}</h2>
+          <p className="mt-1 text-[13px] text-muted">{t("nodes.subtitle")}</p>
         </div>
-        <button
-          onClick={() => setShowAdd(true)}
-          className="flex shrink-0 items-center gap-2 rounded-md border border-border px-3 py-1.5 text-sm transition-colors hover:bg-surface-hover"
-        >
-          <Plus size={14} />
-          Add node
-        </button>
+        {!controlled && (
+          <Button size="sm" icon={Plus} onClick={() => setShowAdd(true)}>
+            {t("nodes.addNode")}
+          </Button>
+        )}
       </div>
 
-      {findings.length > 0 && (
-        <div className="mb-4">
-          <Diagnostics findings={findings} />
+      {fleetFindings.length > 0 && (
+        <div className="mb-4 space-y-1" data-testid="node-diagnostics">
+          {fleetFindings.map((finding) => (
+            <FindingLine key={finding.code} finding={finding} />
+          ))}
         </div>
       )}
+
+      <ErrorLine className="mb-3">{error}</ErrorLine>
+      <ErrorLine className="mb-3">{updateError}</ErrorLine>
+      <ErrorLine className="mb-3">{removeError}</ErrorLine>
 
       {loading && (
         <div className="flex justify-center py-10">
-          <Loader2 className="animate-spin text-blue2" size={24} />
-        </div>
-      )}
-
-      {error && (
-        <div
-          role="alert"
-          className="flex items-center gap-3 rounded-sm border border-danger/30 bg-danger/10 p-3 text-danger"
-        >
-          <AlertCircle size={18} />
-          <span>{error}</span>
-        </div>
-      )}
-
-      {updateError && (
-        <div
-          role="alert"
-          className="mb-3 flex items-center gap-3 rounded-sm border border-danger/30 bg-danger/10 p-3 text-danger"
-        >
-          <AlertCircle size={18} />
-          <span>{updateError}</span>
-        </div>
-      )}
-
-      {removeError && (
-        <div
-          role="alert"
-          className="mb-3 flex items-center gap-3 rounded-sm border border-danger/30 bg-danger/10 p-3 text-danger"
-        >
-          <AlertCircle size={18} />
-          <span>{removeError}</span>
+          <Spinner size="lg" label={t("common.loading")} />
         </div>
       )}
 
       {nodes && nodes.length === 0 && (
-        <p className="py-8 text-center text-text-muted">
-          No nodes registered yet.
-        </p>
+        <EmptyState icon={Server}>{t("nodes.none")}</EmptyState>
       )}
 
       {nodes && nodes.length > 0 && (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border text-left text-xs uppercase tracking-wider text-text-muted">
-                <th scope="col" className="py-2 pr-4 font-semibold">{t("nodes.colName")}</th>
-                <th scope="col" className="py-2 pr-4 font-semibold">{t("nodes.colAddress")}</th>
-                <th scope="col" className="py-2 pr-4 font-semibold">{t("nodes.colInterfaces")}</th>
-                <th scope="col" className="py-2 pr-4 font-semibold">{t("nodes.colRole")}</th>
-                <th scope="col" className="py-2 pr-4 font-semibold">{t("nodes.colState")}</th>
-                <th scope="col" className="py-2 font-semibold">
-                  <span className="sr-only">{t("nodes.colActions")}</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {nodes.map((node) => (
-                <tr key={node.id} className="border-b border-border/50 last:border-0">
-                  <td className="py-2.5 pr-4 font-medium">{node.name}</td>
-                  <td className="py-2.5 pr-4 font-mono text-xs">{node.address || "—"}</td>
-                  <td className="py-2.5 pr-4 font-mono text-xs text-text-muted">
-                    {interfaceSummary(node)}
-                  </td>
-                  <td className="py-2.5 pr-4">
-                    <div className="flex flex-col items-start gap-1">
-                      {node.is_control_plane ? (
-                        <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-primary/15 text-blue2">
-                          Control plane
-                        </span>
-                      ) : (
-                        <span className="text-text-muted">{t("nodes.peer")}</span>
-                      )}
-                      {node.agent?.version && (
-                        <span
-                          className={`text-xs ${node.agent.current === false ? "text-warning" : "text-text-muted"}`}
-                          data-testid={`agent-version-${node.id}`}
-                        >
-                          {t("nodes.agentVersion", { version: node.agent.version })}
-                          {node.agent.current === false && ` · ${t("nodes.agentStale")}`}
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="py-2.5 pr-4">
-                    <div className="flex flex-col items-start gap-1">
-                      <NodeStateBadge state={STATE_CONDITION[node.state] ?? "unknown"} />
-                      {node.agent && !node.agent.enrolled && (
-                        <span className="text-xs text-text-muted">{t("nodes.noAgent")}</span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="py-2.5 text-right">
-                    {!node.is_control_plane && node.agent?.current === false ? (
-                      <button
-                        onClick={() => void runUpdate(node)}
-                        disabled={updating === node.id}
-                        aria-label={t("nodes.install.actionFor", { name: node.name })}
-                        title={t("nodes.install.update")}
-                        className="mr-1 inline-flex items-center gap-1.5 rounded-sm border border-warning/40 bg-warning/10 px-2.5 py-1 text-xs font-medium text-warning transition-colors hover:bg-warning/20 disabled:opacity-50"
-                      >
-                        {updating === node.id ? (
-                          <Loader2 size={13} className="animate-spin" />
-                        ) : (
-                          <Download size={13} />
-                        )}
-                        {updating === node.id ? t("nodes.updating") : t("nodes.updateAction")}
-                      </button>
-                    ) : (
-                      !node.is_control_plane && (
-                        <button
-                          onClick={() => setInstalling(node)}
-                          aria-label={t("nodes.install.actionFor", { name: node.name })}
-                          title={
-                            node.agent?.enrolled
-                              ? t("nodes.install.reinstall")
-                              : t("nodes.install.action")
-                          }
-                          className="rounded-sm p-1.5 text-text-muted transition-colors hover:bg-primary/10 hover:text-blue2"
-                        >
-                          <Download size={14} />
-                        </button>
-                      )
-                    )}
-                    <button
-                      onClick={() => setEditing(node)}
-                      aria-label={t("nodes.edit.actionFor", { name: node.name })}
-                      title={t("nodes.edit.action")}
-                      className="rounded-sm p-1.5 text-text-muted transition-colors hover:bg-primary/10 hover:text-blue2"
-                    >
-                      <Pencil size={14} />
-                    </button>
-                    <button
-                      onClick={() => setDiagnosing(node)}
-                      aria-label={t("nodes.doctor.actionFor", { name: node.name })}
-                      title={t("nodes.doctor.action")}
-                      className="rounded-sm p-1.5 text-text-muted transition-colors hover:bg-primary/10 hover:text-blue2"
-                    >
-                      <Stethoscope size={14} />
-                    </button>
-                    {!node.is_control_plane && (
-                      <button
-                        onClick={() => {
-                          setRemoveError(null);
-                          setForgetting(node);
-                        }}
-                        aria-label={`Forget ${node.name}`}
-                        title={t("nodes.forget")}
-                        className="rounded-sm p-1.5 text-text-muted transition-colors hover:bg-danger/10 hover:text-danger"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div role="list" className="border-y border-line divide-y divide-line">
+          {nodes.map((node) => (
+            <NodeRow
+              key={node.id}
+              node={node}
+              findings={findings.filter((f) => f.node_ids.includes(node.id))}
+              expanded={expanded === node.id}
+              onToggle={() => toggle(node.id)}
+              fabric={fabric}
+              updating={updating === node.id}
+              onUpdate={() => void runUpdate(node)}
+              onInstall={() => setInstalling(node)}
+              onEdit={() => setEditing(node)}
+              onForget={() => {
+                setRemoveError(null);
+                setForgetting(node);
+              }}
+              onChanged={reload}
+            />
+          ))}
         </div>
       )}
 
@@ -1073,14 +1127,6 @@ export default function NodeRegistry() {
           node={editing}
           onClose={() => setEditing(null)}
           onSaved={reload}
-        />
-      )}
-
-      {diagnosing && (
-        <NodeDoctor
-          node={diagnosing}
-          onClose={() => setDiagnosing(null)}
-          onChanged={reload}
         />
       )}
 

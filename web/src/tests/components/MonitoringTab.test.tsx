@@ -19,7 +19,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import MemoryPage from "@/pages/MemoryPage";
+import MonitoringTab from "@/components/MonitoringTab";
 import type { MemoryResponse, NodeStats } from "@/lib/types";
 
 vi.mock("@/lib/api", () => ({
@@ -82,7 +82,7 @@ function oneNode(over: Partial<NodeStats> = {}): MemoryResponse {
 let emit: (event: string, data: unknown) => void;
 const stopStream = vi.fn();
 
-describe("MemoryPage", () => {
+describe("MonitoringTab", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(fetchMemory).mockResolvedValue(memory());
@@ -94,7 +94,7 @@ describe("MemoryPage", () => {
   });
 
   it("explains unified memory rather than drawing an empty usage bar", async () => {
-    render(<MemoryPage />);
+    render(<MonitoringTab />);
 
     expect(await screen.findByText("NVIDIA GB10")).toBeInTheDocument();
     expect(
@@ -127,7 +127,7 @@ describe("MemoryPage", () => {
         ],
       }),
     );
-    render(<MemoryPage />);
+    render(<MonitoringTab />);
 
     expect(await screen.findByText("40960 / 81920 MB")).toBeInTheDocument();
     expect(screen.getByText("50.0%")).toBeInTheDocument();
@@ -136,9 +136,9 @@ describe("MemoryPage", () => {
 
   it("marks a process nothing here started, and kills it once confirmed", async () => {
     const user = userEvent.setup();
-    render(<MemoryPage />);
+    render(<MonitoringTab />);
 
-    const row = (await screen.findByText("98251")).closest("tr")!;
+    const row = (await screen.findByText("98251")).closest<HTMLElement>("[role='listitem']")!;
     expect(within(row).getByText("untracked")).toBeInTheDocument();
     expect(within(row).getByText("83421 MB")).toBeInTheDocument();
 
@@ -160,9 +160,9 @@ describe("MemoryPage", () => {
   // the memory it is holding.
   it("names the process, its pid and its memory before killing anything", async () => {
     const user = userEvent.setup();
-    render(<MemoryPage />);
+    render(<MonitoringTab />);
 
-    const row = (await screen.findByText("98251")).closest("tr")!;
+    const row = (await screen.findByText("98251")).closest<HTMLElement>("[role='listitem']")!;
     await user.click(within(row).getByRole("button", { name: /kill/i }));
 
     const dialog = screen.getByRole("dialog");
@@ -174,9 +174,9 @@ describe("MemoryPage", () => {
 
   it("kills nothing when the confirmation is dismissed", async () => {
     const user = userEvent.setup();
-    render(<MemoryPage />);
+    render(<MonitoringTab />);
 
-    const row = (await screen.findByText("98251")).closest("tr")!;
+    const row = (await screen.findByText("98251")).closest<HTMLElement>("[role='listitem']")!;
     await user.click(within(row).getByRole("button", { name: /kill/i }));
     await user.click(screen.getByRole("button", { name: "Cancel" }));
 
@@ -194,9 +194,9 @@ describe("MemoryPage", () => {
       error: "Operation not permitted",
     });
     const user = userEvent.setup();
-    render(<MemoryPage />);
+    render(<MonitoringTab />);
 
-    const row = (await screen.findByText("98251")).closest("tr")!;
+    const row = (await screen.findByText("98251")).closest<HTMLElement>("[role='listitem']")!;
     await user.click(within(row).getByRole("button", { name: /kill/i }));
     await user.click(screen.getByRole("button", { name: "Kill process" }));
 
@@ -207,9 +207,9 @@ describe("MemoryPage", () => {
   it("says so when the kill fails without a reason", async () => {
     vi.mocked(killGpuProcess).mockResolvedValue({ killed: false, pid: 98251 });
     const user = userEvent.setup();
-    render(<MemoryPage />);
+    render(<MonitoringTab />);
 
-    const row = (await screen.findByText("98251")).closest("tr")!;
+    const row = (await screen.findByText("98251")).closest<HTMLElement>("[role='listitem']")!;
     await user.click(within(row).getByRole("button", { name: /kill/i }));
     await user.click(screen.getByRole("button", { name: "Kill process" }));
 
@@ -220,9 +220,9 @@ describe("MemoryPage", () => {
   it("surfaces a kill request that never reached the backend", async () => {
     vi.mocked(killGpuProcess).mockRejectedValue(new Error("API 500: nvidia-smi gone"));
     const user = userEvent.setup();
-    render(<MemoryPage />);
+    render(<MonitoringTab />);
 
-    const row = (await screen.findByText("98251")).closest("tr")!;
+    const row = (await screen.findByText("98251")).closest<HTMLElement>("[role='listitem']")!;
     await user.click(within(row).getByRole("button", { name: /kill/i }));
     await user.click(screen.getByRole("button", { name: "Kill process" }));
 
@@ -249,9 +249,9 @@ describe("MemoryPage", () => {
       }),
     );
     const user = userEvent.setup();
-    render(<MemoryPage />);
+    render(<MonitoringTab />);
 
-    const row = (await screen.findByText("4242")).closest("tr")!;
+    const row = (await screen.findByText("4242")).closest<HTMLElement>("[role='listitem']")!;
     await user.click(within(row).getByRole("button", { name: /kill/i }));
 
     expect(
@@ -266,7 +266,7 @@ describe("MemoryPage", () => {
   // and inventing the second one would be worse than saying so.
 
   it("says it has no history yet rather than drawing a line through one point", async () => {
-    render(<MemoryPage />);
+    render(<MonitoringTab />);
 
     // The count lands a render after the card does, so wait on the count.
     expect(await screen.findByText(/1 sample so far/)).toBeInTheDocument();
@@ -274,7 +274,7 @@ describe("MemoryPage", () => {
   });
 
   it("draws utilization and temperature once the stream has reported twice", async () => {
-    render(<MemoryPage />);
+    render(<MonitoringTab />);
     await screen.findByText("NVIDIA GB10");
 
     const frame = (utilization: number, temperature: number) =>
@@ -333,7 +333,7 @@ describe("MemoryPage", () => {
       ],
     });
     vi.mocked(fetchMemory).mockResolvedValue(two(90));
-    render(<MemoryPage />);
+    render(<MonitoringTab />);
     await screen.findByText("NVIDIA A100");
 
     act(() => emit("metrics", two(80)));
@@ -344,7 +344,7 @@ describe("MemoryPage", () => {
   });
 
   it("prefers a live metrics frame over the figures it first polled", async () => {
-    render(<MemoryPage />);
+    render(<MonitoringTab />);
     await screen.findByText("NVIDIA GB10");
 
     act(() => {
@@ -355,7 +355,7 @@ describe("MemoryPage", () => {
   });
 
   it("ignores stream frames that are not metrics", async () => {
-    render(<MemoryPage />);
+    render(<MonitoringTab />);
     await screen.findByText("NVIDIA GB10");
 
     act(() => emit("error", { message: "stream hiccup" }));
@@ -365,7 +365,7 @@ describe("MemoryPage", () => {
   });
 
   it("closes the metrics stream when the page goes away", async () => {
-    const { unmount } = render(<MemoryPage />);
+    const { unmount } = render(<MonitoringTab />);
     await screen.findByText("NVIDIA GB10");
 
     unmount();
@@ -375,7 +375,7 @@ describe("MemoryPage", () => {
 
   it("surfaces a failed read instead of an empty dashboard", async () => {
     vi.mocked(fetchMemory).mockRejectedValue(new Error("nvidia-smi not found"));
-    render(<MemoryPage />);
+    render(<MonitoringTab />);
 
     expect(await screen.findByText("nvidia-smi not found")).toBeInTheDocument();
     expect(await screen.findByText("No data available.")).toBeInTheDocument();
@@ -383,7 +383,7 @@ describe("MemoryPage", () => {
 
   it("renders the disk card even on a machine reporting no GPU at all", async () => {
     vi.mocked(fetchMemory).mockResolvedValue(oneNode({ gpu: [], processes: [] }));
-    render(<MemoryPage />);
+    render(<MonitoringTab />);
 
     expect(await screen.findByText("/")).toBeInTheDocument();
     expect(screen.getByText("64.9%")).toBeInTheDocument();
@@ -397,7 +397,7 @@ describe("MemoryPage", () => {
  * The page answered for one machine — whichever the control plane happened to
  * be installed on — and said nothing about which. Three of four Sparks were
  * invisible, and the visible one was unlabelled. */
-describe("MemoryPage across nodes", () => {
+describe("MonitoringTab across nodes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(killGpuProcess).mockResolvedValue({ killed: true, pid: 98251 });
@@ -421,7 +421,7 @@ describe("MemoryPage across nodes", () => {
   });
 
   it("gives every node its own section, and says which one runs the control plane", async () => {
-    render(<MemoryPage />);
+    render(<MonitoringTab />);
 
     expect(await screen.findByTestId("node-control")).toBeInTheDocument();
     expect(screen.getByTestId("node-peer")).toBeInTheDocument();
@@ -448,7 +448,7 @@ describe("MemoryPage across nodes", () => {
         ],
       }),
     );
-    render(<MemoryPage />);
+    render(<MonitoringTab />);
 
     const peer = within(await screen.findByTestId("node-peer"));
     expect(peer.getByText("Could not be asked")).toBeInTheDocument();
@@ -459,10 +459,10 @@ describe("MemoryPage across nodes", () => {
 
   it("sends a kill to the node the process is on", async () => {
     const user = userEvent.setup();
-    render(<MemoryPage />);
+    render(<MonitoringTab />);
 
     const peer = within(await screen.findByTestId("node-peer"));
-    const row = peer.getByText("98251").closest("tr")!;
+    const row = peer.getByText("98251").closest<HTMLElement>("[role='listitem']")!;
     await user.click(within(row).getByRole("button", { name: /kill/i }));
     await user.click(screen.getByRole("button", { name: "Kill process" }));
 
@@ -471,10 +471,10 @@ describe("MemoryPage across nodes", () => {
 
   it("names the node in the confirmation, because the same pid exists on both", async () => {
     const user = userEvent.setup();
-    render(<MemoryPage />);
+    render(<MonitoringTab />);
 
     const peer = within(await screen.findByTestId("node-peer"));
-    const row = peer.getByText("98251").closest("tr")!;
+    const row = peer.getByText("98251").closest<HTMLElement>("[role='listitem']")!;
     await user.click(within(row).getByRole("button", { name: /kill/i }));
 
     expect(
@@ -501,7 +501,7 @@ describe("MemoryPage across nodes", () => {
         ],
       }),
     );
-    render(<MemoryPage />);
+    render(<MonitoringTab />);
 
     expect(await screen.findByText("held by d1")).toBeInTheDocument();
   });
@@ -509,7 +509,7 @@ describe("MemoryPage across nodes", () => {
   it("still renders a backend that answers for one machine only", async () => {
     // An older control plane sends the flat block and no `nodes`.
     vi.mocked(fetchMemory).mockResolvedValue(memory());
-    render(<MemoryPage />);
+    render(<MonitoringTab />);
 
     expect(await screen.findByText("NVIDIA GB10")).toBeInTheDocument();
     expect(screen.getByText("CPU Memory")).toBeInTheDocument();
@@ -519,7 +519,7 @@ describe("MemoryPage across nodes", () => {
     // Two Sparks reporting the same GPU UUID is not hypothetical: the
     // hardware's UUIDs are per machine, and simulation seeds both alike. Keyed
     // by UUID alone, one node's readings would be drawn under the other's card.
-    render(<MemoryPage />);
+    render(<MonitoringTab />);
     await screen.findByTestId("node-peer");
 
     // Two readings make a line; one does not, and the chart says so instead.

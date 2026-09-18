@@ -49,10 +49,17 @@ const SHOTS = [
     settle: "text=What is serving.",
     expand: '[role="tab"]:has-text("Summary")',
   },
-  { name: "cluster", path: "/cluster", settle: "text=The machines." },
+  { name: "fleet", path: "/cluster", settle: "[data-testid=node-registry]" },
   // Full page: the answer covers every node, and one node in a viewport is
-  // the picture this page was rebuilt to stop showing.
-  { name: "monitoring", path: "/monitoring", settle: "text=What they are doing.", fullPage: true },
+  // the picture this page was rebuilt to stop showing. Monitoring is a tab of
+  // Fleet, so the settle is a node's own section rather than the page title,
+  // which both tabs share.
+  {
+    name: "fleet-monitoring",
+    path: "/monitoring",
+    settle: "text=CPU Memory",
+    fullPage: true,
+  },
   // Library is one page under four addresses; each tab is its own shot,
   // because a reader looking for "where are my images" is looking for the
   // tab, not for the page that contains it.

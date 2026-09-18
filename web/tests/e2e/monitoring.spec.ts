@@ -26,7 +26,13 @@ import {
 test("asks every node, and says which one runs the control plane", async ({ page }) => {
   await gotoPage(page, "/monitoring");
 
-  await expect(page.getByRole("heading", { name: "What they are doing.", exact: true })).toBeVisible();
+  // Monitoring is a tab of Fleet now, and `/monitoring` deep-links to it: the
+  // page is the machines, and this is the reading of what they are doing.
+  await expect(page.getByRole("heading", { name: "The machines.", exact: true })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Monitoring" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   // The registry's two Sparks, each with its own section.
   await expect(page.getByRole("heading", { name: "spark-01" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "spark-02" })).toBeVisible();
@@ -42,9 +48,11 @@ test("asks every node, and says which one runs the control plane", async ({ page
 test("marks a GPU process nothing here started", async ({ page }) => {
   await gotoPage(page, "/monitoring");
 
-  const table = page.getByRole("table").first();
-  await expect(table).toBeVisible();
-  await expect(table.getByText("untracked").first()).toBeVisible();
+  // Rows, not a table: each process stacks into a card under 900 so a phone
+  // reads it without scrolling sideways.
+  const process = page.getByRole("listitem").filter({ hasText: "untracked" }).first();
+  await expect(process).toBeVisible();
+  await expect(process.getByText("untracked")).toBeVisible();
   await expect(page.getByRole("button", { name: "Kill" }).first()).toBeVisible();
   await expectNoCrash(page);
 });
@@ -82,7 +90,7 @@ test("renders host CPU and disk without a GPU at all", async ({ page }) => {
   });
   await gotoPage(page, "/monitoring");
 
-  await expect(page.getByRole("heading", { name: "What they are doing.", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "The machines.", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "CPU Memory" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "/", exact: true })).toBeVisible();
   await expect(page.getByText("64.9%", { exact: true })).toBeVisible();

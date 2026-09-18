@@ -204,6 +204,10 @@ test("a running multi-node deployment is marked wherever it is listed", async ({
     // The row names the machines its ranks landed on rather than counting them.
     await expect(row).toContainText(CONTROL);
     await expect(row.getByText("exp", { exact: true })).toBeVisible();
+
+    // Once, on Runs. Fleet listed the same deployments in a second table with
+    // half the actions; it is about the machines now, and this marking has one
+    // place to be right.
     await expectNoCrash(page);
   } finally {
     await purgeDeployments(request, RECIPE);

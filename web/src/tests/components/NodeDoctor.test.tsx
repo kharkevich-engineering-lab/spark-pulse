@@ -63,7 +63,7 @@ describe("NodeDoctor", () => {
   });
 
   it("diagnoses on open and groups findings by who can fix them", async () => {
-    render(<NodeDoctor node={node()} onClose={() => {}} onChanged={() => {}} />);
+    render(<NodeDoctor node={node()} onChanged={() => {}} />);
     const findings = await screen.findByTestId("doctor-findings");
     expect(within(findings).getByText("docker-socket")).toBeInTheDocument();
     expect(findings).toHaveTextContent("Fixable from here");
@@ -84,7 +84,7 @@ describe("NodeDoctor", () => {
         healthy: true,
       }),
     );
-    render(<NodeDoctor node={node()} onClose={() => {}} onChanged={() => {}} />);
+    render(<NodeDoctor node={node()} onChanged={() => {}} />);
     await screen.findByTestId("doctor-findings");
     await user.type(screen.getByLabelText("sudo password"), "s3cret");
     await user.click(screen.getByRole("button", { name: "Repair what is fixable" }));
@@ -99,13 +99,13 @@ describe("NodeDoctor", () => {
         findings: [{ check: "disk", status: "warn", detail: "low", channel: "ssh", verdict: "needs-a-human-on-that-machine", remedy: "free space" }],
       }),
     );
-    render(<NodeDoctor node={node()} onClose={() => {}} onChanged={() => {}} />);
+    render(<NodeDoctor node={node()} onChanged={() => {}} />);
     await screen.findByTestId("doctor-findings");
     expect(screen.queryByRole("button", { name: "Repair what is fixable" })).toBeNull();
   });
 
   it("does not offer a repair on the control node", async () => {
-    render(<NodeDoctor node={node({ is_control_plane: true })} onClose={() => {}} onChanged={() => {}} />);
+    render(<NodeDoctor node={node({ is_control_plane: true })} onChanged={() => {}} />);
     await screen.findByTestId("doctor-findings");
     expect(screen.queryByRole("button", { name: "Repair what is fixable" })).toBeNull();
     expect(screen.queryByLabelText("sudo password")).toBeNull();
@@ -113,14 +113,14 @@ describe("NodeDoctor", () => {
 
   it("surfaces a failure to diagnose", async () => {
     vi.mocked(fetchNodeDoctor).mockRejectedValue(new Error("API 503: the agent transport is not running"));
-    render(<NodeDoctor node={node()} onClose={() => {}} onChanged={() => {}} />);
+    render(<NodeDoctor node={node()} onChanged={() => {}} />);
     expect(await screen.findByRole("alert")).toHaveTextContent("transport is not running");
   });
 
   it("keeps the report and says why when a repair fails", async () => {
     const user = userEvent.setup();
     vi.mocked(treatNode).mockRejectedValue(new Error("API 502: sudo password refused"));
-    render(<NodeDoctor node={node()} onClose={() => {}} onChanged={() => {}} />);
+    render(<NodeDoctor node={node()} onChanged={() => {}} />);
     await screen.findByTestId("doctor-findings");
     await user.click(screen.getByRole("button", { name: "Repair what is fixable" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("sudo password refused");

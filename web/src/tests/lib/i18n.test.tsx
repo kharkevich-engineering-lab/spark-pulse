@@ -63,6 +63,13 @@ describe("the dictionaries", () => {
     "recipes.tabMods",
     "eventStream.info",
     "nodes.colInterfaces",
+    // "Interfaces", "Agent", "Port" and "MTU" carry over into French
+    // unchanged, and "Spark Pulse {version}" is a product name.
+    "fleet.labelInterfaces",
+    "fleet.labelAgent",
+    "fleet.labelPort",
+    "fleet.labelMtu",
+    "fleet.peerSparkPulse",
     "nodes.doctor.applied",
     "fabric.colMtu",
     "fabric.colStatus",

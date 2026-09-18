@@ -232,6 +232,60 @@ function ApplyDialog({ plan, onClose, onApplied }: ApplyDialogProps) {
   );
 }
 
+/** The rule that separates one section of the page from the next. Cards are
+ *  for destinations and panels; a section is a heading over a rule. */
+const SECTION = "border-t border-line pt-12 mt-10 first:border-t-0 first:pt-0 first:mt-0";
+
+/** One node's ConnectX ports, as its agent reported them, with what the plan
+ * would change.
+ *
+ * Exported because the node registry's per-node expand shows exactly this:
+ * the ports belong to the machine, so the row about that machine is where an
+ * operator looks for them. One implementation, so the fabric section and the
+ * registry cannot disagree about what a node's cables are doing.
+ */
+export function NodeFabricPorts({
+  node,
+  plan,
+}: {
+  node?: FabricNode;
+  plan?: FabricNodePlan;
+}) {
+  const { t } = useI18n();
+  if (!node || !node.reported) {
+    return <p className="text-[13px] text-muted">{t("fleet.fabricNone")}</p>;
+  }
+  const up = upPorts(node);
+  if (up.length === 0) {
+    return <p className="text-[13px] text-muted">{t("fabric.noPortsUp")}</p>;
+  }
+  return (
+    <div role="list" className="divide-y divide-line">
+      {up.map((p) => {
+        const planned = plan?.assignments.find((a) => a.netdev === p.netdev);
+        return (
+          <div
+            key={p.netdev}
+            role="listitem"
+            className="flex flex-wrap items-baseline gap-x-4 gap-y-0.5 py-1.5 font-mono text-[12.5px]"
+          >
+            <span className="min-[520px]:w-24 shrink-0">{p.netdev}</span>
+            <span>
+              {p.cidr || <span className="font-sans text-muted">{t("fabric.noAddress")}</span>}
+            </span>
+            {plan?.status === "proposed" && planned && planned.cidr !== p.cidr && (
+              <span className="text-blue2">→ {planned.cidr}</span>
+            )}
+            <span className="text-muted">
+              {t("fleet.labelMtu")} {p.mtu || "—"}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function FabricCard() {
   const { t } = useI18n();
   const [data, setData] = useState<FabricResponse | null>(null);
@@ -274,14 +328,11 @@ export default function FabricCard() {
   };
 
   return (
-    <section data-testid="fabric-card" className="rounded-md border border-line bg-surface p-4">
-      <div className="mb-4 flex items-center justify-between gap-3">
+    <section data-testid="fabric-card" className={SECTION}>
+      <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h3 className="flex items-center gap-2 text-[17px] font-semibold">
-            <Cable size={18} className="text-blue2" />
-            {t("fabric.heading")}
-          </h3>
-          <p className="mt-0.5 text-[13px] text-muted">{t("fabric.subtitle")}</p>
+          <h2 className="text-[22px] font-bold tracking-[-0.02em]">{t("fabric.heading")}</h2>
+          <p className="mt-1 text-[13px] text-muted">{t("fabric.subtitle")}</p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <IconButton
@@ -305,15 +356,15 @@ export default function FabricCard() {
 
       <ErrorLine className="mb-3">{error}</ErrorLine>
 
-      {data && !data.transport && <p className="text-sm text-text-muted">{t("fabric.noTransport")}</p>}
+      {data && !data.transport && <p className="text-[14px] text-muted">{t("fabric.noTransport")}</p>}
 
       {data && data.transport && (
         <>
-          <p className="mb-3 text-sm text-text-muted">{modeText}</p>
+          <p className="mb-3 text-[14px] text-muted">{modeText}</p>
           {plan && (plan.advice?.length ?? 0) > 0 && (
             <ul className="mb-3 space-y-1" data-testid="fabric-advice">
               {plan.advice!.map((a, i) => (
-                <li key={i} role="note" className="rounded-md border border-border bg-surface-hover p-2 text-sm text-text-muted">
+                <li key={i} role="note" className="text-[13px] text-muted">
                   {a}
                 </li>
               ))}
@@ -322,77 +373,48 @@ export default function FabricCard() {
           {plan && plan.problems.length > 0 && (
             <ul className="mb-3 space-y-1" data-testid="fabric-problems">
               {plan.problems.map((p, i) => (
-                <li key={i} role="note" className="rounded-sm border border-warning/30 bg-warning/10 p-2 text-sm">
+                <li key={i} role="note" className="text-[13px] text-warn">
                   {p}
                 </li>
               ))}
             </ul>
           )}
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border text-left text-xs uppercase tracking-wider text-text-muted">
-                  <th scope="col" className="py-2 pr-4 font-semibold">{t("fabric.colNode")}</th>
-                  <th scope="col" className="py-2 pr-4 font-semibold">{t("fabric.colPorts")}</th>
-                  <th scope="col" className="py-2 pr-4 font-semibold">{t("fabric.colAddresses")}</th>
-                  <th scope="col" className="py-2 pr-4 font-semibold">{t("fabric.colMtu")}</th>
-                  <th scope="col" className="py-2 font-semibold">{t("fabric.colStatus")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.nodes.map((node) => {
-                  const nodePlan = planFor(node.node_id);
-                  const up = upPorts(node);
-                  return (
-                    <tr key={node.node_id} className="border-b border-border/50 align-top last:border-0">
-                      <td className="py-2.5 pr-4 font-medium">
-                        {node.name}
-                        {node.reported && (
-                          <div className="mt-0.5 text-xs font-normal text-text-muted">
-                            {node.pinned?.fabric_mode ? t("fabric.pinned") : t("fabric.notPinned")}
-                            {node.wired_management_up === false && plan?.mode === "mesh" && (
-                              <span className="text-warning"> · {t("fabric.noWired")}</span>
-                            )}
-                          </div>
-                        )}
-                      </td>
-                      <td className="py-2.5 pr-4 font-mono text-xs">
-                        {!node.reported
-                          ? <span className="font-sans text-text-muted">{t("fabric.notReported")}</span>
-                          : up.length === 0
-                            ? <span className="font-sans text-text-muted">{t("fabric.noPortsUp")}</span>
-                            : up.map((p) => <div key={p.netdev}>{p.netdev}</div>)}
-                      </td>
-                      <td className="py-2.5 pr-4 font-mono text-xs">
-                        {up.map((p) => (
-                          <div key={p.netdev}>
-                            {p.cidr || <span className="font-sans text-text-muted">{t("fabric.noAddress")}</span>}
-                            {nodePlan?.status === "proposed" &&
-                              nodePlan.assignments.find((a) => a.netdev === p.netdev)?.cidr !== p.cidr && (
-                                <span className="text-blue2"> → {nodePlan.assignments.find((a) => a.netdev === p.netdev)?.cidr}</span>
-                              )}
-                          </div>
-                        ))}
-                      </td>
-                      <td className="py-2.5 pr-4 font-mono text-xs">
-                        {up.map((p) => (
-                          <div key={p.netdev}>{p.mtu || "—"}</div>
-                        ))}
-                      </td>
-                      <td className="py-2.5">
-                        {nodePlan && (
-                          <NodeState
-                            state={STATUS_STATE[nodePlan.status]}
-                            label={statusLabel[nodePlan.status]}
-                            title={nodePlan.reasons.join(" ")}
-                          />
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          {/* Rows, not a table: a node's ports are a short list under its name,
+              which reads the same at 1280 and at 390 — the five-column table
+              this replaced could only be scrolled sideways on a phone. */}
+          <div role="list" className="border-y border-line divide-y divide-line">
+            {data.nodes.map((node) => {
+              const nodePlan = planFor(node.node_id);
+              return (
+                <div
+                  key={node.node_id}
+                  role="listitem"
+                  aria-label={node.name}
+                  data-testid={`fabric-node-${node.node_id}`}
+                  className="py-4 space-y-2"
+                >
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span className="text-[15px] font-semibold">{node.name}</span>
+                    {nodePlan && (
+                      <NodeState
+                        state={STATUS_STATE[nodePlan.status]}
+                        label={statusLabel[nodePlan.status]}
+                        title={nodePlan.reasons.join(" ")}
+                      />
+                    )}
+                    {node.reported && (
+                      <span className="text-[13px] text-muted">
+                        {node.pinned?.fabric_mode ? t("fabric.pinned") : t("fabric.notPinned")}
+                      </span>
+                    )}
+                    {node.reported && node.wired_management_up === false && plan?.mode === "mesh" && (
+                      <span className="text-[13px] text-warn">{t("fabric.noWired")}</span>
+                    )}
+                  </div>
+                  <NodeFabricPorts node={node} plan={nodePlan} />
+                </div>
+              );
+            })}
           </div>
         </>
       )}

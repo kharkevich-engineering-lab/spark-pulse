@@ -10,6 +10,7 @@ import type {
 } from "@/lib/types";
 
 vi.mock("@/lib/api", () => ({
+  fetchFabric: vi.fn(),
   fetchNodes: vi.fn(),
   addNode: vi.fn(),
   updateNode: vi.fn(),
@@ -26,7 +27,9 @@ vi.mock("@/lib/api", () => ({
 import {
   addNode,
   discoverNodes,
+  fetchFabric,
   fetchNodeDiagnostics,
+  fetchNodeDoctor,
   fetchNodeHostKey,
   fetchNodes,
   installNodeAgent,
@@ -83,7 +86,7 @@ describe("NodeRegistry", () => {
   it("renders one row per node with its address and interfaces", async () => {
     render(<NodeRegistry />);
 
-    const peerRow = await screen.findByRole("row", { name: /spark-02/ });
+    const peerRow = await screen.findByRole("listitem", { name: /spark-02/ });
     expect(peerRow).toHaveTextContent("10.0.0.11");
     // Derived, not guessed: the management link and both fabric links.
     expect(peerRow).toHaveTextContent("enp1s0, ib0, ib1");
@@ -92,10 +95,10 @@ describe("NodeRegistry", () => {
   it("marks the control plane and calls a peer a peer", async () => {
     render(<NodeRegistry />);
 
-    expect(await screen.findByRole("row", { name: /spark-01/ })).toHaveTextContent(
+    expect(await screen.findByRole("listitem", { name: /spark-01/ })).toHaveTextContent(
       "Control plane",
     );
-    expect(screen.getByRole("row", { name: /spark-02/ })).toHaveTextContent("Peer");
+    expect(screen.getByRole("listitem", { name: /spark-02/ })).toHaveTextContent("Peer");
   });
 
   it("shows the three states as three distinct labels", async () => {
@@ -108,20 +111,20 @@ describe("NodeRegistry", () => {
     });
     render(<NodeRegistry />);
 
-    expect(await screen.findByRole("row", { name: /alpha/ })).toHaveTextContent("Healthy");
-    expect(screen.getByRole("row", { name: /bravo/ })).toHaveTextContent("Unknown");
-    expect(screen.getByRole("row", { name: /charlie/ })).toHaveTextContent("Dead");
+    expect(await screen.findByRole("listitem", { name: /alpha/ })).toHaveTextContent("Healthy");
+    expect(screen.getByRole("listitem", { name: /bravo/ })).toHaveTextContent("Unknown");
+    expect(screen.getByRole("listitem", { name: /charlie/ })).toHaveTextContent("Dead");
   });
 
   it("says unknown means unverified rather than failed", async () => {
     render(<NodeRegistry />);
-    const row = await screen.findByRole("row", { name: /spark-02/ });
+    const row = await screen.findByRole("listitem", { name: /spark-02/ });
     expect(within(row).getByTitle(/status unverified/i)).toBeInTheDocument();
   });
 
   it("offers no forget button for the control plane", async () => {
     render(<NodeRegistry />);
-    await screen.findByRole("row", { name: /spark-01/ });
+    await screen.findByRole("listitem", { name: /spark-01/ });
 
     expect(screen.getByRole("button", { name: "Forget spark-02" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Forget spark-01" })).toBeNull();
@@ -133,7 +136,7 @@ describe("NodeRegistry", () => {
       node({ id: "new", name: "10.0.0.12", address: "10.0.0.12", ssh_user: "spark" }),
     );
     render(<NodeRegistry />);
-    await screen.findByRole("row", { name: /spark-02/ });
+    await screen.findByRole("listitem", { name: /spark-02/ });
 
     await user.click(screen.getByRole("button", { name: "Add node" }));
     const dialog = screen.getByRole("dialog", { name: "Add node" });
@@ -159,7 +162,7 @@ describe("NodeRegistry", () => {
   it("cannot submit without an address", async () => {
     const user = userEvent.setup();
     render(<NodeRegistry />);
-    await screen.findByRole("row", { name: /spark-02/ });
+    await screen.findByRole("listitem", { name: /spark-02/ });
 
     await user.click(screen.getByRole("button", { name: "Add node" }));
     const dialog = screen.getByRole("dialog", { name: "Add node" });
@@ -172,7 +175,7 @@ describe("NodeRegistry", () => {
       new Error("API 400: a node with address 10.0.0.11 is already registered"),
     );
     render(<NodeRegistry />);
-    await screen.findByRole("row", { name: /spark-02/ });
+    await screen.findByRole("listitem", { name: /spark-02/ });
 
     await user.click(screen.getByRole("button", { name: "Add node" }));
     const dialog = screen.getByRole("dialog", { name: "Add node" });
@@ -205,7 +208,7 @@ describe("NodeRegistry", () => {
     };
     vi.mocked(discoverNodes).mockResolvedValue(result);
     render(<NodeRegistry />);
-    await screen.findByRole("row", { name: /spark-02/ });
+    await screen.findByRole("listitem", { name: /spark-02/ });
 
     await user.click(screen.getByRole("button", { name: "Add node" }));
     const dialog = screen.getByRole("dialog", { name: "Add node" });
@@ -220,7 +223,7 @@ describe("NodeRegistry", () => {
     const user = userEvent.setup();
     vi.mocked(discoverNodes).mockResolvedValue({ mdns_available: false, peers: [] });
     render(<NodeRegistry />);
-    await screen.findByRole("row", { name: /spark-02/ });
+    await screen.findByRole("listitem", { name: /spark-02/ });
 
     await user.click(screen.getByRole("button", { name: "Add node" }));
     const dialog = screen.getByRole("dialog", { name: "Add node" });
@@ -235,7 +238,7 @@ describe("NodeRegistry", () => {
     const user = userEvent.setup();
     vi.mocked(discoverNodes).mockRejectedValue(new Error("API 500: boom"));
     render(<NodeRegistry />);
-    await screen.findByRole("row", { name: /spark-02/ });
+    await screen.findByRole("listitem", { name: /spark-02/ });
 
     await user.click(screen.getByRole("button", { name: "Add node" }));
     const dialog = screen.getByRole("dialog", { name: "Add node" });
@@ -249,7 +252,7 @@ describe("NodeRegistry", () => {
     const user = userEvent.setup();
     vi.mocked(removeNode).mockResolvedValue({ removed: true, node: PEER });
     render(<NodeRegistry />);
-    await screen.findByRole("row", { name: /spark-02/ });
+    await screen.findByRole("listitem", { name: /spark-02/ });
 
     await user.click(screen.getByRole("button", { name: "Forget spark-02" }));
     expect(screen.getByText(/does not touch the machine itself/i)).toBeInTheDocument();
@@ -279,18 +282,29 @@ describe("NodeRegistry", () => {
     });
     render(<NodeRegistry />);
 
-    const panel = await screen.findByTestId("node-diagnostics");
-    expect(panel).toHaveTextContent("2 nodes report the same machine-id");
-    expect(panel).toHaveTextContent("systemd-machine-id-setup");
+    // A finding that names nodes is a line on each of those nodes' rows: the
+    // machine-id clash is about those two machines, and a box at the top of
+    // the list says it about all of them.
+    const row = await screen.findByTestId("node-finding-control");
+    expect(row).toHaveTextContent("2 nodes report the same machine-id");
+    expect(row).toHaveTextContent("systemd-machine-id-setup");
+    expect(screen.getByTestId("node-finding-peer")).toHaveTextContent(
+      "2 nodes report the same machine-id",
+    );
+
+    // One that names none is about the fleet, and sits above the list.
+    const panel = screen.getByTestId("node-diagnostics");
+    expect(panel).toHaveTextContent("mDNS is not available");
     expect(panel).toHaveTextContent("Adding a node by address always works");
+
     // Findings are notes, not errors.
-    expect(within(panel).getAllByRole("note")).toHaveLength(2);
-    expect(within(panel).queryByRole("alert")).toBeNull();
+    expect(screen.getAllByRole("note")).toHaveLength(3);
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("shows nothing at all when there is nothing to report", async () => {
     render(<NodeRegistry />);
-    await screen.findByRole("row", { name: /spark-02/ });
+    await screen.findByRole("listitem", { name: /spark-02/ });
     expect(screen.queryByTestId("node-diagnostics")).toBeNull();
   });
 
@@ -317,7 +331,107 @@ describe("NodeRegistry", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "cannot be removed from the registry",
     );
-    expect(screen.getByRole("row", { name: /spark-02/ })).toBeInTheDocument();
+    expect(screen.getByRole("listitem", { name: /spark-02/ })).toBeInTheDocument();
+  });
+});
+
+// ── The per-node expand ─────────────────────────────────────────────────────
+
+/** What a machine's cables are doing and what the doctor makes of it are a
+ *  question about *one* machine, so they live under that machine's row rather
+ *  than in a dialog over the list it belongs to. */
+describe("the node detail", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockApi();
+    vi.mocked(fetchFabric).mockResolvedValue({
+      transport: true,
+      nodes: [
+        {
+          node_id: "peer",
+          name: "spark-02",
+          is_control_plane: false,
+          reported: true,
+          mode: "direct",
+          ports: [
+            { hca: "rocep1s0f1", netdev: "enp1s0f1np1", is_up: true, cidr: "192.168.177.12/24", mtu: 9000 },
+          ],
+          ib_hca: "rocep1s0f1",
+          errors: [],
+          warnings: [],
+        },
+      ],
+      plan: { mode: "direct", nodes: [], problems: [], proposed: [] },
+    });
+    vi.mocked(fetchNodeDoctor).mockResolvedValue({
+      node_id: "peer",
+      host: "10.0.0.11",
+      healthy: false,
+      channels: ["agent"],
+      findings: [
+        {
+          check: "docker-socket",
+          status: "warn",
+          detail: "spark is not in the docker group",
+          channel: "agent",
+          verdict: "fixable-here",
+          remedy: "usermod -aG docker spark",
+        },
+      ],
+      repairs: [],
+    });
+  });
+
+  it("shows the node's ports and the doctor's findings, and nothing before it is opened", async () => {
+    const user = userEvent.setup();
+    render(<NodeRegistry />);
+    await screen.findByRole("listitem", { name: /spark-02/ });
+
+    // The fabric is not read until a row is opened: a list of machines does
+    // not need to know what every cable is doing.
+    expect(fetchFabric).not.toHaveBeenCalled();
+    expect(fetchNodeDoctor).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Details for spark-02" }));
+
+    const row = screen.getByTestId("node-row-peer");
+    expect(await within(row).findByText("192.168.177.12/24")).toBeInTheDocument();
+    expect(within(row).getByText("enp1s0f1np1")).toBeInTheDocument();
+    // The doctor runs because the row was opened — a diagnosis changes
+    // nothing, so there is no second button to press.
+    expect(await within(row).findByTestId("doctor-findings")).toHaveTextContent("docker-socket");
+    expect(fetchNodeDoctor).toHaveBeenCalledWith("peer");
+  });
+
+  it("closes again, and asks for the fabric only once", async () => {
+    const user = userEvent.setup();
+    render(<NodeRegistry />);
+    await screen.findByRole("listitem", { name: /spark-02/ });
+
+    const toggle = screen.getByRole("button", { name: "Details for spark-02" });
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByTestId("doctor-peer")).toBeNull();
+
+    await user.click(toggle);
+    await waitFor(() => expect(fetchFabric).toHaveBeenCalledTimes(1));
+  });
+
+  it("says so when no agent has reported a node's ports", async () => {
+    const user = userEvent.setup();
+    render(<NodeRegistry />);
+    await screen.findByRole("listitem", { name: /spark-01/ });
+
+    // The control node is not in the fabric answer above, so its row has
+    // nothing to show — said as such, never as an empty list.
+    await user.click(screen.getByRole("button", { name: "Details for spark-01" }));
+    expect(
+      await within(screen.getByTestId("node-row-control")).findByText(
+        /No agent has reported this node/,
+      ),
+    ).toBeInTheDocument();
   });
 });
 
@@ -333,7 +447,7 @@ describe("EditNodeDialog", () => {
     const user = userEvent.setup();
     mockApi({ nodes: [CONTROL, { ...PEER, ssh_user: "spark" }] });
     render(<NodeRegistry />);
-    await screen.findByRole("row", { name: /spark-02/ });
+    await screen.findByRole("listitem", { name: /spark-02/ });
 
     await user.click(screen.getByRole("button", { name: "Edit spark-02" }));
     const dialog = screen.getByRole("dialog", { name: "Edit spark-02" });
@@ -347,7 +461,7 @@ describe("EditNodeDialog", () => {
     mockApi({ nodes: [CONTROL, { ...PEER, ssh_user: "spark" }] });
     vi.mocked(updateNode).mockResolvedValue({ ...PEER, name: "spark-02b", ssh_user: "spark" });
     render(<NodeRegistry />);
-    await screen.findByRole("row", { name: /spark-02/ });
+    await screen.findByRole("listitem", { name: /spark-02/ });
 
     await user.click(screen.getByRole("button", { name: "Edit spark-02" }));
     const dialog = screen.getByRole("dialog", { name: "Edit spark-02" });
@@ -368,7 +482,7 @@ describe("EditNodeDialog", () => {
     mockApi({ nodes: [CONTROL, { ...PEER, ssh_user: "spark" }] });
     vi.mocked(updateNode).mockResolvedValue(PEER);
     render(<NodeRegistry />);
-    await screen.findByRole("row", { name: /spark-02/ });
+    await screen.findByRole("listitem", { name: /spark-02/ });
 
     await user.click(screen.getByRole("button", { name: "Edit spark-02" }));
     const dialog = screen.getByRole("dialog", { name: "Edit spark-02" });
@@ -394,7 +508,7 @@ describe("EditNodeDialog", () => {
       new Error("API 400: a node with address 10.0.0.99 is already registered"),
     );
     render(<NodeRegistry />);
-    await screen.findByRole("row", { name: /spark-02/ });
+    await screen.findByRole("listitem", { name: /spark-02/ });
 
     await user.click(screen.getByRole("button", { name: "Edit spark-02" }));
     const dialog = screen.getByRole("dialog", { name: "Edit spark-02" });
@@ -413,7 +527,7 @@ describe("EditNodeDialog", () => {
   it("closes without calling the API when nothing changed", async () => {
     const user = userEvent.setup();
     render(<NodeRegistry />);
-    await screen.findByRole("row", { name: /spark-02/ });
+    await screen.findByRole("listitem", { name: /spark-02/ });
 
     await user.click(screen.getByRole("button", { name: "Edit spark-02" }));
     const dialog = screen.getByRole("dialog", { name: "Edit spark-02" });
@@ -426,7 +540,7 @@ describe("EditNodeDialog", () => {
   it("offers only the name field for the control plane, which is not reached at an address", async () => {
     const user = userEvent.setup();
     render(<NodeRegistry />);
-    await screen.findByRole("row", { name: /spark-01/ });
+    await screen.findByRole("listitem", { name: /spark-01/ });
 
     await user.click(screen.getByRole("button", { name: "Edit spark-01" }));
     const dialog = screen.getByRole("dialog", { name: "Edit spark-01" });
@@ -439,7 +553,7 @@ describe("EditNodeDialog", () => {
   it("cannot save an empty name", async () => {
     const user = userEvent.setup();
     render(<NodeRegistry />);
-    await screen.findByRole("row", { name: /spark-02/ });
+    await screen.findByRole("listitem", { name: /spark-02/ });
 
     await user.click(screen.getByRole("button", { name: "Edit spark-02" }));
     const dialog = screen.getByRole("dialog", { name: "Edit spark-02" });
@@ -450,7 +564,7 @@ describe("EditNodeDialog", () => {
   it("closes on cancel without saving", async () => {
     const user = userEvent.setup();
     render(<NodeRegistry />);
-    await screen.findByRole("row", { name: /spark-02/ });
+    await screen.findByRole("listitem", { name: /spark-02/ });
 
     await user.click(screen.getByRole("button", { name: "Edit spark-02" }));
     const dialog = screen.getByRole("dialog", { name: "Edit spark-02" });
@@ -497,7 +611,7 @@ function report(overrides: Partial<InstallReport> = {}): InstallReport {
 
 async function openInstall(user: ReturnType<typeof userEvent.setup>) {
   render(<NodeRegistry />);
-  await screen.findByRole("row", { name: /spark-02/ });
+  await screen.findByRole("listitem", { name: /spark-02/ });
   await user.click(screen.getByRole("button", { name: "Install agent on spark-02" }));
   return screen.getByRole("dialog", { name: "Install the agent on spark-02" });
 }
@@ -512,7 +626,7 @@ describe("InstallAgentDialog", () => {
 
   it("offers the install on a peer and not on the control plane", async () => {
     render(<NodeRegistry />);
-    await screen.findByRole("row", { name: /spark-02/ });
+    await screen.findByRole("listitem", { name: /spark-02/ });
     expect(screen.getByRole("button", { name: "Install agent on spark-02" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Install agent on spark-01" })).toBeNull();
   });
@@ -522,7 +636,7 @@ describe("InstallAgentDialog", () => {
       nodes: [CONTROL, { ...PEER, agent: { enrolled: false, connected: false } }],
     });
     render(<NodeRegistry />);
-    const row = await screen.findByRole("row", { name: /spark-02/ });
+    const row = await screen.findByRole("listitem", { name: /spark-02/ });
     expect(row).toHaveTextContent("No agent");
     expect(screen.getByRole("button", { name: "Install agent on spark-02" })).toHaveAttribute(
       "title",
@@ -535,7 +649,7 @@ describe("InstallAgentDialog", () => {
       nodes: [CONTROL, { ...PEER, agent: { enrolled: true, connected: true } }],
     });
     render(<NodeRegistry />);
-    const row = await screen.findByRole("row", { name: /spark-02/ });
+    const row = await screen.findByRole("listitem", { name: /spark-02/ });
     expect(row).not.toHaveTextContent("No agent");
     expect(screen.getByRole("button", { name: "Install agent on spark-02" })).toHaveAttribute(
       "title",
@@ -783,7 +897,7 @@ describe("InstallAgentDialog", () => {
       ],
     });
     render(<NodeRegistry />);
-    const row = await screen.findByRole("row", { name: /spark-02/ });
+    const row = await screen.findByRole("listitem", { name: /spark-02/ });
     expect(within(row).getByTestId("agent-version-peer")).toHaveTextContent("agent 1.2.3 · update available");
     const update = screen.getByRole("button", { name: "Install agent on spark-02" });
     expect(update).toHaveAttribute("title", "Update agent");
@@ -795,7 +909,7 @@ describe("InstallAgentDialog", () => {
       nodes: [CONTROL, { ...PEER, agent: { enrolled: true, connected: true, version: "1.23.0", current: true } }],
     });
     render(<NodeRegistry />);
-    const row = await screen.findByRole("row", { name: /spark-02/ });
+    const row = await screen.findByRole("listitem", { name: /spark-02/ });
     expect(within(row).getByTestId("agent-version-peer")).toHaveTextContent("agent 1.23.0");
     expect(row).not.toHaveTextContent("update available");
     expect(screen.getByRole("button", { name: "Install agent on spark-02" })).toHaveAttribute("title", "Reinstall agent");
@@ -822,7 +936,7 @@ describe("InstallAgentDialog", () => {
       detail: "staged and restarting onto the new binary",
     });
     render(<NodeRegistry />);
-    await screen.findByRole("row", { name: /spark-02/ });
+    await screen.findByRole("listitem", { name: /spark-02/ });
     await user.click(screen.getByRole("button", { name: "Install agent on spark-02" }));
     await waitFor(() => expect(updateNodeAgent).toHaveBeenCalledWith("peer"));
     // No SSH dialog is opened for an update; it goes straight over the agent.
@@ -844,7 +958,7 @@ describe("InstallAgentDialog", () => {
       detail: "not a unit-managed install",
     });
     render(<NodeRegistry />);
-    await screen.findByRole("row", { name: /spark-02/ });
+    await screen.findByRole("listitem", { name: /spark-02/ });
     await user.click(screen.getByRole("button", { name: "Install agent on spark-02" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("not a unit-managed install");
   });
@@ -865,7 +979,7 @@ describe("InstallAgentDialog", () => {
       detail: "this agent predates stream self-update",
     });
     render(<NodeRegistry />);
-    await screen.findByRole("row", { name: /spark-02/ });
+    await screen.findByRole("listitem", { name: /spark-02/ });
     await user.click(screen.getByRole("button", { name: "Install agent on spark-02" }));
     await waitFor(() => expect(updateNodeAgent).toHaveBeenCalledWith("peer"));
     // Instead of a cryptic error, the operator is handed the reinstall dialog.

@@ -81,7 +81,7 @@ describe("FabricCard", () => {
 
   it("shows each node's cabled ports, addresses, MTU and the plan for it", async () => {
     render(<FabricCard />);
-    const row = await screen.findByRole("row", { name: /gx10-ced2/ });
+    const row = await screen.findByRole("listitem", { name: /gx10-ced2/ });
     expect(row).toHaveTextContent("enp1s0f1np1");
     expect(row).toHaveTextContent("enP2p1s0f1np1");
     expect(row).not.toHaveTextContent("enp1s0f0np0");
@@ -111,7 +111,7 @@ describe("FabricCard", () => {
       },
     });
     render(<FabricCard />);
-    const row = await screen.findByRole("row", { name: /gx10-b90f/ });
+    const row = await screen.findByRole("listitem", { name: /gx10-b90f/ });
     expect(row).toHaveTextContent("No agent has reported this node");
     expect(within(row).getByText("Unknown")).toBeInTheDocument();
     expect(screen.getByTestId("fabric-problems")).toHaveTextContent("not cabled alike");
@@ -137,7 +137,7 @@ describe("FabricCard", () => {
   it("refreshes on request", async () => {
     const user = userEvent.setup();
     render(<FabricCard />);
-    await screen.findByRole("row", { name: /gx10-ced2/ });
+    await screen.findByRole("listitem", { name: /gx10-ced2/ });
     await user.click(screen.getByRole("button", { name: "Refresh" }));
     await waitFor(() => expect(fetchFabric).toHaveBeenCalledTimes(2));
   });
@@ -149,7 +149,7 @@ describe("FabricCard", () => {
       reports: [report(), report({ node_id: "b", name: "gx10-b90f" })],
     });
     render(<FabricCard />);
-    await screen.findByRole("row", { name: /gx10-ced2/ });
+    await screen.findByRole("listitem", { name: /gx10-ced2/ });
     await user.click(screen.getByRole("button", { name: "Configure fabric" }));
     const dialog = screen.getByRole("dialog", { name: "Configure fabric" });
     expect(within(dialog).getByText("Planned addresses for gx10-ced2")).toBeInTheDocument();
@@ -189,7 +189,7 @@ describe("FabricCard", () => {
       ],
     });
     render(<FabricCard />);
-    await screen.findByRole("row", { name: /gx10-ced2/ });
+    await screen.findByRole("listitem", { name: /gx10-ced2/ });
     await user.click(screen.getByRole("button", { name: "Configure fabric" }));
     const dialog = screen.getByRole("dialog", { name: "Configure fabric" });
     await user.click(within(dialog).getByRole("button", { name: "Configure 2 node(s)" }));
@@ -214,7 +214,7 @@ describe("FabricCard", () => {
     });
     vi.mocked(applyFabric).mockResolvedValue({ mode: "direct", reports: [] });
     render(<FabricCard />);
-    const row = await screen.findByRole("row", { name: /gx10-ced2/ });
+    const row = await screen.findByRole("listitem", { name: /gx10-ced2/ });
     expect(within(row).getByText("Configured")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Configure fabric" }));
     const dialog = screen.getByRole("dialog", { name: "Configure fabric" });
@@ -230,7 +230,7 @@ describe("FabricCard", () => {
     const user = userEvent.setup();
     vi.mocked(applyFabric).mockRejectedValue(new Error("API 503: the agent transport is not running"));
     render(<FabricCard />);
-    await screen.findByRole("row", { name: /gx10-ced2/ });
+    await screen.findByRole("listitem", { name: /gx10-ced2/ });
     await user.click(screen.getByRole("button", { name: "Configure fabric" }));
     const dialog = screen.getByRole("dialog", { name: "Configure fabric" });
     await user.click(within(dialog).getByRole("button", { name: "Configure 2 node(s)" }));
@@ -255,8 +255,8 @@ describe("FabricCard", () => {
     render(<FabricCard />);
     expect(await screen.findByText(/Both cables between two nodes/)).toBeInTheDocument();
     expect(screen.getByTestId("fabric-advice")).toHaveTextContent("either shape is planned");
-    expect(screen.getByRole("row", { name: /gx10-ced2/ })).toHaveTextContent("Pinned for deploys");
-    expect(screen.getByRole("row", { name: /gx10-b90f/ })).toHaveTextContent("Not pinned for deploys");
+    expect(screen.getByRole("listitem", { name: /gx10-ced2/ })).toHaveTextContent("Pinned for deploys");
+    expect(screen.getByRole("listitem", { name: /gx10-b90f/ })).toHaveTextContent("Not pinned for deploys");
   });
 
   it("flags a mesh node whose 10G port has no link", async () => {
@@ -266,7 +266,7 @@ describe("FabricCard", () => {
       plan: { ...PAIR.plan, mode: "mesh", nodes: [plan()], proposed: ["a"] },
     });
     render(<FabricCard />);
-    const row = await screen.findByRole("row", { name: /gx10-ced2/ });
+    const row = await screen.findByRole("listitem", { name: /gx10-ced2/ });
     expect(row).toHaveTextContent("10G port down");
     expect(screen.getByText(/switchless three-node mesh/)).toBeInTheDocument();
   });

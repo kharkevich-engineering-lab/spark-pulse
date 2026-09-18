@@ -38,9 +38,25 @@ A tab of Runs rather than a page of its own, because a benchmark is something yo
 
 The tab is there when `benchmarking_enabled` is on, and absent when it is not.
 
-## Monitoring
+## Fleet
 
-![Monitoring, one section per node](../assets/screenshots/monitoring.png)
+The machines, in two tabs over the same hardware. **Nodes** is what you have; **Monitoring** is what they are doing. `/cluster` opens on the first, `/monitoring` on the second, and switching tabs rewrites the address so a tab is a link you can send.
+
+### Nodes
+
+![Fleet: the node registry](../assets/screenshots/fleet.png)
+
+A machine is two lines: its name and whether it is answering, then its address, its role, the interfaces we derived rather than guessed, and its agent's version with *current* or *update available* beside it. Anything the fleet diagnostic says about that machine — a duplicate machine-id, say — is a warn line under its name rather than a box at the top of a list it may not be about.
+
+Opening a row shows what that machine's ConnectX ports are doing and what the doctor makes of it, inline. The doctor runs because the row was opened: a diagnosis changes nothing, so there is no second button to press, and the reading no longer covers the list it belongs to.
+
+Adding a node takes an address. Discovery *offers* what it found over mDNS and nothing is ever required to come from it — **Discover peers on this network**, collapsed at the foot of the page, is where you look when a machine you expected is not in the list.
+
+Multi-node is marked experimental here in one line — the full account of what is unproven belongs where you are about to act on it, which is the deploy form and the expanded row on Runs. What is *running* on these machines is on Runs too; this page is about the machines.
+
+### Monitoring
+
+![Fleet: what each node is doing](../assets/screenshots/fleet-monitoring.png)
 
 Every registered node, asked for its own stats through its own agent — including the machine the control plane runs on. Each section carries that node's GPUs, host memory and disks.
 
@@ -83,14 +99,6 @@ The switch beside a badge enables or disables the engine, next to the image it g
 Recipe collections published as OCI artifacts: browse a collection, install one recipe from it or all of them, and see which installed recipes have a newer version published. The registries themselves are listed underneath, with whether each one answers — an unreachable registry is why collections are missing, and the fix belongs beside the symptom.
 
 Engine indexes, model sources and the OCI update schedule are configuration, and live in Settings.
-
-## Cluster
-
-![Cluster](../assets/screenshots/cluster.png)
-
-The node registry. What is running on those machines is the Runs page's list, which this page links to: two tables of the same endpoint, on two polls, is two tables that can disagree. Adding a node takes an address; discovery offers what it found over mDNS, and nothing is ever required to come from discovery. Each node's diagnostics name what is wrong and what to do about it.
-
-Multi-node is marked experimental here in one line — the full account of what is unproven belongs where you are about to act on it, which is the deploy form and the expanded row on Runs.
 
 ## MCP
 
