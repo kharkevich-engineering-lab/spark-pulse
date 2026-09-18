@@ -100,14 +100,17 @@ Recipe collections published as OCI artifacts: browse a collection, install one 
 
 Engine indexes, model sources and the OCI update schedule are configuration, and live in Settings.
 
-## MCP
-
-![MCP](../assets/screenshots/mcp.png)
-
-The Model Context Protocol endpoint: which tools are exposed and how to point an assistant at them. Each tool is implemented by calling this app's own REST API, so MCP behaviour is the REST behaviour by construction.
-
 ## Settings
 
 ![Settings](../assets/screenshots/settings.png)
 
-Tabbed over one form: deployment defaults, container profile, cluster, engines, preferences (theme and language, both browser-local), secrets, and an **Environment** tab that reports how the process is configured — database, CORS origins, auth, MCP — without a browser being able to change any of it. Passwords in a database URL come back stripped.
+Every setting in the product, tabbed over one form, with **Save** on every tab — it writes the whole form, whichever tab an edit was made on.
+
+- **Deployment** — port range, the optional spark-vllm-docker path, the readiness and pull timeouts, how long stopped deployments are kept.
+- **Containers** — the profile every engine container is started with: privileged, memory and swap, `/dev/shm`, process and file limits, the cache directories mounted into each one, and the network policy a mod runs under.
+- **Features** — the switches that change what this control plane *offers* rather than how a deployment behaves: benchmarking, the cluster-mode override, agent auto-update.
+- **Library** — where things are fetched from, in one place instead of three: the engine index and its cache lifetime, the model sources, and the OCI registries with the schedule their auto-update runs on.
+- **MCP** — the Model Context Protocol endpoint, its address and transport, and the snippets that point an assistant at it. The tool list is read from the endpoint itself (`tools/list`), so it is what a client would see. Each tool is implemented by calling this app's own REST API, so MCP behaviour is the REST behaviour by construction. The old `/mcp` route redirects here.
+- **Preferences** — theme and language, both remembered in the browser and never sent to the server.
+- **Secrets** — the Hugging Face token, written to a 0600 file and only ever shown as its last four characters.
+- **Environment** — how the process is configured: database, CORS origins, auth, MCP. Read-only, because a browser that could change these would be the way past every other check. Passwords in a database URL come back stripped.

@@ -55,4 +55,4 @@ Every tool calls the app's REST API over HTTP rather than reaching into the tool
 
 Or, over HTTP, whatever your client's remote-server configuration wants at `http://<host>:8100/mcp`, with the token in an `Authorization` header if you set one.
 
-The **MCP page** in the UI lists the tools this build exposes and the exact snippet for the host it is running on.
+**Settings → MCP** in the UI shows the endpoint for the host it is running on, the snippet for each client, and the tools this build exposes. That list is read from the endpoint itself (`tools/list`) rather than kept beside the page, so it is what a client would actually be offered. The older `/mcp` address redirects there.

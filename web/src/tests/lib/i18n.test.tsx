@@ -110,6 +110,8 @@ describe("the dictionaries", () => {
     "cache.heading",
     "library.caches",
     "mcp.heading",
+    // The Settings tab that carries the initialism, same word in both.
+    "settingsPage.tabMcp",
   ]);
 
   /** A French dictionary that is a copy of the English one is not a
