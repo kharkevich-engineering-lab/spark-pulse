@@ -17,7 +17,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-from spark_pulse.config import config
 from spark_pulse.tools.launch_script import (
     ValidationResult,
     validate_mod_content as validate_mod_content_raw,
@@ -41,12 +40,6 @@ def validate_mod_content(mod_path: Path) -> ValidationResult:
     Delegates to the shared implementation in launch_script.py.
     """
     return validate_mod_content_raw(mod_path)
-
-
-def _mods_dir() -> Path | None:
-    """``<checkout>/mods``, or ``None`` when there is no checkout."""
-    root = config.spark_vllm_dir
-    return None if root is None else root / "mods"
 
 
 def _extract_description(run_sh: Path) -> str:
@@ -117,12 +110,12 @@ def _mod_info(mod_dir: Path, include_script: bool = False) -> dict[str, Any]:
 
 
 def list_mods() -> list[dict[str, Any]]:
-    """Mods from the checkout, plus the operator's own under ``custom-`` ids.
+    """The operator's own mods, under ``custom-`` ids.
 
-    Custom mods used to appear here only because a ``mods/custom-x`` symlink
-    was planted in the checkout. They are read from their own directory now, so
-    they are listed with or without one — under the same ids, which is what the
-    recipes that name them expect.
+    One directory: ``~/.config/spark-pulse/custom-mods``. Mods used to be read
+    out of a spark-vllm-docker checkout as well, with the operator's own
+    reachable only through a ``mods/custom-x`` symlink planted there. The
+    checkout is gone; the ids it minted are what recipes name, so they stayed.
     """
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -145,12 +138,7 @@ def _mod_dirs() -> list[tuple[Path, str]]:
     """``(directory, id prefix)`` for every place a mod can live."""
     from spark_pulse.tools import custom_files
 
-    dirs: list[tuple[Path, str]] = []
-    checkout = _mods_dir()
-    if checkout is not None:
-        dirs.append((checkout, ""))
-    dirs.append((custom_files.custom_mods_dir(), custom_files.CUSTOM_PREFIX))
-    return dirs
+    return [(custom_files.custom_mods_dir(), custom_files.CUSTOM_PREFIX)]
 
 
 def get_mod(mod_id: str) -> dict[str, Any] | None:

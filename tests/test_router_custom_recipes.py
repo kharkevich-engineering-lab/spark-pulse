@@ -140,19 +140,13 @@ class TestRecipeSummaryIncludesCustomized:
 
     def test_list_recipes_includes_is_customized(self, app_client, custom_path):
         """GET /api/recipes should include is_customized for each recipe."""
-        # Create a fake spark-vllm-docker with a recipe
-        spark_path = custom_path.parent / "spark-vllm-docker"
-        spark_path.mkdir(exist_ok=True)
-        recipes_dir = spark_path / "recipes"
-        recipes_dir.mkdir()
+        from spark_pulse.tools import custom_files
+
+        recipes_dir = custom_files.custom_recipes_dir()
+        recipes_dir.mkdir(parents=True, exist_ok=True)
         (recipes_dir / "test-recipe.yaml").write_text(
             "name: Test\nmodel: test-model\n", encoding="utf-8"
         )
-
-        import spark_pulse.config as config_mod
-
-        original_path = config_mod.config._data.get("spark_vllm_path")
-        config_mod.config._data["spark_vllm_path"] = str(spark_path)
 
         # Patch custom path to avoid interference
         import spark_pulse.tools.custom_recipes as cr
@@ -164,13 +158,9 @@ class TestRecipeSummaryIncludesCustomized:
             resp = app_client.get("/api/recipes")
             assert resp.status_code == 200
             data = resp.json()
-            recipe = next((r for r in data if r["id"] == "test-recipe"), None)
+            recipe = next((r for r in data if r["id"] == "custom-test-recipe"), None)
             assert recipe is not None
             assert "is_customized" in recipe
             assert isinstance(recipe["is_customized"], bool)
         finally:
-            if original_path:
-                config_mod.config._data["spark_vllm_path"] = original_path
-            else:
-                config_mod.config._data.pop("spark_vllm_path", None)
             cr._CUSTOM_PATH = original_custom

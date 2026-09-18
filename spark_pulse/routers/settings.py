@@ -40,7 +40,6 @@ _ALLOWED_SECRET_KEYS = {"hf_token"}
 #: actually holds. None of them is a field.
 _ALLOWED_SETTING_KEYS = frozenset(
     {
-        "spark_vllm_path",
         "default_port_range_start",
         "default_port_range_end",
         "webui_port",
@@ -219,7 +218,6 @@ def _cluster_block() -> dict:
 
 def _settings_response() -> dict:
     return {
-        "spark_vllm_path": config.spark_vllm_path,
         "default_port_range_start": config.default_port_range_start,
         "default_port_range_end": config.default_port_range_end,
         "webui_port": config.webui_port,

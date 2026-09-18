@@ -300,7 +300,6 @@ export interface RecipeFormRef {
 }
 
 export interface Settings {
-  spark_vllm_path: string;
   default_port_range_start: number;
   default_port_range_end: number;
   webui_port: number;

@@ -54,9 +54,6 @@ def test_install_systemd_user_scope_writes_user_files(monkeypatch, tmp_path):
     monkeypatch.setattr(service.Path, "home", lambda: tmp_path)
     monkeypatch.setattr(service, "_get_package_dir", lambda: package_dir)
     monkeypatch.setattr(service.sys, "executable", "/usr/bin/python3")
-    monkeypatch.setitem(
-        service.config._data, "spark_vllm_path", "/tmp/spark-vllm-docker"
-    )
 
     calls = []
 
@@ -73,7 +70,7 @@ def test_install_systemd_user_scope_writes_user_files(monkeypatch, tmp_path):
 
     assert unit_file.exists()
     assert env_file.exists()
-    assert "SPARK_VLLM_PATH=/tmp/spark-vllm-docker" in env_file.read_text()
+    assert "WEBUI_PORT=8100" in env_file.read_text()
     assert calls == [
         (["systemctl", "--user", "daemon-reload"], True),
         (["systemctl", "--user", "enable", service.SERVICE_NAME], True),

@@ -306,8 +306,8 @@ class TestHandlerRouting:
             ("list_cache", {}, ("GET", "/api/cache", None, None)),
             (
                 "clean_cache",
-                {"targets": ["CCache"]},
-                ("POST", "/api/cache/clean", {"targets": ["CCache"]}, None),
+                {"targets": ["Triton Cache"]},
+                ("POST", "/api/cache/clean", {"targets": ["Triton Cache"]}, None),
             ),
             ("list_images", {}, ("GET", "/api/images", None, None)),
             (

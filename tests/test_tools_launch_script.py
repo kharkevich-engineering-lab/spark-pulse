@@ -145,6 +145,16 @@ class TestLaunchScriptManager:
             manager = LaunchScriptManager()
             manager.resolve("/nonexistent/path/script.sh")
 
+    def test_resolve_refuses_a_relative_path(self):
+        """A bare name used to mean ``<checkout>/examples/<name>.sh``.
+
+        There is no checkout, and resolving it against the process's working
+        directory would read whatever the server was started from.
+        """
+        manager = LaunchScriptManager()
+        with pytest.raises(FileNotFoundError, match="must be absolute"):
+            manager.resolve("launch.sh")
+
     def test_analyze(self, tmp_path):
         script = tmp_path / "test.sh"
         script.write_text(

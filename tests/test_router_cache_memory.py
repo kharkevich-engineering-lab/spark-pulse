@@ -41,10 +41,10 @@ class TestCacheRouter:
             lambda targets: asked.append(targets) or {t: "Cleaned" for t in targets},
         )
 
-        response = client.post("/api/cache/clean", json={"targets": ["CCache"]})
+        response = client.post("/api/cache/clean", json={"targets": ["Triton Cache"]})
 
-        assert response.json() == {"results": {"CCache": "Cleaned"}}
-        assert asked == [["CCache"]]
+        assert response.json() == {"results": {"Triton Cache": "Cleaned"}}
+        assert asked == [["Triton Cache"]]
 
     def test_cleaning_nothing_deletes_nothing(self, client, monkeypatch):
         monkeypatch.setattr(

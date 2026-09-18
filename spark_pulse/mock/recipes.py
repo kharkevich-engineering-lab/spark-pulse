@@ -13,10 +13,8 @@ source at all — it is demo data, not a second implementation.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
-from spark_pulse.config import config
 from spark_pulse.tools import custom_recipes, recipe_sources
 from spark_pulse.tools.recipe_sources import (
     DEFAULT_CONTAINER as DEFAULT_CONTAINER,
@@ -162,17 +160,15 @@ def _canned(recipe: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def list_recipes(spark_path: Path | None = None) -> list[dict[str, Any]]:
+def list_recipes() -> list[dict[str, Any]]:
     """List every recipe from every source, or the canned catalogue.
 
     Parsing is delegated to the shared module so simulation reports the same
     schema fields (recipe_version, engine, engines, params) and the same
     sources as production.
     """
-    if spark_path is None:
-        spark_path = config.spark_vllm_dir
-    payloads = recipe_sources.iter_recipe_payloads(spark_path)
-    if payloads or recipe_sources.checkout_recipes_dir(spark_path) is not None:
+    payloads = recipe_sources.iter_recipe_payloads()
+    if payloads:
         return [
             recipe_sources.summarize(p, custom_recipes.has_customization(p["id"]))
             for p in payloads
@@ -180,15 +176,13 @@ def list_recipes(spark_path: Path | None = None) -> list[dict[str, Any]]:
     return [_canned(r) for r in _RECIPES]
 
 
-def get_recipe(recipe_id: str, spark_path: Path | None = None) -> dict[str, Any] | None:
+def get_recipe(recipe_id: str) -> dict[str, Any] | None:
     """Load a specific recipe by relative path id or display name.
 
     Falls back to the canned catalogue so a simulated server can still answer
     for a recipe that exists nowhere on disk.
     """
-    if spark_path is None:
-        spark_path = config.spark_vllm_dir
-    recipe = recipe_sources.resolve_recipe(recipe_id, spark_path)
+    recipe = recipe_sources.resolve_recipe(recipe_id)
     if recipe is None:
         for canned in _RECIPES:
             if canned["name"] == recipe_id:

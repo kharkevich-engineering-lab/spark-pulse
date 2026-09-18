@@ -8,7 +8,6 @@ import sys
 from pathlib import Path
 from typing import Literal
 
-from spark_pulse.config import config
 
 SERVICE_NAME = "spark-pulse.service"
 ServiceScope = Literal["system", "user"]
@@ -64,7 +63,6 @@ WantedBy=default.target
 """
 
 ENV_TEMPLATE = """\
-SPARK_VLLM_PATH={spark_vllm_path}
 WEBUI_PORT={port}
 """
 
@@ -153,10 +151,7 @@ def install_systemd(
     work_dir.mkdir(parents=True, exist_ok=True)
 
     # Create env file
-    env_content = ENV_TEMPLATE.format(
-        spark_vllm_path=config.spark_vllm_path,
-        port=port,
-    )
+    env_content = ENV_TEMPLATE.format(port=port)
     env_file.write_text(env_content)
     if scope == "system":
         env_file.chmod(0o644)

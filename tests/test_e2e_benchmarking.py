@@ -30,7 +30,6 @@ def e2e_benchmarking_config():
 
     os.environ["SPARK_PULSE_AUTH_ENABLED"] = "false"
     config._data["benchmarking_enabled"] = True
-    config._data["spark_vllm_path"] = "/tmp/spark-vllm-docker"
     return config
 
 

@@ -101,7 +101,7 @@ class TestStart:
         env_file.write_text(
             "# a comment\n"
             "\n"
-            "SPARK_VLLM_PATH=/opt/spark-vllm-docker\n"
+            "WEBUI_PORT=8123\n"
             "NO_EQUALS_SIGN\n"
             "  PADDED = spaced value \n",
             encoding="utf-8",
@@ -115,7 +115,7 @@ class TestStart:
             )
 
         assert result.exit_code == 0
-        assert fake_env["SPARK_VLLM_PATH"] == "/opt/spark-vllm-docker"
+        assert fake_env["WEBUI_PORT"] == "8123"
         assert fake_env["PADDED"] == "spaced value"
         assert "NO_EQUALS_SIGN" not in fake_env
         execvp.assert_not_called()

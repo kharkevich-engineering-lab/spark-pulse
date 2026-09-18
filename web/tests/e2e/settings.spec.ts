@@ -10,7 +10,6 @@ import { expect, test } from "@playwright/test";
 import { expectNoCrash, gotoPage } from "./helpers";
 
 interface Settings {
-  spark_vllm_path: string;
   default_port_range_start: number;
   default_port_range_end: number;
   default_engine: string;
@@ -54,7 +53,6 @@ test("shows the configuration the backend is running with", async ({ page, reque
 
   await expect(page.getByRole("heading", { name: "Run defaults", exact: true })).toBeVisible();
   const deployment = await valuesOnScreen();
-  expect(deployment).toContain(settings.spark_vllm_path);
   expect(deployment).toContain(String(settings.default_port_range_start));
   expect(deployment).toContain(String(settings.default_port_range_end));
 

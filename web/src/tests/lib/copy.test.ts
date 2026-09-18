@@ -45,7 +45,6 @@ const ALLOWED = new Set([
   "vllm",
   "https://huggingface.co",
   "/models",
-  "/path/to/spark-vllm-docker",
   "~/.cache/vllm",
   "9000",
   "9100",

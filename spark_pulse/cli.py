@@ -26,7 +26,7 @@ from spark_pulse.config import (
 
 @click.group()
 def main():
-    """Spark Manager — Web UI for spark-vllm-docker."""
+    """Spark Pulse — a control plane for NVIDIA Spark-class clusters."""
     pass
 
 

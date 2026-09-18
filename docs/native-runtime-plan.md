@@ -18,15 +18,17 @@ Decisions taken (2026-09-03):
 
 ### 1.1 What depends on the upstream checkout
 
-**Resolved (phase 4).** Nothing is executed out of the checkout any more, and
+**Gone entirely.** The `spark_vllm_path` setting, the `SPARK_VLLM_PATH` variable and
+every reader of a checkout were removed; what follows records how it got there.
+Nothing was executed out of the checkout after phase 4, and
 nothing is written into it. What remains is read-only and optional.
 
 | Kind | Where | What | Status |
 |---|---|---|---|
 | Exec upstream bash | `tools/deployments.py` | The whole deploy path was `run-recipe.sh recipes/<id>.yaml --port ... --solo\|--nodes`; health was PID liveness, stop was SIGTERM to the process group, logs were `tail` on our own log file. | **Deleted.** `tools/native_runtime.py` is the deploy path. `tools/deployment_records.py` keeps the record store and can still list, read, stop and delete a deployment the old runner started, so an upgrade never strands a running process. |
-| Exec upstream bash | `tools/cache.py` | `hf-download.sh --cleanup`, dead on a case mismatch. | **Deleted.** The wheels directory is cleaned like every other cache entry, and is listed only when a checkout exists. |
+| Exec upstream bash | `tools/cache.py` | `hf-download.sh --cleanup`, dead on a case mismatch. | **Deleted**, and so is the wheels entry itself — with `.ccache` and `uv`, which are what building those wheels fills. `/api/cache` lists only the caches an engine fills at runtime. |
 | `git` in checkout | `tools/git_update.py` | fetch/pull/status, background timer, SSE, a UI page. | **Deleted** in phase 0. |
-| Symlinks into it | `tools/custom_files.py`, `tools/oci_registry.py` | `recipes/custom-*`, `recipes/oci-*`, `mods/custom-*` so upstream's runner could see our recipes. | **Deleted.** `recipe_sources.candidate_files` reads `~/.config/spark-pulse/custom-recipes` and `~/.config/spark-pulse/recipes` as first-class sources under the same `custom-`/`oci-` ids, and `tools/mods.py` plus `native_runtime._resolve_mod_dir` read `custom-mods` directly. Custom and OCI content now works with no checkout at all. |
+| Symlinks into it | `tools/custom_files.py`, `tools/oci_registry.py` | `recipes/custom-*`, `recipes/oci-*`, `mods/custom-*` so upstream's runner could see our recipes. | **Deleted.** `recipe_sources.candidate_files` reads `~/.config/spark-pulse/custom-recipes` and `~/.config/spark-pulse/recipes` as first-class sources under the same `custom-`/`oci-` ids, and `tools/mods.py` plus `native_runtime._resolve_mod_dir` read `custom-mods` directly. Custom and OCI content is all there is; the checkout has since been removed outright. |
 | Read-only scan | `tools/recipe_sources.py`, `tools/mods.py`, `tools/launch_script.py` | `recipes/**`, `mods/<id>/`, `examples/`. | **Kept, and optional.** `config.spark_vllm_dir` returns `None` when the path is unset or points nowhere, and every reader degrades to "no recipes/mods/examples from there". |
 
 `launch-cluster.sh`, `build-and-copy.sh` and upstream mod runners were never
@@ -455,7 +457,7 @@ Still open before the native path becomes the default:
 
 ## 6. Things to fix regardless of the plan
 
-- ~~`cache.py` wheels target name mismatch.~~ Done in phase 4: the `hf-download.sh` branch it guarded is deleted, and the wheels directory is cleaned like any other cache entry.
+- ~~`cache.py` wheels target name mismatch.~~ Done in phase 4: the `hf-download.sh` branch it guarded is deleted. The wheels entry has since gone too — it belonged to a checkout nothing reads.
 - ~~`routers/config.py` hardcoded simulation flag.~~ Done: it reports `is_simulation()`.
 - ~~`AGENTS.md` architecture tree and pages list are stale.~~ Done: reduced to a pointer at `CLAUDE.md` and `docs/` so it cannot drift again.
 - `spark-pulse-recipes` README and Qwen skill describe tooling that does not exist.

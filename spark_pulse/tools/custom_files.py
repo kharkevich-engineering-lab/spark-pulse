@@ -8,8 +8,9 @@ source and :mod:`spark_pulse.tools.mods` lists the mods, both under a
 
 They used to be reachable only through symlinks planted in a
 spark-vllm-docker checkout (``recipes/custom-*``, ``mods/custom-*``), so that
-upstream's ``run-recipe.sh`` could see them. That runner is gone, and so are
-the symlinks: these files no longer need a checkout to exist.
+upstream's ``run-recipe.sh`` could see them. The runner, the symlinks and the
+checkout are all gone; the operator's config directory is the only place these
+files live.
 
 Real-only: the router imports this module directly and there is no simulated
 behaviour here — only files under the operator's config directory.
@@ -21,7 +22,7 @@ import shutil
 from pathlib import Path
 
 #: Id prefix under which a custom recipe or mod appears in the unified
-#: listings. It matches the name the old symlinks used, so recipe ids,
+#: listings. It is the name the old symlinks used, kept so recipe ids,
 #: customizations and existing deployment records all keep resolving.
 CUSTOM_PREFIX = "custom-"
 

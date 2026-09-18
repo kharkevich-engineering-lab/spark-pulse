@@ -3,7 +3,7 @@
 Endpoints for uploading, editing, and deleting custom recipes and mods stored
 in ~/.config/spark-pulse/. They are read straight from there — by
 ``recipe_sources`` for recipes and ``tools.mods`` for mods — so a saved file is
-live immediately, with no checkout and nothing to sync.
+live immediately, with nothing to sync and nowhere else to look.
 """
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form

@@ -1,9 +1,10 @@
 """User recipe customizations storage.
 
 Stores partial overrides for recipes as one row per recipe id, separately from
-the recipe YAML, so original files are never modified — git updates to
-spark-vllm-docker always work. ``~/.config/spark-pulse/custom-recipes.json`` is
-where they used to live and is now only the one-time import source.
+the recipe YAML, so original files are never modified — a bundled recipe, or
+one an OCI collection installs, can be replaced wholesale and the operator's
+edits survive. ``~/.config/spark-pulse/custom-recipes.json`` is where they used
+to live and is now only the one-time import source.
 
 Data structure (one row's ``overrides``, keyed by recipe id):
   {
@@ -264,9 +265,7 @@ def has_customization(recipe_id: str) -> bool:
     return get_customization(recipe_id) is not None
 
 
-def get_customized_recipe(
-    recipe_id: str, spark_path: Path | None = None
-) -> dict | None:
+def get_customized_recipe(recipe_id: str) -> dict | None:
     """Load a recipe and merge any user customizations on top.
 
     This is the main entry point — same return shape as get_recipe()
@@ -279,7 +278,7 @@ def get_customized_recipe(
     """
     from spark_pulse.tools.recipes import get_recipe as _get_recipe
 
-    recipe = _get_recipe(recipe_id, spark_path)
+    recipe = _get_recipe(recipe_id)
     if recipe is None:
         return None
 

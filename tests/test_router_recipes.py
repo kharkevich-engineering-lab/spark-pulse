@@ -8,19 +8,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from spark_pulse.app import create_app
-from spark_pulse.config import config
+from spark_pulse.tools import custom_files
 
 BUNDLED_ID = "bundled/qwen2.5-0.5b-instruct"
 
 
 @pytest.fixture
-def client(tmp_path, monkeypatch):
-    """No upstream checkout: the bundled source is all there is."""
-    monkeypatch.setattr(
-        type(config),
-        "spark_vllm_path",
-        property(lambda self: str(tmp_path / "no-checkout")),
-    )
+def client():
+    """The three sources, all of them ours; conftest points them at tmp_path."""
     app = create_app()
     with TestClient(app) as test_client:
         yield test_client
@@ -61,18 +56,18 @@ class TestGetRecipe:
         assert specs["vllm"]["args"] == "--enable-prefix-caching"
         assert specs["sglang"]["args"] == "--chunked-prefill-size 2048"
 
-    def test_a_v1_recipe_explains_why_sglang_is_unavailable(self, client, tmp_path):
-        recipe_dir = tmp_path / "no-checkout" / "recipes"
-        recipe_dir.mkdir(parents=True)
+    def test_a_v1_recipe_explains_why_sglang_is_unavailable(self, client):
+        recipe_dir = custom_files.custom_recipes_dir()
+        recipe_dir.mkdir(parents=True, exist_ok=True)
         (recipe_dir / "v1.yaml").write_text(
             "name: V1\nmodel: org/v1\ncontainer: vllm-node\n"
             "command: vllm serve org/v1 --port {port}\n",
             encoding="utf-8",
         )
 
-        detail = client.get("/api/recipes/v1").json()
+        detail = client.get("/api/recipes/custom-v1").json()
 
-        assert detail["source"] == "upstream"
+        assert detail["source"] == "custom"
         assert detail["engines"] == ["vllm"]
         support = {e["engine"]: e for e in detail["engine_support"]}
         assert support["vllm"]["supported"] is True
