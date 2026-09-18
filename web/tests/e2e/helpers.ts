@@ -34,7 +34,7 @@ export interface Deployment {
 export const NAV_GROUPS = [
   { href: "/", label: "Deploy", heading: "Recipes and mods." },
   { href: "/jobs", label: "Runs", heading: "What is serving." },
-  { href: "/cluster", label: "Fleet", heading: "The machines." },
+  { href: "/cluster", label: "Fleet", heading: "The nodes." },
   { href: "/models", label: "Library", heading: "What is on disk." },
   { href: "/settings", label: "Settings", heading: "Settings." },
 ] as const;

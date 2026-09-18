@@ -23,7 +23,7 @@ export default function RegistryCard({
   onEdit: () => void;
   onVersionChange?: (version: string) => void;
 }) {
-  const { t } = useI18n();
+  const { t, plural } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const [selectedVersion, setSelectedVersion] = useState<string>("");
 
@@ -58,7 +58,7 @@ export default function RegistryCard({
               <span className="font-mono font-semibold truncate">{reg.name}</span>
               {reg.default && (
                 <span className="text-[13px] px-1.5 py-0.5 rounded-full border border-line text-muted font-medium">
-                  default
+                  {t("registry.defaultTag")}
                 </span>
               )}
               {hasVersions && (
@@ -68,7 +68,7 @@ export default function RegistryCard({
                   className="flex items-center gap-1 px-2 py-0.5 rounded-sm bg-bg2 border border-line text-[13px] hover:border-line-strong transition-colors"
                 >
                   <GitBranch size={12} />
-                  <span>{versions?.length} versions</span>
+                  <span>{plural("registry.versionCount", versions?.length ?? 0)}</span>
                   <ChevronDown size={12} className={`transition-transform ${expanded ? "rotate-180" : ""}`} />
                 </button>
               )}
@@ -88,7 +88,7 @@ export default function RegistryCard({
           <IconButton
             size="sm"
             icon={reg.enabled ? Power : PowerOff}
-            label={reg.enabled ? "Disable" : "Enable"}
+            label={reg.enabled ? t("common.disable") : t("common.enable")}
             onClick={onToggle}
             className={`border-transparent hover:border-line ${reg.enabled ? "text-good" : "text-muted"}`}
           />

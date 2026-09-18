@@ -8,6 +8,7 @@
  */
 
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { translatorFor } from "@/lib/i18n";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
@@ -226,17 +227,21 @@ describe("shortImageTag", () => {
   });
 });
 
+/** The reason names itself through the dictionary; these quote the
+ *  English one. */
+const T = translatorFor("en").t;
+
 describe("updateReason", () => {
   it("calls out a republished digest", () => {
-    expect(updateReason(IMAGES[1])).toBe("newer digest published");
+    expect(updateReason(IMAGES[1], T)).toBe("newer digest published");
   });
 
   it("calls out an image that was never pulled", () => {
-    expect(updateReason(IMAGES[2])).toBe("not pulled");
+    expect(updateReason(IMAGES[2], T)).toBe("not pulled");
   });
 
   it("says nothing about an up-to-date image", () => {
-    expect(updateReason(IMAGES[0])).toBe("");
+    expect(updateReason(IMAGES[0], T)).toBe("");
   });
 });
 

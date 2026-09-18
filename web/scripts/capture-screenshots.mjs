@@ -6,8 +6,15 @@
  * once: a page that changes and a screenshot that does not is documentation
  * that lies, and nobody notices until an operator follows it.
  *
- *   ./scripts/run-backend.sh --port 8123        # simulation, serves the built UI
+ *   npm --prefix web run build                   # the SPA the backend serves
+ *   ./scripts/run-backend.sh --port 8123         # simulation, auth forced off
  *   node web/scripts/capture-screenshots.mjs --base http://127.0.0.1:8123
+ *
+ * `run-backend.sh` sets `SPARK_PULSE_AUTH_ENABLED=false` itself, which is what
+ * this needs: with auth on — and a `~/.config/spark-pulse/settings.json` from
+ * `run-dev-oidc-full.sh` is enough to turn it on — every page here waits on a
+ * selector behind a login it cannot pass, and the capture hangs rather than
+ * failing.
  *
  * It lives under `web/` so it resolves Playwright from the frontend's own
  * node_modules — the same one the e2e suite uses, at the same version.

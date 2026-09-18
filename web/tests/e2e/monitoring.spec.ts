@@ -28,7 +28,7 @@ test("asks every node, and says which one runs the control plane", async ({ page
 
   // Monitoring is a tab of Fleet now, and `/monitoring` deep-links to it: the
   // page is the machines, and this is the reading of what they are doing.
-  await expect(page.getByRole("heading", { name: "The machines.", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "The nodes.", exact: true })).toBeVisible();
   await expect(page.getByRole("tab", { name: "Monitoring" })).toHaveAttribute(
     "aria-selected",
     "true",
@@ -41,7 +41,7 @@ test("asks every node, and says which one runs the control plane", async ({ page
 
   // And each answers for its own hardware, through its own agent.
   await expect(page.getByRole("heading", { name: "NVIDIA GB10" })).toHaveCount(2);
-  await expect(page.getByRole("heading", { name: "CPU Memory" })).toHaveCount(2);
+  await expect(page.getByRole("heading", { name: "CPU memory" })).toHaveCount(2);
   await expectNoCrash(page);
 });
 
@@ -90,8 +90,8 @@ test("renders host CPU and disk without a GPU at all", async ({ page }) => {
   });
   await gotoPage(page, "/monitoring");
 
-  await expect(page.getByRole("heading", { name: "The machines.", exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "CPU Memory" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "The nodes.", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "CPU memory" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "/", exact: true })).toBeVisible();
   await expect(page.getByText("64.9%", { exact: true })).toBeVisible();
   await expectNoCrash(page);
@@ -122,6 +122,6 @@ test("keeps the section of a node that could not be asked", async ({ page }) => 
   await expect(page.getByText("Could not be asked")).toBeVisible();
   await expect(page.getByText("10.0.0.11 has no enrolled agent")).toBeVisible();
   // One machine answered, so exactly one CPU card, not two.
-  await expect(page.getByRole("heading", { name: "CPU Memory" })).toHaveCount(1);
+  await expect(page.getByRole("heading", { name: "CPU memory" })).toHaveCount(1);
   await expectNoCrash(page);
 });

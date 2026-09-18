@@ -29,7 +29,7 @@ export default function NewModModal({
   const [dragOver, setDragOver] = useState(false);
 
   const handleZipUpload = useCallback(async (file: File) => {
-    if (file.size > 10 * 1024 * 1024) { onError("ZIP file too large (max 10MB)"); return; }
+    if (file.size > 10 * 1024 * 1024) { onError(t("newMod.zipTooLarge")); return; }
     try {
       const name = file.name.replace(/\.zip$/i, "") || "uploaded-mod";
       const formData = new FormData();
@@ -44,14 +44,14 @@ export default function NewModModal({
 
       if (!resp.ok) {
         const errData = await resp.json().catch(() => ({}));
-        throw new Error(errData.detail || "Failed to upload mod");
+        throw new Error(errData.detail || t("newMod.uploadFailed"));
       }
 
       const data = await resp.json();
       await onSave(data.id, data.name);
       onClose();
     } catch (e) {
-      onError(e instanceof Error ? e.message : "Failed to save mod");
+      onError(e instanceof Error ? e.message : t("newMod.saveFailed"));
     }
   }, [onSave, onError, onClose]);
 
@@ -72,7 +72,7 @@ export default function NewModModal({
     if (file && file.name.endsWith(".zip")) {
         void handleZipUpload(file);
     } else {
-      setErrorModal("Please upload a .zip file");
+      setErrorModal(t("newMod.zipOnly"));
     }
   }, [handleZipUpload]);
 
@@ -94,12 +94,12 @@ export default function NewModModal({
 
   const handleSave = async () => {
     if (!modName.trim()) {
-      setErrorModal("Mod name is required");
+      setErrorModal(t("newMod.nameRequired"));
       return;
     }
     const runSh = files.find(f => f.name === "run.sh");
     if (!runSh || !runSh.content.trim()) {
-      setErrorModal("run.sh is required and cannot be empty");
+      setErrorModal(t("newMod.runShRequired"));
       return;
     }
     setSaving(true);
@@ -120,14 +120,14 @@ export default function NewModModal({
 
       if (!resp.ok) {
         const errData = await resp.json().catch(() => ({}));
-        setErrorModal(errData.detail || "Failed to save mod");
+        setErrorModal(errData.detail || t("newMod.saveFailed"));
         return;
       }
 
       await onSave(`custom/${modName.trim().toLowerCase().replace(/\s+/g, "-")}`, modName.trim());
       onClose();
     } catch (e) {
-      onError(e instanceof Error ? e.message : "Failed to save");
+      onError(e instanceof Error ? e.message : t("newMod.saveFailed"));
     } finally {
       setSaving(false);
     }
@@ -151,7 +151,7 @@ export default function NewModModal({
         actions={
           <>
             <Button size="sm" onClick={handleCancel}>
-              Cancel
+              {t("common.cancel")}
             </Button>
             <Button
               size="sm"
@@ -161,7 +161,7 @@ export default function NewModModal({
               disabled={!modName.trim()}
               onClick={handleSave}
             >
-              {saving ? "Saving..." : "Create Mod"}
+              {saving ? t("common.saving") : t("newMod.create")}
             </Button>
           </>
         }
@@ -189,14 +189,14 @@ export default function NewModModal({
               onDrop={handleDrop}
               className="border border-dashed border-line rounded-sm p-6 text-center cursor-pointer transition-colors text-[14px]"
             >
-              <span className={dragOver ? "text-blue2" : "text-muted"}>Drag &amp; drop a ZIP here</span>
+              <span className={dragOver ? "text-blue2" : "text-muted"}>{t("customFiles.dropZip")}</span>
             </div>
           </div>
 
           {/* Divider */}
           <div className="flex items-center gap-3">
             <div className="flex-1 h-px bg-line" />
-            <span className="text-[13px] text-muted">or create manually</span>
+            <span className="text-[13px] text-muted">{t("newMod.orManually")}</span>
             <div className="flex-1 h-px bg-line" />
           </div>
 
@@ -205,7 +205,7 @@ export default function NewModModal({
             <div className="flex items-center justify-between mb-2">
               <p className="text-[13px] font-medium">{t("newMod.files")}</p>
               <Button size="sm" onClick={addFile}>
-                Add file
+                {t("newMod.addFile")}
               </Button>
             </div>
             <div className="space-y-3">
@@ -225,16 +225,16 @@ export default function NewModModal({
                       size="sm"
                       variant="danger"
                       icon={X}
-                      label={`Remove ${f.name || "file"}`}
+                      label={t("newMod.removeFile", { name: f.name || t("newMod.file") })}
                       onClick={() => removeFile(i)}
                     />
                   </div>
                   <Textarea
                     mono
-                    aria-label={`Content of ${f.name || "file"}`}
+                    aria-label={t("newMod.contentOf", { name: f.name || t("newMod.file") })}
                     value={f.content}
                     onChange={(e) => updateFile(i, "content", e.target.value)}
-                    placeholder={`// Content of ${f.name || "file"}...`}
+                    placeholder={t("newMod.contentOf", { name: f.name || t("newMod.file") })}
                     rows={4}
                   />
                 </div>

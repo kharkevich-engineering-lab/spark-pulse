@@ -42,13 +42,13 @@ describe("NewModModal", () => {
 
   it("starts with a run.sh already stubbed out", () => {
     renderModal();
-    expect(screen.getByRole("heading", { name: "New Mod" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "New mod" })).toBeInTheDocument();
     expect(screen.getByDisplayValue("run.sh")).toBeInTheDocument();
   });
 
   it("cannot be submitted without a name", async () => {
     renderModal();
-    expect(screen.getByRole("button", { name: /Create Mod/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Create mod/ })).toBeDisabled();
   });
 
   /** A mod whose run.sh is empty runs nothing; saying so here is cheaper than
@@ -59,7 +59,7 @@ describe("NewModModal", () => {
     await userEvent.type(screen.getByPlaceholderText("my-mod"), "kernel-patch");
     const body = screen.getAllByRole("textbox").find((el) => el.tagName === "TEXTAREA")!;
     await userEvent.clear(body);
-    await userEvent.click(screen.getByRole("button", { name: /Create Mod/ }));
+    await userEvent.click(screen.getByRole("button", { name: /Create mod/ }));
 
     expect(
       await screen.findByText("run.sh is required and cannot be empty"),
@@ -73,7 +73,7 @@ describe("NewModModal", () => {
     await userEvent.type(screen.getByPlaceholderText("my-mod"), "kernel-patch");
     await userEvent.clear(screen.getByDisplayValue("run.sh"));
     await userEvent.type(screen.getByPlaceholderText("filename"), "setup.py");
-    await userEvent.click(screen.getByRole("button", { name: /Create Mod/ }));
+    await userEvent.click(screen.getByRole("button", { name: /Create mod/ }));
 
     expect(
       await screen.findByText("run.sh is required and cannot be empty"),
@@ -90,7 +90,7 @@ describe("NewModModal", () => {
     const bodies = screen.getAllByRole("textbox").filter((el) => el.tagName === "TEXTAREA");
     await userEvent.type(bodies[1], "hello");
 
-    await userEvent.click(screen.getByRole("button", { name: /Create Mod/ }));
+    await userEvent.click(screen.getByRole("button", { name: /Create mod/ }));
 
     await waitFor(() => expect(onSave).toHaveBeenCalled());
     const [url, init] = fetchMock().mock.calls[0];
@@ -116,7 +116,7 @@ describe("NewModModal", () => {
     await userEvent.click(remove);
     expect(screen.getAllByPlaceholderText("filename")).toHaveLength(1);
 
-    await userEvent.click(screen.getByRole("button", { name: /Create Mod/ }));
+    await userEvent.click(screen.getByRole("button", { name: /Create mod/ }));
     await waitFor(() => expect(onSave).toHaveBeenCalled());
   });
 
@@ -131,7 +131,7 @@ describe("NewModModal", () => {
     const { onSave, onClose } = renderModal();
 
     await userEvent.type(screen.getByPlaceholderText("my-mod"), "kernel-patch");
-    await userEvent.click(screen.getByRole("button", { name: /Create Mod/ }));
+    await userEvent.click(screen.getByRole("button", { name: /Create mod/ }));
 
     expect(
       await screen.findByText("a mod named kernel-patch already exists"),
@@ -145,7 +145,7 @@ describe("NewModModal", () => {
     const { onError } = renderModal();
 
     await userEvent.type(screen.getByPlaceholderText("my-mod"), "mod");
-    await userEvent.click(screen.getByRole("button", { name: /Create Mod/ }));
+    await userEvent.click(screen.getByRole("button", { name: /Create mod/ }));
 
     await waitFor(() => expect(onError).toHaveBeenCalledWith("network down"));
   });

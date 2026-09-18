@@ -157,13 +157,13 @@ describe("RecipeDrawer", () => {
     expect(screen.getByRole("button", { name: "Deploy" })).toBeEnabled();
   });
 
-  it("offers Customize for a stock recipe and Edit Custom for a customized one", () => {
+  it("offers Customize for a stock recipe and Edit custom for a customized one", () => {
     const { unmount } = renderDrawer();
     expect(screen.getByRole("button", { name: "Customize" })).toBeInTheDocument();
     unmount();
 
     renderDrawer({ customization: { model: "Qwen/Qwen3-32B" } });
-    expect(screen.getByRole("button", { name: "Edit Custom" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Edit custom" })).toBeInTheDocument();
   });
 
   it("swaps Deploy for Save once editing starts, and hides the deploy options", async () => {
@@ -180,7 +180,7 @@ describe("RecipeDrawer", () => {
   it("leaves edit mode once a save succeeds", async () => {
     renderDrawer({ customization: { model: "m" } });
 
-    await userEvent.click(screen.getByRole("button", { name: "Edit Custom" }));
+    await userEvent.click(screen.getByRole("button", { name: "Edit custom" }));
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() =>
@@ -192,7 +192,7 @@ describe("RecipeDrawer", () => {
     const onSaveCustomization = vi.fn().mockRejectedValue(new Error("disk full"));
     const { onError } = renderDrawer({ onSaveCustomization, customization: { model: "m" } });
 
-    await userEvent.click(screen.getByRole("button", { name: "Edit Custom" }));
+    await userEvent.click(screen.getByRole("button", { name: "Edit custom" }));
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(onError).toHaveBeenCalledWith("disk full"));
@@ -204,7 +204,7 @@ describe("RecipeDrawer", () => {
   it("asks before discarding a customization, and names it", async () => {
     const { onReset } = renderDrawer({ customization: { model: "m" } });
 
-    await userEvent.click(screen.getByRole("button", { name: "Edit Custom" }));
+    await userEvent.click(screen.getByRole("button", { name: "Edit custom" }));
     await userEvent.click(screen.getByRole("button", { name: "Reset" }));
 
     expect(screen.getByText(/Reset "Qwen3 8B" to its original recipe\?/)).toBeInTheDocument();
@@ -217,7 +217,7 @@ describe("RecipeDrawer", () => {
   it("keeps the customization when the reset prompt is dismissed", async () => {
     const { onReset } = renderDrawer({ customization: { model: "m" } });
 
-    await userEvent.click(screen.getByRole("button", { name: "Edit Custom" }));
+    await userEvent.click(screen.getByRole("button", { name: "Edit custom" }));
     await userEvent.click(screen.getByRole("button", { name: "Reset" }));
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
 

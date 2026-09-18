@@ -110,7 +110,7 @@ describe("Library — caches", () => {
 
     await user.click(screen.getByRole("button", { name: "Clean caches" }));
 
-    expect(await screen.findByRole("heading", { name: "Clean All Caches" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Clean all caches" })).toBeInTheDocument();
     expect(screen.getByText(/This will clean ALL caches/)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Clean" }));

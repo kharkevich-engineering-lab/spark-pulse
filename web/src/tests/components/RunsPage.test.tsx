@@ -456,7 +456,7 @@ describe("RunsPage benchmark launcher", () => {
     const dialog = within(screen.getByRole("dialog"));
     await user.click(dialog.getByLabelText("latency"));
     await user.click(dialog.getByLabelText("gpu memory"));
-    fireEvent.change(dialog.getByLabelText("Context Length"), { target: { value: "8192" } });
+    fireEvent.change(dialog.getByLabelText("Context length"), { target: { value: "8192" } });
     await user.click(dialog.getByRole("button", { name: "Run" }));
 
     await waitFor(() =>

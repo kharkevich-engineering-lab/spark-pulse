@@ -67,7 +67,7 @@ test("opens a recipe drawer and closes it again", async ({ page, request }) => {
   const heading = page.getByRole("heading", { name: recipe.name, exact: true });
   await expect(heading).toBeVisible();
   // Drawer body: the recipe form, read-only until "Customize" is pressed.
-  await expect(page.getByText("Recipe Name", { exact: true })).toBeVisible();
+  await expect(page.getByText("Recipe name", { exact: true })).toBeVisible();
   await expect(page.getByText("Container", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Deploy", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Customize", exact: true })).toBeVisible();

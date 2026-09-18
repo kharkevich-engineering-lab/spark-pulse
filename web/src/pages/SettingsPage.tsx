@@ -27,7 +27,7 @@ import {
 } from "lucide-react";
 import { SunMoonIcon } from "@/components/BrandIcons";
 import { type ThemeMode, getTheme, setTheme } from "@/lib/theme";
-import { LANGUAGES, useI18n } from "@/lib/i18n";
+import { LANGUAGES, useI18n, useT } from "@/lib/i18n";
 import { getConfig, useConfig } from "@/lib/config";
 import SettingsSection from "@/components/SettingsSection";
 import SettingsLibrary from "@/components/SettingsLibrary";
@@ -239,10 +239,11 @@ function LanguagePicker() {
 
 /** The field the environment owns, marked as such. */
 function EnvBadge() {
+  const t = useT();
   return (
     <span className="ml-1.5 inline-flex items-center gap-1 rounded-sm bg-warn/15 px-1.5 py-0.5 text-[12.5px] font-normal text-warn">
       <Lock size={10} />
-      env
+      {t("settings.envBadge")}
     </span>
   );
 }
@@ -711,7 +712,7 @@ export default function SettingsPage() {
             {/* Cluster mode decides whether recipes marked `cluster_only` are
                 offered at all, which is the same kind of decision as
                 benchmarking: it changes what the operator is shown, not how a
-                deployment behaves. The machines themselves are on /cluster. */}
+                a run behaves. The nodes themselves are on /cluster. */}
             <SwitchRow
               icon={Network}
               label={t("settings.clusterMode")}

@@ -255,7 +255,7 @@ describe("NodeRegistry", () => {
     await screen.findByRole("listitem", { name: /spark-02/ });
 
     await user.click(screen.getByRole("button", { name: "Forget spark-02" }));
-    expect(screen.getByText(/does not touch the machine itself/i)).toBeInTheDocument();
+    expect(screen.getByText(/does not touch the node itself/i)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Forget" }));
 
     await waitFor(() => expect(removeNode).toHaveBeenCalledWith("peer"));

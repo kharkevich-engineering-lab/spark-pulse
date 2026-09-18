@@ -185,12 +185,12 @@ function ModDrawer({ modId, onClose }: { modId: string; onClose: () => void }) {
                 className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text transition-colors"
               >
                 {copied ? <Check size={14} className="text-success" /> : <Copy size={14} />}
-                {copied ? "Copied" : "Copy"}
+                {copied ? t("common.copied") : t("common.copy")}
               </button>
             </div>
             <div className="rounded-md bg-bg border border-border overflow-hidden">
               <pre className="p-4 text-xs font-mono overflow-x-auto leading-relaxed whitespace-pre">
-                {detail.script || "(empty)"}
+                {detail.script || t("recipes.emptyScript")}
               </pre>
             </div>
           </div>
@@ -269,7 +269,7 @@ export default function RecipesPage() {
       setCustomRecipes(r);
       setCustomMods(m);
     } catch (e) {
-      setAlertModal({ title: t("common.error"), message: e instanceof Error ? e.message : "Failed to load custom data" });
+      setAlertModal({ title: t("common.error"), message: e instanceof Error ? e.message : t("recipes.loadCustomFailed") });
     } finally {
       setCustomLoading(false);
     }
@@ -348,7 +348,7 @@ export default function RecipesPage() {
       setModFiles(files);
       setShowModModal(true);
     } catch {
-      setAlertModal({ title: t("common.error"), message: "Failed to load mod" });
+      setAlertModal({ title: t("common.error"), message: t("recipes.loadModFailed") });
     }
   };
 
@@ -370,7 +370,7 @@ export default function RecipesPage() {
       ]);
       setSelected({ recipe: detail, customization });
     } catch (e) {
-      setAlertModal({ title: t("common.error"), message: e instanceof Error ? e.message : "Failed to load recipe" });
+      setAlertModal({ title: t("common.error"), message: e instanceof Error ? e.message : t("recipes.loadRecipeFailed") });
     }
   };
 
@@ -472,7 +472,7 @@ export default function RecipesPage() {
       ]);
       setSelected({ recipe: detail, customization });
     } catch (e) {
-      setAlertModal({ title: t("common.error"), message: e instanceof Error ? e.message : "Failed to save customization" });
+      setAlertModal({ title: t("common.error"), message: e instanceof Error ? e.message : t("recipes.saveCustomizationFailed") });
     }
   };
 
@@ -486,7 +486,7 @@ export default function RecipesPage() {
         setSelected({ recipe: detail, customization: {} });
       }
     } catch (e) {
-      setAlertModal({ title: t("common.error"), message: e instanceof Error ? e.message : "Failed to reset customization" });
+      setAlertModal({ title: t("common.error"), message: e instanceof Error ? e.message : t("recipes.resetCustomizationFailed") });
     } finally {
       setResetConfirm(null);
     }
@@ -692,10 +692,7 @@ export default function RecipesPage() {
                 <div className="py-20 text-center text-text-muted">
                   <Wrench size={48} className="mx-auto mb-4 opacity-30" />
                   <p className="text-lg font-medium">{t("recipes.noCustomMods")}</p>
-                  <p className="text-sm mt-1 opacity-70">
-                    A mod is a <code className="font-mono">run.sh</code> that runs inside the
-                    container before the engine starts.
-                  </p>
+                  <p className="text-sm mt-1 opacity-70">{t("recipes.modExplainer")}</p>
                 </div>
               )}
 
@@ -873,13 +870,12 @@ export default function RecipesPage() {
           >
             <div className="space-y-3 text-[14px]">
               <p className="text-muted">
-                <span className="font-mono text-text break-all">{missingModelDeploy.model}</span> is not in the
-                local catalogue, so <span className="font-medium text-text">{missingModelDeploy.name}</span> cannot start.
+                {t("recipes.missingModelBody", {
+                  model: missingModelDeploy.model,
+                  name: missingModelDeploy.name,
+                })}
               </p>
-              <p className="text-muted">
-                Downloading it can take a while. You do not have to wait here — the deployment is recorded and
-                starts on its own when the model lands, and you can cancel it from the Models page at any point.
-              </p>
+              <p className="text-muted">{t("recipes.missingModelWait")}</p>
             </div>
           </Modal>
         </div>
@@ -925,11 +921,12 @@ export default function RecipesPage() {
 // ── Mod card ─────────────────────────────────────────────────────────────────
 
 function ModCard({ mod, onClick }: { mod: ModSummary; onClick: () => void }) {
+  const { t } = useI18n();
   const badges = (
     <>
       {mod.has_patches && (
         <span className="px-1.5 py-0.5 rounded text-xs bg-warning/15 text-warning border border-warning/30 font-mono">
-          patches
+          {t("recipes.patches")}
         </span>
       )}
       {mod.files.map((f) => (

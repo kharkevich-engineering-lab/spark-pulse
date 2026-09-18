@@ -19,6 +19,7 @@
 
 import { AlertTriangle } from "lucide-react";
 import { StatusBadge } from "@/ui";
+import { useT } from "@/lib/i18n";
 import type { DeploymentOrphan, DeploymentRank } from "@/lib/types";
 
 export interface RankListProps {
@@ -33,6 +34,7 @@ function isUnhealthy(rank: DeploymentRank): boolean {
 }
 
 export default function RankList({ ranks, orphans, className = "" }: RankListProps) {
+  const t = useT();
   const list = ranks ?? [];
   const orphanList = orphans ?? [];
   const anyUnhealthy = list.some(isUnhealthy);
@@ -45,7 +47,7 @@ export default function RankList({ ranks, orphans, className = "" }: RankListPro
       {orphanList.length > 0 && (
         <ul className="space-y-1.5" data-testid="rank-orphans">
           {orphanList.map((orphan) => {
-            const node = orphan.node || "this node";
+            const node = orphan.node || t("runs.thisNode");
             return (
               <li
                 key={orphan.rank}
@@ -55,17 +57,16 @@ export default function RankList({ ranks, orphans, className = "" }: RankListPro
                 <AlertTriangle size={14} className="shrink-0 mt-0.5 text-bad" />
                 <div className="min-w-0 space-y-0.5">
                   <p>
-                    <span className="font-medium">Rank {orphan.rank} could not be confirmed stopped</span>
+                    <span className="font-medium">
+                      {t("runs.orphanRank", { rank: orphan.rank })}
+                    </span>
                     <span className="text-muted"> · </span>
                     <span className="font-mono text-muted">{node}</span>
                     <span className="text-muted"> · </span>
                     <span className="font-mono text-muted">{orphan.container_name}</span>
                   </p>
                   <p className="text-muted">{orphan.reason}.</p>
-                  <p className="text-muted">
-                    Its container may still be running and holding {node}&apos;s ports until this
-                    clears.
-                  </p>
+                  <p className="text-muted">{t("runs.orphanPorts", { node })}</p>
                 </div>
               </li>
             );
@@ -86,14 +87,14 @@ export default function RankList({ ranks, orphans, className = "" }: RankListPro
                 }`}
               >
                 {unhealthy && <AlertTriangle size={12} className="shrink-0 text-bad" />}
-                <span className="font-mono shrink-0">rank {rank.rank}</span>
+                <span className="font-mono shrink-0">{t("runs.rank", { rank: rank.rank })}</span>
                 {rank.is_head && (
                   <span className="shrink-0 px-1.5 py-0.5 rounded-full text-[11px] font-semibold uppercase tracking-[0.14em] bg-blue/15 text-blue2 border border-blue/30">
-                    head
+                    {t("runs.head")}
                   </span>
                 )}
                 <span className="text-muted">·</span>
-                <span className="font-mono truncate">{rank.node || "this node"}</span>
+                <span className="font-mono truncate">{rank.node || t("runs.thisNode")}</span>
                 <span className="text-muted">·</span>
                 <span className="font-mono truncate">{rank.container_name}</span>
                 {rank.container && (

@@ -115,3 +115,20 @@ test("passes extra args through to the previewed command", async ({ page }) => {
   await expect(rendered).toBeVisible();
   await expect(rendered.locator("pre")).toContainText("--max-num-seqs 4");
 });
+
+/** The deploy form was 673 lines with not one responsive class: two fixed
+ *  columns of parallelism inputs, a node selector whose rows could not wrap,
+ *  and a plan whose image references and launch command are longer than a
+ *  phone is wide. Previewed as well as opened, because the plan block is the
+ *  part that widens the page if nothing contains it. Runs in both projects —
+ *  at 1280 it is the assertion that the fix cost the desktop nothing. */
+test("the deploy form and its preview fit the viewport", async ({ page }) => {
+  await openDeployOptions(page);
+  await page.getByRole("button", { name: "Preview" }).click();
+  await expect(page.getByTestId("deploy-plan")).toBeVisible();
+
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+  expect(overflow, "the page body must not scroll horizontally").toBeLessThanOrEqual(1);
+});

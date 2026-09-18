@@ -14,7 +14,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { translate, useI18n, type Language } from "@/lib/i18n";
+import { translate, useI18n, type Language, type Translator } from "@/lib/i18n";
 import { connectMetricsStream, fetchMemory, killGpuProcess } from "@/lib/api";
 import { useQuery } from "@/hooks/useQuery";
 import { Activity, OctagonX } from "lucide-react";
@@ -44,18 +44,18 @@ const MAX_SAMPLES = 720;
 const seriesKey = (nodeId: string, gpu: GPUStats) => `${nodeId}|${gpu.uuid}`;
 
 /** The two things the metrics frame actually carries per GPU. */
-function gpuSeries(samples: GPUSample[]): HealthSeries[] {
+function gpuSeries(samples: GPUSample[], t: Translator["t"]): HealthSeries[] {
   const of = (pick: (s: GPUSample) => number | null) =>
     samples.filter((s) => pick(s) !== null).map((s) => ({ t: s.t, value: pick(s) as number }));
   return [
     {
-      label: "GPU utilization",
+      label: t("monitoring.gpuUtilization"),
       unit: "%",
       color: "var(--color-primary)",
       samples: of((s) => s.utilization),
     },
     {
-      label: "Temperature",
+      label: t("monitoring.temperature"),
       unit: "°C",
       color: "var(--color-warning)",
       samples: of((s) => s.temperature),
@@ -128,7 +128,7 @@ export default function MonitoringTab() {
 
   const series = useMemo(() => {
     const byGpu: Record<string, HealthSeries[]> = {};
-    for (const [key, samples] of Object.entries(history)) byGpu[key] = gpuSeries(samples);
+    for (const [key, samples] of Object.entries(history)) byGpu[key] = gpuSeries(samples, t);
     return byGpu;
   }, [history]);
 

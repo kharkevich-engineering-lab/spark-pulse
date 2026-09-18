@@ -48,35 +48,25 @@ describe("the dictionaries", () => {
    *  never happened. Proper nouns, initialisms, and the handful of words
    *  French borrowed unchanged. */
   const IDENTICAL_ON_PURPOSE = new Set([
-    "nav.mcp",
-    "nav.cache",
     "common.ok",
     "engines.none",
     // "Image" and "RAM" are the same word in French; "PID" and "MCP" are
     // initialisms.
     "runs.image",
     "engines.colImage",
-    "monitoring.pid",
     "monitoring.ram",
     "engines.colActions",
     // "Mods" is the term of art the recipes themselves use, in both languages.
     "recipes.tabMods",
     "eventStream.info",
-    "nodes.colInterfaces",
     // "Interfaces", "Agent", "Port" and "MTU" carry over into French
     // unchanged, and "Spark Pulse {version}" is a product name.
-    "fleet.labelInterfaces",
-    "fleet.labelAgent",
-    "fleet.labelPort",
     "fleet.labelMtu",
     "fleet.peerSparkPulse",
     "nodes.doctor.applied",
-    "fabric.colMtu",
-    "fabric.colStatus",
     "fabric.showPlan",
     "nodes.agentVersion",
     "nodes.updating",
-    "nodes.colActions",
     // Placeholders that are literal examples — an address, a key path, an
     // image reference — not prose. Translating them would make them wrong.
     "engines.refPlaceholder",
@@ -104,14 +94,19 @@ describe("the dictionaries", () => {
     "mcp.transportValue",
     "mcp.cursor",
     "oci.url",
-    // "Menu", "Cache" and "MCP" are the same word — or the same initialism —
-    // in both languages, and the page titles are those words with a full stop.
+    // "Menu" and "Cache" are the same word in both languages, and the page
+    // title is that word with a full stop.
     "a11y.menu",
-    "cache.heading",
     "library.caches",
-    "mcp.heading",
     // The Settings tab that carries the initialism, same word in both.
     "settingsPage.tabMcp",
+    // "version" is the same word in French, singular and plural.
+    "registry.versionCount.one",
+    "registry.versionCount.other",
+    // Two abbreviations that read the same in both: the chip on an
+    // experimental feature, and the one marking a field the environment owns.
+    "experimental.chip",
+    "settings.envBadge",
   ]);
 
   /** A French dictionary that is a copy of the English one is not a

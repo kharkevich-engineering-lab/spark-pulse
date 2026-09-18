@@ -36,7 +36,7 @@ export default function NetworkDiscovery() {
       setDiscoveryResult(response.detected);
       setValidationResult(response.validation);
     } catch (e) {
-      setDiscoveryError(e instanceof Error ? e.message : "Discovery failed");
+      setDiscoveryError(e instanceof Error ? e.message : t("nodes.discoveryFailed"));
     } finally {
       setDiscoveryLoading(false);
     }

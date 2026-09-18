@@ -26,6 +26,11 @@ echo "Starting backend in SIMULATION mode on port $port..."
 echo "  http://localhost:$port"
 echo "  http://localhost:$port/docs  (Swagger UI)"
 
-SIMULATION_MODE=1 uvicorn spark_pulse.app:app \
+# Auth is forced off, as it is for the e2e suite. This is the simulation
+# backend, and a ~/.config/spark-pulse/settings.json left behind by
+# run-dev-oidc-full.sh would otherwise turn it on here too — which answers 401
+# to every request and leaves the screenshot capture hanging on a login page it
+# has no credentials for.
+SIMULATION_MODE=1 SPARK_PULSE_AUTH_ENABLED=false uvicorn spark_pulse.app:app \
     --host 127.0.0.1 --port "$port" \
     $reload

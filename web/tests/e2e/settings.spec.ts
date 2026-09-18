@@ -31,7 +31,7 @@ test("shows the configuration the backend is running with", async ({ page, reque
 
   // Every tab renders, and each is reached by name.
   for (const tab of [
-    "Deployment",
+    "Runs",
     "Containers",
     "Features",
     "Library",
@@ -52,7 +52,7 @@ test("shows the configuration the backend is running with", async ({ page, reque
       .locator("input")
       .evaluateAll((nodes) => nodes.map((node) => (node as HTMLInputElement).value));
 
-  await expect(page.getByRole("heading", { name: "Deployment Defaults", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Run defaults", exact: true })).toBeVisible();
   const deployment = await valuesOnScreen();
   expect(deployment).toContain(settings.spark_vllm_path);
   expect(deployment).toContain(String(settings.default_port_range_start));
@@ -61,7 +61,7 @@ test("shows the configuration the backend is running with", async ({ page, reque
   // The Docker block used to render its defaults from literals in the page, so
   // it showed numbers the backend had never heard of. It comes from the API now.
   await page.getByRole("tab", { name: "Containers" }).click();
-  await expect(page.getByRole("heading", { name: "Container Limits", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Container limits", exact: true })).toBeVisible();
   const containers = await valuesOnScreen();
   expect(containers).toContain(String(settings.docker.shm_size_gb));
   expect(containers).toContain(String(settings.docker.pids_limit));
@@ -103,7 +103,7 @@ test("shows the configuration the backend is running with", async ({ page, reque
   // made on Containers and read back from Environment had no button to write
   // it with. It stays inert until something changes, which is also what keeps
   // this spec from writing to the settings file of whoever is running it.
-  for (const tab of ["Preferences", "Secrets", "Environment", "Deployment"]) {
+  for (const tab of ["Preferences", "Secrets", "Environment", "Runs"]) {
     await page.getByRole("tab", { name: tab, exact: true }).click();
     await expect(save).toBeVisible();
     await expect(save).toBeDisabled();
@@ -114,7 +114,7 @@ test("shows the configuration the backend is running with", async ({ page, reque
   // bookmarked.
   await gotoPage(page, "/mcp");
   await expect(page).toHaveURL(/\/settings#mcp$/);
-  await expect(page.getByRole("heading", { name: "Server Status" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Server status" })).toBeVisible();
 
   await expectNoCrash(page);
 });

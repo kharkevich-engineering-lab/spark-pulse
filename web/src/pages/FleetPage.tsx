@@ -118,7 +118,7 @@ export default function FleetPage() {
 
       {tab === "nodes" ? (
         <div className="space-y-0">
-          {/* The machines this control plane knows about — what used to be two
+          {/* The nodes this control plane knows about — what used to be two
               free-text IP boxes. */}
           <NodeRegistry addOpen={addOpen} onAddOpenChange={setAddOpen} />
 

@@ -79,7 +79,7 @@ defaults:
  * A plain-string detail is still handled: not every failure on this path comes
  * from the schema.
  */
-function readValidationErrors(payload: unknown): ValidationIssue[] {
+function readValidationErrors(payload: unknown, fallback: string): ValidationIssue[] {
   const detail = (payload as { detail?: unknown })?.detail;
   if (typeof detail === "string") return [{ field: "yaml", message: detail }];
   if (detail && typeof detail === "object") {
@@ -96,7 +96,7 @@ function readValidationErrors(payload: unknown): ValidationIssue[] {
     const message = (detail as { message?: string }).message;
     if (message) return [{ field: "yaml", message }];
   }
-  return [{ field: "yaml", message: "Validation failed" }];
+  return [{ field: "yaml", message: fallback }];
 }
 
 export default function NewRecipeModal({
@@ -124,7 +124,7 @@ export default function NewRecipeModal({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const processFile = useCallback(async (file: File) => {
-    if (file.size > 1024 * 1024) { onError("File too large (max 1MB)"); return; }
+    if (file.size > 1024 * 1024) { onError(t("customFiles.tooLarge1MB")); return; }
     setFilename(file.name);
     setValidationErrors([]);
     setContent("");
@@ -142,7 +142,7 @@ export default function NewRecipeModal({
       });
 
       if (!validateResp.ok) {
-        setValidationErrors(readValidationErrors(await validateResp.json().catch(() => ({}))));
+        setValidationErrors(readValidationErrors(await validateResp.json().catch(() => ({})), t("newRecipe.validationFailed")));
         return;
       }
 
@@ -152,7 +152,7 @@ export default function NewRecipeModal({
       setContent(text);
       setStep("preview");
     } catch {
-      onError("Failed to read file");
+      onError(t("customFiles.readFailed"));
     }
   }, [onError]);
 
@@ -173,7 +173,7 @@ export default function NewRecipeModal({
     if (file && (file.name.endsWith(".yaml") || file.name.endsWith(".yml"))) {
       processFile(file);
     } else {
-      setValidationErrors([{ field: "file", message: "Please upload a .yaml or .yml file" }]);
+      setValidationErrors([{ field: "file", message: t("newRecipe.yamlOnly") }]);
     }
   }, [processFile]);
 
@@ -207,7 +207,7 @@ export default function NewRecipeModal({
       });
 
       if (!validateResp.ok) {
-        setValidationErrors(readValidationErrors(await validateResp.json().catch(() => ({}))));
+        setValidationErrors(readValidationErrors(await validateResp.json().catch(() => ({})), t("newRecipe.validationFailed")));
         return;
       }
 
@@ -217,7 +217,7 @@ export default function NewRecipeModal({
       const parsed = await validateResp.json().catch(() => ({}));
       setRecipeName(String(parsed.name || recipeName));
     } catch (e) {
-      setValidationErrors([{ field: "yaml", message: e instanceof Error ? e.message : "Validation failed" }]);
+      setValidationErrors([{ field: "yaml", message: e instanceof Error ? e.message : t("newRecipe.validationFailed") }]);
     }
   };
 
@@ -239,7 +239,7 @@ export default function NewRecipeModal({
       });
 
       if (!saveResp.ok) {
-        const issues = readValidationErrors(await saveResp.json().catch(() => ({})));
+        const issues = readValidationErrors(await saveResp.json().catch(() => ({})), t("newRecipe.validationFailed"));
         setErrorModal(issues.map((i) => i.message).join("\n"));
         return;
       }
@@ -247,7 +247,7 @@ export default function NewRecipeModal({
       await onSave(recipeId, recipeName, content);
       onClose();
     } catch (e) {
-      onError(e instanceof Error ? e.message : "Failed to save");
+      onError(e instanceof Error ? e.message : t("customFiles.saveFailed"));
     } finally {
       setSaving(false);
     }
@@ -280,12 +280,16 @@ export default function NewRecipeModal({
         onClose={handleCancel}
         size="lg"
         title={
-          step === "upload" ? (mode === "upload" ? "Upload Recipe" : "Manual Recipe") : "Preview Recipe"
+          step === "upload"
+            ? mode === "upload"
+              ? t("newRecipe.uploadTitle")
+              : t("newRecipe.manualTitle")
+            : t("newRecipe.previewTitle")
         }
         actions={
           <>
             <Button size="sm" onClick={handleCancel}>
-              {step === "preview" ? "Back" : "Cancel"}
+              {step === "preview" ? t("common.back") : t("common.cancel")}
             </Button>
             {step === "preview" && !validationErrors.length && (
               <Button
@@ -296,7 +300,7 @@ export default function NewRecipeModal({
                 disabled={!recipeName.trim()}
                 onClick={handleSave}
               >
-                {saving ? "Saving..." : "Save Recipe"}
+                {saving ? t("common.saving") : t("newRecipe.save")}
               </Button>
             )}
           </>
@@ -315,7 +319,7 @@ export default function NewRecipeModal({
                   }`}
                 >
                   <Upload size={14} />
-                  Upload
+                  {t("newRecipe.upload")}
                 </button>
                 <button
                   onClick={() => { setMode("manual"); setStep("upload"); }}
@@ -324,7 +328,7 @@ export default function NewRecipeModal({
                   }`}
                 >
                   <FileCode size={14} />
-                  Manual
+                  {t("newRecipe.manual")}
                 </button>
               </div>
 
@@ -343,7 +347,7 @@ export default function NewRecipeModal({
                   >
                     <Upload size={32} className="mx-auto text-text-muted mb-4" />
                     <p className="text-sm font-medium text-text mb-1">
-                      Drag and drop a YAML file here, or{" "}
+                      {t("newRecipe.dropYaml")}{" "}
                       <span
                         className="text-blue2 underline cursor-pointer"
                         onClick={(e) => {
@@ -351,10 +355,10 @@ export default function NewRecipeModal({
                           fileInputRef.current?.click();
                         }}
                       >
-                        browse
+                        {t("newRecipe.browse")}
                       </span>
                     </p>
-                    <p className="text-xs text-text-muted mt-1">.yaml or .yml files supported</p>
+                    <p className="text-[13px] text-muted mt-1">{t("newRecipe.yamlSuffixes")}</p>
                   </div>
                   {/* Hidden file input — only triggers when user clicks "browse" text above */}
                   <input
@@ -368,7 +372,7 @@ export default function NewRecipeModal({
                   {/* Or separator */}
                   <div className="flex items-center gap-3 my-6">
                     <div className="flex-1 h-px bg-border" />
-                    <span className="text-xs text-text-muted">or</span>
+                    <span className="text-[13px] text-muted">{t("newRecipe.or")}</span>
                     <div className="flex-1 h-px bg-border" />
                   </div>
 
@@ -378,7 +382,7 @@ export default function NewRecipeModal({
                       onClick={handleSwitchToManual}
                       className="text-sm text-blue2 hover:text-blue2 underline"
                     >
-                      Enter YAML manually
+                      {t("newRecipe.enterManually")}
                     </button>
                   </div>
 
@@ -395,7 +399,7 @@ export default function NewRecipeModal({
                   <div>
                     <div className="flex items-center justify-between mb-2 gap-3 flex-wrap">
                       <label className="text-sm font-medium" htmlFor="recipe-yaml">
-                        Recipe YAML
+                        {t("newRecipe.recipeYaml")}
                       </label>
                       <div className="flex items-center gap-2">
                         {/* Both formats validate; v2 is the one the engines
@@ -422,7 +426,7 @@ export default function NewRecipeModal({
                           ))}
                         </div>
                         <Button size="sm" onClick={handleSaveManual} disabled={!content.trim()}>
-                          Validate recipe
+                          {t("newRecipe.validate")}
                         </Button>
                       </div>
                     </div>
@@ -441,10 +445,7 @@ export default function NewRecipeModal({
                       spellCheck={false}
                       placeholder={TEMPLATES["2"]}
                     />
-                    <p className="text-[13px] text-muted mt-1.5">
-                      Both recipe formats are accepted. Validation reports each problem against
-                      the field it belongs to.
-                    </p>
+                    <p className="text-[13px] text-muted mt-1.5">{t("newRecipe.formatsNote")}</p>
                   </div>
                 </>
               )}
@@ -463,7 +464,7 @@ export default function NewRecipeModal({
                 )}
               </Field>
               {mode === "upload" && filename && (
-                <p className="mb-3 text-[13px] text-muted">Source: {filename}</p>
+                <p className="mb-3 text-[13px] text-muted">{t("newRecipe.source", { filename })}</p>
               )}
 
               <ValidationErrors issues={validationErrors} label={t("newRecipe.validationFailed")} />

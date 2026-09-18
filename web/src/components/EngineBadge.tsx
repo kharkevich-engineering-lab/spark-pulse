@@ -15,13 +15,14 @@ const COLORS: Record<string, string> = {
 
 /** Small pill naming an engine (and its variant when it is not the default one). */
 export default function EngineBadge({ engine, variant, isDefault, enabled = true }: EngineBadgeProps) {
+  const t = useT();
   const c = enabled ? COLORS[engine] || "bg-text-muted/10 text-text-muted border-text-muted/30" : "bg-text-muted/10 text-text-muted border-text-muted/30 opacity-60";
   const label = variant && variant !== "default" ? `${engine} · ${variant}` : engine;
   return (
     <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium border ${c}`}>
       {label}
-      {isDefault && <span className="text-[10px] uppercase tracking-wide opacity-70">default</span>}
-      {!enabled && <span className="text-[10px] uppercase tracking-wide opacity-70">off</span>}
+      {isDefault && <span className="text-[10px] uppercase tracking-wide opacity-70">{t("engines.defaultTag")}</span>}
+      {!enabled && <span className="text-[10px] uppercase tracking-wide opacity-70">{t("engines.offTag")}</span>}
     </span>
   );
 }
@@ -44,14 +45,14 @@ export function EngineList({ engines, defaultEngine }: EngineListProps) {
           <div className="flex items-center gap-2 flex-wrap">
             <EngineBadge engine={e.engine} variant={e.variant} enabled={e.enabled} isDefault={e.engine === defaultEngine && e.variant === "default"} />
             <span className="text-xs text-text-muted font-mono">v{e.version}</span>
-            {e.verified.length > 0 && <span className="text-[10px] uppercase tracking-wide text-success">verified</span>}
+            {e.verified.length > 0 && <span className="text-[10px] uppercase tracking-wide text-success">{t("engines.verifiedTag")}</span>}
           </div>
           <p className="text-xs text-text-muted font-mono break-all">{e.digest ? `${e.image}@${e.digest.slice(0, 19)}…` : e.image_ref}</p>
           <p className="text-xs text-text-muted">
             {Object.entries(e.capabilities)
               .filter(([, v]) => v)
               .map(([k]) => k)
-              .join(", ") || "no capabilities declared"}
+              .join(", ") || t("engines.noCapabilities")}
             {" · "}
             <span className="font-mono">:{e.ports.api}</span>
             {e.ports.rendezvous ? <span className="font-mono"> / :{e.ports.rendezvous}</span> : null}

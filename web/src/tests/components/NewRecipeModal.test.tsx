@@ -60,7 +60,7 @@ describe("NewRecipeModal", () => {
 
   it("opens on the upload step", () => {
     renderModal();
-    expect(screen.getByRole("heading", { name: "Upload Recipe" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Upload a recipe" })).toBeInTheDocument();
     expect(screen.getByText(/\.yaml or \.yml files supported/)).toBeInTheDocument();
   });
 
@@ -69,7 +69,7 @@ describe("NewRecipeModal", () => {
 
     dropOn(yamlFile());
 
-    expect(await screen.findByRole("heading", { name: "Preview Recipe" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Preview the recipe" })).toBeInTheDocument();
     expect(screen.getByDisplayValue("My Recipe")).toBeInTheDocument();
     expect(screen.getByText("Source: my-recipe.yaml")).toBeInTheDocument();
     expect(fetchMock().mock.calls[0][0]).toBe("/api/custom-files/recipes/validate");
@@ -95,7 +95,7 @@ describe("NewRecipeModal", () => {
     expect(
       screen.getByText("line 2: mapping values are not allowed here"),
     ).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Upload Recipe" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Upload a recipe" })).toBeInTheDocument();
   });
 
   it("refuses anything that is not YAML", async () => {
@@ -122,15 +122,15 @@ describe("NewRecipeModal", () => {
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     await userEvent.upload(input, yamlFile());
 
-    expect(await screen.findByRole("heading", { name: "Preview Recipe" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Preview the recipe" })).toBeInTheDocument();
   });
 
   it("writes the previewed YAML under a slug of its name", async () => {
     const { onSave, onClose } = renderModal();
 
     dropOn(yamlFile());
-    await screen.findByRole("heading", { name: "Preview Recipe" });
-    await userEvent.click(screen.getByRole("button", { name: /Save Recipe/ }));
+    await screen.findByRole("heading", { name: "Preview the recipe" });
+    await userEvent.click(screen.getByRole("button", { name: /Save recipe/ }));
 
     await waitFor(() => expect(onSave).toHaveBeenCalled());
     const [url, init] = fetchMock().mock.calls[1];
@@ -145,9 +145,9 @@ describe("NewRecipeModal", () => {
     renderModal();
 
     dropOn(yamlFile());
-    await screen.findByRole("heading", { name: "Preview Recipe" });
+    await screen.findByRole("heading", { name: "Preview the recipe" });
     fetchMock().mockReturnValue(rejected("a recipe named my-recipe already exists"));
-    await userEvent.click(screen.getByRole("button", { name: /Save Recipe/ }));
+    await userEvent.click(screen.getByRole("button", { name: /Save recipe/ }));
 
     expect(
       await screen.findByText("a recipe named my-recipe already exists"),
@@ -158,9 +158,9 @@ describe("NewRecipeModal", () => {
     const { onError } = renderModal();
 
     dropOn(yamlFile());
-    await screen.findByRole("heading", { name: "Preview Recipe" });
+    await screen.findByRole("heading", { name: "Preview the recipe" });
     fetchMock().mockRejectedValue(new Error("network down"));
-    await userEvent.click(screen.getByRole("button", { name: /Save Recipe/ }));
+    await userEvent.click(screen.getByRole("button", { name: /Save recipe/ }));
 
     await waitFor(() => expect(onError).toHaveBeenCalledWith("network down"));
   });
@@ -171,7 +171,7 @@ describe("NewRecipeModal", () => {
 
       await userEvent.click(screen.getByRole("button", { name: "Enter YAML manually" }));
 
-      expect(screen.getByRole("heading", { name: "Manual Recipe" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Write a recipe" })).toBeInTheDocument();
       expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toContain(
         "name: My Custom Recipe",
       );
@@ -197,7 +197,7 @@ describe("NewRecipeModal", () => {
       await userEvent.click(screen.getByRole("button", { name: "Validate recipe" }));
 
       expect(await screen.findByText("model is required")).toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: /Save Recipe/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Save recipe/ })).not.toBeInTheDocument();
     });
 
     it("reports a validation request that never landed", async () => {
@@ -217,11 +217,11 @@ describe("NewRecipeModal", () => {
 
       await userEvent.click(screen.getByRole("button", { name: "Enter YAML manually" }));
       await userEvent.click(screen.getByRole("button", { name: "Validate recipe" }));
-      await screen.findByRole("heading", { name: "Preview Recipe" });
+      await screen.findByRole("heading", { name: "Preview the recipe" });
 
       await userEvent.click(screen.getByRole("button", { name: "Back" }));
 
-      expect(screen.getByRole("heading", { name: "Manual Recipe" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Write a recipe" })).toBeInTheDocument();
       expect(onClose).not.toHaveBeenCalled();
     });
 
@@ -318,7 +318,7 @@ describe("NewRecipeModal", () => {
     const { onClose } = renderModal();
 
     dropOn(yamlFile());
-    await screen.findByRole("heading", { name: "Preview Recipe" });
+    await screen.findByRole("heading", { name: "Preview the recipe" });
     await userEvent.click(screen.getByRole("button", { name: "Back" }));
 
     expect(onClose).toHaveBeenCalled();

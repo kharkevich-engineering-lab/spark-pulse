@@ -39,25 +39,17 @@ export default defineConfig({
     // A phone, at the width the audit measured. Chromium at an iPhone 13's
     // viewport rather than `devices["iPhone 13"]`, which is WebKit: CI installs
     // chromium alone, and the shell is a layout question rather than an engine
-    // one. Scoped to the specs whose page bodies survive 390px — one entry per
-    // line, so a page earning its place here is a one-line change rather than
-    // a rewritten pattern.
+    // one.
+    //
+    // Every spec, rather than a list of the ones that survive 390px. That list
+    // existed because most pages did not, and it grew a line per PR as each
+    // page was reshaped; with the deploy form — the last thing laying out two
+    // columns unconditionally — it had nothing left to leave out. Matching
+    // everything is also what makes a regression fail here: a page kept off a
+    // list is not passing on a phone, it is unmeasured.
     {
       name: "mobile",
-      // One entry per spec, on its own line: a page joins the phone's suite
-      // when the PR that reshaped it lands, and a list adds a line rather
-      // than editing one somebody else is also editing.
-      testMatch: [
-        /app-shell\.spec\.ts$/,
-        /recipes\.spec\.ts$/,
-        /jobs\.spec\.ts$/,
-        /benchmarks\.spec\.ts$/,
-        /settings\.spec\.ts$/,
-        /models\.spec\.ts$/,
-        /engines\.spec\.ts$/,
-        /nodes\.spec\.ts$/,
-        /monitoring\.spec\.ts$/,
-      ],
+      testMatch: "**/*.spec.ts",
       use: {
         ...devices["Desktop Chrome"],
         viewport: { width: 390, height: 844 },

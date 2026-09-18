@@ -657,7 +657,7 @@ describe("RecipesPage", () => {
       await userEvent.click(screen.getByRole("button", { name: "Deploy" }));
 
       const modal = await screen.findByTestId("missing-model-modal");
-      expect(within(modal).getByText("unsloth/Qwen3-27B-NVFP4")).toBeInTheDocument();
+      expect(within(modal).getByText(/unsloth\/Qwen3-27B-NVFP4/)).toBeInTheDocument();
       // The raw error is not what they see.
       expect(screen.queryByText(/allow_missing_model/)).not.toBeInTheDocument();
     });
@@ -790,7 +790,7 @@ describe("RecipesPage", () => {
       await openDeployDrawer();
       expect(screen.getByText("Qwen/Qwen3-32B")).toBeInTheDocument();
 
-      await userEvent.click(screen.getByRole("button", { name: "Edit Custom" }));
+      await userEvent.click(screen.getByRole("button", { name: "Edit custom" }));
       await userEvent.click(screen.getByRole("button", { name: "Reset" }));
       await userEvent.click(screen.getAllByRole("button", { name: "Reset" }).at(-1)!);
 
@@ -848,7 +848,7 @@ describe("RecipesPage", () => {
       expect(await screen.findByText("Mine")).toBeInTheDocument();
       expect(screen.getByText("mine.yaml")).toBeInTheDocument();
       expect(screen.queryByText("Qwen3 8B")).not.toBeInTheDocument();
-      expect(screen.getByText("Browse your custom recipes and mods")).toBeInTheDocument();
+      expect(screen.getByText("Your own recipes and mods.")).toBeInTheDocument();
     });
 
     it("says there are none rather than showing an empty grid", async () => {
@@ -864,7 +864,7 @@ describe("RecipesPage", () => {
       expect(screen.getByText("No custom mods")).toBeInTheDocument();
     });
 
-    /** The dead end this fixes: the "New Recipe" button used to be rendered
+    /** The dead end this fixes: the "New recipe" button used to be rendered
      *  inside `{customRecipes.length > 0 && …}`, so the state everybody starts
      *  in offered no way to create the first one — an empty page saying
      *  "create a new recipe to get started" beside no button that would. */
@@ -877,7 +877,7 @@ describe("RecipesPage", () => {
       await enterCustomMode();
 
       await screen.findByText("No custom recipes");
-      expect(screen.getByRole("button", { name: /New Recipe/ })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /New recipe/ })).toBeInTheDocument();
     });
 
     it("offers to create the first mod when there are none", async () => {
@@ -890,7 +890,7 @@ describe("RecipesPage", () => {
       await userEvent.click(screen.getByRole("tab", { name: /Mods \(0\)/ }));
 
       expect(screen.getByText("No custom mods")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /New Mod/ })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /New mod/ })).toBeInTheDocument();
     });
 
     it("still offers to create one when some already exist", async () => {
@@ -900,7 +900,7 @@ describe("RecipesPage", () => {
       await enterCustomMode();
 
       await screen.findByText("Mine");
-      expect(screen.getByRole("button", { name: /New Recipe/ })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /New recipe/ })).toBeInTheDocument();
     });
 
     it("surfaces a custom directory it could not read", async () => {
@@ -1060,20 +1060,20 @@ describe("RecipesPage", () => {
       await enterCustomMode();
       const before = vi.mocked(listCustomRecipes).mock.calls.length;
 
-      await userEvent.click(await screen.findByRole("button", { name: /New Recipe/ }));
+      await userEvent.click(await screen.findByRole("button", { name: /New recipe/ }));
       const zone = screen.getByText(/Drag and drop a YAML file here/).parentElement!;
       fireEvent.drop(zone, {
         dataTransfer: {
           files: [new File(["name: Fresh\n"], "fresh.yaml", { type: "text/yaml" })],
         },
       });
-      await screen.findByRole("heading", { name: "Preview Recipe" });
-      await userEvent.click(screen.getByRole("button", { name: /Save Recipe/ }));
+      await screen.findByRole("heading", { name: "Preview the recipe" });
+      await userEvent.click(screen.getByRole("button", { name: /Save recipe/ }));
 
       await waitFor(() =>
         expect(vi.mocked(listCustomRecipes).mock.calls.length).toBeGreaterThan(before),
       );
-      expect(screen.queryByRole("heading", { name: "Preview Recipe" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Preview the recipe" })).not.toBeInTheDocument();
       vi.unstubAllGlobals();
     });
 
@@ -1082,11 +1082,11 @@ describe("RecipesPage", () => {
       await screen.findByText("Qwen3 8B");
       await enterCustomMode();
 
-      await userEvent.click(await screen.findByRole("button", { name: /New Recipe/ }));
-      expect(screen.getByRole("heading", { name: "Upload Recipe" })).toBeInTheDocument();
+      await userEvent.click(await screen.findByRole("button", { name: /New recipe/ }));
+      expect(screen.getByRole("heading", { name: "Upload a recipe" })).toBeInTheDocument();
 
       await userEvent.click(screen.getAllByRole("button", { name: "Cancel" })[0]);
-      expect(screen.queryByRole("heading", { name: "Upload Recipe" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Upload a recipe" })).not.toBeInTheDocument();
     });
 
     it("re-reads the custom directory after a new mod is written", async () => {
@@ -1102,14 +1102,14 @@ describe("RecipesPage", () => {
       await userEvent.click(screen.getByRole("tab", { name: /Mods \(1\)/ }));
       const before = vi.mocked(listCustomMods).mock.calls.length;
 
-      await userEvent.click(await screen.findByRole("button", { name: /New Mod/ }));
+      await userEvent.click(await screen.findByRole("button", { name: /New mod/ }));
       await userEvent.type(screen.getByPlaceholderText("my-mod"), "fresh");
-      await userEvent.click(screen.getByRole("button", { name: /Create Mod/ }));
+      await userEvent.click(screen.getByRole("button", { name: /Create mod/ }));
 
       await waitFor(() =>
         expect(vi.mocked(listCustomMods).mock.calls.length).toBeGreaterThan(before),
       );
-      expect(screen.queryByRole("heading", { name: "New Mod" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "New mod" })).not.toBeInTheDocument();
       vi.unstubAllGlobals();
     });
 
@@ -1119,11 +1119,11 @@ describe("RecipesPage", () => {
       await enterCustomMode();
       await userEvent.click(screen.getByRole("tab", { name: /Mods \(1\)/ }));
 
-      await userEvent.click(await screen.findByRole("button", { name: /New Mod/ }));
-      expect(screen.getByRole("heading", { name: "New Mod" })).toBeInTheDocument();
+      await userEvent.click(await screen.findByRole("button", { name: /New mod/ }));
+      expect(screen.getByRole("heading", { name: "New mod" })).toBeInTheDocument();
 
       await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
-      expect(screen.queryByRole("heading", { name: "New Mod" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "New mod" })).not.toBeInTheDocument();
     });
   });
 });

@@ -117,12 +117,29 @@ export function translatePlural(
   return translate(language, `${key}.${count === 1 ? "one" : "other"}`, { count, ...vars });
 }
 
-interface I18nValue {
+export interface I18nValue {
   language: Language;
   setLanguage: (next: Language) => void;
   t: (key: string, vars?: Vars) => string;
   /** `t`, for a string whose wording depends on how many there are. */
   plural: (key: string, count: number, vars?: Vars) => string;
+}
+
+/** What a function outside a component needs to speak the operator's language.
+ *
+ * A helper that returns a sentence — the deploy preview's occupancy line, the
+ * pre-flight's cost — has no hooks to call, so the caller hands it the pair.
+ * Required rather than defaulted to English: a helper that quietly falls back
+ * is how a French page comes to show an English sentence nobody reports.
+ */
+export type Translator = Pick<I18nValue, "t" | "plural">;
+
+/** A `Translator` bound to one language, for callers outside React. */
+export function translatorFor(language: Language): Translator {
+  return {
+    t: (key, vars) => translate(language, key, vars),
+    plural: (key, count, vars) => translatePlural(language, key, count, vars),
+  };
 }
 
 const I18nContext = createContext<I18nValue | null>(null);
