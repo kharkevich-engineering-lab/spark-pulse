@@ -1,4 +1,4 @@
-import { HealthHistoryChart, type HealthSeries } from "@/components/HealthBadge";
+import { HealthHistoryChart, type HealthSeries } from "@/components/HealthHistoryChart";
 import { useI18n } from "@/lib/i18n";
 import type { EngineMetricsWindow, EngineMetricSample } from "@/lib/types";
 
@@ -150,7 +150,7 @@ function Unavailable({ window: w }: { window: EngineMetricsWindow }) {
   return (
     <div
       data-testid="engine-metrics-unavailable"
-      className="p-4 rounded-lg border border-dashed border-border text-xs text-text-muted space-y-1"
+      className="p-4 rounded-md border border-dashed border-border text-xs text-text-muted space-y-1"
     >
       <p className="font-medium text-text">{t("engineMetrics.unavailable")}</p>
       <p>{w.detail ?? t("engineMetrics.unreadable")}</p>

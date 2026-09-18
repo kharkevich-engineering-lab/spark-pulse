@@ -3,6 +3,7 @@ import { useI18n } from "@/lib/i18n";
 import { useState } from "react";
 import { fetchSettings } from "@/lib/api";
 import { useQuery } from "@/hooks/useQuery";
+import { Code } from "@/ui";
 import { getConfig, useConfig } from "@/lib/config";
 
 const TOOLS = [
@@ -25,7 +26,7 @@ function CodeBlock({ code, label }: { code: string; label: string }) {
     setTimeout(() => setCopied(false), 2000);
   };
   return (
-    <div className="rounded-xl bg-surface border border-border overflow-hidden">
+    <div className="rounded-md bg-surface border border-border overflow-hidden">
       <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-bg">
         <span className="text-xs text-text-muted font-mono">{label}</span>
         <button onClick={copy} className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text transition-colors">
@@ -41,7 +42,7 @@ function CodeBlock({ code, label }: { code: string; label: string }) {
 function SetupSection({ title, children }: { title: string; children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="rounded-xl bg-surface border border-border overflow-hidden">
+    <div className="rounded-md bg-surface border border-border overflow-hidden">
       <button onClick={() => setOpen(v => !v)} className="w-full flex items-center justify-between px-5 py-4 hover:bg-surface-hover transition-colors">
         <span className="font-semibold text-sm">{title}</span>
         <ChevronDown size={16} className={`text-text-muted transition-transform ${open ? "rotate-180" : ""}`} />
@@ -89,10 +90,10 @@ export default function MCPPage() {
       </div>
 
       {/* Status + connection */}
-      <div className="rounded-xl bg-surface border border-border p-5 space-y-4">
+      <div className="rounded-md bg-surface border border-border p-5 space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Bot size={18} className="text-primary" />
+            <Bot size={18} className="text-blue2" />
             <span className="font-semibold">{t("mcp.status")}</span>
           </div>
           {enabled
@@ -101,7 +102,7 @@ export default function MCPPage() {
         </div>
         {!enabled && (
           <div className="space-y-3">
-            <div className="flex items-start gap-3 p-3 rounded-lg bg-warning/10 border border-warning/30">
+            <div className="flex items-start gap-3 p-3 rounded-sm bg-warning/10 border border-warning/30">
               <PowerOff size={16} className="text-warning shrink-0 mt-0.5" />
               <div className="space-y-1 text-sm">
                 <p className="font-medium">{t("mcp.notMounted")}</p>
@@ -120,19 +121,19 @@ export default function MCPPage() {
           </div>
         )}
         {enabled && <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
-          <div className="flex items-center justify-between p-2.5 rounded-lg bg-bg gap-3">
+          <div className="flex items-center justify-between p-2.5 rounded-sm bg-bg gap-3">
             <span className="flex items-center gap-2 text-text-muted shrink-0"><Globe size={13} />{t("mcp.endpoint")}</span>
             <span className="font-mono text-xs truncate">{endpoint}</span>
           </div>
-          <div className="flex items-center justify-between p-2.5 rounded-lg bg-bg gap-3">
+          <div className="flex items-center justify-between p-2.5 rounded-sm bg-bg gap-3">
             <span className="flex items-center gap-2 text-text-muted shrink-0"><Plug size={13} />{t("mcp.transport")}</span>
             <span className="font-mono text-xs">{t("mcp.transportValue")}</span>
           </div>
-          <div className="flex items-center justify-between p-2.5 rounded-lg bg-bg gap-3">
+          <div className="flex items-center justify-between p-2.5 rounded-sm bg-bg gap-3">
             <span className="flex items-center gap-2 text-text-muted shrink-0"><Lock size={13} />{t("mcp.security")}</span>
             <span className="font-mono text-xs">{t("mcp.securityValue")}</span>
           </div>
-          <div className="flex items-center justify-between p-2.5 rounded-lg bg-bg gap-3">
+          <div className="flex items-center justify-between p-2.5 rounded-sm bg-bg gap-3">
             <span className="flex items-center gap-2 text-text-muted shrink-0"><Key size={13} />{t("mcp.apiToken")}</span>
             <span className="font-mono text-xs">{t("mcp.apiTokenValue")}</span>
           </div>
@@ -141,12 +142,12 @@ export default function MCPPage() {
 
       {/* Tools grid */}
       <div>
-        <h3 className="text-base font-semibold mb-3 flex items-center gap-2"><Code2 size={16} className="text-primary" />Available Tools ({TOOLS.length})</h3>
+        <h3 className="text-base font-semibold mb-3 flex items-center gap-2"><Code2 size={16} className="text-blue2" />Available Tools ({TOOLS.length})</h3>
         {!enabled && <p className="text-xs text-text-muted mb-3">{t("mcp.toolsNote")}</p>}
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
           {TOOLS.map((tool) => (
-            <div key={tool.name} className="p-4 rounded-xl bg-surface border border-border hover:border-border-hover transition-colors group">
-              <p className="font-mono text-sm text-primary group-hover:text-primary-hover transition-colors mb-1">{tool.name}</p>
+            <div key={tool.name} className="p-4 rounded-md bg-surface border border-border hover:border-border-hover transition-colors group">
+              <p className="font-mono text-sm text-blue2 group-hover:text-blue2 transition-colors mb-1">{tool.name}</p>
               <p className="text-xs text-text-muted">{tool.desc}</p>
             </div>
           ))}
@@ -156,10 +157,10 @@ export default function MCPPage() {
       {/* Setup guides (collapsible) — every snippet embeds the endpoint, so
           there is nothing honest to show while MCP is off. */}
       {enabled && <div>
-        <h3 className="text-base font-semibold mb-3 flex items-center gap-2"><Terminal size={16} className="text-primary" />{t("mcp.guides")}</h3>
+        <h3 className="text-base font-semibold mb-3 flex items-center gap-2"><Terminal size={16} className="text-blue2" />{t("mcp.guides")}</h3>
         <div className="space-y-2">
           <SetupSection title={t("mcp.claudeDesktop")}>
-            <p className="text-xs text-text-muted pt-1">Add to your <code className="font-mono bg-bg px-1 py-0.5 rounded">claude_desktop_config.json</code>:</p>
+            <p className="text-xs text-text-muted pt-1">Add to your <Code>claude_desktop_config.json</Code>:</p>
             <CodeBlock label="claude_desktop_config.json" code={`{
   "mcpServers": {
     "spark-pulse": {

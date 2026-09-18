@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useI18n } from "@/lib/i18n";
 import { Link } from "react-router-dom";
-import { AlertCircle, Boxes, Download, HardDrive, Loader2, Plus, Rocket, Save, Server, Trash2, X } from "lucide-react";
+import { Boxes, Download, HardDrive, Plus, Rocket, Save, Server, Trash2, X } from "lucide-react";
 import {
   cancelModelDownload,
   cancelScheduledDeploy,
@@ -20,17 +20,26 @@ import { useQuery } from "@/hooks/useQuery";
 import { useSSEConnection } from "@/hooks/useSSEConnection";
 import { SSEConnectionState } from "@/lib/operations";
 import { formatSize } from "@/lib/utils";
-import { AlertModal, Modal } from "@/components/Modal";
+import {
+  ACTIVE_STATES,
+  AlertModal,
+  Button,
+  EmptyState,
+  ErrorLine,
+  IconButton,
+  Input,
+  NodeScopedDialog,
+  ProgressRow,
+  Select,
+  Spinner,
+} from "@/ui";
 import type {
   ModelDownloadJob,
   ModelEntry,
-  ModelPresence,
   ModelSource,
   ModelSyncResult,
   ScheduledDeploy,
 } from "@/lib/types";
-
-const ACTIVE_STATES = ["queued", "running"];
 
 /** Shape of a DeploymentEvent frame as emitted by /sse/models. */
 interface ModelEventFrame {
@@ -50,12 +59,6 @@ export function describePrecision(model: ModelEntry): string {
   if (cfg.quantization_method) return cfg.quantization_method;
   if (cfg.quantization.length) return "quantized";
   return cfg.torch_dtype || "—";
-}
-
-function progressPercent(job: ModelDownloadJob): number {
-  if (job.status === "completed") return 100;
-  if (!job.bytes_total) return 0;
-  return Math.min(100, Math.round((job.bytes_done / job.bytes_total) * 100));
 }
 
 // ── Sources editor ───────────────────────────────────────────────────────────
@@ -83,45 +86,56 @@ function SourcesEditor({ sources, onSaved, onError }: { sources: ModelSource[]; 
   };
 
   return (
-    <section className="p-5 rounded-xl bg-surface border border-border space-y-3">
+    <section className="p-5 rounded-md bg-surface border border-line space-y-3">
       <div className="flex items-center justify-between">
-        <h3 className="font-semibold flex items-center gap-2"><HardDrive size={16} className="text-primary" />{t("models.sources")}</h3>
+        <h3 className="font-semibold flex items-center gap-2">
+          <HardDrive size={16} className="text-blue2" />
+          {t("models.sources")}
+        </h3>
         <div className="flex gap-2">
-          <button
-            onClick={() => setDraft((d) => [...d, { name: "", type: "hf_hub", endpoint: "https://huggingface.co", token_secret: "" }])}
-            className="px-3 py-1.5 rounded-lg border border-border hover:border-border-hover text-sm flex items-center gap-1.5"
+          <Button
+            size="sm"
+            icon={Plus}
+            onClick={() =>
+              setDraft((d) => [
+                ...d,
+                { name: "", type: "hf_hub", endpoint: "https://huggingface.co", token_secret: "" },
+              ])
+            }
           >
-            <Plus size={14} />{t("models.addSource")}
-          </button>
-          <button onClick={save} disabled={saving} className="px-3 py-1.5 rounded-lg bg-primary/10 text-primary border border-primary/30 hover:bg-primary/20 disabled:opacity-50 text-sm flex items-center gap-1.5">
-            {saving ? <Loader2 className="animate-spin" size={14} /> : <Save size={14} />}{t("common.save")}
-          </button>
+            {t("models.addSource")}
+          </Button>
+          <Button size="sm" variant="primary" icon={Save} loading={saving} onClick={save}>
+            {t("common.save")}
+          </Button>
         </div>
       </div>
 
-      {draft.length === 0 && <p className="text-sm text-text-muted">{t("models.noSources")}</p>}
+      {draft.length === 0 && <p className="text-[14px] text-muted">{t("models.noSources")}</p>}
 
       <div className="space-y-2">
         {draft.map((s, i) => (
           <div key={i} className="grid grid-cols-1 md:grid-cols-[1fr_140px_1fr_1fr_auto] gap-2 items-center">
-            <input aria-label={t("models.sourceName", { n: i + 1 })} value={s.name} onChange={(e) => update(i, { name: e.target.value })} placeholder={t("models.namePlaceholder")} className="px-2 py-1.5 rounded-lg bg-bg border border-border text-sm" />
-            <select aria-label={t("models.sourceType", { n: i + 1 })} value={s.type} onChange={(e) => update(i, { type: e.target.value as ModelSource["type"] })} className="px-2 py-1.5 rounded-lg bg-bg border border-border text-sm">
+            <Input aria-label={t("models.sourceName", { n: i + 1 })} value={s.name} onChange={(e) => update(i, { name: e.target.value })} placeholder={t("models.namePlaceholder")} />
+            <Select aria-label={t("models.sourceType", { n: i + 1 })} value={s.type} onChange={(e) => update(i, { type: e.target.value as ModelSource["type"] })}>
               <option value="hf_hub">hf_hub</option>
               <option value="local_path">local_path</option>
-            </select>
+            </Select>
             {s.type === "hf_hub" ? (
               <>
-                <input aria-label={t("models.sourceEndpoint", { n: i + 1 })} value={s.endpoint ?? ""} onChange={(e) => update(i, { endpoint: e.target.value })} placeholder="https://huggingface.co" className="px-2 py-1.5 rounded-lg bg-bg border border-border text-sm font-mono" />
-                <input aria-label={t("models.sourceToken", { n: i + 1 })} value={s.token_secret ?? ""} onChange={(e) => update(i, { token_secret: e.target.value })} placeholder={t("models.tokenPlaceholder")} className="px-2 py-1.5 rounded-lg bg-bg border border-border text-sm font-mono" />
+                <Input mono aria-label={t("models.sourceEndpoint", { n: i + 1 })} value={s.endpoint ?? ""} onChange={(e) => update(i, { endpoint: e.target.value })} placeholder="https://huggingface.co" />
+                <Input mono aria-label={t("models.sourceToken", { n: i + 1 })} value={s.token_secret ?? ""} onChange={(e) => update(i, { token_secret: e.target.value })} placeholder={t("models.tokenPlaceholder")} />
               </>
             ) : (
-              <>
-                <input aria-label={t("models.sourcePath", { n: i + 1 })} value={s.path ?? ""} onChange={(e) => update(i, { path: e.target.value })} placeholder="/models" className="px-2 py-1.5 rounded-lg bg-bg border border-border text-sm font-mono md:col-span-2" />
-              </>
+              <Input mono aria-label={t("models.sourcePath", { n: i + 1 })} value={s.path ?? ""} onChange={(e) => update(i, { path: e.target.value })} placeholder="/models" className="md:col-span-2" />
             )}
-            <button aria-label={`Remove source ${i + 1}`} onClick={() => setDraft((d) => d.filter((_, idx) => idx !== i))} className="p-1.5 rounded-lg text-text-muted hover:text-danger hover:bg-danger/10">
-              <X size={15} />
-            </button>
+            <IconButton
+              size="sm"
+              icon={X}
+              label={`Remove source ${i + 1}`}
+              onClick={() => setDraft((d) => d.filter((_, idx) => idx !== i))}
+              className="border-transparent text-muted hover:text-bad hover:border-line"
+            />
           </div>
         ))}
       </div>
@@ -283,7 +297,7 @@ export default function ModelsPage() {
           <h2 className="text-2xl font-bold">{t("models.title")}</h2>
           <p className="text-text-muted mt-1">
             {t("models.subtitle")}{" "}
-            <Link to="/cache" className="text-primary hover:underline">{t("models.cacheLink")}</Link>
+            <Link to="/cache" className="text-blue2 hover:underline">{t("models.cacheLink")}</Link>
           </p>
         </div>
         <div className="text-right">
@@ -293,32 +307,38 @@ export default function ModelsPage() {
       </div>
 
       {/* Download form */}
-      <form onSubmit={submit} className="p-5 rounded-xl bg-surface border border-border space-y-3">
-        <h3 className="font-semibold flex items-center gap-2"><Download size={16} className="text-primary" />{t("models.download")}</h3>
+      <form onSubmit={submit} className="p-5 rounded-md bg-surface border border-line space-y-3">
+        <h3 className="font-semibold flex items-center gap-2"><Download size={16} className="text-blue2" />{t("models.download")}</h3>
         <div className="grid grid-cols-1 md:grid-cols-[2fr_1fr_1fr_auto] gap-2">
-          <input
+          <Input
+            mono
             aria-label={t("models.modelId")}
             placeholder={t("models.modelIdPlaceholder")}
             value={modelId}
             onChange={(e) => setModelId(e.target.value)}
-            className="px-3 py-2 rounded-lg bg-bg border border-border font-mono text-sm"
           />
-          <select aria-label={t("models.source")} value={sourceName} onChange={(e) => setSourceName(e.target.value)} className="px-3 py-2 rounded-lg bg-bg border border-border text-sm">
+          <Select aria-label={t("models.source")} value={sourceName} onChange={(e) => setSourceName(e.target.value)}>
             <option value="">{t("models.defaultSource")}</option>
             {(sources ?? []).filter((s) => s.type === "hf_hub").map((s) => (
               <option key={s.name} value={s.name}>{s.name}</option>
             ))}
-          </select>
-          <input
+          </Select>
+          <Input
+            mono
             aria-label={t("models.revision")}
             placeholder={t("models.revisionPlaceholder")}
             value={revision}
             onChange={(e) => setRevision(e.target.value)}
-            className="px-3 py-2 rounded-lg bg-bg border border-border font-mono text-sm"
           />
-          <button type="submit" disabled={starting || !modelId.trim()} className="px-4 py-2 rounded-lg bg-primary/10 text-primary border border-primary/30 hover:bg-primary/20 disabled:opacity-50 flex items-center gap-2">
-            {starting ? <Loader2 className="animate-spin" size={16} /> : <Download size={16} />}Download
-          </button>
+          <Button
+            type="submit"
+            variant="primary"
+            icon={Download}
+            loading={starting}
+            disabled={!modelId.trim()}
+          >
+            Download
+          </Button>
         </div>
       </form>
 
@@ -332,44 +352,24 @@ export default function ModelsPage() {
         </div>
         {active.length === 0 && recent.length === 0 && <p className="text-sm text-text-muted">{t("models.noDownloads")}</p>}
         {[...active, ...recent].map((job) => (
-          <div key={job.id} data-testid={`job-${job.id}`} className="p-4 rounded-xl bg-surface border border-border">
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="font-mono text-sm truncate">{job.model}</p>
-                <p className="text-xs text-text-muted">
-                  {job.status}
-                  {job.current_file ? ` · ${job.current_file}` : ""}
-                  {job.error ? ` · ${job.error}` : ""}
-                </p>
-              </div>
-              <div className="flex items-center gap-3 shrink-0">
-                <span className="text-xs font-mono text-text-muted">
-                  {formatSize(job.bytes_done)} / {job.bytes_total ? formatSize(job.bytes_total) : "?"}
-                </span>
-                {ACTIVE_STATES.includes(job.status) && (
-                  <button aria-label={t("models.cancelDownload", { model: job.model })} onClick={() => doCancel(job.id)} className="p-1.5 rounded-lg text-text-muted hover:text-danger hover:bg-danger/10">
-                    <X size={15} />
-                  </button>
-                )}
-              </div>
-            </div>
-            <div className="mt-2 h-1.5 rounded-full bg-tag-bg overflow-hidden">
-              <div
-                role="progressbar"
-                aria-label={t("models.progress", { model: job.model })}
-                aria-valuenow={progressPercent(job)}
-                className="h-full bg-primary transition-all"
-                style={{ width: `${progressPercent(job)}%` }}
-              />
-            </div>
+          <ProgressRow
+            key={job.id}
+            data-testid={`job-${job.id}`}
+            title={job.model}
+            detail={`${job.status}${job.current_file ? ` · ${job.current_file}` : ""}${job.error ? ` · ${job.error}` : ""}`}
+            job={job}
+            progressLabel={t("models.progress", { model: job.model })}
+            cancelLabel={t("models.cancelDownload", { model: job.model })}
+            onCancel={ACTIVE_STATES.includes(job.status) ? () => doCancel(job.id) : undefined}
+          >
             {waitingOn(job.id).map((entry) => (
               <div
                 key={entry.id}
                 data-testid={`scheduled-${entry.id}`}
-                className={`mt-2 flex items-center justify-between gap-3 px-3 py-2 rounded-lg border ${entry.status === "failed" ? "bg-danger/5 border-danger/20" : "bg-primary/5 border-primary/20"}`}
+                className={`mt-2 flex items-center justify-between gap-3 px-3 py-2 rounded-sm border ${entry.status === "failed" ? "bg-danger/5 border-danger/20" : "bg-primary/5 border-primary/20"}`}
               >
                 <p className="text-xs text-text-secondary flex items-center gap-2 min-w-0">
-                  <Rocket size={13} className={entry.status === "failed" ? "text-danger shrink-0" : "text-primary shrink-0"} />
+                  <Rocket size={13} className={entry.status === "failed" ? "text-danger shrink-0" : "text-blue2 shrink-0"} />
                   <span className="truncate">
                     {entry.status === "waiting" && <>{t("models.scheduledTo")} <span className="font-medium text-text">{entry.name}</span> {t("models.whenFinishes")}</>}
                     {entry.status === "deploying" && <>{t("models.deployingNow")} <span className="font-medium text-text">{entry.name}</span> {t("models.now")}</>}
@@ -378,26 +378,30 @@ export default function ModelsPage() {
                   </span>
                 </p>
                 {entry.status === "waiting" && (
-                  <button
-                    aria-label={t("models.cancelScheduled", { name: entry.name })}
+                  <IconButton
+                    size="sm"
+                    icon={X}
+                    label={t("models.cancelScheduled", { name: entry.name })}
                     onClick={() => doCancelScheduled(entry)}
-                    className="p-1 rounded text-text-muted hover:text-danger hover:bg-danger/10 shrink-0"
-                  >
-                    <X size={14} />
-                  </button>
+                    className="border-transparent text-muted hover:text-bad hover:border-line"
+                  />
                 )}
               </div>
             ))}
-          </div>
+          </ProgressRow>
         ))}
       </section>
 
       {/* Catalogue */}
-      {loading && <div className="flex justify-center py-16"><Loader2 className="animate-spin text-primary" size={32} /></div>}
-      {error && <div className="p-4 rounded-lg bg-danger/10 border border-danger/30 text-danger flex items-center gap-3"><AlertCircle size={20} /><span>{error}</span></div>}
+      {loading && (
+        <div className="flex justify-center py-16">
+          <Spinner size="lg" label={t("common.loading")} />
+        </div>
+      )}
+      <ErrorLine>{error}</ErrorLine>
 
       {models && models.length > 0 && (
-        <div className="rounded-xl bg-surface border border-border overflow-x-auto">
+        <div className="rounded-md bg-surface border border-line overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-text-muted border-b border-border">
@@ -419,18 +423,21 @@ export default function ModelsPage() {
                   <td className="p-3">{m.referenced_by.length}</td>
                   <td className="p-3 text-right whitespace-nowrap">
                     {peers.length > 0 && (
-                      <button
-                        aria-label={t("models.replicateModel", { model: m.id })}
-                        title={t("models.replicateTitle")}
+                      <IconButton
+                        size="sm"
+                        icon={Server}
+                        label={t("models.replicateModel", { model: m.id })}
                         onClick={() => setReplicateTarget(m.id)}
-                        className="p-1.5 rounded-lg text-text-muted hover:text-primary hover:bg-primary/10"
-                      >
-                        <Server size={15} />
-                      </button>
+                        className="border-transparent text-muted hover:text-blue2 hover:border-line"
+                      />
                     )}
-                    <button aria-label={t("models.deleteModel", { model: m.id })} onClick={() => setDeleteTarget(m.id)} className="p-1.5 rounded-lg text-text-muted hover:text-danger hover:bg-danger/10">
-                      <Trash2 size={15} />
-                    </button>
+                    <IconButton
+                      size="sm"
+                      icon={Trash2}
+                      label={t("models.deleteModel", { model: m.id })}
+                      onClick={() => setDeleteTarget(m.id)}
+                      className="border-transparent text-muted hover:text-bad hover:border-line"
+                    />
                   </td>
                 </tr>
               ))}
@@ -440,7 +447,7 @@ export default function ModelsPage() {
       )}
 
       {models && models.length === 0 && !loading && (
-        <div className="text-center py-16 text-text-muted"><Boxes size={40} className="mx-auto mb-4 opacity-50" /><p>{t("models.empty")}</p></div>
+        <EmptyState icon={Boxes}>{t("models.empty")}</EmptyState>
       )}
 
       <SourcesEditor
@@ -476,14 +483,12 @@ export default function ModelsPage() {
     </div>
   );
 }
-
 /** Which machines lose the model.
  *
- * A model replicated to four Sparks is on four disks. The old dialog deleted
- * it from this one and said it was gone, which is how a cluster fills up with
- * copies nobody can see. Presence is asked as the dialog opens so the nodes
- * that actually hold it are the ones preselected — a node without a copy has
- * nothing to reclaim.
+ * A model replicated to four Sparks is on four disks. Deleting it from this
+ * one and saying it was gone is how a cluster fills up with copies nobody can
+ * see. Presence is asked as the dialog opens, so the nodes that actually hold
+ * it are the ones preselected: a node without a copy has nothing to reclaim.
  */
 export function ModelDeleteDialog({
   model,
@@ -497,99 +502,33 @@ export function ModelDeleteDialog({
   onConfirm: (nodes: string[]) => void;
 }) {
   const { t } = useI18n();
-  const [presence, setPresence] = useState<ModelPresence | "loading" | null>(null);
-  const [selected, setSelected] = useState<string[]>([]);
-  // A ref, not state: whether the operator has touched the boxes must not
-  // re-run the presence query, and reading it inside the effect is exactly
-  // what a ref is for.
-  const touched = useRef(false);
-
-  useEffect(() => {
-    if (peers.length === 0) return;
-    let live = true;
-    setPresence("loading");
-    fetchModelPresence(model, peers)
-      .then((answer) => {
-        if (!live) return;
-        setPresence(answer);
-        // Only preselect what the operator has not already changed.
-        setSelected((current) =>
-          touched.current
-            ? current
-            : answer.nodes.filter((n) => n.present).map((n) => n.node),
-        );
-      })
-      .catch(() => live && setPresence(null));
-    return () => {
-      live = false;
-    };
-  }, [model, peers]);
-
-  const holders = useMemo(() => {
-    if (!presence || presence === "loading") return [];
-    return presence.nodes.filter((n) => n.present).map((n) => n.node);
-  }, [presence]);
 
   return (
-    <Modal open onClose={onClose} title={t("models.deleteTitle")}>
-      <div className="space-y-4">
-        <p className="text-sm text-text-muted">{t("models.deleteBody", { model })}</p>
-
-        {peers.length > 0 && (
-          <fieldset className="space-y-2">
-            <legend className="text-sm font-medium mb-1">{t("models.alsoRemoveFrom")}</legend>
-            {presence === "loading" && (
-              <p className="text-xs text-text-muted flex items-center gap-2">
-                <Loader2 size={12} className="animate-spin" />
-                {t("common.loading")}
-              </p>
-            )}
-            {peers.map((node) => (
-              <label key={node} className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={selected.includes(node)}
-                  onChange={(e) => {
-                    touched.current = true;
-                    setSelected((current) =>
-                      e.target.checked ? [...current, node] : current.filter((n) => n !== node),
-                    );
-                  }}
-                />
-                <span className="font-mono">{node}</span>
-                {presence && presence !== "loading" && !holders.includes(node) && (
-                  <span className="text-xs text-text-muted">{t("models.notThere")}</span>
-                )}
-              </label>
-            ))}
-          </fieldset>
-        )}
-
-        <div className="flex justify-end gap-2">
-          <button onClick={onClose} className="px-4 py-2 rounded-lg border border-border text-sm">
-            {t("common.cancel")}
-          </button>
-          <button
-            onClick={() => onConfirm(selected)}
-            className="px-4 py-2 rounded-lg bg-danger/10 text-danger border border-danger/30 hover:bg-danger/20 text-sm"
-          >
-            {selected.length > 0 ? t("models.deleteConfirm") : t("common.delete")}
-          </button>
-        </div>
-      </div>
-    </Modal>
+    <NodeScopedDialog
+      verb="delete"
+      title={t("models.deleteTitle")}
+      body={t("models.deleteBody", { model })}
+      legend={t("models.alsoRemoveFrom")}
+      nodes={peers}
+      fetchPresence={(nodes) => fetchModelPresence(model, nodes)}
+      noteFor={(_node, holds) =>
+        holds === false ? <span className="text-[13px] text-muted">{t("models.notThere")}</span> : null
+      }
+      confirmLabel={(selected) => (selected.length > 0 ? t("models.deleteConfirm") : t("common.delete"))}
+      onConfirm={(nodes) => onConfirm(nodes)}
+      onClose={onClose}
+    />
   );
 }
 
 /** Which machines get a copy.
  *
- * The inverse of the delete dialog: a node presence already reports as
- * holding the model has nothing to gain from a transfer, so it starts
- * unchecked and the nodes actually missing it are what's preselected. The
- * control node is never offered — it is always the source `peers` already
- * excludes it. `force` is offered for the case presence gets it wrong (a
- * node that verifies against a different manifest, say): re-transfer rather
- * than trust the skip.
+ * The inverse of the delete dialog: a node presence already reports as holding
+ * the model has nothing to gain from a transfer, so the nodes actually missing
+ * it are what is preselected. The control node is never offered — it is always
+ * the source, and `peers` already excludes it. `force` is there for the case
+ * presence gets it wrong (a node that verifies against a different manifest,
+ * say): re-transfer rather than trust the skip.
  */
 export function ModelReplicateDialog({
   model,
@@ -601,133 +540,57 @@ export function ModelReplicateDialog({
   onClose: () => void;
 }) {
   const { t } = useI18n();
-  const [presence, setPresence] = useState<ModelPresence | "loading" | null>(null);
-  const [selected, setSelected] = useState<string[]>([]);
-  const touched = useRef(false);
-  const [force, setForce] = useState(false);
-  const [syncing, setSyncing] = useState(false);
   const [result, setResult] = useState<ModelSyncResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  const loadPresence = useCallback(() => {
-    if (peers.length === 0) return Promise.resolve();
-    setPresence("loading");
-    return fetchModelPresence(model, peers)
-      .then((answer) => {
-        setPresence(answer);
-        // Only preselect what the operator has not already changed — the
-        // nodes presence says do NOT hold a copy yet.
-        setSelected((current) =>
-          touched.current
-            ? current
-            : answer.nodes.filter((n) => !n.present).map((n) => n.node),
-        );
-      })
-      .catch(() => setPresence(null));
-  }, [model, peers]);
-
-  useEffect(() => {
-    loadPresence();
-  }, [loadPresence]);
-
-  const holders = useMemo(() => {
-    if (!presence || presence === "loading") return [];
-    return presence.nodes.filter((n) => n.present).map((n) => n.node);
-  }, [presence]);
 
   const resultFor = useCallback(
     (node: string) => result?.results.find((r) => r.node === node) ?? null,
     [result],
   );
 
-  const doSync = async () => {
-    setSyncing(true);
+  const doSync = async (nodes: string[], { force }: { force: boolean }) => {
     setError(null);
     setResult(null);
     try {
-      const outcome = await syncModelToNodes(model, selected, undefined, { force });
-      setResult(outcome);
-      await loadPresence();
+      setResult(await syncModelToNodes(model, nodes, undefined, { force }));
     } catch (err) {
       setError(err instanceof Error ? err.message : t("models.unknownError"));
-    } finally {
-      setSyncing(false);
     }
   };
 
   return (
-    <Modal open onClose={onClose} title={t("models.replicateTitle")}>
-      <div className="space-y-4">
-        <p className="text-sm text-text-muted">{t("models.replicateBody", { model })}</p>
-
-        {peers.length > 0 && (
-          <fieldset className="space-y-2">
-            <legend className="text-sm font-medium mb-1">{t("models.replicateTo")}</legend>
-            {presence === "loading" && (
-              <p className="text-xs text-text-muted flex items-center gap-2">
-                <Loader2 size={12} className="animate-spin" />
-                {t("common.loading")}
-              </p>
+    <NodeScopedDialog
+      verb="replicate"
+      title={t("models.replicateTitle")}
+      body={t("models.replicateBody", { model })}
+      legend={t("models.replicateTo")}
+      nodes={peers}
+      fetchPresence={(nodes) => fetchModelPresence(model, nodes)}
+      forceLabel={t("models.forceOption")}
+      confirmLabel={t("models.replicateConfirm")}
+      requireSelection
+      error={error}
+      onConfirm={doSync}
+      onClose={onClose}
+      noteFor={(node, holds) => {
+        const outcome = resultFor(node);
+        return (
+          <>
+            {holds === true && (
+              <span className="text-[13px] text-muted">{t("models.alreadyThere")}</span>
             )}
-            {peers.map((node) => {
-              const nodeResult = resultFor(node);
-              return (
-                <label key={node} className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={selected.includes(node)}
-                    onChange={(e) => {
-                      touched.current = true;
-                      setSelected((current) =>
-                        e.target.checked ? [...current, node] : current.filter((n) => n !== node),
-                      );
-                    }}
-                  />
-                  <span className="font-mono">{node}</span>
-                  {presence && presence !== "loading" && holders.includes(node) && (
-                    <span className="text-xs text-text-muted">{t("models.alreadyThere")}</span>
-                  )}
-                  {nodeResult && (
-                    <span className={nodeResult.ok ? "text-xs text-success" : "text-xs text-danger"}>
-                      {nodeResult.ok
-                        ? nodeResult.skipped
-                          ? t("models.replicateSkipped")
-                          : t("models.replicateVerified")
-                        : nodeResult.error || t("models.replicateNodeFailed")}
-                    </span>
-                  )}
-                </label>
-              );
-            })}
-          </fieldset>
-        )}
-
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} />
-          {t("models.forceOption")}
-        </label>
-
-        {error && (
-          <div className="p-3 rounded-lg bg-danger/10 border border-danger/30 text-danger text-sm flex items-center gap-2">
-            <AlertCircle size={16} />
-            <span>{error}</span>
-          </div>
-        )}
-
-        <div className="flex justify-end gap-2">
-          <button onClick={onClose} className="px-4 py-2 rounded-lg border border-border text-sm">
-            {t("common.cancel")}
-          </button>
-          <button
-            onClick={doSync}
-            disabled={selected.length === 0 || syncing}
-            className="px-4 py-2 rounded-lg bg-primary/10 text-primary border border-primary/30 hover:bg-primary/20 disabled:opacity-50 text-sm flex items-center gap-2"
-          >
-            {syncing && <Loader2 className="animate-spin" size={14} />}
-            {t("models.replicateConfirm")}
-          </button>
-        </div>
-      </div>
-    </Modal>
+            {outcome && (
+              <span className={outcome.ok ? "text-[13px] text-good" : "text-[13px] text-bad"}>
+                {outcome.ok
+                  ? outcome.skipped
+                    ? t("models.replicateSkipped")
+                    : t("models.replicateVerified")
+                  : outcome.error || t("models.replicateNodeFailed")}
+              </span>
+            )}
+          </>
+        );
+      }}
+    />
   );
 }

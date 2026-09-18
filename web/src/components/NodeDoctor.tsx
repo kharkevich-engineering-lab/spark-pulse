@@ -9,23 +9,21 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertCircle, AlertTriangle, CheckCircle2, Info, Loader2, Wrench, X } from "lucide-react";
+import { Wrench } from "lucide-react";
 import { fetchNodeDoctor, treatNode } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
+import { Button, ErrorLine, Field, Input, Modal, NodeState, Spinner, type NodeCondition } from "@/ui";
 import type { ClusterNode, DoctorFinding, DoctorReport } from "@/lib/types";
 
-const STATUS_ICON: Record<DoctorFinding["status"], typeof CheckCircle2> = {
-  ok: CheckCircle2,
-  warn: AlertTriangle,
-  broken: AlertCircle,
-  unknown: Info,
-};
-
-const STATUS_CLASS: Record<DoctorFinding["status"], string> = {
-  ok: "text-success",
-  warn: "text-warning",
-  broken: "text-danger",
-  unknown: "text-text-muted",
+/** The doctor's four verdicts in the one node vocabulary. It used to have four
+ *  icons of its own — a tick, a triangle, an alert and an info — which is a
+ *  second thing to learn for the same four states the rest of the app already
+ *  says with a coloured dot. */
+const STATUS_STATE: Record<DoctorFinding["status"], NodeCondition> = {
+  ok: "ok",
+  warn: "warn",
+  broken: "bad",
+  unknown: "unknown",
 };
 
 function Findings({ report }: { report: DoctorReport }) {
@@ -37,30 +35,27 @@ function Findings({ report }: { report: DoctorReport }) {
   };
   return (
     <div className="space-y-2" data-testid="doctor-findings">
-      {report.findings.map((f) => {
-        const Icon = STATUS_ICON[f.status];
-        return (
-          <div key={f.check} className="rounded-lg border border-border p-2.5 text-sm">
-            <div className="flex items-start gap-2">
-              <Icon size={15} className={`mt-0.5 shrink-0 ${STATUS_CLASS[f.status]}`} />
-              <div className="min-w-0">
-                <p>
-                  <span className="font-medium">{f.check}</span>
-                  {f.status !== "ok" && label[f.verdict] && (
-                    <span className="ml-2 text-xs text-text-muted">· {label[f.verdict]}</span>
-                  )}
-                </p>
-                <p className="text-text-muted">{f.detail}</p>
-                {f.status !== "ok" && f.remedy && (
-                  <p className="mt-1 text-xs text-text-muted">
-                    <span className="font-medium">{t("nodes.doctor.remedyLabel")}:</span> {f.remedy}
-                  </p>
+      {report.findings.map((f) => (
+        <div key={f.check} className="rounded-sm border border-line p-2.5 text-[14px]">
+          <div className="flex items-start gap-2">
+            <NodeState state={STATUS_STATE[f.status]} dotOnly className="mt-1.5" />
+            <div className="min-w-0">
+              <p>
+                <span className="font-medium">{f.check}</span>
+                {f.status !== "ok" && label[f.verdict] && (
+                  <span className="ml-2 text-[13px] text-muted">· {label[f.verdict]}</span>
                 )}
-              </div>
+              </p>
+              <p className="text-muted">{f.detail}</p>
+              {f.status !== "ok" && f.remedy && (
+                <p className="mt-1 text-[13px] text-muted">
+                  <span className="font-medium">{t("nodes.doctor.remedyLabel")}:</span> {f.remedy}
+                </p>
+              )}
             </div>
           </div>
-        );
-      })}
+        </div>
+      ))}
     </div>
   );
 }
@@ -112,33 +107,37 @@ export default function NodeDoctor({ node, onClose, onChanged }: Props) {
   const problems = (report?.findings ?? []).filter((f) => f.status === "warn" || f.status === "broken");
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div
-        role="dialog"
-        aria-label={t("nodes.doctor.title", { name: node.name })}
-        className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-surface p-6 shadow-2xl"
-      >
-        <div className="mb-4 flex items-center justify-between">
-          <h3 className="flex items-center gap-2 text-lg font-bold">
-            <Wrench size={20} className="text-primary" />
-            {t("nodes.doctor.title", { name: node.name })}
-          </h3>
-          <button onClick={onClose} aria-label={t("common.close")} className="rounded-lg p-1 hover:bg-surface-hover">
-            <X size={18} />
-          </button>
-        </div>
-
+    <Modal
+      open
+      onClose={onClose}
+      size="md"
+      title={t("nodes.doctor.title", { name: node.name })}
+      icon={<Wrench size={20} className="text-blue2" />}
+      actions={
+        <>
+          <Button size="sm" onClick={onClose}>
+            {t("nodes.doctor.close")}
+          </Button>
+          {fixable.length > 0 && !node.is_control_plane && (
+            <Button size="sm" variant="primary" icon={Wrench} loading={repairing} onClick={repair}>
+              {repairing ? t("nodes.doctor.repairing") : t("nodes.doctor.repair")}
+            </Button>
+          )}
+        </>
+      }
+    >
+      <>
         {loading && (
-          <p className="flex items-center gap-2 text-sm text-text-muted" role="status">
-            <Loader2 size={14} className="animate-spin" />
+          <p className="flex items-center gap-2 text-[14px] text-muted" role="status">
+            <Spinner size="sm" />
             {t("nodes.doctor.running")}
           </p>
         )}
 
         {report && !loading && (
           <div className="space-y-4">
-            <div className="flex items-center justify-between text-sm">
-              <span className={report.healthy ? "text-success" : "text-text-muted"}>
+            <div className="flex items-center justify-between text-[14px]">
+              <span className={report.healthy ? "text-good" : "text-muted"}>
                 {report.healthy
                   ? t("nodes.doctor.healthy")
                   : t("nodes.doctor.problems", { count: problems.length })}
@@ -171,55 +170,28 @@ export default function NodeDoctor({ node, onClose, onChanged }: Props) {
             )}
 
             {fixable.length > 0 && !node.is_control_plane && (
-              <div className="space-y-2 border-t border-border pt-3">
-                <label htmlFor="doctor-sudo" className="block text-sm font-medium text-text-muted">
-                  {t("nodes.doctor.sudoPassword")}
-                </label>
-                <input
-                  id="doctor-sudo"
-                  type="password"
-                  autoComplete="off"
-                  value={sudoPassword}
-                  onChange={(e) => setSudoPassword(e.target.value)}
-                  disabled={repairing}
-                  className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-text focus:outline-none focus:ring-2 focus:ring-primary/50"
-                />
-                <p className="text-xs text-text-muted">{t("nodes.doctor.sudoNote")}</p>
+              <div className="border-t border-line pt-3">
+                <Field label={t("nodes.doctor.sudoPassword")} hint={t("nodes.doctor.sudoNote")}>
+                  {(control) => (
+                    <Input
+                      {...control}
+                      type="password"
+                      autoComplete="off"
+                      value={sudoPassword}
+                      onChange={(e) => setSudoPassword(e.target.value)}
+                      disabled={repairing}
+                    />
+                  )}
+                </Field>
               </div>
             )}
 
-            {error && (
-              <div role="alert" className="flex items-center gap-2 rounded-lg border border-danger/30 bg-danger/10 p-3 text-sm text-danger">
-                <AlertCircle size={16} className="shrink-0" />
-                <span>{error}</span>
-              </div>
-            )}
+            <ErrorLine>{error}</ErrorLine>
           </div>
         )}
 
-        {error && !report && (
-          <div role="alert" className="mt-3 flex items-center gap-2 rounded-lg border border-danger/30 bg-danger/10 p-3 text-sm text-danger">
-            <AlertCircle size={16} className="shrink-0" />
-            <span>{error}</span>
-          </div>
-        )}
-
-        <div className="mt-6 flex items-center justify-end gap-3 border-t border-border pt-4">
-          <button onClick={onClose} className="rounded-lg border border-border px-4 py-2 transition-colors hover:bg-surface-hover">
-            {t("nodes.doctor.close")}
-          </button>
-          {fixable.length > 0 && !node.is_control_plane && (
-            <button
-              onClick={repair}
-              disabled={repairing}
-              className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
-            >
-              {repairing ? <Loader2 size={16} className="animate-spin" /> : <Wrench size={16} />}
-              {repairing ? t("nodes.doctor.repairing") : t("nodes.doctor.repair")}
-            </button>
-          )}
-        </div>
-      </div>
-    </div>
+        {!report && <ErrorLine className="mt-3">{error}</ErrorLine>}
+      </>
+    </Modal>
   );
 }

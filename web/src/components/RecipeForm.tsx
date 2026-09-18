@@ -177,19 +177,19 @@ const RecipeForm = forwardRef<RecipeFormRef, {
         <label className="block text-sm font-medium mb-1">{t("recipeForm.name")}</label>
         <input type="text" value={name} onChange={(e) => { setName(e.target.value); watchFormChanges(); }}
           disabled={!isEditing}
-          className="w-full px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm disabled:opacity-60" />
+          className="w-full px-3 py-2 rounded-sm bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm disabled:opacity-60" />
       </div>
       <div>
         <label className="block text-sm font-medium mb-1">{t("recipeForm.model")}</label>
         <input type="text" value={model} onChange={(e) => { setModel(e.target.value); watchFormChanges(); }}
           disabled={!isEditing} placeholder={t("recipeForm.modelPlaceholder")}
-          className="w-full px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm text-text-muted disabled:opacity-60" />
+          className="w-full px-3 py-2 rounded-sm bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm text-text-muted disabled:opacity-60" />
       </div>
       <div>
         <label className="block text-sm font-medium mb-1">{t("recipeForm.container")}</label>
         <input type="text" value={container} onChange={(e) => { setContainer(e.target.value); watchFormChanges(); }}
           disabled={!isEditing}
-          className="w-full px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm disabled:opacity-60" />
+          className="w-full px-3 py-2 rounded-sm bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm disabled:opacity-60" />
       </div>
       {command && (
         <div>
@@ -198,7 +198,7 @@ const RecipeForm = forwardRef<RecipeFormRef, {
           </label>
           <textarea value={command} onChange={(e) => { setCommand(e.target.value); watchFormChanges(); }}
             disabled={!isEditing} rows={3}
-            className="w-full px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-xs disabled:opacity-60 resize-y" />
+            className="w-full px-3 py-2 rounded-sm bg-bg border border-border focus:border-primary focus:outline-none font-mono text-xs disabled:opacity-60 resize-y" />
         </div>
       )}
       {Object.keys(recipe.defaults).length > 0 && (
@@ -231,7 +231,7 @@ const RecipeForm = forwardRef<RecipeFormRef, {
                 className="w-24 px-2 py-0.5 rounded border border-border focus:border-primary focus:outline-none font-mono text-xs" />
               <input type="text" placeholder={t("recipeForm.envValue")} value={newEnvValue} onChange={(e) => setNewEnvValue(e.target.value)}
                 className="w-24 px-2 py-0.5 rounded border border-border focus:border-primary focus:outline-none font-mono text-xs" />
-              <button onClick={addEnv} className="text-xs px-2 py-0.5 rounded bg-primary/20 text-primary hover:bg-primary/30">{t("recipeForm.add")}</button>
+              <button onClick={addEnv} className="text-xs px-2 py-0.5 rounded bg-primary/20 text-blue2 hover:bg-primary/30">{t("recipeForm.add")}</button>
             </div>
           )}
         </div>
@@ -254,7 +254,7 @@ const RecipeForm = forwardRef<RecipeFormRef, {
             <div className="flex items-center gap-2">
               <input type="text" placeholder={t("recipeForm.buildArgPlaceholder")} value={newBuildArg} onChange={(e) => setNewBuildArg(e.target.value)}
                 className="w-48 px-2 py-0.5 rounded border border-border focus:border-primary focus:outline-none font-mono text-xs" />
-              <button onClick={addBuildArg} className="text-xs px-2 py-0.5 rounded bg-primary/20 text-primary hover:bg-primary/30">{t("recipeForm.add")}</button>
+              <button onClick={addBuildArg} className="text-xs px-2 py-0.5 rounded bg-primary/20 text-blue2 hover:bg-primary/30">{t("recipeForm.add")}</button>
             </div>
           )}
         </div>
@@ -277,7 +277,7 @@ const RecipeForm = forwardRef<RecipeFormRef, {
               <input type="text" placeholder={t("recipeForm.modPlaceholder")} value={newMod} onChange={(e) => setNewMod(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addMod())}
                 className="w-40 px-2 py-0.5 rounded border border-border focus:border-primary focus:outline-none font-mono text-xs" />
-              <button onClick={addMod} className="text-xs px-2 py-0.5 rounded bg-primary/20 text-primary hover:bg-primary/30">{t("recipeForm.add")}</button>
+              <button onClick={addMod} className="text-xs px-2 py-0.5 rounded bg-primary/20 text-blue2 hover:bg-primary/30">{t("recipeForm.add")}</button>
             </div>
           )}
         </div>
@@ -320,11 +320,11 @@ const RecipeForm = forwardRef<RecipeFormRef, {
       {isEditing && (
         <div className="flex items-center gap-2 mb-4">
           <button onClick={() => setEditAsYaml(false)}
-            className={`px-3 py-1.5 text-sm font-medium rounded transition-colors ${!editAsYaml ? "bg-primary/10 text-primary" : "text-text-muted hover:text-text"}`}>
+            className={`px-3 py-1.5 text-sm font-medium rounded transition-colors ${!editAsYaml ? "bg-primary/10 text-blue2" : "text-text-muted hover:text-text"}`}>
             Form
           </button>
           <button onClick={() => setEditAsYaml(true)}
-            className={`px-3 py-1.5 text-sm font-medium rounded transition-colors flex items-center gap-1.5 ${editAsYaml ? "bg-primary/10 text-primary" : "text-text-muted hover:text-text"}`}>
+            className={`px-3 py-1.5 text-sm font-medium rounded transition-colors flex items-center gap-1.5 ${editAsYaml ? "bg-primary/10 text-blue2" : "text-text-muted hover:text-text"}`}>
             <Code2 size={14} />
             Edit as YAML
           </button>

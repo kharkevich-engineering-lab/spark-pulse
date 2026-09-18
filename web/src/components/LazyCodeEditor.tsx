@@ -24,7 +24,7 @@ export default function LazyCodeEditor({
   spellCheck,
 }: LazyCodeEditorProps) {
   const fallbackClassName = [
-    "w-full rounded-lg bg-bg border border-border focus:border-primary focus:outline-none resize-y",
+    "w-full rounded-sm bg-bg border border-border focus:border-blue focus:outline-none resize-y",
     className,
   ]
     .filter(Boolean)

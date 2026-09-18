@@ -30,7 +30,7 @@ test("lists every recipe the API serves", async ({ page, request }) => {
 
   await gotoPage(page, "/");
 
-  await expect(page.getByRole("button", { name: `Recipes (${recipes.length})` })).toBeVisible();
+  await expect(page.getByRole("tab", { name: `Recipes (${recipes.length})` })).toBeVisible();
   for (const recipe of recipes) {
     await expect(
       page.getByRole("button", { name: new RegExp(escapeRegExp(recipe.name)) }),
@@ -83,7 +83,7 @@ test("lists the mods the API serves", async ({ page, request }) => {
   const mods = (await response.json()) as { id: string }[];
 
   await gotoPage(page, "/");
-  await page.getByRole("button", { name: `Mods (${mods.length})` }).click();
+  await page.getByRole("tab", { name: `Mods (${mods.length})` }).click();
 
   if (mods.length === 0) {
     await expect(page.getByText("No mods found")).toBeVisible();

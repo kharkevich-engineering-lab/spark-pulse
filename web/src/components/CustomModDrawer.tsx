@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useI18n } from "@/lib/i18n";
 import { Save, Trash2, X } from "lucide-react";
-import { ConfirmModal } from "@/components/Modal";
+import { Button, ConfirmModal, IconButton } from "@/ui";
 import type { CustomModInfo, ModFileMap } from "@/lib/types";
 import SlideDrawer from "./SlideDrawer";
 
@@ -73,18 +73,13 @@ export default function CustomModDrawer({
       }
       actions={
         <>
-          <button type="button" onClick={() => setShowDelete(true)}
-            className="px-3 py-1.5 rounded-lg border border-border hover:border-danger text-sm font-medium transition-colors text-danger flex items-center gap-1.5">
-            <Trash2 size={14} /> Delete
-          </button>
-          <button type="button" onClick={handleSave} disabled={saving}
-            className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover disabled:opacity-50 text-white font-medium text-sm transition-colors flex items-center gap-1.5">
-            <Save size={14} />
+          <Button size="sm" variant="danger" icon={Trash2} onClick={() => setShowDelete(true)}>
+            Delete
+          </Button>
+          <Button size="sm" variant="primary" icon={Save} loading={saving} onClick={handleSave}>
             {saving ? "Saving..." : "Save"}
-          </button>
-          <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover:bg-surface-hover transition-colors">
-            <X size={18} />
-          </button>
+          </Button>
+          <IconButton size="sm" icon={X} label={t("common.close")} onClick={onClose} className="border-transparent text-muted hover:text-text hover:border-line" />
         </>
       }
     >
@@ -99,7 +94,7 @@ export default function CustomModDrawer({
                   <li key={f}>
                     <button onClick={() => setSelectedFile(f)}
                       className={`w-full text-left px-2 py-1 rounded text-xs font-mono transition-colors truncate ${
-                        selectedFile === f ? "bg-primary/15 text-primary" : "hover:bg-surface-hover text-text-muted"
+                        selectedFile === f ? "bg-primary/15 text-blue2" : "hover:bg-surface-hover text-text-muted"
                       }`}>
                       {f}
                     </button>
@@ -118,7 +113,7 @@ export default function CustomModDrawer({
                 <textarea
                   value={fileMap[selectedFile] || ""}
                   onChange={(e) => handleFileChange(e.target.value)}
-                  className="w-full h-full px-4 py-3 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm resize-none"
+                  className="w-full h-full px-4 py-3 rounded-sm bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm resize-none"
                   spellCheck={false}
                   placeholder={t("customFiles.scriptPlaceholder")}
                 />

@@ -30,6 +30,30 @@
     "working": "En cours…",
     "yes": "oui"
   },
+  "status": {
+    "running": "En cours",
+    "ready": "Prêt",
+    "pulling": "Téléchargement",
+    "starting": "Démarrage",
+    "stopped": "Arrêté",
+    "error": "Erreur",
+    "pending": "En attente",
+    "unknown": "Inconnu",
+    "in_sync": "Synchronisé",
+    "in_progress": "Modification en cours",
+    "deleting": "Suppression",
+    "unverified": "Non vérifié"
+  },
+  "nodeState": {
+    "ok": "Opérationnel",
+    "okTitle": "Joignable et répond.",
+    "warn": "Dégradé",
+    "warnTitle": "Joignable, avec un point à examiner.",
+    "bad": "Hors service",
+    "badTitle": "Injoignable, confirmé.",
+    "unknown": "Inconnu",
+    "unknownTitle": "État non vérifié — non joint, ce qui n'est pas la même chose qu'en échec."
+  },
   "a11y": {
     "openMenu": "Ouvrir le menu de navigation",
     "closeMenu": "Fermer le menu de navigation",
@@ -170,11 +194,7 @@
     "nothingToFix": "Rien à corriger et rien à télécharger au préalable."
   },
   "health": {
-    "notEnoughHistory": "Pas encore assez d'historique",
-    "healthy": "Sain",
-    "degraded": "Dégradé",
-    "unhealthy": "Défaillant",
-    "unknown": "Inconnu"
+    "notEnoughHistory": "Pas encore assez d'historique"
   },
   "cluster": {
     "title": "Orchestration de grappe",
@@ -327,7 +347,9 @@
     "testConnection": "Tester la connexion",
     "remove": "Retirer le registre",
     "versions": "Versions disponibles",
-    "selectVersion": "Choisir une version…"
+    "selectVersion": "Choisir une version…",
+    "connected": "Connecté",
+    "notConnected": "Non connecté"
   },
   "engineMetrics": {
     "unavailable": "Métriques du moteur indisponibles",
@@ -842,7 +864,10 @@
     "usernameRequired": "Le nom d'utilisateur est requis pour l'authentification par nom d'utilisateur et mot de passe",
     "secretRequiredOnAuthChange": "Saisissez un jeton ou un mot de passe avant de passer à ce type d'authentification",
     "registryUpdated": "Registre mis à jour",
-    "registryUpdateFailed": "Échec de la mise à jour du registre"
+    "registryUpdateFailed": "Échec de la mise à jour du registre",
+    "uninstallConfirm": "Retirer {name} de ce plan de contrôle ? La collection reste dans son registre.",
+    "removeRegistry": "Oublier le registre",
+    "removeRegistryConfirm": "Oublier {name} ? Les collections déjà installées depuis ce registre restent en place."
   },
   "fabric": {
     "heading": "Fabric ConnectX",

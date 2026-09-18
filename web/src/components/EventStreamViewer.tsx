@@ -70,8 +70,8 @@ const eventColors: Record<EventType, string> = {
   [EventType.NCCL_ERROR]: "text-danger",
   [EventType.MOD_VALIDATION_FAILURE]: "text-danger",
   [EventType.MOD_APPLY_FAILURE]: "text-danger",
-  [EventType.DEPLOYMENT_START]: "text-primary",
-  [EventType.CLUSTER_START]: "text-primary",
+  [EventType.DEPLOYMENT_START]: "text-blue2",
+  [EventType.CLUSTER_START]: "text-blue2",
   [EventType.RAY_CLUSTER_READY]: "text-success",
   [EventType.DEPLOYMENT_SUCCESS]: "text-success",
   [EventType.CLUSTER_READY]: "text-success",
@@ -150,7 +150,7 @@ export default function EventStreamViewer({
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Activity size={20} className="text-primary" />
+          <Activity size={20} className="text-blue2" />
           <h3 className="text-lg font-semibold">{t("eventStream.title")}</h3>
           <span className="text-xs text-text-muted bg-surface-hover px-2 py-0.5 rounded-full">
             {plural("eventStream.eventCount", filteredEvents.length)}
@@ -159,7 +159,7 @@ export default function EventStreamViewer({
         {onClear && events.length > 0 && (
           <button
             onClick={onClear}
-            className="flex items-center gap-1 px-2 py-1 text-sm rounded-lg hover:bg-surface-hover transition-colors"
+            className="flex items-center gap-1 px-2 py-1 text-sm rounded-md hover:bg-surface-hover transition-colors"
           >
             <Trash2 size={14} />
             {t("common.clear")}
@@ -172,7 +172,7 @@ export default function EventStreamViewer({
         <select
           value={filterSeverity}
           onChange={(e) => setFilterSeverity(e.target.value)}
-          className="px-2 py-1 text-sm rounded-lg border border-border bg-surface focus:outline-none focus:ring-2 focus:ring-primary/50"
+          className="px-2 py-1 text-sm rounded-md border border-border bg-surface focus:outline-none focus:ring-2 focus:ring-primary/50"
         >
           <option value="all">{t("eventStream.allSeverities")}</option>
           <option value="error">{t("eventStream.errors")}</option>
@@ -183,7 +183,7 @@ export default function EventStreamViewer({
         <select
           value={filterNode}
           onChange={(e) => setFilterNode(e.target.value)}
-          className="px-2 py-1 text-sm rounded-lg border border-border bg-surface focus:outline-none focus:ring-2 focus:ring-primary/50"
+          className="px-2 py-1 text-sm rounded-md border border-border bg-surface focus:outline-none focus:ring-2 focus:ring-primary/50"
         >
           <option value="all">{t("eventStream.allNodes")}</option>
           {uniqueNodes.map((node) => (
@@ -206,7 +206,7 @@ export default function EventStreamViewer({
             return (
               <div
                 key={event.event_id}
-                className="flex items-start gap-3 p-2 rounded-lg hover:bg-surface-hover transition-colors"
+                className="flex items-start gap-3 p-2 rounded-md hover:bg-surface-hover transition-colors"
               >
                 <Icon size={14} className={`shrink-0 mt-0.5 ${color}`} />
                 <div className="flex-1 min-w-0">

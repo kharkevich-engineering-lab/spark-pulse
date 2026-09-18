@@ -30,6 +30,30 @@
     "working": "Working…",
     "yes": "yes"
   },
+  "status": {
+    "running": "Running",
+    "ready": "Ready",
+    "pulling": "Pulling",
+    "starting": "Starting",
+    "stopped": "Stopped",
+    "error": "Error",
+    "pending": "Pending",
+    "unknown": "Unknown",
+    "in_sync": "In sync",
+    "in_progress": "In progress",
+    "deleting": "Deleting",
+    "unverified": "Unverified"
+  },
+  "nodeState": {
+    "ok": "Healthy",
+    "okTitle": "Reached and responding.",
+    "warn": "Degraded",
+    "warnTitle": "Reached, with something worth looking at.",
+    "bad": "Dead",
+    "badTitle": "Confirmed unreachable.",
+    "unknown": "Unknown",
+    "unknownTitle": "Status unverified — not reached, which is not the same as failed."
+  },
   "a11y": {
     "openMenu": "Open navigation menu",
     "closeMenu": "Close navigation menu",
@@ -170,11 +194,7 @@
     "nothingToFix": "Nothing to fix and nothing to download first."
   },
   "health": {
-    "notEnoughHistory": "Not enough history yet",
-    "healthy": "Healthy",
-    "degraded": "Degraded",
-    "unhealthy": "Unhealthy",
-    "unknown": "Unknown"
+    "notEnoughHistory": "Not enough history yet"
   },
   "cluster": {
     "title": "Cluster Orchestration",
@@ -327,7 +347,9 @@
     "testConnection": "Test connection",
     "remove": "Remove registry",
     "versions": "Available Versions",
-    "selectVersion": "Select a version..."
+    "selectVersion": "Select a version...",
+    "connected": "Connected",
+    "notConnected": "Not connected"
   },
   "engineMetrics": {
     "unavailable": "Engine metrics unavailable",
@@ -842,7 +864,10 @@
     "usernameRequired": "Username is required for username & password authentication",
     "secretRequiredOnAuthChange": "Enter a token or password before switching to this authentication type",
     "registryUpdated": "Registry updated",
-    "registryUpdateFailed": "Failed to update registry"
+    "registryUpdateFailed": "Failed to update registry",
+    "uninstallConfirm": "Remove {name} from this control plane? The collection stays in its registry.",
+    "removeRegistry": "Forget registry",
+    "removeRegistryConfirm": "Forget {name}? Collections already installed from it stay where they are."
   },
   "fabric": {
     "heading": "ConnectX fabric",

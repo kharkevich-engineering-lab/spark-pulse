@@ -2,11 +2,24 @@ import { useState, useEffect } from "react";
 import { fetchSettings, updateSettings, fetchSecrets, saveSecrets, deleteSecret } from "@/lib/api";
 import type { DockerSettings } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
-import { Settings as SettingsIcon, Loader2, AlertCircle, Check, KeyRound, Eye, EyeOff, Trash2, Lock, Server, Box, Info, ShieldCheck, Palette, Sun, Moon, Languages, ToggleRight, FlaskConical, Bot, Network } from "lucide-react";
+import { Settings as SettingsIcon, AlertCircle, Check, KeyRound, Eye, EyeOff, Trash2, Lock, Server, Box, Info, ShieldCheck, Palette, Sun, Moon, Languages, ToggleRight, FlaskConical, Bot, Network } from "lucide-react";
 import { SunMoonIcon } from "@/components/BrandIcons";
 import { type ThemeMode, getTheme, setTheme } from "@/lib/theme";
 import { LANGUAGES, useI18n } from "@/lib/i18n";
-import { AlertModal } from "@/components/Modal";
+import {
+  AlertModal,
+  Button,
+  Card,
+  Code,
+  ErrorLine,
+  IconButton,
+  Input,
+  Select,
+  Spinner,
+  Tabs,
+  Textarea,
+  Toggle,
+} from "@/ui";
 
 /** The tabs, in the order an operator meets them.
  *
@@ -57,8 +70,6 @@ function storedTab(): TabId {
   return "deployment";
 }
 
-const inputCls = "w-full px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm";
-const cardCls = "rounded-xl bg-surface border border-border p-5 space-y-4";
 /** One card per row, at a measure a form is read at.
  *
  * Every tab used to be `lg:grid-cols-2`, which existed so tabs holding two
@@ -69,28 +80,6 @@ const cardCls = "rounded-xl bg-surface border border-border p-5 space-y-4";
  */
 const sectionCls = "space-y-4 max-w-3xl";
 const referenceCls = "grid grid-cols-1 lg:grid-cols-2 gap-4 items-start";
-
-/** Defined here rather than inside the page.
- *
- * A component declared in a render body is a new component type on every
- * render, so React unmounts and remounts its subtree each time — which throws
- * away focus and any state it holds. These have neither today, and a switch
- * that loses focus mid-keyboard-navigation is the bug that would appear the
- * moment one of them grew some. */
-function Toggle({ on, onClick, label }: { on: boolean; onClick: () => void; label: string }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={on}
-      aria-label={label}
-      onClick={onClick}
-      className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${on ? "bg-primary" : "bg-border"}`}
-    >
-      <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${on ? "translate-x-5" : "translate-x-0"}`} />
-    </button>
-  );
-}
 
 /** One read-only fact about how this process is configured. */
 function Fact({ label, value, hint }: { label: string; value: React.ReactNode; hint?: string }) {
@@ -103,10 +92,6 @@ function Fact({ label, value, hint }: { label: string; value: React.ReactNode; h
       <div className="text-right shrink-0 max-w-[55%]">{value}</div>
     </div>
   );
-}
-
-function Code({ children }: { children: React.ReactNode }) {
-  return <code className="px-2 py-0.5 rounded bg-bg font-mono text-xs break-all">{children}</code>;
 }
 
 /** The colour theme, as three explicit choices rather than a cycler.
@@ -148,9 +133,9 @@ function ThemePicker() {
             onClick={() => choose(id)}
             aria-pressed={active}
             title={hint}
-            className={`flex flex-col items-center gap-2 px-3 py-4 rounded-lg border transition-colors ${
+            className={`flex flex-col items-center gap-2 px-3 py-4 rounded-sm border transition-colors ${
               active
-                ? "border-primary bg-primary/10 text-primary"
+                ? "border-primary bg-primary/10 text-blue2"
                 : "border-border text-text-muted hover:text-text hover:border-border-hover"
             }`}
           >
@@ -184,9 +169,9 @@ function LanguagePicker() {
             onClick={() => setLanguage(id)}
             aria-pressed={active}
             lang={id}
-            className={`px-3 py-3 rounded-lg border text-sm font-medium transition-colors ${
+            className={`px-3 py-3 rounded-sm border text-sm font-medium transition-colors ${
               active
-                ? "border-primary bg-primary/10 text-primary"
+                ? "border-primary bg-primary/10 text-blue2"
                 : "border-border text-text-muted hover:text-text hover:border-border-hover"
             }`}
           >
@@ -288,8 +273,13 @@ export default function SettingsPage() {
     }
   };
 
-  if (loading) return <div className="flex justify-center py-20"><Loader2 className="animate-spin text-primary" size={32} /></div>;
-  if (error) return <div className="p-4 rounded-lg bg-danger/10 border border-danger/30 text-danger flex items-center gap-3"><AlertCircle size={20} /><span>{error}</span></div>;
+  if (loading)
+    return (
+      <div className="flex justify-center py-20">
+        <Spinner size="lg" label={t("common.loading")} />
+      </div>
+    );
+  if (error) return <ErrorLine>{error}</ErrorLine>;
 
   return (
     <div className="space-y-6">
@@ -299,37 +289,28 @@ export default function SettingsPage() {
       </div>
 
       {/* ── Tabs ─────────────────────────────────────────────────────────── */}
-      <div className="flex gap-1 border-b border-border overflow-x-auto" role="tablist">
-        {TABS.map(({ id, labelKey, icon: Icon }) => (
-          <button
-            key={id}
-            role="tab"
-            aria-selected={tab === id}
-            onClick={() => selectTab(id)}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
-              tab === id ? "border-primary text-primary" : "border-transparent text-text-muted hover:text-text"
-            }`}
-          >
-            <span className="flex items-center gap-1.5"><Icon size={16} />{t(labelKey)}</span>
-          </button>
-        ))}
-      </div>
+      <Tabs
+        label={t("settings.title")}
+        value={tab}
+        onChange={(id) => selectTab(id as TabId)}
+        tabs={TABS.map(({ id, labelKey }) => ({ id, label: t(labelKey) }))}
+      />
 
       {/* ── Deployment ───────────────────────────────────────────────────── */}
       {tab === "deployment" && (
         <div className={sectionCls}>
-          <div className={cardCls}>
+          <Card padding="none" className="p-5 space-y-4">
             <div className="flex items-center gap-2 pb-3 border-b border-border">
-              <Server size={16} className="text-primary" />
+              <Server size={16} className="text-blue2" />
               <h3 className="font-semibold">{t("settings.defaults")}</h3>
             </div>
 
             <div>
               <label className="block text-sm font-medium mb-1">{t("settings.portRange")}</label>
               <div className="flex items-center gap-2">
-                <input aria-label={t("settings.portRangeStart")} type="number" value={Number(form.default_port_range_start ?? 9000)} onChange={(e) => setForm({ ...form, default_port_range_start: parseInt(e.target.value) || 9000 })} className={inputCls} placeholder="9000" />
+                <Input mono aria-label={t("settings.portRangeStart")} type="number" value={Number(form.default_port_range_start ?? 9000)} onChange={(e) => setForm({ ...form, default_port_range_start: parseInt(e.target.value) || 9000 })} placeholder="9000" />
                 <span className="text-text-muted shrink-0 text-sm">–</span>
-                <input aria-label={t("settings.portRangeEnd")} type="number" value={Number(form.default_port_range_end ?? 9100)} onChange={(e) => setForm({ ...form, default_port_range_end: parseInt(e.target.value) || 9100 })} className={inputCls} placeholder="9100" />
+                <Input mono aria-label={t("settings.portRangeEnd")} type="number" value={Number(form.default_port_range_end ?? 9100)} onChange={(e) => setForm({ ...form, default_port_range_end: parseInt(e.target.value) || 9100 })} placeholder="9100" />
               </div>
               <p className="text-xs text-text-muted mt-1">{t("settings.portRangeHelp")}</p>
             </div>
@@ -339,21 +320,21 @@ export default function SettingsPage() {
                 <label className="text-sm font-medium">{t("settings.sparkPath")}</label>
                 {isEnvManaged("spark_vllm_path") && <EnvBadge />}
               </div>
-              <input type="text" value={String(form.spark_vllm_path ?? "")} onChange={(e) => setForm({ ...form, spark_vllm_path: e.target.value })} disabled={isEnvManaged("spark_vllm_path")} className={`${inputCls} disabled:opacity-40 disabled:cursor-not-allowed`} placeholder="/path/to/spark-vllm-docker" />
+              <Input mono type="text" value={String(form.spark_vllm_path ?? "")} onChange={(e) => setForm({ ...form, spark_vllm_path: e.target.value })} disabled={isEnvManaged("spark_vllm_path")} placeholder="/path/to/spark-vllm-docker" />
               <p className="text-xs text-text-muted mt-1">{isEnvManaged("spark_vllm_path") ? t("settings.sparkPathEnv") : t("settings.sparkPathHelp")}</p>
             </div>
-          </div>
+          </Card>
 
-          <div className={cardCls}>
+          <Card padding="none" className="p-5 space-y-4">
             <div className="flex items-center gap-2 pb-3 border-b border-border">
-              <SettingsIcon size={16} className="text-primary" />
+              <SettingsIcon size={16} className="text-blue2" />
               <h3 className="font-semibold">{t("settings.timeouts")}</h3>
             </div>
 
             <div>
               <label className="block text-sm font-medium mb-1">{t("settings.readyTimeout")}</label>
               <div className="flex items-center gap-2">
-                <input type="number" min="30" max="7200" value={Number(form.deploy_ready_timeout_seconds ?? 600)} onChange={(e) => setForm({ ...form, deploy_ready_timeout_seconds: parseInt(e.target.value) || 600 })} className="w-28 px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm" />
+                <Input mono type="number" min="30" max="7200" value={Number(form.deploy_ready_timeout_seconds ?? 600)} onChange={(e) => setForm({ ...form, deploy_ready_timeout_seconds: parseInt(e.target.value) || 600 })} className="w-28" />
                 <span className="text-sm text-text-muted">seconds</span>
               </div>
               <p className="text-xs text-text-muted mt-1">{t("settings.readyTimeoutHelp")}</p>
@@ -362,7 +343,7 @@ export default function SettingsPage() {
             <div>
               <label className="block text-sm font-medium mb-1">{t("settings.pullTimeout")}</label>
               <div className="flex items-center gap-2">
-                <input type="number" min="30" max="3600" value={Number(form.docker_pull_stall_timeout_seconds ?? 300)} onChange={(e) => setForm({ ...form, docker_pull_stall_timeout_seconds: parseInt(e.target.value) || 300 })} className="w-28 px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm" />
+                <Input mono type="number" min="30" max="3600" value={Number(form.docker_pull_stall_timeout_seconds ?? 300)} onChange={(e) => setForm({ ...form, docker_pull_stall_timeout_seconds: parseInt(e.target.value) || 300 })} className="w-28" />
                 <span className="text-sm text-text-muted">seconds</span>
               </div>
               <p className="text-xs text-text-muted mt-1">{t("settings.pullTimeoutHelp")}</p>
@@ -371,21 +352,21 @@ export default function SettingsPage() {
             <div>
               <label className="block text-sm font-medium mb-1">{t("settings.retention")}</label>
               <div className="flex items-center gap-2">
-                <input type="number" min="0" max="365" value={Number(form.job_retention_days ?? 7)} onChange={(e) => setForm({ ...form, job_retention_days: parseInt(e.target.value) || 0 })} className="w-24 px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm" />
+                <Input mono type="number" min="0" max="365" value={Number(form.job_retention_days ?? 7)} onChange={(e) => setForm({ ...form, job_retention_days: parseInt(e.target.value) || 0 })} className="w-24 px-3 py-2 rounded-sm bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm" />
                 <span className="text-sm text-text-muted">days</span>
               </div>
               <p className="text-xs text-text-muted mt-1">{t("settings.retentionHelp")}</p>
             </div>
-          </div>
+          </Card>
         </div>
       )}
 
       {/* ── Containers ───────────────────────────────────────────────────── */}
       {tab === "containers" && (
         <div className={sectionCls}>
-          <div className={cardCls}>
+          <Card padding="none" className="p-5 space-y-4">
             <div className="flex items-center gap-2 pb-3 border-b border-border">
-              <Box size={16} className="text-primary" />
+              <Box size={16} className="text-blue2" />
               <h3 className="font-semibold">{t("settings.limits")}</h3>
             </div>
             <p className="text-xs text-text-muted -mt-2">{t("settings.limitsHelp")}</p>
@@ -395,53 +376,53 @@ export default function SettingsPage() {
                 <p className="text-sm font-medium">{t("settings.privileged")}</p>
                 <p className="text-xs text-text-muted mt-0.5">{t("settings.privilegedHelp")}</p>
               </div>
-              <Toggle on={dockerCfg.privileged !== false} onClick={() => setDocker("privileged", dockerCfg.privileged === false)} label={t("settings.privileged")} />
+              <Toggle on={dockerCfg.privileged !== false} onChange={() => setDocker("privileged", dockerCfg.privileged === false)} label={t("settings.privileged")} />
             </div>
 
             <div>
               <label className="block text-sm font-medium mb-1">{t("settings.memLimit")}</label>
-              <input type="number" min="0" step="1" value={dockerCfg.memory_limit_gb ?? ""} onChange={(e) => setDocker("memory_limit_gb", e.target.value === "" ? null : parseFloat(e.target.value))} className={inputCls} placeholder={t("settings.noLimit")} />
+              <Input mono type="number" min="0" step="1" value={dockerCfg.memory_limit_gb ?? ""} onChange={(e) => setDocker("memory_limit_gb", e.target.value === "" ? null : parseFloat(e.target.value))} placeholder={t("settings.noLimit")} />
               <p className="text-xs text-text-muted mt-1">{t("settings.memLimitHelp")}</p>
             </div>
 
             <div>
               <label className="block text-sm font-medium mb-1">{t("settings.swapLimit")}</label>
-              <input type="number" min="0" step="1" value={dockerCfg.memory_swap_limit_gb ?? ""} onChange={(e) => setDocker("memory_swap_limit_gb", e.target.value === "" ? null : parseFloat(e.target.value))} className={inputCls} placeholder={t("settings.noLimit")} />
+              <Input mono type="number" min="0" step="1" value={dockerCfg.memory_swap_limit_gb ?? ""} onChange={(e) => setDocker("memory_swap_limit_gb", e.target.value === "" ? null : parseFloat(e.target.value))} placeholder={t("settings.noLimit")} />
               <p className="text-xs text-text-muted mt-1">{t("settings.swapLimitHelp")}</p>
             </div>
 
             <div>
               <label className="block text-sm font-medium mb-1">{t("settings.shm")}</label>
-              <input type="number" min="1" step="1" value={Number(dockerCfg.shm_size_gb ?? 64)} onChange={(e) => setDocker("shm_size_gb", parseInt(e.target.value) || 64)} className={inputCls} placeholder="64" />
+              <Input mono type="number" min="1" step="1" value={Number(dockerCfg.shm_size_gb ?? 64)} onChange={(e) => setDocker("shm_size_gb", parseInt(e.target.value) || 64)} placeholder="64" />
               <p className="text-xs text-text-muted mt-1"><code className="font-mono">/dev/shm</code>. Tensor-parallel workers pass tensors through it; too small shows up as a hang, not an error.</p>
             </div>
 
             <div>
               <label className="block text-sm font-medium mb-1">{t("settings.pids")}</label>
-              <input type="number" min="64" step="64" value={Number(dockerCfg.pids_limit ?? 4096)} onChange={(e) => setDocker("pids_limit", parseInt(e.target.value) || 4096)} className={inputCls} placeholder="4096" />
+              <Input mono type="number" min="64" step="64" value={Number(dockerCfg.pids_limit ?? 4096)} onChange={(e) => setDocker("pids_limit", parseInt(e.target.value) || 4096)} placeholder="4096" />
             </div>
 
             <div>
               <label className="block text-sm font-medium mb-1">{t("settings.nofile")}</label>
-              <input type="number" min="1024" step="1024" value={Number(dockerCfg.nofile_limit ?? 1048576)} onChange={(e) => setDocker("nofile_limit", parseInt(e.target.value) || 1048576)} className={inputCls} placeholder="1048576" />
+              <Input mono type="number" min="1024" step="1024" value={Number(dockerCfg.nofile_limit ?? 1048576)} onChange={(e) => setDocker("nofile_limit", parseInt(e.target.value) || 1048576)} placeholder="1048576" />
             </div>
-          </div>
+          </Card>
 
           <div className="space-y-4">
-            <div className={cardCls}>
+            <Card padding="none" className="p-5 space-y-4">
               <div className="flex items-center gap-2 pb-3 border-b border-border">
-                <Box size={16} className="text-primary" />
+                <Box size={16} className="text-blue2" />
                 <h3 className="font-semibold">{t("settings.caches")}</h3>
               </div>
 
               <div>
                 <label className="block text-sm font-medium mb-1">{t("settings.cacheDirs")}</label>
-                <textarea
+                <Textarea
                   aria-label={t("settings.cacheDirs")}
                   rows={4}
                   value={(dockerCfg.cache_dirs ?? []).join("\n")}
                   onChange={(e) => setDocker("cache_dirs", e.target.value.split("\n").map((l) => l.trim()).filter(Boolean))}
-                  className={`${inputCls} resize-y`}
+                 
                   placeholder="~/.cache/vllm"
                 />
                 <p className="text-xs text-text-muted mt-1">{t("settings.cacheDirsHelp")}</p>
@@ -452,30 +433,30 @@ export default function SettingsPage() {
                   <p className="text-sm font-medium">{t("settings.keepEntrypoint")}</p>
                   <p className="text-xs text-text-muted mt-0.5">{t("settings.keepEntrypointHelp")}</p>
                 </div>
-                <Toggle on={!!dockerCfg.keep_entrypoint} onClick={() => setDocker("keep_entrypoint", !dockerCfg.keep_entrypoint)} label={t("settings.keepEntrypoint")} />
+                <Toggle on={!!dockerCfg.keep_entrypoint} onChange={() => setDocker("keep_entrypoint", !dockerCfg.keep_entrypoint)} label={t("settings.keepEntrypoint")} />
               </div>
-            </div>
+            </Card>
 
-            <div className={cardCls}>
+            <Card padding="none" className="p-5 space-y-4">
               <div className="flex items-center gap-2 pb-3 border-b border-border">
-                <ShieldCheck size={16} className="text-primary" />
+                <ShieldCheck size={16} className="text-blue2" />
                 <h3 className="font-semibold">{t("settings.mods")}</h3>
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1">{t("settings.modPolicy")}</label>
-                <select
+                <Select
                   aria-label={t("settings.modPolicyLabel")}
                   value={String(modCfg.network_policy ?? "warn")}
                   onChange={(e) => setForm({ ...form, mod: { ...modCfg, network_policy: e.target.value } })}
-                  className="w-full px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none text-sm"
+                 
                 >
                   <option value="allow">{t("settings.modAllow")}</option>
                   <option value="warn">{t("settings.modWarn")}</option>
                   <option value="deny">{t("settings.modDeny")}</option>
-                </select>
+                </Select>
                 <p className="text-xs text-text-muted mt-1">{t("settings.modPolicyHelp")}</p>
               </div>
-            </div>
+            </Card>
           </div>
         </div>
       )}
@@ -484,9 +465,9 @@ export default function SettingsPage() {
       {/* ── Features ─────────────────────────────────────────────────────── */}
       {tab === "features" && (
         <div className={sectionCls}>
-          <div className={cardCls}>
+          <Card padding="none" className="p-5 space-y-4">
             <div className="flex items-center gap-2 pb-3 border-b border-border">
-              <ToggleRight size={16} className="text-primary" />
+              <ToggleRight size={16} className="text-blue2" />
               <h3 className="font-semibold">{t("settings.features")}</h3>
             </div>
             <p className="text-xs text-text-muted -mt-2">{t("settings.featuresHelp")}</p>
@@ -499,7 +480,7 @@ export default function SettingsPage() {
                 </p>
                 <p className="text-xs text-text-muted mt-0.5">{t("settings.benchmarkingHelp")}</p>
               </div>
-              <Toggle on={!!form.benchmarking_enabled} onClick={() => setForm({ ...form, benchmarking_enabled: !form.benchmarking_enabled })} label={t("settings.benchmarking")} />
+              <Toggle on={!!form.benchmarking_enabled} onChange={() => setForm({ ...form, benchmarking_enabled: !form.benchmarking_enabled })} label={t("settings.benchmarking")} />
             </div>
 
             {/* Cluster mode decides whether recipes marked `cluster_only` are
@@ -520,7 +501,7 @@ export default function SettingsPage() {
                   </p>
                 )}
               </div>
-              <Toggle on={!!form.cluster_enabled} onClick={() => setForm({ ...form, cluster_enabled: !form.cluster_enabled })} label={t("settings.clusterMode")} />
+              <Toggle on={!!form.cluster_enabled} onChange={() => setForm({ ...form, cluster_enabled: !form.cluster_enabled })} label={t("settings.clusterMode")} />
             </div>
 
             <div className="flex items-start justify-between gap-4">
@@ -530,7 +511,7 @@ export default function SettingsPage() {
               </div>
               <Toggle
                 on={form.agent_auto_update !== false}
-                onClick={() => setForm({ ...form, agent_auto_update: !(form.agent_auto_update !== false) })}
+                onChange={() => setForm({ ...form, agent_auto_update: !(form.agent_auto_update !== false) })}
                 label={t("settings.agentAutoUpdate")}
               />
             </div>
@@ -550,16 +531,16 @@ export default function SettingsPage() {
                 ? <Code>{environment.mcp_path}</Code>
                 : <span className="text-xs text-text-muted">{t("common.disabled")}</span>}
             </div>
-          </div>
+          </Card>
         </div>
       )}
 
       {/* ── Preferences ──────────────────────────────────────────────────── */}
       {tab === "preferences" && (
         <div className={sectionCls}>
-          <div className={cardCls}>
+          <Card padding="none" className="p-5 space-y-4">
             <div className="flex items-center gap-2 pb-3 border-b border-border">
-              <Palette size={16} className="text-primary" />
+              <Palette size={16} className="text-blue2" />
               <h3 className="font-semibold">{t("preferences.appearance")}</h3>
             </div>
             <div>
@@ -567,11 +548,11 @@ export default function SettingsPage() {
               <ThemePicker />
               <p className="text-xs text-text-muted mt-2">{t("preferences.themeNote")}</p>
             </div>
-          </div>
+          </Card>
 
-          <div className={cardCls}>
+          <Card padding="none" className="p-5 space-y-4">
             <div className="flex items-center gap-2 pb-3 border-b border-border">
-              <Languages size={16} className="text-primary" />
+              <Languages size={16} className="text-blue2" />
               <h3 className="font-semibold">{t("preferences.language")}</h3>
             </div>
             <div>
@@ -581,17 +562,17 @@ export default function SettingsPage() {
               <LanguagePicker />
               <p className="text-xs text-text-muted mt-2">{t("preferences.languageNote")}</p>
             </div>
-          </div>
+          </Card>
         </div>
       )}
 
       {/* ── Secrets ──────────────────────────────────────────────────────── */}
       {tab === "secrets" && (
         <div className={sectionCls}>
-          <div className={cardCls}>
+          <Card padding="none" className="p-5 space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-border">
               <div className="flex items-center gap-2">
-                <KeyRound size={16} className="text-primary" />
+                <KeyRound size={16} className="text-blue2" />
                 <h3 className="font-semibold">{t("settings.secrets")}</h3>
               </div>
               <span className="text-xs text-text-muted px-2 py-0.5 rounded bg-bg border border-border font-mono">{t("settings.mode600")}</span>
@@ -604,19 +585,29 @@ export default function SettingsPage() {
               </div>
               <div className="flex gap-2">
                 <div className="relative flex-1">
-                  <input type={showToken ? "text" : "password"} value={hfToken} onChange={(e) => setHfToken(e.target.value)} placeholder={secrets?.hf_token ? t("settings.hfReplace") : "hf_…"} className={`${inputCls} pr-9`} autoComplete="off" aria-label={t("settings.hfToken")} />
+                  <Input mono type={showToken ? "text" : "password"} value={hfToken} onChange={(e) => setHfToken(e.target.value)} placeholder={secrets?.hf_token ? t("settings.hfReplace") : "hf_…"} className="pr-9" autoComplete="off" aria-label={t("settings.hfToken")} />
                   <button type="button" onClick={() => setShowToken(v => !v)} aria-label={showToken ? t("settings.hideToken") : t("settings.showToken")} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-muted hover:text-text transition-colors">
                     {showToken ? <EyeOff size={15} /> : <Eye size={15} />}
                   </button>
                 </div>
-                <button onClick={handleSaveToken} disabled={savingToken || !hfToken.trim()} className="px-3 py-2 rounded-lg bg-primary hover:bg-primary-hover disabled:opacity-50 text-white font-medium text-sm transition-colors flex items-center gap-1.5">
-                  {savingToken ? <Loader2 className="animate-spin" size={14} /> : savedToken ? <Check size={14} /> : <KeyRound size={14} />}
-                  {savedToken ? "Saved!" : "Save"}
-                </button>
+                <Button
+                  size="sm"
+                  variant="primary"
+                  icon={savedToken ? Check : KeyRound}
+                  loading={savingToken}
+                  disabled={!hfToken.trim()}
+                  onClick={handleSaveToken}
+                >
+                  {savedToken ? t("common.saved") : t("common.save")}
+                </Button>
                 {secrets?.hf_token && (
-                  <button onClick={handleClearToken} className="px-3 py-2 rounded-lg border border-border hover:border-danger/50 hover:text-danger text-text-muted transition-colors" title={t("settings.clearToken")} aria-label={t("settings.clearToken")}>
-                    <Trash2 size={15} />
-                  </button>
+                  <IconButton
+                    size="sm"
+                    variant="danger"
+                    icon={Trash2}
+                    label={t("settings.clearToken")}
+                    onClick={handleClearToken}
+                  />
                 )}
               </div>
               <p className="text-xs text-text-muted mt-1.5">
@@ -624,16 +615,16 @@ export default function SettingsPage() {
                 <code className="font-mono"> ~/.config/spark-pulse/secrets.json</code>; it is never sent back to this page.
               </p>
             </div>
-          </div>
+          </Card>
         </div>
       )}
 
       {/* ── Environment ──────────────────────────────────────────────────── */}
       {tab === "environment" && environment && (
         <div className={referenceCls}>
-          <div className={cardCls}>
+          <Card padding="none" className="p-5 space-y-4">
             <div className="flex items-center gap-2 pb-3 border-b border-border">
-              <Info size={16} className="text-primary" />
+              <Info size={16} className="text-blue2" />
               <h3 className="font-semibold">{t("settings.runtime")}</h3>
             </div>
             <p className="text-xs text-text-muted -mt-2">
@@ -657,11 +648,11 @@ export default function SettingsPage() {
                 />
               )}
             </div>
-          </div>
+          </Card>
 
-          <div className={cardCls}>
+          <Card padding="none" className="p-5 space-y-4">
             <div className="flex items-center gap-2 pb-3 border-b border-border">
-              <ShieldCheck size={16} className="text-primary" />
+              <ShieldCheck size={16} className="text-blue2" />
               <h3 className="font-semibold">{t("settings.access")}</h3>
             </div>
 
@@ -698,17 +689,22 @@ export default function SettingsPage() {
                 value={environment.mcp_enabled ? <Code>{environment.mcp_path}</Code> : <span className="text-xs text-text-muted">{t("common.disabled")}</span>}
               />
             </div>
-          </div>
+          </Card>
         </div>
       )}
 
       {/* ── Save ─────────────────────────────────────────────────────────── */}
       {tab !== "secrets" && tab !== "environment" && tab !== "preferences" && (
         <div className="flex items-center gap-3">
-          <button onClick={handleSave} disabled={saving || !isDirty} className="px-4 py-2 rounded-lg bg-primary hover:bg-primary-hover disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium text-sm transition-colors flex items-center gap-2">
-            {saving ? <Loader2 className="animate-spin" size={14} /> : saved ? <Check size={14} /> : <SettingsIcon size={14} />}
+          <Button
+            variant="primary"
+            icon={saved ? Check : SettingsIcon}
+            loading={saving}
+            disabled={!isDirty}
+            onClick={handleSave}
+          >
             {saving ? t("common.saving") : saved ? t("common.saved") : t("settings.save")}
-          </button>
+          </Button>
           {/* One form across every tab, so this saves edits made on any of
               them — including a tab the operator has since navigated away
               from. Saying so beats a button that silently does more than it

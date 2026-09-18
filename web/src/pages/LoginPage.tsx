@@ -24,14 +24,14 @@ export default function LoginPage() {
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center">
           <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
-            <PulseIcon className="text-primary" size={32} />
+            <PulseIcon className="text-blue2" size={32} />
           </div>
           <div className="mb-2 text-2xl font-bold text-foreground">{t("brand.product")}</div>
           <div className="mb-6 text-sm text-text-muted">{t("login.prompt")}</div>
 
           <button
             onClick={login}
-            className="px-6 py-2.5 rounded-lg bg-primary hover:bg-primary-hover text-white font-medium transition-colors"
+            className="px-6 py-2.5 rounded-sm bg-blue-cta hover:bg-primary-hover text-white font-semibold text-[14px] transition-colors"
             type="button"
           >
             {t("login.signIn")}

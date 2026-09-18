@@ -9,15 +9,10 @@
  */
 
 import { useState } from "react";
-import { AlertCircle, Check, Loader2, Radio, Wifi, WifiOff } from "lucide-react";
+import { AlertCircle, Check, Radio, Wifi, WifiOff } from "lucide-react";
 import { runDiscovery, type DiscoveryResult, type ValidationResult } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
-
-const cardCls = "rounded-xl bg-surface border border-border p-5 space-y-4";
-
-function Code({ children }: { children: React.ReactNode }) {
-  return <code className="font-mono text-xs px-1.5 py-0.5 rounded bg-bg border border-border">{children}</code>;
-}
+import { Button, Card, Code, ErrorLine } from "@/ui";
 
 export default function NetworkDiscovery() {
   const { t } = useI18n();
@@ -41,29 +36,18 @@ export default function NetworkDiscovery() {
   };
 
   return (
-    <div className={cardCls}>
-      <div className="flex items-center justify-between pb-3 border-b border-border">
+    <Card padding="none" className="p-5 space-y-4">
+      <div className="flex items-center justify-between pb-3 border-b border-line">
         <div className="flex items-center gap-2">
-          <Radio size={16} className="text-primary" />
+          <Radio size={16} className="text-blue2" />
           <h3 className="font-semibold">{t("settings.discovery")}</h3>
         </div>
-        <button
-          type="button"
-          onClick={handleDiscover}
-          disabled={discoveryLoading}
-          className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover disabled:opacity-50 text-white font-medium text-xs transition-colors flex items-center gap-1.5"
-        >
-          {discoveryLoading ? <Loader2 className="animate-spin" size={12} /> : <Radio size={12} />}
+        <Button size="sm" icon={Radio} loading={discoveryLoading} onClick={handleDiscover}>
           {t("settings.discover")}
-        </button>
+        </Button>
       </div>
 
-      {discoveryError && (
-        <div className="text-xs text-danger flex items-center gap-1.5">
-          <AlertCircle size={12} />
-          <span>{discoveryError}</span>
-        </div>
-      )}
+      <ErrorLine>{discoveryError}</ErrorLine>
 
       {discoveryResult && (
         <div className="space-y-3">
@@ -147,6 +131,6 @@ export default function NetworkDiscovery() {
       {!discoveryResult && !discoveryLoading && (
         <p className="text-xs text-text-muted">{t("settings.discoveryIdle")}</p>
       )}
-    </div>
+    </Card>
   );
 }

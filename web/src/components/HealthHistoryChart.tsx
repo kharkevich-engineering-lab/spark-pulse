@@ -1,81 +1,13 @@
-import { HealthStatus } from "@/lib/operations";
+/** The health history sparklines.
+ *
+ * There was a `HealthBadge` at the top of this file: a coloured dot with a word
+ * beside it, whose four states a row cast out of the deployment's own status
+ * with three `as any`s. Its one caller put it *next to* `StatusBadge`, so every
+ * row said its status twice in two vocabularies. The badge is gone and
+ * `StatusBadge` is the one status; the chart, which nothing duplicates, stays.
+ */
+
 import { useT } from "@/lib/i18n";
-
-interface HealthBadgeProps {
-  status: HealthStatus;
-  size?: "sm" | "md" | "lg";
-  showLabel?: boolean;
-  className?: string;
-}
-
-const statusConfig = {
-  [HealthStatus.HEALTHY]: {
-    color: "var(--color-success)",
-    bg: "bg-success/10",
-    border: "border-success/30",
-    labelKey: "health.healthy",
-    icon: "●",
-  },
-  [HealthStatus.DEGRADED]: {
-    color: "var(--color-warning)",
-    bg: "bg-warning/10",
-    border: "border-warning/30",
-    labelKey: "health.degraded",
-    icon: "●",
-  },
-  [HealthStatus.UNHEALTHY]: {
-    color: "var(--color-danger)",
-    bg: "bg-danger/10",
-    border: "border-danger/30",
-    labelKey: "health.unhealthy",
-    icon: "●",
-  },
-  [HealthStatus.UNKNOWN]: {
-    color: "var(--color-text-muted)",
-    bg: "bg-surface-hover",
-    border: "border-border",
-    labelKey: "health.unknown",
-    icon: "●",
-  },
-} as const;
-
-// The badge is derived from the deployment's own status — the container is
-// running, or it is not. It is deliberately not the output of a health check:
-// nothing in this system runs one, and a badge that implied otherwise would be
-// the most misleading pixel on the page.
-export default function HealthBadge({
-  status,
-  size = "md",
-  showLabel = true,
-  className = "",
-}: HealthBadgeProps) {
-  const t = useT();
-  const config = statusConfig[status];
-  const sizeClasses = {
-    sm: "w-2 h-2",
-    md: "w-3 h-3",
-    lg: "w-4 h-4",
-  };
-
-  return (
-    <span className={`inline-flex items-center gap-1.5 ${className}`}>
-      <span
-        className={`rounded-full ${sizeClasses[size]}`}
-        style={{ backgroundColor: config.color }}
-      />
-      {showLabel && (
-        <span className={`text-xs font-medium ${
-          status === HealthStatus.HEALTHY ? "text-success" :
-          status === HealthStatus.DEGRADED ? "text-warning" :
-          status === HealthStatus.UNHEALTHY ? "text-danger" :
-          "text-text-muted"
-        }`}>
-          {t(config.labelKey)}
-        </span>
-      )}
-    </span>
-  );
-}
 
 // ── Health History Chart ─────────────────────────────────────────────────────
 //
@@ -309,7 +241,7 @@ export function HealthHistoryChart({
   if (drawable.length === 0) {
     return (
       <div
-        className={`p-6 rounded-lg border border-dashed border-border flex flex-col items-center justify-center text-center ${className}`}
+        className={`p-6 rounded-md border border-dashed border-border flex flex-col items-center justify-center text-center ${className}`}
       >
         <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-text-muted mb-2">
           <path d="M3 3v18h18" strokeLinecap="round" strokeLinejoin="round" />
@@ -326,7 +258,7 @@ export function HealthHistoryChart({
   }
 
   return (
-    <div className={`rounded-lg border border-border p-4 space-y-4 ${className}`}>
+    <div className={`rounded-sm border border-border p-4 space-y-4 ${className}`}>
       <div>
         <h4 className="text-sm font-semibold">{title}</h4>
         {caption && <p className="text-xs text-text-muted mt-0.5">{caption}</p>}

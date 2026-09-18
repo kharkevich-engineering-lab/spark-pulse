@@ -8,10 +8,22 @@ import {
   deleteBenchmark,
 } from "@/lib/api";
 import { useQuery } from "@/hooks/useQuery";
-import StatusBadge from "@/components/StatusBadge";
-import { AlertModal, ConfirmModal } from "@/components/Modal";
 import {
-  Flame, Loader2, AlertCircle, TrendingUp,
+  AlertModal,
+  Button,
+  ConfirmModal,
+  EmptyState,
+  ErrorLine,
+  Field,
+  IconButton,
+  Input,
+  Modal,
+  Spinner,
+  StatusBadge,
+  Tabs,
+} from "@/ui";
+import {
+  Flame, TrendingUp,
   TrendingDown,
   X, Play, BarChart3, Table as TableIcon, Trash2,
 } from "lucide-react";
@@ -135,37 +147,34 @@ export default function BenchmarkingPage() {
   const renderHistoryTab = () => (
     <div className="space-y-3">
       {selectedRunIds.length >= 2 && (
-        <div className="flex items-center justify-between p-3 rounded-lg bg-primary/5 border border-primary/20">
-          <p className="text-sm text-primary font-medium">
-            {selectedRunIds.length} run(s) selected
-          </p>
+        <div className="flex items-center justify-between gap-3 p-3 rounded-md border border-line">
+          <p className="text-[14px] font-medium">{selectedRunIds.length} run(s) selected</p>
           <div className="flex items-center gap-2">
-            <button onClick={runComparison} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-white text-sm font-medium hover:bg-primary-hover transition-colors">
-              <BarChart3 size={14} />
+            <Button size="sm" variant="primary" icon={BarChart3} onClick={runComparison}>
               Compare Selected
-            </button>
-            <button onClick={() => setSelectedRunIds([])} className="px-3 py-1.5 rounded-lg text-sm text-text-muted hover:bg-surface-hover transition-colors">
-              Clear
-            </button>
+            </Button>
+            <Button size="sm" onClick={() => setSelectedRunIds([])}>
+              {t("common.clear")}
+            </Button>
           </div>
         </div>
       )}
 
-      {error && <div className="p-4 rounded-lg bg-danger/10 border border-danger/30 text-danger flex items-center gap-3"><AlertCircle size={20} /><span>{error}</span></div>}
+      <ErrorLine>{error}</ErrorLine>
       {benchmarks && benchmarks.length > 0 && (
         <div className="space-y-2">
           {benchmarks.map((bench) => {
             const isSelected = selectedRunIds.includes(bench.benchmark_id);
             return (
-              <div key={bench.benchmark_id} className="rounded-xl bg-surface border border-border overflow-hidden">
+              <div key={bench.benchmark_id} className="rounded-md bg-surface border border-line overflow-hidden">
                 <div className="flex items-center gap-3 p-4">
                   <input
                     type="checkbox"
                     checked={isSelected}
                     onChange={() => toggleSelectRun(bench.benchmark_id)}
-                    className="rounded border-border text-primary focus:ring-primary cursor-pointer"
+                    className="accent-[var(--blue)] cursor-pointer"
                   />
-                  <Flame size={16} className="text-primary shrink-0" />
+                  <Flame size={16} className="text-blue2 shrink-0" />
                   <div className="flex-1 min-w-0">
                     <p className="font-medium truncate">
                       {bench.recipe_name || bench.recipe_id || bench.benchmark_id.slice(0, 8)}
@@ -177,18 +186,17 @@ export default function BenchmarkingPage() {
                   </div>
                   <StatusBadge status={bench.status} />
                   {bench.baseline_id && (
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium shrink-0">
+                    <span className="text-[13px] px-2 py-0.5 rounded-full border border-line text-muted font-medium shrink-0">
                       vs baseline
                     </span>
                   )}
-                  <button
+                  <IconButton
+                    size="sm"
+                    icon={Trash2}
+                    label={t("benchmarking.delete")}
                     onClick={() => setDeleteTarget(bench)}
-                    aria-label={t("benchmarking.delete")}
-                    title={t("benchmarking.delete")}
-                    className="p-1.5 rounded-lg text-text-muted hover:text-danger hover:bg-danger/10 transition-colors shrink-0"
-                  >
-                    <Trash2 size={16} />
-                  </button>
+                    className="border-transparent text-muted hover:text-bad hover:border-line"
+                  />
                 </div>
               </div>
             );
@@ -196,18 +204,20 @@ export default function BenchmarkingPage() {
         </div>
       )}
       {benchmarks && benchmarks.length === 0 && !loading && !error && (
-        <div className="text-center py-20 text-text-muted">
-          <Flame size={40} className="mx-auto mb-4 opacity-50" />
-          <p>{t("benchmarking.empty")}</p>
-          <p className="text-sm mt-1">{t("benchmarking.emptyHint")}</p>
-        </div>
+        <EmptyState icon={Flame} hint={t("benchmarking.emptyHint")}>
+          {t("benchmarking.empty")}
+        </EmptyState>
       )}
     </div>
   );
 
   const renderSummaryTab = () => (
     <div className="space-y-3">
-      {latestLoading && <div className="flex justify-center py-20"><Loader2 className="animate-spin text-primary" size={32} /></div>}
+      {latestLoading && (
+        <div className="flex justify-center py-20">
+          <Spinner size="lg" label={t("common.loading")} />
+        </div>
+      )}
       {latestByRecipe && Object.keys(latestByRecipe).length > 0 && (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -264,11 +274,9 @@ export default function BenchmarkingPage() {
         </div>
       )}
       {latestByRecipe && Object.keys(latestByRecipe).length === 0 && !latestLoading && (
-        <div className="text-center py-20 text-text-muted">
-          <TableIcon size={40} className="mx-auto mb-4 opacity-50" />
-          <p>{t("benchmarking.noData")}</p>
-          <p className="text-sm mt-1">{t("benchmarking.noDataHint")}</p>
-        </div>
+        <EmptyState icon={TableIcon} hint={t("benchmarking.noDataHint")}>
+          {t("benchmarking.noData")}
+        </EmptyState>
       )}
     </div>
   );
@@ -282,62 +290,39 @@ export default function BenchmarkingPage() {
           <h2 className="text-2xl font-bold">{t("benchmarking.title")}</h2>
           <p className="text-text-muted mt-1">{t("benchmarking.subtitle")}</p>
         </div>
-        <button
-          onClick={() => setShowRunModal(true)}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-colors"
-        >
-          <Play size={16} />
+        <Button variant="primary" icon={Play} onClick={() => setShowRunModal(true)}>
           {t("benchmarking.run")}
-        </button>
+        </Button>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-border">
-        <button
-          onClick={() => { setActiveTab("history"); setShowComparison(false); }}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-            activeTab === "history" && !showComparison
-              ? "border-primary text-primary"
-              : "border-transparent text-text-muted hover:text-text"
-          }`}
-        >
-          <span className="flex items-center gap-1.5">
-            <Flame size={16} />
-            {t("benchmarking.history")}
-            {benchmarks && <span className="text-xs opacity-60">({benchmarks.length})</span>}
-          </span>
-        </button>
-        <button
-          onClick={() => { setActiveTab("summary"); setShowComparison(false); }}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-            activeTab === "summary" && !showComparison
-              ? "border-primary text-primary"
-              : "border-transparent text-text-muted hover:text-text"
-          }`}
-        >
-          <span className="flex items-center gap-1.5">
-            <TableIcon size={16} />
-            {t("benchmarking.summary")}
-            {latestByRecipe && <span className="text-xs opacity-60">({Object.keys(latestByRecipe).length})</span>}
-          </span>
-        </button>
-        <button
-          onClick={() => { setShowComparison(false); setActiveTab("history"); }}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-            showComparison
-              ? "border-primary text-primary"
-              : "border-transparent text-text-muted hover:text-text"
-          }`}
-        >
-          <span className="flex items-center gap-1.5">
-            <BarChart3 size={16} />
-            {t("benchmarking.comparison")}
-          </span>
-        </button>
-      </div>
+      <Tabs
+        label={t("benchmarking.title")}
+        value={showComparison ? "comparison" : activeTab}
+        // The comparison pill is a view rather than a list: it lights up once
+        // two runs have been compared, and clicking it puts the comparison
+        // away again. That is what it always did; only the shape has changed.
+        onChange={(id) => {
+          setShowComparison(false);
+          setActiveTab(id === "summary" ? "summary" : "history");
+        }}
+        tabs={[
+          { id: "history", label: t("benchmarking.history"), count: benchmarks?.length },
+          {
+            id: "summary",
+            label: t("benchmarking.summary"),
+            count: latestByRecipe ? Object.keys(latestByRecipe).length : undefined,
+          },
+          { id: "comparison", label: t("benchmarking.comparison") },
+        ]}
+      />
 
       {/* Tab content */}
-      {loading && <div className="flex justify-center py-20"><Loader2 className="animate-spin text-primary" size={32} /></div>}
+      {loading && (
+        <div className="flex justify-center py-20">
+          <Spinner size="lg" label={t("common.loading")} />
+        </div>
+      )}
       {activeTab === "history" && !showComparison && renderHistoryTab()}
       {activeTab === "summary" && renderSummaryTab()}
 
@@ -345,13 +330,17 @@ export default function BenchmarkingPage() {
       {showComparison && comparisonResult && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-lg font-bold flex items-center gap-2">
-              <BarChart3 size={20} className="text-primary" />
+            <h3 className="text-[17px] font-semibold flex items-center gap-2">
+              <BarChart3 size={20} className="text-blue2" />
               Run Comparison
             </h3>
-            <button onClick={() => { setShowComparison(false); setComparisonResult(null); }} className="p-1 rounded hover:bg-surface-hover">
-              <X size={18} />
-            </button>
+            <IconButton
+              size="sm"
+              icon={X}
+              label={t("common.close")}
+              onClick={() => { setShowComparison(false); setComparisonResult(null); }}
+              className="border-transparent text-muted hover:text-text hover:border-line"
+            />
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -396,57 +385,103 @@ export default function BenchmarkingPage() {
 
       {/* Run Benchmark Modal */}
       {showRunModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="rounded-xl bg-surface border border-border w-full max-w-md p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-bold flex items-center gap-2">
-                <Flame size={20} className="text-primary" />
-                Run Benchmark
-              </h3>
-              <button onClick={() => setShowRunModal(false)} className="p-1 rounded hover:bg-surface-hover">
-                <X size={18} />
-              </button>
-            </div>
+        <Modal
+          open
+          onClose={() => setShowRunModal(false)}
+          title="Run Benchmark"
+          icon={<Flame size={20} className="text-blue2" />}
+          actions={
+            <>
+              <Button size="sm" onClick={() => setShowRunModal(false)}>
+                {t("common.cancel")}
+              </Button>
+              <Button
+                size="sm"
+                variant="primary"
+                loading={isRunning}
+                disabled={!runTarget}
+                onClick={handleRun}
+              >
+                {isRunning ? "Running..." : "Run"}
+              </Button>
+            </>
+          }
+        >
+          <div className="space-y-4">
+            <Field label={t("benchmarking.target")}>
+              {(control) => (
+                <Input
+                  {...control}
+                  mono
+                  type="text"
+                  value={runTarget}
+                  onChange={(e) => setRunTarget(e.target.value)}
+                  placeholder={t("benchmarking.targetPlaceholder")}
+                />
+              )}
+            </Field>
+            <Field label={t("benchmarking.recipeId")}>
+              {(control) => (
+                <Input
+                  {...control}
+                  mono
+                  type="text"
+                  value={runRecipeId}
+                  onChange={(e) => setRunRecipeId(e.target.value)}
+                  placeholder={t("benchmarking.recipeIdPlaceholder")}
+                />
+              )}
+            </Field>
+            <Field label={t("benchmarking.baseline")}>
+              {(control) => (
+                <Input
+                  {...control}
+                  mono
+                  type="text"
+                  value={runBaseline}
+                  onChange={(e) => setRunBaseline(e.target.value)}
+                  placeholder={t("benchmarking.baselinePlaceholder")}
+                />
+              )}
+            </Field>
             <div>
-              <label className="block text-sm font-medium mb-1">{t("benchmarking.target")}</label>
-              <input type="text" value={runTarget} onChange={(e) => setRunTarget(e.target.value)} placeholder={t("benchmarking.targetPlaceholder")} className="w-full px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">{t("benchmarking.recipeId")}</label>
-              <input type="text" value={runRecipeId} onChange={(e) => setRunRecipeId(e.target.value)} placeholder={t("benchmarking.recipeIdPlaceholder")} className="w-full px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">{t("benchmarking.baseline")}</label>
-              <input type="text" value={runBaseline} onChange={(e) => setRunBaseline(e.target.value)} placeholder={t("benchmarking.baselinePlaceholder")} className="w-full px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">{t("benchmarking.types")}</label>
+              <p className="block text-[13px] font-medium mb-1.5">{t("benchmarking.types")}</p>
               <div className="flex flex-wrap gap-2">
                 {["throughput", "latency", "gpu_memory", "gpu_utilization", "prefill_speed"].map((type) => (
-                  <label key={type} className="flex items-center gap-1.5 text-sm cursor-pointer">
-                    <input type="checkbox" checked={(runParams.benchmarks as string[] || []).includes(type)} onChange={(e) => {
-                      const current = (runParams.benchmarks as string[]) || [];
-                      const next = e.target.checked ? [...current, type] : current.filter((t: string) => t !== type);
-                      setRunParams({ ...runParams, benchmarks: next });
-                    }} className="rounded border-border text-primary focus:ring-primary" />
-                    <span className="text-text-muted">{type.replace(/_/g, " ")}</span>
+                  <label key={type} className="flex items-center gap-1.5 text-[14px] cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="accent-[var(--blue)]"
+                      checked={((runParams.benchmarks as string[]) || []).includes(type)}
+                      onChange={(e) => {
+                        const current = (runParams.benchmarks as string[]) || [];
+                        const next = e.target.checked
+                          ? [...current, type]
+                          : current.filter((t: string) => t !== type);
+                        setRunParams({ ...runParams, benchmarks: next });
+                      }}
+                    />
+                    <span className="text-muted">{type.replace(/_/g, " ")}</span>
                   </label>
                 ))}
               </div>
             </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">{t("benchmarking.contextLength")}</label>
-              <input type="number" value={Number(runParams.context_length) || 4096} onChange={(e) => setRunParams({ ...runParams, context_length: parseInt(e.target.value) || 4096 })} className="w-32 px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm" />
-            </div>
-            <div className="flex justify-end gap-2 pt-2">
-              <button onClick={() => setShowRunModal(false)} className="px-4 py-2 rounded-lg border border-border text-sm hover:bg-surface-hover transition-colors">{t("common.cancel")}</button>
-              <button onClick={handleRun} disabled={!runTarget || isRunning} className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-colors disabled:opacity-50">
-                {isRunning && <Loader2 size={16} className="animate-spin" />}
-                {isRunning ? "Running..." : "Run"}
-              </button>
-            </div>
+            <Field label={t("benchmarking.contextLength")}>
+              {(control) => (
+                <Input
+                  {...control}
+                  mono
+                  type="number"
+                  className="w-32"
+                  value={Number(runParams.context_length) || 4096}
+                  onChange={(e) =>
+                    setRunParams({ ...runParams, context_length: parseInt(e.target.value) || 4096 })
+                  }
+                />
+              )}
+            </Field>
           </div>
-        </div>
+        </Modal>
       )}
 
       {/* Delete confirmation */}

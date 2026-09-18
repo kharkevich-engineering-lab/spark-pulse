@@ -20,14 +20,14 @@ export default function NotFoundPage() {
       <div className="flex-1 flex items-center justify-center px-6">
         <div className="text-center">
           <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
-            <PulseIcon className="text-primary" size={32} />
+            <PulseIcon className="text-blue2" size={32} />
           </div>
           <p className="text-5xl font-bold text-text">404</p>
           <h1 className="mt-2 text-xl font-semibold">{t("notFound.heading")}</h1>
           <p className="mt-2 max-w-md text-sm text-text-muted">{t("notFound.body")}</p>
           <Link
             to="/"
-            className="mt-6 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary hover:bg-primary-hover text-white font-medium text-sm transition-colors"
+            className="mt-6 inline-flex items-center gap-2 px-[18px] py-[11px] rounded-sm bg-blue-cta hover:bg-primary-hover text-white font-semibold text-[14px] transition-colors"
           >
             <Home size={16} />
             {t("notFound.home")}

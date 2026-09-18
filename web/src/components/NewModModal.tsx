@@ -3,7 +3,7 @@
 import { useState, useCallback } from "react";
 import { useI18n } from "@/lib/i18n";
 import { Save, X } from "lucide-react";
-import { AlertModal } from "@/components/Modal";
+import { AlertModal, Button, Field, IconButton, Input, Modal, Textarea } from "@/ui";
 
 interface ModFile {
   name: string;
@@ -143,111 +143,106 @@ export default function NewModModal({
 
   return (
     <>
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="absolute inset-0 bg-black/60" onClick={handleCancel} />
-        <div className="relative w-full max-w-3xl max-h-[90vh] overflow-auto rounded-xl bg-surface border border-border shadow-2xl">
-          {/* Header */}
-          <div className="sticky top-0 bg-surface border-b border-border px-6 py-4 flex items-center justify-between">
-            <h3 className="text-lg font-bold">{t("newMod.title")}</h3>
-            <button onClick={handleCancel} className="p-1.5 rounded-lg hover:bg-surface-hover transition-colors">
-              <X size={18} />
-            </button>
-          </div>
-
-          {/* Body */}
-          <div className="p-6 space-y-4">
-            {/* Name */}
-            <div>
-              <label className="block text-sm font-medium mb-1">{t("newMod.name")}</label>
-              <input
+      <Modal
+        open
+        onClose={handleCancel}
+        size="lg"
+        title={t("newMod.title")}
+        actions={
+          <>
+            <Button size="sm" onClick={handleCancel}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              variant="primary"
+              icon={Save}
+              loading={saving}
+              disabled={!modName.trim()}
+              onClick={handleSave}
+            >
+              {saving ? "Saving..." : "Create Mod"}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <Field label={t("newMod.name")}>
+            {(control) => (
+              <Input
+                {...control}
+                mono
                 type="text"
                 value={modName}
                 onChange={(e) => setModName(e.target.value)}
                 placeholder={t("newMod.namePlaceholder")}
-                className="w-full px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm"
               />
-            </div>
+            )}
+          </Field>
 
-            {/* Upload ZIP zone */}
-            <div>
-              <label className="block text-sm font-medium mb-1">{t("newMod.uploadZip")}</label>
-              <div
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onDrop={handleDrop}
-                className="border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors text-sm"
-              >
-                <span className={dragOver ? "text-primary" : "text-text-muted"}>
-                  Drag & drop a ZIP here
-                </span>
-              </div>
+          {/* Upload ZIP zone */}
+          <div>
+            <p className="block text-[13px] font-medium mb-1.5">{t("newMod.uploadZip")}</p>
+            <div
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              className="border border-dashed border-line rounded-sm p-6 text-center cursor-pointer transition-colors text-[14px]"
+            >
+              <span className={dragOver ? "text-blue2" : "text-muted"}>Drag &amp; drop a ZIP here</span>
             </div>
+          </div>
 
-            {/* Divider */}
-            <div className="flex items-center gap-3">
-              <div className="flex-1 h-px bg-border" />
-              <span className="text-xs text-text-muted">or create manually</span>
-              <div className="flex-1 h-px bg-border" />
+          {/* Divider */}
+          <div className="flex items-center gap-3">
+            <div className="flex-1 h-px bg-line" />
+            <span className="text-[13px] text-muted">or create manually</span>
+            <div className="flex-1 h-px bg-line" />
+          </div>
+
+          {/* Files */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[13px] font-medium">{t("newMod.files")}</p>
+              <Button size="sm" onClick={addFile}>
+                Add file
+              </Button>
             </div>
-
-            {/* Files */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <label className="text-sm font-medium">{t("newMod.files")}</label>
-                <button onClick={addFile} className="text-xs px-2 py-1 rounded bg-primary/20 text-primary hover:bg-primary/30">
-                  + Add File
-                </button>
-              </div>
-              <div className="space-y-3">
-                {files.map((f, i) => (
-                  <div key={i} className="p-3 rounded-lg bg-bg border border-border space-y-2">
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={f.name}
-                        onChange={(e) => updateFile(i, "name", e.target.value)}
-                        placeholder={t("newMod.filenamePlaceholder")}
-                        className="flex-1 px-2 py-1 rounded border border-border focus:border-primary focus:outline-none font-mono text-xs"
-                      />
-                      <button
-                        onClick={() => removeFile(i)}
-                        className="p-1 rounded hover:bg-danger/10 text-danger"
-                      >
-                        <X size={12} />
-                      </button>
-                    </div>
-                    <textarea
-                      value={f.content}
-                      onChange={(e) => updateFile(i, "content", e.target.value)}
-                      placeholder={`// Content of ${f.name || "file"}...`}
-                      rows={4}
-                      className="w-full px-2 py-1 rounded border border-border focus:border-primary focus:outline-none font-mono text-xs resize-y"
+            <div className="space-y-3">
+              {files.map((f, i) => (
+                <div key={i} className="p-3 rounded-sm bg-bg border border-line space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Input
+                      mono
+                      type="text"
+                      aria-label={t("newMod.filenamePlaceholder")}
+                      value={f.name}
+                      onChange={(e) => updateFile(i, "name", e.target.value)}
+                      placeholder={t("newMod.filenamePlaceholder")}
+                      className="flex-1"
+                    />
+                    <IconButton
+                      size="sm"
+                      variant="danger"
+                      icon={X}
+                      label={`Remove ${f.name || "file"}`}
+                      onClick={() => removeFile(i)}
                     />
                   </div>
-                ))}
-              </div>
+                  <Textarea
+                    mono
+                    aria-label={`Content of ${f.name || "file"}`}
+                    value={f.content}
+                    onChange={(e) => updateFile(i, "content", e.target.value)}
+                    placeholder={`// Content of ${f.name || "file"}...`}
+                    rows={4}
+                  />
+                </div>
+              ))}
             </div>
           </div>
-
-          {/* Footer */}
-          <div className="flex items-center justify-between px-6 py-4 border-t border-border bg-surface sticky bottom-0">
-            <button
-              onClick={handleCancel}
-              className="px-4 py-2 rounded-lg border border-border hover:bg-surface-hover text-sm font-medium transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={saving || !modName.trim()}
-              className="px-4 py-2 rounded-lg bg-primary hover:bg-primary-hover disabled:opacity-50 text-white font-medium text-sm transition-colors flex items-center gap-1.5"
-            >
-              <Save size={14} />
-              {saving ? "Saving..." : "Create Mod"}
-            </button>
-          </div>
         </div>
-      </div>
+      </Modal>
 
       {/* Error modal */}
       {errorModal && (

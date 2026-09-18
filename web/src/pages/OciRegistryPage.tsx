@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useI18n } from "@/lib/i18n";
 import {
-  Package, Settings as SettingsIcon, Download, RefreshCw,
+  Package, Download, RefreshCw,
   Plus, AlertCircle, CheckCircle2, Loader2, Clock, XCircle,
   Check, Box, Network, Cpu, Trash2,
 } from "lucide-react";
@@ -29,7 +29,18 @@ import {
 } from "@/lib/api";
 import type { OciRegistry, OciRegistryUpdate, OciCollection, OciCollectionRecipe, OciUpdateCheck } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
-import { AlertModal } from "@/components/Modal";
+import {
+  AlertModal,
+  Button,
+  ConfirmModal,
+  EmptyState,
+  Field,
+  IconButton,
+  Input,
+  Spinner,
+  Tabs,
+  Toggle,
+} from "@/ui";
 import SlideDrawer from "@/components/SlideDrawer";
 import RegistryCard from "@/components/RegistryCard";
 import EditRegistryDialog from "@/components/EditRegistryDialog";
@@ -52,6 +63,16 @@ export default function OciRegistryPage() {
   const [newRegUrl, setNewRegUrl] = useState("");
   const [autoUpdating, setAutoUpdating] = useState(false);
   const [registryVersions, setRegistryVersions] = useState<Record<string, string[]>>({});
+  /** The recipe the operator asked to uninstall, held until they confirm.
+   *  Two of the three uninstall paths asked nothing at all: a click on a bin
+   *  icon removed the recipe and reported it afterwards. */
+  const [uninstallTarget, setUninstallTarget] = useState<string | null>(null);
+  /** The registry the operator asked to forget, same reason. */
+  const [removeTarget, setRemoveTarget] = useState<OciRegistry | null>(null);
+  /** The auto-update schedule as it is being typed. It used to PUT the whole
+   *  settings object on every keystroke, so typing a cron expression saved
+   *  every prefix of it — including the invalid ones. */
+  const [scheduleDraft, setScheduleDraft] = useState<string | null>(null);
   // Fetch versions for a registry
   const fetchVersionsForRegistry = useCallback(async (regName: string) => {
     try {
@@ -293,6 +314,27 @@ export default function OciRegistryPage() {
     }
   };
 
+  /** Saved when the field loses focus, not on every keystroke: the old handler
+   *  PUT the settings on each character, so a cron expression was saved once
+   *  per prefix and every invalid one along the way was briefly the schedule. */
+  const saveSchedule = async (current: string) => {
+    if (scheduleDraft === null || scheduleDraft === current) {
+      setScheduleDraft(null);
+      return;
+    }
+    try {
+      await updateOciAutoUpdateSettings({ schedule: scheduleDraft });
+      setScheduleDraft(null);
+      refetchAuto();
+    } catch (e) {
+      setAlertModal({
+        title: "Error",
+        message: e instanceof Error ? e.message : "Failed to update settings",
+        open: true,
+      });
+    }
+  };
+
   const handleRunAutoUpdate = async () => {
     setAutoUpdating(true);
     try {
@@ -324,7 +366,7 @@ export default function OciRegistryPage() {
       <div className="flex items-center justify-between">
         <div className="space-y-1">
           <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Package size={24} className="text-primary" />
+            <Package size={24} className="text-blue2" />
             OCI Recipe Registry
           </h1>
           <p className="text-text-muted text-sm">
@@ -334,36 +376,20 @@ export default function OciRegistryPage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-border pb-0">
-        {([
-          { key: "browse" as Tab, label: "Browse", icon: Package },
-          { key: "installed" as Tab, label: "Installed", icon: Download },
-          { key: "settings" as Tab, label: "Settings", icon: SettingsIcon },
-        ]).map(tab => (
-          <button
-            key={tab.key}
-            onClick={() => setActiveTab(tab.key)}
-            className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === tab.key
-                ? "border-primary text-primary"
-                : "border-transparent text-text-muted hover:text-foreground"
-            }`}
-          >
-            <tab.icon size={16} />
-            {tab.label}
-            {tab.key === "installed" && (ociMeta?.length || 0) > 0 && (
-              <span className="ml-1 px-1.5 py-0.5 rounded-full text-xs bg-primary/15 text-primary">
-                {ociMeta?.length}
-              </span>
-            )}
-            {tab.key === "installed" && updates?.some(u => !u.local_changes) && (
-              <span className="ml-1 px-1.5 py-0.5 rounded-full text-xs bg-success/15 text-success">
-                {updates.filter(u => !u.local_changes).length}
-              </span>
-            )}
-          </button>
-        ))}
-      </div>
+      <Tabs
+        label={t("nav.oci")}
+        value={activeTab}
+        onChange={(id) => setActiveTab(id as Tab)}
+        tabs={[
+          { id: "browse", label: "Browse" },
+          {
+            id: "installed",
+            label: "Installed",
+            count: ociMeta?.length || undefined,
+          },
+          { id: "settings", label: "Settings" },
+        ]}
+      />
 
       {/* Browse Tab */}
       {activeTab === "browse" && (
@@ -371,7 +397,7 @@ export default function OciRegistryPage() {
           {/* Collections Grid */}
           {colsLoading ? (
             <div className="flex items-center justify-center py-16">
-              <Loader2 size={24} className="animate-spin text-primary" />
+              <Spinner size="lg" label={t("common.loading")} />
             </div>
           ) : collections && collections.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -400,7 +426,7 @@ export default function OciRegistryPage() {
         <div className="space-y-6">
           {/* Update Section */}
           {updates && updates.length > 0 && (
-            <div className="p-6 rounded-xl bg-surface border border-border">
+            <div className="p-6 rounded-md bg-surface border border-border">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
                   <RefreshCw size={16} className="text-warning" />
@@ -410,14 +436,14 @@ export default function OciRegistryPage() {
                   <button
                     onClick={handleCheckUpdates}
                     disabled={updatesLoading}
-                    className="px-3 py-1.5 rounded-lg text-sm border border-border hover:bg-surface-hover transition-colors"
+                    className="px-3 py-1.5 rounded-md text-sm border border-border hover:bg-surface-hover transition-colors"
                   >
                     {updatesLoading ? <Loader2 size={14} className="animate-spin" /> : "Check"}
                   </button>
                   <button
                     onClick={handleApplyUpdates}
                     disabled={updates.some(u => u.local_changes)}
-                    className="px-3 py-1.5 rounded-lg text-sm bg-warning text-warning-foreground hover:bg-warning/90 transition-colors disabled:opacity-50"
+                    className="px-3 py-1.5 rounded-sm text-sm bg-warning text-warning-foreground hover:bg-warning/90 transition-colors disabled:opacity-50"
                   >
                     Apply All
                   </button>
@@ -425,7 +451,7 @@ export default function OciRegistryPage() {
               </div>
               <div className="space-y-3">
                 {updates.map(u => (
-                  <div key={u.collection} className="flex items-center justify-between p-4 rounded-lg bg-surface-pressed border border-border">
+                  <div key={u.collection} className="flex items-center justify-between p-4 rounded-md bg-surface-pressed border border-border">
                     <div className="flex items-center gap-3">
                       {u.local_changes ? (
                         <AlertCircle size={16} className="text-warning" />
@@ -459,17 +485,17 @@ export default function OciRegistryPage() {
           {/* Installed Collections */}
           {metaLoading ? (
             <div className="flex items-center justify-center py-16">
-              <Loader2 size={24} className="animate-spin text-primary" />
+              <Spinner size="lg" label={t("common.loading")} />
             </div>
           ) : ociMeta && ociMeta.length > 0 ? (
             <div className="space-y-3">
               {ociMeta.map(meta => (
                 <div
                   key={meta.name}
-                  className="flex items-center justify-between p-3 rounded-lg border border-border bg-surface"
+                  className="flex items-center justify-between p-3 rounded-md border border-border bg-surface"
                 >
                   <div className="flex items-center gap-3">
-                    <Download size={16} className="text-primary" />
+                    <Download size={16} className="text-blue2" />
                     <div>
                       <span className="font-mono font-semibold">{meta.name}</span>
                       <span className="text-text-muted text-sm ml-2">
@@ -487,23 +513,21 @@ export default function OciRegistryPage() {
                     {meta.local_changes && (
                       <span className="text-warning text-xs">{t("oci.modified")}</span>
                     )}
-                    <button
-                      onClick={() => handleUninstallRecipe(meta.name)}
-                      className="p-1.5 rounded-lg hover:bg-danger/10 text-text-muted hover:text-danger transition-colors"
-                      title={t("oci.uninstallRecipe")}
-                    >
-                      <Trash2 size={16} />
-                    </button>
+                    <IconButton
+                      size="sm"
+                      icon={Trash2}
+                      label={t("oci.uninstallRecipe")}
+                      onClick={() => setUninstallTarget(meta.name)}
+                      className="border-transparent text-muted hover:text-bad hover:border-line"
+                    />
                   </div>
                 </div>
               ))}
             </div>
           ) : (
-            <div className="text-center py-16 text-text-muted">
-              <Download size={48} className="mx-auto mb-4 opacity-30" />
-              <p className="text-base font-medium">{t("oci.noInstalled")}</p>
-              <p className="text-sm mt-2">{t("oci.noInstalledHint")}</p>
-            </div>
+            <EmptyState icon={Download} hint={t("oci.noInstalledHint")}>
+              {t("oci.noInstalled")}
+            </EmptyState>
           )}
         </div>
       )}
@@ -512,23 +536,19 @@ export default function OciRegistryPage() {
       {activeTab === "settings" && (
         <div className="space-y-8">
           {/* Registries */}
-          <div className="p-6 rounded-xl bg-surface border border-border">
+          <div className="p-6 rounded-md bg-surface border border-border">
             <div className="flex items-center justify-between mb-5">
               <div className="flex items-center gap-2">
-                <Package size={16} className="text-primary" />
+                <Package size={16} className="text-blue2" />
                 <h3 className="font-semibold">{t("oci.registries")}</h3>
               </div>
-              <button
-                onClick={() => setAddingRegistry(true)}
-                className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm bg-primary text-white hover:bg-primary/90 transition-colors"
-              >
-                <Plus size={14} />
+              <Button size="sm" variant="primary" icon={Plus} onClick={() => setAddingRegistry(true)}>
                 {t("oci.addRegistryButton")}
-              </button>
+              </Button>
             </div>
             {regsLoading ? (
               <div className="flex items-center justify-center py-12">
-                <Loader2 size={20} className="animate-spin text-primary" />
+                <Spinner size="lg" label={t("common.loading")} />
               </div>
             ) : registries && registries.length > 0 ? (
               <div className="space-y-3">
@@ -539,24 +559,18 @@ export default function OciRegistryPage() {
                     versions={registryVersions[reg.name] || []}
                     onToggle={() => handleToggleRegistry(reg)}
                     onTest={() => handleTestRegistry(reg)}
-                    onRemove={() => handleRemoveRegistry(reg)}
+                    onRemove={() => setRemoveTarget(reg)}
                     onEdit={() => setEditingRegistry(reg)}
-                    onVersionChange={(version) => {
-                      console.log(`Registry ${reg.name} version changed to ${version}`);
-                    }}
                   />
                 ))}
               </div>
             ) : (
-              <div className="text-center py-12 text-text-muted">
-                <Package size={32} className="mx-auto mb-3 opacity-30" />
-                <p className="text-sm font-medium">{t("oci.noRegistries")}</p>
-              </div>
+              <EmptyState icon={Package}>{t("oci.noRegistries")}</EmptyState>
             )}
 
             {/* Add Registry Form */}
             {addingRegistry && (
-              <div className="mt-6 p-5 rounded-lg border border-border bg-surface-pressed">
+              <div className="mt-6 p-5 rounded-md border border-border bg-surface-pressed">
                 <h3 className="font-semibold mb-4">{t("oci.addRegistry")}</h3>
                 <div className="space-y-4">
                   <div>
@@ -566,7 +580,7 @@ export default function OciRegistryPage() {
                       value={newRegName}
                       onChange={e => setNewRegName(e.target.value)}
                       placeholder={t("oci.namePlaceholder")}
-                      className="w-full px-3 py-2 rounded-lg border border-border bg-surface text-sm"
+                      className="w-full px-3 py-2 rounded-md border border-border bg-surface text-sm"
                     />
                   </div>
                   <div>
@@ -576,23 +590,24 @@ export default function OciRegistryPage() {
                       value={newRegUrl}
                       onChange={e => setNewRegUrl(e.target.value)}
                       placeholder={t("oci.urlPlaceholder")}
-                      className="w-full px-3 py-2 rounded-lg border border-border bg-surface text-sm"
+                      className="w-full px-3 py-2 rounded-md border border-border bg-surface text-sm"
                     />
                   </div>
                   <div className="flex gap-2">
-                    <button
+                    <Button
+                      size="sm"
+                      variant="primary"
                       onClick={handleAddRegistry}
                       disabled={!newRegName.trim() || !newRegUrl.trim()}
-                      className="px-4 py-2 rounded-lg text-sm bg-primary text-white hover:bg-primary/90 disabled:opacity-50"
                     >
                       Add
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                      size="sm"
                       onClick={() => { setAddingRegistry(false); setNewRegName(""); setNewRegUrl(""); }}
-                      className="px-4 py-2 rounded-lg text-sm border border-border hover:bg-surface-hover"
                     >
                       Cancel
-                    </button>
+                    </Button>
                   </div>
                 </div>
               </div>
@@ -600,14 +615,14 @@ export default function OciRegistryPage() {
           </div>
 
           {/* Auto-Update */}
-          <div className="p-6 rounded-xl bg-surface border border-border">
+          <div className="p-6 rounded-md bg-surface border border-border">
             <div className="flex items-center gap-2 mb-5">
-              <Clock size={16} className="text-primary" />
+              <Clock size={16} className="text-blue2" />
               <h3 className="font-semibold">{t("oci.autoUpdate")}</h3>
             </div>
             {autoLoading ? (
               <div className="flex items-center justify-center py-12">
-                <Loader2 size={20} className="animate-spin text-primary" />
+                <Spinner size="lg" label={t("common.loading")} />
               </div>
             ) : autoSettings && (
               <div className="space-y-5">
@@ -618,41 +633,29 @@ export default function OciRegistryPage() {
                       Check for updates on a schedule
                     </p>
                   </div>
-                  <button
-                    onClick={() => handleToggleAutoUpdate(!autoSettings.enabled)}
-                    className={`relative w-12 h-6 rounded-full transition-colors ${
-                      autoSettings.enabled ? "bg-success" : "bg-text-muted/30"
-                    }`}
-                  >
-                    <span
-                      className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${
-                        autoSettings.enabled ? "translate-x-6" : ""
-                      }`}
-                    />
-                  </button>
+                  <Toggle
+                    on={autoSettings.enabled}
+                    onChange={handleToggleAutoUpdate}
+                    label={t("oci.enableAutoUpdate")}
+                  />
                 </div>
 
-                <div className="flex items-center gap-4">
-                  <div className="flex-1">
-                    <label className="block text-sm text-text-muted mb-2">{t("oci.schedule")}</label>
-                    <input
-                      type="text"
-                      value={autoSettings.schedule}
-                      onChange={e => updateOciAutoUpdateSettings({ schedule: e.target.value })}
-                      className="w-full px-3 py-2 rounded-lg border border-border bg-surface text-sm font-mono"
-                    />
-                  </div>
-                  <button
-                    onClick={handleRunAutoUpdate}
-                    disabled={autoUpdating}
-                    className="px-4 py-2 rounded-lg text-sm bg-primary text-white hover:bg-primary/90 disabled:opacity-50 mt-6"
-                  >
-                    {autoUpdating ? (
-                      <Loader2 size={16} className="animate-spin inline" />
-                    ) : (
-                      "Run Now"
+                <div className="flex items-end gap-4">
+                  <Field label={t("oci.schedule")} className="flex-1">
+                    {(control) => (
+                      <Input
+                        {...control}
+                        mono
+                        type="text"
+                        value={scheduleDraft ?? autoSettings.schedule}
+                        onChange={(e) => setScheduleDraft(e.target.value)}
+                        onBlur={() => saveSchedule(autoSettings.schedule)}
+                      />
                     )}
-                  </button>
+                  </Field>
+                  <Button variant="primary" loading={autoUpdating} onClick={handleRunAutoUpdate}>
+                    Run Now
+                  </Button>
                 </div>
               </div>
             )}
@@ -667,7 +670,7 @@ export default function OciRegistryPage() {
         header={
           <div className="space-y-2">
             <div className="flex items-center gap-3">
-              <Package size={20} className="text-primary" />
+              <Package size={20} className="text-blue2" />
               <span className="text-xl font-mono font-bold">{drawerCollection?.name}</span>
               <span className="text-sm text-text-muted font-mono">v{drawerCollection?.version}</span>
             </div>
@@ -699,7 +702,7 @@ export default function OciRegistryPage() {
                 return (
                   <div
                     key={idx}
-                    className="p-4 rounded-lg border border-border bg-surface hover:bg-surface-hover transition-colors mb-2"
+                    className="p-4 rounded-md border border-border bg-surface hover:bg-surface-hover transition-colors mb-2"
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex-1 min-w-0">
@@ -716,7 +719,7 @@ export default function OciRegistryPage() {
                             <Box size={12} />{recipe.container || "N/A"}
                           </span>
                           {(recipe.solo_only || (!recipe.solo_only && !recipe.cluster_only)) && (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-primary/20 text-primary">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-primary/20 text-blue2">
                               <Cpu size={11} />Solo
                             </span>
                           )}
@@ -729,41 +732,43 @@ export default function OciRegistryPage() {
                       </div>
                       <div className="flex items-center gap-2">
                         {isInstalling ? (
-                          <Loader2 size={16} className="animate-spin text-primary" />
+                          <Spinner label={t("common.loading")} />
                         ) : isUpdating ? (
-                          <Loader2 size={16} className="animate-spin text-warning" />
+                          <Spinner className="text-warn" label={t("common.loading")} />
                         ) : isDone ? (
                           <Check size={16} className="text-success" />
                         ) : (
                           <>
                             {isInstalled ? (
                               <>
-                                <button
-                                  onClick={() => handleUpdateRecipe(recipe.name, drawerCollection!)}
-                                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs bg-warning text-warning-foreground hover:bg-warning/90 transition-colors font-medium"
+                                <Button
+                                  size="sm"
+                                  icon={RefreshCw}
                                   title={t("oci.updateRecipe")}
+                                  onClick={() => handleUpdateRecipe(recipe.name, drawerCollection!)}
                                 >
-                                  <RefreshCw size={12} />
                                   {t("oci.update")}
-                                </button>
-                                <button
-                                  onClick={() => handleUninstallRecipe(recipe.name)}
-                                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs border border-border hover:bg-danger/10 hover:text-danger hover:border-danger transition-colors"
-                                  title="Uninstall this recipe"
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="danger"
+                                  icon={Trash2}
+                                  title={t("oci.uninstallRecipe")}
+                                  onClick={() => setUninstallTarget(recipe.name)}
                                 >
-                                  <Trash2 size={12} />
                                   {t("oci.uninstall")}
-                                </button>
+                                </Button>
                               </>
                             ) : (
-                              <button
-                                onClick={() => handleInstallRecipe(recipe.name, drawerCollection!)}
-                                className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs bg-primary text-white hover:bg-primary/90 transition-colors font-medium"
+                              <Button
+                                size="sm"
+                                variant="primary"
+                                icon={Download}
                                 title={t("oci.installRecipe")}
+                                onClick={() => handleInstallRecipe(recipe.name, drawerCollection!)}
                               >
-                                <Download size={12} />
                                 {t("oci.install")}
-                              </button>
+                              </Button>
                             )}
                           </>
                         )}
@@ -781,14 +786,14 @@ export default function OciRegistryPage() {
 
           {/* Install Collection Button - kept for bulk install */}
           <div className="flex justify-end pt-2 pr-4 border-t border-border">
-            <button
-              onClick={() => drawerCollection && handleInstall(drawerCollection)}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-white hover:bg-primary/90 transition-colors font-medium text-sm"
+            <Button
+              variant="primary"
+              icon={Download}
               title={t("oci.installAll")}
+              onClick={() => drawerCollection && handleInstall(drawerCollection)}
             >
-              <Download size={16} />
               Install All Recipes
-            </button>
+            </Button>
           </div>
         </div>
       </SlideDrawer>
@@ -799,6 +804,38 @@ export default function OciRegistryPage() {
         onClose={() => setEditingRegistry(null)}
         onSave={handleSaveRegistry}
       />
+
+      {uninstallTarget && (
+        <ConfirmModal
+          open
+          onClose={() => setUninstallTarget(null)}
+          onConfirm={async () => {
+            const name = uninstallTarget;
+            setUninstallTarget(null);
+            await handleUninstallRecipe(name);
+          }}
+          title={t("oci.uninstallRecipe")}
+          message={t("oci.uninstallConfirm", { name: uninstallTarget })}
+          confirmLabel={t("common.uninstall")}
+          confirmVariant="danger"
+        />
+      )}
+
+      {removeTarget && (
+        <ConfirmModal
+          open
+          onClose={() => setRemoveTarget(null)}
+          onConfirm={async () => {
+            const reg = removeTarget;
+            setRemoveTarget(null);
+            await handleRemoveRegistry(reg);
+          }}
+          title={t("oci.removeRegistry")}
+          message={t("oci.removeRegistryConfirm", { name: removeTarget.name })}
+          confirmLabel={t("common.delete")}
+          confirmVariant="danger"
+        />
+      )}
 
       {/* Alert Modal */}
       {alertModal && alertModal.open && (

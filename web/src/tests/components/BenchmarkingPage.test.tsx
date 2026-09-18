@@ -81,7 +81,7 @@ describe("BenchmarkingPage", () => {
 
     expect(await screen.findByText("Qwen3 8B")).toBeInTheDocument();
     expect(screen.getByText("Qwen3 32B")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /History/ })).toHaveTextContent("(2)");
+    expect(screen.getByRole("tab", { name: /History/ })).toHaveTextContent("(2)");
     expect(screen.getAllByText("Completed").length).toBeGreaterThan(0);
   });
 
@@ -278,7 +278,7 @@ describe("BenchmarkingPage", () => {
       await userEvent.click(screen.getByRole("button", { name: /Compare Selected/ }));
       await screen.findByRole("heading", { name: /Run Comparison/ });
 
-      await userEvent.click(screen.getByRole("button", { name: "Comparison" }));
+      await userEvent.click(screen.getByRole("tab", { name: "Comparison" }));
 
       expect(screen.queryByRole("heading", { name: /Run Comparison/ })).not.toBeInTheDocument();
     });
@@ -300,7 +300,7 @@ describe("BenchmarkingPage", () => {
       });
       render(<BenchmarkingPage />);
 
-      await userEvent.click(await screen.findByRole("button", { name: /Summary/ }));
+      await userEvent.click(await screen.findByRole("tab", { name: /Summary/ }));
 
       expect(screen.getByRole("columnheader", { name: "Throughput" })).toBeInTheDocument();
       expect(screen.getByText("1234.5")).toBeInTheDocument();
@@ -316,7 +316,7 @@ describe("BenchmarkingPage", () => {
       });
       render(<BenchmarkingPage />);
 
-      await userEvent.click(await screen.findByRole("button", { name: /Summary/ }));
+      await userEvent.click(await screen.findByRole("tab", { name: /Summary/ }));
 
       expect(screen.getByText("bundled/qwen3-8b")).toBeInTheDocument();
       expect(screen.getAllByText("—").length).toBe(6);
@@ -324,7 +324,7 @@ describe("BenchmarkingPage", () => {
 
     it("says the summary is empty rather than showing an empty table", async () => {
       render(<BenchmarkingPage />);
-      await userEvent.click(await screen.findByRole("button", { name: /Summary/ }));
+      await userEvent.click(await screen.findByRole("tab", { name: /Summary/ }));
 
       expect(screen.getByText("No benchmark data yet.")).toBeInTheDocument();
     });

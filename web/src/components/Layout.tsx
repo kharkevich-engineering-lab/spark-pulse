@@ -51,11 +51,11 @@ function HeaderInner() {
 
   return (
     <div className="hidden lg:flex fixed top-4 right-4 z-50 items-center gap-2">
-      <span className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-surface-hover text-sm">
+      <span className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-surface-hover text-sm">
         <User size={14} />
         {user?.name || user?.email || "User"}
       </span>
-      <button onClick={logout} className="p-2 rounded-lg hover:bg-surface-hover transition-colors" title={t("a11y.logout")}>
+      <button onClick={logout} className="p-2 rounded-md hover:bg-surface-hover transition-colors" title={t("a11y.logout")}>
         <LogOut size={18} />
       </button>
     </div>
@@ -87,7 +87,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     <div className="flex h-screen bg-bg text-text">
       {/* Mobile menu button */}
       <button
-        className="lg:hidden fixed top-4 left-4 z-50 p-2 rounded-lg bg-surface border border-border hover:border-border-hover"
+        className="lg:hidden fixed top-4 left-4 z-50 p-2 rounded-md bg-surface border border-border hover:border-border-hover"
         onClick={() => setOpen(!open)}
       >
         {open ? <X size={20} /> : <Menu size={20} />}
@@ -109,7 +109,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         {/* Logo */}
         <div className="p-6 border-b border-border">
           <div className="flex items-center gap-3">
-            <PulseIcon className="text-primary" size={28} />
+            <PulseIcon className="text-blue2" size={28} />
             <div>
               <h1 className="font-bold text-lg leading-tight">Spark Pulse</h1>
               <p className="text-xs text-text-muted">{version}</p>
@@ -128,9 +128,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 to={item.href}
                 onClick={() => setOpen(false)}
                 className={cn(
-                  "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
+                  "flex items-center gap-3 px-3 py-2.5 rounded-sm text-sm font-medium transition-colors",
                   active
-                    ? "bg-primary/10 text-primary"
+                    ? "bg-primary/10 text-blue2"
                     : "text-text-muted hover:text-text hover:bg-surface-hover"
                 )}
               >

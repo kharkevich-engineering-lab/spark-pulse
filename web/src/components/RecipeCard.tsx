@@ -43,7 +43,7 @@ export default function RecipeCard({ r, isRunning, clusterBlocked, onSelect, onR
         </span>
       )}
       {(r.solo_only || (!r.solo_only && !r.cluster_only)) && (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-primary/20 text-primary">
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-primary/20 text-blue2">
           <Cpu size={11} />{t("recipeCard.solo")}
         </span>
       )}
@@ -62,7 +62,7 @@ export default function RecipeCard({ r, isRunning, clusterBlocked, onSelect, onR
 
   const icon = (
     <div className="flex items-center gap-2 shrink-0">
-      <Zap size={16} className={isRunning ? "text-success" : "text-primary"} />
+      <Zap size={16} className={isRunning ? "text-success" : "text-blue2"} />
       {isRunning && <span className="flex items-center gap-1 text-xs text-success font-medium"><span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />{t("recipeCard.running")}</span>}
       {clusterBlocked && <span className="text-xs text-text-muted">{t("recipeCard.clusterOnly")}</span>}
       {r.is_customized && onReset && (

@@ -150,8 +150,8 @@ describe("Layout nav", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole("link", { name: /Cluster/ })).toHaveClass("text-primary");
-    expect(screen.getByRole("link", { name: /Inference/ })).not.toHaveClass("text-primary");
+    expect(screen.getByRole("link", { name: /Cluster/ })).toHaveClass("text-blue2");
+    expect(screen.getByRole("link", { name: /Inference/ })).not.toHaveClass("text-blue2");
   });
 
   /** On a phone the sidebar is off-canvas until the menu button is pressed,

@@ -56,7 +56,7 @@ export default function SlideDrawer({ open, onClose, header, actions, children }
       <div
         ref={drawerRef}
         tabIndex={-1}
-        className="h-full w-full max-w-2xl bg-surface border-l border-border shadow-xl flex flex-col overflow-hidden outline-none"
+        className="h-full w-full max-w-2xl bg-surface border-l border-border flex flex-col overflow-hidden outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header row: content + actions */}

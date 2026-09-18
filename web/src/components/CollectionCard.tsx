@@ -17,7 +17,7 @@ export default function CollectionCard({
     <BaseCard
       icon={
         <div className="flex items-center gap-2 shrink-0">
-          <Package size={16} className="text-primary" />
+          <Package size={16} className="text-blue2" />
           <span className="text-xs text-text-muted font-mono">{collection.display_version}</span>
         </div>
       }

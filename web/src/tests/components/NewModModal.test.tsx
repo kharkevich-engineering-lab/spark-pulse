@@ -84,7 +84,7 @@ describe("NewModModal", () => {
     const { onSave, onClose } = renderModal();
 
     await userEvent.type(screen.getByPlaceholderText("my-mod"), "Kernel Patch");
-    await userEvent.click(screen.getByRole("button", { name: "+ Add File" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add file" }));
     const names = screen.getAllByPlaceholderText("filename");
     await userEvent.type(names[1], "notes.md");
     const bodies = screen.getAllByRole("textbox").filter((el) => el.tagName === "TEXTAREA");
@@ -107,7 +107,7 @@ describe("NewModModal", () => {
     const { onSave } = renderModal();
 
     await userEvent.type(screen.getByPlaceholderText("my-mod"), "mod");
-    await userEvent.click(screen.getByRole("button", { name: "+ Add File" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add file" }));
     const names = screen.getAllByPlaceholderText("filename");
     expect(names).toHaveLength(2);
 
@@ -212,10 +212,10 @@ describe("NewModModal", () => {
     const zone = screen.getByText("Drag & drop a ZIP here").parentElement!;
 
     fireEvent.dragOver(zone);
-    expect(screen.getByText("Drag & drop a ZIP here")).toHaveClass("text-primary");
+    expect(screen.getByText("Drag & drop a ZIP here")).toHaveClass("text-blue2");
 
     fireEvent.dragLeave(zone);
-    expect(screen.getByText("Drag & drop a ZIP here")).toHaveClass("text-text-muted");
+    expect(screen.getByText("Drag & drop a ZIP here")).toHaveClass("text-muted");
   });
 
   it("discards what was typed when the operator cancels", async () => {

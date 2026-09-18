@@ -10,9 +10,20 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertCircle, Cable, CheckCircle2, Loader2, RefreshCw, X } from "lucide-react";
+import { AlertCircle, Cable, CheckCircle2, RefreshCw } from "lucide-react";
 import { applyFabric, fetchFabric } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
+import {
+  Button,
+  ErrorLine,
+  Field,
+  IconButton,
+  Input,
+  Modal,
+  NodeState,
+  Spinner,
+  type NodeCondition,
+} from "@/ui";
 import type {
   FabricApplyReport,
   FabricNode,
@@ -21,11 +32,13 @@ import type {
   FabricResponse,
 } from "@/lib/types";
 
-const STATUS_CLASS: Record<FabricNodeStatus, string> = {
-  configured: "bg-success/20 text-success border-success/30",
-  proposed: "bg-primary/15 text-primary border-primary/30",
-  unknown: "bg-warning/20 text-warning border-warning/30",
-  refused: "bg-danger/20 text-danger border-danger/30",
+/** The fabric's four words in the one node vocabulary. `proposed` is a warning
+ *  rather than an accent: the cable is not carrying traffic yet. */
+const STATUS_STATE: Record<FabricNodeStatus, NodeCondition> = {
+  configured: "ok",
+  proposed: "warn",
+  unknown: "unknown",
+  refused: "bad",
 };
 
 function upPorts(node: FabricNode) {
@@ -68,29 +81,44 @@ function ApplyDialog({ plan, onClose, onApplied }: ApplyDialogProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div
-        role="dialog"
-        aria-label={t("fabric.configure")}
-        className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-surface p-6 shadow-2xl"
-      >
-        <div className="mb-4 flex items-center justify-between">
-          <h3 className="flex items-center gap-2 text-lg font-bold">
-            <Cable size={20} className="text-primary" />
-            {t("fabric.configure")}
-          </h3>
-          <button onClick={onClose} aria-label={t("common.close")} className="rounded-lg p-1 hover:bg-surface-hover">
-            <X size={18} />
-          </button>
-        </div>
-
+    <Modal
+      open
+      onClose={onClose}
+      size="md"
+      title={t("fabric.configure")}
+      icon={<Cable size={20} className="text-blue2" />}
+      actions={
+        reports ? (
+          <Button variant="primary" size="sm" onClick={onClose}>
+            {t("fabric.close")}
+          </Button>
+        ) : (
+          <>
+            <Button size="sm" onClick={onClose} disabled={running}>
+              {t("fabric.cancel")}
+            </Button>
+            <Button
+              size="sm"
+              variant="primary"
+              icon={Cable}
+              loading={running}
+              onClick={run}
+              disabled={count === 0}
+            >
+              {t("fabric.configureCount", { count })}
+            </Button>
+          </>
+        )
+      }
+    >
+      <>
         {reports ? (
           <div className="space-y-3" data-testid="fabric-apply-report">
             {reports.map((r) => (
               <div
                 key={r.node_id}
                 role="status"
-                className={`rounded-lg border p-3 text-sm ${
+                className={`rounded-sm border p-3 text-sm ${
                   r.verified
                     ? "border-success/30 bg-success/10"
                     : r.applied
@@ -144,7 +172,7 @@ function ApplyDialog({ plan, onClose, onApplied }: ApplyDialogProps) {
             {plan
               .filter((n) => n.status === "proposed" || (override && n.status === "configured"))
               .map((n) => (
-                <details key={n.node_id} className="rounded-lg border border-border p-3">
+                <details key={n.node_id} className="rounded-sm border border-border p-3">
                   <summary className="cursor-pointer text-sm font-medium">
                     {t("fabric.showPlan", { name: n.name })}
                   </summary>
@@ -163,66 +191,42 @@ function ApplyDialog({ plan, onClose, onApplied }: ApplyDialogProps) {
               ))}
 
             {configured.length > 0 && (
-              <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={override} onChange={(e) => setOverride(e.target.checked)} disabled={running} />
+              <label className="flex items-center gap-2 text-[14px]">
+                <input
+                  type="checkbox"
+                  className="accent-[var(--blue)]"
+                  checked={override}
+                  onChange={(e) => setOverride(e.target.checked)}
+                  disabled={running}
+                />
                 {t("fabric.override")}
               </label>
             )}
 
-            <div>
-              <label htmlFor="fabric-sudo" className="mb-1 block text-sm font-medium text-text-muted">
-                {t("fabric.sudoPassword")}
-              </label>
-              <input
-                id="fabric-sudo"
-                type="password"
-                autoComplete="off"
-                value={sudoPassword}
-                onChange={(e) => setSudoPassword(e.target.value)}
-                disabled={running}
-                className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-text focus:outline-none focus:ring-2 focus:ring-primary/50"
-              />
-              <p className="mt-1 text-xs text-text-muted">{t("fabric.sudoNote")}</p>
-            </div>
+            <Field label={t("fabric.sudoPassword")} hint={t("fabric.sudoNote")}>
+              {(control) => (
+                <Input
+                  {...control}
+                  type="password"
+                  autoComplete="off"
+                  value={sudoPassword}
+                  onChange={(e) => setSudoPassword(e.target.value)}
+                  disabled={running}
+                />
+              )}
+            </Field>
 
             {running && (
-              <p className="flex items-center gap-2 text-sm text-text-muted" role="status">
-                <Loader2 size={14} className="animate-spin" />
+              <p className="flex items-center gap-2 text-[13px] text-muted" role="status">
+                <Spinner size="sm" />
                 {t("fabric.applying")}
               </p>
             )}
-            {error && (
-              <div role="alert" className="flex items-center gap-2 rounded-lg border border-danger/30 bg-danger/10 p-3 text-sm text-danger">
-                <AlertCircle size={16} className="shrink-0" />
-                <span>{error}</span>
-              </div>
-            )}
+            <ErrorLine>{error}</ErrorLine>
           </div>
         )}
-
-        <div className="mt-6 flex items-center justify-end gap-3 border-t border-border pt-4">
-          {reports ? (
-            <button onClick={onClose} className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90">
-              {t("fabric.close")}
-            </button>
-          ) : (
-            <>
-              <button onClick={onClose} disabled={running} className="rounded-lg border border-border px-4 py-2 hover:bg-surface-hover disabled:opacity-50">
-                {t("fabric.cancel")}
-              </button>
-              <button
-                onClick={run}
-                disabled={running || count === 0}
-                className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-              >
-                {running ? <Loader2 size={16} className="animate-spin" /> : <Cable size={16} />}
-                {t("fabric.configureCount", { count })}
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
+      </>
+    </Modal>
   );
 }
 
@@ -268,42 +272,36 @@ export default function FabricCard() {
   };
 
   return (
-    <section data-testid="fabric-card" className="rounded-xl border border-border bg-surface p-4">
+    <section data-testid="fabric-card" className="rounded-md border border-line bg-surface p-4">
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
-          <h3 className="flex items-center gap-2 text-lg font-bold">
-            <Cable size={18} className="text-primary" />
+          <h3 className="flex items-center gap-2 text-[17px] font-semibold">
+            <Cable size={18} className="text-blue2" />
             {t("fabric.heading")}
           </h3>
-          <p className="mt-0.5 text-sm text-text-muted">{t("fabric.subtitle")}</p>
+          <p className="mt-0.5 text-[13px] text-muted">{t("fabric.subtitle")}</p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <button
+          <IconButton
+            size="sm"
+            icon={RefreshCw}
+            label={t("fabric.refresh")}
+            loading={loading}
             onClick={() => void load()}
-            disabled={loading}
-            aria-label={t("fabric.refresh")}
-            title={t("fabric.refresh")}
-            className="rounded-lg border border-border p-1.5 hover:bg-surface-hover disabled:opacity-50"
-          >
-            {loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-          </button>
-          <button
+          />
+          <Button
+            size="sm"
+            variant="primary"
+            icon={Cable}
             onClick={() => setConfiguring(true)}
             disabled={!data || !data.transport || (proposed === 0 && !plan?.nodes.some((n) => n.status === "configured"))}
-            className="flex items-center gap-2 rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
           >
-            <Cable size={14} />
             {t("fabric.configure")}
-          </button>
+          </Button>
         </div>
       </div>
 
-      {error && (
-        <div role="alert" className="flex items-center gap-3 rounded-lg border border-danger/30 bg-danger/10 p-3 text-danger">
-          <AlertCircle size={18} />
-          <span>{error}</span>
-        </div>
-      )}
+      <ErrorLine className="mb-3">{error}</ErrorLine>
 
       {data && !data.transport && <p className="text-sm text-text-muted">{t("fabric.noTransport")}</p>}
 
@@ -313,7 +311,7 @@ export default function FabricCard() {
           {plan && (plan.advice?.length ?? 0) > 0 && (
             <ul className="mb-3 space-y-1" data-testid="fabric-advice">
               {plan.advice!.map((a, i) => (
-                <li key={i} role="note" className="rounded-lg border border-border bg-surface-hover p-2 text-sm text-text-muted">
+                <li key={i} role="note" className="rounded-md border border-border bg-surface-hover p-2 text-sm text-text-muted">
                   {a}
                 </li>
               ))}
@@ -322,7 +320,7 @@ export default function FabricCard() {
           {plan && plan.problems.length > 0 && (
             <ul className="mb-3 space-y-1" data-testid="fabric-problems">
               {plan.problems.map((p, i) => (
-                <li key={i} role="note" className="rounded-lg border border-warning/30 bg-warning/10 p-2 text-sm">
+                <li key={i} role="note" className="rounded-sm border border-warning/30 bg-warning/10 p-2 text-sm">
                   {p}
                 </li>
               ))}
@@ -369,7 +367,7 @@ export default function FabricCard() {
                             {p.cidr || <span className="font-sans text-text-muted">{t("fabric.noAddress")}</span>}
                             {nodePlan?.status === "proposed" &&
                               nodePlan.assignments.find((a) => a.netdev === p.netdev)?.cidr !== p.cidr && (
-                                <span className="text-primary"> → {nodePlan.assignments.find((a) => a.netdev === p.netdev)?.cidr}</span>
+                                <span className="text-blue2"> → {nodePlan.assignments.find((a) => a.netdev === p.netdev)?.cidr}</span>
                               )}
                           </div>
                         ))}
@@ -381,12 +379,11 @@ export default function FabricCard() {
                       </td>
                       <td className="py-2.5">
                         {nodePlan && (
-                          <span
+                          <NodeState
+                            state={STATUS_STATE[nodePlan.status]}
+                            label={statusLabel[nodePlan.status]}
                             title={nodePlan.reasons.join(" ")}
-                            className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${STATUS_CLASS[nodePlan.status]}`}
-                          >
-                            {statusLabel[nodePlan.status]}
-                          </span>
+                          />
                         )}
                       </td>
                     </tr>

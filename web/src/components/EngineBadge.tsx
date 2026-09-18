@@ -9,7 +9,7 @@ interface EngineBadgeProps {
 }
 
 const COLORS: Record<string, string> = {
-  vllm: "bg-primary/20 text-primary border-primary/30",
+  vllm: "bg-primary/20 text-blue2 border-primary/30",
   sglang: "bg-success/20 text-success border-success/30",
 };
 

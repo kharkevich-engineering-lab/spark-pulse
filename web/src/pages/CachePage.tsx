@@ -36,32 +36,32 @@ export default function CachePage() {
       </div>
 
       {cacheData && (
-        <div className="p-4 rounded-xl bg-surface border border-border flex items-center justify-between">
-          <div className="flex items-center gap-3"><Database size={20} className="text-primary" /><div><p className="font-medium">{t("cache.total")}</p><p className="text-2xl font-bold">{formatSize(totalSize)}</p></div></div>
-          <button onClick={() => setCleanTarget("all")} disabled={!!cleaning} className="px-4 py-2 rounded-lg bg-danger/10 text-danger border border-danger/30 hover:bg-danger/20 disabled:opacity-50 transition-colors flex items-center gap-2">
+        <div className="p-4 rounded-md bg-surface border border-border flex items-center justify-between">
+          <div className="flex items-center gap-3"><Database size={20} className="text-blue2" /><div><p className="font-medium">{t("cache.total")}</p><p className="text-2xl font-bold">{formatSize(totalSize)}</p></div></div>
+          <button onClick={() => setCleanTarget("all")} disabled={!!cleaning} className="px-4 py-2 rounded-sm bg-danger/10 text-danger border border-danger/30 hover:bg-danger/20 disabled:opacity-50 transition-colors flex items-center gap-2">
             {cleaning === "all" ? <Loader2 className="animate-spin" size={16} /> : <Trash2 size={16} />}{t("cache.cleanAll")}
           </button>
         </div>
       )}
 
-      {loading && <div className="flex justify-center py-20"><Loader2 className="animate-spin text-primary" size={32} /></div>}
-      {error && <div className="p-4 rounded-lg bg-danger/10 border border-danger/30 text-danger flex items-center gap-3"><AlertCircle size={20} /><span>{error}</span></div>}
+      {loading && <div className="flex justify-center py-20"><Loader2 className="animate-spin text-blue2" size={32} /></div>}
+      {error && <div className="p-4 rounded-sm bg-danger/10 border border-danger/30 text-danger flex items-center gap-3"><AlertCircle size={20} /><span>{error}</span></div>}
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {cacheData?.entries.map((e) => (
-          <div key={e.name} className="p-5 rounded-xl bg-surface border border-border hover:border-border-hover transition-colors group">
+          <div key={e.name} className="p-5 rounded-md bg-surface border border-border hover:border-border-hover transition-colors group">
             <div className="flex items-start justify-between mb-3">
               <div className="flex items-start gap-2.5 min-w-0 flex-1">
                 <FolderOpen size={18} className="text-text-muted mt-0.5 shrink-0" />
                 <div className="min-w-0">
-                  <h3 className="font-semibold text-base group-hover:text-primary transition-colors">{e.name}</h3>
+                  <h3 className="font-semibold text-base group-hover:text-blue2 transition-colors">{e.name}</h3>
                   <p className="text-xs text-text-muted mt-0.5 font-mono truncate">{e.path}</p>
                 </div>
               </div>
               <button
                 onClick={() => setCleanTarget(e.name)}
                 disabled={cleaning === e.name}
-                className="p-1.5 rounded-lg text-text-muted hover:text-danger hover:bg-danger/10 transition-colors disabled:opacity-50 shrink-0 ml-2"
+                className="p-1.5 rounded-sm text-text-muted hover:text-danger hover:bg-danger/10 transition-colors disabled:opacity-50 shrink-0 ml-2"
                 title={t("cache.cleanOne")}
               >
                 {cleaning === e.name ? <Loader2 className="animate-spin" size={15} /> : <Trash2 size={15} />}

@@ -19,17 +19,14 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  AlertCircle,
   ArrowDownToLine,
   ChevronDown,
   ChevronRight,
   Download,
   Layers,
-  Loader2,
   RefreshCw,
   Server,
   Trash2,
-  X,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import {
@@ -51,7 +48,20 @@ import { useSSEConnection } from "@/hooks/useSSEConnection";
 import { SSEConnectionState } from "@/lib/operations";
 import { useI18n } from "@/lib/i18n";
 import { formatSize } from "@/lib/utils";
-import { AlertModal, Modal } from "@/components/Modal";
+import {
+  ACTIVE_STATES,
+  AlertModal,
+  Button,
+  ErrorLine,
+  Field,
+  Input,
+  NodeScopedDialog,
+  NodeState,
+  ProgressRow,
+  Spinner,
+  Textarea,
+  Toggle,
+} from "@/ui";
 import EngineBadge from "@/components/EngineBadge";
 import type {
   EngineSummary,
@@ -60,8 +70,6 @@ import type {
   ImagePullJob,
   Settings,
 } from "@/lib/types";
-
-const ACTIVE_STATES = ["queued", "running"];
 
 interface ImageEventFrame {
   type?: string;
@@ -100,11 +108,6 @@ export function updateReason(image: ImageEntry): string {
   if (image.digest_drift) return "newer digest published";
   if (!image.present) return "not pulled";
   return "";
-}
-
-export function progressPercent(job: ImagePullJob): number {
-  if (job.status === "completed") return 100;
-  return Math.max(0, Math.min(100, Math.round(job.percent || 0)));
 }
 
 /** One engine, with everything known about it in one place.
@@ -373,7 +376,7 @@ export default function EnginesPage() {
           <h2 className="text-2xl font-bold">{t("engines.title")}</h2>
           <p className="text-text-muted mt-1">
             {t("engines.subtitle")}{" "}
-            <Link to="/models" className="text-primary hover:underline">
+            <Link to="/models" className="text-blue2 hover:underline">
               {t("engines.modelsLink")}
             </Link>
           </p>
@@ -394,28 +397,29 @@ export default function EnginesPage() {
           e.preventDefault();
           pull(ref);
         }}
-        className="p-5 rounded-xl bg-surface border border-border space-y-3"
+        className="p-5 rounded-md bg-surface border border-border space-y-3"
       >
         <h3 className="font-semibold flex items-center gap-2">
-          <Download size={16} className="text-primary" />
+          <Download size={16} className="text-blue2" />
           {t("engines.pullTitle")}
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
-          <input
+          <Input
+            mono
             aria-label={t("engines.refLabel")}
             placeholder={t("engines.refPlaceholder")}
             value={ref}
             onChange={(e) => setRef(e.target.value)}
-            className="px-3 py-2 rounded-lg bg-bg border border-border font-mono text-sm"
           />
-          <button
+          <Button
             type="submit"
-            disabled={!!pulling || !ref.trim()}
-            className="px-4 py-2 rounded-lg bg-primary/10 text-primary border border-primary/30 hover:bg-primary/20 disabled:opacity-50 flex items-center gap-2"
+            variant="primary"
+            icon={ArrowDownToLine}
+            loading={!!pulling}
+            disabled={!ref.trim()}
           >
-            {pulling ? <Loader2 className="animate-spin" size={16} /> : <ArrowDownToLine size={16} />}
             {t("engines.pull")}
-          </button>
+          </Button>
         </div>
       </form>
 
@@ -428,59 +432,29 @@ export default function EnginesPage() {
             </span>
           </div>
           {[...active, ...recent].map((job) => (
-            <div key={job.id} data-testid={`pull-${job.id}`} className="p-4 rounded-xl bg-surface border border-border">
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="font-mono text-sm truncate">{job.ref}</p>
-                  <p className="text-xs text-text-muted">
-                    {job.status}
-                    {job.layers ? ` · ${job.layers} layers` : ""}
-                    {job.error ? ` · ${job.error}` : ""}
-                  </p>
-                </div>
-                <div className="flex items-center gap-3 shrink-0">
-                  <span className="text-xs font-mono text-text-muted">
-                    {formatSize(job.bytes_done)} / {job.bytes_total ? formatSize(job.bytes_total) : "?"}
-                  </span>
-                  {ACTIVE_STATES.includes(job.status) && (
-                    <button
-                      aria-label={`Cancel pull of ${job.ref}`}
-                      onClick={() => doCancel(job.id)}
-                      className="p-1.5 rounded-lg text-text-muted hover:text-danger hover:bg-danger/10"
-                    >
-                      <X size={15} />
-                    </button>
-                  )}
-                </div>
-              </div>
-              <div className="mt-2 h-1.5 rounded-full bg-tag-bg overflow-hidden">
-                <div
-                  role="progressbar"
-                  aria-label={`${job.ref} progress`}
-                  aria-valuenow={progressPercent(job)}
-                  className="h-full bg-primary transition-all"
-                  style={{ width: `${progressPercent(job)}%` }}
-                />
-              </div>
-            </div>
+            <ProgressRow
+              key={job.id}
+              data-testid={`pull-${job.id}`}
+              title={job.ref}
+              detail={`${job.status}${job.layers ? ` · ${job.layers} layers` : ""}${job.error ? ` · ${job.error}` : ""}`}
+              job={job}
+              progressLabel={`${job.ref} progress`}
+              cancelLabel={`Cancel pull of ${job.ref}`}
+              onCancel={ACTIVE_STATES.includes(job.status) ? () => doCancel(job.id) : undefined}
+            />
           ))}
         </section>
       )}
 
       {loading && (
         <div className="flex justify-center py-16">
-          <Loader2 className="animate-spin text-primary" size={32} />
+          <Spinner size="lg" label={t("common.loading")} />
         </div>
       )}
-      {error && (
-        <div className="p-4 rounded-lg bg-danger/10 border border-danger/30 text-danger flex items-center gap-3">
-          <AlertCircle size={20} />
-          <span>{error}</span>
-        </div>
-      )}
+      <ErrorLine>{error}</ErrorLine>
 
       {rows.length > 0 && (
-        <div className="rounded-xl bg-surface border border-border overflow-x-auto">
+        <div className="rounded-md bg-surface border border-border overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-text-muted border-b border-border">
@@ -510,7 +484,7 @@ export default function EnginesPage() {
                           // versions, so the reference is what distinguishes them
                           // — for a screen reader as much as for a test.
                           aria-label={`Details for ${image.ref}`}
-                          className="flex items-center gap-2 text-left hover:text-primary transition-colors"
+                          className="flex items-center gap-2 text-left hover:text-blue2 transition-colors"
                         >
                           {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                           <span className="flex items-center gap-2">
@@ -541,9 +515,7 @@ export default function EnginesPage() {
                           <Toggle
                             on={effectiveEnabled(engine.engine)}
                             disabled={togglingEngine === engine.engine}
-                            onClick={() =>
-                              toggleEngineEnabled(engine.engine, !effectiveEnabled(engine.engine))
-                            }
+                            onChange={(next) => toggleEngineEnabled(engine.engine, next)}
                             label={t("engines.toggleLabel", { engine: engine.engine })}
                           />
                         )}
@@ -600,7 +572,7 @@ export default function EnginesPage() {
                         <button
                           aria-label={`Pull ${image.ref}`}
                           onClick={() => pull(image.ref)}
-                          className="p-1.5 rounded-lg text-text-muted hover:text-primary hover:bg-primary/10"
+                          className="p-1.5 rounded-sm text-text-muted hover:text-blue2 hover:bg-primary/10"
                         >
                           <RefreshCw size={15} />
                         </button>
@@ -610,7 +582,7 @@ export default function EnginesPage() {
                           aria-label={`Copy ${image.ref} to every node`}
                           title={t("engines.syncTitle")}
                           onClick={() => doSync(image.ref)}
-                          className="p-1.5 rounded-lg text-text-muted hover:text-primary hover:bg-primary/10"
+                          className="p-1.5 rounded-sm text-text-muted hover:text-blue2 hover:bg-primary/10"
                         >
                           <Server size={15} />
                         </button>
@@ -619,7 +591,7 @@ export default function EnginesPage() {
                         <button
                           aria-label={`Delete ${image.ref}`}
                           onClick={() => setDeleteTarget(row)}
-                          className="p-1.5 rounded-lg text-text-muted hover:text-danger hover:bg-danger/10"
+                          className="p-1.5 rounded-sm text-text-muted hover:text-danger hover:bg-danger/10"
                         >
                           <Trash2 size={15} />
                         </button>
@@ -686,35 +658,6 @@ export default function EnginesPage() {
   );
 }
 
-/** Same switch as Settings', copied rather than shared: that one is not
- * exported, and a component declared inside a render body would remount (and
- * lose focus) every render. */
-function Toggle({
-  on,
-  onClick,
-  label,
-  disabled,
-}: {
-  on: boolean;
-  onClick: () => void;
-  label: string;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={on}
-      aria-label={label}
-      disabled={disabled}
-      onClick={onClick}
-      className={`relative w-9 h-5 rounded-full transition-colors shrink-0 disabled:opacity-50 ${on ? "bg-primary" : "bg-border"}`}
-    >
-      <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${on ? "translate-x-4" : "translate-x-0"}`} />
-    </button>
-  );
-}
-
 /** What an engine is, and where its image is, under the row. */
 function EngineDetail({
   row,
@@ -759,8 +702,8 @@ function EngineDetail({
         <p className="font-medium text-sm">{t("engines.onNodes")}</p>
         {peerCount === 0 && <p className="text-text-muted">{t("engines.soloNode")}</p>}
         {peerCount > 0 && presence === "loading" && (
-          <p className="text-text-muted flex items-center gap-1.5">
-            <Loader2 className="animate-spin" size={12} />
+          <p className="text-muted flex items-center gap-1.5">
+            <Spinner size="sm" />
             {t("engines.asking")}
           </p>
         )}
@@ -770,13 +713,14 @@ function EngineDetail({
               <li key={node.node} className="flex items-center justify-between gap-3">
                 <span className="font-mono">{node.node}</span>
                 {node.error ? (
-                  <span className="text-warning">{t("engines.couldNotAsk")}</span>
+                  <NodeState state="unknown" label={t("engines.couldNotAsk")} title={node.error} />
                 ) : node.present ? (
-                  <span className={node.matches ? "text-success" : "text-warning"}>
-                    {node.matches ? t("engines.sameImage") : t("engines.differentImage")}
-                  </span>
+                  <NodeState
+                    state={node.matches ? "ok" : "warn"}
+                    label={node.matches ? t("engines.sameImage") : t("engines.differentImage")}
+                  />
                 ) : (
-                  <span className="text-text-muted">{t("engines.absent")}</span>
+                  <NodeState state="unknown" label={t("engines.absent")} />
                 )}
               </li>
             ))}
@@ -802,58 +746,26 @@ export function DeleteDialog({
   onConfirm: (nodes: string[]) => void;
 }) {
   const { t } = useI18n();
-  // Preselected to the nodes that actually hold it, when we know: the point of
-  // the dialog is reclaiming disk, and a node without the image has none to
-  // reclaim.
-  const holders = useMemo(() => {
-    if (!presence || presence === "loading") return peers;
-    return presence.nodes.filter((n) => n.present).map((n) => n.node);
-  }, [presence, peers]);
-  const [selected, setSelected] = useState<string[]>(holders);
 
   return (
-    <Modal open onClose={onClose} title={t("engines.deleteTitle")}>
-      <div className="space-y-4">
-        <p className="text-sm text-text-muted">
-          {t("engines.deleteBody", { ref: row.image.ref, size: formatSize(row.image.size_bytes) })}
-        </p>
-
-        {peers.length > 0 && (
-          <fieldset className="space-y-2">
-            <legend className="text-sm font-medium mb-1">{t("engines.alsoRemoveFrom")}</legend>
-            {peers.map((node) => (
-              <label key={node} className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={selected.includes(node)}
-                  onChange={(e) =>
-                    setSelected((current) =>
-                      e.target.checked ? [...current, node] : current.filter((n) => n !== node),
-                    )
-                  }
-                />
-                <span className="font-mono">{node}</span>
-                {!holders.includes(node) && (
-                  <span className="text-xs text-text-muted">{t("engines.notThere")}</span>
-                )}
-              </label>
-            ))}
-          </fieldset>
-        )}
-
-        <div className="flex justify-end gap-2">
-          <button onClick={onClose} className="px-4 py-2 rounded-lg border border-border text-sm">
-            {t("common.cancel")}
-          </button>
-          <button
-            onClick={() => onConfirm(selected)}
-            className="px-4 py-2 rounded-lg bg-danger/10 text-danger border border-danger/30 hover:bg-danger/20 text-sm"
-          >
-            {t("engines.deleteConfirm")}
-          </button>
-        </div>
-      </div>
-    </Modal>
+    <NodeScopedDialog
+      verb="delete"
+      title={t("engines.deleteTitle")}
+      body={t("engines.deleteBody", { ref: row.image.ref, size: formatSize(row.image.size_bytes) })}
+      legend={t("engines.alsoRemoveFrom")}
+      nodes={peers}
+      presence={presence}
+      // Until a node has answered, the dialog offers every peer: this is a
+      // reclaim-disk dialog, and leaving a node out because nobody asked is
+      // how a cluster keeps a 26 GB image nobody can see.
+      selectionWhenUnknown={peers}
+      noteFor={(_node, holds) =>
+        holds === false ? <span className="text-[13px] text-muted">{t("engines.notThere")}</span> : null
+      }
+      confirmLabel={t("engines.deleteConfirm")}
+      onConfirm={(nodes) => onConfirm(nodes)}
+      onClose={onClose}
+    />
   );
 }
 
@@ -900,68 +812,67 @@ export function RegistrySettings({
     }
   };
 
-  const inputCls = "w-full px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm";
-
   return (
-    <section className="p-5 rounded-xl bg-surface border border-border space-y-4">
-      <div className="flex items-center justify-between pb-3 border-b border-border">
+    <section className="p-5 rounded-md bg-surface border border-line space-y-4">
+      <div className="flex items-center justify-between pb-3 border-b border-line">
         <h3 className="font-semibold">{t("engines.registry")}</h3>
-        <button
-          onClick={onRefreshIndex}
-          disabled={refreshing}
-          className="px-2.5 py-1 rounded-lg border border-border hover:border-primary/50 text-text-muted hover:text-text text-xs transition-colors flex items-center gap-1.5 disabled:opacity-50"
-        >
-          <RefreshCw size={13} className={refreshing ? "animate-spin" : ""} />
+        <Button size="sm" icon={RefreshCw} loading={refreshing} onClick={onRefreshIndex}>
           {t("engines.refreshIndex")}
-        </button>
+        </Button>
       </div>
 
-      <div>
-        <label className="block text-sm font-medium mb-1" htmlFor="default-engine">{t("engines.defaultEngine")}</label>
-        <input
-          id="default-engine"
-          type="text"
-          value={form.default_engine ?? ""}
-          onChange={(e) => setForm({ ...form, default_engine: e.target.value })}
-          className={inputCls}
-          placeholder="vllm"
-        />
-      </div>
-
-      <div>
-        <label className="block text-sm font-medium mb-1" htmlFor="engine-indexes">{t("engines.indexes")}</label>
-        <textarea
-          id="engine-indexes"
-          rows={3}
-          value={(form.engine_indexes ?? []).join("\n")}
-          onChange={(e) => setForm({ ...form, engine_indexes: e.target.value.split("\n").map((l) => l.trim()).filter(Boolean) })}
-          className={`${inputCls} resize-y`}
-        />
-        <p className="text-xs text-text-muted mt-1">{t("engines.indexesHelp")}</p>
-      </div>
-
-      <div>
-        <label className="block text-sm font-medium mb-1" htmlFor="index-ttl">{t("engines.indexTtl")}</label>
-        <div className="flex items-center gap-2">
-          <input
-            id="index-ttl"
-            type="number"
-            min="0"
-            value={form.engine_index_cache_ttl_seconds ?? 3600}
-            onChange={(e) => setForm({ ...form, engine_index_cache_ttl_seconds: parseInt(e.target.value) || 0 })}
-            className="w-28 px-3 py-2 rounded-lg bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm"
+      <Field label={t("engines.defaultEngine")}>
+        {(control) => (
+          <Input
+            {...control}
+            mono
+            type="text"
+            value={form.default_engine ?? ""}
+            onChange={(e) => setForm({ ...form, default_engine: e.target.value })}
+            placeholder="vllm"
           />
-          <span className="text-sm text-text-muted">{t("engines.seconds")}</span>
-        </div>
-      </div>
+        )}
+      </Field>
 
-      <button
-        onClick={save}
-        disabled={saving}
-        className="px-4 py-2 rounded-lg bg-primary hover:bg-primary-hover disabled:opacity-50 text-white font-medium text-sm"
-      >
+      <Field label={t("engines.indexes")} hint={t("engines.indexesHelp")}>
+        {(control) => (
+          <Textarea
+            {...control}
+            mono
+            rows={3}
+            value={(form.engine_indexes ?? []).join("\n")}
+            onChange={(e) =>
+              setForm({
+                ...form,
+                engine_indexes: e.target.value.split("\n").map((l) => l.trim()).filter(Boolean),
+              })
+            }
+          />
+        )}
+      </Field>
+
+      <Field label={t("engines.indexTtl")}>
+        {(control) => (
+          <div className="flex items-center gap-2">
+            <Input
+              {...control}
+              mono
+              type="number"
+              min="0"
+              className="w-28"
+              value={form.engine_index_cache_ttl_seconds ?? 3600}
+              onChange={(e) =>
+                setForm({ ...form, engine_index_cache_ttl_seconds: parseInt(e.target.value) || 0 })
+              }
+            />
+            <span className="text-[14px] text-muted">{t("engines.seconds")}</span>
+          </div>
+        )}
+      </Field>
+
+      <Button variant="primary" loading={saving} onClick={save}>
         {saving ? t("common.saving") : saved ? t("common.saved") : t("engines.saveRegistry")}
-      </button>
+      </Button>
     </section>
   );
 }
