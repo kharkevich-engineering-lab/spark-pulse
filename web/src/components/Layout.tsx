@@ -256,15 +256,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             <strong className="text-[15px] font-bold tracking-[-0.01em] whitespace-nowrap max-[520px]:text-[13px]">
               {t("brand.product")}
             </strong>
-            <small className="mt-[3px] text-[9.5px] font-medium uppercase tracking-[0.22em] text-muted max-[520px]:text-[8.5px]">
-              {t("brand.company")}
-              {version && (
-                <>
-                  {" · "}
-                  <span>{version}</span>
-                </>
-              )}
-            </small>
+            {version && (
+              <small className="mt-[3px] text-[9.5px] font-medium uppercase tracking-[0.22em] text-muted max-[520px]:text-[8.5px]">
+                {version}
+              </small>
+            )}
           </span>
         </Link>
 
