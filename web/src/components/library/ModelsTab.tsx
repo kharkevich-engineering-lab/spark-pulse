@@ -47,7 +47,7 @@ import {
   type NodeCondition,
 } from "@/ui";
 import type {
-  CacheEntry,
+  CacheResponse,
   ModelDownloadJob,
   ModelEntry,
   ModelPresence,
@@ -139,7 +139,7 @@ export function describeWhere(
 
 export interface ModelsTabProps {
   models: UseQueryResult<ModelEntry[]>;
-  cache: UseQueryResult<{ entries: CacheEntry[] }>;
+  cache: UseQueryResult<CacheResponse>;
   /** `/cache` is still a bookmark: it opens this tab at the caches section. */
   scrollToCaches?: boolean;
 }

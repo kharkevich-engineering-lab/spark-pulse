@@ -23,7 +23,10 @@ page was single-node as a result. That is gone — `GetNodeStats` is a command
 now, so every node answers for itself and the control node is not a special
 case. The pre-flight's host probes followed: `tools.preflight` sends each one
 as a `RunHostProbe` command through the node's own agent, the control node over
-loopback, so it no longer shells out or logs in. What remains outside is
+loopback, so it no longer shells out or logs in. So did the caches: `tools.cache`
+walked and emptied `~/.cache` in this process, which made the Library's Caches
+section answer for the control node and call it the cluster, and it is now
+`ScanCache`/`CleanCache` on every node's own agent. What remains outside is
 `tools.discovery`, which enumerates this host's interfaces before there is any
 node to ask.
 """
@@ -64,7 +67,6 @@ MAY_TOUCH_THE_FILESYSTEM = {
         "its own directory under ~/.config/spark-pulse: the control sockets, "
         "and the known_hosts holding the keys bootstrap confirmed"
     ),
-    "cache.py": "this host's own caches, which the Cache page is about",
     "custom_files.py": "the operator's own recipe and mod directories",
     "hub_cache.py": "a standalone layout/verification module with no node in it",
     "oci_registry.py": "the control plane's own registry cache and recipe files",

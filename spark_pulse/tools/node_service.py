@@ -493,6 +493,14 @@ class NodeService(Protocol):
         """Run one read-only host diagnostic on the node (for the pre-flight)."""
         ...
 
+    def scan_cache(self, paths: list[str]) -> Any:
+        """Measure the engine caches on the node."""
+        ...
+
+    def clean_cache(self, paths: list[str], include_hub: bool = False) -> Any:
+        """Empty the engine caches on the node."""
+        ...
+
 
 #: The method names the three implementations must agree on.
 NODE_SERVICE_METHODS: tuple[str, ...] = (
@@ -519,8 +527,8 @@ NODE_SERVICE_METHODS: tuple[str, ...] = (
 #: stricter meaning: every name in it must match ``DockerService``'s signature,
 #: which is what lets a caller hold a service without knowing which
 #: implementation it is. These have no Docker equivalent — they read the node's
-#: hardware and its model cache, and signal its processes — so asserting they
-#: match it would be asserting something false.
+#: hardware, its model cache and its engine caches, and signal its processes —
+#: so asserting they match it would be asserting something false.
 #:
 #: They still travel the same transport, are still answered by the same agent,
 #: and are still reached through the same resolver, which is the property that
@@ -529,6 +537,8 @@ NODE_MACHINE_METHODS: tuple[str, ...] = (
     "get_node_stats",
     "list_snapshot",
     "remove_snapshot",
+    "scan_cache",
+    "clean_cache",
     "terminate_process",
     "configure_fabric",
     "install_bundle",

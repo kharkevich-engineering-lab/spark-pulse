@@ -109,11 +109,10 @@
       "one": "{count} fichier",
       "other": "{count} fichiers"
     },
-    "confirmAllTitle": "Vider tous les caches",
-    "confirmAllBody": "Cela videra TOUS les caches. Cette action est irréversible.",
     "confirmOneTitle": "Vider le cache",
-    "confirmOneBody": "Vider le cache « {name} » ? Cette action est irréversible.",
-    "failed": "Échec"
+    "confirmOneBody": "Vider le cache « {name} » sur {node} ? Cette action est irréversible.",
+    "failed": "Échec",
+    "atLeast": "au moins {size}"
   },
   "errorBoundary": {
     "heading": "Une erreur est survenue",
@@ -1007,12 +1006,15 @@
   },
   "library": {
     "browse": "Parcourir",
+    "cacheUnreachable": "Injoignable",
     "caches": "Caches",
-    "cachesHint": "Caches de compilation et de téléchargement. En vider un coûte du temps, jamais un modèle.",
+    "cachesHint": "Caches des moteurs, par nœud. En vider un coûte du temps ; le cache de modèles se vide depuis sa propre carte.",
     "cancelPull": "Annuler la récupération de {ref}",
     "check": "Vérifier",
-    "cleanCaches": "Vider les caches",
-    "cleanOne": "Vider le cache {name}",
+    "cleanNode": "Tout vider sur ce nœud",
+    "cleanNodeBody": "Vider tous les caches de {node} sauf les modèles téléchargés ? Cette action est irréversible.",
+    "cleanNodeTitle": "Vider les caches de ce nœud",
+    "cleanOne": "Vider le cache {name} sur {node}",
     "colQuant": "Quantif.",
     "colWhere": "Où",
     "connectionFailed": "Le registre n'a pas répondu",

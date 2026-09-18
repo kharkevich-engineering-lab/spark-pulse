@@ -88,6 +88,13 @@ def docker_for(node: Node) -> Any:
         # preflight report a 26 GB download as already done — the one answer
         # that check exists to give.
         service = MockDockerService(MockDockerClient(seeded_images=False))
+        # A peer that has served fewer models holds less in its caches.
+        # Identical numbers on every node would make the per-node split
+        # invisible on the one page that is about exactly that.
+        service.caches = {
+            path: (size // 3, files // 2)
+            for path, (size, files) in service.caches.items()
+        }
         _peers[key] = service
     return service
 

@@ -62,6 +62,16 @@ Deleting asks which machines. A model replicated to four Sparks is on four disks
 
 Naming a revision leaves the shared blobs alone, because they belong to the revisions that stay. Naming none takes the repository.
 
+## Caches, per node
+
+Under the catalogue: the four directories an engine fills while it serves — the Hugging Face hub cache, vLLM's, FlashInfer's JIT cache and Triton's — **one sub-section per node**, each with its own total, its own cards and its own buttons.
+
+They were single-node until 1.29. The control plane walked its own `~/.cache` and the page presented the answer as the cluster's, so on a two-node install the section described one machine and did not say which. Every node is now asked through its own agent (`ScanCache`), the control node over loopback exactly as a peer is. What the control plane owns is the *definitions* — which directories are caches, what they are called; what only the node knows is where its `$HOME` is, so the paths travel as `~/…` and each node expands them against its own. The card shows the path that node resolved.
+
+A node that could not be asked keeps its heading and says why — an agent too old to know the operation says so, and the remedy is to update it. Unknown is not empty: a section quietly showing four zeroes would report a full disk as free.
+
+Emptying is per node, and never removes a directory — only what is in it, because a cache directory that vanishes is one Docker recreates owned by root. **Clean all on this node** sweeps every cache on that machine *except the models*: deleting 48 GB of downloaded weights is a different request from freeing some JIT artefacts, and it belongs to the Models section above, which knows which nodes hold a copy. The agent enforces that itself — it refuses the hub cache unless the request explicitly names it, refuses any path outside the agent user's home, and unlinks a symlink rather than following it out.
+
 ## Sources
 
 Where a model id is resolved from — the hub, a mirror, a `local_path` directory — is configuration, and is edited in Settings. The download row here offers the list; it does not own it.

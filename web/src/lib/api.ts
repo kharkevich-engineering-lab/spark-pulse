@@ -1,4 +1,4 @@
-import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheEntry, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, CustomRecipeInfo, CustomModInfo, ModFileMap, BenchmarkResult, OciRegistry, OciRegistryUpdate, OciCollection, OciCollectionRecipe, OciRecipeMeta, OciUpdateCheck, OciUpdateApply, OciUpdateResult, OciAutoUpdateSettings, EngineListResponse, EngineDetail, EngineIndexRefreshResult, RenderRequest, RenderResult, ModelEntry, ModelSource, ModelDownloadJob, ModelSyncResult, ModelPresence, ModelDeleteResult, ImageEntry, ImagePullJob, ImageSyncResult, ImagePresence, ImageDeleteResult, DeployPlan, DeployPlanRequest, PreflightReport, EngineMetricsWindow, ScheduledDeploy } from "@/lib/types";
+import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheResponse, CacheCleanResponse, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, CustomRecipeInfo, CustomModInfo, ModFileMap, BenchmarkResult, OciRegistry, OciRegistryUpdate, OciCollection, OciCollectionRecipe, OciRecipeMeta, OciUpdateCheck, OciUpdateApply, OciUpdateResult, OciAutoUpdateSettings, EngineListResponse, EngineDetail, EngineIndexRefreshResult, RenderRequest, RenderResult, ModelEntry, ModelSource, ModelDownloadJob, ModelSyncResult, ModelPresence, ModelDeleteResult, ImageEntry, ImagePullJob, ImageSyncResult, ImagePresence, ImageDeleteResult, DeployPlan, DeployPlanRequest, PreflightReport, EngineMetricsWindow, ScheduledDeploy } from "@/lib/types";
 
 const API = "/api";
 
@@ -127,8 +127,9 @@ export async function killGpuProcess(pid: number, node = ""): Promise<{ killed: 
 
 // ── Cache ───────────────────────────────────────────────────────────────────
 
-export async function fetchCache(signal?: AbortSignal): Promise<{ entries: CacheEntry[] }> { return json<{ entries: CacheEntry[] }>("/cache", { signal }); }
-export async function cleanCache(targets: string[]): Promise<Record<string, string>> { return json<Record<string, string>>("/cache/clean", { method: "POST", body: JSON.stringify({ targets }) }); }
+export async function fetchCache(signal?: AbortSignal): Promise<CacheResponse> { return json<CacheResponse>("/cache", { signal }); }
+export async function cleanCache(node: string, name: string): Promise<CacheCleanResponse> { return json<CacheCleanResponse>("/cache/clean", { method: "POST", body: JSON.stringify({ node, name }) }); }
+export async function cleanAllCaches(node: string): Promise<CacheCleanResponse> { return json<CacheCleanResponse>("/cache/clean-all", { method: "POST", body: JSON.stringify({ node }) }); }
 
 // ── Settings ────────────────────────────────────────────────────────────────
 

@@ -133,7 +133,7 @@ class PullProgress(_message.Message):
     def __init__(self, ref: _Optional[str] = ..., status: _Optional[str] = ..., layers: _Optional[int] = ..., bytes_done: _Optional[int] = ..., bytes_total: _Optional[int] = ..., percent: _Optional[float] = ...) -> None: ...
 
 class Command(_message.Message):
-    __slots__ = ("command_id", "epoch", "timeout_seconds", "run_container", "ensure_directories", "stop_container", "get_container_status", "exec_in_container", "copy_to_container", "copy_dir_to_container", "get_logs", "list_managed_containers", "get_container_by_deployment", "get_container_by_recipe", "image_exists", "image_info", "list_images", "pull_image", "remove_image", "get_facts", "get_node_stats", "list_snapshot", "remove_snapshot", "terminate_process", "configure_fabric", "install_bundle", "run_host_probe")
+    __slots__ = ("command_id", "epoch", "timeout_seconds", "run_container", "ensure_directories", "stop_container", "get_container_status", "exec_in_container", "copy_to_container", "copy_dir_to_container", "get_logs", "list_managed_containers", "get_container_by_deployment", "get_container_by_recipe", "image_exists", "image_info", "list_images", "pull_image", "remove_image", "get_facts", "get_node_stats", "list_snapshot", "remove_snapshot", "terminate_process", "configure_fabric", "install_bundle", "run_host_probe", "scan_cache", "clean_cache")
     COMMAND_ID_FIELD_NUMBER: _ClassVar[int]
     EPOCH_FIELD_NUMBER: _ClassVar[int]
     TIMEOUT_SECONDS_FIELD_NUMBER: _ClassVar[int]
@@ -161,6 +161,8 @@ class Command(_message.Message):
     CONFIGURE_FABRIC_FIELD_NUMBER: _ClassVar[int]
     INSTALL_BUNDLE_FIELD_NUMBER: _ClassVar[int]
     RUN_HOST_PROBE_FIELD_NUMBER: _ClassVar[int]
+    SCAN_CACHE_FIELD_NUMBER: _ClassVar[int]
+    CLEAN_CACHE_FIELD_NUMBER: _ClassVar[int]
     command_id: str
     epoch: int
     timeout_seconds: float
@@ -188,10 +190,12 @@ class Command(_message.Message):
     configure_fabric: ConfigureFabric
     install_bundle: InstallBundle
     run_host_probe: RunHostProbe
-    def __init__(self, command_id: _Optional[str] = ..., epoch: _Optional[int] = ..., timeout_seconds: _Optional[float] = ..., run_container: _Optional[_Union[RunContainer, _Mapping]] = ..., ensure_directories: _Optional[_Union[EnsureDirectories, _Mapping]] = ..., stop_container: _Optional[_Union[StopContainer, _Mapping]] = ..., get_container_status: _Optional[_Union[GetContainerStatus, _Mapping]] = ..., exec_in_container: _Optional[_Union[ExecInContainer, _Mapping]] = ..., copy_to_container: _Optional[_Union[CopyToContainer, _Mapping]] = ..., copy_dir_to_container: _Optional[_Union[CopyDirToContainer, _Mapping]] = ..., get_logs: _Optional[_Union[GetLogs, _Mapping]] = ..., list_managed_containers: _Optional[_Union[ListManagedContainers, _Mapping]] = ..., get_container_by_deployment: _Optional[_Union[GetContainerByDeployment, _Mapping]] = ..., get_container_by_recipe: _Optional[_Union[GetContainerByRecipe, _Mapping]] = ..., image_exists: _Optional[_Union[ImageExists, _Mapping]] = ..., image_info: _Optional[_Union[ImageInfo, _Mapping]] = ..., list_images: _Optional[_Union[ListImages, _Mapping]] = ..., pull_image: _Optional[_Union[PullImage, _Mapping]] = ..., remove_image: _Optional[_Union[RemoveImage, _Mapping]] = ..., get_facts: _Optional[_Union[GetFacts, _Mapping]] = ..., get_node_stats: _Optional[_Union[GetNodeStats, _Mapping]] = ..., list_snapshot: _Optional[_Union[ListSnapshot, _Mapping]] = ..., remove_snapshot: _Optional[_Union[RemoveSnapshot, _Mapping]] = ..., terminate_process: _Optional[_Union[TerminateProcess, _Mapping]] = ..., configure_fabric: _Optional[_Union[ConfigureFabric, _Mapping]] = ..., install_bundle: _Optional[_Union[InstallBundle, _Mapping]] = ..., run_host_probe: _Optional[_Union[RunHostProbe, _Mapping]] = ...) -> None: ...
+    scan_cache: ScanCache
+    clean_cache: CleanCache
+    def __init__(self, command_id: _Optional[str] = ..., epoch: _Optional[int] = ..., timeout_seconds: _Optional[float] = ..., run_container: _Optional[_Union[RunContainer, _Mapping]] = ..., ensure_directories: _Optional[_Union[EnsureDirectories, _Mapping]] = ..., stop_container: _Optional[_Union[StopContainer, _Mapping]] = ..., get_container_status: _Optional[_Union[GetContainerStatus, _Mapping]] = ..., exec_in_container: _Optional[_Union[ExecInContainer, _Mapping]] = ..., copy_to_container: _Optional[_Union[CopyToContainer, _Mapping]] = ..., copy_dir_to_container: _Optional[_Union[CopyDirToContainer, _Mapping]] = ..., get_logs: _Optional[_Union[GetLogs, _Mapping]] = ..., list_managed_containers: _Optional[_Union[ListManagedContainers, _Mapping]] = ..., get_container_by_deployment: _Optional[_Union[GetContainerByDeployment, _Mapping]] = ..., get_container_by_recipe: _Optional[_Union[GetContainerByRecipe, _Mapping]] = ..., image_exists: _Optional[_Union[ImageExists, _Mapping]] = ..., image_info: _Optional[_Union[ImageInfo, _Mapping]] = ..., list_images: _Optional[_Union[ListImages, _Mapping]] = ..., pull_image: _Optional[_Union[PullImage, _Mapping]] = ..., remove_image: _Optional[_Union[RemoveImage, _Mapping]] = ..., get_facts: _Optional[_Union[GetFacts, _Mapping]] = ..., get_node_stats: _Optional[_Union[GetNodeStats, _Mapping]] = ..., list_snapshot: _Optional[_Union[ListSnapshot, _Mapping]] = ..., remove_snapshot: _Optional[_Union[RemoveSnapshot, _Mapping]] = ..., terminate_process: _Optional[_Union[TerminateProcess, _Mapping]] = ..., configure_fabric: _Optional[_Union[ConfigureFabric, _Mapping]] = ..., install_bundle: _Optional[_Union[InstallBundle, _Mapping]] = ..., run_host_probe: _Optional[_Union[RunHostProbe, _Mapping]] = ..., scan_cache: _Optional[_Union[ScanCache, _Mapping]] = ..., clean_cache: _Optional[_Union[CleanCache, _Mapping]] = ...) -> None: ...
 
 class CommandResult(_message.Message):
-    __slots__ = ("command_id", "failure", "container", "strings", "boolean", "status", "exec", "text", "containers", "image", "images", "pull", "facts", "stats", "snapshot", "removal", "termination", "fabric", "bundle_installed", "host_probe")
+    __slots__ = ("command_id", "failure", "container", "strings", "boolean", "status", "exec", "text", "containers", "image", "images", "pull", "facts", "stats", "snapshot", "removal", "termination", "fabric", "bundle_installed", "host_probe", "cache_scan", "cache_clean")
     COMMAND_ID_FIELD_NUMBER: _ClassVar[int]
     FAILURE_FIELD_NUMBER: _ClassVar[int]
     CONTAINER_FIELD_NUMBER: _ClassVar[int]
@@ -212,6 +216,8 @@ class CommandResult(_message.Message):
     FABRIC_FIELD_NUMBER: _ClassVar[int]
     BUNDLE_INSTALLED_FIELD_NUMBER: _ClassVar[int]
     HOST_PROBE_FIELD_NUMBER: _ClassVar[int]
+    CACHE_SCAN_FIELD_NUMBER: _ClassVar[int]
+    CACHE_CLEAN_FIELD_NUMBER: _ClassVar[int]
     command_id: str
     failure: CommandFailure
     container: ContainerRef
@@ -232,7 +238,9 @@ class CommandResult(_message.Message):
     fabric: FabricResult
     bundle_installed: BundleInstalled
     host_probe: HostProbeResult
-    def __init__(self, command_id: _Optional[str] = ..., failure: _Optional[_Union[CommandFailure, _Mapping]] = ..., container: _Optional[_Union[ContainerRef, _Mapping]] = ..., strings: _Optional[_Union[StringList, _Mapping]] = ..., boolean: _Optional[_Union[BoolValue, _Mapping]] = ..., status: _Optional[_Union[ContainerStatus, _Mapping]] = ..., exec: _Optional[_Union[ExecOutcome, _Mapping]] = ..., text: _Optional[_Union[StringValue, _Mapping]] = ..., containers: _Optional[_Union[ContainerList, _Mapping]] = ..., image: _Optional[_Union[ImageRef, _Mapping]] = ..., images: _Optional[_Union[ImageList, _Mapping]] = ..., pull: _Optional[_Union[PullOutcome, _Mapping]] = ..., facts: _Optional[_Union[NodeFacts, _Mapping]] = ..., stats: _Optional[_Union[NodeStats, _Mapping]] = ..., snapshot: _Optional[_Union[SnapshotListing, _Mapping]] = ..., removal: _Optional[_Union[SnapshotRemoval, _Mapping]] = ..., termination: _Optional[_Union[ProcessTermination, _Mapping]] = ..., fabric: _Optional[_Union[FabricResult, _Mapping]] = ..., bundle_installed: _Optional[_Union[BundleInstalled, _Mapping]] = ..., host_probe: _Optional[_Union[HostProbeResult, _Mapping]] = ...) -> None: ...
+    cache_scan: CacheScan
+    cache_clean: CacheClean
+    def __init__(self, command_id: _Optional[str] = ..., failure: _Optional[_Union[CommandFailure, _Mapping]] = ..., container: _Optional[_Union[ContainerRef, _Mapping]] = ..., strings: _Optional[_Union[StringList, _Mapping]] = ..., boolean: _Optional[_Union[BoolValue, _Mapping]] = ..., status: _Optional[_Union[ContainerStatus, _Mapping]] = ..., exec: _Optional[_Union[ExecOutcome, _Mapping]] = ..., text: _Optional[_Union[StringValue, _Mapping]] = ..., containers: _Optional[_Union[ContainerList, _Mapping]] = ..., image: _Optional[_Union[ImageRef, _Mapping]] = ..., images: _Optional[_Union[ImageList, _Mapping]] = ..., pull: _Optional[_Union[PullOutcome, _Mapping]] = ..., facts: _Optional[_Union[NodeFacts, _Mapping]] = ..., stats: _Optional[_Union[NodeStats, _Mapping]] = ..., snapshot: _Optional[_Union[SnapshotListing, _Mapping]] = ..., removal: _Optional[_Union[SnapshotRemoval, _Mapping]] = ..., termination: _Optional[_Union[ProcessTermination, _Mapping]] = ..., fabric: _Optional[_Union[FabricResult, _Mapping]] = ..., bundle_installed: _Optional[_Union[BundleInstalled, _Mapping]] = ..., host_probe: _Optional[_Union[HostProbeResult, _Mapping]] = ..., cache_scan: _Optional[_Union[CacheScan, _Mapping]] = ..., cache_clean: _Optional[_Union[CacheClean, _Mapping]] = ...) -> None: ...
 
 class CommandFailure(_message.Message):
     __slots__ = ("type", "message")
@@ -750,6 +758,60 @@ class HostProbeResult(_message.Message):
     stdout: str
     stderr: str
     def __init__(self, exit_code: _Optional[int] = ..., stdout: _Optional[str] = ..., stderr: _Optional[str] = ...) -> None: ...
+
+class ScanCache(_message.Message):
+    __slots__ = ("paths",)
+    PATHS_FIELD_NUMBER: _ClassVar[int]
+    paths: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, paths: _Optional[_Iterable[str]] = ...) -> None: ...
+
+class CacheScan(_message.Message):
+    __slots__ = ("dirs",)
+    DIRS_FIELD_NUMBER: _ClassVar[int]
+    dirs: _containers.RepeatedCompositeFieldContainer[CacheDir]
+    def __init__(self, dirs: _Optional[_Iterable[_Union[CacheDir, _Mapping]]] = ...) -> None: ...
+
+class CacheDir(_message.Message):
+    __slots__ = ("path", "exists", "bytes", "files", "error", "truncated")
+    PATH_FIELD_NUMBER: _ClassVar[int]
+    EXISTS_FIELD_NUMBER: _ClassVar[int]
+    BYTES_FIELD_NUMBER: _ClassVar[int]
+    FILES_FIELD_NUMBER: _ClassVar[int]
+    ERROR_FIELD_NUMBER: _ClassVar[int]
+    TRUNCATED_FIELD_NUMBER: _ClassVar[int]
+    path: str
+    exists: bool
+    bytes: int
+    files: int
+    error: str
+    truncated: bool
+    def __init__(self, path: _Optional[str] = ..., exists: _Optional[bool] = ..., bytes: _Optional[int] = ..., files: _Optional[int] = ..., error: _Optional[str] = ..., truncated: _Optional[bool] = ...) -> None: ...
+
+class CleanCache(_message.Message):
+    __slots__ = ("paths", "include_hub")
+    PATHS_FIELD_NUMBER: _ClassVar[int]
+    INCLUDE_HUB_FIELD_NUMBER: _ClassVar[int]
+    paths: _containers.RepeatedScalarFieldContainer[str]
+    include_hub: bool
+    def __init__(self, paths: _Optional[_Iterable[str]] = ..., include_hub: _Optional[bool] = ...) -> None: ...
+
+class CacheClean(_message.Message):
+    __slots__ = ("results",)
+    RESULTS_FIELD_NUMBER: _ClassVar[int]
+    results: _containers.RepeatedCompositeFieldContainer[CacheDirResult]
+    def __init__(self, results: _Optional[_Iterable[_Union[CacheDirResult, _Mapping]]] = ...) -> None: ...
+
+class CacheDirResult(_message.Message):
+    __slots__ = ("path", "removed", "freed_bytes", "error")
+    PATH_FIELD_NUMBER: _ClassVar[int]
+    REMOVED_FIELD_NUMBER: _ClassVar[int]
+    FREED_BYTES_FIELD_NUMBER: _ClassVar[int]
+    ERROR_FIELD_NUMBER: _ClassVar[int]
+    path: str
+    removed: bool
+    freed_bytes: int
+    error: str
+    def __init__(self, path: _Optional[str] = ..., removed: _Optional[bool] = ..., freed_bytes: _Optional[int] = ..., error: _Optional[str] = ...) -> None: ...
 
 class ConfigureFabric(_message.Message):
     __slots__ = ("interfaces", "peers")

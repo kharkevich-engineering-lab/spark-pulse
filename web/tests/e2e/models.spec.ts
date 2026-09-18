@@ -22,6 +22,14 @@ interface CacheEntry {
   size_bytes: number;
 }
 
+interface CacheNode {
+  node_id: string;
+  name: string;
+  reachable: boolean;
+  total_bytes: number;
+  dirs: CacheEntry[];
+}
+
 /** Cards under 900px, a table above it — one layout at a time, never both. */
 async function isNarrow(page: import("@playwright/test").Page): Promise<boolean> {
   return (page.viewportSize()?.width ?? 1280) < 900;
@@ -103,11 +111,16 @@ test("offers the configured sources, and says where they are edited", async ({ p
   await expectNoCrash(page);
 });
 
-test("keeps the old /cache address, on the caches section", async ({ page, request }) => {
+test("keeps the old /cache address, on the caches section, one node at a time", async ({
+  page,
+  request,
+}) => {
   const response = await request.get("/api/cache");
   expect(response.ok(), "GET /api/cache should succeed").toBeTruthy();
-  const { entries } = (await response.json()) as { entries: CacheEntry[] };
-  expect(entries.length, "simulation mode should serve cache entries").toBeGreaterThan(0);
+  const { nodes } = (await response.json()) as { nodes: CacheNode[] };
+  // The simulated fleet is two Sparks, and the section is about which machine
+  // is holding the bytes — one node would not exercise that at all.
+  expect(nodes.length, "simulation mode should serve two nodes").toBeGreaterThan(1);
 
   await gotoPage(page, "/cache");
   await expect(page.getByRole("heading", { name: "What is on disk.", exact: true })).toBeVisible();
@@ -118,24 +131,39 @@ test("keeps the old /cache address, on the caches section", async ({ page, reque
 
   const caches = page.getByRole("heading", { name: "Caches", exact: true });
   await expect(caches).toBeVisible();
-  for (const entry of entries) {
-    const card = page.getByTestId(`cache-${entry.name}`);
-    await expect(card).toContainText(entry.name);
-    await expect(card).toContainText(entry.path);
+  for (const node of nodes) {
+    const section = page.getByTestId(`cache-node-${node.node_id}`);
+    await expect(section).toContainText(node.name);
+    for (const entry of node.dirs) {
+      const card = page.getByTestId(`cache-${node.node_id}-${entry.name}`);
+      // The path the *node* resolved, not the `~/` form that was sent to it.
+      await expect(card).toContainText(entry.path);
+      expect(entry.path.startsWith("~")).toBeFalsy();
+    }
   }
   await expectNoCrash(page);
 });
 
-test("confirms before emptying one cache", async ({ page, request }) => {
-  const { entries } = (await (await request.get("/api/cache")).json()) as { entries: CacheEntry[] };
-  const target = entries[0];
+test("confirms before emptying one cache, and empties it on the node named", async ({
+  page,
+  request,
+}) => {
+  const { nodes } = (await (await request.get("/api/cache")).json()) as { nodes: CacheNode[] };
+  // The peer, not the control node: a clean that names no machine is exactly
+  // what this section stopped doing, and the control node would hide it.
+  const node = nodes.filter((one) => one.reachable).at(-1)!;
+  const target = node.dirs.find((entry) => entry.name === "Triton Cache")!;
 
   await gotoPage(page, "/cache");
-  await page.getByRole("button", { name: `Clean the ${target.name} cache` }).click();
+  await page
+    .getByRole("button", { name: `Clean the ${target.name} cache on ${node.name}` })
+    .click();
 
-  // Nothing goes until it is confirmed, and the dialog names which one.
+  // Nothing goes until it is confirmed, and the dialog names the cache and the
+  // machine it is on.
   const dialog = page.getByRole("dialog");
   await expect(dialog).toContainText(target.name);
+  await expect(dialog).toContainText(node.name);
 
   const posted = page.waitForResponse(
     (r) => r.url().includes("/api/cache/clean") && r.request().method() === "POST",
@@ -143,16 +171,26 @@ test("confirms before emptying one cache", async ({ page, request }) => {
   await dialog.getByRole("button", { name: "Clean", exact: true }).click();
   const response = await posted;
   expect(response.ok(), "POST /api/cache/clean should succeed").toBeTruthy();
-  expect(JSON.parse(response.request().postData() ?? "{}")).toEqual({ targets: [target.name] });
+  expect(JSON.parse(response.request().postData() ?? "{}")).toEqual({
+    node: node.node_id,
+    name: target.name,
+  });
   await expectNoCrash(page);
 });
 
-test("backs out of emptying every cache", async ({ page }) => {
+test("backs out of emptying every cache on a node", async ({ page, request }) => {
+  const { nodes } = (await (await request.get("/api/cache")).json()) as { nodes: CacheNode[] };
+  const node = nodes[0];
+
   await gotoPage(page, "/models");
-  await page.getByRole("button", { name: "Clean caches" }).click();
+  await page
+    .getByTestId(`cache-node-${node.node_id}`)
+    .getByRole("button", { name: "Clean all on this node" })
+    .click();
 
   const dialog = page.getByRole("dialog");
-  await expect(dialog).toContainText(/ALL caches/);
+  await expect(dialog).toContainText(node.name);
+  await expect(dialog).toContainText(/except the downloaded models/);
   await dialog.getByRole("button", { name: "Cancel" }).click();
 
   await expect(page.getByRole("dialog")).toHaveCount(0);
