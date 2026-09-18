@@ -914,7 +914,7 @@
   },
   "fabric": {
     "heading": "Fabric ConnectX",
-    "subtitle": "Les ports ConnectX-7, tels que l'agent de chaque nœud les rapporte, et les adresses que le guide réseau de spark-vllm-docker leur donne.",
+    "subtitle": "Les ports ConnectX-7, tels que l'agent de chaque nœud les rapporte, et les adresses que le schéma leur donne : un /24 par câble, .11/.12/.13, MTU 9000.",
     "refresh": "Actualiser",
     "noTransport": "Le transport des agents ne tourne pas, donc les ports d'aucun nœud ne sont connus.",
     "noPortsUp": "Pas de câble",

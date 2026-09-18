@@ -413,25 +413,21 @@ class TestConfigExposesRuntime:
         assert data["deploy_ready_timeout_seconds"] == 900
 
 
-class TestRuntimeFlagValidation:
-    """``native`` is the only runtime, so nothing else can be selected.
+class TestRuntimeIsAConstant:
+    """``native`` is the only runtime, and it is not a setting.
 
-    The fallback used to be ``upstream``, on the reasoning that a typo must
-    never silently switch the deploy path. There is one path now, and an
-    operator upgrading with ``runtime: upstream`` still in their settings.json
-    must land on it rather than on a runtime that was deleted.
+    It was one once, resolved from settings.json or ``SPARK_PULSE_RUNTIME``
+    with anything unrecognised falling back to ``native``. There is one deploy
+    path, so there is nothing to select: the value is a constant an operator
+    can read and cannot set.
     """
 
-    def test_an_unknown_runtime_falls_back_to_native(self):
+    def test_nothing_in_the_environment_can_change_it(self):
         with patch.dict("os.environ", {"SPARK_PULSE_RUNTIME": "nonsense"}):
             assert config.runtime == "native"
 
-    def test_a_stale_upstream_setting_resolves_to_native(self):
-        with patch.dict("os.environ", {"SPARK_PULSE_RUNTIME": "upstream"}):
-            assert config.runtime == "native"
-
-    def test_the_env_var_selects_native(self):
-        with patch.dict("os.environ", {"SPARK_PULSE_RUNTIME": "native"}):
+    def test_nothing_in_settings_can_change_it(self):
+        with patch.dict(config._data, {"runtime": "nonsense"}):
             assert config.runtime == "native"
 
 

@@ -43,7 +43,7 @@ def sim_client(app):
         yield TestClient(app)
 
 
-def _meta(name="spark-vllm-7b.yaml", local_changes=False):
+def _meta(name="qwen3-8b.yaml", local_changes=False):
     return RecipeMeta(
         name=name,
         source="spark-official",
@@ -309,7 +309,7 @@ class TestCollections:
 class TestCollectionRecipes:
     def test_recipes_are_serialised_with_placement_flags(self, client):
         recipe = CollectionRecipe(
-            name="spark-vllm-7b",
+            name="qwen3-8b",
             description="Llama 3.1 8B",
             model="meta-llama/Llama-3.1-8B-Instruct",
             container="vllm-node",
@@ -325,7 +325,7 @@ class TestCollectionRecipes:
         assert response.status_code == 200
         assert response.json() == [
             {
-                "name": "spark-vllm-7b",
+                "name": "qwen3-8b",
                 "description": "Llama 3.1 8B",
                 "model": "meta-llama/Llama-3.1-8B-Instruct",
                 "container": "vllm-node",
@@ -630,7 +630,7 @@ class TestMetadata:
         assert response.status_code == 200
         assert response.json() == [
             {
-                "name": "spark-vllm-7b.yaml",
+                "name": "qwen3-8b.yaml",
                 "source": "spark-official",
                 "collection": "spark-recipes",
                 "version": "1.0.0",
@@ -645,11 +645,11 @@ class TestMetadata:
         with patch.object(
             oci_router, "get_oci_meta", return_value=_meta(local_changes=True)
         ) as getter:
-            response = client.get("/api/oci/recipes/meta/spark-vllm-7b.yaml")
+            response = client.get("/api/oci/recipes/meta/qwen3-8b.yaml")
         assert response.status_code == 200
         assert response.json()["local_changes"] is True
         assert response.json()["collection"] == "spark-recipes"
-        assert getter.call_args == call("spark-vllm-7b.yaml")
+        assert getter.call_args == call("qwen3-8b.yaml")
 
     def test_a_recipe_without_metadata_is_404(self, client):
         with patch.object(oci_router, "get_oci_meta", return_value=None):
@@ -758,10 +758,12 @@ class TestCacheAndBackgroundUpdater:
 
 @pytest.fixture(autouse=True)
 def clean_mock_recipe_state():
-    """`_mock_installed_recipes` is process-wide; keep it per-test."""
-    oci_router._mock_installed_recipes.clear()
+    """The simulated install set is process-wide; keep it per-test."""
+    from spark_pulse.mock import oci_registry as simulated
+
+    simulated._INSTALLED_RECIPES.clear()
     yield
-    oci_router._mock_installed_recipes.clear()
+    simulated._INSTALLED_RECIPES.clear()
 
 
 class TestSimulationBranches:
@@ -797,12 +799,12 @@ class TestSimulationBranches:
         assert response.json() == []
 
     def test_installing_a_recipe_twice_is_idempotent(self, sim_client):
-        body = {"collection": "spark-recipes", "recipe": "spark-vllm-7b"}
+        body = {"collection": "spark-recipes", "recipe": "qwen3-8b"}
         first = sim_client.post("/api/oci/recipes/install", json=body)
         second = sim_client.post("/api/oci/recipes/install", json=body)
         assert first.json() == {
             "success": True,
-            "recipe": "spark-vllm-7b",
+            "recipe": "qwen3-8b",
             "action": "installed",
         }
         assert second.json()["action"] == "up_to_date"
@@ -810,23 +812,23 @@ class TestSimulationBranches:
     def test_updating_an_installed_recipe_reports_updated(self, sim_client):
         sim_client.post(
             "/api/oci/recipes/install",
-            json={"collection": "spark-recipes", "recipe": "spark-vllm-7b"},
+            json={"collection": "spark-recipes", "recipe": "qwen3-8b"},
         )
         response = sim_client.post(
-            "/api/oci/recipes/update/spark-vllm-7b",
+            "/api/oci/recipes/update/qwen3-8b",
             json={"collection": "spark-recipes"},
         )
         assert response.status_code == 200
         assert response.json() == {
             "success": True,
-            "recipe": "spark-vllm-7b",
+            "recipe": "qwen3-8b",
             "action": "updated",
         }
 
     def test_updating_a_recipe_that_was_never_installed_is_404(self, sim_client):
         response = sim_client.post(
-            "/api/oci/recipes/update/spark-vllm-7b",
+            "/api/oci/recipes/update/qwen3-8b",
             json={"collection": "spark-recipes"},
         )
         assert response.status_code == 404
-        assert response.json()["detail"] == "Recipe 'spark-vllm-7b' is not installed"
+        assert response.json()["detail"] == "Recipe 'qwen3-8b' is not installed"

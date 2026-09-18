@@ -9,12 +9,13 @@ read from. Without the allowlist, ``PUT /api/settings {"auth_enabled": false}``
 turns authentication off, which would make this endpoint the way past every
 other check in the system.
 
-**Reported but not editable** — the ``environment`` and ``cluster`` blocks. An
-operator has to be able to *see* how the process is configured to make sense of
-anything else: which database it is on, whether authentication is active, which
-origins may call it, and whether this control plane has a second node to deploy
-across. Showing that is not the same as letting the browser change it, and the
-ones that would be dangerous to change are exactly the ones worth showing.
+**Reported but not editable** — the ``environment`` and ``cluster`` blocks, and
+``runtime``. An operator has to be able to *see* how the process is configured
+to make sense of anything else: which database it is on, whether authentication
+is active, which origins may call it, whether this control plane has a second
+node to deploy across, and how a run is launched. Showing that is not the same
+as letting the browser change it, and the ones that would be dangerous — or, in
+``runtime``'s case, meaningless — to change are exactly the ones worth showing.
 
 **Secret** — never reported at all, only replaced. ``hf_token`` comes back
 masked; the raw value leaves this process only in a deployment's environment.
@@ -32,12 +33,14 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 _ALLOWED_SECRET_KEYS = {"hf_token"}
 
-#: The settings this endpoint may change — exactly the ones it reports back.
+#: The settings this endpoint may change.
 #:
-#: ``env_managed``, ``environment`` and ``cluster`` are absent on purpose: the
-#: first is a report of which fields the environment owns, the second a report
-#: of how the process is configured, the third a report of what the registry
-#: actually holds. None of them is a field.
+#: ``env_managed``, ``environment``, ``cluster`` and ``runtime`` are absent on
+#: purpose: the first is a report of which fields the environment owns, the
+#: second a report of how the process is configured, the third a report of what
+#: the registry actually holds, and the fourth a constant — there is one
+#: deployment runtime, so a value written here would select nothing. All four
+#: are reported and none of them is a field.
 _ALLOWED_SETTING_KEYS = frozenset(
     {
         "default_port_range_start",
@@ -46,7 +49,6 @@ _ALLOWED_SETTING_KEYS = frozenset(
         "cluster_enabled",
         "agent_auto_update",
         "job_retention_days",
-        "runtime",
         "deploy_ready_timeout_seconds",
         "docker_pull_stall_timeout_seconds",
         "benchmarking_enabled",
@@ -260,7 +262,7 @@ def get_settings():
 
 @router.put("")
 def update_settings(req: dict):
-    reported_only = {"env_managed", "environment", "cluster"}
+    reported_only = {"env_managed", "environment", "cluster", "runtime"}
     unknown = sorted(set(req) - _ALLOWED_SETTING_KEYS - reported_only)
     if unknown:
         raise HTTPException(

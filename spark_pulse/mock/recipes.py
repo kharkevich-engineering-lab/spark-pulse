@@ -154,7 +154,7 @@ def _canned(recipe: dict[str, Any]) -> dict[str, Any]:
     out.setdefault("engine", None)
     out.setdefault("engines", ["vllm"])
     out.setdefault("engine_specs", {})
-    out.setdefault("source", recipe_sources.SOURCE_UPSTREAM)
+    out.setdefault("source", recipe_sources.SOURCE_UNKNOWN)
     out["params"] = dict(recipe.get("defaults", {}))
     out["engine_support"] = recipe_sources.engine_support(out)
     return out

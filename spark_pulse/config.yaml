@@ -6,11 +6,6 @@ benchmarking_enabled: false
 # labels it experimental. Flip this once a two-node bring-up has been verified.
 cluster_experimental: true
 job_retention_days: 7
-# Deployment runtime. "native" — Spark Pulse drives Docker from Python via the
-# engine registry — is the only one left; the upstream run-recipe.sh path was
-# removed. Kept as a key because deployment records carry it, and because a
-# future runtime would be selected here.
-runtime: native
 deploy_ready_timeout_seconds: 900
 # Seconds of *silence* from a docker pull — no bytes at all, not merely slow
 # — before it is failed rather than left holding a worker thread. Ten minutes,

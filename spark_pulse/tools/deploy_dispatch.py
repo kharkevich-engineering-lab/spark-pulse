@@ -2,12 +2,10 @@
 
 There is a single way to run a deployment: :mod:`tools.native_runtime`, which
 drives Docker on every node through that node's agent. This module is what the
-routers and the MCP tools call, and all it does now is adapt: a plan comes back
-as a dict, a status read is a live one rather than the stored row.
-
-It used to *dispatch*, by the record's own ``runtime`` field, because a
-deployment made by the removed ``run-recipe.sh`` runner could still be on disk
-with a process still serving. That branch is gone with the records it was for.
+routers and the MCP tools call, and all it does is adapt: a plan comes back as
+a dict, a status read is a live one rather than the stored row. Nothing here
+branches on a record's ``runtime`` field — that field is a note about how a run
+was made, not a choice about where to send it.
 """
 
 from __future__ import annotations
