@@ -1,42 +1,195 @@
 @import "tailwindcss";
 
-@theme {
-  /* Dark theme (default) — matches kharkevich.com */
-  --color-bg: #08111f;
-  --color-surface: #10192a;
-  --color-surface-hover: #162338;
-  --color-border: rgba(148, 163, 184, 0.24);
-  --color-border-hover: rgba(148, 163, 184, 0.4);
-  --color-primary: #7ab8ff;
-  --color-primary-hover: #93cafe;
-  --color-accent-2: #5de7d1;
-  --color-tag-bg: #162338;
-  --color-success: #34d058;
-  --color-warning: #f59e0b;
-  --color-danger: #ea4a5a;
-  --color-text: #e6edf7;
-  --color-text-muted: #a6b4c8;
+/* Inter variable, self-hosted — the same file and the same face as
+   hub.kharkevich.com. One woff2 covers 100..900, so a weight is a variation
+   axis rather than another request. It sits under `/assets/` rather than
+   `/fonts/` because that is one of the paths `auth.py` serves without a
+   session: from `/fonts/` the login page — the one page an operator sees
+   before signing in — would be the only page rendered in the fallback face. */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/assets/fonts/inter-latin-variable.woff2") format("woff2");
 }
 
-html, body, #root { height: 100%; margin: 0; padding: 0; }
-* { scrollbar-width: thin; scrollbar-color: #2a4a6a transparent; }
-button { cursor: pointer; }
-button:disabled { cursor: not-allowed; }
+/* The palette, lifted from hub.kharkevich.com/styles/main.css. `:root` is the
+   dark theme; `html.light` below overrides it — the same element, so the
+   aliases in `@theme` (which resolve `var(--line)` and friends on :root) pick
+   the light values up without being restated.
+   `static` keeps every name in the output: the aliases below are var chains,
+   and a token dropped for being "unused" would take its alias with it. */
+@theme static {
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
 
-/* Light theme overrides — matches kharkevich.com */
+  --radius-sm: 3px;
+  --radius-md: 8px;
+
+  /* The hub's own names. */
+  --color-bg: var(--bg);
+  --color-bg2: var(--bg2);
+  --color-surface: var(--surface);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-blue: var(--blue);
+  --color-blue2: var(--blue2);
+  --color-blue-cta: var(--blue-cta);
+  --color-brand-accent: var(--brand-accent);
+
+  /* Semantic, a Spark Pulse addition — the hub has no status vocabulary.
+     Identical in both themes. */
+  --color-good: var(--good);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
+
+  /* Aliases for the names the app already uses. They are one hop onto the
+     palette above, not a second palette; the components move onto the hub
+     names page by page. */
+  --color-surface-hover: color-mix(in srgb, var(--text) 7%, var(--surface));
+  --color-surface-pressed: color-mix(in srgb, var(--text) 12%, var(--surface));
+  --color-border: var(--line);
+  --color-border-hover: var(--line-strong);
+  --color-primary: var(--blue-cta);
+  --color-primary-hover: color-mix(in srgb, var(--blue-cta) 85%, #000);
+  --color-primary-foreground: #fff;
+  --color-accent-2: var(--brand-accent);
+  --color-tag-bg: var(--bg2);
+  --color-success: var(--good);
+  --color-warning: var(--warn);
+  --color-warning-foreground: #071523;
+  --color-danger: var(--bad);
+  --color-danger-hover: color-mix(in srgb, var(--bad) 85%, #000);
+  --color-destructive: var(--bad);
+  --color-amber: var(--warn);
+  --color-background: var(--bg);
+  --color-foreground: var(--text);
+  --color-text-muted: var(--muted);
+  --color-text-secondary: var(--muted);
+}
+
+:root {
+  --bg: #06101d;
+  --bg2: #091727;
+  --surface: #0b1a2c;
+  --line: #36506a88;
+  --line-strong: #3291ff99;
+  --text: #f2f7ff;
+  --muted: #a3b3c6;
+  --blue: #1683ff;
+  --blue2: #70c1ff;
+  --blue-cta: #0d6ee0;
+  --brand-accent: #38bdf8;
+  --good: #10b981;
+  --warn: #f59e0b;
+  --bad: #ef4444;
+  color-scheme: dark;
+}
+
 html.light {
-  --color-bg: #f6f8fa;
-  --color-surface: #ffffff;
-  --color-surface-hover: #edf3fb;
-  --color-border: #d7e0ea;
-  --color-border-hover: #c0cdd8;
-  --color-primary: #2a78c9;
-  --color-primary-hover: #3c88d9;
-  --color-accent-2: #00a9a5;
-  --color-tag-bg: #edf3fb;
-  --color-success: #34d058;
-  --color-warning: #f59e0b;
-  --color-danger: #ea4a5a;
-  --color-text: #1a2732;
-  --color-text-muted: #5c6b72;
+  --bg: #f4f7fb;
+  --bg2: #e7eef6;
+  --surface: #fff;
+  --line: #1b3d602e;
+  --line-strong: #006fed77;
+  --text: #071523;
+  --muted: #476078;
+  --blue: #006fed;
+  --blue2: #0068e0;
+  --blue-cta: #006fed;
+  --brand-accent: #0369a1;
+  color-scheme: light;
+}
+
+/* Base rules live in Tailwind's `base` layer on purpose: unlayered CSS beats
+   every layer, so an unlayered `h1 { font-size }` here would win over the
+   `text-2xl` a component asked for. */
+@layer base {
+  body {
+    font-size: 15px;
+    font-weight: 400;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  a {
+    color: var(--blue2);
+  }
+  a:hover {
+    text-decoration: underline;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+  }
+  h1 {
+    font-size: 36px;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+  }
+  h2 {
+    font-size: 22px;
+    font-weight: 700;
+  }
+  h3 {
+    font-size: 17px;
+    font-weight: 600;
+  }
+  @media (max-width: 520px) {
+    h1 {
+      font-size: 28px;
+    }
+  }
+
+  code,
+  kbd,
+  samp,
+  pre {
+    font-family: var(--font-mono);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--blue);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--muted) 40%, transparent) transparent;
+}
+button {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: not-allowed;
+}
+
+/* Motion is decoration. An operator who has asked the OS to stop it gets a
+   page that still works, with nothing moving. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
 }
