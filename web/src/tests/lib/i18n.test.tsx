@@ -52,10 +52,9 @@ describe("the dictionaries", () => {
     "nav.cache",
     "common.ok",
     "engines.none",
-    // "Placement", "Image" and "RAM" are the same word in French; "PID" and
-    // "MCP" are initialisms.
-    "cluster.colPlacement",
-    "inference.image",
+    // "Image" and "RAM" are the same word in French; "PID" and "MCP" are
+    // initialisms.
+    "runs.image",
     "engines.colImage",
     "monitoring.pid",
     "monitoring.ram",
@@ -97,7 +96,6 @@ describe("the dictionaries", () => {
     "mcp.transport",
     "mcp.transportValue",
     "mcp.cursor",
-    "benchmarking.recipeIdPlaceholder",
     "oci.url",
     // "Menu", "Cache" and "MCP" are the same word — or the same initialism —
     // in both languages, and the page titles are those words with a full stop.

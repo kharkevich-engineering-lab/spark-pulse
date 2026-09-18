@@ -107,7 +107,11 @@ else
   echo "🚀 Starting the simulation backend on port $port..."
   # Auth is forced off so a developer's ~/.config/spark-pulse/settings.json
   # cannot bounce the suite to the OIDC login page; CI has it off already.
+  # Benchmarking is forced on because it is a tab of Runs now rather than a
+  # page behind a nav entry: with the flag at its default the tab is absent,
+  # and `benchmarks.spec.ts` would skip itself rather than check anything.
   env SIMULATION_MODE=1 SPARK_PULSE_AUTH_ENABLED=false \
+    SPARK_PULSE_BENCHMARKING_ENABLED=true \
     $python -m uvicorn spark_pulse.app:app --host 127.0.0.1 --port $port --workers 1 \
     >/tmp/spark-pulse-e2e-backend.log 2>&1 &
   set backend_pid $last_pid

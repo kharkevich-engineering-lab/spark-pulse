@@ -238,24 +238,16 @@ test("enrol, select, preview, deploy, see the ranks, stop", async ({ page, reque
     )
     .toBe("running");
 
-  // The Cluster page answers "what is running on my machines", so it names
-  // the machines rather than counting them.
-  await gotoPage(page, "/cluster");
-  const clusterRow = page
-    .getByTestId("cluster-deployments")
-    .getByRole("row")
-    .filter({ hasText: RECIPE_NAME })
-    .first();
-  await expect(clusterRow).toContainText(CONTROL);
-  await expect(clusterRow).toContainText(PEER);
-
+  // Runs is the one list, and it names the machines rather than counting
+  // them: the Fleet page's second table of the same endpoint is gone.
   await gotoPage(page, "/jobs");
   const row = page.getByTestId(`deployment-${deployment.id}`);
   await expect(row).toBeVisible();
-  await expect(row).toContainText("2 nodes");
+  await expect(row).toContainText(CONTROL);
+  await expect(row).toContainText(PEER);
 
   // ── 5. The ranks, with their nodes, rank 0 the head ──────────────────────
-  await row.getByText(RECIPE_NAME, { exact: true }).click();
+  await row.getByRole("button", { name: "Logs" }).click();
   const rankZero = page.getByTestId("rank-row-0");
   const rankOne = page.getByTestId("rank-row-1");
   await expect(rankZero).toContainText("rank 0");
@@ -267,11 +259,13 @@ test("enrol, select, preview, deploy, see the ranks, stop", async ({ page, reque
   await expect(rankOne).not.toContainText("head");
 
   // ── 6. Stop it, and see every rank torn down ─────────────────────────────
-  await row.getByTitle("Stop", { exact: true }).click();
+  await row.getByRole("button", { name: "Stop", exact: true }).click();
   const stopDialog = page.getByRole("dialog");
-  await expect(stopDialog.getByRole("heading", { name: "Stop Deployment" })).toBeVisible();
+  await expect(stopDialog.getByRole("heading", { name: "Stop this run" })).toBeVisible();
   await stopDialog.getByRole("button", { name: "Stop", exact: true }).last().click();
 
+  // A stopped run leaves the Live pill for Finished; the record stays.
+  await page.getByRole("tab", { name: /^Finished/ }).click();
   await expect(row.getByText("Stopped", { exact: true })).toBeVisible();
   // The page's own evidence that both ranks went: an orphan is a rank we asked
   // to stop and could not confirm gone, and it is rendered right here when

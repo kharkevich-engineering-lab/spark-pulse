@@ -69,7 +69,7 @@ Everything in [the tour](tour.md) was captured from exactly that.
 
 1. Open **Recipes & Mods** and pick a recipe.
 2. Press **Deploy**. The preview shows the resolved engine, image, model and the command that will run, plus a pre-flight verdict per node.
-3. Accept. The deployment appears on **Inference** with its ranks, its engine metrics and its log.
+3. Accept. The run appears on **Runs**, under Live, with its ranks, its engine metrics and its log.
 
 If the model is not downloaded, the deploy is not refused: it offers to download it and starts the deployment when the download finishes.
 

@@ -1,4 +1,4 @@
-/** The deploy journey: launch a recipe, see the job, stop it.
+/** The deploy journey: launch a recipe, see the run, stop it.
  *
  * Kept as one test on purpose. Deployments are process-wide state in the
  * simulation backend, so splitting the journey across tests that Playwright is
@@ -25,7 +25,7 @@ test.afterEach(async ({ request }) => {
   await purgeDeployments(request, RECIPE_ID);
 });
 
-test("deploys a recipe, shows it on the Inference page and stops it", async ({ page, request }) => {
+test("deploys a recipe, shows it on the Runs page and stops it", async ({ page, request }) => {
   await gotoPage(page, "/");
   await page.getByRole("button", { name: new RegExp(escapeRegExp(RECIPE_NAME)) }).click();
 
@@ -46,18 +46,22 @@ test("deploys a recipe, shows it on the Inference page and stops it", async ({ p
   await (await openNav(page)).getByRole("link", { name: "Runs" }).click();
   await expect(page.getByRole("heading", { name: "What is serving.", exact: true })).toBeVisible();
 
+  // A live run is under Live, which is the pill the page opens on.
+  await expect(page.getByRole("tab", { name: /^Live/ })).toHaveAttribute("aria-selected", "true");
   const row = page.getByTestId(`deployment-${deployment.id}`);
   await expect(row).toBeVisible();
-  await expect(row.getByText(RECIPE_NAME, { exact: true })).toBeVisible();
-  await expect(row.getByText(RECIPE_ID, { exact: false })).toBeVisible();
+  await expect(row.getByRole("button", { name: RECIPE_NAME, exact: true })).toBeVisible();
   await expect(row.getByText("Running", { exact: true })).toBeVisible();
 
-  await row.getByTitle("Stop", { exact: true }).click();
+  await row.getByRole("button", { name: "Stop", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByRole("heading", { name: "Stop" })).toBeVisible();
+  await expect(dialog.getByRole("heading", { name: "Stop this run" })).toBeVisible();
   await dialog.getByRole("button", { name: "Stop", exact: true }).last().click();
 
+  // A stopped run leaves Live for Finished — the record stays, it is just not
+  // serving any more.
+  await page.getByRole("tab", { name: /^Finished/ }).click();
   await expect(row.getByText("Stopped", { exact: true })).toBeVisible();
   await expectNoCrash(page);
 
@@ -65,7 +69,7 @@ test("deploys a recipe, shows it on the Inference page and stops it", async ({ p
   expect(after.map((d) => d.status)).toEqual(["stopped"]);
 });
 
-test("shows the log stream for a deployment", async ({ page, request }) => {
+test("shows the log stream for a run", async ({ page, request }) => {
   const created = await request.post("/api/deployments", {
     data: { recipe_id: RECIPE_ID, name: RECIPE_NAME, params: {} },
   });
@@ -76,8 +80,10 @@ test("shows the log stream for a deployment", async ({ page, request }) => {
   await gotoPage(page, "/jobs");
   const row = page.getByTestId(`deployment-${deployment.id}`);
   await expect(row).toBeVisible();
-
-  await row.getByText(RECIPE_NAME, { exact: true }).click();
+  // The recipe the run came from is in the expanded detail, not on the row:
+  // the row says what is serving, the panel says what it was made from.
+  await row.getByRole("button", { name: "Logs" }).click();
+  await expect(row.getByText(RECIPE_ID, { exact: true })).toBeVisible();
   await expect(row.getByRole("button", { name: "Hide" })).toBeVisible();
   await expect(row.getByText("Streaming")).toBeVisible();
   await expectNoCrash(page);
@@ -92,7 +98,7 @@ test("shows the log stream for a deployment", async ({ page, request }) => {
  * never started, so an end-to-end check that a number really arrives is the
  * point of this test rather than a nicety.
  */
-test("shows the engine's own metrics for a running deployment", async ({ page, request }) => {
+test("shows the engine's own metrics for a running run", async ({ page, request }) => {
   const created = await request.post("/api/deployments", {
     data: { recipe_id: RECIPE_ID, name: RECIPE_NAME, params: {} },
   });
@@ -101,7 +107,7 @@ test("shows the engine's own metrics for a running deployment", async ({ page, r
 
   await gotoPage(page, "/jobs");
   const row = page.getByTestId(`deployment-${deployment.id}`);
-  await row.getByText(RECIPE_NAME, { exact: true }).click();
+  await row.getByRole("button", { name: "Logs" }).click();
 
   // Up to one backend sweep plus one UI poll before the first window arrives.
   await expect(row.getByText("Queued", { exact: true })).toBeVisible({ timeout: 20_000 });
@@ -109,8 +115,12 @@ test("shows the engine's own metrics for a running deployment", async ({ page, r
   await expect(row.getByText("Preemptions", { exact: true })).toBeVisible();
 
   // The window is memory only, and the page says so rather than implying that
-  // anything here survives a restart of the control plane.
-  await expect(row.getByText(/Restarting Spark Pulse loses this window/)).toBeVisible();
+  // anything here survives a restart of the control plane. The caption sits on
+  // the chart, and a chart needs two samples — so this is one sampler sweep
+  // and one UI poll further out than the gauges above.
+  await expect(row.getByText(/Restarting Spark Pulse loses this window/)).toBeVisible({
+    timeout: 20_000,
+  });
   // And it says why it shows no percentile, rather than inventing one from a
   // histogram bucket.
   await expect(row.getByText(/Latency percentiles are not shown/)).toBeVisible();

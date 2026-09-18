@@ -1,60 +1,48 @@
-/** The Cluster page: a node registry, and the deployments running on it.
+/** The Fleet page: the machines, their fabric, and how one is added.
  *
  * What this page used to be was a front end for the cluster orchestrator —
  * start, stop, validate, rollback, and a list of clusters read off container
  * labels. That orchestrator is gone. A cluster is a deployment of size N, so
- * the two questions this page answers are now answered by two surviving APIs:
+ * this page answers one question — *which machines do we have?* — from
+ * `/api/nodes`, and the other one moved: what is running on them is the Runs
+ * page's list, which is the only one now. This page carried a second table of
+ * the live deployments on its own fifteen-second poll, so an operator reading
+ * the two could watch them disagree about the same endpoint.
  *
- *   which machines do we have?   → `/api/nodes`, rendered by <NodeRegistry />
- *   what is running on them?     → `/api/deployments`, rendered below
- *
- * Deploying is not done from here. It is one deploy form on the Recipes page,
- * whatever the node count, which is the whole point of the convergence.
+ * Deploying is not done from here either. It is one deploy form on the
+ * Recipes page, whatever the node count, which is the whole point of the
+ * convergence.
  */
 
-import { useEffect } from "react";
+import { Link } from "react-router-dom";
 import { useI18n } from "@/lib/i18n";
-import { fetchDeployments } from "@/lib/api";
-import { useQuery } from "@/hooks/useQuery";
-import { EmptyState, ErrorLine, PageHeader, Spinner, StatusBadge } from "@/ui";
+import { PageHeader } from "@/ui";
 import NodeRegistry from "@/components/NodeRegistry";
 import NetworkDiscovery from "@/components/NetworkDiscovery";
 import FabricCard from "@/components/FabricCard";
-import { Server } from "lucide-react";
-import type { Deployment } from "@/lib/types";
-import { ExperimentalBadge, ExperimentalNote } from "@/components/Experimental";
-import { MULTI_NODE_BADGE_TITLE, nodeCount } from "@/lib/experimental";
+import { ExperimentalNote } from "@/components/Experimental";
 import { useConfig } from "@/lib/config";
-
-/** Where a deployment's ranks run, named rather than counted. */
-function placement(deployment: Deployment): string {
-  const nodes = deployment.nodes ?? [];
-  if (nodes.length === 0) return "this node";
-  return nodes.join(", ");
-}
 
 export default function ClusterPage() {
   const { t } = useI18n();
-  const { data: deployments, loading, error, refetch } = useQuery<Deployment[]>(fetchDeployments);
   const { config } = useConfig();
   const experimental = config?.cluster_experimental ?? true;
-
-  useEffect(() => { const i = setInterval(refetch, 15000); return () => clearInterval(i); }, [refetch]);
-
-  const live = (deployments ?? []).filter((d) => d.status !== "stopped" && d.status !== "error");
 
   return (
     <div className="space-y-6">
       {/* One line, not the full banner. This page is read rather than acted
           on; what is unproven and why belongs where an operator is about to
           deploy across machines, which is the deploy form and the expanded
-          row on Inference. */}
+          row on Runs. */}
       <PageHeader
         eyebrow={t("nav.fleet")}
         title={t("cluster.heading")}
         description={
           <>
-            {t("cluster.subtitle")}
+            {t("cluster.subtitle")}{" "}
+            <Link to="/jobs" className="text-blue2 hover:underline">
+              {t("runs.seeAll")}
+            </Link>
             {experimental && (
               <ExperimentalNote className="mt-2" text={t("cluster.experimental")} />
             )}
@@ -73,71 +61,6 @@ export default function ClusterPage() {
           told about it. It was a card in Settings under a Cluster tab; the
           machines are here. */}
       <NetworkDiscovery />
-
-      {/* Deployments, which is what "cluster status" became. */}
-      <div className="rounded-md bg-surface border border-line p-4 space-y-3" data-testid="cluster-deployments">
-        <div className="flex items-center gap-2">
-          <Server size={18} className="text-blue2" />
-          <h3 className="text-lg font-semibold">{t("cluster.deployments")}</h3>
-        </div>
-
-        {loading && (
-          <div className="flex justify-center py-10">
-            <Spinner size="lg" label={t("common.loading")} />
-          </div>
-        )}
-        <ErrorLine>{error}</ErrorLine>
-
-        {!loading && !error && live.length === 0 && (
-          <EmptyState icon={Server}>{t("cluster.nothingRunning")}</EmptyState>
-        )}
-
-        {live.length > 0 && (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-text-muted">
-                  <th className="py-2 pr-4 font-medium">{t("cluster.colDeployment")}</th>
-                  <th className="py-2 pr-4 font-medium">{t("cluster.colNodes")}</th>
-                  <th className="py-2 pr-4 font-medium">{t("cluster.colPlacement")}</th>
-                  <th className="py-2 pr-4 font-medium">{t("cluster.colEngine")}</th>
-                  <th className="py-2 font-medium">{t("cluster.colStatus")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {live.map((deployment) => (
-                  <tr key={deployment.id} className="border-t border-line">
-                    <td className="py-2 pr-4">
-                      <p className="font-medium">{deployment.name}</p>
-                      <p className="text-xs text-text-muted">{deployment.recipe_id}</p>
-                    </td>
-                    <td className="py-2 pr-4">
-                      <span className="inline-flex items-center gap-1.5">
-                        {nodeCount(deployment)}
-                        {nodeCount(deployment) > 1 && (
-                          <ExperimentalBadge title={MULTI_NODE_BADGE_TITLE} />
-                        )}
-                      </span>
-                    </td>
-                    <td className="py-2 pr-4 font-mono text-xs">{placement(deployment)}</td>
-                    <td className="py-2 pr-4">
-                      {deployment.engine ? `${deployment.engine}/${deployment.variant ?? "default"}` : "—"}
-                    </td>
-                    <td className="py-2">
-                      <StatusBadge
-                        status={deployment.status}
-                        sync={deployment.sync}
-                        syncReason={deployment.sync_reason}
-                      />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
     </div>
   );
 }

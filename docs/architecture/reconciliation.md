@@ -55,7 +55,7 @@ Records written before `sync` existed carry no value and are settled by definiti
 
 ## In the UI
 
-`StatusBadge` renders both fields and shows the second chip only when there is something to say. `isSettling()` disables the buttons that would ask again, and the Inference page re-reads the list on a `deployment_sync` event rather than waiting out the ten-second poll — which is what made a delete look like nothing had happened.
+`StatusBadge` renders both fields and shows the second chip only when there is something to say. `isSettling()` disables the buttons that would ask again, and the Runs page re-reads the list on a `deployment_sync` event rather than waiting out the ten-second poll — which is what made a delete look like nothing had happened.
 
 ## Startup reconciliation
 

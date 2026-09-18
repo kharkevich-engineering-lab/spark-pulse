@@ -1,9 +1,10 @@
 import { useState, useEffect, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { useI18n } from "@/lib/i18n";
-import { fetchRecipes, fetchRecipe, fetchDeployments, createDeployment, scheduleDeploy, fetchSettings, fetchRecipeCustomization, saveRecipeCustomization, deleteRecipeCustomization, fetchMods, fetchMod, listCustomRecipes, saveCustomRecipe, deleteCustomRecipe, listCustomMods, getCustomModFiles, saveCustomModFiles, deleteCustomMod, uninstallOciRecipe, ApiError } from "@/lib/api";
+import { fetchRecipes, fetchRecipe, createDeployment, scheduleDeploy, fetchSettings, fetchRecipeCustomization, saveRecipeCustomization, deleteRecipeCustomization, fetchMods, fetchMod, listCustomRecipes, saveCustomRecipe, deleteCustomRecipe, listCustomMods, getCustomModFiles, saveCustomModFiles, deleteCustomMod, uninstallOciRecipe, ApiError } from "@/lib/api";
 import type { RecipeDetail, RecipeCustomization, RecipeSummary, ModSummary, ModDetail, CustomRecipeInfo, CustomModInfo, ModFileMap, PreflightReport } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
+import { useDeployments } from "@/hooks/useDeployments";
 import { AlertModal, Button, ConfirmModal, ErrorLine, Modal, PageHeader, Spinner, Tabs, Toggle } from "@/ui";
 import PreflightPanel from "@/components/PreflightPanel";
 import { Loader2, AlertCircle, ChevronDown, X, Copy, Check, Wrench, FileCode2, FileText, FileCode, Plus, Download } from "lucide-react";
@@ -202,7 +203,10 @@ function ModDrawer({ modId, onClose }: { modId: string; onClose: () => void }) {
 export default function RecipesPage() {
   const { t, plural } = useI18n();
   const { data: recipes, loading: recipesLoading, error: recipesError, refetch } = useQuery(fetchRecipes);
-  const { data: deployments } = useQuery(fetchDeployments);
+  // The same read Runs makes, through the same hook: this page only needs to
+  // know which recipes are already serving, and a second fetch of its own is
+  // how the badge came to outlive the run it was marking.
+  const { deployments } = useDeployments();
   const { data: settings } = useQuery(fetchSettings);
   const { data: mods, loading: modsLoading, error: modsError } = useQuery(fetchMods);
   const [showCustom, setShowCustom] = useState(false);

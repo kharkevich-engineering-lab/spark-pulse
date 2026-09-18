@@ -1,12 +1,19 @@
-/** The Inference list: a deployment that spans machines says so on its row
- * and repeats what is unproven when it is opened; a solo one says nothing. */
+/** Runs: one list, three pills.
+ *
+ * What a row says about itself (where its ranks are, how it is doing, how long
+ * it has been up), which pill it lands under, and the three different things
+ * the teardown button means — plus everything the expanded row carried before
+ * the page was one page: the log stream, the per-rank read, the engine's own
+ * metrics window and the deployment event stream.
+ */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import InferencePage from "@/pages/InferencePage";
+import { MemoryRouter } from "react-router-dom";
+import RunsPage from "@/pages/RunsPage";
 import { MULTI_NODE_BADGE_TITLE, MULTI_NODE_UNPROVEN } from "@/lib/experimental";
-import type { Deployment, EngineMetricsWindow } from "@/lib/types";
+import type { BenchmarkResult, Deployment, EngineMetricsWindow } from "@/lib/types";
 
 vi.mock("@/lib/api", () => ({
   // Inert by default: only the tests that care about rank state stub it.
@@ -18,10 +25,21 @@ vi.mock("@/lib/api", () => ({
   stopDeployment: vi.fn(),
   connectLogStream: vi.fn(() => () => {}),
   runBenchmark: vi.fn(),
+  fetchBenchmarks: vi.fn(() => Promise.resolve([])),
+  fetchLatestByRecipe: vi.fn(() => Promise.resolve({})),
+  compareRuns: vi.fn(),
+  deleteBenchmark: vi.fn(),
+}));
+
+/** The feature flag, readable by the tests that turn it off. */
+const appConfig = vi.hoisted(() => ({ benchmarking_enabled: true }));
+vi.mock("@/lib/config", () => ({
+  useConfig: () => ({ config: appConfig, configLoaded: true }),
 }));
 
 import {
   connectLogStream,
+  fetchBenchmarks,
   fetchDeployment,
   fetchDeployments,
   fetchEngineMetrics,
@@ -48,92 +66,247 @@ function deployment(over: Partial<Deployment> = {}): Deployment {
   };
 }
 
+function benchmark(over: Partial<BenchmarkResult> = {}): BenchmarkResult {
+  return {
+    benchmark_id: "b1",
+    deployment_id: "solo",
+    recipe_id: "qwen3-8b",
+    recipe_name: "Qwen3 8B",
+    baseline_id: null,
+    status: "completed",
+    started_at: "2026-01-02T00:00:00+00:00",
+    completed_at: "2026-01-02T00:01:00+00:00",
+    params: {},
+    results: { throughput: 45.2, latency_ms: 12.3 },
+    ...over,
+  };
+}
+
 const SOLO = deployment();
 const GANG = deployment({
   id: "gang",
   name: "gang job",
   node_count: 2,
   nodes: ["10.0.0.10", "10.0.0.11"],
+  params: { tensor_parallel: 2 },
 });
 /** A record written before the field existed. */
 const LEGACY = deployment({ id: "legacy", name: "legacy job", node_count: undefined });
 
-async function expand(name: string) {
-  const user = userEvent.setup();
-  await user.click(await screen.findByText(name));
+function show() {
+  return render(
+    <MemoryRouter>
+      <RunsPage />
+    </MemoryRouter>,
+  );
 }
 
-describe("InferencePage multi-node marking", () => {
+async function expand(name: string) {
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name }));
+}
+
+/** Move to a pill by its label — the counts are part of the accessible name. */
+async function openTab(label: string) {
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("tab", { name: new RegExp(`^${label}`) }));
+}
+
+beforeEach(() => {
+  appConfig.benchmarking_enabled = true;
+});
+
+describe("RunsPage tabs", () => {
+  const RUNNING = deployment({ id: "r1", name: "running job", status: "running" });
+  const FINISHED = deployment({ id: "f1", name: "finished job", status: "stopped" });
+  const ERRORED = deployment({ id: "e1", name: "errored job", status: "error" });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(fetchDeployments).mockResolvedValue([RUNNING, FINISHED, ERRORED]);
+  });
+
+  it("counts what is live and what is finished, and opens on the live ones", async () => {
+    show();
+
+    expect(await screen.findByRole("tab", { name: /^Live \(1\)/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByRole("tab", { name: /^Finished \(2\)/ })).toBeInTheDocument();
+    expect(screen.getByTestId("deployment-r1")).toBeInTheDocument();
+    expect(screen.queryByTestId("deployment-f1")).toBeNull();
+  });
+
+  it("puts a stopped run and a failed one under Finished", async () => {
+    show();
+    await openTab("Finished");
+
+    expect(screen.getByTestId("deployment-f1")).toBeInTheDocument();
+    expect(screen.getByTestId("deployment-e1")).toBeInTheDocument();
+    expect(screen.queryByTestId("deployment-r1")).toBeNull();
+  });
+
+  /** Landing on an empty Live tab with a history sitting behind Finished is a
+   *  page that looks broken to somebody who has stopped everything. */
+  it("opens on the history when nothing is live", async () => {
+    vi.mocked(fetchDeployments).mockResolvedValue([FINISHED]);
+    show();
+
+    expect(await screen.findByTestId("deployment-f1")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^Finished/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
+  it("offers the benchmarks tab only when the feature is on", async () => {
+    show();
+    expect(await screen.findByRole("tab", { name: /^Benchmarks/ })).toBeInTheDocument();
+  });
+
+  it("hides the benchmarks tab, and the launcher, when the feature is off", async () => {
+    appConfig.benchmarking_enabled = false;
+    show();
+
+    await screen.findByTestId("deployment-r1");
+    expect(screen.queryByRole("tab", { name: /^Benchmarks/ })).toBeNull();
+    expect(fetchBenchmarks).not.toHaveBeenCalled();
+  });
+
+  it("says there are no runs at all rather than showing an empty pill", async () => {
+    vi.mocked(fetchDeployments).mockResolvedValue([]);
+    show();
+
+    expect(await screen.findByText("No runs yet — deploy a recipe.")).toBeInTheDocument();
+    expect(screen.getByText("Recipes are on the Deploy page.")).toBeInTheDocument();
+  });
+
+  it("says the live pill is empty without claiming the history is", async () => {
+    vi.mocked(fetchDeployments).mockResolvedValue([FINISHED]);
+    show();
+    await openTab("Live");
+
+    expect(await screen.findByText("Nothing is serving.")).toBeInTheDocument();
+  });
+
+  it("says the history is empty when everything is still running", async () => {
+    vi.mocked(fetchDeployments).mockResolvedValue([RUNNING]);
+    show();
+    await openTab("Finished");
+
+    expect(await screen.findByText("No finished runs.")).toBeInTheDocument();
+  });
+
+  it("surfaces a failed load instead of an empty list", async () => {
+    vi.mocked(fetchDeployments).mockRejectedValue(new Error("API 503: backend restarting"));
+    show();
+
+    expect(await screen.findByText("API 503: backend restarting")).toBeInTheDocument();
+    expect(screen.queryByText("No runs yet — deploy a recipe.")).toBeNull();
+  });
+});
+
+describe("RunsPage row", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(fetchDeployments).mockResolvedValue([SOLO, GANG, LEGACY]);
   });
 
-  it("says how many machines a multi-node deployment holds, and that it is unverified", async () => {
-    render(<InferencePage />);
+  it("names the machines a run's ranks landed on, and the shape it was given", async () => {
+    show();
 
     const row = await screen.findByTestId("deployment-gang");
-    expect(row).toHaveTextContent("2 nodes");
+    expect(row).toHaveTextContent("tp 2 · 10.0.0.10 + 10.0.0.11");
     expect(within(row).getByTitle(MULTI_NODE_BADGE_TITLE)).toBeInTheDocument();
   });
 
-  it("says nothing multi-node about a deployment on one machine", async () => {
-    render(<InferencePage />);
+  it("says nothing multi-node about a run on one machine", async () => {
+    show();
 
     const row = await screen.findByTestId("deployment-solo");
-    expect(row).not.toHaveTextContent(/nodes/);
+    expect(row).toHaveTextContent("this node");
     expect(within(row).queryByTitle(MULTI_NODE_BADGE_TITLE)).toBeNull();
   });
 
   it("leaves a record with no node_count alone rather than failing on it", async () => {
-    render(<InferencePage />);
+    show();
 
     const row = await screen.findByTestId("deployment-legacy");
     expect(row).toHaveTextContent("legacy job");
     expect(within(row).queryByTitle(MULTI_NODE_BADGE_TITLE)).toBeNull();
   });
 
-  it("carries the unproven list into the expanded view of a multi-node deployment", async () => {
-    render(<InferencePage />);
-    await expand("gang job");
+  it("shows the port, the engine and the model as chips", async () => {
+    vi.mocked(fetchDeployments).mockResolvedValue([
+      deployment({ id: "c1", name: "chipped", engine: "vllm", variant: "default", model: "Qwen/Qwen3-8B" }),
+    ]);
+    show();
 
-    const note = within(screen.getByTestId("deployment-gang")).getByRole("note");
-    expect(note).toHaveTextContent(/runs on two Sparks; some of it is still unproven/i);
-    for (const item of MULTI_NODE_UNPROVEN) {
-      expect(note).toHaveTextContent(item);
-    }
+    const row = await screen.findByTestId("deployment-c1");
+    expect(row).toHaveTextContent("vllm/default");
+    expect(row).toHaveTextContent("Qwen/Qwen3-8B");
+    expect(row).toHaveTextContent(":9000");
   });
 
-  it("does not warn about multi-node when a solo deployment is opened", async () => {
-    render(<InferencePage />);
-    await expand("solo job");
+  /** The two numbers an operator arrives with a question about. They come from
+   *  the run's own latest benchmark, and say "—" rather than nothing when
+   *  nobody has measured it. */
+  it("carries the latest benchmark's numbers on the row", async () => {
+    vi.mocked(fetchBenchmarks).mockResolvedValue([
+      benchmark({ benchmark_id: "old", started_at: "2026-01-01T00:00:00+00:00", results: { throughput: 1 } }),
+      benchmark({ benchmark_id: "new" }),
+    ]);
+    show();
 
-    const panel = screen.getByTestId("deployment-solo");
-    expect(within(panel).queryByRole("note")).toBeNull();
-    // Opened, not merely unchanged: the log pane is there.
-    expect(within(panel).getByText("No logs yet...")).toBeInTheDocument();
+    const row = await screen.findByTestId("deployment-solo");
+    await waitFor(() => expect(row).toHaveTextContent("45.2 tok/s"));
+    expect(row).toHaveTextContent("12.3 ms");
   });
 
-  it("opens an older record with no node_count without warning about machines it has none of", async () => {
-    render(<InferencePage />);
-    await expand("legacy job");
+  it("writes an em dash for a run nobody has benchmarked", async () => {
+    show();
 
-    const panel = screen.getByTestId("deployment-legacy");
-    expect(within(panel).queryByRole("note")).toBeNull();
-    expect(within(panel).getByText("No logs yet...")).toBeInTheDocument();
+    const row = await screen.findByTestId("deployment-legacy");
+    expect(within(row).getByText("Throughput").parentElement).toHaveTextContent("—");
+  });
+
+  it("says how long a live run has been serving", async () => {
+    show();
+
+    const row = await screen.findByTestId("deployment-solo");
+    expect(within(row).getByText("Serving")).toBeInTheDocument();
+    expect(row).toHaveTextContent(/up \d/);
+  });
+
+  it("says when a finished run ended, and how long it lasted", async () => {
+    vi.mocked(fetchDeployments).mockResolvedValue([
+      deployment({
+        id: "done",
+        name: "done job",
+        status: "stopped",
+        started_at: "2026-01-01T10:00:00Z",
+        stopped_at: "2026-01-01T12:30:00Z",
+      }),
+    ]);
+    show();
+
+    const row = await screen.findByTestId("deployment-done");
+    expect(within(row).getByText("Ended")).toBeInTheDocument();
+    expect(row).toHaveTextContent("2h 30m");
   });
 });
 
 /** The teardown path.
  *
- * One button does three different things depending on what the deployment is
- * doing — stop a running one, cancel a pending one, forget a finished one —
- * and the confirmation is the only place the operator is told which. Getting
- * that wrong means someone clicks "Stop" expecting a graceful shutdown and
- * instead erases the record of a run, or clicks expecting to tidy history and
- * kills a live model. So the wording of each of the three is pinned here.
+ * One button does three different things depending on what the run is doing —
+ * stop a running one, cancel a pending one, forget a finished one — and the
+ * confirmation is the only place the operator is told which. Getting that
+ * wrong means someone clicks "Stop" expecting a graceful shutdown and instead
+ * erases the record of a run, or clicks expecting to tidy history and kills a
+ * live model. So the wording of each of the three is pinned here.
  */
-describe("InferencePage teardown", () => {
+describe("RunsPage teardown", () => {
   const RUNNING = deployment({ id: "run1", name: "running job", status: "running" });
   const PENDING = deployment({ id: "pend1", name: "pending job", status: "pending" });
   const FINISHED = deployment({ id: "old1", name: "finished job", status: "stopped" });
@@ -147,53 +320,52 @@ describe("InferencePage teardown", () => {
 
   it("calls stopping a running model what it is, and terminates it once confirmed", async () => {
     const user = userEvent.setup();
-    render(<InferencePage />);
+    show();
 
     const row = await screen.findByTestId("deployment-run1");
-    await user.click(within(row).getByTitle("Stop"));
+    await user.click(within(row).getByRole("button", { name: "Stop" }));
 
-    expect(await screen.findByRole("heading", { name: "Stop Deployment" })).toBeInTheDocument();
-    expect(
-      screen.getByText(/Stop "running job"\? This will terminate the running process\./),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Stop this run" })).toBeInTheDocument();
+    expect(screen.getByText(/Stop “running job”\? Its containers go/)).toBeInTheDocument();
     expect(stopDeployment).not.toHaveBeenCalled();
 
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Stop" }));
     await waitFor(() => expect(stopDeployment).toHaveBeenCalledWith("run1"));
   });
 
-  it("calls stopping a deployment that has not started yet a cancel", async () => {
+  it("calls stopping a run that has not started yet a cancel", async () => {
     const user = userEvent.setup();
-    render(<InferencePage />);
+    show();
 
     const row = await screen.findByTestId("deployment-pend1");
-    await user.click(within(row).getByTitle("Cancel"));
+    await user.click(within(row).getByRole("button", { name: "Cancel" }));
 
-    expect(await screen.findByRole("heading", { name: "Cancel" })).toBeInTheDocument();
-    expect(screen.getByText(/Cancel "pending job" before it starts\?/)).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Cancel this run" })).toBeInTheDocument();
+    expect(screen.getByText(/Cancel “pending job” before it starts\?/)).toBeInTheDocument();
   });
 
-  it("calls clearing a finished run a removal from history, not a stop", async () => {
+  it("calls clearing a finished run a removal, not a stop", async () => {
     const user = userEvent.setup();
-    render(<InferencePage />);
+    show();
+    await openTab("Finished");
 
     const row = await screen.findByTestId("deployment-old1");
-    await user.click(within(row).getByTitle("Remove from history"));
+    await user.click(within(row).getByRole("button", { name: "Remove" }));
 
-    expect(await screen.findByRole("heading", { name: "Remove" })).toBeInTheDocument();
-    expect(screen.getByText(/Remove "finished job" from history\?/)).toBeInTheDocument();
-    expect(screen.queryByText(/terminate the running process/)).toBeNull();
+    expect(await screen.findByRole("heading", { name: "Remove this run" })).toBeInTheDocument();
+    expect(screen.getByText(/Remove “finished job” from the history\?/)).toBeInTheDocument();
+    expect(screen.queryByText(/Its containers go/)).toBeNull();
 
-    await user.click(screen.getByRole("button", { name: "Remove" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Remove" }));
     await waitFor(() => expect(stopDeployment).toHaveBeenCalledWith("old1"));
   });
 
-  it("leaves the deployment alone when the confirmation is dismissed", async () => {
+  it("leaves the run alone when the confirmation is dismissed", async () => {
     const user = userEvent.setup();
-    render(<InferencePage />);
+    show();
 
     const row = await screen.findByTestId("deployment-run1");
-    await user.click(within(row).getByTitle("Stop"));
+    await user.click(within(row).getByRole("button", { name: "Stop" }));
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
 
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -203,82 +375,156 @@ describe("InferencePage teardown", () => {
   it("says why a stop failed instead of leaving the row looking untouched", async () => {
     const user = userEvent.setup();
     vi.mocked(stopDeployment).mockRejectedValue(new Error("API 500: container is wedged"));
-    render(<InferencePage />);
+    show();
 
     const row = await screen.findByTestId("deployment-run1");
-    await user.click(within(row).getByTitle("Stop"));
+    await user.click(within(row).getByRole("button", { name: "Stop" }));
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Stop" }));
 
     expect(await screen.findByText("API 500: container is wedged")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "OK" }));
     await waitFor(() => expect(screen.queryByText("API 500: container is wedged")).toBeNull());
   });
+});
 
-  it("offers a benchmark only for a model that is actually serving", async () => {
-    render(<InferencePage />);
+/** The one launcher: it opens from the run it will measure, so there is no id
+ *  to type and no way to point it at something that does not exist. */
+describe("RunsPage benchmark launcher", () => {
+  const RUNNING = deployment({ id: "run1", name: "running job", status: "running" });
+  const PENDING = deployment({ id: "pend1", name: "pending job", status: "pending" });
+  const FINISHED = deployment({ id: "old1", name: "finished job", status: "stopped" });
 
-    const running = await screen.findByTestId("deployment-run1");
-    expect(within(running).getByTitle("Run Benchmark")).toBeInTheDocument();
-    expect(within(screen.getByTestId("deployment-pend1")).queryByTitle("Run Benchmark")).toBeNull();
-    expect(within(screen.getByTestId("deployment-old1")).queryByTitle("Run Benchmark")).toBeNull();
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(connectLogStream).mockReturnValue(() => {});
+    vi.mocked(fetchDeployments).mockResolvedValue([RUNNING, PENDING, FINISHED]);
   });
 
-  it("names the deployment it is about to benchmark, and runs it on confirmation", async () => {
+  it("offers a benchmark only for a model that is actually serving", async () => {
+    show();
+
+    const running = await screen.findByTestId("deployment-run1");
+    expect(within(running).getByRole("button", { name: "Benchmark" })).toBeEnabled();
+    expect(
+      within(screen.getByTestId("deployment-pend1")).getByRole("button", { name: "Benchmark" }),
+    ).toBeDisabled();
+    await openTab("Finished");
+    expect(
+      within(screen.getByTestId("deployment-old1")).queryByRole("button", { name: "Benchmark" }),
+    ).toBeNull();
+  });
+
+  it("names the run it is about to measure and sends its own id, not a typed one", async () => {
     const user = userEvent.setup();
-    vi.mocked(runBenchmark).mockResolvedValue({ id: "bench1" } as never);
-    render(<InferencePage />);
+    vi.mocked(runBenchmark).mockResolvedValue({ benchmark_id: "b1" } as never);
+    show();
 
     const row = await screen.findByTestId("deployment-run1");
-    await user.click(within(row).getByTitle("Run Benchmark"));
+    await user.click(within(row).getByRole("button", { name: "Benchmark" }));
 
-    expect(await screen.findByRole("heading", { name: "Run Benchmark" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Benchmark this run" })).toBeInTheDocument();
     expect(screen.getByRole("dialog")).toHaveAttribute("aria-labelledby");
-    expect(screen.getByText(/Run a benchmark on "running job"/)).toBeInTheDocument();
-    expect(runBenchmark).not.toHaveBeenCalled();
+    expect(screen.getByText(/Measure “running job” while it serves/)).toBeInTheDocument();
+    // No free-text target: there is nothing to mistype.
+    expect(screen.queryByLabelText(/Target Deployment/)).toBeNull();
 
     await user.click(screen.getByRole("button", { name: "Run" }));
 
     await waitFor(() =>
       expect(runBenchmark).toHaveBeenCalledWith(
-        expect.objectContaining({ deployment_id: "run1", recipe_id: "qwen3-8b" }),
+        expect.objectContaining({
+          deployment_id: "run1",
+          recipe_id: "qwen3-8b",
+          recipe_name: "running job",
+          params: { benchmarks: ["throughput", "latency"], context_length: 4096 },
+        }),
       ),
     );
-    // The dialog closes itself once the run has been accepted.
     await waitFor(() =>
-      expect(screen.queryByRole("heading", { name: "Run Benchmark" })).toBeNull(),
+      expect(screen.queryByRole("heading", { name: "Benchmark this run" })).toBeNull(),
     );
+  });
+
+  it("carries the metrics and the context length the operator chose", async () => {
+    const user = userEvent.setup();
+    vi.mocked(runBenchmark).mockResolvedValue({ benchmark_id: "b1" } as never);
+    show();
+
+    const row = await screen.findByTestId("deployment-run1");
+    await user.click(within(row).getByRole("button", { name: "Benchmark" }));
+
+    const dialog = within(screen.getByRole("dialog"));
+    await user.click(dialog.getByLabelText("latency"));
+    await user.click(dialog.getByLabelText("gpu memory"));
+    fireEvent.change(dialog.getByLabelText("Context Length"), { target: { value: "8192" } });
+    await user.click(dialog.getByRole("button", { name: "Run" }));
+
+    await waitFor(() =>
+      expect(runBenchmark).toHaveBeenCalledWith(
+        expect.objectContaining({
+          params: { benchmarks: ["throughput", "gpu_memory"], context_length: 8192 },
+        }),
+      ),
+    );
+  });
+
+  it("will not start a measurement of nothing", async () => {
+    const user = userEvent.setup();
+    show();
+
+    const row = await screen.findByTestId("deployment-run1");
+    await user.click(within(row).getByRole("button", { name: "Benchmark" }));
+    const dialog = within(screen.getByRole("dialog"));
+    await user.click(dialog.getByLabelText("throughput"));
+    await user.click(dialog.getByLabelText("latency"));
+
+    expect(dialog.getByRole("button", { name: "Run" })).toBeDisabled();
   });
 
   it("explains a refused benchmark rather than closing on a failure", async () => {
     const user = userEvent.setup();
     vi.mocked(runBenchmark).mockRejectedValue(new Error("benchmarking is disabled"));
-    render(<InferencePage />);
+    show();
 
     const row = await screen.findByTestId("deployment-run1");
-    await user.click(within(row).getByTitle("Run Benchmark"));
+    await user.click(within(row).getByRole("button", { name: "Benchmark" }));
     await user.click(screen.getByRole("button", { name: "Run" }));
 
     expect(await screen.findByText("benchmarking is disabled")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Benchmark this run" })).toBeInTheDocument();
   });
 
   it("backs out of a benchmark without running one", async () => {
     const user = userEvent.setup();
-    render(<InferencePage />);
+    show();
 
     const row = await screen.findByTestId("deployment-run1");
-    await user.click(within(row).getByTitle("Run Benchmark"));
+    await user.click(within(row).getByRole("button", { name: "Benchmark" }));
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
 
     await waitFor(() =>
-      expect(screen.queryByRole("heading", { name: "Run Benchmark" })).toBeNull(),
+      expect(screen.queryByRole("heading", { name: "Benchmark this run" })).toBeNull(),
     );
     expect(runBenchmark).not.toHaveBeenCalled();
+  });
+
+  it("closes the launcher from its own X", async () => {
+    const user = userEvent.setup();
+    show();
+
+    const row = await screen.findByTestId("deployment-run1");
+    await user.click(within(row).getByRole("button", { name: "Benchmark" }));
+    await user.click(within(screen.getByRole("dialog")).getByTitle("Close"));
+
+    await waitFor(() =>
+      expect(screen.queryByRole("heading", { name: "Benchmark this run" })).toBeNull(),
+    );
   });
 });
 
 /** What the expanded row shows: the container that is actually running, the
  *  ranks it spans, and the live log. */
-describe("InferencePage expanded detail", () => {
+describe("RunsPage expanded detail", () => {
   const NATIVE = deployment({
     id: "nat1",
     name: "native job",
@@ -315,12 +561,44 @@ describe("InferencePage expanded detail", () => {
     vi.mocked(connectLogStream).mockReturnValue(() => {});
   });
 
-  it("names the image and container a native deployment is actually running", async () => {
-    render(<InferencePage />);
+  it("carries the unproven list into the expanded view of a multi-node run", async () => {
+    show();
+    await expand("native job");
+
+    const note = within(screen.getByTestId("deployment-nat1")).getByRole("note");
+    expect(note).toHaveTextContent(/runs on two Sparks; some of it is still unproven/i);
+    for (const item of MULTI_NODE_UNPROVEN) {
+      expect(note).toHaveTextContent(item);
+    }
+  });
+
+  it("does not warn about multi-node when a solo run is opened", async () => {
+    vi.mocked(fetchDeployments).mockResolvedValue([SOLO]);
+    show();
+    await expand("solo job");
+
+    const panel = screen.getByTestId("deployment-solo");
+    expect(within(panel).queryByRole("note")).toBeNull();
+    expect(within(panel).getByText("No logs yet…")).toBeInTheDocument();
+  });
+
+  it("opens an older record with no node_count without warning about machines it has none of", async () => {
+    vi.mocked(fetchDeployments).mockResolvedValue([LEGACY]);
+    show();
+    await expand("legacy job");
+
+    const panel = screen.getByTestId("deployment-legacy");
+    expect(within(panel).queryByRole("note")).toBeNull();
+    expect(within(panel).getByText("No logs yet…")).toBeInTheDocument();
+  });
+
+  it("names the recipe, image and container a run is actually using", async () => {
+    show();
     await expand("native job");
 
     const panel = screen.getByTestId("deployment-nat1");
-    expect(within(panel).getByText("vllm/default")).toBeInTheDocument();
+    expect(within(panel).getByText("qwen3-8b", { selector: "dd" })).toBeInTheDocument();
+    expect(within(panel).getByText("vllm/default", { selector: "dd" })).toBeInTheDocument();
     expect(within(panel).getByText("ghcr.io/acme/engine/vllm:0.1.0")).toBeInTheDocument();
     expect(
       within(panel).getByText("spark-pulse-nat1-r0-g1", { selector: "dd" }),
@@ -328,7 +606,7 @@ describe("InferencePage expanded detail", () => {
   });
 
   it("lists every rank with the machine it landed on, rank 0 marked head", async () => {
-    render(<InferencePage />);
+    show();
     await expand("native job");
 
     const ranks = within(screen.getByTestId("deployment-nat1")).getByTestId("rank-rows");
@@ -346,7 +624,7 @@ describe("InferencePage expanded detail", () => {
       push = onMessage;
       return close;
     });
-    render(<InferencePage />);
+    show();
     await expand("native job");
 
     expect(connectLogStream).toHaveBeenCalledWith("nat1", expect.any(Function));
@@ -360,15 +638,15 @@ describe("InferencePage expanded detail", () => {
     expect(screen.queryByText("Streaming")).toBeNull();
   });
 
-  /** A `status` frame means the deployment moved on — the row's badge is
-   *  stale until the list is re-read, so the stream has to trigger that. */
-  it("re-reads the deployment list when the stream reports a status change", async () => {
+  /** A `status` frame means the run moved on — the row's badge is stale until
+   *  the list is re-read, so the stream has to trigger that. */
+  it("re-reads the list when the stream reports a status change", async () => {
     let push: ((event: string, data: unknown) => void) | undefined;
     vi.mocked(connectLogStream).mockImplementation((_id, onMessage) => {
       push = onMessage;
       return () => {};
     });
-    render(<InferencePage />);
+    show();
     await expand("native job");
     const before = vi.mocked(fetchDeployments).mock.calls.length;
 
@@ -389,7 +667,7 @@ describe("InferencePage expanded detail", () => {
       push = onMessage;
       return () => {};
     });
-    render(<InferencePage />);
+    show();
     await expand("native job");
     expect(screen.getByText("Streaming")).toBeInTheDocument();
 
@@ -398,59 +676,29 @@ describe("InferencePage expanded detail", () => {
     expect(screen.queryByText("Streaming")).toBeNull();
   });
 
-  it("says there is nothing to show rather than rendering an empty list", async () => {
-    vi.mocked(fetchDeployments).mockResolvedValue([]);
-    render(<InferencePage />);
-
-    expect(await screen.findByText("No deployments yet.")).toBeInTheDocument();
-    expect(screen.getByText("Launch a recipe from the Recipes page.")).toBeInTheDocument();
-  });
-
-  it("surfaces a failed load instead of an empty list", async () => {
-    vi.mocked(fetchDeployments).mockRejectedValue(new Error("API 503: backend restarting"));
-    render(<InferencePage />);
-
-    expect(await screen.findByText("API 503: backend restarting")).toBeInTheDocument();
-    expect(screen.queryByText("No deployments yet.")).toBeNull();
-  });
-
   /** The log pane auto-scrolls, but only while the operator is already at the
    *  bottom — scrolling up to read something must not be yanked away by the
    *  next line. All that can be observed here is that scrolling is handled at
    *  all rather than throwing. */
   it("tracks whether the log pane is pinned to the bottom", async () => {
-    render(<InferencePage />);
+    show();
     await expand("native job");
 
-    const pane = screen.getByText("No logs yet...").parentElement!;
+    const pane = screen.getByText("No logs yet…").parentElement!;
     fireEvent.scroll(pane, { target: { scrollTop: 0 } });
 
-    expect(screen.getByText("No logs yet...")).toBeInTheDocument();
-  });
-
-  it("closes the benchmark dialog from its own X", async () => {
-    const user = userEvent.setup();
-    render(<InferencePage />);
-
-    const row = await screen.findByTestId("deployment-nat1");
-    await user.click(within(row).getByTitle("Run Benchmark"));
-
-    await user.click(within(screen.getByRole("dialog")).getByTitle("Close"));
-
-    await waitFor(() =>
-      expect(screen.queryByRole("heading", { name: "Run Benchmark" })).toBeNull(),
-    );
+    expect(screen.getByText("No logs yet…")).toBeInTheDocument();
   });
 });
 
 /** The deployment event stream.
  *
  * `/sse/events/deployments` is how the page learns that something happened to a
- * deployment it is not tailing the log of. The events are filtered per
- * deployment, so a frame for one job must not appear under another — that
- * filter is the whole reason the viewer is inside the expanded row.
+ * run it is not tailing the log of. The events are filtered per run, so a
+ * frame for one must not appear under another — that filter is the whole
+ * reason the viewer is inside the expanded row.
  */
-describe("InferencePage event stream", () => {
+describe("RunsPage event stream", () => {
   const ONE = deployment({ id: "d1", name: "first job", status: "running" });
   const TWO = deployment({ id: "d2", name: "second job", status: "running" });
 
@@ -491,8 +739,8 @@ describe("InferencePage event stream", () => {
   const stream = () =>
     CapturingEventSource.instances.find((s) => s.url === "/sse/events/deployments")!;
 
-  it("shows an event under the deployment it belongs to, and not under another", async () => {
-    render(<InferencePage />);
+  it("shows an event under the run it belongs to, and not under another", async () => {
+    show();
     await expand("first job");
     await waitFor(() => expect(stream()).toBeDefined());
 
@@ -510,8 +758,8 @@ describe("InferencePage event stream", () => {
     const first = screen.getByTestId("deployment-d1");
     expect(await within(first).findByText("rank 0 is serving")).toBeInTheDocument();
 
-    // The other deployment's viewer is not even mounted, and once it is, the
-    // event does not belong to it.
+    // The other run's viewer is not even mounted, and once it is, the event
+    // does not belong to it.
     await expand("first job"); // close
     await expand("second job");
     const second = screen.getByTestId("deployment-d2");
@@ -520,7 +768,7 @@ describe("InferencePage event stream", () => {
   });
 
   it("fills in an id and a timestamp for a frame that arrived without them", async () => {
-    render(<InferencePage />);
+    show();
     await expand("first job");
     await waitFor(() => expect(stream()).toBeDefined());
 
@@ -535,7 +783,7 @@ describe("InferencePage event stream", () => {
   });
 
   it("ignores a frame that is not an event at all", async () => {
-    render(<InferencePage />);
+    show();
     await expand("first job");
     await waitFor(() => expect(stream()).toBeDefined());
 
@@ -546,9 +794,9 @@ describe("InferencePage event stream", () => {
     ).toBeInTheDocument();
   });
 
-  it("clears the events of one deployment without touching the others", async () => {
+  it("clears the events of one run without touching the others", async () => {
     const user = userEvent.setup();
-    render(<InferencePage />);
+    show();
     await expand("first job");
     await waitFor(() => expect(stream()).toBeDefined());
 
@@ -573,13 +821,13 @@ describe("InferencePage event stream", () => {
 /** Which machine in a cluster is sick.
  *
  * Per-rank container state is not in the deployment list and deliberately so:
- * the list is one Docker enumerate on this machine, while a rank's live state
- * is an inspect per rank — over SSH for every rank that is not local. It is
- * read from the detail endpoint for the one row the operator has opened, which
- * is the only place the ranks are rendered anyway. These tests pin both halves:
- * the highlight reaches the screen, and nothing is spent on rows nobody opened.
+ * the list is one enumerate, while a rank's live state is an inspect per rank
+ * through that rank's own node. It is read from the detail endpoint for the
+ * one row the operator has opened, which is the only place the ranks are
+ * rendered anyway. These tests pin both halves: the highlight reaches the
+ * screen, and nothing is spent on rows nobody opened.
  */
-describe("InferencePage rank health", () => {
+describe("RunsPage rank health", () => {
   const RANKS = [
     {
       rank: 0,
@@ -628,35 +876,36 @@ describe("InferencePage rank health", () => {
   });
 
   it("names the rank whose container died, and leaves the healthy one plain", async () => {
-    render(<InferencePage />);
+    show();
     await expand("cluster job");
 
     await waitFor(() => expect(fetchDeployment).toHaveBeenCalledWith("c1"));
     const rows = within(screen.getByTestId("deployment-c1")).getByTestId("rank-rows");
     const sick = await within(rows).findByTestId("rank-row-1");
-    expect(sick).toHaveTextContent("exited");
+    // The one status vocabulary, not a third set of words for containers.
+    expect(sick).toHaveTextContent("Exited");
     expect(sick).toHaveTextContent("10.0.0.11");
-    expect(sick.className).toContain("border-danger");
+    expect(sick.className).toContain("border-bad");
 
     const well = within(rows).getByTestId("rank-row-0");
-    expect(well).toHaveTextContent("running");
-    expect(well.className).not.toContain("border-danger");
+    expect(well).toHaveTextContent("Running");
+    expect(well.className).not.toContain("border-bad");
   });
 
   it("spends nothing on the ranks of rows nobody has opened", async () => {
-    render(<InferencePage />);
+    show();
 
     await screen.findByTestId("deployment-c1");
     expect(fetchDeployment).not.toHaveBeenCalled();
   });
 
-  it("does not inspect the ranks of a deployment that is not running", async () => {
-    // A stopped deployment has no containers by design and a pending one has
-    // none yet: asking would paint every rank red for saying what the row says.
+  it("does not inspect the ranks of a run that is not running", async () => {
+    // A stopped run has no containers by design and a pending one has none
+    // yet: asking would paint every rank red for saying what the row says.
     vi.mocked(fetchDeployments).mockResolvedValue([
       deployment({ id: "c1", name: "cluster job", status: "stopped", ranks: RANKS }),
     ]);
-    render(<InferencePage />);
+    show();
     await expand("cluster job");
 
     expect(
@@ -667,14 +916,14 @@ describe("InferencePage rank health", () => {
 
   it("keeps the ranks the list already gave when the live read fails", async () => {
     vi.mocked(fetchDeployment).mockRejectedValue(new Error("API 502: node unreachable"));
-    render(<InferencePage />);
+    show();
     await expand("cluster job");
 
     await waitFor(() => expect(fetchDeployment).toHaveBeenCalledWith("c1"));
     const rows = within(screen.getByTestId("deployment-c1")).getByTestId("rank-rows");
     expect(within(rows).getByTestId("rank-row-1")).toHaveTextContent("10.0.0.11");
     // No container state, and no error banner shouted over the log pane.
-    expect(within(rows).getByTestId("rank-row-1")).not.toHaveTextContent("exited");
+    expect(within(rows).getByTestId("rank-row-1")).not.toHaveTextContent("Exited");
     expect(screen.queryByText("API 502: node unreachable")).toBeNull();
   });
 
@@ -684,7 +933,7 @@ describe("InferencePage rank health", () => {
       push = onMessage;
       return () => {};
     });
-    render(<InferencePage />);
+    show();
     await expand("cluster job");
     await waitFor(() => expect(fetchDeployment).toHaveBeenCalledTimes(1));
 
@@ -702,7 +951,7 @@ describe("InferencePage rank health", () => {
       push = onMessage;
       return () => {};
     });
-    render(<InferencePage />);
+    show();
     await expand("cluster job");
 
     act(() => push!("status", { status: "stopped" }));
@@ -724,21 +973,21 @@ describe("InferencePage rank health", () => {
     vi.mocked(fetchDeployment).mockImplementation(async (id: string) =>
       id === "c1" ? LIVE : ({ ...OTHER, ranks: RANKS } as Deployment),
     );
-    render(<InferencePage />);
+    show();
     await expand("cluster job");
-    await within(screen.getByTestId("deployment-c1")).findByText("exited");
+    await within(screen.getByTestId("deployment-c1")).findByText("Exited");
 
     await expand("other job");
 
     await waitFor(() => expect(fetchDeployment).toHaveBeenCalledWith("c2"));
     const rows = within(screen.getByTestId("deployment-c2")).getByTestId("rank-rows");
-    expect(rows).not.toHaveTextContent("exited");
+    expect(rows).not.toHaveTextContent("Exited");
   });
 });
 
 // ── Engine metrics on the open row ───────────────────────────────────────────
 
-describe("InferencePage engine metrics", () => {
+describe("RunsPage engine metrics", () => {
   const RUNNING = deployment({ id: "m1", name: "metrics job", status: "running" });
 
   function metricsWindow(over: Partial<EngineMetricsWindow> = {}): EngineMetricsWindow {
@@ -790,7 +1039,7 @@ describe("InferencePage engine metrics", () => {
   });
 
   it("asks for nothing until a row is opened", async () => {
-    render(<InferencePage />);
+    show();
     await screen.findByText("metrics job");
 
     expect(fetchEngineMetrics).not.toHaveBeenCalled();
@@ -798,7 +1047,7 @@ describe("InferencePage engine metrics", () => {
 
   it("reads the open row's window and shows the queue depth", async () => {
     vi.mocked(fetchEngineMetrics).mockResolvedValue(metricsWindow());
-    render(<InferencePage />);
+    show();
 
     await expand("metrics job");
 
@@ -817,7 +1066,7 @@ describe("InferencePage engine metrics", () => {
         samples: [],
       }),
     );
-    render(<InferencePage />);
+    show();
 
     await expand("metrics job");
 
@@ -829,7 +1078,7 @@ describe("InferencePage engine metrics", () => {
 
   it("stops saying it is reading when the read fails, and invents nothing", async () => {
     vi.mocked(fetchEngineMetrics).mockRejectedValue(new Error("network"));
-    render(<InferencePage />);
+    show();
 
     await expand("metrics job");
 
@@ -842,7 +1091,7 @@ describe("InferencePage engine metrics", () => {
     vi.mocked(fetchDeployments).mockResolvedValue([RUNNING, OTHER]);
     // Only ever answers for m1; opening m2 must therefore show nothing.
     vi.mocked(fetchEngineMetrics).mockResolvedValue(metricsWindow());
-    render(<InferencePage />);
+    show();
     await expand("metrics job");
     await screen.findByText("Queued");
 
@@ -857,10 +1106,10 @@ describe("InferencePage engine metrics", () => {
  *  that asked for it to go. What the operator sees while the reconciler works
  *  is the whole point of the change: the record still says what it is, plus
  *  what has been asked of it, and the buttons that would ask again are shut. */
-describe("InferencePage convergence", () => {
+describe("RunsPage convergence", () => {
   const SETTLED = deployment({ id: "ok1", name: "settled job", status: "running", sync: "in_sync" });
-  /** A live deployment the operator has asked to stop. It is still running:
-   *  the containers are gone only when a node says so. */
+  /** A live run the operator has asked to stop. It is still running: the
+   *  containers are gone only when a node says so. */
   const GOING = deployment({
     id: "go1",
     name: "going job",
@@ -902,8 +1151,8 @@ describe("InferencePage convergence", () => {
     vi.mocked(stopDeployment).mockResolvedValue(undefined);
   });
 
-  it("says a running deployment is still running while it is being stopped", async () => {
-    render(<InferencePage />);
+  it("says a running run is still running while it is being stopped", async () => {
+    show();
 
     const row = within(await screen.findByTestId("deployment-go1"));
     // Not "stopped": the container may still be holding its GPU.
@@ -912,28 +1161,29 @@ describe("InferencePage convergence", () => {
   });
 
   it("shuts the stop button while the stop is in flight", async () => {
-    render(<InferencePage />);
+    show();
 
     const row = within(await screen.findByTestId("deployment-go1"));
 
     expect(row.getByTitle("Waiting for the nodes to catch up")).toBeDisabled();
   });
 
-  it("shuts the remove-from-history button too, so the record is not asked twice", async () => {
-    render(<InferencePage />);
+  it("shuts the remove button too, so the record is not asked twice", async () => {
+    show();
+    await openTab("Finished");
 
     const row = within(await screen.findByTestId("deployment-hist1"));
 
+    expect(row.getByRole("button", { name: "Remove" })).toBeDisabled();
     expect(row.getByTitle("Waiting for the nodes to catch up")).toBeDisabled();
-    expect(row.queryByTitle("Remove from history")).toBeNull();
   });
 
-  it("leaves a settled deployment's actions alone", async () => {
-    render(<InferencePage />);
+  it("leaves a settled run's actions alone", async () => {
+    show();
 
     const row = within(await screen.findByTestId("deployment-ok1"));
 
-    expect(row.getByTitle("Stop")).toBeEnabled();
+    expect(row.getByRole("button", { name: "Stop" })).toBeEnabled();
     expect(row.queryByTestId("sync-in_sync")).toBeNull();
   });
 
@@ -941,7 +1191,7 @@ describe("InferencePage convergence", () => {
    *  for the ten-second poll is what made a delete look like nothing had
    *  happened. */
   it("re-reads the list when the reconciler says a record changed", async () => {
-    render(<InferencePage />);
+    show();
     await screen.findByTestId("deployment-go1");
     await waitFor(() =>
       expect(CapturingEventSource.instances.find((s) => s.url === "/sse/events/deployments")).toBeDefined(),
@@ -965,8 +1215,33 @@ describe("InferencePage convergence", () => {
     );
   });
 
+  it("re-reads the list on a lifecycle frame the stream carries", async () => {
+    show();
+    await screen.findByTestId("deployment-go1");
+    await waitFor(() =>
+      expect(CapturingEventSource.instances.find((s) => s.url === "/sse/events/deployments")).toBeDefined(),
+    );
+    const stream = CapturingEventSource.instances.find((s) => s.url === "/sse/events/deployments")!;
+    const before = vi.mocked(fetchDeployments).mock.calls.length;
+
+    act(() =>
+      stream.emit({
+        type: "deployment_stopped",
+        event_id: "e3",
+        timestamp: "2026-01-01T00:00:00Z",
+        message: "rank 0 is gone",
+        resource: "go1",
+        resource_type: "deployment",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(vi.mocked(fetchDeployments).mock.calls.length).toBeGreaterThan(before),
+    );
+  });
+
   it("does not re-read the list for an ordinary log event", async () => {
-    render(<InferencePage />);
+    show();
     await screen.findByTestId("deployment-go1");
     await waitFor(() =>
       expect(CapturingEventSource.instances.find((s) => s.url === "/sse/events/deployments")).toBeDefined(),
@@ -984,6 +1259,51 @@ describe("InferencePage convergence", () => {
         resource_type: "deployment",
       }),
     );
+
+    expect(vi.mocked(fetchDeployments).mock.calls.length).toBe(before);
+  });
+});
+
+/** The fallback poll.
+ *
+ * It exists for what the stream cannot say — a dropped connection, a frame the
+ * backend does not send. Nothing live means nothing can change without a
+ * frame, so an idle control plane is asked for nothing at all.
+ */
+describe("RunsPage polling", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("re-reads the list while something is live", async () => {
+    vi.mocked(fetchDeployments).mockResolvedValue([SOLO]);
+    show();
+    await vi.waitFor(() => expect(screen.getByTestId("deployment-solo")).toBeInTheDocument());
+    const before = vi.mocked(fetchDeployments).mock.calls.length;
+
+    await act(async () => {
+      vi.advanceTimersByTime(10_000);
+    });
+
+    expect(vi.mocked(fetchDeployments).mock.calls.length).toBeGreaterThan(before);
+  });
+
+  it("asks for nothing when every run has finished", async () => {
+    vi.mocked(fetchDeployments).mockResolvedValue([
+      deployment({ id: "f1", name: "finished job", status: "stopped" }),
+    ]);
+    show();
+    await vi.waitFor(() => expect(screen.getByTestId("deployment-f1")).toBeInTheDocument());
+    const before = vi.mocked(fetchDeployments).mock.calls.length;
+
+    await act(async () => {
+      vi.advanceTimersByTime(30_000);
+    });
 
     expect(vi.mocked(fetchDeployments).mock.calls.length).toBe(before);
   });

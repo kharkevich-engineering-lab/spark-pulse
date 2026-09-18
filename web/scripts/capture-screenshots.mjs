@@ -38,7 +38,17 @@ const SHOTS = [
   // page is *for* — the ranks, the engine's own metrics, the live log — is
   // what opens underneath it. Needs a deployment to exist: POST one to
   // /api/deployments against the simulation backend first.
-  { name: "jobs", path: "/jobs", settle: "text=What is serving.", expand: "text=qwen3.8-27b" },
+  { name: "jobs", path: "/jobs", settle: "text=What is serving.", expand: 'button:has-text("Logs")' },
+  // The Benchmarks tab of that same page, on its Summary sub-view. Needs
+  // `benchmarking_enabled` on — `SPARK_PULSE_BENCHMARKING_ENABLED=true` on the
+  // backend — or the tab is not there and this shot fails loudly rather than
+  // capturing a page with a tab missing from it.
+  {
+    name: "benchmarking",
+    path: "/benchmarking",
+    settle: "text=What is serving.",
+    expand: '[role="tab"]:has-text("Summary")',
+  },
   { name: "cluster", path: "/cluster", settle: "text=The machines." },
   // Full page: the answer covers every node, and one node in a viewport is
   // the picture this page was rebuilt to stop showing.
