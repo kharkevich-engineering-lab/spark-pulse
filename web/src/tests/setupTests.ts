@@ -63,11 +63,32 @@ global.IntersectionObserver = class MockIntersectionObserver implements Intersec
   unobserve() {}
 };
 
-// Mock matchMedia
+// Mock matchMedia.
+//
+// A width query is answered from `window.innerWidth` (jsdom's default is
+// 1024) rather than with a flat `false`: `useMediaQuery` decides whether a
+// page renders a table or a list of cards, and a stub that says "no" to every
+// query would silently test the phone layout on every desktop assertion. A
+// test that wants the narrow layout sets `window.innerWidth` before rendering.
+// Everything else — `prefers-color-scheme`, say — still answers false.
+function widthMatches(query: string): boolean {
+  const min = /min-width:\s*(\d+)px/.exec(query);
+  const max = /max-width:\s*(\d+)px/.exec(query);
+  if (!min && !max) return false;
+  if (min && window.innerWidth < Number(min[1])) return false;
+  if (max && window.innerWidth > Number(max[1])) return false;
+  return true;
+}
+
+/** Put the viewport back where every other test expects it. */
+afterEach(() => {
+  Object.defineProperty(window, "innerWidth", { writable: true, configurable: true, value: 1024 });
+});
+
 Object.defineProperty(window, "matchMedia", {
   writable: true,
   value: vi.fn().mockImplementation((query) => ({
-    matches: false,
+    matches: widthMatches(query),
     media: query,
     onchange: null,
     addListener: vi.fn(), // deprecated

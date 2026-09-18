@@ -1,5 +1,8 @@
 # Models and replication
 
+The **Models** tab of Library (`/models`), with the caches that fill the same
+disk as a section under it — `/cache` is still an address, and it opens here.
+
 ## The catalogue
 
 Anything in the Hugging Face hub cache (`$HF_HOME/hub`) is a model here, plus anything under a configured `local_path` source. Recipes are consulted only to say which of them reference a given model.
@@ -40,8 +43,25 @@ After the transfer the node's copy is verified against the manifest, and only th
 
 Your Hugging Face token never leaves the control plane. Worker containers are handed `HF_HUB_OFFLINE=1`, so a worker missing a file fails loudly instead of quietly re-downloading it over the uplink from every node at once.
 
+## Where a model is, on the row
+
+The table answers "can I delete this" before the dialog is opened. One column, four verdicts, from the presence check above:
+
+| the row says | it means |
+|---|---|
+| **2 of 2 nodes** | every machine holds a verified copy |
+| **gx10-ced2 only** | one machine holds it; the others do not |
+| **partial on gx10-ced2** | a machine holds part of a snapshot — worse than none, because it deploys and then fails on a shard nobody notices |
+| **not checked** | nobody answered, or nobody was asked; the node's own error is on hover |
+
+A node that could not be reached is never counted as a node without a copy. On a single-machine install the catalogue *is* the answer, and the column says so rather than leaving you to wonder whether it was asked.
+
 ## Deleting
 
 Deleting asks which machines. A model replicated to four Sparks is on four disks, and the dialog preselects the nodes presence says hold a copy — a node without one has no disk to reclaim. Every node answers for itself: removed or not, how much it freed, or why it could not be asked, and a node that refused is named rather than folded into "deleted".
 
 Naming a revision leaves the shared blobs alone, because they belong to the revisions that stay. Naming none takes the repository.
+
+## Sources
+
+Where a model id is resolved from — the hub, a mirror, a `local_path` directory — is configuration, and is edited in Settings. The download row here offers the list; it does not own it.

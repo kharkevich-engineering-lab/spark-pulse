@@ -1,10 +1,11 @@
-/** Engines: what this cluster can run, and what a deploy would have to pull.
+/** Library, engines tab: what this cluster can run, and what a deploy waits on.
  *
- * The page exists to separate two states that both mean "you will wait": an
+ * The tab exists to separate two states that both mean "you will wait": an
  * image that was never pulled, and one whose version was republished under a
- * new digest. The spec asserts the page tells them apart — and, since the
- * Images page and the Engines settings tab became one, that an engine's own
- * facts are on the same row as its image's size.
+ * new digest. The spec asserts it tells them apart — and, since the Images
+ * page and the Engines settings tab became one row, that an engine's own facts
+ * sit beside its image's size. Where engines *come from* is configuration and
+ * has left for Settings, so what is asserted here is the line that says so.
  */
 
 import { expect, test } from "@playwright/test";
@@ -43,14 +44,15 @@ function shortDigest(digest: string | null | undefined): string {
 test("shows the engines the registry knows about", async ({ page, request }) => {
   const response = await request.get("/api/engines");
   expect(response.ok(), "GET /api/engines should succeed").toBeTruthy();
-  const { engines, default_engine } = (await response.json()) as {
-    engines: EngineSummary[];
-    default_engine: string;
-  };
+  const { engines } = (await response.json()) as { engines: EngineSummary[] };
   expect(engines.length, "simulation mode should serve an engine registry").toBeGreaterThan(0);
 
   await gotoPage(page, "/engines");
-  await expect(page.getByRole("heading", { name: "Engines and images.", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "What is on disk.", exact: true })).toBeVisible();
+  await expect(page.getByRole("tab", { name: /^Engines/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
 
   for (const engine of engines) {
     // The row is keyed by the image reference, which is what the catalogue and
@@ -69,9 +71,10 @@ test("shows the engines the registry knows about", async ({ page, request }) => 
     await expect(page.getByText(`:${engine.ports.api}`, { exact: false }).first()).toBeVisible();
     await row.getByRole("button", { name: `Details for ${engine.image_ref}` }).click();
   }
-  // Where engines come from is configured on the page they appear on, so the
-  // default engine is a field here rather than a tab in Settings.
-  await expect(page.getByLabel("Default engine")).toHaveValue(default_engine);
+
+  // The indexes are configuration and live in Settings now; leaving no trace
+  // of where they went reads as a feature that was removed.
+  await expect(page.getByText("Engine indexes are configured in Settings.")).toBeVisible();
   await expectNoCrash(page);
 });
 
@@ -82,7 +85,6 @@ test("lists every engine image the backend knows about", async ({ page, request 
   expect(images.length, "simulation mode should serve an image catalogue").toBeGreaterThan(0);
 
   await gotoPage(page, "/engines");
-  await expect(page.getByRole("heading", { name: "Engines and images.", exact: true })).toBeVisible();
 
   for (const image of images) {
     const row = page.getByTestId(`engine-${image.ref}`);
@@ -92,7 +94,7 @@ test("lists every engine image the backend knows about", async ({ page, request 
     await expect(row).toContainText(image.engine);
     // "default" is the absence of a variant, so the badge leaves it unsaid —
     // the rule `EngineBadge` has always applied, now that the badge is what
-    // this page renders.
+    // this tab renders.
     if (image.variant !== "default") await expect(row).toContainText(image.variant);
   }
   await expectNoCrash(page);
@@ -130,4 +132,31 @@ test("distinguishes a missing image from a republished digest", async ({ page, r
   const needsAttention = images.filter((i) => i.update_available).length;
   await expect(page.getByText(`${needsAttention} need attention`)).toBeVisible();
   await expectNoCrash(page);
+});
+
+/** Deleting an image is tens of minutes to undo, so it names what it costs
+ *  before it does anything — and, on a cluster, which machines it touches. */
+test("asks before deleting an image, and says what re-pulling costs", async ({ page, request }) => {
+  const { images } = (await (await request.get("/api/images")).json()) as { images: ImageEntry[] };
+  const present = images.find((i) => i.present);
+  expect(present, "simulation should include an image this host holds").toBeTruthy();
+
+  await gotoPage(page, "/engines");
+  await page.getByRole("button", { name: `Delete ${present!.ref}` }).click();
+
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText(/Re-pulling it can take tens of minutes/);
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expectNoCrash(page);
+});
+
+test("does not scroll sideways at phone width", async ({ page }) => {
+  await gotoPage(page, "/engines");
+  await page.getByTestId(/^engine-/).first().waitFor();
+
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+  expect(overflow, "the page body must not scroll horizontally").toBeLessThanOrEqual(1);
 });

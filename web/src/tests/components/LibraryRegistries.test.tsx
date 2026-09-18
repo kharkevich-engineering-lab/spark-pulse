@@ -10,9 +10,9 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import OciRegistryPage from "@/pages/OciRegistryPage";
+import { MemoryRouter } from "react-router-dom";
+import LibraryPage from "@/pages/LibraryPage";
 import type {
-  OciAutoUpdateSettings,
   OciCollection,
   OciCollectionRecipe,
   OciRecipeMeta,
@@ -21,11 +21,14 @@ import type {
 } from "@/lib/types";
 
 vi.mock("@/lib/api", () => ({
+  // The Library shell's own reads: Registries is a tab of it now.
+  fetchModels: vi.fn(() => Promise.resolve([])),
+  fetchImages: vi.fn(() => Promise.resolve([])),
+  fetchCache: vi.fn(() => Promise.resolve({ entries: [] })),
+  cleanCache: vi.fn(),
   fetchOciRegistries: vi.fn(),
   fetchOciCollections: vi.fn(),
   fetchOciMeta: vi.fn(),
-  fetchOciAutoUpdateSettings: vi.fn(),
-  updateOciAutoUpdateSettings: vi.fn(),
   installOciCollection: vi.fn(),
   checkOciUpdates: vi.fn(),
   applyOciUpdates: vi.fn(),
@@ -33,7 +36,6 @@ vi.mock("@/lib/api", () => ({
   updateOciRegistry: vi.fn(),
   removeOciRegistry: vi.fn(),
   testOciRegistry: vi.fn(),
-  runOciAutoUpdate: vi.fn(),
   fetchOciCollectionRecipes: vi.fn(),
   fetchOciRegistryVersions: vi.fn(),
   installOciRecipe: vi.fn(),
@@ -45,7 +47,6 @@ import {
   addOciRegistry,
   applyOciUpdates,
   checkOciUpdates,
-  fetchOciAutoUpdateSettings,
   fetchOciCollectionRecipes,
   fetchOciCollections,
   fetchOciMeta,
@@ -54,10 +55,8 @@ import {
   installOciCollection,
   installOciRecipe,
   removeOciRegistry,
-  runOciAutoUpdate,
   testOciRegistry,
   uninstallOciRecipe,
-  updateOciAutoUpdateSettings,
   updateOciRecipe,
   updateOciRegistry,
 } from "@/lib/api";
@@ -121,12 +120,6 @@ const UPDATE: OciUpdateCheck = {
   modified_recipes: ["qwen3-8b"],
 };
 
-const AUTO: OciAutoUpdateSettings = {
-  enabled: false,
-  schedule: "0 3 * * *",
-  overwrite_local: false,
-};
-
 // The sub-nav is a real tablist now, so the pills are tabs rather than bare
 // buttons — the selector moves, the coverage does not.
 // The sub-nav is a real tablist now, so the pills are tabs rather than bare
@@ -139,13 +132,19 @@ const openTab = (name: string) =>
 const confirmDialog = async (label: string) =>
   userEvent.click(await screen.findByRole("button", { name: label }));
 
-describe("OciRegistryPage", () => {
+const renderPage = () =>
+  render(
+    <MemoryRouter initialEntries={["/oci"]}>
+      <LibraryPage />
+    </MemoryRouter>,
+  );
+
+describe("Library — registries", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(fetchOciRegistries).mockResolvedValue([REGISTRY]);
     vi.mocked(fetchOciCollections).mockResolvedValue([COLLECTION]);
     vi.mocked(fetchOciMeta).mockResolvedValue([META]);
-    vi.mocked(fetchOciAutoUpdateSettings).mockResolvedValue(AUTO);
     vi.mocked(checkOciUpdates).mockResolvedValue([UPDATE]);
     vi.mocked(fetchOciRegistryVersions).mockResolvedValue({ versions: ["1.2.0", "1.1.0"] } as never);
     vi.mocked(fetchOciCollectionRecipes).mockResolvedValue([RECIPE]);
@@ -157,8 +156,6 @@ describe("OciRegistryPage", () => {
     vi.mocked(removeOciRegistry).mockResolvedValue({} as never);
     vi.mocked(addOciRegistry).mockResolvedValue(REGISTRY);
     vi.mocked(testOciRegistry).mockResolvedValue({ ok: true } as never);
-    vi.mocked(runOciAutoUpdate).mockResolvedValue({ success: true, updated: 2 } as never);
-    vi.mocked(updateOciAutoUpdateSettings).mockResolvedValue(AUTO);
     vi.mocked(applyOciUpdates).mockResolvedValue([
       { collection: "spark-recipes", success: true, installed: ["qwen3-8b"] },
     ]);
@@ -166,7 +163,7 @@ describe("OciRegistryPage", () => {
 
   describe("browse", () => {
     it("lists the collections a registry offers, with what is in them", async () => {
-      render(<OciRegistryPage />);
+      renderPage();
 
       expect(await screen.findByText("spark-recipes")).toBeInTheDocument();
       expect(screen.getByText("Recipes for the DGX Spark")).toBeInTheDocument();
@@ -176,7 +173,7 @@ describe("OciRegistryPage", () => {
 
     it("points at Settings when no registry has produced a collection", async () => {
       vi.mocked(fetchOciCollections).mockResolvedValue([]);
-      render(<OciRegistryPage />);
+      renderPage();
 
       expect(await screen.findByText("No collections found")).toBeInTheDocument();
       expect(
@@ -185,7 +182,7 @@ describe("OciRegistryPage", () => {
     });
 
     it("opens a collection and lists the recipes it carries", async () => {
-      render(<OciRegistryPage />);
+      renderPage();
       await userEvent.click(await screen.findByText("spark-recipes"));
 
       await waitFor(() =>
@@ -197,7 +194,7 @@ describe("OciRegistryPage", () => {
 
     it("says a collection is empty rather than showing a blank drawer", async () => {
       vi.mocked(fetchOciCollectionRecipes).mockResolvedValue([]);
-      render(<OciRegistryPage />);
+      renderPage();
       await userEvent.click(await screen.findByText("spark-recipes"));
 
       expect(
@@ -206,7 +203,7 @@ describe("OciRegistryPage", () => {
     });
 
     it("offers Update and Uninstall for a recipe already installed, Install for one that is not", async () => {
-      render(<OciRegistryPage />);
+      renderPage();
       await userEvent.click(await screen.findByText("spark-recipes"));
       await screen.findByText("qwen3-8b");
 
@@ -217,7 +214,7 @@ describe("OciRegistryPage", () => {
 
     it("installs a single recipe from the version the collection is pinned to", async () => {
       vi.mocked(fetchOciMeta).mockResolvedValue([]);
-      render(<OciRegistryPage />);
+      renderPage();
       await userEvent.click(await screen.findByText("spark-recipes"));
       await screen.findByText("qwen3-8b");
 
@@ -236,18 +233,18 @@ describe("OciRegistryPage", () => {
     it("names the recipe that failed to install rather than a bare error", async () => {
       vi.mocked(fetchOciMeta).mockResolvedValue([]);
       vi.mocked(installOciRecipe).mockRejectedValue(new Error("manifest unknown"));
-      render(<OciRegistryPage />);
+      renderPage();
       await userEvent.click(await screen.findByText("spark-recipes"));
       await screen.findByText("qwen3-8b");
 
       await userEvent.click(screen.getByRole("button", { name: "Install" }));
 
-      expect(await screen.findByText("Install Failed")).toBeInTheDocument();
+      expect(await screen.findByText("Install failed")).toBeInTheDocument();
       expect(screen.getByText("manifest unknown")).toBeInTheDocument();
     });
 
     it("updates one installed recipe", async () => {
-      render(<OciRegistryPage />);
+      renderPage();
       await userEvent.click(await screen.findByText("spark-recipes"));
       await screen.findByText("qwen3-8b");
 
@@ -264,21 +261,22 @@ describe("OciRegistryPage", () => {
 
     it("reports an update the registry refused", async () => {
       vi.mocked(updateOciRecipe).mockRejectedValue(new Error("digest mismatch"));
-      render(<OciRegistryPage />);
+      renderPage();
       await userEvent.click(await screen.findByText("spark-recipes"));
       await screen.findByText("qwen3-8b");
 
       await userEvent.click(screen.getByRole("button", { name: /Update/ }));
 
-      expect(await screen.findByText("Update Failed")).toBeInTheDocument();
+      expect(await screen.findByText("Update failed")).toBeInTheDocument();
       expect(screen.getByText("digest mismatch")).toBeInTheDocument();
     });
 
     it("installs a whole collection and says which version landed", async () => {
-      render(<OciRegistryPage />);
+      renderPage();
       await userEvent.click(await screen.findByText("spark-recipes"));
 
       await userEvent.click(await screen.findByRole("button", { name: /Install All Recipes/ }));
+      await confirmDialog("Install");
 
       await waitFor(() =>
         expect(installOciCollection).toHaveBeenCalledWith("spark-recipes", "1.2.0", "ghcr"),
@@ -288,9 +286,10 @@ describe("OciRegistryPage", () => {
 
     it("reports a collection install that failed", async () => {
       vi.mocked(installOciCollection).mockRejectedValue(new Error("registry unreachable"));
-      render(<OciRegistryPage />);
+      renderPage();
       await userEvent.click(await screen.findByText("spark-recipes"));
       await userEvent.click(await screen.findByRole("button", { name: /Install All Recipes/ }));
+      await confirmDialog("Install");
 
       expect(await screen.findByText("registry unreachable")).toBeInTheDocument();
     });
@@ -298,7 +297,7 @@ describe("OciRegistryPage", () => {
 
   describe("installed", () => {
     it("lists what is installed, from which collection and at what version", async () => {
-      render(<OciRegistryPage />);
+      renderPage();
       await openTab("Installed");
 
       expect(await screen.findByText("qwen3-8b")).toBeInTheDocument();
@@ -309,7 +308,7 @@ describe("OciRegistryPage", () => {
     it("says nothing is installed rather than showing an empty list", async () => {
       vi.mocked(fetchOciMeta).mockResolvedValue([]);
       vi.mocked(checkOciUpdates).mockResolvedValue([]);
-      render(<OciRegistryPage />);
+      renderPage();
       await openTab("Installed");
 
       expect(await screen.findByText("No OCI recipes installed")).toBeInTheDocument();
@@ -317,14 +316,14 @@ describe("OciRegistryPage", () => {
 
     it("marks a recipe the operator edited locally", async () => {
       vi.mocked(fetchOciMeta).mockResolvedValue([{ ...META, local_changes: true }]);
-      render(<OciRegistryPage />);
+      renderPage();
       await openTab("Installed");
 
       expect(await screen.findByText("Modified")).toBeInTheDocument();
     });
 
     it("shows what an update would change before applying it", async () => {
-      render(<OciRegistryPage />);
+      renderPage();
       await openTab("Installed");
 
       expect(await screen.findByText("Available Updates")).toBeInTheDocument();
@@ -337,7 +336,7 @@ describe("OciRegistryPage", () => {
      *  edited locally would lose that edit, so Apply All is held back. */
     it("holds back Apply All while any collection carries local changes", async () => {
       vi.mocked(checkOciUpdates).mockResolvedValue([{ ...UPDATE, local_changes: true }]);
-      render(<OciRegistryPage />);
+      renderPage();
       await openTab("Installed");
 
       await screen.findByText("Available Updates");
@@ -350,7 +349,7 @@ describe("OciRegistryPage", () => {
         { collection: "spark-recipes", success: true, installed: ["qwen3-8b"] },
         { collection: "other", success: false, installed: [], error: "boom" },
       ]);
-      render(<OciRegistryPage />);
+      renderPage();
       await openTab("Installed");
       await screen.findByText("Available Updates");
 
@@ -366,7 +365,7 @@ describe("OciRegistryPage", () => {
 
     it("reports an apply that never reached the registry", async () => {
       vi.mocked(applyOciUpdates).mockRejectedValue(new Error("registry unreachable"));
-      render(<OciRegistryPage />);
+      renderPage();
       await openTab("Installed");
       await screen.findByText("Available Updates");
 
@@ -376,7 +375,7 @@ describe("OciRegistryPage", () => {
     });
 
     it("re-asks the registry when the operator checks for updates", async () => {
-      render(<OciRegistryPage />);
+      renderPage();
       await openTab("Installed");
       await screen.findByText("Available Updates");
       const before = vi.mocked(checkOciUpdates).mock.calls.length;
@@ -389,7 +388,7 @@ describe("OciRegistryPage", () => {
     });
 
     it("uninstalls a recipe and says so", async () => {
-      render(<OciRegistryPage />);
+      renderPage();
       await openTab("Installed");
       await screen.findByText("qwen3-8b");
 
@@ -402,7 +401,7 @@ describe("OciRegistryPage", () => {
 
     it("reports an uninstall that failed", async () => {
       vi.mocked(uninstallOciRecipe).mockRejectedValue(new Error("recipe is deployed"));
-      render(<OciRegistryPage />);
+      renderPage();
       await openTab("Installed");
       await screen.findByText("qwen3-8b");
 
@@ -413,27 +412,25 @@ describe("OciRegistryPage", () => {
     });
   });
 
-  describe("settings", () => {
+  describe("the registries themselves", () => {
     it("lists the registries with their URL and the versions they carry", async () => {
-      render(<OciRegistryPage />);
-      await openTab("Settings");
+      renderPage();
 
       expect(await screen.findByText("ghcr")).toBeInTheDocument();
       expect(screen.getByText("ghcr.io/acme/recipes")).toBeInTheDocument();
-      expect(screen.getByText("2 versions")).toBeInTheDocument();
+      // The versions are a second request, made once the registries land.
+      expect(await screen.findByText("2 versions")).toBeInTheDocument();
     });
 
     it("says there are no registries rather than showing an empty box", async () => {
       vi.mocked(fetchOciRegistries).mockResolvedValue([]);
-      render(<OciRegistryPage />);
-      await openTab("Settings");
+      renderPage();
 
       expect(await screen.findByText("No registries configured")).toBeInTheDocument();
     });
 
     it("adds a registry, enabled, and clears the form", async () => {
-      render(<OciRegistryPage />);
-      await openTab("Settings");
+      renderPage();
 
       await userEvent.click(await screen.findByRole("button", { name: /Add Registry/ }));
       await userEvent.type(screen.getByPlaceholderText("my-registry"), "internal");
@@ -453,8 +450,7 @@ describe("OciRegistryPage", () => {
     });
 
     it("will not add a registry missing a name or a URL", async () => {
-      render(<OciRegistryPage />);
-      await openTab("Settings");
+      renderPage();
 
       await userEvent.click(await screen.findByRole("button", { name: /Add Registry/ }));
       await userEvent.type(screen.getByPlaceholderText("my-registry"), "internal");
@@ -464,8 +460,7 @@ describe("OciRegistryPage", () => {
 
     it("reports a registry the backend would not accept", async () => {
       vi.mocked(addOciRegistry).mockRejectedValue(new Error("that name is taken"));
-      render(<OciRegistryPage />);
-      await openTab("Settings");
+      renderPage();
 
       await userEvent.click(await screen.findByRole("button", { name: /Add Registry/ }));
       await userEvent.type(screen.getByPlaceholderText("my-registry"), "internal");
@@ -476,8 +471,7 @@ describe("OciRegistryPage", () => {
     });
 
     it("abandons the add form without writing anything", async () => {
-      render(<OciRegistryPage />);
-      await openTab("Settings");
+      renderPage();
 
       await userEvent.click(await screen.findByRole("button", { name: /Add Registry/ }));
       await userEvent.type(screen.getByPlaceholderText("my-registry"), "internal");
@@ -488,8 +482,7 @@ describe("OciRegistryPage", () => {
     });
 
     it("toggles a registry off without deleting it", async () => {
-      render(<OciRegistryPage />);
-      await openTab("Settings");
+      renderPage();
 
       await userEvent.click(await screen.findByRole("button", { name: "Disable" }));
 
@@ -500,8 +493,7 @@ describe("OciRegistryPage", () => {
 
     it("reports a toggle the backend rejected", async () => {
       vi.mocked(updateOciRegistry).mockRejectedValue(new Error("registries.yaml is read-only"));
-      render(<OciRegistryPage />);
-      await openTab("Settings");
+      renderPage();
 
       await userEvent.click(await screen.findByRole("button", { name: "Disable" }));
 
@@ -510,8 +502,7 @@ describe("OciRegistryPage", () => {
 
     it("opens the edit dialog pre-filled, without ever showing a stored secret", async () => {
       vi.mocked(fetchOciRegistries).mockResolvedValue([REGISTRY_WITH_AUTH]);
-      render(<OciRegistryPage />);
-      await openTab("Settings");
+      renderPage();
 
       await userEvent.click(await screen.findByRole("button", { name: "Edit registry" }));
 
@@ -525,8 +516,7 @@ describe("OciRegistryPage", () => {
 
     it("saves only the fields the operator changed, plus a non-empty new secret", async () => {
       vi.mocked(fetchOciRegistries).mockResolvedValue([REGISTRY_WITH_AUTH]);
-      render(<OciRegistryPage />);
-      await openTab("Settings");
+      renderPage();
 
       await userEvent.click(await screen.findByRole("button", { name: "Edit registry" }));
       const url = screen.getByLabelText("URL");
@@ -548,8 +538,7 @@ describe("OciRegistryPage", () => {
 
     it("leaves the stored secret alone when only the URL changes", async () => {
       vi.mocked(fetchOciRegistries).mockResolvedValue([REGISTRY_WITH_AUTH]);
-      render(<OciRegistryPage />);
-      await openTab("Settings");
+      renderPage();
 
       await userEvent.click(await screen.findByRole("button", { name: "Edit registry" }));
       const url = screen.getByLabelText("URL");
@@ -566,8 +555,7 @@ describe("OciRegistryPage", () => {
 
     it("shows a backend error inline and keeps the dialog open to retry", async () => {
       vi.mocked(updateOciRegistry).mockRejectedValue(new Error("registries.yaml is read-only"));
-      render(<OciRegistryPage />);
-      await openTab("Settings");
+      renderPage();
 
       await userEvent.click(await screen.findByRole("button", { name: "Edit registry" }));
       const url = screen.getByLabelText("URL");
@@ -581,8 +569,7 @@ describe("OciRegistryPage", () => {
 
     it("requires a username for username & password authentication", async () => {
       vi.mocked(fetchOciRegistries).mockResolvedValue([REGISTRY_WITH_AUTH]);
-      render(<OciRegistryPage />);
-      await openTab("Settings");
+      renderPage();
 
       await userEvent.click(await screen.findByRole("button", { name: "Edit registry" }));
       const username = screen.getByLabelText("Username");
@@ -596,8 +583,7 @@ describe("OciRegistryPage", () => {
     });
 
     it("requires a URL", async () => {
-      render(<OciRegistryPage />);
-      await openTab("Settings");
+      renderPage();
 
       await userEvent.click(await screen.findByRole("button", { name: "Edit registry" }));
       const url = screen.getByLabelText("URL");
@@ -609,8 +595,7 @@ describe("OciRegistryPage", () => {
     });
 
     it("switches to token authentication with a new token", async () => {
-      render(<OciRegistryPage />);
-      await openTab("Settings");
+      renderPage();
 
       await userEvent.click(await screen.findByRole("button", { name: "Edit registry" }));
       await userEvent.selectOptions(screen.getByLabelText("Authentication"), "token");
@@ -625,8 +610,7 @@ describe("OciRegistryPage", () => {
     });
 
     it("requires a new secret before switching to a different authentication type", async () => {
-      render(<OciRegistryPage />);
-      await openTab("Settings");
+      renderPage();
 
       await userEvent.click(await screen.findByRole("button", { name: "Edit registry" }));
       await userEvent.selectOptions(screen.getByLabelText("Authentication"), "token");
@@ -639,8 +623,7 @@ describe("OciRegistryPage", () => {
     });
 
     it("closes without saving when nothing changed", async () => {
-      render(<OciRegistryPage />);
-      await openTab("Settings");
+      renderPage();
 
       await userEvent.click(await screen.findByRole("button", { name: "Edit registry" }));
       await userEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -650,8 +633,7 @@ describe("OciRegistryPage", () => {
     });
 
     it("abandons the edit dialog on cancel", async () => {
-      render(<OciRegistryPage />);
-      await openTab("Settings");
+      renderPage();
 
       await userEvent.click(await screen.findByRole("button", { name: "Edit registry" }));
       await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
@@ -661,8 +643,7 @@ describe("OciRegistryPage", () => {
     });
 
     it("removes a registry the operator no longer wants", async () => {
-      render(<OciRegistryPage />);
-      await openTab("Settings");
+      renderPage();
 
       await userEvent.click(await screen.findByRole("button", { name: "Remove registry" }));
       await confirmDialog("Delete");
@@ -672,8 +653,7 @@ describe("OciRegistryPage", () => {
 
     it("reports a removal the backend refused", async () => {
       vi.mocked(removeOciRegistry).mockRejectedValue(new Error("cannot remove the default"));
-      render(<OciRegistryPage />);
-      await openTab("Settings");
+      renderPage();
 
       await userEvent.click(await screen.findByRole("button", { name: "Remove registry" }));
       await confirmDialog("Delete");
@@ -686,106 +666,43 @@ describe("OciRegistryPage", () => {
     it("names a registry that failed its connection test", async () => {
       vi.mocked(fetchOciRegistries).mockResolvedValue([{ ...REGISTRY, connected: false }]);
       vi.mocked(testOciRegistry).mockResolvedValue({ ok: false } as never);
-      render(<OciRegistryPage />);
-      await openTab("Settings");
+      renderPage();
 
       await userEvent.click(await screen.findByRole("button", { name: "Test connection" }));
 
-      expect(await screen.findByText("Registry ghcr is not reachable")).toBeInTheDocument();
+      expect(await screen.findByText("ghcr is not reachable from here.")).toBeInTheDocument();
     });
 
     it("reports a connection test that threw", async () => {
       vi.mocked(fetchOciRegistries).mockResolvedValue([{ ...REGISTRY, connected: false }]);
       vi.mocked(testOciRegistry).mockRejectedValue(new Error("DNS failure"));
-      render(<OciRegistryPage />);
-      await openTab("Settings");
+      renderPage();
 
       await userEvent.click(await screen.findByRole("button", { name: "Test connection" }));
 
       expect(await screen.findByText("DNS failure")).toBeInTheDocument();
     });
 
-    it("turns auto-update on", async () => {
-      render(<OciRegistryPage />);
-      await openTab("Settings");
-      await screen.findByText("Enable Auto-Update");
-
-      const toggle = screen
-        .getByText("Enable Auto-Update")
-        .closest("div")!.parentElement!.querySelector("button")!;
-      await userEvent.click(toggle);
-
-      await waitFor(() =>
-        expect(updateOciAutoUpdateSettings).toHaveBeenCalledWith({ enabled: true }),
-      );
-    });
-
-    it("runs auto-update on demand and reports what it changed", async () => {
-      render(<OciRegistryPage />);
-      await openTab("Settings");
-
-      await userEvent.click(await screen.findByRole("button", { name: "Run Now" }));
-
-      await waitFor(() => expect(runOciAutoUpdate).toHaveBeenCalled());
-      expect(await screen.findByText("2 recipe(s) updated")).toBeInTheDocument();
-    });
-
-    it("explains an auto-update that decided to do nothing", async () => {
-      vi.mocked(runOciAutoUpdate).mockResolvedValue({
-        skipped: true,
-        reason: "not due until 03:00",
-      } as never);
-      render(<OciRegistryPage />);
-      await openTab("Settings");
-
-      await userEvent.click(await screen.findByRole("button", { name: "Run Now" }));
-
-      expect(await screen.findByText("not due until 03:00")).toBeInTheDocument();
-    });
-
-    it("reports an auto-update that failed", async () => {
-      vi.mocked(runOciAutoUpdate).mockResolvedValue({
-        success: false,
-        error: "no registry is enabled",
-      } as never);
-      render(<OciRegistryPage />);
-      await openTab("Settings");
-
-      await userEvent.click(await screen.findByRole("button", { name: "Run Now" }));
-
-      expect(await screen.findByText("no registry is enabled")).toBeInTheDocument();
-    });
-
-    it("reports an auto-update that threw", async () => {
-      vi.mocked(runOciAutoUpdate).mockRejectedValue(new Error("scheduler is down"));
-      render(<OciRegistryPage />);
-      await openTab("Settings");
-
-      await userEvent.click(await screen.findByRole("button", { name: "Run Now" }));
-
-      expect(await screen.findByText("scheduler is down")).toBeInTheDocument();
-    });
-
     it("carries on when a registry will not report its versions", async () => {
       vi.mocked(fetchOciRegistryVersions).mockRejectedValue(new Error("no tags"));
-      render(<OciRegistryPage />);
-      await openTab("Settings");
+      renderPage();
 
       expect(await screen.findByText("ghcr")).toBeInTheDocument();
       expect(screen.queryByText(/versions/)).not.toBeInTheDocument();
     });
 
     it("lets the operator dismiss whatever the page reported", async () => {
-      render(<OciRegistryPage />);
-      await openTab("Settings");
-      await userEvent.click(await screen.findByRole("button", { name: "Run Now" }));
-      const alert = await screen.findByText("2 recipe(s) updated");
+      vi.mocked(fetchOciRegistries).mockResolvedValue([{ ...REGISTRY, connected: false }]);
+      vi.mocked(testOciRegistry).mockResolvedValue({ ok: false } as never);
+      renderPage();
+      await userEvent.click(await screen.findByRole("button", { name: "Test connection" }));
+      const alert = await screen.findByText("ghcr is not reachable from here.");
 
       await userEvent.click(
         within(alert.closest('[role="dialog"]')!).getByRole("button", { name: "Close" }),
       );
 
-      expect(screen.queryByText("2 recipe(s) updated")).not.toBeInTheDocument();
+      expect(screen.queryByText("ghcr is not reachable from here.")).not.toBeInTheDocument();
     });
   });
 });

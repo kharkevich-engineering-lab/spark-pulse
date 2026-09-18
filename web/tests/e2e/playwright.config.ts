@@ -39,10 +39,9 @@ export default defineConfig({
     // A phone, at the width the audit measured. Chromium at an iPhone 13's
     // viewport rather than `devices["iPhone 13"]`, which is WebKit: CI installs
     // chromium alone, and the shell is a layout question rather than an engine
-    // one. Scoped to the specs whose page bodies already survive 390px — the
-    // wide tables on Engines, Models, Cluster and OCI are PRs 5-7's work, and a
-    // mobile project that fails on them from the day it lands is a project
-    // nobody runs.
+    // one. Scoped to the specs whose page bodies survive 390px — one entry per
+    // line, so a page earning its place here is a one-line change rather than
+    // a rewritten pattern.
     {
       name: "mobile",
       // One entry per line: PRs 5-7 widen this list as their page bodies
@@ -53,6 +52,8 @@ export default defineConfig({
         /jobs\.spec\.ts$/,
         /benchmarks\.spec\.ts$/,
         /settings\.spec\.ts$/,
+        /models\.spec\.ts$/,
+        /engines\.spec\.ts$/,
       ],
       use: {
         ...devices["Desktop Chrome"],

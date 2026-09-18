@@ -2,7 +2,9 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import ModelsPage, { describePrecision, shortRevision } from "@/pages/ModelsPage";
+import LibraryPage from "@/pages/LibraryPage";
+import { describePrecision, describeWhere, shortRevision } from "@/components/library/ModelsTab";
+import { translate } from "@/lib/i18n";
 import type { ModelEntry } from "@/lib/types";
 
 /**
@@ -35,6 +37,12 @@ class CapturingEventSource {
 }
 
 vi.mock("@/lib/api", () => ({
+  // The Library shell's own reads: the header counts every byte on the disk,
+  // and the tab bar counts what each tab holds.
+  fetchCache: vi.fn(() => Promise.resolve({ entries: [] })),
+  cleanCache: vi.fn(),
+  fetchImages: vi.fn(() => Promise.resolve([])),
+  fetchOciRegistries: vi.fn(() => Promise.resolve([])),
   fetchModels: vi.fn(),
   fetchModelSources: vi.fn(),
   fetchModelDownloads: vi.fn(),
@@ -43,7 +51,6 @@ vi.mock("@/lib/api", () => ({
   cancelScheduledDeploy: vi.fn(),
   fetchScheduledDeploys: vi.fn(),
   deleteModel: vi.fn(),
-  saveModelSources: vi.fn(),
   // The cluster the model might also be sitting on. Inert by default: only
   // the delete tests care, and a page that asks for nodes must not depend on
   // there being any.
@@ -62,7 +69,6 @@ import {
   fetchModelSources,
   fetchModels,
   fetchNodes,
-  saveModelSources,
   startModelDownload,
   syncModelToNodes,
 } from "@/lib/api";
@@ -94,9 +100,16 @@ const models: ModelEntry[] = [
   },
 ];
 
-const renderPage = () => render(<MemoryRouter><ModelsPage /></MemoryRouter>);
+const renderPage = () =>
+  render(
+    <MemoryRouter initialEntries={["/models"]}>
+      <LibraryPage />
+    </MemoryRouter>,
+  );
 
-describe("ModelsPage helpers", () => {
+const t = (key: string, vars?: Record<string, string | number>) => translate("en", key, vars);
+
+describe("the models tab's helpers", () => {
   it("shortens a revision", () => {
     expect(shortRevision("aaaabbbbccccdddd")).toBe("aaaabbbbcc");
     expect(shortRevision(null)).toBe("—");
@@ -109,7 +122,7 @@ describe("ModelsPage helpers", () => {
   });
 });
 
-describe("ModelsPage", () => {
+describe("Library — models", () => {
   beforeEach(() => {
     CapturingEventSource.instances = [];
     vi.stubGlobal("EventSource", CapturingEventSource);
@@ -127,10 +140,23 @@ describe("ModelsPage", () => {
     expect(await screen.findByText("acme/plain-7b")).toBeInTheDocument();
     expect(screen.getByText("acme/quant-70b")).toBeInTheDocument();
     expect(screen.getByText("awq")).toBeInTheDocument();
-    // Referenced-by count for the first model.
-    expect(screen.getByText("1")).toBeInTheDocument();
-    // Total on disk.
-    expect(screen.getByText("24.0 GB")).toBeInTheDocument();
+    // The count of recipes referencing a model went; the column that replaced
+    // it says the thing an operator reclaiming disk actually needs.
+    expect(screen.getByRole("columnheader", { name: "Where" })).toBeInTheDocument();
+    // Everything on the disk, and how much of it is cache — the one line the
+    // four pages this replaced could not say between them.
+    expect(
+      await screen.findByText(t("library.onDisk", { total: "24.0 GB", cache: "0 B" })),
+    ).toBeInTheDocument();
+  });
+
+  /** One machine holds every model it has, by definition — so the column says
+   *  so rather than leaving the operator to wonder whether it was asked. */
+  it("says the model is on the only node there is", async () => {
+    renderPage();
+    await screen.findByText("acme/plain-7b");
+
+    expect(screen.getAllByText("1 of 1 nodes")).toHaveLength(2);
   });
 
   it("lists hub sources in the download form", async () => {
@@ -207,7 +233,7 @@ describe("ModelsPage", () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByLabelText("Delete acme/plain-7b"));
+    await user.click(await screen.findByLabelText("Remove acme/plain-7b"));
     expect(screen.getByText(/Delete the cached snapshot/)).toBeInTheDocument();
     expect(deleteModel).not.toHaveBeenCalled();
 
@@ -250,7 +276,7 @@ describe("ModelsPage", () => {
     vi.mocked(deleteModel).mockRejectedValue(new Error("snapshot is in use"));
     renderPage();
 
-    await user.click(await screen.findByLabelText("Delete acme/plain-7b"));
+    await user.click(await screen.findByLabelText("Remove acme/plain-7b"));
     await user.click(screen.getByRole("button", { name: "Delete" }));
 
     expect(await screen.findByRole("heading", { name: "Delete failed" })).toBeInTheDocument();
@@ -328,103 +354,6 @@ describe("ModelsPage", () => {
   });
 });
 
-/** The sources editor.
- *
- * A source is where a model id is resolved from, so a broken one means every
- * download fails with a network error rather than a useful message. It is a
- * draft-then-save editor: nothing is written until Save, the shape of the row
- * follows the type (a hub source has an endpoint and a token, a local one has
- * a path), and a rejected save has to say so rather than looking applied.
- */
-describe("ModelsPage sources editor", () => {
-  const SOURCES: { name: string; type: "hf_hub" | "local_path"; endpoint?: string; token_secret?: string; path?: string }[] = [
-    { name: "hf", type: "hf_hub", endpoint: "https://huggingface.co", token_secret: "hf_token" },
-  ];
-
-  beforeEach(() => {
-    CapturingEventSource.instances = [];
-    vi.stubGlobal("EventSource", CapturingEventSource);
-    vi.mocked(fetchModels).mockResolvedValue([]);
-    vi.mocked(fetchModelDownloads).mockResolvedValue([]);
-    vi.mocked(fetchModelSources).mockResolvedValue(SOURCES);
-    vi.mocked(saveModelSources).mockResolvedValue(SOURCES as never);
-  });
-
-  it("edits a source in a draft and writes it only on save", async () => {
-    const user = userEvent.setup();
-    renderPage();
-
-    const endpoint = await screen.findByLabelText("Source 1 endpoint");
-    await user.clear(endpoint);
-    await user.type(endpoint, "http://mirror.local");
-    expect(saveModelSources).not.toHaveBeenCalled();
-
-    await user.click(screen.getByRole("button", { name: /^Save$/ }));
-
-    await waitFor(() =>
-      expect(saveModelSources).toHaveBeenCalledWith([
-        expect.objectContaining({ name: "hf", endpoint: "http://mirror.local" }),
-      ]),
-    );
-  });
-
-  it("swaps a hub source's endpoint and token for a path when it becomes local", async () => {
-    const user = userEvent.setup();
-    renderPage();
-
-    await user.selectOptions(await screen.findByLabelText("Source 1 type"), "local_path");
-
-    expect(screen.queryByLabelText("Source 1 endpoint")).toBeNull();
-    expect(screen.queryByLabelText("Source 1 token secret")).toBeNull();
-    const path = screen.getByLabelText("Source 1 path");
-    await user.type(path, "/srv/models");
-    await user.click(screen.getByRole("button", { name: /^Save$/ }));
-
-    await waitFor(() =>
-      expect(saveModelSources).toHaveBeenCalledWith([
-        expect.objectContaining({ type: "local_path", path: "/srv/models" }),
-      ]),
-    );
-  });
-
-  it("adds and removes rows without touching the stored list until saved", async () => {
-    const user = userEvent.setup();
-    renderPage();
-    await screen.findByLabelText("Source 1 name");
-
-    await user.click(screen.getByRole("button", { name: /add source/i }));
-    await user.type(screen.getByLabelText("Source 2 name"), "spare");
-
-    await user.click(screen.getByLabelText("Remove source 1"));
-    // The second row is now the first, and it is the one that survives.
-    expect(screen.queryByLabelText("Source 2 name")).toBeNull();
-
-    await user.click(screen.getByRole("button", { name: /^Save$/ }));
-    await waitFor(() =>
-      expect(saveModelSources).toHaveBeenCalledWith([expect.objectContaining({ name: "spare" })]),
-    );
-  });
-
-  it("says the list is empty rather than showing bare buttons", async () => {
-    vi.mocked(fetchModelSources).mockResolvedValue([]);
-    renderPage();
-
-    expect(await screen.findByText("No sources configured.")).toBeInTheDocument();
-  });
-
-  it("says why a save was refused", async () => {
-    const user = userEvent.setup();
-    vi.mocked(saveModelSources).mockRejectedValue(new Error("endpoint is not a URL"));
-    renderPage();
-    await screen.findByLabelText("Source 1 name");
-
-    await user.click(screen.getByRole("button", { name: /^Save$/ }));
-
-    expect(await screen.findByRole("heading", { name: "Save failed" })).toBeInTheDocument();
-    expect(screen.getByText("endpoint is not a URL")).toBeInTheDocument();
-  });
-});
-
 // ── Deployments waiting on a download ───────────────────────────────────────
 
 /**
@@ -434,7 +363,7 @@ describe("ModelsPage sources editor", () => {
  * way to know a deployment is queued on these bytes, and no way to call it off
  * short of cancelling the download and guessing what that did.
  */
-describe("ModelsPage — scheduled deploys", () => {
+describe("Library — deployments waiting on a download", () => {
   const runningJob = {
     id: "job9", model: "acme/big", source: "hf", revision: null, allow_patterns: null,
     status: "running", bytes_done: 10, bytes_total: 100, current_file: null, path: null,
@@ -527,7 +456,7 @@ describe("ModelsPage — scheduled deploys", () => {
  * A 26 GB model replicated to four Sparks is on four disks. The dialog used to
  * delete it from this one and the page then said it was gone, which is how a
  * cluster fills with copies nobody can see. */
-describe("ModelsPage delete across nodes", () => {
+describe("Library — deleting a model across nodes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(fetchModels).mockResolvedValue(models);
@@ -562,7 +491,7 @@ describe("ModelsPage delete across nodes", () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByLabelText("Delete acme/plain-7b"));
+    await user.click(await screen.findByLabelText("Remove acme/plain-7b"));
 
     const dialog = within(screen.getByRole("dialog"));
     await waitFor(() => expect(dialog.getByText("10.0.0.11")).toBeInTheDocument());
@@ -576,7 +505,7 @@ describe("ModelsPage delete across nodes", () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByLabelText("Delete acme/plain-7b"));
+    await user.click(await screen.findByLabelText("Remove acme/plain-7b"));
     const dialog = within(screen.getByRole("dialog"));
     await waitFor(() => expect(dialog.getByText("10.0.0.11")).toBeInTheDocument());
     await user.click(dialog.getByRole("button", { name: /Delete everywhere selected/ }));
@@ -598,7 +527,7 @@ describe("ModelsPage delete across nodes", () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByLabelText("Delete acme/plain-7b"));
+    await user.click(await screen.findByLabelText("Remove acme/plain-7b"));
     const dialog = within(screen.getByRole("dialog"));
     await user.click(dialog.getByRole("checkbox", { name: /10\.0\.0\.12/ }));
     await act(async () => {
@@ -616,7 +545,7 @@ describe("ModelsPage delete across nodes", () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByLabelText("Delete acme/plain-7b"));
+    await user.click(await screen.findByLabelText("Remove acme/plain-7b"));
     const dialog = within(screen.getByRole("dialog"));
     await waitFor(() => expect(dialog.getByText("10.0.0.11")).toBeInTheDocument());
     await user.click(dialog.getByRole("button", { name: /Delete everywhere selected/ }));
@@ -637,7 +566,7 @@ describe("ModelsPage delete across nodes", () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByLabelText("Delete acme/plain-7b"));
+    await user.click(await screen.findByLabelText("Remove acme/plain-7b"));
     const dialog = within(screen.getByRole("dialog"));
     await waitFor(() => expect(dialog.getByText("10.0.0.11")).toBeInTheDocument());
     await user.click(dialog.getByRole("button", { name: /Delete everywhere selected/ }));
@@ -653,7 +582,7 @@ describe("ModelsPage delete across nodes", () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByLabelText("Delete acme/plain-7b"));
+    await user.click(await screen.findByLabelText("Remove acme/plain-7b"));
 
     expect(fetchModelPresence).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Delete" }));
@@ -667,7 +596,7 @@ describe("ModelsPage delete across nodes", () => {
  * model has nothing to gain from a transfer, so the dialog preselects the
  * nodes that are missing it rather than the ones that already hold it.
  */
-describe("ModelsPage replicate across nodes", () => {
+describe("Library — replicating a model across nodes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(fetchModels).mockResolvedValue(models);
@@ -875,5 +804,119 @@ describe("ModelsPage replicate across nodes", () => {
 
     await waitFor(() => expect(dialog.queryByText("Loading…")).not.toBeInTheDocument());
     expect(dialog.queryByText("already there")).not.toBeInTheDocument();
+  });
+});
+
+/** The "Where" column.
+ *
+ * A model on one of four machines and a model on all four are different
+ * answers to "can I delete this", and the page used to give neither: the
+ * dialog knew, once it was open, and the row said nothing. `describeWhere` is
+ * the verdict, and it is deliberately unwilling to read silence as absence.
+ */
+describe("Library — where a model is", () => {
+  const entry = (node: string, state?: string, error?: string) => ({ node, state, error });
+
+  it("says every node holds it", () => {
+    expect(describeWhere([entry("a", "verified"), entry("b", "verified")], t)).toMatchObject({
+      state: "ok",
+      label: "2 of 2 nodes",
+    });
+  });
+
+  it("names the single holder rather than counting to one", () => {
+    expect(describeWhere([entry("gx10-ced2", "verified"), entry("b", "absent")], t)).toMatchObject({
+      state: "warn",
+      label: "gx10-ced2 only",
+    });
+  });
+
+  it("counts the holders when there is more than one but not all", () => {
+    const answer = describeWhere(
+      [entry("a", "verified"), entry("b", "verified"), entry("c", "absent")],
+      t,
+    );
+    expect(answer).toMatchObject({ state: "warn", label: "2 of 3 nodes" });
+  });
+
+  /** Half a snapshot is worse than none: it deploys and then fails on a shard
+   *  nobody notices is missing, so it is the bad state, not a warning. */
+  it("calls out a partial copy, and which machine has it", () => {
+    expect(describeWhere([entry("a", "verified"), entry("b", "partial")], t)).toMatchObject({
+      state: "bad",
+      label: "partial on b",
+    });
+  });
+
+  it("says nothing was checked when nothing answered, and why", () => {
+    const answer = describeWhere([entry("a", undefined, "no enrolled agent")], t);
+    expect(answer.state).toBe("unknown");
+    expect(answer.label).toBe("not checked");
+    expect(answer.title).toContain("no enrolled agent");
+  });
+
+  it("keeps a node that could not be asked out of the count, on hover", () => {
+    const answer = describeWhere(
+      [entry("a", "verified"), entry("b", undefined, "connection reset")],
+      t,
+    );
+    expect(answer).toMatchObject({ state: "warn", label: "a only" });
+    expect(answer.title).toContain("connection reset");
+  });
+
+  it("has no verdict before anything has been asked", () => {
+    expect(describeWhere(null, t).label).toBe("not checked");
+    expect(describeWhere([], t).label).toBe("not checked");
+  });
+
+  it("asks every node about every model, and renders the answer in the row", async () => {
+    vi.mocked(fetchNodes).mockResolvedValue([
+      { is_control_plane: true, address: "192.168.1.100", name: "spark-01" },
+      { is_control_plane: false, address: "10.0.0.11" },
+    ] as never);
+    vi.mocked(fetchModelPresence).mockImplementation((id: string) =>
+      Promise.resolve({
+        model: id,
+        local: true,
+        local_state: "verified",
+        nodes: [{ node: "10.0.0.11", present: false, state: "absent", error: null }],
+      }),
+    );
+    renderPage();
+
+    expect(await screen.findAllByText("spark-01 only")).toHaveLength(2);
+  });
+
+  it("leaves the row unchecked when the presence read fails", async () => {
+    vi.mocked(fetchNodes).mockResolvedValue([
+      { is_control_plane: true, address: "192.168.1.100" },
+      { is_control_plane: false, address: "10.0.0.11" },
+    ] as never);
+    vi.mocked(fetchModelPresence).mockRejectedValue(new Error("no route to host"));
+    renderPage();
+
+    await screen.findByText("acme/plain-7b");
+    await waitFor(() => expect(screen.getAllByText("not checked")).toHaveLength(2));
+  });
+});
+
+/** The phone.
+ *
+ * A six-column table at 390px is a horizontal scrollbar with the actions off
+ * the end of it. Under 900 the rows are cards — one set of markup, not two, so
+ * there is exactly one button named "Remove acme/plain-7b" on the page.
+ */
+describe("Library — models on a phone", () => {
+  beforeEach(() => {
+    Object.defineProperty(window, "innerWidth", { writable: true, configurable: true, value: 390 });
+  });
+
+  it("renders cards rather than a table, and only one of each action", async () => {
+    renderPage();
+    await screen.findByText("acme/plain-7b");
+
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(screen.getByTestId("model-acme/plain-7b")).toHaveTextContent("4.0 GB · bfloat16");
+    expect(screen.getAllByLabelText("Remove acme/plain-7b")).toHaveLength(1);
   });
 });

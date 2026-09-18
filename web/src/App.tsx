@@ -6,14 +6,11 @@ import { I18nProvider } from "@/lib/i18n";
 import RecipesPage from "@/pages/RecipesPage";
 import RunsPage from "@/pages/RunsPage";
 import MemoryPage from "@/pages/MemoryPage";
-import CachePage from "@/pages/CachePage";
-import ModelsPage from "@/pages/ModelsPage";
-import EnginesPage from "@/pages/EnginesPage";
+import LibraryPage from "@/pages/LibraryPage";
 import MCPPage from "@/pages/MCPPage";
 import SettingsPage from "@/pages/SettingsPage";
 import LoginPage from "@/pages/LoginPage";
 import NotFoundPage from "@/pages/NotFoundPage";
-import OciRegistryPage from "@/pages/OciRegistryPage";
 import ClusterPage from "@/pages/ClusterPage";
 import { ErrorBoundary, DefaultErrorFallback } from "@/components/ErrorBoundary";
 import { initCsrfToken } from "@/lib/api";
@@ -58,11 +55,14 @@ const PAGES: { path: string; element: React.ReactNode }[] = [
   { path: "/cluster", element: <ClusterPage /> },
   { path: "/benchmarking", element: <BenchmarkingRoute /> },
   { path: "/monitoring", element: <MemoryPage /> },
-  { path: "/models", element: <ModelsPage /> },
-  { path: "/engines", element: <EnginesPage /> },
-  { path: "/cache", element: <CachePage /> },
+  // Four addresses, one page. Library is tabbed, and each tab keeps the
+  // route it had as a page so nothing an operator bookmarked stops resolving;
+  // `/cache` opens the Models tab at the caches section.
+  { path: "/models", element: <LibraryPage /> },
+  { path: "/engines", element: <LibraryPage /> },
+  { path: "/cache", element: <LibraryPage /> },
   { path: "/mcp", element: <MCPPage /> },
-  { path: "/oci", element: <OciRegistryPage /> },
+  { path: "/oci", element: <LibraryPage /> },
   { path: "/settings", element: <SettingsPage /> },
 ];
 

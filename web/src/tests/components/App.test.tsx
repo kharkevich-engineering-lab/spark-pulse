@@ -46,11 +46,10 @@ vi.mock("@/pages/RunsPage", () => ({
 }));
 vi.mock("@/pages/ClusterPage", () => ({ default: () => <div>cluster page</div> }));
 vi.mock("@/pages/MemoryPage", () => ({ default: () => <div>monitoring page</div> }));
-vi.mock("@/pages/ModelsPage", () => ({ default: () => <div>models page</div> }));
-vi.mock("@/pages/EnginesPage", () => ({ default: () => <div>engines page</div> }));
-vi.mock("@/pages/CachePage", () => ({ default: () => <div>cache page</div> }));
+// One page under four addresses: Library is tabbed, and each tab kept the
+// route it had when it was a page of its own.
+vi.mock("@/pages/LibraryPage", () => ({ default: () => <div>library page</div> }));
 vi.mock("@/pages/MCPPage", () => ({ default: () => <div>mcp page</div> }));
-vi.mock("@/pages/OciRegistryPage", () => ({ default: () => <div>oci page</div> }));
 vi.mock("@/pages/SettingsPage", () => ({ default: () => <div>settings page</div> }));
 vi.mock("@/pages/LoginPage", () => ({ default: () => <div>login page</div> }));
 
@@ -64,11 +63,11 @@ const ROUTES: [string, string][] = [
   ["/jobs", "runs page live"],
   ["/cluster", "cluster page"],
   ["/monitoring", "monitoring page"],
-  ["/models", "models page"],
-  ["/engines", "engines page"],
-  ["/cache", "cache page"],
+  ["/models", "library page"],
+  ["/engines", "library page"],
+  ["/cache", "library page"],
   ["/mcp", "mcp page"],
-  ["/oci", "oci page"],
+  ["/oci", "library page"],
   ["/settings", "settings page"],
 ];
 

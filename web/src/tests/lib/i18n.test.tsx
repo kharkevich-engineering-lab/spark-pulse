@@ -101,6 +101,7 @@ describe("the dictionaries", () => {
     // in both languages, and the page titles are those words with a full stop.
     "a11y.menu",
     "cache.heading",
+    "library.caches",
     "mcp.heading",
   ]);
 

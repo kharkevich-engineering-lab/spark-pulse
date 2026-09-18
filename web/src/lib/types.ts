@@ -842,6 +842,10 @@ export interface ModelSyncResult {
 export interface ModelPresence {
   model: string;
   local: boolean;
+  /** The three-state verdict for this machine — absent, partial, verified —
+   *  where `local` is only its "verified" case. A partial copy here is a real
+   *  answer, and a boolean has nowhere to put it. */
+  local_state?: string;
   nodes: { node: string; present: boolean; state?: string; error: string | null }[];
 }
 

@@ -40,7 +40,11 @@ flowchart LR
 
 An index is an OCI artifact listing published engine images and their digests. The registry merges it over the bundled defaults, caches it for `engine_index_cache_ttl_seconds`, and marks each engine `available` or not — an engine whose image has not been published is listed but not offered.
 
-The Engines page shows per engine: the image, whether this node has it, its size, its digest, and **digest drift** — the same tag now resolving to a different image than the one on disk. Expanding a row asks every node whether it holds that image; a node that cannot be asked is *unknown*, never *absent*, because "we could not ask" is not a reason to pull 26 GB again.
+The **Engines** tab of Library (`/engines`) shows per engine: the image, whether this node has it, its size, its digest, and **digest drift** — the same tag now resolving to a different image than the one on disk. Expanding a row asks every node whether it holds that image; a node that cannot be asked is *unknown*, never *absent*, because "we could not ask" is not a reason to pull 26 GB again.
+
+The switch beside an engine's badge enables or disables it, next to the image it gates — the last enabled engine cannot be switched off, because nothing would be deployable. Copying an image to other machines names them first: *copy to every registered node* was one click and, on a four-node cluster, 26 GB a machine.
+
+Which indexes are consulted, the cache lifetime and the default engine are configuration, and are edited in Settings rather than on the page they govern.
 
 ## Distributing images across nodes
 
