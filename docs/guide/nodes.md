@@ -1,5 +1,7 @@
 # Nodes and the cluster
 
+The **Fleet** page (`/cluster`) is where the machines are. It has two tabs over the same hardware: **Nodes**, everything below, and **Monitoring** (`/monitoring`), what each of them is doing right now.
+
 ## The registry
 
 A node is a record: a minted id, a display name, an address, whether it is the control plane, an SSH user for bootstrap, its interfaces, and a state — `healthy`, `unknown` or `dead`.
@@ -48,7 +50,9 @@ The control node is the one machine that cannot be surfaced to anybody — a den
 
 ## The doctor
 
-**Diagnose** on a node's row asks the doctor why it is not working. It reads only — the hub already knows the agent's liveness, version and what its Docker daemon answered, and the checks that need the machine (the unit, lingering, the docker socket, identity files, reachability, disk, clock) use the control plane's key over SSH. Every finding says which of three kinds it is: fixable from here, needs a decision (re-enrolment destroys identity, so a program never does it), or needs someone on that machine (a dead disk, a daemon that will not start, a wrong clock).
+Opening a node's row runs the doctor and shows what it found under that row, beside what the machine's ConnectX ports are doing. A diagnosis changes nothing, so it needs no second button, and it no longer covers the list of machines it is about.
+
+The doctor asks why a node is not working. It reads only — the hub already knows the agent's liveness, version and what its Docker daemon answered, and the checks that need the machine (the unit, lingering, the docker socket, identity files, reachability, disk, clock) use the control plane's key over SSH. Every finding says which of three kinds it is: fixable from here, needs a decision (re-enrolment destroys identity, so a program never does it), or needs someone on that machine (a dead disk, a daemon that will not start, a wrong clock).
 
 **Repair what is fixable** acts only on the first kind and checks again afterward. It is the one button that changes anything, and each repair says what it did — a docker-group add now restarts the user's service manager so the group is in effect, rather than sending you to log in again. The control node is diagnosed the same way over its own agent, but not repaired over SSH: upgrade and restart the control plane instead.
 
@@ -69,7 +73,7 @@ Each finding names a remedy, because every condition here is one the cluster can
 
 ## Fabric
 
-Every node's ConnectX-7 ports are read from what its agent reports on each heartbeat — the RoCE devices under `/sys/class/infiniband`, the netdev each drives, whether the port is active, and the address and MTU on it — so the Cluster page's **ConnectX fabric** card and the deploy pre-flight see the same thing without logging in.
+Every node's ConnectX-7 ports are read from what its agent reports on each heartbeat — the RoCE devices under `/sys/class/infiniband`, the netdev each drives, whether the port is active, and the address and MTU on it — so the Fleet page's **ConnectX fabric** section and the deploy pre-flight see the same thing without logging in.
 
 The shape is worked out from the cabling, with one thing `spark-vllm-docker`'s `autodiscover.sh` cannot know: how many nodes there are.
 

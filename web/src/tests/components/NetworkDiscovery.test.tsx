@@ -30,9 +30,19 @@ const DISCOVERY: DiscoveryResponse = {
   validation: { healthy: true, warnings: [], errors: [] },
 };
 
+/** The section is collapsed until it is opened — it is the last thing on the
+ *  page and the one an operator reaches for once, not on every visit. */
+async function open() {
+  const user = userEvent.setup();
+  await user.click(
+    await screen.findByRole("button", { name: "Discover peers on this network" }),
+  );
+}
+
 async function discover() {
   const user = userEvent.setup();
-  await user.click(await screen.findByRole("button", { name: /discover/i }));
+  await open();
+  await user.click(await screen.findByRole("button", { name: "Discover" }));
 }
 
 describe("NetworkDiscovery", () => {
@@ -43,7 +53,7 @@ describe("NetworkDiscovery", () => {
 
   it("offers no global NCCL fields to edit", async () => {
     render(<NetworkDiscovery />);
-    await screen.findByRole("heading", { name: "Network Discovery" });
+    await open();
 
     expect(screen.queryByPlaceholderText("auto-detect")).toBeNull();
     expect(screen.queryByText(/Leave empty to auto-detect/i)).toBeNull();
@@ -77,6 +87,7 @@ describe("NetworkDiscovery", () => {
 
   it("says nothing has been discovered yet rather than showing an empty panel", async () => {
     render(<NetworkDiscovery />);
+    await open();
 
     expect(await screen.findByText(/Reports only — nothing is saved/)).toBeInTheDocument();
   });

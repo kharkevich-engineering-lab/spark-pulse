@@ -102,7 +102,7 @@ test("enrol, select, preview, deploy, see the ranks, stop", async ({ page, reque
   // ── 1. Enrol a peer, and see the registry hold it ────────────────────────
   await gotoPage(page, "/cluster");
   const registry = page.getByTestId("node-registry");
-  await registry.getByRole("button", { name: "Add node" }).click();
+  await page.getByRole("button", { name: "Add node" }).click();
 
   const dialog = page.getByRole("dialog", { name: "Add node" });
   await dialog.getByLabel("Address *").fill(enrolled);
@@ -117,7 +117,7 @@ test("enrol, select, preview, deploy, see the ranks, stop", async ({ page, reque
   await install.getByRole("button", { name: "Later" }).click();
   await expect(install).toBeHidden();
 
-  const enrolledRow = registry.getByRole("row").filter({ hasText: "spark-journey" });
+  const enrolledRow = registry.getByRole("listitem", { name: "spark-journey" });
   await expect(enrolledRow).toContainText(enrolled);
   await expect(enrolledRow).toContainText("Peer");
 
@@ -125,7 +125,7 @@ test("enrol, select, preview, deploy, see the ranks, stop", async ({ page, reque
   // node's own probe — so the row that has them is the peer the backend
   // already knows, and having them is what makes it deployable: NCCL pinning
   // is find-or-fail against exactly these names.
-  const peerRow = registry.getByRole("row").filter({ hasText: PEER_NAME });
+  const peerRow = registry.getByRole("listitem", { name: PEER_NAME });
   await expect(peerRow).toContainText("eth0");
   await expect(peerRow).toContainText("ib0");
 
@@ -133,7 +133,7 @@ test("enrol, select, preview, deploy, see the ranks, stop", async ({ page, reque
   // seeded peer and nothing else.
   await registry.getByRole("button", { name: "Forget spark-journey" }).click();
   await page.getByRole("button", { name: "Forget", exact: true }).click();
-  await expect(registry.getByRole("row").filter({ hasText: "spark-journey" })).toHaveCount(0);
+  await expect(registry.getByRole("listitem", { name: "spark-journey" })).toHaveCount(0);
 
   // ── 2. Choose more than one node, and see the world size ─────────────────
   await openDeployOptions(page, RECIPE_NAME);
@@ -238,8 +238,10 @@ test("enrol, select, preview, deploy, see the ranks, stop", async ({ page, reque
     )
     .toBe("running");
 
-  // Runs is the one list, and it names the machines rather than counting
-  // them: the Fleet page's second table of the same endpoint is gone.
+  // Which machines it landed on is named on Runs, where the deployment is —
+  // Runs is the one list, it names the machines rather than counting them,
+  // and Fleet's second table of the same endpoint is gone. The ranks below
+  // are where the two addresses are asserted.
   await gotoPage(page, "/jobs");
   const row = page.getByTestId(`deployment-${deployment.id}`);
   await expect(row).toBeVisible();
@@ -435,7 +437,7 @@ test.skip("shows the pre-flight gate and its override", () => {});
 test("refuses a duplicate address where it was typed", async ({ page }) => {
   await gotoPage(page, "/cluster");
   const registry = page.getByTestId("node-registry");
-  await registry.getByRole("button", { name: "Add node" }).click();
+  await page.getByRole("button", { name: "Add node" }).click();
 
   const dialog = page.getByRole("dialog", { name: "Add node" });
   await dialog.getByLabel("Address *").fill(PEER);
@@ -449,6 +451,6 @@ test("refuses a duplicate address where it was typed", async ({ page }) => {
   await expect(dialog.getByLabel("Address *")).toHaveValue(PEER);
 
   await dialog.getByRole("button", { name: "Cancel" }).click();
-  await expect(registry.getByRole("row").filter({ hasText: PEER })).toHaveCount(1);
+  await expect(registry.getByRole("listitem").filter({ hasText: PEER })).toHaveCount(1);
   await expectNoCrash(page);
 });

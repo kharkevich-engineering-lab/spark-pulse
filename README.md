@@ -31,7 +31,7 @@ What is running, with per-rank state, the engine's own metrics and the log.
 
 ### Monitoring
 
-![Monitoring](https://raw.githubusercontent.com/kharkevich-engineering-lab/spark-pulse/main/docs/assets/screenshots/monitoring.png)
+![Monitoring](https://raw.githubusercontent.com/kharkevich-engineering-lab/spark-pulse/main/docs/assets/screenshots/fleet-monitoring.png)
 
 Every node, asked through its own agent: GPUs, memory, disks, and which deployment holds each GPU process.
 

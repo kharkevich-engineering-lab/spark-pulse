@@ -44,8 +44,9 @@ export default defineConfig({
     // a rewritten pattern.
     {
       name: "mobile",
-      // One entry per line: PRs 5-7 widen this list as their page bodies
-      // survive 390, and a one-line-per-spec list is a one-line diff each.
+      // One entry per spec, on its own line: a page joins the phone's suite
+      // when the PR that reshaped it lands, and a list adds a line rather
+      // than editing one somebody else is also editing.
       testMatch: [
         /app-shell\.spec\.ts$/,
         /recipes\.spec\.ts$/,
@@ -54,6 +55,8 @@ export default defineConfig({
         /settings\.spec\.ts$/,
         /models\.spec\.ts$/,
         /engines\.spec\.ts$/,
+        /nodes\.spec\.ts$/,
+        /monitoring\.spec\.ts$/,
       ],
       use: {
         ...devices["Desktop Chrome"],

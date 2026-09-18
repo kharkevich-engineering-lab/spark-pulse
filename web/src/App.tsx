@@ -5,13 +5,12 @@ import { ConfigProvider, useConfig } from "@/lib/config";
 import { I18nProvider } from "@/lib/i18n";
 import RecipesPage from "@/pages/RecipesPage";
 import RunsPage from "@/pages/RunsPage";
-import MemoryPage from "@/pages/MemoryPage";
 import LibraryPage from "@/pages/LibraryPage";
 import MCPPage from "@/pages/MCPPage";
 import SettingsPage from "@/pages/SettingsPage";
 import LoginPage from "@/pages/LoginPage";
 import NotFoundPage from "@/pages/NotFoundPage";
-import ClusterPage from "@/pages/ClusterPage";
+import FleetPage from "@/pages/FleetPage";
 import { ErrorBoundary, DefaultErrorFallback } from "@/components/ErrorBoundary";
 import { initCsrfToken } from "@/lib/api";
 
@@ -52,9 +51,10 @@ function BenchmarkingRoute() {
 const PAGES: { path: string; element: React.ReactNode }[] = [
   { path: "/", element: <RecipesPage /> },
   { path: "/jobs", element: <RunsPage /> },
-  { path: "/cluster", element: <ClusterPage /> },
+  { path: "/cluster", element: <FleetPage /> },
   { path: "/benchmarking", element: <BenchmarkingRoute /> },
-  { path: "/monitoring", element: <MemoryPage /> },
+  // Monitoring is a tab of Fleet; the route deep-links to it.
+  { path: "/monitoring", element: <FleetPage /> },
   // Four addresses, one page. Library is tabbed, and each tab keeps the
   // route it had as a page so nothing an operator bookmarked stops resolving;
   // `/cache` opens the Models tab at the caches section.

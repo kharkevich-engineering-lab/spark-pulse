@@ -44,8 +44,7 @@ vi.mock("@/pages/RecipesPage", () => ({ default: () => <div>recipes page</div> }
 vi.mock("@/pages/RunsPage", () => ({
   default: ({ initialTab }: { initialTab?: string }) => <div>runs page {initialTab ?? "live"}</div>,
 }));
-vi.mock("@/pages/ClusterPage", () => ({ default: () => <div>cluster page</div> }));
-vi.mock("@/pages/MemoryPage", () => ({ default: () => <div>monitoring page</div> }));
+vi.mock("@/pages/FleetPage", () => ({ default: () => <div>fleet page</div> }));
 // One page under four addresses: Library is tabbed, and each tab kept the
 // route it had when it was a page of its own.
 vi.mock("@/pages/LibraryPage", () => ({ default: () => <div>library page</div> }));
@@ -61,8 +60,9 @@ function renderAt(path: string) {
 const ROUTES: [string, string][] = [
   ["/", "recipes page"],
   ["/jobs", "runs page live"],
-  ["/cluster", "cluster page"],
-  ["/monitoring", "monitoring page"],
+  ["/cluster", "fleet page"],
+  // Monitoring is a tab of Fleet, so the route renders the same page.
+  ["/monitoring", "fleet page"],
   ["/models", "library page"],
   ["/engines", "library page"],
   ["/cache", "library page"],

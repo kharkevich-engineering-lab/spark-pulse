@@ -995,5 +995,39 @@
     "wherePartial": "partial on {node}",
     "wherePartialTitle": "A node holds part of the snapshot. Replicate it again.",
     "whereUnknown": "not checked"
+  },
+  "fleet": {
+    "nodes": {
+      "one": "{count} node",
+      "other": "{count} nodes"
+    },
+    "runsPrefix": "what runs on them is under",
+    "tabNodes": "Nodes",
+    "tabMonitoring": "Monitoring",
+    "details": "Details",
+    "detailsFor": "Details for {name}",
+    "hideDetails": "Hide details",
+    "fabricPorts": "Fabric ports",
+    "fabricNone": "No agent has reported this node's ports.",
+    "doctorSection": "Doctor",
+    "discover": "Discover peers on this network",
+    "agentCurrent": "current",
+    "forgetFor": "Forget {name}",
+    "labelAddress": "Address",
+    "labelInterfaces": "Interfaces",
+    "labelAgent": "Agent",
+    "labelPort": "Port",
+    "labelMtu": "MTU",
+    "labelPlan": "Plan",
+    "labelAddresses": "Addresses",
+    "labelProcess": "Process",
+    "peerRegistered": "already registered",
+    "peerSshOnly": "SSH only",
+    "peerSparkPulse": "Spark Pulse {version}",
+    "peerUnnamed": "unnamed",
+    "historyCaption": "Sampled from the live metrics stream since this page was opened. Nothing stores it, so it starts over on reload.",
+    "killFailed": "PID {pid} was not killed",
+    "killNoReason": "The backend refused to signal {name} (PID {pid}) and gave no reason.",
+    "killError": "Could not kill PID {pid}"
   }
 }

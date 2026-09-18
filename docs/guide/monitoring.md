@@ -8,7 +8,7 @@ Two different things are called monitoring here, and they come from different pl
 
 ```mermaid
 sequenceDiagram
-  participant P as Monitoring page
+  participant P as Fleet · Monitoring
   participant CP as Control plane
   participant N1 as Agent · spark-01
   participant N2 as Agent · spark-02

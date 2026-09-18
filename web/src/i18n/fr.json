@@ -995,5 +995,39 @@
     "wherePartial": "partiel sur {node}",
     "wherePartialTitle": "Un nœud n'a qu'une partie de l'instantané. Répliquez-le à nouveau.",
     "whereUnknown": "non vérifié"
+  },
+  "fleet": {
+    "nodes": {
+      "one": "{count} nœud",
+      "other": "{count} nœuds"
+    },
+    "runsPrefix": "ce qui y tourne se trouve sous",
+    "tabNodes": "Nœuds",
+    "tabMonitoring": "Supervision",
+    "details": "Détails",
+    "detailsFor": "Détails de {name}",
+    "hideDetails": "Masquer les détails",
+    "fabricPorts": "Ports du fabric",
+    "fabricNone": "Aucun agent n'a signalé les ports de ce nœud.",
+    "doctorSection": "Diagnostic",
+    "discover": "Découvrir des pairs sur ce réseau",
+    "agentCurrent": "à jour",
+    "forgetFor": "Oublier {name}",
+    "labelAddress": "Adresse",
+    "labelInterfaces": "Interfaces",
+    "labelAgent": "Agent",
+    "labelPort": "Port",
+    "labelMtu": "MTU",
+    "labelPlan": "Plan prévu",
+    "labelAddresses": "Adresses",
+    "labelProcess": "Processus",
+    "peerRegistered": "déjà enregistré",
+    "peerSshOnly": "SSH uniquement",
+    "peerSparkPulse": "Spark Pulse {version}",
+    "peerUnnamed": "sans nom",
+    "historyCaption": "Échantillonné depuis le flux de métriques en direct depuis l'ouverture de cette page. Rien n'est conservé : tout repart de zéro au rechargement.",
+    "killFailed": "Le PID {pid} n'a pas été arrêté",
+    "killNoReason": "Le backend a refusé de signaler {name} (PID {pid}) sans donner de raison.",
+    "killError": "Impossible d'arrêter le PID {pid}"
   }
 }

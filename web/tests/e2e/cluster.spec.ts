@@ -43,11 +43,19 @@ test("marks the cluster page and its nav entry experimental", async ({ page, req
   await expectNoCrash(page);
 });
 
+/* The deployments table that used to be on this page is gone: "what is
+ * running on my machines" is a question about runs, and it is answered on
+ * Runs, once, where the controls to act on it are. `jobs.spec.ts` and
+ * `multinode.spec.ts` assert it there. What is left in its place is the
+ * pointer in the page's own description, which is what this asserts — the
+ * table's absence alone would still pass on a page that forgot to say where
+ * the answer went. */
 test("points at Runs instead of listing the deployments a second time", async ({ page }) => {
   await gotoPage(page, "/cluster");
 
   await expect(page.getByTestId("cluster-deployments")).toHaveCount(0);
-  await page.getByRole("link", { name: "See the runs." }).click();
+  // Scoped to the page: the header nav carries a Runs link of its own.
+  await page.getByRole("main").getByRole("link", { name: "Runs" }).click();
 
   await expect(page).toHaveURL(/\/jobs$/);
   await expect(page.getByRole("heading", { name: "What is serving." })).toBeVisible();
