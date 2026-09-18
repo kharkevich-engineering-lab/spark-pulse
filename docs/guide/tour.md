@@ -52,21 +52,37 @@ Three things this page is careful about:
 
 The **Kill** button stops the container when the process is in one of ours — killing the process inside would leave the container holding its ports — and otherwise signals the process on the node that has it.
 
-## Models
+## Library
 
-![Models](../assets/screenshots/models.png)
+![Library — the models tab, with the caches under it](../assets/screenshots/library.png)
 
-The Hugging Face cache as a catalogue: what is downloaded, how big, which recipes reference it, and what the config says about precision and context length. Downloads run as tracked jobs with progress, and a download started because a deploy needed it says which deployment is waiting.
+Four pages answered one question — what is on this disk — so an operator hunting for a hundred gigabytes read four navigation entries to find out which of them was holding it. Library is one page with three tabs, and the header says the total and how much of it is cache before you pick one. The old addresses all still resolve: `/engines` and `/oci` open their tab, `/cache` opens Models at the caches section.
 
-Deleting a model asks *which machines* — a 26 GB model replicated to four Sparks is on four disks, and the dialog preselects the nodes that presence says hold a copy.
+### Models
 
-## Engines
+The Hugging Face cache as a catalogue: what is downloaded, how big, at which revision and in what precision. Downloads run as tracked jobs with progress, and a download started because a deploy needed it says which deployment is waiting.
 
-![Engines](../assets/screenshots/engines.png)
+**Where** is the column the page was missing. A model on one of four machines and a model on all four are different answers to "can I delete this", and the row now gives one: *2 of 2 nodes*, *gx10-ced2 only*, *partial on gx10-ced2* — a snapshot copied without its blobs, which is worse than none because it deploys and then fails on a shard nobody notices — or *not checked*, for a node that could not be asked. Silence is never read as absence.
 
-An engine is a plugin plus a published image. This page is both: what each engine supports and which nodes carry its image. Expanding a row asks every node whether it has that image and at which ID — *unknown* for a node that could not be asked, never *absent*, because "we could not ask" is not a reason to pull 26 GB again.
+Replicate and Remove both name the machines they touch before they touch them; the delete dialog preselects the nodes presence says hold a copy, because a node without one has no disk to reclaim.
 
-Pull to a node, remove from several, and set which engine indexes are consulted.
+Below the table, the caches that fill a Spark's disk — Hugging Face, vLLM, FlashInfer, Triton, ccache, wheels — with their sizes and a way to empty one. They are a section rather than a page: a cache is a line item under the catalogue it belongs to.
+
+### Engines
+
+![Library — engines](../assets/screenshots/library-engines.png)
+
+An engine is a plugin plus a published image, and this tab is both: what each engine supports, whether this cluster has its image, at which digest, and whether the tag now resolves to a newer one. Expanding a row asks every node whether it holds that image — *unknown* for a node that could not be asked, never *absent*, because "we could not ask" is not a reason to pull 26 GB again.
+
+The switch beside a badge enables or disables the engine, next to the image it gates. Copying an image to other machines asks which ones now, rather than sending 26 GB to every node behind a button whose label said *every*.
+
+### Registries
+
+![Library — registries](../assets/screenshots/library-registries.png)
+
+Recipe collections published as OCI artifacts: browse a collection, install one recipe from it or all of them, and see which installed recipes have a newer version published. The registries themselves are listed underneath, with whether each one answers — an unreachable registry is why collections are missing, and the fix belongs beside the symptom.
+
+Engine indexes, model sources and the OCI update schedule are configuration, and live in Settings.
 
 ## Cluster
 
@@ -75,18 +91,6 @@ Pull to a node, remove from several, and set which engine indexes are consulted.
 The node registry. What is running on those machines is the Runs page's list, which this page links to: two tables of the same endpoint, on two polls, is two tables that can disagree. Adding a node takes an address; discovery offers what it found over mDNS, and nothing is ever required to come from discovery. Each node's diagnostics name what is wrong and what to do about it.
 
 Multi-node is marked experimental here in one line — the full account of what is unproven belongs where you are about to act on it, which is the deploy form and the expanded row on Runs.
-
-## OCI Registry
-
-![OCI registry](../assets/screenshots/oci.png)
-
-Recipe collections published as OCI artifacts. Add a registry, browse a collection, install a recipe, and let a background check tell you when a newer version is published.
-
-## Cache
-
-![Cache](../assets/screenshots/cache.png)
-
-The caches that fill a Spark's disk — Hugging Face, vLLM, FlashInfer, Triton, ccache, wheels — with their sizes and a way to clear them.
 
 ## MCP
 

@@ -8,16 +8,17 @@
  */
 
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import EnginesPage, {
+import LibraryPage from "@/pages/LibraryPage";
+import {
   isDigestTag,
   joinEngines,
   shortDigest,
   shortImageTag,
   updateReason,
-} from "@/pages/EnginesPage";
+} from "@/components/library/EnginesTab";
 import type { ClusterNode, EngineSummary, ImageEntry, Settings } from "@/lib/types";
 
 /** The shared setupTests EventSource stub records listeners but cannot deliver
@@ -47,6 +48,12 @@ class CapturingEventSource {
 }
 
 vi.mock("@/lib/api", () => ({
+  // The Library shell's own reads. Engines is a tab of it now, so the page
+  // around this one still asks what else is on the disk.
+  fetchModels: vi.fn(() => Promise.resolve([])),
+  fetchCache: vi.fn(() => Promise.resolve({ entries: [] })),
+  fetchOciRegistries: vi.fn(() => Promise.resolve([])),
+  cleanCache: vi.fn(),
   fetchImages: vi.fn(),
   fetchImagePulls: vi.fn(),
   fetchImagePresence: vi.fn(),
@@ -55,7 +62,6 @@ vi.mock("@/lib/api", () => ({
   deleteImage: vi.fn(),
   syncImageToNodes: vi.fn(),
   fetchEngines: vi.fn(),
-  refreshEngines: vi.fn(),
   fetchNodes: vi.fn(),
   fetchSettings: vi.fn(),
   updateSettings: vi.fn(),
@@ -70,7 +76,6 @@ import {
   fetchImages,
   fetchNodes,
   fetchSettings,
-  refreshEngines,
   startImagePull,
   syncImageToNodes,
   updateSettings,
@@ -177,8 +182,8 @@ const SETTINGS = {
 
 function renderPage() {
   return render(
-    <MemoryRouter>
-      <EnginesPage />
+    <MemoryRouter initialEntries={["/engines"]}>
+      <LibraryPage />
     </MemoryRouter>,
   );
 }
@@ -252,7 +257,7 @@ describe("joinEngines", () => {
   });
 });
 
-describe("EnginesPage", () => {
+describe("Library — engines", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     CapturingEventSource.instances = [];
@@ -268,8 +273,9 @@ describe("EnginesPage", () => {
     renderPage();
 
     await waitFor(() => expect(screen.getAllByText("present").length).toBe(2));
-    // Twice over: the status cell, and the chip saying why it wants attention.
-    expect(screen.getAllByText("not pulled").length).toBe(2);
+    // Once, not twice: the chip beside the status is for what the status word
+    // cannot say, and "not pulled  not pulled" is one fact in two colours.
+    expect(screen.getAllByText("not pulled").length).toBe(1);
     expect(screen.getAllByText("25.0 GB").length).toBe(2);
   });
 
@@ -371,14 +377,32 @@ describe("EnginesPage", () => {
     expect(deleteImage).not.toHaveBeenCalled();
   });
 
-  it("copies an image to every registered node", async () => {
+  /** "Copy to every registered node" was one click and no question. On a
+   *  four-node cluster that is 26 GB a machine, decided by a button whose
+   *  label said "every" — so it asks which, the same way delete does. */
+  it("asks which nodes a copy lands on before sending 26 GB to each", async () => {
     const user = userEvent.setup();
     vi.mocked(syncImageToNodes).mockResolvedValue({} as never);
     renderPage();
 
-    await user.click(await screen.findByLabelText(`Copy ${PRESENT} to every node`));
+    await user.click(await screen.findByLabelText(`Copy ${PRESENT} to other nodes`));
+    expect(syncImageToNodes).not.toHaveBeenCalled();
+    expect(await screen.findByText(/Each node selected pulls its own copy/)).toBeInTheDocument();
 
-    expect(syncImageToNodes).toHaveBeenCalledWith(PRESENT, ["10.0.0.2"]);
+    await user.click(screen.getByRole("button", { name: "Copy" }));
+
+    await waitFor(() => expect(syncImageToNodes).toHaveBeenCalledWith(PRESENT, ["10.0.0.2"]));
+  });
+
+  it("says why a copy failed rather than leaving the nodes looking fed", async () => {
+    const user = userEvent.setup();
+    vi.mocked(syncImageToNodes).mockRejectedValue(new Error("registry refused the pull"));
+    renderPage();
+
+    await user.click(await screen.findByLabelText(`Copy ${PRESENT} to other nodes`));
+    await user.click(screen.getByRole("button", { name: "Copy" }));
+
+    expect(await screen.findByText("registry refused the pull")).toBeInTheDocument();
   });
 
   it("tracks live pull progress from the SSE stream", async () => {
@@ -466,7 +490,7 @@ describe("EnginesPage", () => {
 // full ref has to stay reachable — on hover, and in the DOM for a screen
 // reader or a copy.
 
-describe("EnginesPage digest-pinned image refs", () => {
+describe("Library — digest-pinned image refs", () => {
   const DIGEST_HEX = "01234567" + "9".repeat(52) + "89ab";
   const DIGEST_REF = `ghcr.io/acme/engine/llama-cpp:sha256:${DIGEST_HEX}`;
 
@@ -517,7 +541,7 @@ describe("EnginesPage digest-pinned image refs", () => {
 // through the *current* settings.engines map, because `config.update` replaces
 // the whole map rather than merging it itself.
 
-describe("EnginesPage engine enable/disable toggle", () => {
+describe("Library — the engine enable switch", () => {
   const TWO_ENGINES = [
     engine({ engine: "vllm", key: "vllm/default", image_ref: PRESENT, enabled: true }),
     engine({ engine: "sglang", key: "sglang/default", image_ref: DRIFTED, enabled: true }),
@@ -618,65 +642,67 @@ describe("EnginesPage engine enable/disable toggle", () => {
   });
 });
 
-// ── The registry settings, which used to be a Settings tab ──────────────────
-
-describe("EnginesPage registry settings", () => {
+/** What the tab says about itself, and what it says on a phone. */
+describe("Library — engines, and the width they are read at", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    CapturingEventSource.instances = [];
     vi.stubGlobal("EventSource", CapturingEventSource);
-    vi.mocked(fetchImages).mockResolvedValue([]);
+    vi.mocked(fetchImages).mockResolvedValue(IMAGES);
     vi.mocked(fetchImagePulls).mockResolvedValue([]);
-    vi.mocked(fetchEngines).mockResolvedValue({ default_engine: "vllm", engines: [] });
-    vi.mocked(fetchNodes).mockResolvedValue([]);
+    vi.mocked(fetchEngines).mockResolvedValue({ default_engine: "vllm", engines: [engine()] });
+    vi.mocked(fetchNodes).mockResolvedValue([node("10.0.0.1", true), node("10.0.0.2")]);
     vi.mocked(fetchSettings).mockResolvedValue(SETTINGS);
-    vi.mocked(refreshEngines).mockResolvedValue({ refreshed: true, engines: 1, indexes: [] } as never);
-    vi.mocked(updateSettings).mockResolvedValue(SETTINGS);
   });
 
-  it("edits the indexes as a list, one URL per line", async () => {
-    const user = userEvent.setup();
-    renderPage();
-    const indexes = await screen.findByLabelText("Engine indexes");
-    await waitFor(() => expect(indexes).toHaveValue("https://acme.test/engines.json"));
-
-    fireEvent.change(indexes, {
-      target: { value: "https://a.test/e.json\nhttps://b.test/e.json" },
-    });
-    await user.click(screen.getByRole("button", { name: /save registry/i }));
-
-    await waitFor(() =>
-      expect(updateSettings).toHaveBeenCalledWith(
-        expect.objectContaining({
-          engine_indexes: ["https://a.test/e.json", "https://b.test/e.json"],
-        }),
-      ),
-    );
-  });
-
-  it("re-reads the index on request", async () => {
-    const user = userEvent.setup();
+  /** The indexes are configuration and move to Settings; leaving no trace of
+   *  where they went is how an operator concludes the feature was removed. */
+  it("says where engine indexes are configured now", async () => {
     renderPage();
 
-    await user.click(await screen.findByRole("button", { name: /refresh/i }));
-
-    await waitFor(() => expect(refreshEngines).toHaveBeenCalled());
-    // Refreshing an index is pointless unless the list is re-read after it.
-    await waitFor(() => expect(vi.mocked(fetchEngines).mock.calls.length).toBeGreaterThan(1));
+    expect(
+      await screen.findByText("Engine indexes are configured in Settings."),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("Engine indexes")).toBeNull();
   });
 
-  it("says why an index refresh failed", async () => {
-    const user = userEvent.setup();
-    vi.mocked(refreshEngines).mockRejectedValue(new Error("API 502: ghcr.io unreachable"));
+  it("counts the images that want attention", async () => {
     renderPage();
 
-    await user.click(await screen.findByRole("button", { name: /refresh/i }));
-
-    expect(await screen.findByText("API 502: ghcr.io unreachable")).toBeInTheDocument();
+    expect(await screen.findByText("2 need attention")).toBeInTheDocument();
   });
 
-  it("says the page is empty rather than showing a blank table", async () => {
+  it("says the catalogue is empty rather than showing a blank table", async () => {
+    vi.mocked(fetchImages).mockResolvedValue([]);
+    vi.mocked(fetchEngines).mockResolvedValue({ default_engine: "vllm", engines: [] });
     renderPage();
 
     expect(await screen.findByText(/No engines yet/)).toBeInTheDocument();
+  });
+
+  it("renders cards rather than a six-column table on a phone", async () => {
+    Object.defineProperty(window, "innerWidth", { writable: true, configurable: true, value: 390 });
+    renderPage();
+
+    await screen.findByTestId(`engine-${PRESENT}`);
+    expect(screen.queryByRole("table")).toBeNull();
+    // One card, so exactly one of each action rather than a hidden second copy.
+    expect(screen.getAllByLabelText(`Delete ${PRESENT}`)).toHaveLength(1);
+  });
+
+  it("opens a row's per-node detail inside the card", async () => {
+    Object.defineProperty(window, "innerWidth", { writable: true, configurable: true, value: 390 });
+    vi.mocked(fetchImagePresence).mockResolvedValue({
+      ref: PRESENT,
+      local: true,
+      image_id: "sha256:aaaa",
+      nodes: [{ node: "10.0.0.2", present: true, image_id: "sha256:aaaa", matches: true, error: null }],
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: `Details for ${PRESENT}` }));
+
+    expect(await screen.findByText("same image")).toBeInTheDocument();
   });
 });

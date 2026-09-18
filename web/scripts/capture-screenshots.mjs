@@ -53,10 +53,12 @@ const SHOTS = [
   // Full page: the answer covers every node, and one node in a viewport is
   // the picture this page was rebuilt to stop showing.
   { name: "monitoring", path: "/monitoring", settle: "text=What they are doing.", fullPage: true },
-  { name: "models", path: "/models", settle: "text=What is on disk." },
-  { name: "engines", path: "/engines", settle: "text=Engines and images." },
-  { name: "oci", path: "/oci", settle: "text=Collections" },
-  { name: "cache", path: "/cache", settle: "text=Caches." },
+  // Library is one page under four addresses; each tab is its own shot,
+  // because a reader looking for "where are my images" is looking for the
+  // tab, not for the page that contains it.
+  { name: "library", path: "/models", settle: "text=What is on disk." },
+  { name: "library-engines", path: "/engines", settle: "text=Engine indexes are configured" },
+  { name: "library-registries", path: "/oci", settle: "text=Registries" },
   { name: "mcp", path: "/mcp", settle: "text=MCP." },
   { name: "settings", path: "/settings", settle: "text=Settings." },
   // One phone-width shot, because the shell is the change a reader most needs
