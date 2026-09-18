@@ -45,7 +45,15 @@ export default defineConfig({
     // nobody runs.
     {
       name: "mobile",
-      testMatch: /(app-shell|recipes|jobs|settings)\.spec\.ts$/,
+      // One entry per line: PRs 5-7 widen this list as their page bodies
+      // survive 390, and a one-line-per-spec list is a one-line diff each.
+      testMatch: [
+        /app-shell\.spec\.ts$/,
+        /recipes\.spec\.ts$/,
+        /jobs\.spec\.ts$/,
+        /benchmarks\.spec\.ts$/,
+        /settings\.spec\.ts$/,
+      ],
       use: {
         ...devices["Desktop Chrome"],
         viewport: { width: 390, height: 844 },

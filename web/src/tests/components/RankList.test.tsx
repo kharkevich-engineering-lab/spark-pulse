@@ -71,7 +71,9 @@ describe("RankList", () => {
       />,
     );
     expect(screen.getByTestId("rank-list")).toBeInTheDocument();
-    expect(screen.getByTestId("rank-row-0")).toHaveTextContent("exited");
+    // The run's own status vocabulary, not a third set of words for a
+    // container: the same dot and the same capitalised word the row above says.
+    expect(screen.getByTestId("rank-row-0")).toHaveTextContent("Exited");
   });
 
   it("surfaces an orphan with its node, its container, and what it blocks", () => {

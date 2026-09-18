@@ -4,8 +4,7 @@ import { AuthProvider } from "@/lib/auth";
 import { ConfigProvider, useConfig } from "@/lib/config";
 import { I18nProvider } from "@/lib/i18n";
 import RecipesPage from "@/pages/RecipesPage";
-import InferencePage from "@/pages/InferencePage";
-import BenchmarkingPage from "@/pages/BenchmarkingPage";
+import RunsPage from "@/pages/RunsPage";
 import MemoryPage from "@/pages/MemoryPage";
 import CachePage from "@/pages/CachePage";
 import ModelsPage from "@/pages/ModelsPage";
@@ -22,11 +21,26 @@ import { initCsrfToken } from "@/lib/api";
 // Initialize CSRF token from meta tag (no-op if meta tag is absent)
 initCsrfToken();
 
-// Wrapper that conditionally renders the Benchmarking page based on config
+/** `/benchmarking` is Runs, opened on its Benchmarks tab.
+ *
+ * The page it used to render is that tab now. The route is kept because
+ * bookmarks, the MCP tools and the docs all name it — and because a benchmark
+ * is something you do to a run, so the two were never separate destinations.
+ * With the feature off there is no tab to open, and the route goes home. */
 function BenchmarkingRoute() {
-  const { config } = useConfig();
-  const enabled = config?.benchmarking_enabled ?? false;
-  return enabled ? <BenchmarkingPage /> : <Navigate to="/" replace />;
+  const { config, configLoaded } = useConfig();
+  // Wait for the answer rather than assume one. `/api/config` arrives a tick
+  // after the first render, so deciding on a null config sent *every* direct
+  // navigation home — a bookmark, a link in the docs, the URL the MCP tools
+  // hand back — and the route only ever worked when it was reached from
+  // inside the app. Nothing renders while the question is open, which is not
+  // the same as answering it no.
+  if (!configLoaded) return null;
+  return config?.benchmarking_enabled ? (
+    <RunsPage initialTab="benchmarks" />
+  ) : (
+    <Navigate to="/" replace />
+  );
 }
 
 /** The application's pages, as data.
@@ -40,7 +54,7 @@ function BenchmarkingRoute() {
  */
 const PAGES: { path: string; element: React.ReactNode }[] = [
   { path: "/", element: <RecipesPage /> },
-  { path: "/jobs", element: <InferencePage /> },
+  { path: "/jobs", element: <RunsPage /> },
   { path: "/cluster", element: <ClusterPage /> },
   { path: "/benchmarking", element: <BenchmarkingRoute /> },
   { path: "/monitoring", element: <MemoryPage /> },

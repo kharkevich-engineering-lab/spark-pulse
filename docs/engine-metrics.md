@@ -38,7 +38,7 @@ iteration stats, not Prometheus text) or names nobody here has read off a
 running instance, so they have no map: an unknown engine is tried against
 every map in turn, and a body in one of these dialects still charts.
 
-`GET /api/deployments/{id}/metrics` returns the window. The Inference page
+`GET /api/deployments/{id}/metrics` returns the window. The Runs page
 shows the newest reading as a row of gauges and the window behind them as
 sparklines.
 

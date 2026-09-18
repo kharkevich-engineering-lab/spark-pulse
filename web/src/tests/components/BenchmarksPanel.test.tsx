@@ -1,27 +1,35 @@
-/** The benchmarking page: runs, the summary table, and comparing two of them.
+/** The benchmarks tab: runs, the summary, and comparing two of them.
  *
  * A benchmark number is only worth anything next to another one, so the
  * behaviour that matters is the comparison path — selecting runs, asking the
  * backend to diff them, and rendering which way each metric moved — plus the
- * empty states, because a page that shows nothing and says nothing reads as
- * broken.
+ * empty states, because a panel that shows nothing and says nothing reads as
+ * broken. Starting a run is not here any more: the launcher opens from the run
+ * it measures, and its tests are on the Runs page.
  */
 
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import BenchmarkingPage from "@/pages/BenchmarkingPage";
+import BenchmarksPanel from "@/components/BenchmarksPanel";
+import { useQuery } from "@/hooks/useQuery";
 import type { BenchmarkResult } from "@/lib/types";
 
 vi.mock("@/lib/api", () => ({
   fetchBenchmarks: vi.fn(),
   fetchLatestByRecipe: vi.fn(),
-  runBenchmark: vi.fn(),
   compareRuns: vi.fn(),
   deleteBenchmark: vi.fn(),
 }));
 
-import { compareRuns, deleteBenchmark, fetchBenchmarks, fetchLatestByRecipe, runBenchmark } from "@/lib/api";
+import { compareRuns, deleteBenchmark, fetchBenchmarks, fetchLatestByRecipe } from "@/lib/api";
+
+/** The panel is fed by its page. This is that wiring, so the tests can still
+ *  assert that a delete re-reads the history rather than editing it in place. */
+function Harness() {
+  const { data, loading, error, refetch } = useQuery(fetchBenchmarks);
+  return <BenchmarksPanel benchmarks={data} loading={loading} error={error} refetch={refetch} />;
+}
 
 const run = (over: Partial<BenchmarkResult> = {}): BenchmarkResult => ({
   benchmark_id: "bench-0001",
@@ -66,18 +74,17 @@ const COMPARISON = {
   },
 };
 
-describe("BenchmarkingPage", () => {
+describe("BenchmarksPanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(fetchBenchmarks).mockResolvedValue(RUNS);
     vi.mocked(fetchLatestByRecipe).mockResolvedValue({});
-    vi.mocked(runBenchmark).mockResolvedValue({} as never);
     vi.mocked(compareRuns).mockResolvedValue(COMPARISON as never);
     vi.mocked(deleteBenchmark).mockResolvedValue(undefined);
   });
 
   it("lists every run with its recipe and status, counting them on the tab", async () => {
-    render(<BenchmarkingPage />);
+    render(<Harness />);
 
     expect(await screen.findByText("Qwen3 8B")).toBeInTheDocument();
     expect(screen.getByText("Qwen3 32B")).toBeInTheDocument();
@@ -85,23 +92,34 @@ describe("BenchmarkingPage", () => {
     expect(screen.getAllByText("Completed").length).toBeGreaterThan(0);
   });
 
+  /** An empty destination whose emptiness meant "you have not done something
+   *  elsewhere yet" is not a tab. The comparison renders where the selection
+   *  is made, so there are two pills rather than three. */
+  it("offers two sub-views, not an empty comparison tab", async () => {
+    render(<Harness />);
+    await screen.findByText("Qwen3 8B");
+
+    expect(screen.getAllByRole("tab")).toHaveLength(2);
+    expect(screen.queryByRole("tab", { name: "Comparison" })).toBeNull();
+  });
+
   /** A run measured against a baseline is a different claim from a run
    *  measured on its own, and the list is where that distinction survives. */
   it("marks the run that was measured against a baseline", async () => {
-    render(<BenchmarkingPage />);
+    render(<Harness />);
     expect(await screen.findByText("vs baseline")).toBeInTheDocument();
   });
 
-  it("says the page is empty rather than showing an empty list", async () => {
+  it("says the panel is empty rather than showing an empty list", async () => {
     vi.mocked(fetchBenchmarks).mockResolvedValue([]);
-    render(<BenchmarkingPage />);
+    render(<Harness />);
 
     expect(await screen.findByText("No benchmarks run yet.")).toBeInTheDocument();
   });
 
   it("surfaces a history the backend could not produce", async () => {
     vi.mocked(fetchBenchmarks).mockRejectedValue(new Error("benchmark store unreadable"));
-    render(<BenchmarkingPage />);
+    render(<Harness />);
 
     expect(await screen.findByText("benchmark store unreadable")).toBeInTheDocument();
   });
@@ -113,7 +131,7 @@ describe("BenchmarkingPage", () => {
     const deleteButtons = () => screen.getAllByRole("button", { name: "Delete this run" });
 
     it("asks before removing anything, naming the run", async () => {
-      render(<BenchmarkingPage />);
+      render(<Harness />);
       await screen.findByText("Qwen3 8B");
 
       await userEvent.click(deleteButtons()[0]);
@@ -126,7 +144,7 @@ describe("BenchmarkingPage", () => {
     });
 
     it("deletes the run it was pointed at and refetches the list", async () => {
-      render(<BenchmarkingPage />);
+      render(<Harness />);
       await screen.findByText("Qwen3 32B");
       expect(fetchBenchmarks).toHaveBeenCalledTimes(1);
 
@@ -141,7 +159,7 @@ describe("BenchmarkingPage", () => {
     });
 
     it("leaves the run alone when the operator backs out", async () => {
-      render(<BenchmarkingPage />);
+      render(<Harness />);
       await screen.findByText("Qwen3 8B");
 
       await userEvent.click(deleteButtons()[0]);
@@ -157,7 +175,7 @@ describe("BenchmarkingPage", () => {
       vi.mocked(deleteBenchmark).mockRejectedValue(
         new Error("API 409: benchmark bench-0001 is still running"),
       );
-      render(<BenchmarkingPage />);
+      render(<Harness />);
       await screen.findByText("Qwen3 8B");
 
       await userEvent.click(deleteButtons()[0]);
@@ -171,7 +189,7 @@ describe("BenchmarkingPage", () => {
 
     it("says so when the run had already gone", async () => {
       vi.mocked(deleteBenchmark).mockRejectedValue(new Error("API 404: Benchmark not found"));
-      render(<BenchmarkingPage />);
+      render(<Harness />);
       await screen.findByText("Qwen3 8B");
 
       await userEvent.click(deleteButtons()[0]);
@@ -183,19 +201,19 @@ describe("BenchmarkingPage", () => {
     /** A deleted run left in the selection would send the compare call an id
      *  the backend no longer has, and it answers 404 for the whole set. */
     it("drops the deleted run from a pending comparison selection", async () => {
-      render(<BenchmarkingPage />);
+      render(<Harness />);
       await screen.findByText("Qwen3 8B");
 
       await userEvent.click(screen.getAllByRole("checkbox")[0]);
       await userEvent.click(screen.getAllByRole("checkbox")[1]);
-      expect(screen.getByText("2 run(s) selected")).toBeInTheDocument();
+      expect(screen.getByText("2 runs selected")).toBeInTheDocument();
 
       await userEvent.click(deleteButtons()[0]);
       await userEvent.click(screen.getByRole("button", { name: "Delete" }));
 
       await waitFor(() => expect(deleteBenchmark).toHaveBeenCalledWith("bench-0001"));
       await waitFor(() =>
-        expect(screen.queryByText("2 run(s) selected")).not.toBeInTheDocument(),
+        expect(screen.queryByText("2 runs selected")).not.toBeInTheDocument(),
       );
     });
   });
@@ -204,63 +222,64 @@ describe("BenchmarkingPage", () => {
     /** One run selected is not a comparison, so the affordance stays hidden
      *  until there is something to compare it against. */
     it("offers nothing to compare until a second run is selected", async () => {
-      render(<BenchmarkingPage />);
+      render(<Harness />);
       await screen.findByText("Qwen3 8B");
 
       await userEvent.click(screen.getAllByRole("checkbox")[0]);
-      expect(screen.queryByRole("button", { name: /Compare Selected/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Compare selected/ })).not.toBeInTheDocument();
 
       await userEvent.click(screen.getAllByRole("checkbox")[1]);
-      expect(screen.getByRole("button", { name: /Compare Selected/ })).toBeInTheDocument();
-      expect(screen.getByText("2 run(s) selected")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Compare selected/ })).toBeInTheDocument();
+      expect(screen.getByText("2 runs selected")).toBeInTheDocument();
     });
 
     it("shows each metric side by side, and which way it moved", async () => {
-      render(<BenchmarkingPage />);
+      render(<Harness />);
       await screen.findByText("Qwen3 8B");
 
       await userEvent.click(screen.getAllByRole("checkbox")[0]);
       await userEvent.click(screen.getAllByRole("checkbox")[1]);
-      await userEvent.click(screen.getByRole("button", { name: /Compare Selected/ }));
+      await userEvent.click(screen.getByRole("button", { name: /Compare selected/ }));
 
       await waitFor(() =>
         expect(compareRuns).toHaveBeenCalledWith(["bench-0001", "bench-0002"]),
       );
-      expect(screen.getByRole("heading", { name: /Run Comparison/ })).toBeInTheDocument();
-      expect(screen.getByText("throughput")).toBeInTheDocument();
+      const panel = within(screen.getByTestId("comparison"));
+      expect(screen.getByRole("heading", { name: /Comparison/ })).toBeInTheDocument();
+      expect(panel.getByText("throughput")).toBeInTheDocument();
       // The metric name loses its underscores; the numbers keep two decimals.
-      expect(screen.getByText("latency ms")).toBeInTheDocument();
-      expect(screen.getByText("1234.50")).toBeInTheDocument();
-      expect(screen.getByText("21.5%")).toBeInTheDocument();
-      expect(screen.getByText("8.0%")).toBeInTheDocument();
+      expect(panel.getByText("latency ms")).toBeInTheDocument();
+      expect(panel.getByText("1234.50")).toBeInTheDocument();
+      expect(panel.getByText("21.5%")).toBeInTheDocument();
+      expect(panel.getByText("8.0%")).toBeInTheDocument();
     });
 
     it("says so when the backend cannot diff the runs", async () => {
       vi.mocked(compareRuns).mockRejectedValue(new Error("nope"));
-      render(<BenchmarkingPage />);
+      render(<Harness />);
       await screen.findByText("Qwen3 8B");
 
       await userEvent.click(screen.getAllByRole("checkbox")[0]);
       await userEvent.click(screen.getAllByRole("checkbox")[1]);
-      await userEvent.click(screen.getByRole("button", { name: /Compare Selected/ }));
+      await userEvent.click(screen.getByRole("button", { name: /Compare selected/ }));
 
       expect(await screen.findByText("Failed to compare benchmarks")).toBeInTheDocument();
     });
 
     it("clears the selection when the operator asks", async () => {
-      render(<BenchmarkingPage />);
+      render(<Harness />);
       await screen.findByText("Qwen3 8B");
 
       await userEvent.click(screen.getAllByRole("checkbox")[0]);
       await userEvent.click(screen.getAllByRole("checkbox")[1]);
       await userEvent.click(screen.getByRole("button", { name: "Clear" }));
 
-      expect(screen.queryByText("2 run(s) selected")).not.toBeInTheDocument();
+      expect(screen.queryByText("2 runs selected")).not.toBeInTheDocument();
       expect(screen.getAllByRole("checkbox")[0]).not.toBeChecked();
     });
 
     it("deselects a run the operator ticked by mistake", async () => {
-      render(<BenchmarkingPage />);
+      render(<Harness />);
       await screen.findByText("Qwen3 8B");
 
       await userEvent.click(screen.getAllByRole("checkbox")[0]);
@@ -269,43 +288,65 @@ describe("BenchmarkingPage", () => {
       expect(screen.getAllByRole("checkbox")[0]).not.toBeChecked();
     });
 
-    it("closes the comparison and goes back to the history", async () => {
-      render(<BenchmarkingPage />);
+    it("puts the comparison away again from its own close", async () => {
+      render(<Harness />);
       await screen.findByText("Qwen3 8B");
 
       await userEvent.click(screen.getAllByRole("checkbox")[0]);
       await userEvent.click(screen.getAllByRole("checkbox")[1]);
-      await userEvent.click(screen.getByRole("button", { name: /Compare Selected/ }));
-      await screen.findByRole("heading", { name: /Run Comparison/ });
+      await userEvent.click(screen.getByRole("button", { name: /Compare selected/ }));
+      await screen.findByTestId("comparison");
 
-      await userEvent.click(screen.getByRole("tab", { name: "Comparison" }));
+      await userEvent.click(within(screen.getByTestId("comparison")).getByTitle("Close"));
 
-      expect(screen.queryByRole("heading", { name: /Run Comparison/ })).not.toBeInTheDocument();
+      expect(screen.queryByTestId("comparison")).not.toBeInTheDocument();
+      // The history is still there underneath.
+      expect(screen.getByText("Qwen3 8B")).toBeInTheDocument();
     });
   });
 
-  describe("summary tab", () => {
+  describe("summary", () => {
+    const LATEST = {
+      "bundled/qwen3-8b": run({
+        results: {
+          throughput: 1234.5,
+          latency_ms: 42.25,
+          decode_latency_ms: 12.5,
+          gpu_memory_gb: 60.2,
+          gpu_utilization: 88.6,
+          prefill_speed: 900.1,
+        },
+      }),
+    };
+
     it("lays every recipe's latest numbers out in one table", async () => {
-      vi.mocked(fetchLatestByRecipe).mockResolvedValue({
-        "bundled/qwen3-8b": run({
-          results: {
-            throughput: 1234.5,
-            latency_ms: 42.25,
-            decode_latency_ms: 12.5,
-            gpu_memory_gb: 60.2,
-            gpu_utilization: 88.6,
-            prefill_speed: 900.1,
-          },
-        }),
-      });
-      render(<BenchmarkingPage />);
+      vi.mocked(fetchLatestByRecipe).mockResolvedValue(LATEST);
+      render(<Harness />);
 
       await userEvent.click(await screen.findByRole("tab", { name: /Summary/ }));
 
+      const table = within(screen.getByTestId("summary-table"));
       expect(screen.getByRole("columnheader", { name: "Throughput" })).toBeInTheDocument();
-      expect(screen.getByText("1234.5")).toBeInTheDocument();
-      expect(screen.getByText("42.3")).toBeInTheDocument();
-      expect(screen.getByText("89%")).toBeInTheDocument();
+      expect(table.getByText("1234.5")).toBeInTheDocument();
+      expect(table.getByText("42.3")).toBeInTheDocument();
+      expect(table.getByText("89%")).toBeInTheDocument();
+    });
+
+    /** Nine columns do not survive 390px however they are scrolled: the model
+     *  name goes off screen with the numbers, so the reader is swiping a table
+     *  with no row labels. Under 900 each recipe is a card, with the same
+     *  numbers named. */
+    it("repeats the same numbers as cards for a narrow screen", async () => {
+      vi.mocked(fetchLatestByRecipe).mockResolvedValue(LATEST);
+      render(<Harness />);
+
+      await userEvent.click(await screen.findByRole("tab", { name: /Summary/ }));
+
+      const cards = within(screen.getByTestId("summary-cards"));
+      expect(cards.getByText("Qwen3 8B")).toBeInTheDocument();
+      expect(cards.getByText("Throughput")).toBeInTheDocument();
+      expect(cards.getByText("1234.5")).toBeInTheDocument();
+      expect(cards.getByText("89%")).toBeInTheDocument();
     });
 
     /** A recipe benchmarked before a metric existed has no value for it, and
@@ -314,91 +355,20 @@ describe("BenchmarkingPage", () => {
       vi.mocked(fetchLatestByRecipe).mockResolvedValue({
         "bundled/qwen3-8b": run({ results: null, recipe_name: "" }),
       });
-      render(<BenchmarkingPage />);
+      render(<Harness />);
 
       await userEvent.click(await screen.findByRole("tab", { name: /Summary/ }));
 
-      expect(screen.getByText("bundled/qwen3-8b")).toBeInTheDocument();
-      expect(screen.getAllByText("—").length).toBe(6);
+      const table = within(screen.getByTestId("summary-table"));
+      expect(table.getByText("bundled/qwen3-8b")).toBeInTheDocument();
+      expect(table.getAllByText("—").length).toBe(6);
     });
 
     it("says the summary is empty rather than showing an empty table", async () => {
-      render(<BenchmarkingPage />);
+      render(<Harness />);
       await userEvent.click(await screen.findByRole("tab", { name: /Summary/ }));
 
       expect(screen.getByText("No benchmark data yet.")).toBeInTheDocument();
-    });
-  });
-
-  describe("running one", () => {
-    it("will not start without a deployment to point at", async () => {
-      render(<BenchmarkingPage />);
-      await userEvent.click(screen.getByRole("button", { name: /Run Benchmark/ }));
-
-      expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
-    });
-
-    it("sends the deployment, recipe, baseline and the chosen metrics", async () => {
-      render(<BenchmarkingPage />);
-      await userEvent.click(screen.getByRole("button", { name: /Run Benchmark/ }));
-
-      await userEvent.type(screen.getByPlaceholderText("deployment-id"), "dep-42");
-      await userEvent.type(screen.getByPlaceholderText("qwen3.5-397b-int4"), "bundled/qwen3-8b");
-      await userEvent.type(screen.getByPlaceholderText("benchmark-id"), "bench-0001");
-      await userEvent.click(screen.getByRole("checkbox", { name: "gpu memory" }));
-      await userEvent.click(screen.getByRole("button", { name: "Run" }));
-
-      await waitFor(() => expect(runBenchmark).toHaveBeenCalled());
-      expect(vi.mocked(runBenchmark).mock.calls[0][0]).toEqual({
-        deployment_id: "dep-42",
-        baseline_id: "bench-0001",
-        recipe_id: "bundled/qwen3-8b",
-        recipe_name: "bundled/qwen3-8b",
-        params: {
-          benchmarks: ["throughput", "latency", "gpu_memory"],
-          context_length: 4096,
-        },
-      });
-    });
-
-    it("drops a metric the operator unticks, and carries the context length", async () => {
-      render(<BenchmarkingPage />);
-      await userEvent.click(screen.getByRole("button", { name: /Run Benchmark/ }));
-
-      await userEvent.type(screen.getByPlaceholderText("deployment-id"), "dep-42");
-      await userEvent.click(screen.getByRole("checkbox", { name: "latency" }));
-      // One change event, the way a paste or a spinner arrives: the field
-      // falls back to 4096 whenever it is momentarily empty, so clearing it
-      // and typing would leave "40968192" behind.
-      fireEvent.change(screen.getByRole("spinbutton"), { target: { value: "8192" } });
-      await userEvent.click(screen.getByRole("button", { name: "Run" }));
-
-      await waitFor(() => expect(runBenchmark).toHaveBeenCalled());
-      expect(vi.mocked(runBenchmark).mock.calls[0][0].params).toEqual({
-        benchmarks: ["throughput"],
-        context_length: 8192,
-      });
-    });
-
-    it("keeps the form open and says why when the run is refused", async () => {
-      vi.mocked(runBenchmark).mockRejectedValue(new Error("deployment dep-42 is not running"));
-      render(<BenchmarkingPage />);
-      await userEvent.click(screen.getByRole("button", { name: /Run Benchmark/ }));
-
-      await userEvent.type(screen.getByPlaceholderText("deployment-id"), "dep-42");
-      await userEvent.click(screen.getByRole("button", { name: "Run" }));
-
-      expect(await screen.findByText("deployment dep-42 is not running")).toBeInTheDocument();
-      expect(screen.getByPlaceholderText("deployment-id")).toBeInTheDocument();
-    });
-
-    it("closes the form when the operator backs out", async () => {
-      render(<BenchmarkingPage />);
-      await userEvent.click(screen.getByRole("button", { name: /Run Benchmark/ }));
-      await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
-
-      expect(screen.queryByPlaceholderText("deployment-id")).not.toBeInTheDocument();
-      expect(runBenchmark).not.toHaveBeenCalled();
     });
   });
 });

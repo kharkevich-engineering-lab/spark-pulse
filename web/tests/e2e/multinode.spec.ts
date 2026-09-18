@@ -196,20 +196,14 @@ test("a running multi-node deployment is marked wherever it is listed", async ({
     const listed = (await listDeployments(request)).find((d) => d.name === "e2e multi-node");
     expect(listed, "the deployment should be listed").toBeTruthy();
 
+    // One list, on Runs: the Fleet page's second table of the same endpoint
+    // is gone, so this is the only place the marking has to reach.
     await gotoPage(page, "/jobs");
     const row = page.getByTestId(`deployment-${listed!.id}`);
     await expect(row).toBeVisible();
-    await expect(row).toContainText("2 nodes");
+    // The row names the machines its ranks landed on rather than counting them.
+    await expect(row).toContainText(CONTROL);
     await expect(row.getByText("exp", { exact: true })).toBeVisible();
-
-    // The Cluster page's own list marks it too.
-    await gotoPage(page, "/cluster");
-    const clusterRow = page
-      .getByTestId("cluster-deployments")
-      .getByRole("row")
-      .filter({ hasText: "e2e multi-node" });
-    await expect(clusterRow.first()).toBeVisible();
-    await expect(clusterRow.first().getByText("exp", { exact: true })).toBeVisible();
     await expectNoCrash(page);
   } finally {
     await purgeDeployments(request, RECIPE);

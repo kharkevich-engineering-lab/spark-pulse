@@ -20,13 +20,23 @@ A recipe is a model, an engine and its arguments in one file. The card says whic
 
 ## Runs
 
-![The Runs page with a deployment expanded](../assets/screenshots/jobs.png)
+![The Runs page with a run expanded](../assets/screenshots/jobs.png)
 
-What is running, and what each one is doing. A row carries the engine, the port, health, lifecycle status and — while a change is being applied — a second chip saying *in progress* or *deleting*, because a deployment being torn down is still running until a node says otherwise.
+One list of runs, under three pills: **Live** is what is still serving, **Finished** is the history a stopped run becomes, and **Benchmarks** is what has been measured. There used to be three lists of the same endpoint — this page, a table on Fleet and a page of its own for benchmarks — on three different polls.
 
-Expanding a row shows the resolved engine and image, the container name, the per-rank state for a multi-node deployment, and the engine's own metrics: requests running, queue depth, KV-cache use, preemptions. That window is read from the engine's `/metrics` and held in memory only — an hour of five-second samples, gone on restart. Retention is Prometheus's job, and the page says so rather than implying otherwise.
+A row is two lines and a column. The name and *one* status badge; then the engine, the model, where its ranks landed and the port; then, on the right, the throughput and first-token time from its latest benchmark, how long it has been serving (or when it ended and how long it lasted), and the actions, spelled out rather than drawn as icons. While a change is being applied the badge carries a second chip saying *in progress* or *deleting*, because a run being torn down is still running until a node says otherwise.
 
-Below that, the log, streamed.
+**Logs** opens the row: the resolved engine and image, the container name, the per-rank state for a multi-node run, and the engine's own metrics — requests running, queue depth, KV-cache use, preemptions. That window is read from the engine's `/metrics` and held in memory only: an hour of five-second samples, gone on restart. Retention is Prometheus's job, and the page says so rather than implying otherwise. Below that, the log, streamed.
+
+## Benchmarks
+
+![The Benchmarks tab of Runs](../assets/screenshots/benchmarking.png)
+
+A tab of Runs rather than a page of its own, because a benchmark is something you do to a run. **History** is every measurement with its recipe and status; tick two and the comparison renders under them, metric by metric, with which way each moved. **Summary** is the latest numbers per recipe — a table on a laptop, one card per recipe on a phone.
+
+**Benchmark**, on a live run, is the only launcher. It opens with that run already the target, so there is no deployment id to type and nothing to point at something that does not exist; what it still asks is what to measure, at what context length, and which earlier run to diff against. `/benchmarking` opens this tab.
+
+The tab is there when `benchmarking_enabled` is on, and absent when it is not.
 
 ## Monitoring
 
@@ -62,9 +72,9 @@ Pull to a node, remove from several, and set which engine indexes are consulted.
 
 ![Cluster](../assets/screenshots/cluster.png)
 
-The node registry and what is running on it. Adding a node takes an address; discovery offers what it found over mDNS, and nothing is ever required to come from discovery. Each node's diagnostics name what is wrong and what to do about it.
+The node registry. What is running on those machines is the Runs page's list, which this page links to: two tables of the same endpoint, on two polls, is two tables that can disagree. Adding a node takes an address; discovery offers what it found over mDNS, and nothing is ever required to come from discovery. Each node's diagnostics name what is wrong and what to do about it.
 
-Multi-node is marked experimental here in one line — the full account of what is unproven belongs where you are about to act on it, which is the deploy form and the expanded row on Inference.
+Multi-node is marked experimental here in one line — the full account of what is unproven belongs where you are about to act on it, which is the deploy form and the expanded row on Runs.
 
 ## OCI Registry
 

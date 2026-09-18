@@ -18,7 +18,8 @@
  */
 
 import { AlertTriangle } from "lucide-react";
-import type { ContainerStatus, DeploymentOrphan, DeploymentRank } from "@/lib/types";
+import { StatusBadge } from "@/ui";
+import type { DeploymentOrphan, DeploymentRank } from "@/lib/types";
 
 export interface RankListProps {
   ranks?: DeploymentRank[];
@@ -29,20 +30,6 @@ export interface RankListProps {
 /** True when a rank's live container is known and is not running. */
 function isUnhealthy(rank: DeploymentRank): boolean {
   return !!rank.container && !rank.container.running;
-}
-
-function containerTone(container: ContainerStatus): string {
-  if (container.running) return "text-success";
-  if (container.status === "missing") return "text-danger";
-  return "text-warning";
-}
-
-function ContainerState({ container }: { container: ContainerStatus }) {
-  return (
-    <span className={`font-mono ${containerTone(container)}`} title={container.error || undefined}>
-      {container.status}
-    </span>
-  );
 }
 
 export default function RankList({ ranks, orphans, className = "" }: RankListProps) {
@@ -63,19 +50,19 @@ export default function RankList({ ranks, orphans, className = "" }: RankListPro
               <li
                 key={orphan.rank}
                 data-testid="rank-orphan"
-                className="flex items-start gap-2 p-2 rounded-sm bg-danger/5 border border-danger/30 text-xs"
+                className="flex items-start gap-2 p-2 rounded-sm bg-bad/5 border border-bad/30 text-[13px]"
               >
-                <AlertTriangle size={14} className="shrink-0 mt-0.5 text-danger" />
+                <AlertTriangle size={14} className="shrink-0 mt-0.5 text-bad" />
                 <div className="min-w-0 space-y-0.5">
                   <p>
                     <span className="font-medium">Rank {orphan.rank} could not be confirmed stopped</span>
-                    <span className="text-text-muted"> · </span>
-                    <span className="font-mono text-text-muted">{node}</span>
-                    <span className="text-text-muted"> · </span>
-                    <span className="font-mono text-text-muted">{orphan.container_name}</span>
+                    <span className="text-muted"> · </span>
+                    <span className="font-mono text-muted">{node}</span>
+                    <span className="text-muted"> · </span>
+                    <span className="font-mono text-muted">{orphan.container_name}</span>
                   </p>
-                  <p className="text-text-muted">{orphan.reason}.</p>
-                  <p className="text-text-muted">
+                  <p className="text-muted">{orphan.reason}.</p>
+                  <p className="text-muted">
                     Its container may still be running and holding {node}&apos;s ports until this
                     clears.
                   </p>
@@ -94,25 +81,29 @@ export default function RankList({ ranks, orphans, className = "" }: RankListPro
               <li
                 key={rank.rank}
                 data-testid={`rank-row-${rank.rank}`}
-                className={`flex items-center gap-2 px-2 py-1 rounded-md text-xs ${
-                  unhealthy ? "bg-danger/5 border border-danger/30" : "bg-surface border border-border"
+                className={`flex items-center gap-2 px-2 py-1 rounded-md text-[13px] ${
+                  unhealthy ? "bg-bad/5 border border-bad/30" : "bg-surface border border-line"
                 }`}
               >
-                {unhealthy && <AlertTriangle size={12} className="shrink-0 text-danger" />}
+                {unhealthy && <AlertTriangle size={12} className="shrink-0 text-bad" />}
                 <span className="font-mono shrink-0">rank {rank.rank}</span>
                 {rank.is_head && (
-                  <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wide bg-primary/15 text-blue2 border border-primary/30">
+                  <span className="shrink-0 px-1.5 py-0.5 rounded-full text-[11px] font-semibold uppercase tracking-[0.14em] bg-blue/15 text-blue2 border border-blue/30">
                     head
                   </span>
                 )}
-                <span className="text-text-muted">·</span>
+                <span className="text-muted">·</span>
                 <span className="font-mono truncate">{rank.node || "this node"}</span>
-                <span className="text-text-muted">·</span>
+                <span className="text-muted">·</span>
                 <span className="font-mono truncate">{rank.container_name}</span>
                 {rank.container && (
                   <>
-                    <span className="text-text-muted">·</span>
-                    <ContainerState container={rank.container} />
+                    <span className="text-muted">·</span>
+                    {/* One status vocabulary: the same dot and word the run's
+                        own badge uses, rather than a third set of colours. */}
+                    <span title={rank.container.error || undefined}>
+                      <StatusBadge status={rank.container.status} />
+                    </span>
                   </>
                 )}
               </li>

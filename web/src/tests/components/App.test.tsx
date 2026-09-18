@@ -41,9 +41,10 @@ vi.mock("@/components/Layout", () => ({
 // Every routed page, stubbed to nothing but its own name. The factories are
 // hoisted above every local binding, so each one spells itself out.
 vi.mock("@/pages/RecipesPage", () => ({ default: () => <div>recipes page</div> }));
-vi.mock("@/pages/InferencePage", () => ({ default: () => <div>inference page</div> }));
+vi.mock("@/pages/RunsPage", () => ({
+  default: ({ initialTab }: { initialTab?: string }) => <div>runs page {initialTab ?? "live"}</div>,
+}));
 vi.mock("@/pages/ClusterPage", () => ({ default: () => <div>cluster page</div> }));
-vi.mock("@/pages/BenchmarkingPage", () => ({ default: () => <div>benchmarking page</div> }));
 vi.mock("@/pages/MemoryPage", () => ({ default: () => <div>monitoring page</div> }));
 vi.mock("@/pages/ModelsPage", () => ({ default: () => <div>models page</div> }));
 vi.mock("@/pages/EnginesPage", () => ({ default: () => <div>engines page</div> }));
@@ -60,7 +61,7 @@ function renderAt(path: string) {
 
 const ROUTES: [string, string][] = [
   ["/", "recipes page"],
-  ["/jobs", "inference page"],
+  ["/jobs", "runs page live"],
   ["/cluster", "cluster page"],
   ["/monitoring", "monitoring page"],
   ["/models", "models page"],
@@ -103,22 +104,26 @@ describe("App routing", () => {
     renderAt("/benchmarking");
 
     await waitFor(() => expect(screen.getByText("recipes page")).toBeInTheDocument());
-    expect(screen.queryByText("benchmarking page")).toBeNull();
+    expect(screen.queryByText("runs page benchmarks")).toBeNull();
   });
 
   it("routes to /benchmarking once the backend enables it", () => {
     config = { ...config!, benchmarking_enabled: true };
     renderAt("/benchmarking");
 
-    expect(screen.getByText("benchmarking page")).toBeInTheDocument();
+    expect(screen.getByText("runs page benchmarks")).toBeInTheDocument();
   });
 
-  /** Config arrives a tick after the first render, so the gate has to be
-   *  closed while it is still null rather than flashing the page open. */
-  it("keeps the gate shut while config has not arrived", async () => {
+  /** Config arrives a tick after the first render. The gate stays shut while
+   *  it is null — no flash of a page the backend may refuse — but it does not
+   *  answer *no* either: redirecting on an unanswered question is what sent
+   *  every bookmark of /benchmarking home before it had been asked. */
+  it("keeps the gate shut, and sends nobody home, while config has not arrived", async () => {
     config = null;
     renderAt("/benchmarking");
 
-    await waitFor(() => expect(screen.getByText("recipes page")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId("shell")).toBeInTheDocument());
+    expect(screen.queryByText("runs page benchmarks")).toBeNull();
+    expect(screen.queryByText("recipes page")).toBeNull();
   });
 });
