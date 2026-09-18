@@ -48,7 +48,6 @@ vi.mock("@/pages/FleetPage", () => ({ default: () => <div>fleet page</div> }));
 // One page under four addresses: Library is tabbed, and each tab kept the
 // route it had when it was a page of its own.
 vi.mock("@/pages/LibraryPage", () => ({ default: () => <div>library page</div> }));
-vi.mock("@/pages/MCPPage", () => ({ default: () => <div>mcp page</div> }));
 vi.mock("@/pages/SettingsPage", () => ({ default: () => <div>settings page</div> }));
 vi.mock("@/pages/LoginPage", () => ({ default: () => <div>login page</div> }));
 
@@ -66,7 +65,6 @@ const ROUTES: [string, string][] = [
   ["/models", "library page"],
   ["/engines", "library page"],
   ["/cache", "library page"],
-  ["/mcp", "mcp page"],
   ["/oci", "library page"],
   ["/settings", "settings page"],
 ];
@@ -89,6 +87,17 @@ describe("App routing", () => {
 
     expect(screen.getByText(content)).toBeInTheDocument();
     expect(screen.getByTestId("shell")).toBeInTheDocument();
+  });
+
+  /** `/mcp` was a page of its own; its content is a tab of Settings now. The
+   *  route stays as a redirect, because it is in the docs, in the nav group
+   *  that speaks for it, and in whatever an operator bookmarked. */
+  it("sends the old /mcp route to the Settings tab that replaced it", () => {
+    renderAt("/mcp");
+
+    expect(screen.getByText("settings page")).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/settings");
+    expect(window.location.hash).toBe("#mcp");
   });
 
   it("renders the login page with no shell around it", () => {

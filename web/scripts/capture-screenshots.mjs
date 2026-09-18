@@ -66,7 +66,8 @@ const SHOTS = [
   { name: "library", path: "/models", settle: "text=What is on disk." },
   { name: "library-engines", path: "/engines", settle: "text=Engine indexes are configured" },
   { name: "library-registries", path: "/oci", settle: "text=Registries" },
-  { name: "mcp", path: "/mcp", settle: "text=MCP." },
+  // There is no MCP shot any more: `/mcp` is a tab of Settings, and a page
+  // that is one tab of another page is documented by that page's screenshot.
   { name: "settings", path: "/settings", settle: "text=Settings." },
   // One phone-width shot, because the shell is the change a reader most needs
   // to see at 390: the header collapses to a menu button and nothing overlaps.

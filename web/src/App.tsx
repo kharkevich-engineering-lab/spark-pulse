@@ -6,7 +6,6 @@ import { I18nProvider } from "@/lib/i18n";
 import RecipesPage from "@/pages/RecipesPage";
 import RunsPage from "@/pages/RunsPage";
 import LibraryPage from "@/pages/LibraryPage";
-import MCPPage from "@/pages/MCPPage";
 import SettingsPage from "@/pages/SettingsPage";
 import LoginPage from "@/pages/LoginPage";
 import NotFoundPage from "@/pages/NotFoundPage";
@@ -61,7 +60,10 @@ const PAGES: { path: string; element: React.ReactNode }[] = [
   { path: "/models", element: <LibraryPage /> },
   { path: "/engines", element: <LibraryPage /> },
   { path: "/cache", element: <LibraryPage /> },
-  { path: "/mcp", element: <MCPPage /> },
+  // `/mcp` was a page; its content is a tab of Settings now. The route is
+  // kept as a redirect so a bookmark, a link in the docs and the nav group
+  // that speaks for it all still land on the same content.
+  { path: "/mcp", element: <Navigate to="/settings#mcp" replace /> },
   { path: "/oci", element: <LibraryPage /> },
   { path: "/settings", element: <SettingsPage /> },
 ];
