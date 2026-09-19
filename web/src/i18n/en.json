@@ -914,7 +914,7 @@
   },
   "fabric": {
     "heading": "ConnectX fabric",
-    "subtitle": "The ConnectX-7 ports, as each node's agent reports them, and the addresses spark-vllm-docker's networking guide gives them.",
+    "subtitle": "The ConnectX-7 ports, as each node's agent reports them, and the addresses the scheme gives them: a /24 per cable, .11/.12/.13, MTU 9000.",
     "refresh": "Refresh",
     "noTransport": "The agent transport is not running, so no node's ports are known.",
     "noPortsUp": "No cable",

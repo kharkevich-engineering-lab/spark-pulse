@@ -1,7 +1,7 @@
 """Native solo deployment runtime — Docker driven from Python.
 
-This is the phase-1 replacement for forking upstream's ``run-recipe.sh``. It
-reproduces the upstream lifecycle described in the native-runtime plan §1.4:
+This is the deploy path; there is no other. It runs the lifecycle the
+native-runtime plan §1.4 sets out:
 
 1. :func:`plan` resolves everything up front — engine, image, model, mods,
    port, container profile and the rendered per-rank launch script — and

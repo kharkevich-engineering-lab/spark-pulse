@@ -322,6 +322,28 @@ class TestTheModBlock:
         assert "sandbox" in response.json()["detail"]
 
 
+class TestTheRuntimeReport:
+    """``runtime`` is reported, because an operator asks how a run is launched.
+
+    It is not a field. There is one deploy path, so a value written into
+    settings.json would select nothing — and the form sends the whole body
+    back, so the endpoint has to accept the key it just reported and drop it.
+    """
+
+    def test_it_is_reported(self, client):
+        assert client.get("/api/settings").json()["runtime"] == "native"
+
+    def test_sending_it_back_writes_nothing(self, client, private_config_files):
+        body = client.get("/api/settings").json()
+        body["runtime"] = "nonsense"
+
+        assert client.put("/api/settings", json=body).status_code == 200
+
+        written = json.loads(private_config_files["settings"].read_text())
+        assert "runtime" not in written
+        assert config.runtime == "native"
+
+
 class TestTheEnvironmentReport:
     """Configuration the operator must see and the browser must not change."""
 

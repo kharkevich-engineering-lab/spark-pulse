@@ -17,7 +17,8 @@ export interface RecipeSummary {
   engines: string[];
   /** Engine-neutral parameters. Mirrors `defaults` for v1 recipes. */
   params: Record<string, unknown>;
-  /** Where the recipe came from: bundled, upstream, custom or oci. */
+  /** Where the recipe came from: bundled, custom or oci — or "unknown" for an
+   *  id none of the three claims, which the card shows no badge for. */
   source: string;
   /** Whether each known engine can run this recipe, and why not when it cannot. */
   engine_support: RecipeEngineSupport[];
@@ -111,8 +112,9 @@ export interface Deployment {
   sync?: string;
   /** Why it is not settled, in the operator's words. */
   sync_reason?: string;
-  /** "native" when the deployment runs as a container we drive ourselves;
-   *  absent or "upstream" when it was launched via run-recipe.sh. */
+  /** How the run was made: "native" — a container we drive ourselves — which
+   *  is the only runtime there is. Absent on a record written before the
+   *  field existed. */
   runtime?: string;
   engine?: string;
   variant?: string;

@@ -40,6 +40,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/oci", tags=["oci"])
 
 
+def _simulated():
+    """The simulated registry, imported only when the switch asks for it.
+
+    Every endpoint below picks its implementation — the real tool or this
+    module's twin of the same name — and then serialises the result once.
+    Imported inside the call because ``spark_pulse.mock`` pulls in every mock
+    the package ships, and a production process has no use for any of them.
+    """
+    from spark_pulse.mock import oci_registry as simulated
+
+    return simulated
+
+
 # ── Registries ───────────────────────────────────────────────────────────────
 
 
@@ -88,22 +101,20 @@ def _public_registry(registry: dict) -> dict:
 @router.get("/registries")
 def get_registries():
     """List all configured registries with connectivity status."""
-    if is_simulation():
-        return [_public_registry(r) for r in _mock_reg_state]
-    return [_public_registry(r) for r in list_registries()]
+    lister = _simulated().mock_list_registries if is_simulation() else list_registries
+    return [_public_registry(r) for r in lister()]
 
 
 @router.post("/registries")
 def create_registry(body: dict):
     """Add a new registry."""
-    if is_simulation():
-        return _public_registry(_mock_add_registry(body))
     name = body.get("name")
     url = body.get("url")
     if not name or not url:
         raise HTTPException(status_code=400, detail="name and url are required")
+    adder = _simulated().mock_add_registry if is_simulation() else add_registry
     try:
-        return _public_registry(add_registry(body))
+        return _public_registry(adder(body))
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -111,9 +122,8 @@ def create_registry(body: dict):
 @router.put("/registries/{name}")
 def update_registry_endpoint(name: str, body: dict):
     """Update an existing registry."""
-    if is_simulation():
-        return _public_registry(_mock_update_registry(name, body))
-    result = update_registry(name, body)
+    updater = _simulated().mock_update_registry if is_simulation() else update_registry
+    result = updater(name, body)
     if not result:
         raise HTTPException(status_code=404, detail=f"Registry '{name}' not found")
     return _public_registry(result)
@@ -122,9 +132,8 @@ def update_registry_endpoint(name: str, body: dict):
 @router.delete("/registries/{name}")
 def delete_registry(name: str):
     """Remove a registry."""
-    if is_simulation():
-        return _mock_delete_registry(name)
-    if not remove_registry(name):
+    remover = _simulated().mock_remove_registry if is_simulation() else remove_registry
+    if not remover(name):
         raise HTTPException(status_code=404, detail=f"Registry '{name}' not found")
     return {"deleted": True}
 
@@ -132,17 +141,19 @@ def delete_registry(name: str):
 @router.get("/registries/{name}/test-connection")
 def test_connection(name: str):
     """Test connectivity to a registry."""
-    if is_simulation():
-        return {"ok": True, "registry": name}
-    ok = test_registry_connection(name)
-    return {"ok": ok, "registry": name}
+    tester = (
+        _simulated().mock_test_registry_connection
+        if is_simulation()
+        else test_registry_connection
+    )
+    return {"ok": tester(name), "registry": name}
 
 
 @router.get("/registries/{name}/versions")
 def get_registry_versions(name: str):
     """Get available version tags for a registry."""
     if is_simulation():
-        return {"versions": ["1.0.0", "1.0.1", "latest"]}
+        return {"versions": _simulated().mock_list_tags(name)}
     try:
         regs = list_registries()
         reg = next((r for r in regs if r["name"] == name), None)
@@ -169,10 +180,9 @@ def get_collections(
     version: str = Query(None, description="Version tag to filter by"),
 ):
     """List available recipe collections from one or more registries."""
-    if is_simulation():
-        return _mock_collections(registry=registry, version=version)
+    lister = _simulated().mock_list_collections if is_simulation() else list_collections
     try:
-        collections = list_collections(registry_name=registry, version=version)
+        collections = lister(registry_name=registry, version=version)
         return [
             {
                 "name": c.name,
@@ -201,12 +211,13 @@ def get_collection_recipes(
     registry: str = Query(None, description="Registry name to filter by"),
 ):
     """List individual recipes in a collection."""
-    if is_simulation():
-        return _mock_collection_recipes(name)
+    lister = (
+        _simulated().mock_list_collection_recipes
+        if is_simulation()
+        else list_collection_recipes
+    )
     try:
-        recipes = list_collection_recipes(
-            collection_name=name, version=version, registry_name=registry
-        )
+        recipes = lister(collection_name=name, version=version, registry_name=registry)
         return [
             {
                 "name": r.name,
@@ -232,8 +243,6 @@ def get_collection_recipes(
 @router.post("/install")
 def post_install(body: dict):
     """Install a recipe collection from an OCI registry."""
-    if is_simulation():
-        return _mock_install_collection(body)
     name = body.get("name")
     version = body.get("version")
     registry = body.get("registry")
@@ -244,8 +253,11 @@ def post_install(body: dict):
             detail="name and version are required",
         )
 
+    installer = (
+        _simulated().mock_install_collection if is_simulation() else install_collection
+    )
     try:
-        installed = install_collection(
+        installed = installer(
             name=name,
             version=version,
             registry_name=registry,
@@ -261,8 +273,6 @@ def post_install(body: dict):
 @router.post("/recipes/install")
 def install_oci_recipe_endpoint(body: dict):
     """Install a single recipe from a collection."""
-    if is_simulation():
-        return _mock_install_recipe(body)
     collection = body.get("collection")
     recipe = body.get("recipe")
     version = body.get("version")
@@ -274,15 +284,17 @@ def install_oci_recipe_endpoint(body: dict):
             status_code=400, detail="collection and recipe are required"
         )
 
+    installer = (
+        _simulated().mock_install_oci_recipe if is_simulation() else install_oci_recipe
+    )
     try:
-        result = install_oci_recipe(
+        return installer(
             collection_name=collection,
             recipe_name=recipe,
             version=version or "",
             registry_name=registry,
             overwrite=overwrite,
         )
-        return result
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:
@@ -296,8 +308,6 @@ def update_oci_recipe_endpoint(
     body: dict = {},
 ):
     """Update an existing OCI-installed recipe."""
-    if is_simulation():
-        return _mock_update_recipe(recipe_name, body)
     collection = body.get("collection")
     version = body.get("version")
     registry = body.get("registry")
@@ -305,14 +315,16 @@ def update_oci_recipe_endpoint(
     if not collection:
         raise HTTPException(status_code=400, detail="collection is required")
 
+    updater = (
+        _simulated().mock_update_oci_recipe if is_simulation() else update_oci_recipe
+    )
     try:
-        result = update_oci_recipe(
+        return updater(
             recipe_name=recipe_name,
             collection_name=collection,
             version=version,
             registry_name=registry,
         )
-        return result
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:
@@ -338,10 +350,9 @@ def get_update_check(
     registry: str = Query(None, description="Filter by registry name"),
 ):
     """Check for available updates for installed OCI recipes."""
-    if is_simulation():
-        return _mock_updates()
+    checker = _simulated().mock_check_updates if is_simulation() else check_updates
     try:
-        updates = check_updates(collection=collection, registry=registry)
+        updates = checker(collection=collection, registry=registry)
         return [
             {
                 "collection": u.collection,
@@ -383,9 +394,8 @@ def post_update(body: dict):
 @router.get("/recipes/meta")
 def get_oci_recipes_meta():
     """List all installed OCI recipes with their metadata."""
-    if is_simulation():
-        return _mock_oci_meta()
-    metas = list_oci_recipes()
+    lister = _simulated().mock_list_oci_recipes if is_simulation() else list_oci_recipes
+    metas = lister()
     return [
         {
             "name": m.name,
@@ -493,272 +503,3 @@ def stop_background_endpoint():
     """Stop the background update checker."""
     stop_background_updater()
     return {"stopped": True}
-
-
-# ── Mock data (for development/testing) ──────────────────────────────────────
-
-
-def _mock_registries():
-    return [
-        {
-            "name": "spark-official",
-            "url": "ghcr.io/kharkevich-engineering-lab/spark-pulse-recipes",
-            "enabled": True,
-            "default": True,
-            "auth_type": "token",
-            "connected": True,
-        },
-        {
-            "name": "my-registry",
-            "url": "registry.example.com/my-org/recipes",
-            "enabled": False,
-            "default": False,
-            "auth_type": "none",
-            "connected": False,
-            "error": "Registry not configured",
-        },
-    ]
-
-
-# Mutable mock state for simulation CRUD
-_mock_reg_state: list[dict] = [
-    {
-        "name": "ghcr.io/kharkevich-engineering-lab/spark-pulse-recipes",
-        "url": "ghcr.io/kharkevich-engineering-lab/spark-pulse-recipes",
-        "enabled": True,
-        "default": True,
-        "auth_type": "token",
-        "connected": True,
-    },
-    {
-        "name": "my-registry",
-        "url": "registry.example.com/my-org/recipes",
-        "enabled": False,
-        "default": False,
-        "auth_type": "none",
-        "connected": False,
-        "error": "Registry not configured",
-    },
-]
-
-
-def _mock_add_registry(body: dict) -> dict:
-    """Add a registry to mock state."""
-    name = body.get("name", "")
-    url = body.get("url", "")
-    # Deduplicate by name
-    _mock_reg_state[:] = [r for r in _mock_reg_state if r["name"] != name]
-    reg = {
-        "name": name,
-        "url": url,
-        "enabled": body.get("enabled", True),
-        "default": body.get("default", False),
-        "auth_type": body.get("auth_type", "none"),
-        "connected": False,
-    }
-    _mock_reg_state.append(reg)
-    return reg
-
-
-def _mock_update_registry(name: str, body: dict) -> dict:
-    """Update a registry in mock state."""
-    for i, r in enumerate(_mock_reg_state):
-        if r["name"] == name:
-            for k, v in body.items():
-                _mock_reg_state[i][k] = v
-            return _mock_reg_state[i]
-    raise HTTPException(status_code=404, detail=f"Registry '{name}' not found")
-
-
-def _mock_delete_registry(name: str) -> dict:
-    """Delete a registry from mock state."""
-    before = len(_mock_reg_state)
-    _mock_reg_state[:] = [r for r in _mock_reg_state if r["name"] != name]
-    if len(_mock_reg_state) < before:
-        return {"deleted": True}
-    raise HTTPException(status_code=404, detail=f"Registry '{name}' not found")
-
-
-def _mock_collections(registry: str | None = None, version: str | None = None):
-    collections = [
-        {
-            "name": "spark-recipes",
-            "version": "1.0.0",
-            "description": "Spark Pulse recipe collection",
-            "vendor": "Kharkevich Engineering Lab",
-            "license": "MIT",
-            "recipe_count": 5,
-            "digest": "sha256:abc123def456",
-            "registry": "ghcr.io/kharkevich-engineering-lab/spark-pulse-recipes",
-        },
-        {
-            "name": "community-recipes",
-            "version": "0.3.0",
-            "description": "Community-contributed recipes",
-            "vendor": "Community",
-            "license": "Apache-2.0",
-            "recipe_count": 3,
-            "digest": "sha256:789ghi012jkl",
-            "registry": "ghcr.io/kharkevich-engineering-lab/spark-pulse-recipes",
-        },
-    ]
-    if registry:
-        collections = [c for c in collections if c["registry"] == registry]
-    if version:
-        collections = [c for c in collections if c["version"] == version]
-    return collections
-
-
-def _mock_install_collection(body: dict) -> dict:
-    """Mock collection installation."""
-    name = body.get("name", "")
-    version = body.get("version", "")
-    # Check if collection exists in mock data
-    collections = _mock_collections()
-    matching = [c for c in collections if c["name"] == name and c["version"] == version]
-    if not matching:
-        raise HTTPException(
-            status_code=404, detail=f"Collection '{name}:{version}' not found"
-        )
-    # Return mock installed recipes
-    recipes_map = {
-        "spark-recipes": [
-            f"spark-vllm-{size}b.yaml" for size in ["7b", "13b", "20b", "40b", "70b"]
-        ],
-        "community-recipes": ["community-llama-3-8b.yaml"],
-    }
-    installed = recipes_map.get(name, [f"{name}.yaml"])
-    return {"installed": installed}
-
-
-def _mock_collection_recipes(name: str) -> list[dict]:
-    """Mock recipe listing for a collection."""
-    recipes_map = {
-        "spark-recipes": [
-            {
-                "name": "spark-vllm-7b",
-                "description": "Llama 3.1 8B inference with vLLM",
-                "model": "meta-llama/Llama-3.1-8B-Instruct",
-                "container": "vllm-node",
-                "recipe_version": "1.0.0",
-            },
-            {
-                "name": "spark-vllm-13b",
-                "description": "Llama 3.1 70B inference with vLLM",
-                "model": "meta-llama/Llama-3.1-70B-Instruct",
-                "container": "vllm-node",
-                "recipe_version": "1.0.0",
-            },
-            {
-                "name": "spark-vllm-20b",
-                "description": "Mistral 22B inference with vLLM",
-                "model": "mistralai/Mistral-22B-Instruct-v0.1",
-                "container": "vllm-node",
-                "recipe_version": "1.0.0",
-            },
-            {
-                "name": "spark-vllm-40b",
-                "description": "Mixtral 8x7B inference with vLLM",
-                "model": "mistralai/Mixtral-8x7B-Instruct-v0.1",
-                "container": "vllm-node",
-                "recipe_version": "1.0.0",
-            },
-            {
-                "name": "spark-vllm-70b",
-                "description": "Llama 3.1 70B optimized inference",
-                "model": "meta-llama/Llama-3.1-70B-Instruct",
-                "container": "vllm-node",
-                "recipe_version": "1.0.0",
-            },
-        ],
-        "community-recipes": [
-            {
-                "name": "community-llama-3-8b",
-                "description": "Community-tuned Llama 3 8B",
-                "model": "meta-llama/Llama-3-8B",
-                "container": "vllm-node",
-                "recipe_version": "0.3.0",
-            },
-            {
-                "name": "community-mixtral-8x7b",
-                "description": "Community-tuned Mixtral 8x7B",
-                "model": "mistralai/Mixtral-8x7B-Instruct-v0.1",
-                "container": "vllm-node",
-                "recipe_version": "0.3.0",
-            },
-            {
-                "name": "community-qwen-72b",
-                "description": "Qwen 2.5 72B inference",
-                "model": "Qwen/Qwen2.5-72B-Instruct",
-                "container": "vllm-node",
-                "recipe_version": "0.3.0",
-            },
-        ],
-    }
-    return recipes_map.get(name, [])
-
-
-# Mock state for installed individual recipes
-_mock_installed_recipes: set[str] = set()
-
-
-def _mock_install_recipe(body: dict) -> dict:
-    """Mock install a single recipe."""
-    recipe = body.get("recipe", "")
-    collection = body.get("collection", "")
-    key = f"{collection}/{recipe}"
-    if key in _mock_installed_recipes:
-        return {"success": True, "recipe": recipe, "action": "up_to_date"}
-    _mock_installed_recipes.add(key)
-    return {"success": True, "recipe": recipe, "action": "installed"}
-
-
-def _mock_update_recipe(recipe_name: str, body: dict) -> dict:
-    """Mock update a single recipe."""
-    collection = body.get("collection", "")
-    key = f"{collection}/{recipe_name}"
-    if key not in _mock_installed_recipes:
-        raise HTTPException(
-            status_code=404, detail=f"Recipe '{recipe_name}' is not installed"
-        )
-    return {"success": True, "recipe": recipe_name, "action": "updated"}
-
-
-def _mock_updates():
-    return [
-        {
-            "collection": "spark-recipes",
-            "current_version": "1.0.0",
-            "latest_version": "1.1.0",
-            "current_digest": "sha256:abc123def456",
-            "latest_digest": "sha256:new789xyz",
-            "local_changes": False,
-            "added_recipes": ["spark-vllm-70b.yaml"],
-            "modified_recipes": ["spark-vllm-7b.yaml"],
-        },
-    ]
-
-
-def _mock_oci_meta():
-    return [
-        {
-            "name": "spark-vllm-7b.yaml",
-            "source": "spark-official",
-            "collection": "spark-recipes",
-            "version": "1.0.0",
-            "digest": "sha256:abc123",
-            "installed_at": "2026-06-15T02:00:00Z",
-            "updated_at": "2026-06-15T02:00:00Z",
-            "local_changes": False,
-        },
-        {
-            "name": "spark-vllm-13b.yaml",
-            "source": "spark-official",
-            "collection": "spark-recipes",
-            "version": "1.0.0",
-            "digest": "sha256:def456",
-            "installed_at": "2026-06-15T02:00:00Z",
-            "updated_at": "2026-06-15T02:00:00Z",
-            "local_changes": False,
-        },
-    ]

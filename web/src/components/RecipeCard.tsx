@@ -20,19 +20,22 @@ export default function RecipeCard({ r, isRunning, clusterBlocked, onSelect, onR
   onSelect: () => void;
   onReset?: () => void;
   /** Uninstalls an OCI-installed recipe. Only ever passed for `source ===
-   *  "oci"` — a bundled or upstream recipe has nothing this can remove. */
+   *  "oci"` — a bundled recipe has nothing this can remove. */
   onUninstall?: () => void;
 }) {
   const { t } = useI18n();
   const engines = usableEngines(r);
   const isOci = r.source === "oci";
-  const isManaged = r.source === "bundled" || r.source === "upstream";
+  /** Shipped with the package, so the operator cannot edit the file behind it.
+   *  `unknown` — an id no source claims — is not managed: nothing here knows
+   *  where it came from, and claiming otherwise would be a guess. */
+  const isManaged = r.source === "bundled";
   const badges = (
     <>
       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-tag-bg text-text-muted">
         <Box size={12} />{r.container}
       </span>
-      {r.source && r.source !== "upstream" && (
+      {r.source && r.source !== "unknown" && (
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-tag-bg text-text-muted">
           <Package size={11} />{r.source}
         </span>
