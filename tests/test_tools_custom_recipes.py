@@ -286,7 +286,7 @@ class TestGetCustomizedRecipe:
             with patch(
                 "spark_pulse.tools.recipes.get_recipe", return_value=fake_recipe
             ):
-                result = custom_recipes.get_customized_recipe("r", spark_path=tmp_path)
+                result = custom_recipes.get_customized_recipe("r")
                 assert result == fake_recipe
 
     def test_merges_custom_defaults(self, tmp_path):

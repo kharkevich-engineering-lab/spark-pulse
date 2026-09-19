@@ -454,30 +454,6 @@ export default function SettingsPage() {
                 />
               </div>
             </Field>
-
-            <Field
-              label={t("settings.sparkPath")}
-              hint={
-                <>
-                  {isEnvManaged("spark_vllm_path")
-                    ? t("settings.sparkPathEnv")
-                    : t("settings.sparkPathHelp")}
-                  {isEnvManaged("spark_vllm_path") && <EnvBadge />}
-                </>
-              }
-            >
-              {(control) => (
-                <Input
-                  {...control}
-                  mono
-                  type="text"
-                  value={String(form.spark_vllm_path ?? "")}
-                  onChange={(e) => setForm({ ...form, spark_vllm_path: e.target.value })}
-                  disabled={isEnvManaged("spark_vllm_path")}
-                  placeholder="/path/to/spark-vllm-docker"
-                />
-              )}
-            </Field>
           </SettingsSection>
 
           <SettingsSection title={t("settings.timeouts")}>
@@ -883,7 +859,16 @@ export default function SettingsPage() {
                 hint={t("settings.runtimeRowHelp")}
                 value={<Code>{String(form.runtime ?? "native")}</Code>}
               />
-              <Fact label={t("settings.webuiPort")} value={<Code>{String(form.webui_port ?? "")}</Code>} />
+              <Fact
+                label={t("settings.webuiPort")}
+                hint={isEnvManaged("webui_port") ? t("settings.webuiPortEnv") : undefined}
+                value={
+                  <>
+                    <Code>{String(form.webui_port ?? "")}</Code>
+                    {isEnvManaged("webui_port") && <EnvBadge />}
+                  </>
+                }
+              />
               <Fact
                 label={t("settings.workerThreads")}
                 hint={t("settings.workerThreadsHelp")}

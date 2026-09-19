@@ -2,7 +2,7 @@ import importlib
 
 from spark_pulse.tools import cache
 
-# The real module: production is what has to stop shelling out to the checkout.
+# The real module: production is what has to list the caches an engine fills.
 real_cache = importlib.import_module("spark_pulse.tools.cache")
 
 
@@ -13,7 +13,6 @@ def test_get_cache_dirs_contains_expected_entries(monkeypatch):
     names = {entry["name"] for entry in entries}
 
     assert "HF Model Cache" in names
-    assert "Wheels (spark-vllm)" in names
 
 
 def test_scan_dir_returns_zero_for_missing_path(tmp_path):
@@ -39,45 +38,52 @@ def test_scan_dir_counts_files_and_sizes(tmp_path):
     assert out["size_bytes"] == 6
 
 
-# ── The checkout is optional, and nothing is executed out of it ──────────────
+# ── Only the caches an engine fills ──────────────────────────────────────────
 
 
-class TestWheelsCacheEntry:
-    """``hf-download.sh --cleanup`` is gone; the wheels dir is just a directory.
+class TestOnlyRuntimeCaches:
+    """The build caches are gone, because the build they belong to is not ours.
 
-    It also belongs to a checkout, so it is offered only when there is one —
-    a permanently empty entry an operator cannot clean is worse than no entry.
+    ``wheels`` lived in a spark-vllm-docker checkout, and ``.ccache`` and ``uv``
+    are what compiling those wheels fills. Spark Pulse has never compiled one —
+    engines arrive as images — so all three were entries an operator was invited
+    to clean on behalf of a workflow this product does not run.
     """
 
-    def test_the_wheels_entry_appears_only_with_a_checkout(self, tmp_path, monkeypatch):
-        import spark_pulse.config as cfg
+    def test_the_listed_caches_are_the_engine_runtime_ones(self, monkeypatch):
+        monkeypatch.setenv("HOME", "/tmp/home")
 
-        monkeypatch.setitem(cfg.config._data, "spark_vllm_path", str(tmp_path))
         names = {entry["name"] for entry in real_cache.get_cache_dirs()}
-        assert real_cache.WHEELS_CACHE_NAME in names
 
-        monkeypatch.setitem(
-            cfg.config._data, "spark_vllm_path", str(tmp_path / "absent")
-        )
-        names = {entry["name"] for entry in real_cache.get_cache_dirs()}
-        assert real_cache.WHEELS_CACHE_NAME not in names
+        assert names == {
+            "HF Model Cache",
+            "vLLM Cache",
+            "FlashInfer Cache",
+            "Triton Cache",
+        }
 
-    def test_cleaning_the_wheels_dir_deletes_files_without_a_subprocess(
+    def test_no_entry_points_into_a_checkout(self, monkeypatch):
+        monkeypatch.setenv("HOME", "/tmp/home")
+
+        paths = [entry["path"] for entry in real_cache.get_cache_dirs()]
+
+        assert not any("spark-vllm-docker" in path for path in paths)
+        assert not any(path.endswith("/wheels") for path in paths)
+
+    def test_cleaning_a_cache_deletes_files_without_a_subprocess(
         self, tmp_path, monkeypatch
     ):
-        import spark_pulse.config as cfg
-
-        monkeypatch.setitem(cfg.config._data, "spark_vllm_path", str(tmp_path))
-        wheels = tmp_path / "wheels"
-        wheels.mkdir()
-        (wheels / "a.whl").write_text("x")
+        monkeypatch.setenv("HOME", str(tmp_path))
+        triton = tmp_path / ".triton"
+        triton.mkdir()
+        (triton / "a.cubin").write_text("x")
 
         def _no_subprocess(*_a, **_k):  # pragma: no cover - must never run
-            raise AssertionError("clean_cache must not shell out to the checkout")
+            raise AssertionError("clean_cache must not shell out")
 
         monkeypatch.setattr("subprocess.run", _no_subprocess)
 
-        result = real_cache.clean_cache([real_cache.WHEELS_CACHE_NAME])
+        result = real_cache.clean_cache(["Triton Cache"])
 
-        assert "Cleaned" in result[real_cache.WHEELS_CACHE_NAME]
-        assert list(wheels.iterdir()) == []
+        assert "Cleaned" in result["Triton Cache"]
+        assert list(triton.iterdir()) == []

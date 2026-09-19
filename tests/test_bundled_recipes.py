@@ -13,7 +13,7 @@ import yaml
 
 from spark_pulse.engines import EngineRegistry, Topology
 from spark_pulse.engines.registry import load_bundled_specs
-from spark_pulse.tools import recipe_schema, recipe_sources
+from spark_pulse.tools import custom_files, recipe_schema, recipe_sources
 
 # `recipes` is the mock under SIMULATION_MODE=1, which is what the API serves
 # in simulation; discovery is shared with the real tools via recipe_sources.
@@ -28,8 +28,6 @@ BUNDLED_IDS = [
     "bundled/qwen3.5-35b-a3b-fp8",
     "bundled/qwen3.8-27b",
 ]
-
-NO_CHECKOUT = Path("/nonexistent-spark-vllm-checkout")
 
 
 def bundled_files() -> list[Path]:
@@ -88,34 +86,34 @@ def test_the_smoke_recipe_is_cheap():
 # ── Discovery and listing ────────────────────────────────────────────────────
 
 
-def test_candidate_files_lists_bundled_recipes_without_a_checkout():
-    ids = [rid for rid, _ in recipe_sources.candidate_files(NO_CHECKOUT)]
+def test_candidate_files_lists_the_bundled_recipes():
+    ids = [rid for rid, _ in recipe_sources.candidate_files()]
     assert ids == BUNDLED_IDS
 
 
 def test_list_recipes_labels_the_bundled_source():
-    listed = {r["id"]: r for r in recipes.list_recipes(spark_path=NO_CHECKOUT)}
+    listed = {r["id"]: r for r in recipes.list_recipes()}
     for recipe_id in BUNDLED_IDS:
         assert listed[recipe_id]["source"] == "bundled"
         assert listed[recipe_id]["recipe_version"] == "2"
         assert listed[recipe_id]["engines"] == ["vllm", "sglang"]
 
 
-def test_bundled_recipes_do_not_shadow_a_checkout_recipe(tmp_path):
-    recipe_dir = tmp_path / "recipes"
-    recipe_dir.mkdir()
+def test_bundled_recipes_do_not_shadow_the_operators_own():
+    recipe_dir = custom_files.custom_recipes_dir()
+    recipe_dir.mkdir(parents=True, exist_ok=True)
     (recipe_dir / "local.yaml").write_text(
         "name: Local\nmodel: org/local\ncontainer: vllm-node\ncommand: vllm serve\n",
         encoding="utf-8",
     )
-    listed = {r["id"]: r for r in recipes.list_recipes(spark_path=tmp_path)}
+    listed = {r["id"]: r for r in recipes.list_recipes()}
     assert set(BUNDLED_IDS) < set(listed)
-    assert listed["local"]["source"] == "upstream"
+    assert listed["custom-local"]["source"] == "custom"
 
 
 @pytest.mark.parametrize("recipe_id", BUNDLED_IDS)
 def test_get_recipe_resolves_a_bundled_id(recipe_id):
-    payload = recipes.get_recipe(recipe_id, spark_path=NO_CHECKOUT)
+    payload = recipes.get_recipe(recipe_id)
     assert payload is not None
     assert payload["id"] == recipe_id
     assert payload["source"] == "bundled"
@@ -128,7 +126,7 @@ def test_get_recipe_resolves_a_bundled_id(recipe_id):
         ("bundled/qwen2.5-0.5b-instruct", "bundled"),
         ("custom-mine", "custom"),
         ("oci-thing", "oci"),
-        ("qwen3.5-35b", "upstream"),
+        ("a-name-with-no-prefix", "upstream"),
     ],
 )
 def test_source_of(recipe_id, expected):
@@ -141,7 +139,7 @@ def test_source_of(recipe_id, expected):
 @pytest.mark.parametrize("recipe_id", BUNDLED_IDS)
 @pytest.mark.parametrize("engine_name", ["vllm", "sglang"])
 def test_every_bundled_recipe_renders_on_both_engines(registry, recipe_id, engine_name):
-    payload = recipes.get_recipe(recipe_id, spark_path=NO_CHECKOUT)
+    payload = recipes.get_recipe(recipe_id)
     engine = registry.engine(engine_name)
 
     supported, reason = engine.supports(payload)
@@ -167,7 +165,7 @@ def test_engine_support_answers_for_every_engine_the_registry_carries(recipe_id)
     not exist, which is a different and more confusing answer than "this
     recipe was not written for it".
     """
-    payload = recipes.get_recipe(recipe_id, spark_path=NO_CHECKOUT)
+    payload = recipes.get_recipe(recipe_id)
     support = {e["engine"]: e for e in payload["engine_support"]}
 
     assert set(support) == REGISTERED_ENGINES
@@ -179,14 +177,14 @@ def test_engine_support_answers_for_every_engine_the_registry_carries(recipe_id)
         assert "only declares engines" in support[name]["reason"]
 
 
-def test_a_v1_recipe_reports_sglang_as_unsupported_with_a_reason(tmp_path):
-    recipe_dir = tmp_path / "recipes"
-    recipe_dir.mkdir()
+def test_a_v1_recipe_reports_sglang_as_unsupported_with_a_reason():
+    recipe_dir = custom_files.custom_recipes_dir()
+    recipe_dir.mkdir(parents=True, exist_ok=True)
     (recipe_dir / "v1.yaml").write_text(
         "name: V1\nmodel: org/v1\ncontainer: vllm-node\ncommand: vllm serve org/v1\n",
         encoding="utf-8",
     )
-    payload = recipes.get_recipe("v1", spark_path=tmp_path)
+    payload = recipes.get_recipe("custom-v1")
     support = {e["engine"]: e for e in payload["engine_support"]}
     assert support["vllm"]["supported"] is True
     assert support["sglang"]["supported"] is False
@@ -195,9 +193,7 @@ def test_a_v1_recipe_reports_sglang_as_unsupported_with_a_reason(tmp_path):
 
 def test_the_smoke_recipe_renders_the_hardware_command(registry):
     """The exact solo SGLang line that gets run on a GB10."""
-    payload = recipes.get_recipe(
-        "bundled/qwen2.5-0.5b-instruct", spark_path=NO_CHECKOUT
-    )
+    payload = recipes.get_recipe("bundled/qwen2.5-0.5b-instruct")
     result = registry.engine("sglang").render(payload, topology=Topology.solo())
     assert result.command == (
         "python3 -m sglang.launch_server"

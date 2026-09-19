@@ -9,25 +9,14 @@ rendering a launch command for an engine.
 Sources, in listing order:
 
 * ``spark_pulse/recipes`` shipped inside the package (ids prefixed
-  ``bundled/``) — engine-neutral v2 recipes that work without any checkout,
+  ``bundled/``),
 * ``~/.config/spark-pulse/custom-recipes`` (ids prefixed ``custom-``),
 * ``~/.config/spark-pulse/recipes``, where OCI collections install
-  (ids prefixed ``oci-``),
-* the ``recipes/`` directory of a spark-vllm-docker checkout, when one is
-  configured — read-only, and entirely optional.
+  (ids prefixed ``oci-``).
 
-There was a fifth: ``~/.config/spark-pulse/imported/recipes``, filled by an
-"Import from upstream" panel that copied a checkout's recipes into the config
-directory. The importer was removed and only the reader stayed, so the source
-could be read but never written — a directory nothing in circulation can
-create. It has gone too; the files an operator imported are still on disk if
-they want them, and the three sources above are the ones anything can add to.
-
-The custom and OCI directories used to reach this listing only because
-symlinks were planted in the checkout so upstream's runner could see them.
-The runner and the symlinks are gone; these are first-class sources now, under
-exactly the ids the symlinks produced, so recipe ids, saved customizations and
-existing deployment records all keep resolving.
+Those three are the whole list. The recipe *format* is ``spark-vllm-docker``'s,
+which is the one thing the two projects share; the id prefixes are part of
+the id, so saved customizations and deployment records resolve by them.
 
 Every payload carries a ``source`` label so the UI can tell them apart.
 """
@@ -89,68 +78,6 @@ SUMMARY_FIELDS = (
 # ── Discovery ────────────────────────────────────────────────────────────────
 
 
-def iter_recipe_files(recipe_dir: Path) -> list[Path]:
-    """Return recipe file candidates, including extensionless symlinks.
-
-    Spark Pulse no longer creates those links, but a checkout upgraded from an
-    older install still holds them — ``recipes/custom-my-recipe ->
-    .../custom-my-recipe.yaml`` — and an operator may have made their own.
-    They resolve to YAML and are valid recipes, so they stay in discovery;
-    ``candidate_files`` drops the duplicate id.
-    """
-    seen: set[Path] = set()
-    files: list[Path] = []
-
-    if not recipe_dir.is_dir():
-        return files
-
-    for pattern in ("*.yaml", "*.yml"):
-        for path in sorted(recipe_dir.rglob(pattern)):
-            if path not in seen:
-                seen.add(path)
-                files.append(path)
-
-    # Include extensionless symlinks that resolve to YAML files.
-    for path in sorted(recipe_dir.iterdir()):
-        if path.suffix:
-            continue
-        if not path.is_symlink():
-            continue
-        try:
-            target = path.resolve(strict=True)
-        except OSError:
-            continue
-        if not target.is_file() or target.suffix.lower() not in {".yaml", ".yml"}:
-            continue
-        if path not in seen:
-            seen.add(path)
-            files.append(path)
-
-    return files
-
-
-def checkout_recipes_dir(spark_path: Path | None) -> Path | None:
-    """``<checkout>/recipes`` when there is a checkout, else ``None``.
-
-    An unset path arrives here as ``Path("")``, which is the process's working
-    directory; resolving that to ``./recipes`` would scan whatever the server
-    happened to be started from. A checkout is optional, so "no directory" is
-    the answer, not a guess.
-    """
-    if spark_path is None or not str(spark_path).strip():
-        return None
-    recipe_dir = Path(spark_path).expanduser() / "recipes"
-    return recipe_dir if recipe_dir.is_dir() else None
-
-
-def recipe_id_from_path(recipe_dir: Path, recipe_file: Path) -> str:
-    """Derive a recipe id from its path relative to the recipes directory."""
-    rel = recipe_file.relative_to(recipe_dir)
-    if recipe_file.suffix.lower() in {".yaml", ".yml"}:
-        return str(rel.with_suffix(""))
-    return str(rel)
-
-
 def bundled_recipes_dir() -> Path:
     """Directory holding the recipes shipped inside the package."""
     return BUNDLED_RECIPES_DIR
@@ -173,7 +100,13 @@ def _bundled_recipe_id(recipe_file: Path) -> str:
 
 
 def source_of(recipe_id: str) -> str:
-    """Label the source a recipe id came from."""
+    """Label the source a recipe id came from.
+
+    ``upstream`` is what an id matching none of the three prefixes gets — a
+    deployment record written before the managed directories existed, or
+    simulation's canned catalogue. It names a recipe *format*, not a place on
+    disk: nothing is read out of a checkout any more.
+    """
     if recipe_id.startswith(f"{BUNDLED_SOURCE_PREFIX}/"):
         return SOURCE_BUNDLED
     leaf = recipe_id.rsplit("/", 1)[-1]
@@ -218,24 +151,16 @@ def _managed_recipe_dirs() -> list[tuple[str, Path]]:
     ]
 
 
-def candidate_files(spark_path: Path | None) -> list[tuple[str, Path]]:
+def candidate_files() -> list[tuple[str, Path]]:
     """Return ``(recipe_id, file)`` pairs for every known recipe source.
 
-    ``spark_path`` may be ``None`` or point nowhere: a checkout is optional,
-    and its absence costs exactly the recipes it would have contributed. Ids
-    are unique — the first source to claim one keeps it, which matters while a
-    checkout upgraded from an older install still carries the ``custom-*`` and
-    ``oci-*`` symlinks that version planted.
+    Ids are unique — the first source to claim one keeps it.
     """
     pairs: list[tuple[str, Path]] = []
     for path in iter_bundled_recipe_files():
         pairs.append((_bundled_recipe_id(path), path))
     for prefix, directory in _managed_recipe_dirs():
         pairs.extend(_flat_dir_files(directory, prefix))
-    recipe_dir = checkout_recipes_dir(spark_path)
-    if recipe_dir is not None:
-        for path in iter_recipe_files(recipe_dir):
-            pairs.append((recipe_id_from_path(recipe_dir, path), path))
 
     seen: set[str] = set()
     unique: list[tuple[str, Path]] = []
@@ -377,10 +302,10 @@ def to_payload(
     return payload
 
 
-def iter_recipe_payloads(spark_path: Path | None) -> list[dict[str, Any]]:
+def iter_recipe_payloads() -> list[dict[str, Any]]:
     """Parse every recipe from every source into the flat payload shape."""
     payloads: list[dict[str, Any]] = []
-    for recipe_id, path in candidate_files(spark_path):
+    for recipe_id, path in candidate_files():
         parsed = parse_file(path, recipe_id)
         if parsed is None:
             continue
@@ -388,10 +313,8 @@ def iter_recipe_payloads(spark_path: Path | None) -> list[dict[str, Any]]:
     return payloads
 
 
-def resolve_recipe(recipe_id: str, spark_path: Path | None) -> dict[str, Any] | None:
+def resolve_recipe(recipe_id: str) -> dict[str, Any] | None:
     """Find and parse one recipe by id or display name, without customization."""
-    recipe_dir = checkout_recipes_dir(spark_path)
-
     candidates: list[tuple[str, Path]] = []
     if recipe_id.startswith(f"{BUNDLED_SOURCE_PREFIX}/"):
         rel = recipe_id[len(BUNDLED_SOURCE_PREFIX) + 1 :]
@@ -411,17 +334,9 @@ def resolve_recipe(recipe_id: str, spark_path: Path | None) -> dict[str, Any] | 
                 if path.is_file():
                     candidates.append((recipe_id, path))
                     break
-        if not candidates and recipe_dir is not None:
-            for path in (
-                recipe_dir / recipe_id,
-                recipe_dir / f"{recipe_id}.yaml",
-                recipe_dir / f"{recipe_id}.yml",
-            ):
-                if path.exists():
-                    candidates.append((recipe_id_from_path(recipe_dir, path), path))
 
     if not candidates and recipe_id:
-        candidates = candidate_files(spark_path)
+        candidates = candidate_files()
 
     for candidate_id, path in candidates:
         parsed = parse_file(path, candidate_id)

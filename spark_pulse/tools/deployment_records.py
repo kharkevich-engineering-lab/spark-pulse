@@ -10,13 +10,9 @@ behaviour here to simulate, only a file. Simulation mode changes *where* the
 file is (the gitignored ``spark_pulse/data/`` copy, so an e2e run never touches
 an operator's real state) and nothing else, so both modes run this code.
 
-There was a second kind of record here once: a deployment forked as
-``run-recipe.sh`` out of a spark-vllm-docker checkout and tracked by PID. That
-runtime was removed, and everything that could still list, stop and delete
-such a record has gone with it — including the only ``os.killpg`` in the
-control plane, which is the part that mattered. A PID is meaningless without
-the machine it is on, and every process this system ends now goes through the
-agent on the node that holds it.
+A record never carries a PID: a process is meaningless without the machine it
+is on, and every process this system ends goes through the agent on the node
+that holds it.
 """
 
 from __future__ import annotations

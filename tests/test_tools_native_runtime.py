@@ -914,31 +914,31 @@ class TestMods:
     """Mods are the part upstream's bash did for us; get the contract right."""
 
     @pytest.fixture
-    def checkout(self, tmp_path):
-        """A spark-vllm-docker-shaped checkout with one real mod."""
-        mod = tmp_path / "mods" / "fix-qwen"
+    def custom_mods(self, tmp_path, monkeypatch):
+        """The operator's ``custom-mods`` directory, holding one real mod."""
+        from spark_pulse.tools import custom_files
+
+        monkeypatch.setattr(custom_files, "_CUSTOM_MODS_DIR", tmp_path / "custom-mods")
+        mod = tmp_path / "custom-mods" / "fix-qwen"
         mod.mkdir(parents=True)
         (mod / "run.sh").write_text("#!/bin/bash\ncp t.jinja $WORKSPACE_DIR/x.jinja\n")
         (mod / "t.jinja").write_text("{}")
-        with patch.object(
-            type(nr.config), "spark_vllm_path", property(lambda self: str(tmp_path))
-        ):
-            yield tmp_path
+        return tmp_path
 
-    def test_a_repo_relative_mod_path_resolves(self, checkout):
-        # Recipes name mods the way upstream does, from the checkout root.
+    def test_a_mod_named_the_way_upstreams_format_does_resolves(self, custom_mods):
+        # Recipes name mods ``mods/<name>``, as upstream's recipe format does.
         assert nr._resolve_mod_dir("mods/fix-qwen").name == "fix-qwen"
 
-    def test_a_bare_mod_name_resolves_too(self, checkout):
+    def test_a_bare_mod_name_resolves_too(self, custom_mods):
         assert nr._resolve_mod_dir("fix-qwen").name == "fix-qwen"
 
-    def test_a_missing_mod_fails_the_deploy(self, checkout):
+    def test_a_missing_mod_fails_the_deploy(self, custom_mods):
         # Skipping it silently costs 15 minutes and an unexplained engine error.
         with pytest.raises(nr.NativeRuntimeError, match="no run.sh"):
             nr._resolve_mod_dir("mods/not-here")
 
     def test_mods_run_with_workspace_dir_set_to_the_engine_workdir(
-        self, native, docker, checkout
+        self, native, docker, custom_mods
     ):
         plan = native.plan("qwen3-8b-mods")
         plan.mods = ["mods/fix-qwen"]

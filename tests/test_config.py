@@ -11,7 +11,6 @@ def test_config_loads_yaml_when_present(tmp_path, monkeypatch):
     config_file.write_text(
         yaml.safe_dump(
             {
-                "spark_vllm_path": "/opt/spark",
                 "webui_port": 8200,
                 "default_port_range_start": 9500,
             }
@@ -25,7 +24,6 @@ def test_config_loads_yaml_when_present(tmp_path, monkeypatch):
     )
     cfg = config_module._Config()
 
-    assert cfg.spark_vllm_path == "/opt/spark"
     assert cfg.webui_port == 8200
     assert cfg.default_port_range_start == 9500
 
@@ -39,14 +37,13 @@ def test_config_uses_defaults_when_file_missing(tmp_path, monkeypatch):
 
     cfg = config_module._Config()
 
-    assert cfg.spark_vllm_path == "/tmp/spark-vllm-docker"
     assert cfg.webui_port == 8100
 
 
 def test_env_overrides_yaml_values(tmp_path, monkeypatch):
     config_file = tmp_path / "config.yaml"
     config_file.write_text(
-        yaml.safe_dump({"spark_vllm_path": "/from-yaml", "webui_port": 8101}),
+        yaml.safe_dump({"webui_port": 8101}),
         encoding="utf-8",
     )
 
@@ -54,12 +51,10 @@ def test_env_overrides_yaml_values(tmp_path, monkeypatch):
     monkeypatch.setattr(
         config_module, "_SETTINGS_PATH", tmp_path / "missing_settings.json"
     )
-    monkeypatch.setenv("SPARK_VLLM_PATH", "/from-env")
     monkeypatch.setenv("WEBUI_PORT", "9999")
 
     cfg = config_module._Config()
 
-    assert cfg.spark_vllm_path == "/from-env"
     assert cfg.webui_port == 9999
 
 
@@ -335,25 +330,24 @@ def test_env_managed_tracks_env_vars(tmp_path, monkeypatch):
     """Config should track which fields are managed by env vars."""
     config_file = tmp_path / "config.yaml"
     config_file.write_text(
-        yaml.safe_dump({"spark_vllm_path": "/from-yaml"}),
+        yaml.safe_dump({"webui_port": 8101}),
         encoding="utf-8",
     )
     monkeypatch.setattr(config_module, "_CONFIG_PATH", config_file)
-    monkeypatch.setenv("SPARK_VLLM_PATH", "/from-env")
+    monkeypatch.setenv("WEBUI_PORT", "9999")
 
     cfg = config_module._Config()
-    assert "spark_vllm_path" in cfg.env_managed
+    assert "webui_port" in cfg.env_managed
 
 
 def test_env_managed_empty_when_no_env_vars(tmp_path, monkeypatch):
     """Env managed should be empty when no env vars are set."""
     config_file = tmp_path / "config.yaml"
     config_file.write_text(
-        yaml.safe_dump({"spark_vllm_path": "/from-yaml"}),
+        yaml.safe_dump({"webui_port": 8101}),
         encoding="utf-8",
     )
     monkeypatch.setattr(config_module, "_CONFIG_PATH", config_file)
-    monkeypatch.delenv("SPARK_VLLM_PATH", raising=False)
     monkeypatch.delenv("WEBUI_PORT", raising=False)
 
     cfg = config_module._Config()

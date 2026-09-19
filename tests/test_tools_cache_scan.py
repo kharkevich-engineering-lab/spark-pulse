@@ -192,8 +192,8 @@ class TestMockCache:
     def test_cleaning_reports_a_result_per_target(self):
         from spark_pulse.mock import cache as mock_cache
 
-        assert mock_cache.clean_cache(["CCache", "vLLM Cache"]) == {
-            "CCache": "Mock: cleaned CCache",
+        assert mock_cache.clean_cache(["Triton Cache", "vLLM Cache"]) == {
+            "Triton Cache": "Mock: cleaned Triton Cache",
             "vLLM Cache": "Mock: cleaned vLLM Cache",
         }
 

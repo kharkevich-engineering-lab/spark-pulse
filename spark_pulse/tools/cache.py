@@ -5,20 +5,18 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from spark_pulse.config import config
-
-WHEELS_CACHE_NAME = "Wheels (spark-vllm)"
-
 
 def get_cache_dirs() -> list[dict[str, str]]:
     """Return known cache directories.
 
-    The wheels directory belongs to a spark-vllm-docker checkout, so it is
-    listed only when there is one; a path pointing nowhere would otherwise show
-    up as a permanently empty cache an operator cannot clean.
+    Engine runtime caches only — what a model server fills while it serves.
+    There were three more once (``wheels``, ``.ccache``, ``uv``), all of them
+    build caches belonging to upstream's wheel-building workflow, which
+    nothing here has ever run: engines arrive as images and recipes come from
+    the bundled set, OCI collections and the operator's own files.
     """
     home = os.path.expanduser("~")
-    dirs = [
+    return [
         {
             "name": "HF Model Cache",
             "path": f"{home}/.cache/huggingface/hub",
@@ -39,27 +37,7 @@ def get_cache_dirs() -> list[dict[str, str]]:
             "path": f"{home}/.triton",
             "description": "Triton compiler cache",
         },
-        {
-            "name": "CCache",
-            "path": f"{home}/.ccache",
-            "description": "CUDA/C++ compilation cache",
-        },
-        {
-            "name": "uv Pip Cache",
-            "path": f"{home}/.cache/uv",
-            "description": "Python package cache",
-        },
     ]
-    checkout = config.spark_vllm_dir
-    if checkout is not None:
-        dirs.append(
-            {
-                "name": WHEELS_CACHE_NAME,
-                "path": str(checkout / "wheels"),
-                "description": "Built/installed wheels",
-            }
-        )
-    return dirs
 
 
 def scan_dir(path: str) -> dict[str, Any]:

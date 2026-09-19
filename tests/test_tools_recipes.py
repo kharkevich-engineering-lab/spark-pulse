@@ -1,6 +1,7 @@
 import json
+from pathlib import Path
 
-from spark_pulse.tools import recipes
+from spark_pulse.tools import custom_files, recipes
 
 # `recipes` above is the mock under SIMULATION_MODE=1, which is what the API
 # serves in simulation. Discovery/parsing/rendering is shared with the real
@@ -12,15 +13,26 @@ from spark_pulse.tools import recipe_sources
 def without_bundled(entries: list[dict]) -> list[dict]:
     """Drop the recipes shipped inside the package.
 
-    Bundled recipes are always listed, so tests about a temporary checkout
-    filter them out rather than pretending they are absent.
+    Bundled recipes are always listed, so tests about the operator's own
+    directory filter them out rather than pretending they are absent.
     """
     return [e for e in entries if e.get("source") != recipe_sources.SOURCE_BUNDLED]
 
 
-def test_list_recipes_parses_valid_and_skips_bad_yaml(tmp_path):
-    recipe_dir = tmp_path / "recipes"
-    recipe_dir.mkdir()
+def custom_dir() -> Path:
+    """The operator's own recipe directory, redirected to tmp_path by conftest.
+
+    It is the only place a recipe that is not bundled or OCI-installed can
+    live: a recipe id is ``custom-<stem>``, which is the id the removed
+    checkout symlinks minted.
+    """
+    directory = custom_files.custom_recipes_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def test_list_recipes_parses_valid_and_skips_bad_yaml():
+    recipe_dir = custom_dir()
 
     (recipe_dir / "valid.yaml").write_text(
         """
@@ -34,22 +46,20 @@ defaults:
     )
     (recipe_dir / "broken.yaml").write_text("name: [", encoding="utf-8")
 
-    out = without_bundled(recipes.list_recipes(spark_path=tmp_path))
+    out = without_bundled(recipes.list_recipes())
 
     assert len(out) == 1
-    assert out[0]["id"] == "valid"
+    assert out[0]["id"] == "custom-valid"
     assert out[0]["name"] == "TinyLlama"
     assert out[0]["defaults"]["port"] == 8123
 
 
-def test_get_recipe_returns_none_for_missing(tmp_path):
-    assert recipes.get_recipe("does-not-exist", spark_path=tmp_path) is None
+def test_get_recipe_returns_none_for_missing():
+    assert recipes.get_recipe("does-not-exist") is None
 
 
-def test_get_recipe_returns_recipe_payload(tmp_path):
-    recipe_dir = tmp_path / "recipes"
-    recipe_dir.mkdir()
-    (recipe_dir / "qwen.yaml").write_text(
+def test_get_recipe_returns_recipe_payload():
+    (custom_dir() / "qwen.yaml").write_text(
         """
 name: Qwen
 model: Qwen/Qwen2.5
@@ -60,76 +70,42 @@ defaults:
         encoding="utf-8",
     )
 
-    out = recipes.get_recipe("qwen", spark_path=tmp_path)
+    out = recipes.get_recipe("custom-qwen")
 
     assert out is not None
-    assert out["id"] == "qwen"
+    assert out["id"] == "custom-qwen"
     assert out["name"] == "Qwen"
     assert out["command"].startswith("vllm serve")
     assert out["defaults"]["port"] == 9001
 
 
-def test_list_recipes_scans_subdirectories(tmp_path):
-    recipe_dir = tmp_path / "recipes"
-    (recipe_dir / "cluster").mkdir(parents=True)
-    (recipe_dir / "cluster" / "big-model.yaml").write_text(
-        "name: Big Model (PP=3)\nmodel: vendor/big\n", encoding="utf-8"
-    )
-    (recipe_dir / "small.yaml").write_text(
-        "name: Small Model\nmodel: vendor/small\n", encoding="utf-8"
-    )
-
-    out = recipes.list_recipes(spark_path=tmp_path)
-    ids = [r["id"] for r in out]
-
-    assert "small" in ids
-    assert "cluster/big-model" in ids
-
-
-def test_get_recipe_finds_subdirectory_recipe(tmp_path):
-    recipe_dir = tmp_path / "recipes"
-    (recipe_dir / "cluster").mkdir(parents=True)
-    (recipe_dir / "cluster" / "big-model.yaml").write_text(
-        "name: Big Model (PP=3)\nmodel: vendor/big\ncommand: vllm serve\n",
+def test_get_recipe_resolves_a_display_name():
+    """A recipe is addressable by the name it declares, not only by its id."""
+    (custom_dir() / "qwen.yaml").write_text(
+        "name: Qwen\nmodel: Qwen/Qwen2.5\ncommand: vllm serve\n",
         encoding="utf-8",
     )
 
-    out = recipes.get_recipe("cluster/big-model", spark_path=tmp_path)
+    out = recipes.get_recipe("Qwen")
 
     assert out is not None
-    assert out["id"] == "cluster/big-model"
-    assert out["name"] == "Big Model (PP=3)"
+    assert out["id"] == "custom-qwen"
 
 
-def test_list_recipes_includes_extensionless_symlink(tmp_path):
-    recipe_dir = tmp_path / "recipes"
-    recipe_dir.mkdir()
+def test_a_subdirectory_is_not_a_recipe_source():
+    """The custom directory is flat, and always was for the ids it mints.
 
-    custom_file = tmp_path / "custom-new.yaml"
-    custom_file.write_text("name: Custom New\nmodel: vendor/custom\n", encoding="utf-8")
-    (recipe_dir / "custom-new").symlink_to(custom_file)
-
-    out = recipes.list_recipes(spark_path=tmp_path)
-    ids = [r["id"] for r in out]
-
-    assert "custom-new" in ids
-
-
-def test_get_recipe_reads_extensionless_symlink(tmp_path):
-    recipe_dir = tmp_path / "recipes"
-    recipe_dir.mkdir()
-
-    custom_file = tmp_path / "custom-uploaded.yaml"
-    custom_file.write_text(
-        "name: Uploaded Recipe\nmodel: vendor/uploaded\n", encoding="utf-8"
+    Nested ids (``cluster/big-model``) only ever came from the ``recipes/``
+    tree of a spark-vllm-docker checkout, which is no longer read.
+    """
+    nested = custom_dir() / "cluster"
+    nested.mkdir()
+    (nested / "big-model.yaml").write_text(
+        "name: Big Model (PP=3)\nmodel: vendor/big\n", encoding="utf-8"
     )
-    (recipe_dir / "custom-uploaded").symlink_to(custom_file)
 
-    out = recipes.get_recipe("custom-uploaded", spark_path=tmp_path)
-
-    assert out is not None
-    assert out["id"] == "custom-uploaded"
-    assert out["name"] == "Uploaded Recipe"
+    assert without_bundled(recipes.list_recipes()) == []
+    assert recipes.get_recipe("cluster/big-model") is None
 
 
 def test_build_launch_command_replaces_supported_tokens():
@@ -154,9 +130,7 @@ def test_build_launch_command_replaces_supported_tokens():
 
 
 def test_get_recipe_applies_saved_customization(tmp_path, monkeypatch):
-    recipe_dir = tmp_path / "recipes"
-    recipe_dir.mkdir()
-    (recipe_dir / "qwen.yaml").write_text(
+    (custom_dir() / "qwen.yaml").write_text(
         """
 name: Qwen
 model: Qwen/Qwen2.5
@@ -172,7 +146,7 @@ defaults:
     custom_path.write_text(
         json.dumps(
             {
-                "qwen": {
+                "custom-qwen": {
                     "command": "custom serve {model}",
                     "defaults": {"port": 9010},
                     "mods": ["my-mod"],
@@ -183,7 +157,7 @@ defaults:
     )
     monkeypatch.setattr(recipes.custom_recipes, "_CUSTOM_PATH", custom_path)
 
-    out = recipes.get_recipe("qwen", spark_path=tmp_path)
+    out = recipes.get_recipe("custom-qwen")
 
     assert out is not None
     assert out["command"] == "custom serve {model}"
@@ -214,15 +188,13 @@ engines:
 """.strip()
 
 
-def test_list_recipes_reports_schema_fields_for_v1(tmp_path):
-    recipe_dir = tmp_path / "recipes"
-    recipe_dir.mkdir()
-    (recipe_dir / "tiny.yaml").write_text(
+def test_list_recipes_reports_schema_fields_for_v1():
+    (custom_dir() / "tiny.yaml").write_text(
         "name: Tiny\nmodel: org/tiny\ncontainer: vllm-node\ncommand: vllm serve\n",
         encoding="utf-8",
     )
 
-    out = without_bundled(recipes.list_recipes(spark_path=tmp_path))[0]
+    out = without_bundled(recipes.list_recipes())[0]
 
     assert out["recipe_version"] == "1"
     assert out["engine"] is None
@@ -230,12 +202,10 @@ def test_list_recipes_reports_schema_fields_for_v1(tmp_path):
     assert out["params"] == out["defaults"]
 
 
-def test_list_recipes_reports_schema_fields_for_v2(tmp_path):
-    recipe_dir = tmp_path / "recipes"
-    recipe_dir.mkdir()
-    (recipe_dir / "structured.yaml").write_text(V2_RECIPE, encoding="utf-8")
+def test_list_recipes_reports_schema_fields_for_v2():
+    (custom_dir() / "structured.yaml").write_text(V2_RECIPE, encoding="utf-8")
 
-    out = without_bundled(recipes.list_recipes(spark_path=tmp_path))[0]
+    out = without_bundled(recipes.list_recipes())[0]
 
     assert out["recipe_version"] == "2"
     assert out["engine"] == "vllm"
@@ -247,12 +217,10 @@ def test_list_recipes_reports_schema_fields_for_v2(tmp_path):
     assert out["mods"] == ["fix-something"]
 
 
-def test_get_recipe_returns_v2_detail(tmp_path):
-    recipe_dir = tmp_path / "recipes"
-    recipe_dir.mkdir()
-    (recipe_dir / "structured.yaml").write_text(V2_RECIPE, encoding="utf-8")
+def test_get_recipe_returns_v2_detail():
+    (custom_dir() / "structured.yaml").write_text(V2_RECIPE, encoding="utf-8")
 
-    out = recipes.get_recipe("structured", spark_path=tmp_path)
+    out = recipes.get_recipe("custom-structured")
 
     assert out is not None
     assert out["recipe_version"] == "2"

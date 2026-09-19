@@ -34,42 +34,6 @@ _CACHE_ENTRIES = [
         "file_count": 67,
         "description": "Triton compiler cache",
     },
-    {
-        "name": "CCache",
-        "path": "/home/user/.ccache",
-        "size_bytes": 13207024435,
-        "file_count": 1842,
-        "description": "CUDA/C++ compilation cache",
-    },
-    {
-        "name": "uv Pip Cache",
-        "path": "/home/user/.cache/uv",
-        "size_bytes": 34359738368,
-        "file_count": 312,
-        "description": "Python package cache",
-    },
-    {
-        "name": "Wheels (spark-vllm)",
-        "path": "/tmp/spark-vllm-docker/wheels",
-        "size_bytes": 9332321280,
-        "file_count": 8,
-        "description": "Built/installed wheels",
-    },
-]
-
-# Expected cache dirs for test compatibility
-EXPECTED_CACHE_DIRS = [
-    "/home/user/.cache/huggingface",
-    "/home/user/.cache/huggingface/datasets",
-    "/home/user/.cache/uv",
-    "/home/user/.cache/vllm",
-    "/root/.cache/huggingface",
-    "/root/.cache/huggingface/datasets",
-    "/root/.cache/uv",
-    "/root/.cache/vllm",
-    "/tmp/spark-vllm-docker/build",
-    "/tmp/spark-vllm-docker/wheels",
-    "/var/lib/docker/overlay2",
 ]
 
 
@@ -95,21 +59,6 @@ def get_cache_dirs() -> list[dict[str, str]]:
             "name": "Triton Cache",
             "path": "/home/user/.triton",
             "description": "Triton compiler cache",
-        },
-        {
-            "name": "CCache",
-            "path": "/home/user/.ccache",
-            "description": "CUDA/C++ compilation cache",
-        },
-        {
-            "name": "uv Pip Cache",
-            "path": "/home/user/.cache/uv",
-            "description": "Python package cache",
-        },
-        {
-            "name": "Wheels (spark-vllm)",
-            "path": "/tmp/spark-vllm-docker/wheels",
-            "description": "Built/installed wheels",
         },
     ]
 

@@ -118,13 +118,6 @@ async def lifespan(app: FastAPI):
 
     mode = "SIMULATION" if is_simulation() else "PRODUCTION"
     print(f"Spark Pulse starting in {mode} mode")
-    # The checkout is one optional recipe/mod source, not something we run.
-    checkout = config.spark_vllm_dir
-    print(
-        f"spark-vllm-docker recipes: {checkout}"
-        if checkout is not None
-        else "spark-vllm-docker: not configured (recipes come from the other sources)"
-    )
 
     # Refuse to start on an unreadable state file. An unreadable state file is
     # not an empty cluster: coming up with an empty view while containers are
@@ -317,7 +310,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title="Spark Pulse",
-        description="Web UI for spark-vllm-docker",
+        description="A control plane for NVIDIA Spark-class clusters",
         version=get_version(),
         lifespan=lifespan,
     )
@@ -369,7 +362,7 @@ def create_app() -> FastAPI:
     # Health check
     @app.get("/health")
     def health_check():
-        return {"status": "ok", "spark_vllm_path": config.spark_vllm_path}
+        return {"status": "ok"}
 
     # Version
     @app.get("/version")

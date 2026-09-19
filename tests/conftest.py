@@ -148,9 +148,8 @@ def isolate_managed_recipe_dirs(tmp_path, monkeypatch):
     """Keep recipe listing away from the developer's real config directory.
 
     ``recipe_sources`` lists the custom-recipes and OCI-recipes directories as
-    first-class sources — they used to reach it only through symlinks planted
-    in a checkout — so a developer with either of those populated would see
-    their own recipes in every listing assertion.
+    first-class sources, so a developer with either of those populated would
+    see their own recipes in every listing assertion.
     """
     import spark_pulse.tools.custom_files  # noqa: F401
     import spark_pulse.tools.oci_registry  # noqa: F401

@@ -887,6 +887,77 @@ describe("Library — where a model is", () => {
     expect(await screen.findAllByText("spark-01 only")).toHaveLength(2);
   });
 
+  /** Replicate is an offer to move bytes. When every node has answered and
+   *  every node holds a verified copy there is nowhere to move them, and the
+   *  row was offering a transfer whose whole result would be "skipped". */
+  it("stops offering replication once every node holds a verified copy", async () => {
+    vi.mocked(fetchNodes).mockResolvedValue([
+      { is_control_plane: true, address: "192.168.1.100", name: "spark-01" },
+      { is_control_plane: false, address: "10.0.0.11" },
+    ] as never);
+    vi.mocked(fetchModelPresence).mockImplementation((id: string) =>
+      Promise.resolve({
+        model: id,
+        local: true,
+        local_state: "verified",
+        nodes: [{ node: "10.0.0.11", present: true, state: "verified", error: null }],
+      }),
+    );
+    renderPage();
+
+    expect(await screen.findAllByText("2 of 2 nodes")).toHaveLength(2);
+    expect(
+      screen.queryByLabelText("Replicate acme/plain-7b to other nodes"),
+    ).not.toBeInTheDocument();
+    // Removing it is still the operator's to make — it is the copies that are
+    // the point, not the row.
+    expect(screen.getByLabelText("Remove acme/plain-7b")).toBeInTheDocument();
+  });
+
+  /** A node that could not be asked is not a node that has the model. */
+  it("still offers replication to a node that could not be asked", async () => {
+    vi.mocked(fetchNodes).mockResolvedValue([
+      { is_control_plane: true, address: "192.168.1.100", name: "spark-01" },
+      { is_control_plane: false, address: "10.0.0.11" },
+    ] as never);
+    vi.mocked(fetchModelPresence).mockImplementation((id: string) =>
+      Promise.resolve({
+        model: id,
+        local: true,
+        local_state: "verified",
+        nodes: [{ node: "10.0.0.11", present: false, error: "connection reset" }],
+      }),
+    );
+    renderPage();
+
+    await screen.findByText("acme/plain-7b");
+    expect(
+      await screen.findByLabelText("Replicate acme/plain-7b to other nodes"),
+    ).toBeInTheDocument();
+  });
+
+  /** A partial copy is a broken one, and re-sending it is the repair. */
+  it("still offers replication when a node holds a partial copy", async () => {
+    vi.mocked(fetchNodes).mockResolvedValue([
+      { is_control_plane: true, address: "192.168.1.100", name: "spark-01" },
+      { is_control_plane: false, address: "10.0.0.11" },
+    ] as never);
+    vi.mocked(fetchModelPresence).mockImplementation((id: string) =>
+      Promise.resolve({
+        model: id,
+        local: true,
+        local_state: "verified",
+        nodes: [{ node: "10.0.0.11", present: true, state: "partial", error: null }],
+      }),
+    );
+    renderPage();
+
+    await screen.findByText("acme/plain-7b");
+    expect(
+      await screen.findByLabelText("Replicate acme/plain-7b to other nodes"),
+    ).toBeInTheDocument();
+  });
+
   it("leaves the row unchecked when the presence read fails", async () => {
     vi.mocked(fetchNodes).mockResolvedValue([
       { is_control_plane: true, address: "192.168.1.100" },

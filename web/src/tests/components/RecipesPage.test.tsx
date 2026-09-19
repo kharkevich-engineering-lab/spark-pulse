@@ -371,7 +371,9 @@ describe("RecipesPage", () => {
       renderPage();
 
       expect(await screen.findByText("No recipes found.")).toBeInTheDocument();
-      expect(screen.getByText(/Check spark-vllm-docker path in Settings/)).toBeInTheDocument();
+      expect(
+        screen.getByText(/install a collection from a registry/),
+      ).toBeInTheDocument();
     });
 
     it("surfaces a recipe list the backend could not produce", async () => {

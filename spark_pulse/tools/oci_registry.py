@@ -31,8 +31,7 @@ BUNDLED_REGISTRIES_CONFIG = Path(__file__).resolve().parent.parent / "registries
 OCI_CACHE_DIR = Path.home() / ".cache" / "spark-pulse" / "oci"
 OCI_META_CACHE_DIR = OCI_CACHE_DIR / "meta_cache"
 #: Where an installed OCI recipe lands. ``recipe_sources`` lists this directory
-#: directly, under ``oci-<stem>`` ids; installing no longer plants a symlink in
-#: a spark-vllm-docker checkout to make the recipe visible.
+#: directly, under ``oci-<stem>`` ids.
 RECIPES_DIR = Path.home() / ".config" / "spark-pulse" / "recipes"
 AUTO_UPDATE_LOG = Path.home() / ".local" / "share" / "spark-pulse" / "auto-update.log"
 

@@ -58,7 +58,6 @@ import {
 } from "@/lib/api";
 
 const SETTINGS: Settings = {
-  spark_vllm_path: "/opt/spark-vllm-docker",
   default_port_range_start: 9000,
   default_port_range_end: 9100,
   webui_port: 8100,
@@ -231,27 +230,17 @@ describe("SettingsPage deployment tab", () => {
   it("seeds every field from the settings the server sent", async () => {
     renderPage();
 
-    expect(await screen.findByDisplayValue("/opt/spark-vllm-docker")).toBeInTheDocument();
-    expect(screen.getByLabelText("Port range start")).toHaveValue(9000);
+    expect(await screen.findByLabelText("Port range start")).toHaveValue(9000);
+    expect(screen.getByLabelText("Port range end")).toHaveValue(9100);
     expect(screen.getByDisplayValue("600")).toBeInTheDocument();
     expect(screen.getByDisplayValue("300")).toBeInTheDocument();
   });
 
-  /** A field the environment owns cannot be edited here, because the process
-   *  would read the env var back over whatever was typed on the next start. */
-  it("locks a field the environment owns, and says which variable owns it", async () => {
-    vi.mocked(fetchSettings).mockResolvedValue({ ...SETTINGS, env_managed: ["spark_vllm_path"] });
-    renderPage();
-
-    const path = await screen.findByDisplayValue("/opt/spark-vllm-docker");
-    expect(path).toBeDisabled();
-    expect(screen.getByText(/Controlled by SPARK_VLLM_PATH/)).toBeInTheDocument();
-  });
 
   it("writes each deployment field under the key it belongs to", async () => {
     const user = userEvent.setup();
     renderPage();
-    await screen.findByDisplayValue("/opt/spark-vllm-docker");
+    await screen.findByLabelText("Port range start");
 
     // `fireEvent.change` rather than typing: jsdom's `<input type="number">`
     // has no usable text selection, so "select all and type" appends to the
@@ -283,7 +272,7 @@ describe("SettingsPage deployment tab", () => {
    *  the recipe's own value. Neither had a reader in the backend. */
   it("no longer offers the v1 container name or a global VRAM share", async () => {
     renderPage();
-    await screen.findByDisplayValue("/opt/spark-vllm-docker");
+    await screen.findByLabelText("Port range start");
 
     expect(screen.queryByDisplayValue("vllm-node")).toBeNull();
     expect(screen.queryByText(/Default container/i)).toBeNull();
@@ -708,7 +697,7 @@ describe("SettingsPage saving", () => {
 
   it("will not save a form nobody has changed", async () => {
     renderPage();
-    await screen.findByDisplayValue("/opt/spark-vllm-docker");
+    await screen.findByLabelText("Port range start");
 
     expect(saveButton()).toBeDisabled();
   });
@@ -718,7 +707,7 @@ describe("SettingsPage saving", () => {
    *  operator's only clue was that the button had gone. */
   it("offers Save on every tab", async () => {
     renderPage();
-    await screen.findByDisplayValue("/opt/spark-vllm-docker");
+    await screen.findByLabelText("Port range start");
 
     for (const tab of [
       /containers/i,
@@ -738,16 +727,15 @@ describe("SettingsPage saving", () => {
   it("saves the edited fields and confirms where they landed", async () => {
     const user = userEvent.setup();
     renderPage();
-    const path = await screen.findByDisplayValue("/opt/spark-vllm-docker");
+    const start = await screen.findByLabelText("Port range start");
 
-    await user.clear(path);
-    await user.type(path, "/srv/spark");
+    fireEvent.change(start, { target: { value: "9500" } });
     await waitFor(() => expect(saveButton()).toBeEnabled());
     await user.click(saveButton());
 
     await waitFor(() =>
       expect(updateSettings).toHaveBeenCalledWith(
-        expect.objectContaining({ spark_vllm_path: "/srv/spark" }),
+        expect.objectContaining({ default_port_range_start: 9500 }),
       ),
     );
     expect(await screen.findByText(/Saved to/)).toBeInTheDocument();
@@ -781,9 +769,9 @@ describe("SettingsPage saving", () => {
     const user = userEvent.setup();
     vi.mocked(updateSettings).mockRejectedValue(new Error("API 403: settings are read-only"));
     renderPage();
-    const path = await screen.findByDisplayValue("/opt/spark-vllm-docker");
+    const start = await screen.findByLabelText("Port range start");
 
-    await user.type(path, "-x");
+    fireEvent.change(start, { target: { value: "9500" } });
     await user.click(saveButton());
 
     expect(await screen.findByText("API 403: settings are read-only")).toBeInTheDocument();
@@ -832,6 +820,25 @@ describe("SettingsPage environment tab", () => {
     expect(screen.queryAllByRole("textbox")).toHaveLength(0);
     expect(screen.queryAllByRole("switch")).toHaveLength(0);
     expect(saveButton()).toBeDisabled();
+  });
+
+  /** A field the environment owns cannot be changed here, because the process
+   *  would read the variable back over whatever was saved on the next start.
+   *  `WEBUI_PORT` is the one field that can be owned this way. */
+  it("marks the port when an environment variable owns it, and names it", async () => {
+    vi.mocked(fetchSettings).mockResolvedValue({ ...SETTINGS, env_managed: ["webui_port"] });
+    renderPage();
+    await openTab(/environment/i);
+
+    expect(await screen.findByText(/Controlled by the WEBUI_PORT/)).toBeInTheDocument();
+  });
+
+  it("says nothing about the environment owning a port it does not own", async () => {
+    renderPage();
+    await openTab(/environment/i);
+    await screen.findByRole("heading", { name: "Runtime" });
+
+    expect(screen.queryByText(/Controlled by the WEBUI_PORT/)).toBeNull();
   });
 
   /** How a worker node gets an engine image without pulling from the internet.

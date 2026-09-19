@@ -82,7 +82,7 @@ The Hugging Face cache as a catalogue: what is downloaded, how big, at which rev
 
 Replicate and Remove both name the nodes they touch before they touch them; the delete dialog preselects the nodes presence says hold a copy, because a node without one has no disk to reclaim.
 
-Below the table, the caches that fill a Spark's disk — Hugging Face, vLLM, FlashInfer, Triton, ccache, wheels — with their sizes and a way to empty one. They are a section rather than a page: a cache is a line item under the catalogue it belongs to.
+Below the table, the caches an engine fills on a Spark's disk — Hugging Face, vLLM, FlashInfer, Triton — with their sizes and a way to empty one. They are a section rather than a page: a cache is a line item under the catalogue it belongs to.
 
 ### Engines
 
@@ -106,7 +106,7 @@ Engine indexes, model sources and the OCI update schedule are configuration, and
 
 Every setting in the product, tabbed over one form, with **Save** on every tab — it writes the whole form, whichever tab an edit was made on.
 
-- **Runs** — port range, the optional spark-vllm-docker path, the readiness and pull timeouts, how long stopped runs are kept.
+- **Runs** — port range, the readiness and pull timeouts, how long stopped runs are kept.
 - **Containers** — the profile every engine container is started with: privileged, memory and swap, `/dev/shm`, process and file limits, the cache directories mounted into each one, and the network policy a mod runs under.
 - **Features** — the switches that change what this control plane *offers* rather than how a run behaves: benchmarking, the cluster-mode override, agent auto-update.
 - **Library** — where things are fetched from, in one place instead of three: the engine index and its cache lifetime, the model sources, and the OCI registries with the schedule their auto-update runs on.

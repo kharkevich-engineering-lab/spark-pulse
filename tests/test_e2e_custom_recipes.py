@@ -24,7 +24,7 @@ import httpx
 
 @pytest.fixture(scope="module")
 def temp_dir(tmp_path_factory):
-    """Create a temp directory for custom-recipes.json and spark-vllm-docker."""
+    """A temp directory for custom-recipes.json and the recipes themselves."""
     return tmp_path_factory.mktemp("custom-recipes-e2e")
 
 
@@ -35,11 +35,9 @@ def custom_recipe_file(temp_dir):
 
 
 @pytest.fixture(scope="module")
-def spark_vllm_dir(temp_dir):
-    """Create a fake spark-vllm-docker with a recipe."""
-    spark = temp_dir / "spark-vllm-docker"
-    spark.mkdir()
-    recipes_dir = spark / "recipes"
+def recipes_dir(temp_dir):
+    """The operator's own recipe directory, holding two recipes."""
+    recipes_dir = temp_dir / "custom-recipes"
     recipes_dir.mkdir()
 
     (recipes_dir / "simple.yaml").write_text(
@@ -56,16 +54,32 @@ def spark_vllm_dir(temp_dir):
         "build_args: ['--build-arg X=1']\n",
         encoding="utf-8",
     )
-    return str(spark)
+    return recipes_dir
+
+
+@pytest.fixture(autouse=True)
+def _module_recipe_dir(recipes_dir, monkeypatch):
+    """Point the custom-recipes directory at this module's own.
+
+    ``conftest.isolate_managed_recipe_dirs`` redirects it to a fresh
+    ``tmp_path`` per test, which would leave the server started once for the
+    whole module reading an empty directory.
+    """
+    import spark_pulse.tools.custom_files as custom_files
+
+    monkeypatch.setattr(custom_files, "_CUSTOM_RECIPES_DIR", recipes_dir)
 
 
 @pytest.fixture(scope="module")
-def e2e_config(spark_vllm_dir, custom_recipe_file):
+def e2e_config(recipes_dir, custom_recipe_file):
     """Configure the app for e2e tests."""
     from spark_pulse.config import config
 
     os.environ["SPARK_PULSE_AUTH_ENABLED"] = "false"
-    config._data["spark_vllm_path"] = spark_vllm_dir
+
+    import spark_pulse.tools.custom_files as custom_files
+
+    custom_files._CUSTOM_RECIPES_DIR = recipes_dir
 
     # Patch custom recipes path (both standalone and inline synthetic module)
     import spark_pulse.tools.custom_recipes as cr
@@ -145,14 +159,14 @@ class TestRecipeCustomizationE2E:
 
     def test_get_customization_empty(self, e2e_server):
         """GET customization should return empty dict when none exist."""
-        resp = httpx.get(f"{e2e_server}/api/recipes/customize/simple")
+        resp = httpx.get(f"{e2e_server}/api/recipes/customize/custom-simple")
         assert resp.status_code == 200
         assert resp.json() == {}
 
     def test_save_customization_command(self, e2e_server):
         """Should save a command customization."""
         body = {"command": "custom-serve {model} --port {port}"}
-        resp = httpx.put(f"{e2e_server}/api/recipes/customize/simple", json=body)
+        resp = httpx.put(f"{e2e_server}/api/recipes/customize/custom-simple", json=body)
         assert resp.status_code == 200
         data = resp.json()
         assert data["command"] == "custom-serve {model} --port {port}"
@@ -160,7 +174,7 @@ class TestRecipeCustomizationE2E:
     def test_save_customization_defaults(self, e2e_server):
         """Should save defaults customization."""
         body = {"defaults": {"port": 9999, "tensor_parallel": 2}}
-        resp = httpx.put(f"{e2e_server}/api/recipes/customize/simple", json=body)
+        resp = httpx.put(f"{e2e_server}/api/recipes/customize/custom-simple", json=body)
         assert resp.status_code == 200
         data = resp.json()
         assert data["defaults"]["port"] == 9999
@@ -168,9 +182,9 @@ class TestRecipeCustomizationE2E:
     def test_get_customization_after_save(self, e2e_server):
         """Should return saved customization on GET."""
         body = {"model": "custom-model"}
-        httpx.put(f"{e2e_server}/api/recipes/customize/simple", json=body)
+        httpx.put(f"{e2e_server}/api/recipes/customize/custom-simple", json=body)
 
-        resp = httpx.get(f"{e2e_server}/api/recipes/customize/simple")
+        resp = httpx.get(f"{e2e_server}/api/recipes/customize/custom-simple")
         assert resp.status_code == 200
         data = resp.json()
         assert data["model"] == "custom-model"
@@ -178,7 +192,7 @@ class TestRecipeCustomizationE2E:
     def test_save_customization_env(self, e2e_server):
         """Should save env customization."""
         body = {"env": {"CUSTOM_VAR": "value"}}
-        resp = httpx.put(f"{e2e_server}/api/recipes/customize/simple", json=body)
+        resp = httpx.put(f"{e2e_server}/api/recipes/customize/custom-simple", json=body)
         assert resp.status_code == 200
         data = resp.json()
         assert data["env"]["CUSTOM_VAR"] == "value"
@@ -186,7 +200,7 @@ class TestRecipeCustomizationE2E:
     def test_save_customization_build_args(self, e2e_server):
         """Should save build_args customization."""
         body = {"build_args": ["--build-arg NEW=1"]}
-        resp = httpx.put(f"{e2e_server}/api/recipes/customize/simple", json=body)
+        resp = httpx.put(f"{e2e_server}/api/recipes/customize/custom-simple", json=body)
         assert resp.status_code == 200
         data = resp.json()
         assert data["build_args"] == ["--build-arg NEW=1"]
@@ -194,7 +208,7 @@ class TestRecipeCustomizationE2E:
     def test_save_ignores_non_customizable_fields(self, e2e_server):
         """Should ignore fields not in CUSTOMIZABLE_FIELDS."""
         body = {"description": "should be ignored", "command": "keep"}
-        resp = httpx.put(f"{e2e_server}/api/recipes/customize/simple", json=body)
+        resp = httpx.put(f"{e2e_server}/api/recipes/customize/custom-simple", json=body)
         assert resp.status_code == 200
         data = resp.json()
         assert "command" in data
@@ -202,28 +216,30 @@ class TestRecipeCustomizationE2E:
 
     def test_delete_customization(self, e2e_server):
         """DELETE should remove customization."""
-        httpx.put(f"{e2e_server}/api/recipes/customize/simple", json={"command": "cmd"})
-        resp = httpx.delete(f"{e2e_server}/api/recipes/customize/simple")
+        httpx.put(
+            f"{e2e_server}/api/recipes/customize/custom-simple", json={"command": "cmd"}
+        )
+        resp = httpx.delete(f"{e2e_server}/api/recipes/customize/custom-simple")
         assert resp.status_code == 200
         assert resp.json()["deleted"] is True
 
         # Verify it's gone
-        resp = httpx.get(f"{e2e_server}/api/recipes/customize/simple")
+        resp = httpx.get(f"{e2e_server}/api/recipes/customize/custom-simple")
         assert resp.status_code == 200
         assert resp.json() == {}
 
     def test_delete_nonexistent_returns_false(self, e2e_server):
         """DELETE for non-existent should return false."""
-        resp = httpx.delete(f"{e2e_server}/api/recipes/customize/simple")
+        resp = httpx.delete(f"{e2e_server}/api/recipes/customize/custom-simple")
         assert resp.status_code == 200
         assert resp.json()["deleted"] is False
 
     def test_customization_persists_across_requests(self, e2e_server):
         """Customization saved on PUT should be visible on subsequent GET."""
         body = {"command": "persist-cmd", "defaults": {"port": 7777}}
-        httpx.put(f"{e2e_server}/api/recipes/customize/complex", json=body)
+        httpx.put(f"{e2e_server}/api/recipes/customize/custom-complex", json=body)
 
-        resp = httpx.get(f"{e2e_server}/api/recipes/customize/complex")
+        resp = httpx.get(f"{e2e_server}/api/recipes/customize/custom-complex")
         assert resp.status_code == 200
         data = resp.json()
         assert data["command"] == "persist-cmd"
@@ -231,21 +247,27 @@ class TestRecipeCustomizationE2E:
 
     def test_recipe_list_reflects_customization(self, e2e_server):
         """Recipe list should show is_customized=true after save."""
-        httpx.put(f"{e2e_server}/api/recipes/customize/simple", json={"command": "x"})
+        httpx.put(
+            f"{e2e_server}/api/recipes/customize/custom-simple", json={"command": "x"}
+        )
 
         resp = httpx.get(f"{e2e_server}/api/recipes")
         assert resp.status_code == 200
-        simple = next((r for r in resp.json() if r["id"] == "simple"), None)
+        simple = next((r for r in resp.json() if r["id"] == "custom-simple"), None)
         assert simple is not None
         assert simple["is_customized"] is True
 
     def test_delete_reflects_in_recipe_list(self, e2e_server):
         """Deleting customization should remove is_customized flag."""
-        httpx.put(f"{e2e_server}/api/recipes/customize/complex", json={"command": "x"})
-        httpx.delete(f"{e2e_server}/api/recipes/customize/complex")
+        httpx.put(
+            f"{e2e_server}/api/recipes/customize/custom-complex", json={"command": "x"}
+        )
+        httpx.delete(f"{e2e_server}/api/recipes/customize/custom-complex")
 
         resp = httpx.get(f"{e2e_server}/api/recipes")
         assert resp.status_code == 200
-        complex_recipe = next((r for r in resp.json() if r["id"] == "complex"), None)
+        complex_recipe = next(
+            (r for r in resp.json() if r["id"] == "custom-complex"), None
+        )
         assert complex_recipe is not None
         assert complex_recipe["is_customized"] is False

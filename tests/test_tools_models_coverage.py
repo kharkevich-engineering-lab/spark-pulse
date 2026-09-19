@@ -318,7 +318,7 @@ class TestRecipeIndex:
     ):
         """The catalogue is about the cache; recipes are only an annotation."""
         monkeypatch.setattr(
-            tools_pkg, "recipes", _StubRecipes(RuntimeError("no checkout"))
+            tools_pkg, "recipes", _StubRecipes(RuntimeError("no recipes"))
         )
 
         assert models_tool._recipe_index() == {}

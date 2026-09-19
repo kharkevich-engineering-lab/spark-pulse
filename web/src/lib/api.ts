@@ -79,9 +79,6 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
 export async function fetchRecipes(signal?: AbortSignal): Promise<RecipeSummary[]> { return json<RecipeSummary[]>("/recipes", { signal }); }
 export async function fetchRecipe(id: string): Promise<RecipeDetail> { return json<RecipeDetail>(`/recipes/${id}`); }
 
-/** Import recipes and mods from a local spark-vllm-docker checkout or a git URL. */
-
-
 // ── Deployments ─────────────────────────────────────────────────────────────
 
 export async function fetchDeployments(signal?: AbortSignal): Promise<Deployment[]> { return json<Deployment[]>("/deployments", { signal }); }

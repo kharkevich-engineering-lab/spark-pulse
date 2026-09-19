@@ -21,7 +21,6 @@ _KNOWN_RUNTIMES = (RUNTIME_NATIVE,)
 # Fields that can be overridden by environment variables.
 # key = settings field name, value = env var name
 _ENV_MAP: dict[str, str] = {
-    "spark_vllm_path": "SPARK_VLLM_PATH",
     "webui_port": "WEBUI_PORT",
 }
 
@@ -94,30 +93,6 @@ class _Config:
     @property
     def env_managed(self) -> list[str]:
         return sorted(self._env_managed)
-
-    @property
-    def spark_vllm_path(self) -> str:
-        """Path to a spark-vllm-docker checkout. Entirely optional.
-
-        Nothing is executed out of it any more. It is one recipe source among
-        several, the place upstream-style mods live, and where the launch-script
-        examples are found. Unset, missing or wrong, every one of those degrades
-        to "no recipes/mods/examples from there" — never to an error.
-        """
-        return str(self._data.get("spark_vllm_path", "/tmp/spark-vllm-docker"))
-
-    @property
-    def spark_vllm_dir(self) -> Path | None:
-        """The checkout as a directory, or ``None`` when there isn't one.
-
-        Callers that walk the checkout use this so an unset path can never be
-        read as ``Path("")``, which is the current working directory.
-        """
-        raw = self.spark_vllm_path.strip()
-        if not raw:
-            return None
-        path = Path(raw).expanduser()
-        return path if path.is_dir() else None
 
     @property
     def default_port_range_start(self) -> int:
@@ -251,8 +226,8 @@ class _Config:
     def runtime(self) -> str:
         """Deployment runtime. ``native`` is the only one there is.
 
-        The ``upstream`` runtime — fork ``run-recipe.sh`` out of a
-        spark-vllm-docker checkout — was removed, so anything unrecognised
+        The ``upstream`` runtime — fork upstream's ``run-recipe.sh`` out of a
+        checkout on disk — was removed, so anything unrecognised
         (a typo, or a stale ``runtime: upstream`` left in a user's
         settings.json by an older install) resolves to ``native`` rather than
         to a path that no longer exists. Deployment *records* still carry their

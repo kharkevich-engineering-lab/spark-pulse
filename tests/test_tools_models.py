@@ -138,7 +138,7 @@ def hf_home(tmp_path, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _no_recipes():
-    """Catalogue tests should not depend on a real spark-vllm checkout."""
+    """Catalogue tests should not depend on the developer's own recipes."""
     with patch.object(models_tool, "_recipe_index", return_value={}):
         yield
 

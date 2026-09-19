@@ -1396,18 +1396,12 @@ def _rank_record(rank_plan: RankPlan) -> dict[str, Any]:
 def _resolve_mod_dir(mod: str) -> Path:
     """Locate a recipe's mod on disk.
 
-    Two places, because mods come from two: a spark-vllm-docker checkout, where
-    recipes name them relative to the root (``mods/fix-x``) or bare, and the
-    operator's own ``custom-mods`` directory. The latter used to be reachable
-    only because a ``mods/custom-x`` symlink was planted in the checkout; it is
-    looked up directly now, so a custom mod works with no checkout at all.
+    One directory — the operator's own ``custom-mods``. A recipe may name a
+    mod the way upstream's format does (``mods/fix-x``), bare, or with the
+    ``custom-`` prefix the listing shows; all three resolve to the same place,
+    because that prefix is all the removed checkout symlinks ever added.
     """
     candidates: list[Path] = []
-    root = config.spark_vllm_dir
-    if root is not None:
-        candidates.append(root / mod)
-        if not mod.startswith("mods/"):
-            candidates.append(root / "mods" / mod)
     name = mod.removeprefix("mods/")
     custom_root = tools.custom_files.custom_mods_dir()
     candidates.append(custom_root / name)

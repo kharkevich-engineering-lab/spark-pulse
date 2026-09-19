@@ -1,18 +1,16 @@
 """Tests for the mod *reader* in ``tools/mods.py``.
 
 ``tests/test_tools_mods.py`` covers the orchestrator and the security
-validation; the half that actually reads a checkout — the description
-extractor, the asset-kind table, and the two-directory listing that merges the
-checkout's ``mods/`` with the operator's own ``custom-mods/`` — had no tests at
-all. That half is what the Mods page renders, so a regression there is silent
-until someone opens the page.
+validation; the half that actually reads the operator's ``custom-mods/``
+directory — the description extractor, the asset-kind table, the listing and
+its ``custom-`` id prefix — had no tests at all. That half is what the Mods
+page renders, so a regression there is silent until someone opens the page.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from spark_pulse.config import config
 from spark_pulse.tools import custom_files
 from spark_pulse.tools.mods import (
     _asset_kind,
@@ -32,15 +30,6 @@ def _write_mod(directory, name: str, script: str = "#!/bin/bash\ntrue\n", **file
     for filename, body in files.items():
         (mod / filename.replace("__", ".")).write_text(body)
     return mod
-
-
-@pytest.fixture
-def checkout(tmp_path, monkeypatch):
-    """A spark-vllm-docker checkout with a ``mods/`` directory."""
-    mods_dir = tmp_path / "checkout" / "mods"
-    mods_dir.mkdir(parents=True)
-    monkeypatch.setitem(config._data, "spark_vllm_path", str(tmp_path / "checkout"))
-    return mods_dir
 
 
 @pytest.fixture
@@ -185,24 +174,15 @@ class TestModInfo:
 
 
 class TestModDirs:
-    def test_without_a_checkout_only_the_operators_own_directory_is_searched(
-        self, tmp_path, monkeypatch, custom
-    ):
-        monkeypatch.setitem(config._data, "spark_vllm_path", "")
-
+    def test_only_the_operators_own_directory_is_searched(self, custom):
+        """One source. A ``mods/`` tree in a checkout was the other, and the
+        checkout is gone — so there is no precedence order left to get wrong.
+        """
         assert _mod_dirs() == [(custom, custom_files.CUSTOM_PREFIX)]
-
-    def test_with_a_checkout_the_checkout_comes_first(self, checkout, custom):
-        assert _mod_dirs() == [(checkout, ""), (custom, custom_files.CUSTOM_PREFIX)]
 
 
 class TestListMods:
-    def test_checkout_mods_keep_their_bare_id(self, checkout, custom):
-        _write_mod(checkout, "nccl-optimization", "# Tune NCCL\n")
-
-        assert [m["id"] for m in list_mods()] == ["nccl-optimization"]
-
-    def test_the_operators_own_mods_are_prefixed(self, checkout, custom):
+    def test_the_operators_own_mods_are_prefixed(self, custom):
         _write_mod(custom, "my-mod", "# Mine\n")
 
         listed = list_mods()
@@ -210,52 +190,32 @@ class TestListMods:
         assert [m["id"] for m in listed] == ["custom-my-mod"]
         assert listed[0]["description"] == "Mine"
 
-    def test_a_missing_checkout_is_skipped_rather_than_raising(
-        self, tmp_path, monkeypatch, custom
+    def test_a_missing_custom_directory_is_skipped_rather_than_raising(
+        self, tmp_path, monkeypatch
     ):
-        monkeypatch.setitem(config._data, "spark_vllm_path", str(tmp_path / "gone"))
+        monkeypatch.setattr(custom_files, "_CUSTOM_MODS_DIR", tmp_path / "never-made")
 
         assert list_mods() == []
 
-    def test_a_missing_custom_directory_is_skipped_rather_than_raising(
-        self, tmp_path, monkeypatch, checkout
-    ):
-        monkeypatch.setattr(custom_files, "_CUSTOM_MODS_DIR", tmp_path / "never-made")
-        _write_mod(checkout, "real", "# Real\n")
+    def test_files_and_dot_directories_are_not_mods(self, custom):
+        (custom / "README.md").write_text("not a mod")
+        (custom / ".hidden").mkdir()
+        _write_mod(custom, "real", "# Real\n")
 
-        assert [m["id"] for m in list_mods()] == ["real"]
-
-    def test_files_and_dot_directories_are_not_mods(self, checkout, custom):
-        (checkout / "README.md").write_text("not a mod")
-        (checkout / ".hidden").mkdir()
-        _write_mod(checkout, "real", "# Real\n")
-
-        assert [m["id"] for m in list_mods()] == ["real"]
-
-    def test_the_same_id_is_listed_once(self, checkout, custom):
-        # Both directories hold "shared"; only the checkout's bare id and the
-        # operator's prefixed id exist, so a genuine collision needs the same
-        # prefix on both sides.
-        _write_mod(checkout, "custom-shared", "# From the checkout\n")
-        _write_mod(custom, "shared", "# From the operator\n")
-
-        listed = list_mods()
-
-        assert [m["id"] for m in listed] == ["custom-shared"]
-        assert listed[0]["description"] == "From the checkout"
+        assert [m["id"] for m in list_mods()] == ["custom-real"]
 
 
 class TestGetMod:
-    def test_a_checkout_mod_is_returned_with_its_script(self, checkout, custom):
-        _write_mod(checkout, "nccl", "#!/bin/bash\n# Tune NCCL\n")
+    def test_a_mod_is_returned_with_its_script(self, custom):
+        _write_mod(custom, "nccl", "#!/bin/bash\n# Tune NCCL\n")
 
-        mod = get_mod("nccl")
+        mod = get_mod("custom-nccl")
 
-        assert mod["id"] == "nccl"
+        assert mod["id"] == "custom-nccl"
         assert mod["description"] == "Tune NCCL"
         assert mod["script"] == "#!/bin/bash\n# Tune NCCL\n"
 
-    def test_the_prefix_is_stripped_before_looking_on_disk(self, checkout, custom):
+    def test_the_prefix_is_stripped_before_looking_on_disk(self, custom):
         _write_mod(custom, "mine", "# Mine\n")
 
         mod = get_mod("custom-mine")
@@ -263,18 +223,16 @@ class TestGetMod:
         assert mod["id"] == "custom-mine"
         assert mod["description"] == "Mine"
 
-    def test_an_unprefixed_id_is_never_looked_for_in_the_custom_directory(
-        self, checkout, custom
-    ):
+    def test_an_unprefixed_id_is_never_looked_for_in_the_custom_directory(self, custom):
         _write_mod(custom, "mine", "# Mine\n")
 
         assert get_mod("mine") is None
 
-    def test_an_unknown_mod_is_none(self, checkout, custom):
+    def test_an_unknown_mod_is_none(self, custom):
         assert get_mod("nope") is None
 
     @pytest.mark.parametrize("mod_id", ["../etc", "a/b", "custom-../x"])
-    def test_path_traversal_is_refused(self, mod_id, checkout, custom):
+    def test_path_traversal_is_refused(self, mod_id, custom):
         assert get_mod(mod_id) is None
 
 

@@ -1,6 +1,6 @@
 # Spark Pulse
 
-Spark Pulse is a web control plane for deploying inference engines (vLLM, SGLang) on NVIDIA DGX Spark hardware. It drives Docker directly from Python through its own engine plugins — there is no dependency on [spark-vllm-docker](https://github.com/eugr/spark-vllm-docker) to deploy. A spark-vllm-docker checkout is optional and, when configured, is used only as a read-only source for importing existing recipes and browsing mods/example launch scripts.
+Spark Pulse is a web control plane for deploying inference engines (vLLM, SGLang) on NVIDIA DGX Spark hardware. It drives Docker directly from Python through its own engine plugins. Recipes and mods stay format-compatible with [spark-vllm-docker](https://github.com/eugr/spark-vllm-docker); nothing else is shared, and no checkout of it is read.
 
 It brings recipe discovery, deployment management, live monitoring, cache cleanup, and configuration into one interface. Multi-node deployment is supported by the same deploy path, but it has not yet been exercised on more than one physical machine — treat it as unproven until a real two-node bring-up validates it.
 
@@ -91,7 +91,6 @@ The full table lives in the [configuration reference](https://kharkevich-enginee
 |---|---|---|---|
 | `webui_port` | int | `8100` | TCP port the web UI listens on. |
 | `runtime` | string | `native` | Deployment runtime. `native` — Spark Pulse drives Docker itself through the engine registry — is the only one. |
-| `spark_vllm_path` | string | `/tmp/spark-vllm-docker` | Optional path to a spark-vllm-docker checkout. Nothing is executed out of it; it is read only as a source of recipes and mods. |
 | `default_port_range_start` | int | `9000` | Start of the port range deployments are allocated from. |
 | `default_port_range_end` | int | `9100` | End of that range. |
 | `job_retention_days` | int | `7` | Days to retain finished deployment records. |
@@ -114,7 +113,6 @@ The following environment variables override their corresponding config keys:
 
 | Environment Variable | Config Key | Description |
 |---|---|---|
-| `SPARK_VLLM_PATH` | `spark_vllm_path` | Override the spark-vllm-docker path. |
 | `WEBUI_PORT` | `webui_port` | Override the web UI port. |
 | `SPARK_PULSE_DATABASE_URL` | `database_url` | Override the database URL. |
 | `SPARK_PULSE_AUTH_ENABLED` | `auth_enabled` | Turn OIDC on or off. |

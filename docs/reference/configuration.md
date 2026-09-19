@@ -17,7 +17,6 @@ Later wins. Secrets live apart, in `~/.config/spark-pulse/secrets.json` (mode `0
 |---|---|---|
 | `webui_port` | `8100` | Port the UI and API listen on. |
 | `runtime` | `native` | Deployment runtime. `native` — Spark Pulse drives Docker through the engine registry — is the only one. |
-| `spark_vllm_path` | `/tmp/spark-vllm-docker` | Optional read-only checkout, used only as a source of recipes and mods. Nothing is executed out of it. |
 | `job_retention_days` | `7` | How long finished deployment records are kept. |
 | `deploy_ready_timeout_seconds` | `900` | How long a deploy waits for an engine to report ready. |
 | `docker_pull_stall_timeout_seconds` | `600` | Seconds of *silence* from a pull — no bytes at all, not merely slow — before it is failed rather than left holding a worker thread. A pull is also retried up to three times before the deployment is failed. `0` disables. |
@@ -96,7 +95,6 @@ image_registry:
 
 | Variable | Overrides |
 |---|---|
-| `SPARK_VLLM_PATH` | `spark_vllm_path` |
 | `WEBUI_PORT` | `webui_port` |
 | `SPARK_PULSE_DATABASE_URL` | `database_url` |
 | `SPARK_PULSE_AUTH_ENABLED` | `auth_enabled` |

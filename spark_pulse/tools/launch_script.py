@@ -225,57 +225,19 @@ class LaunchScriptManager:
     - validate_launch_script() for pre-flight validation
     """
 
-    def __init__(self, spark_path: Path | None = None):
-        self._spark_path = spark_path or self._default_spark_path()
-
-    @staticmethod
-    def _default_spark_path() -> Path:
-        """The configured spark-vllm-docker checkout, whether or not it exists.
-
-        Never the empty path: ``Path("")`` is the process's working directory,
-        and an unset checkout would then resolve ``examples/`` against whatever
-        the server was started from. An unset path yields one that cannot
-        exist, so lookups fail as "not found" rather than finding the wrong
-        file.
-        """
-        from spark_pulse.config import config
-
-        raw = config.spark_vllm_path.strip()
-        return Path(raw).expanduser() if raw else Path("/nonexistent/spark-vllm-docker")
-
     def resolve(self, path: str) -> Path:
-        """Resolve launch script path.
+        """Resolve a launch script path.
 
-        Resolution order:
-        1. Absolute path -> use as-is
-        2. Relative path -> check spark_path/examples/
-        3. Name without .sh -> check spark_path/examples/<name>.sh
+        Absolute only: resolving a relative name against the process's
+        working directory would read whatever the server happened to be
+        started from.
         """
         p = Path(path)
-
-        # Absolute path
-        if p.is_absolute():
-            if p.exists():
-                return p
+        if not p.is_absolute():
+            raise FileNotFoundError(f"Launch script path must be absolute: {path}")
+        if not p.exists():
             raise FileNotFoundError(f"Launch script not found: {p}")
-
-        # Relative path or name
-        examples_dir = self._spark_path / "examples"
-        resolved = examples_dir / path
-
-        if resolved.exists():
-            return resolved
-
-        # Try with .sh extension
-        if not path.endswith(".sh"):
-            resolved = examples_dir / f"{path}.sh"
-            if resolved.exists():
-                return resolved
-
-        raise FileNotFoundError(
-            f"Launch script not found: {path} "
-            f"(checked {resolved} and {examples_dir / path})"
-        )
+        return p
 
     def analyze(self, script_path: Path) -> LaunchScriptInfo:
         """Analyze script before patching."""

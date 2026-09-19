@@ -48,7 +48,6 @@ class TestGetSettings:
         body = client.get("/api/settings").json()
 
         assert set(body) == {
-            "spark_vllm_path",
             "default_port_range_start",
             "default_port_range_end",
             "webui_port",
