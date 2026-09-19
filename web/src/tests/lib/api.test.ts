@@ -144,10 +144,17 @@ const CASES: Case[] = [
   { name: "fetchCache", call: () => api.fetchCache(), path: "/api/cache", method: "GET" },
   {
     name: "cleanCache",
-    call: () => api.cleanCache(["hf", "torch"]),
+    call: () => api.cleanCache("node-1", "vLLM Cache"),
     path: "/api/cache/clean",
     method: "POST",
-    body: { targets: ["hf", "torch"] },
+    body: { node: "node-1", name: "vLLM Cache" },
+  },
+  {
+    name: "cleanAllCaches",
+    call: () => api.cleanAllCaches("node-1"),
+    path: "/api/cache/clean-all",
+    method: "POST",
+    body: { node: "node-1" },
   },
 
   // ── Settings and secrets ──────────────────────────────────────────────────

@@ -13,7 +13,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import LibraryPage, { tabForPath } from "@/pages/LibraryPage";
-import type { CacheEntry, ImageEntry, ModelEntry } from "@/lib/types";
+import type { CacheNode, ImageEntry, ModelEntry } from "@/lib/types";
 
 vi.mock("@/lib/api", () => ({
   fetchModels: vi.fn(),
@@ -21,6 +21,7 @@ vi.mock("@/lib/api", () => ({
   fetchImages: vi.fn(),
   fetchOciRegistries: vi.fn(),
   cleanCache: vi.fn(),
+  cleanAllCaches: vi.fn(),
   // Whatever the mounted tab asks for on its own.
   fetchModelSources: vi.fn(() => Promise.resolve([])),
   fetchModelDownloads: vi.fn(() => Promise.resolve([])),
@@ -89,12 +90,26 @@ const IMAGE = {
   update_available: false,
 } as unknown as ImageEntry;
 
-const CACHE: CacheEntry = {
-  name: "huggingface",
-  path: "/home/spark/.cache/huggingface",
-  size_bytes: 1024 ** 3,
-  file_count: 3,
-  description: "",
+const CACHE: CacheNode = {
+  node_id: "control-1",
+  name: "spark-01",
+  address: "192.168.1.100",
+  is_control_plane: true,
+  reachable: true,
+  reason: null,
+  total_bytes: 1024 ** 3,
+  dirs: [
+    {
+      name: "huggingface",
+      path: "/home/spark/.cache/huggingface",
+      size_bytes: 1024 ** 3,
+      file_count: 3,
+      description: "",
+      exists: true,
+      truncated: false,
+      error: null,
+    },
+  ],
 };
 
 const renderAt = (path: string) =>
@@ -119,7 +134,7 @@ describe("Library — the shell", () => {
     vi.clearAllMocks();
     vi.mocked(fetchModels).mockResolvedValue([MODEL]);
     vi.mocked(fetchImages).mockResolvedValue([IMAGE]);
-    vi.mocked(fetchCache).mockResolvedValue({ entries: [CACHE] });
+    vi.mocked(fetchCache).mockResolvedValue({ nodes: [CACHE] });
     vi.mocked(fetchOciRegistries).mockResolvedValue([
       { name: "ghcr", url: "ghcr.io/acme", enabled: true, default: true, auth_type: "none" },
     ]);

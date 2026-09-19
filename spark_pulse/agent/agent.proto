@@ -182,6 +182,8 @@ message Command {
     ConfigureFabric configure_fabric = 31;
     InstallBundle install_bundle = 32;
     RunHostProbe run_host_probe = 33;
+    ScanCache scan_cache = 34;
+    CleanCache clean_cache = 35;
   }
 }
 
@@ -210,6 +212,8 @@ message CommandResult {
     FabricResult fabric = 18;
     BundleInstalled bundle_installed = 19;
     HostProbeResult host_probe = 20;
+    CacheScan cache_scan = 21;
+    CacheClean cache_clean = 22;
   }
 }
 
@@ -615,6 +619,76 @@ message HostProbeResult {
   int32 exit_code = 1;
   string stdout = 2;
   string stderr = 3;
+}
+
+// The engine caches on this node's disk, measured.
+//
+// The *definitions* — which directories are caches, what they are called, what
+// they hold — stay in the control plane, because they are a fact about the
+// product rather than about a machine. What only the node knows is where its
+// own `$HOME` is and what is inside those directories, so the control plane
+// sends `~/...` and the node expands it against the home of the user the agent
+// runs as. Inventing a peer's home on the control node would be guessing at
+// somebody else's machine — the same mistake `RunContainer.user` avoids with
+// its `agent` sentinel.
+message ScanCache {
+  // Absolute paths, or paths beginning `~/`, expanded on the node.
+  repeated string paths = 1;
+}
+
+message CacheScan {
+  // One entry per requested path, in the order they were asked for.
+  repeated CacheDir dirs = 1;
+}
+
+message CacheDir {
+  // The path as the node resolved it — `~` already expanded, so an operator
+  // reads where the bytes actually are rather than where they were asked for.
+  string path = 1;
+  bool exists = 2;
+  uint64 bytes = 3;
+  uint64 files = 4;
+  // Why this one could not be measured. Per directory, never per request: one
+  // unreadable cache must not cost the other three their numbers.
+  string error = 5;
+  // The walk stopped at its ceiling, so the numbers are a floor rather than a
+  // total. A hub cache of small shards really does hold millions of entries,
+  // and a scan that walks all of them is how a page's poll pins a worker;
+  // "at least this much" is the honest answer, and it has to be sayable.
+  bool truncated = 6;
+}
+
+// Empty the *contents* of these cache directories on this node.
+//
+// Four rules, enforced here rather than trusted from the caller, because this
+// is the one operation in the protocol that deletes an operator's files by
+// path:
+//
+//   * the directory itself is never removed, only what is in it — a cache
+//     directory that vanishes is one Docker recreates owned by root;
+//   * a symlink is unlinked, never followed, so a link pointing out of a cache
+//     cannot make this delete something else;
+//   * a path outside the agent user's `$HOME` is refused; and
+//   * `~/.cache/huggingface/hub` is refused unless `include_hub` — that is the
+//     model cache, and the Library's Models section owns removing models.
+message CleanCache {
+  repeated string paths = 1;
+  // Permit the hub cache. Set only when the operator named that one cache and
+  // confirmed it; a sweep of every cache on a node never sets it.
+  bool include_hub = 2;
+}
+
+message CacheClean {
+  repeated CacheDirResult results = 1;
+}
+
+message CacheDirResult {
+  string path = 1;
+  // Whether anything was emptied. False for a directory that was not there,
+  // one that was already empty, and a refusal — `error` says which.
+  bool removed = 2;
+  uint64 freed_bytes = 3;
+  string error = 4;
 }
 
 message ConfigureFabric {

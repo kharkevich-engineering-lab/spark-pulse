@@ -1,93 +1,38 @@
-"""Mock cache tools — plausible cache sizes for a DGX Spark dev setup."""
+"""Simulated caches — the real aggregator over a simulated fleet.
+
+There is no second implementation of the cache logic here, for the same reason
+``mock.preflight`` has no second copy of the checks and ``mock.node_service``
+has no second copy of the container service: a parallel implementation cannot
+catch a bug in the code it stands in for.
+
+Everything below is :mod:`spark_pulse.tools.cache` itself. It asks
+``tools.node_registry`` for the nodes and ``tools.node_service`` for each one's
+service, and in simulation both of those are already the mock ones — so the
+aggregation, the per-node blocks, the unreachable case and the hub-cache rule
+are all the production code path. What is invented is only what a node answers,
+and that lives on :class:`~spark_pulse.mock.docker.MockDockerService`, one
+table per simulated machine, so two nodes have two sets of caches and cleaning
+one never empties the other.
+"""
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any
+from spark_pulse.tools.cache import (  # noqa: F401 — re-exported, not re-implemented
+    HUB_CACHE_NAME as HUB_CACHE_NAME,
+    MAX_PARALLEL_NODES as MAX_PARALLEL_NODES,
+    clean_all as clean_all,
+    clean_cache as clean_cache,
+    for_node as for_node,
+    get_cache_dirs as get_cache_dirs,
+    get_cache_status as get_cache_status,
+)
 
-_CACHE_ENTRIES = [
-    {
-        "name": "HF Model Cache",
-        "path": "/home/user/.cache/huggingface/hub",
-        "size_bytes": 48542741504,
-        "file_count": 12,
-        "description": "Downloaded HuggingFace models",
-    },
-    {
-        "name": "vLLM Cache",
-        "path": "/home/user/.cache/vllm",
-        "size_bytes": 2254857830,
-        "file_count": 4,
-        "description": "vLLM internal cache",
-    },
-    {
-        "name": "FlashInfer Cache",
-        "path": "/home/user/.cache/flashinfer",
-        "size_bytes": 933232128,
-        "file_count": 23,
-        "description": "FlashInfer JIT cache",
-    },
-    {
-        "name": "Triton Cache",
-        "path": "/home/user/.triton",
-        "size_bytes": 1503238553,
-        "file_count": 67,
-        "description": "Triton compiler cache",
-    },
+__all__ = [
+    "HUB_CACHE_NAME",
+    "MAX_PARALLEL_NODES",
+    "clean_all",
+    "clean_cache",
+    "for_node",
+    "get_cache_dirs",
+    "get_cache_status",
 ]
-
-
-def get_cache_dirs() -> list[dict[str, str]]:
-    """Return expected cache directories to scan (matching real module format)."""
-    return [
-        {
-            "name": "HF Model Cache",
-            "path": "/home/user/.cache/huggingface/hub",
-            "description": "Downloaded HuggingFace models",
-        },
-        {
-            "name": "vLLM Cache",
-            "path": "/home/user/.cache/vllm",
-            "description": "vLLM internal cache",
-        },
-        {
-            "name": "FlashInfer Cache",
-            "path": "/home/user/.cache/flashinfer",
-            "description": "FlashInfer JIT cache",
-        },
-        {
-            "name": "Triton Cache",
-            "path": "/home/user/.triton",
-            "description": "Triton compiler cache",
-        },
-    ]
-
-
-def scan_dir(path: str) -> dict[str, Any]:
-    """Return mock scan results for a directory."""
-    p = Path(path)
-    if not p.exists():
-        return {"size_bytes": 0, "file_count": 0}
-    size = 0
-    count = 0
-    for f in p.rglob("*"):
-        if f.is_file():
-            try:
-                size += f.stat().st_size
-                count += 1
-            except OSError:
-                pass
-    return {"size_bytes": size, "file_count": count}
-
-
-def list_cache() -> list[dict[str, Any]]:
-    """Return mock cache entries."""
-    return list(_CACHE_ENTRIES)
-
-
-def clean_cache(targets: list[str]) -> dict[str, str]:
-    """Return mock clean results."""
-    results: dict[str, str] = {}
-    for t in targets:
-        results[t] = f"Mock: cleaned {t}"
-    return results

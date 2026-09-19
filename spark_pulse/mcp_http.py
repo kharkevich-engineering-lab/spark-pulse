@@ -88,22 +88,39 @@ TOOLS = [
     },
     {
         "name": "list_cache",
-        "description": "List cached models and artifacts",
+        "description": "List the engine caches on every node",
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
         "name": "clean_cache",
-        "description": "Clean cached models and artifacts",
+        "description": "Empty one engine cache on one node",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "targets": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Cache names to clean, or ['all']",
+                "node": {
+                    "type": "string",
+                    "description": "Node id, as list_cache reports it",
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Cache name, as list_cache reports it",
                 },
             },
-            "required": ["targets"],
+            "required": ["node", "name"],
+        },
+    },
+    {
+        "name": "clean_all_caches",
+        "description": "Empty every engine cache on one node except the model cache",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "node": {
+                    "type": "string",
+                    "description": "Node id, as list_cache reports it",
+                },
+            },
+            "required": ["node"],
         },
     },
     {
@@ -362,7 +379,12 @@ HANDLERS: dict[str, Any] = {
     "get_memory": lambda args: _http("GET", "/memory"),
     "list_cache": lambda args: _http("GET", "/cache"),
     "clean_cache": lambda args: _http(
-        "POST", "/cache/clean", json_body={"targets": args["targets"]}
+        "POST",
+        "/cache/clean",
+        json_body={"node": args["node"], "name": args["name"]},
+    ),
+    "clean_all_caches": lambda args: _http(
+        "POST", "/cache/clean-all", json_body={"node": args["node"]}
     ),
     "list_images": lambda args: _http("GET", "/images"),
     "pull_image": lambda args: _http(

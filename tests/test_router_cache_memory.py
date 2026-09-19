@@ -27,38 +27,71 @@ def client():
 
 
 class TestCacheRouter:
-    def test_the_listing_is_wrapped_in_entries(self, client, monkeypatch):
-        entry = {"name": "HF Model Cache", "path": "/c/hf", "size_bytes": 7}
-        monkeypatch.setattr(tools.cache, "list_cache", lambda: [entry])
+    """One shape, every node, and no verb that does not name its machine."""
 
-        assert client.get("/api/cache").json() == {"entries": [entry]}
+    def test_the_listing_is_a_section_per_node(self, client):
+        body = client.get("/api/cache").json()
 
-    def test_cleaning_reports_a_result_per_target(self, client, monkeypatch):
-        asked: list[list[str]] = []
+        assert set(body) == {"nodes"}
+        assert len(body["nodes"]) >= 2
+        first = body["nodes"][0]
+        assert first["is_control_plane"] is True
+        assert set(first) >= {
+            "node_id",
+            "name",
+            "address",
+            "is_control_plane",
+            "reachable",
+            "reason",
+            "total_bytes",
+            "dirs",
+        }
+
+    def test_cleaning_one_cache_names_its_node_and_reports_what_it_freed(self, client):
+        nodes = client.get("/api/cache").json()["nodes"]
+        target = nodes[-1]["node_id"]
+
+        body = client.post(
+            "/api/cache/clean", json={"node": target, "name": "Triton Cache"}
+        ).json()
+
+        assert body["node"] == target
+        assert body["reachable"] is True
+        assert [result["name"] for result in body["results"]] == ["Triton Cache"]
+        assert body["results"][0]["freed_bytes"] > 0
+
+    def test_cleaning_every_cache_on_a_node_leaves_the_models_alone(self, client):
+        target = client.get("/api/cache").json()["nodes"][0]["node_id"]
+
+        body = client.post("/api/cache/clean-all", json={"node": target}).json()
+
+        names = [result["name"] for result in body["results"]]
+        assert "HF Model Cache" not in names
+        assert names == ["vLLM Cache", "FlashInfer Cache", "Triton Cache"]
+
+    def test_a_request_that_names_no_node_cleans_nothing(self, client, monkeypatch):
         monkeypatch.setattr(
             tools.cache,
             "clean_cache",
-            lambda targets: asked.append(targets) or {t: "Cleaned" for t in targets},
+            lambda *a, **k: pytest.fail("must not clean without a node"),
+        )
+        monkeypatch.setattr(
+            tools.cache,
+            "clean_all",
+            lambda *a, **k: pytest.fail("must not clean without a node"),
         )
 
-        response = client.post("/api/cache/clean", json={"targets": ["Triton Cache"]})
+        assert client.post("/api/cache/clean", json={"name": "x"}).status_code == 400
+        assert client.post("/api/cache/clean-all", json={}).status_code == 400
 
-        assert response.json() == {"results": {"Triton Cache": "Cleaned"}}
-        assert asked == [["Triton Cache"]]
-
-    def test_cleaning_nothing_deletes_nothing(self, client, monkeypatch):
+    def test_a_request_that_names_no_cache_cleans_nothing(self, client, monkeypatch):
         monkeypatch.setattr(
             tools.cache,
             "clean_cache",
-            lambda targets: pytest.fail("must not clean without a target"),
+            lambda *a, **k: pytest.fail("must not clean without a cache"),
         )
 
-        assert client.post("/api/cache/clean", json={}).json() == {
-            "error": "No targets specified"
-        }
-        assert client.post("/api/cache/clean", json={"targets": []}).json() == {
-            "error": "No targets specified"
-        }
+        assert client.post("/api/cache/clean", json={"node": "n"}).status_code == 400
 
 
 # ── Memory ───────────────────────────────────────────────────────────────────
