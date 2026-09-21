@@ -15,8 +15,6 @@
 import { useAuth } from "@/lib/auth";
 import { useI18n, useT, LANGUAGES } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
-import { ExperimentalBadge } from "@/components/Experimental";
-import { MULTI_NODE_BADGE_TITLE } from "@/lib/experimental";
 import { useConfig } from "@/lib/config";
 import { BrandFooter } from "@/components/BrandFooter";
 import { getTheme, setTheme, type ThemeMode } from "@/lib/theme";
@@ -36,18 +34,12 @@ export interface NavGroup {
   href: string;
   labelKey: string;
   routes: string[];
-  experimental?: boolean;
 }
 
 export const NAV_GROUPS: NavGroup[] = [
   { href: "/", labelKey: "nav.deploy", routes: ["/"] },
   { href: "/jobs", labelKey: "nav.runs", routes: ["/jobs", "/benchmarking"] },
-  {
-    href: "/cluster",
-    labelKey: "nav.fleet",
-    routes: ["/cluster", "/monitoring"],
-    experimental: true,
-  },
+  { href: "/cluster", labelKey: "nav.fleet", routes: ["/cluster", "/monitoring"] },
   { href: "/models", labelKey: "nav.library", routes: ["/models", "/engines", "/cache", "/oci"] },
   { href: "/settings", labelKey: "nav.settings", routes: ["/settings", "/mcp"] },
 ];
@@ -159,8 +151,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const location = useLocation();
   const [version, setVersion] = useState("");
-  const { config } = useConfig();
-  const clusterExperimental = config?.cluster_experimental ?? true;
   const menuRef = useRef<HTMLDivElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -228,13 +218,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           )}
         >
           {t(group.labelKey)}
-          {group.experimental && clusterExperimental && (
-            <ExperimentalBadge title={MULTI_NODE_BADGE_TITLE} />
-          )}
         </Link>
       );
     },
-    [current, clusterExperimental, t],
+    [current, t],
   );
 
   return (

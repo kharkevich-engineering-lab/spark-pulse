@@ -2,9 +2,6 @@ auth_enabled: false
 # Offers recipes marked `cluster_only`. The recipes page reads it.
 cluster_enabled: false
 benchmarking_enabled: false
-# Multi-node orchestration has never been exercised on real hardware, so the UI
-# labels it experimental. Flip this once a two-node bring-up has been verified.
-cluster_experimental: true
 job_retention_days: 7
 deploy_ready_timeout_seconds: 900
 # Seconds of *silence* from a docker pull — no bytes at all, not merely slow

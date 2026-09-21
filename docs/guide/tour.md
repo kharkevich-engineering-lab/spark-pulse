@@ -52,7 +52,7 @@ Opening a row shows what that node's ConnectX ports are doing and what the docto
 
 Adding a node takes an address. Discovery *offers* what it found over mDNS and nothing is ever required to come from it — **Find nodes on this network**, collapsed at the foot of the page, is where you look when a node you expected is not in the list.
 
-Multi-node is marked experimental here in one line — the full account of what is unproven belongs where you are about to act on it, which is the deploy form and the expanded row on Runs. What is *running* on these nodes is on Runs too; this page is about the nodes.
+What is *running* on these nodes is on Runs; this page is about the nodes.
 
 ### Monitoring
 

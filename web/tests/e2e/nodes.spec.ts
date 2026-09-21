@@ -97,14 +97,6 @@ test("lists the nodes the backend holds, with interfaces, role and state", async
   await expectNoCrash(page);
 });
 
-test("keeps the experimental marking above the registry", async ({ page }) => {
-  await gotoPage(page, "/cluster");
-  await expect(
-    page.getByRole("note").filter({ hasText: "Multi-node is still experimental" }),
-  ).toBeVisible();
-  await expectNoCrash(page);
-});
-
 test("adds a node by address and keeps it across a reload", async ({ page, request }) => {
   const address = "10.42.0.7";
   await purgeNode(request, address);

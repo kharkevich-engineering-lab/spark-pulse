@@ -9,7 +9,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import FleetPage from "@/pages/FleetPage";
@@ -84,15 +84,13 @@ describe("FleetPage", () => {
     vi.mocked(connectMetricsStream).mockReturnValue(() => {});
   });
 
-  it("says multi-node is experimental in one line, not a wall of text", async () => {
-    // The full banner — six named unproven things and why — belongs where an
-    // operator is about to deploy across machines. This page is read, and on
-    // it the banner was the loudest thing on the screen.
+  /** The page carried a line saying multi-node was experimental. Two nodes
+   *  have run and been measured, so there is nothing to disclaim. */
+  it("carries no experimental note above the registry", async () => {
     renderAt("/cluster");
 
-    const note = await screen.findByRole("note");
-    expect(note).toHaveTextContent("Multi-node is still experimental.");
-    expect(within(note).queryAllByRole("listitem")).toHaveLength(0);
+    expect(await screen.findByTestId("node-registry")).toBeInTheDocument();
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
   });
 
   it("opens /cluster on the nodes tab, with the fabric and discovery under it", async () => {

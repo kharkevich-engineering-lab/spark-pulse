@@ -14,7 +14,6 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import Layout, { NAV_GROUPS, activeGroup } from "@/components/Layout";
 import { I18nProvider } from "@/lib/i18n";
-import { MULTI_NODE_BADGE_TITLE } from "@/lib/experimental";
 import type { AppConfig } from "@/lib/config";
 
 let config: AppConfig | null = null;
@@ -38,7 +37,6 @@ function withAuth(overrides: Partial<AppConfig> = {}): AppConfig {
     auth_enabled: false,
     mcp_enabled: true,
     cluster_enabled: true,
-    cluster_experimental: true,
     benchmarking_enabled: false,
     simulation_mode: true,
     runtime: "native",
@@ -150,17 +148,12 @@ describe("the header nav", () => {
     );
   });
 
-  it("keeps the experimental mark on Fleet, which is where the cluster is", () => {
+  /** Fleet was marked with a chip while multi-node had not been run on
+   *  hardware. It has, so the nav entry is a nav entry. */
+  it("carries no chip beside Fleet", () => {
     renderLayout();
     const fleet = primaryNav().getByRole("link", { name: /Fleet/ });
-    expect(within(fleet).getByTitle(MULTI_NODE_BADGE_TITLE)).toBeInTheDocument();
-  });
-
-  it("drops the mark when the installation says multi-node is no longer experimental", () => {
-    config = withAuth({ cluster_experimental: false });
-    renderLayout();
-    expect(primaryNav().getByRole("link", { name: /Fleet/ })).toBeInTheDocument();
-    expect(screen.queryByTitle(MULTI_NODE_BADGE_TITLE)).toBeNull();
+    expect(fleet).toHaveTextContent(/^Fleet$/);
   });
 
   /** Benchmarking is a tab of Runs now, so the flag no longer removes a nav

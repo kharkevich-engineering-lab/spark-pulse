@@ -103,9 +103,8 @@ describe("the dictionaries", () => {
     // "version" is the same word in French, singular and plural.
     "registry.versionCount.one",
     "registry.versionCount.other",
-    // Two abbreviations that read the same in both: the chip on an
-    // experimental feature, and the one marking a field the environment owns.
-    "experimental.chip",
+    // An abbreviation that reads the same in both: the chip marking a field
+    // the environment owns.
     "settings.envBadge",
   ]);
 

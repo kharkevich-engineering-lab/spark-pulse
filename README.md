@@ -2,7 +2,7 @@
 
 Spark Pulse is a web control plane for deploying inference engines (vLLM, SGLang) on NVIDIA DGX Spark hardware. It drives Docker directly from Python through its own engine plugins. Recipes and mods stay format-compatible with [spark-vllm-docker](https://github.com/eugr/spark-vllm-docker); nothing else is shared, and no checkout of it is read.
 
-It brings recipe discovery, deployment management, live monitoring, cache cleanup, and configuration into one interface. Multi-node deployment is supported by the same deploy path, but it has not yet been exercised on more than one physical machine — treat it as unproven until a real two-node bring-up validates it.
+It brings recipe discovery, deployment management, live monitoring, cache cleanup, and configuration into one interface. Multi-node deployment goes through the same deploy path and has run on two DGX Sparks — vLLM tensor-parallel and llama.cpp over its RPC backend, both benchmarked there. Three or more nodes, the fabric's full bandwidth and SGLang across machines have not been measured; `docs/upstream-cluster-parity.md` lists what is still open.
 
 **License:** [MIT](LICENSE) — Copyright © 2026 Kharkevich Engineering Lab
 
@@ -96,7 +96,6 @@ The full table lives in the [configuration reference](https://kharkevich-enginee
 | `job_retention_days` | int | `7` | Days to retain finished deployment records. |
 | `default_engine` | string | `vllm` | Engine used when a recipe does not name one. |
 | `cluster_enabled` | bool | `false` | Forces recipes marked `cluster_only` on. They are offered anyway once a second node is enrolled. |
-| `cluster_experimental` | bool | `true` | Marks multi-node as unproven in the UI. |
 | `database_url` | string | *(empty)* | Empty means SQLite under `~/.config/spark-pulse`; any SQLAlchemy URL otherwise. |
 | `cors_allowed_origins` | list | `[]` | Browser origins allowed to call this API. Never `*`. |
 | `mcp_enabled` | bool | `true` | Enable the MCP endpoint. |

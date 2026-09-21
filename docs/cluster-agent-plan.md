@@ -617,9 +617,13 @@ registry holds; the same machine listed twice; and a parallelism that does not
 occupy the topology exactly, in either direction — the old behaviour trimmed
 spare peers silently, and a rank with no shard to hold hangs at the rendezvous.
 
-**What stays unproven until a second Spark exists.** This is the list the UI
-banner renders, kept in `web/src/lib/experimental.ts`; the two must stay in
-step, and an item leaves only when it has been observed on hardware.
+**What stays unproven until a second Spark exists.** *Retired 2026-09-21: two
+Sparks ran vLLM tensor-parallel and llama.cpp over RPC across the pair, so the
+banner and `web/src/lib/experimental.ts` are gone and §8 of
+`upstream-cluster-parity.md` is where what is still unmeasured is tracked. What
+follows is the plan as it was written.* This is the list the UI banner renders,
+kept in `web/src/lib/experimental.ts`; the two must stay in step, and an item
+leaves only when it has been observed on hardware.
 
 Since 2026-09-04 the list is in **two groups**, because "unproven" and
 "unknown" are different states and running them together tells an operator

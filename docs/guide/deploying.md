@@ -41,8 +41,6 @@ The waiting deployment is recorded, so a restart in the middle of a 26 GB downlo
 
 The same form. A recipe declares what it needs; if you name several nodes, the deployment is a gang of ranks — one container per rank, each started through its own node's agent, all carrying the same generation so a half-started attempt can be told from a running one.
 
-> Multi-node is implemented and has not been exercised on real hardware. The deploy form says so, and names what specifically is unproven — rendezvous across machines, NCCL interface selection, the pieces that only two physical Sparks can confirm.
-
 ## Stopping and removing
 
 Both are the same button in different states, and they are different operations:

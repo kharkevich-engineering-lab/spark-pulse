@@ -29,8 +29,6 @@ import NodeRegistry from "@/components/NodeRegistry";
 import NetworkDiscovery from "@/components/NetworkDiscovery";
 import FabricCard from "@/components/FabricCard";
 import MonitoringTab from "@/components/MonitoringTab";
-import { ExperimentalNote } from "@/components/Experimental";
-import { useConfig } from "@/lib/config";
 
 type FleetTab = "nodes" | "monitoring";
 
@@ -46,10 +44,8 @@ export function tabForPath(pathname: string): FleetTab {
 
 export default function FleetPage() {
   const { t, plural } = useI18n();
-  const { config } = useConfig();
   const location = useLocation();
   const navigate = useNavigate();
-  const experimental = config?.cluster_experimental ?? true;
 
   const tab = tabForPath(location.pathname);
   /** How many machines, for the tab count and the one-line description.
@@ -100,11 +96,6 @@ export default function FleetPage() {
           </Button>
         }
       />
-
-      {/* One line, not the full banner. What is unproven and why belongs where
-          an operator is about to deploy across machines, which is the deploy
-          form and the expanded row on Runs. */}
-      {experimental && <ExperimentalNote text={t("cluster.experimental")} />}
 
       <Tabs
         label={t("nav.fleet")}

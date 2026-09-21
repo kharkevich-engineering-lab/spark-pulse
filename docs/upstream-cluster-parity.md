@@ -1,6 +1,6 @@
 # Cluster compatibility with `eugr/spark-vllm-docker`
 
-Status: 2026-09-17, hardware evidence added. Reference read at commit `358bf26` on 2026-09-04.
+Status: 2026-09-21, a second engine added to the hardware evidence. Reference read at commit `358bf26` on 2026-09-04.
 
 ## The stance: compatibility, not parity
 
@@ -35,7 +35,7 @@ Four states, and they carry very different risk. Do not collapse them.
 | **U — unspecified** | Nobody documents it. The row says which sources were checked and what question they failed to answer. These are the genuinely unknown ones. There are six. |
 | **D — divergence** | Upstream does it for a reason that does not apply to us, two sources disagree and we chose, or the agent architecture above makes it somebody else's job. The row says which. |
 
-### Hardware evidence, 2026-09-17
+### Hardware evidence, 2026-09-17 and 2026-09-21
 
 **Most of this document is still not hardware evidence, but some of it now
 is.** A two-node DGX Spark cluster — GB10, aarch64, control node `gx10-ced2`
@@ -64,12 +64,24 @@ two fixes in PR #111:
   said "exercised in simulation"; they were observed. **Whether the start
   order *matters* is still unknown** — that is §5.4, and it stays there.
 
-What that run did **not** establish: no perftest or NCCL bandwidth number was
-taken, so §5.3 is untouched; the pair was two cables between two nodes, which
-gets none of the ring settings (§2.9) and produces no ring evidence at all;
-nothing at three or four nodes was cabled; and an unreachable peer over a real
-SSH transport — a half-open connection rather than a clean refusal — was not
-exercised. Every row not marked **H** is still what it was.
+**A second engine spanned the same pair on 2026-09-21.** llama.cpp crossed the
+machine boundary through its RPC backend rather than a rendezvous: the peer ran
+`ggml-rpc-server` and rank zero was handed `--rpc` naming it, at the worker's
+**verified fabric address** rather than the Wi-Fi NIC it is registered under —
+RPC carries every activation tensor, so which wire it takes is the whole
+question. Rank zero was held until that port answered, and `Bonsai-2-27B`
+(ternary GGUF, 7.2 GB) was served from the copy the control plane had already
+replicated onto the peer rather than downloaded a second time by the engine.
+So two engines of different shapes — a tensor-parallel rendezvous and an RPC
+gang — have now run across two DGX Sparks and been benchmarked on them.
+
+What neither run established: no perftest or NCCL bandwidth number was taken,
+so §5.3 is untouched; the pair was two cables between two nodes, which gets
+none of the ring settings (§2.9) and produces no ring evidence at all; nothing
+at three or four nodes was cabled; SGLang has still never crossed a machine
+boundary; and an unreachable peer over a real SSH transport — a half-open
+connection rather than a clean refusal — was not exercised. Every row not
+marked **H** is still what it was.
 
 ## A second evidence pass
 
@@ -277,9 +289,9 @@ reports four ports up and the mesh-settings check fires.
 ## 5. Unspecified — the six genuinely unknown
 
 These are the rows where no source consulted answers the question. Each names
-what was checked. **The 2026-09-17 two-node run measured none of them**: it
-took no bandwidth figure, cabled no ring, ran no SGLang across machines, and
-varied neither the start order nor the affinity setting. Nothing in this
+what was checked. **Neither two-node run measured any of them**: between them
+they took no bandwidth figure, cabled no ring, ran no SGLang across machines,
+and varied neither the start order nor the affinity setting. Nothing in this
 section changed.
 
 ### 5.1 Why `NCCL_IGNORE_CPU_AFFINITY=1` on GB10
@@ -510,10 +522,11 @@ refuses a legal value is worse than none.
 
 Split by the taxonomy above, because these carry different risk.
 
-**Settled on 2026-09-17** — see the hardware-evidence section at the top for
+**Settled on hardware** — see the hardware-evidence section at the top for
 what was actually seen:
 
-* the rendezvous forming across machines **under vLLM** (4.4);
+* the rendezvous forming across machines **under vLLM** (4.4), and llama.cpp's
+  RPC gang across the same pair over the fabric (2026-09-21);
 * interface pinning against real per-role names (1.2, 1.5, 2.2, 2.3, 7.1–7.3);
 * worker-first start, head-first teardown, the orphan bookkeeping, the
   pre-flight across two nodes and the reconciler stopping and deleting across
@@ -542,5 +555,11 @@ two-node run took none:
 * whether SGLang needs `--enable-dp-attention` across nodes (5.6);
 * whether `NCCL_IGNORE_CPU_AFFINITY=1` is the right direction on GB10 (5.1).
 
-`web/src/lib/experimental.ts` renders this split to the operator, and the two
-must stay in step.
+**Nothing in the UI claims any of this.** Until 2026-09-21 the deploy form,
+the Fleet page and every multi-node run carried a banner rendering the split
+above, because multi-node had not been run on hardware. Two engines have now
+run across two DGX Sparks and been benchmarked there, so the banner, the chip
+and the `cluster_experimental` flag behind them are gone. The open questions
+are not gone with them: they are the two lists above, and an item leaves one
+when a run has measured it — never before, and never because a page looked
+tidier without it.

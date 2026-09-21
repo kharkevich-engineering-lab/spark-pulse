@@ -1,9 +1,9 @@
 /** Multi-node, end to end against the simulation backend.
  *
- * **None of this is evidence that multi-node works on hardware.** There is one
- * DGX Spark, so what a browser and a simulated backend can show is what is
- * rendered, what is refused, what is recorded, and — the point of this file —
- * that an operator who can reach the feature is told it is unverified.
+ * **None of this is evidence about hardware.** Two DGX Sparks have run and
+ * been measured — see `docs/upstream-cluster-parity.md` — and that is not what
+ * a browser and a simulated backend can show. What they can show is what is
+ * rendered, what is refused and what is recorded.
  *
  * The refusals are asserted through the REST API rather than the form, because
  * a refusal an operator never sees is the failure mode: the deploy form only
@@ -74,9 +74,7 @@ async function plan(request: APIRequestContext, nodes: string[], parallel = node
   });
 }
 
-test("a two-node plan renders one rank per machine, and says it is unproven", async ({
-  request,
-}) => {
+test("a two-node plan renders one rank per machine", async ({ request }) => {
   const response = await plan(request, [CONTROL, PEER]);
   expect(response.ok(), await response.text()).toBeTruthy();
   const body = (await response.json()) as {
@@ -95,7 +93,10 @@ test("a two-node plan renders one rank per machine, and says it is unproven", as
     // Interface pinning, which a solo plan does not get at all.
     expect(entry.env.NCCL_SOCKET_IFNAME).toBeTruthy();
   }
-  expect(body.warnings.join(" ")).toContain("has run on two DGX Sparks");
+  // Two nodes carried a standing warning about what had not been measured.
+  // Two nodes have since run and been measured, so a plan carries only the
+  // warnings that are about this plan.
+  expect(body.warnings.join(" ")).not.toContain("DGX Sparks");
 });
 
 test("a solo plan is unchanged: no pinning, no warning", async ({ request }) => {
@@ -147,7 +148,7 @@ test("refuses a node count the parallelism does not occupy", async ({ request })
   expect(detail).toContain("only occupies 1");
 });
 
-test("the deploy form marks its node selector, and names the risks once used", async ({
+test("the deploy form's node selector adds a rank per peer, and warns about nothing", async ({
   page,
   request,
 }) => {
@@ -160,23 +161,18 @@ test("the deploy form marks its node selector, and names the risks once used", a
   await page.getByRole("button", { name: "Deploy options" }).click();
   const selector = page.getByTestId("deploy-node-selector");
   await expect(selector).toBeVisible();
-  await expect(selector.getByText("exp", { exact: true })).toBeVisible();
-
-  // Solo is not experimental, so nothing shouts until a peer is picked.
-  await expect(selector.getByRole("note")).toHaveCount(0);
 
   const peer = nodes.find((n) => !n.is_control_plane);
   await selector.getByRole("checkbox", { checked: false }).first().check();
   expect(peer, "a peer should have been available to select").toBeTruthy();
 
-  const note = selector.getByRole("note");
-  await expect(note).toBeVisible();
-  await expect(note).toContainText("Multi-node has run on two machines");
-  await expect(note).toContainText("rendezvous forms across machines");
+  await expect(page.getByTestId("deploy-world-size")).toContainText("2 nodes, ranks 0-1");
+  // Picking a peer used to raise a warning box naming what had not been run.
+  await expect(selector.getByRole("note")).toHaveCount(0);
   await expectNoCrash(page);
 });
 
-test("a running multi-node deployment is marked wherever it is listed", async ({
+test("a running multi-node deployment names its machines on Runs", async ({
   page,
   request,
 }) => {
@@ -197,17 +193,16 @@ test("a running multi-node deployment is marked wherever it is listed", async ({
     expect(listed, "the deployment should be listed").toBeTruthy();
 
     // One list, on Runs: the Fleet page's second table of the same endpoint
-    // is gone, so this is the only place the marking has to reach.
+    // is gone, so this is the only place the placement has to reach.
     await gotoPage(page, "/jobs");
     const row = page.getByTestId(`deployment-${listed!.id}`);
     await expect(row).toBeVisible();
     // The row names the machines its ranks landed on rather than counting them.
     await expect(row).toContainText(CONTROL);
-    await expect(row.getByText("exp", { exact: true })).toBeVisible();
+    await expect(row).toContainText(PEER);
+    // And carries no chip: a run across two machines is a run.
+    await expect(row.getByText("exp", { exact: true })).toHaveCount(0);
 
-    // Once, on Runs. Fleet listed the same deployments in a second table with
-    // half the actions; it is about the machines now, and this marking has one
-    // place to be right.
     await expectNoCrash(page);
   } finally {
     await purgeDeployments(request, RECIPE);

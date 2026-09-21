@@ -225,7 +225,6 @@
     }
   },
   "cluster": {
-    "experimental": "Multi-node is still experimental.",
     "heading": "The nodes."
   },
   "monitoring": {
@@ -655,7 +654,6 @@
     "cacheDirsHelp": "One per line. Mounted into every container, so a compiled kernel survives the container that built it — the difference between a warm start and several minutes of recompilation.",
     "caches": "Caches and entrypoint",
     "clearToken": "Clear token",
-    "clusterExperimental": "Multi-node is marked experimental in this build.",
     "clusterMode": "Force cluster mode",
     "clusterModeHelp": "Forces recipes that need more than one node on. They are offered anyway once a second node is enrolled, so this is for a cluster still being built.",
     "defaultPath": "{backend} (default path)",
@@ -1125,10 +1123,5 @@
     "toolsHint": "Asked of the endpoint itself, so this is what a client would see — not a list kept by hand here.",
     "toolsFailed": "Could not read the tool list from {endpoint}.",
     "guidesHint": "Each snippet carries the endpoint above, so there is nothing to fill in."
-  },
-  "experimental": {
-    "tooltip": "Experimental: not yet verified on real hardware",
-    "chip": "exp",
-    "feature": "Experimental feature"
   }
 }

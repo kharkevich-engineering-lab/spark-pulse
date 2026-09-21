@@ -12,7 +12,6 @@ import {
 import type { DockerSettings, ModelSource } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
 import {
-  AlertCircle,
   Bot,
   Check,
   Eye,
@@ -123,14 +122,12 @@ function SwitchRow({
   icon: Icon,
   on,
   onChange,
-  children,
 }: {
   label: string;
   hint: string;
   icon?: typeof Bot;
   on: boolean;
   onChange: (next: boolean) => void;
-  children?: React.ReactNode;
 }) {
   return (
     <div className="flex items-start justify-between gap-4">
@@ -140,7 +137,6 @@ function SwitchRow({
           {label}
         </p>
         <p className="mt-0.5 text-[13px] leading-snug text-muted">{hint}</p>
-        {children}
       </div>
       <Toggle on={on} onChange={onChange} label={label} />
     </div>
@@ -695,14 +691,7 @@ export default function SettingsPage() {
               hint={t("settings.clusterModeHelp")}
               on={!!form.cluster_enabled}
               onChange={() => setForm({ ...form, cluster_enabled: !form.cluster_enabled })}
-            >
-              {environment?.cluster_experimental && (
-                <p className="mt-1.5 flex items-start gap-1.5 text-[13px] text-warn">
-                  <AlertCircle size={12} className="mt-0.5 shrink-0" />
-                  <span>{t("settings.clusterExperimental")}</span>
-                </p>
-              )}
-            </SwitchRow>
+            />
 
             <SwitchRow
               label={t("settings.agentAutoUpdate")}

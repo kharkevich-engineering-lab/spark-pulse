@@ -1,10 +1,15 @@
 # Cluster evidence
 
-Multi-node has run on two DGX Sparks since 2026-09-17 (see the hardware
-evidence in `upstream-cluster-parity.md`). This document was written before
-that as the substitute for running it, and it remains the record for every
-decision no run has yet measured: what the authoritative source says, what we
-do, and whether they agree.
+Multi-node has run on two DGX Sparks since 2026-09-17 — vLLM
+tensor-parallel, and llama.cpp across its RPC backend since 2026-09-21 (see the
+hardware evidence in `upstream-cluster-parity.md`). This document was written
+before that as the substitute for running it, and it remains the record for
+every decision no run has yet measured: what the authoritative source says,
+what we do, and whether they agree.
+
+Citations below to `web/src/lib/experimental.ts` are to the UI's unproven list
+as it stood on 2026-09-04. That module was retired on 2026-09-21 along with the
+banner it fed; what is still unmeasured is §8 of `upstream-cluster-parity.md`.
 
 Every claim carries a citation — a URL, a file and line in this repository, or a
 file and line in `eugr/spark-vllm-docker` at `358bf26` (read on the Spark at
