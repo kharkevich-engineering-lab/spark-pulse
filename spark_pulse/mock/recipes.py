@@ -170,7 +170,7 @@ def list_recipes() -> list[dict[str, Any]]:
     payloads = recipe_sources.iter_recipe_payloads()
     if payloads:
         return [
-            recipe_sources.summarize(p, custom_recipes.has_customization(p["id"]))
+            recipe_sources.summarize(p, custom_recipes.has_customization_for(p))
             for p in payloads
         ]
     return [_canned(r) for r in _RECIPES]
@@ -191,7 +191,7 @@ def get_recipe(recipe_id: str) -> dict[str, Any] | None:
     if recipe is None:
         return None
     recipe_sources.apply_customization(
-        recipe, custom_recipes.get_customization(recipe["id"])
+        recipe, custom_recipes.get_customization_for(recipe)
     )
     return recipe
 

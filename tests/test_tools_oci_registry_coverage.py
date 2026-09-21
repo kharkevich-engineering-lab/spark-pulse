@@ -914,7 +914,12 @@ class TestInstallOciRecipe:
 
         result = oci.install_oci_recipe("pack", "alpha", "1.0.0")
 
-        assert result == {"success": True, "recipe": "alpha", "action": "installed"}
+        assert result == {
+            "success": True,
+            "recipe": "alpha",
+            "recipe_id": "oci-alpha",
+            "action": "installed",
+        }
         assert (env.recipes_dir / "alpha.yaml").read_text() == "name: alpha"
         assert oci.get_oci_meta("alpha.yaml").collection == "pack"
 
@@ -1095,9 +1100,15 @@ class TestRecipeMetadata:
         Reading that as a file extension is what sent uninstall looking for a
         sidecar that has never existed, and it answered "not found" for every
         recipe whose name carries a version.
+
+        The dot survives the slug for the same reason: ``qwen3.8-27b`` is a
+        stem this project has always used, and re-spelling it would churn an id
+        that was never the problem. What the name loses is only its case, and
+        only because nothing is installed here under either spelling — a file
+        that *is* on disk answers for itself, which the two tests above cover.
         """
-        assert oci._meta_path("GLM-4.7-Flash-AWQ").name == "GLM-4.7-Flash-AWQ.yaml.meta"
-        assert oci._meta_path("Qwen3.8-27B").name == "Qwen3.8-27B.yaml.meta"
+        assert oci._meta_path("GLM-4.7-Flash-AWQ").name == "glm-4.7-flash-awq.yaml.meta"
+        assert oci._meta_path("Qwen3.8-27B").name == "qwen3.8-27b.yaml.meta"
 
     def test_rewriting_metadata_preserves_the_original_install_time(self, env):
         oci._write_recipe_meta("alpha.yaml", "reg", "pack", "1.0.0", "sha256:a")

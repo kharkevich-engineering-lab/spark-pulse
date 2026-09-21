@@ -21,9 +21,7 @@ from spark_pulse.tools.recipe_sources import (
 def list_recipes() -> list[dict[str, Any]]:
     """List every recipe from every source."""
     return [
-        recipe_sources.summarize(
-            payload, custom_recipes.has_customization(payload["id"])
-        )
+        recipe_sources.summarize(payload, custom_recipes.has_customization_for(payload))
         for payload in recipe_sources.iter_recipe_payloads()
     ]
 
@@ -34,7 +32,7 @@ def get_recipe(recipe_id: str) -> dict[str, Any] | None:
     if recipe is None:
         return None
     recipe_sources.apply_customization(
-        recipe, custom_recipes.get_customization(recipe["id"])
+        recipe, custom_recipes.get_customization_for(recipe)
     )
     return recipe
 
