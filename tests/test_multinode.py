@@ -69,6 +69,16 @@ PEERS = ["10.0.0.11", "10.0.0.12", "10.0.0.13"]
 
 FLEET = [CONTROL, *PEERS]
 
+#: What a *verified* fabric apply recorded on each of them — NETWORKING.md's
+#: scheme, a ``/24`` per cable with ``.11`` for the first machine. Note that
+#: none of these shares a network with the addresses above: the registered
+#: address is the management NIC, which on the real pair is Wi-Fi, and the
+#: whole point of recording these is that they are a different wire.
+FABRIC = {
+    address: (f"192.168.177.{11 + index}", f"192.168.178.{11 + index}")
+    for index, address in enumerate(FLEET)
+}
+
 #: A recipe whose parallelism can be dialled to the node count. One GPU per
 #: node means the world size *is* the node count, so tp has to track it.
 RECIPE = {
@@ -162,6 +172,9 @@ def fleet(tmp_path, registry):
     # purpose: interface names are per machine, and a test where every node
     # happens to share one cannot tell a per-node lookup from a global.
     existing = {node.address: node for node in tools.node_registry.list_nodes()}
+    control = existing.get(CONTROL)
+    if control is not None:
+        tools.node_registry.update_node(control.id, fabric_addresses=FABRIC[CONTROL])
     for index, address in enumerate(PEERS, start=1):
         fields = {
             "ssh_user": "spark",
@@ -169,11 +182,16 @@ def fleet(tmp_path, registry):
             "infiniband_interfaces": ("ib0", "ib1"),
         }
         node = existing.get(address)
-        if node is not None:
-            tools.node_registry.update_node(node.id, **fields)
-            continue
-        tools.node_registry.add_node(
-            name=f"spark-{index + 1:02d}", address=address, **fields
+        if node is None:
+            node = tools.node_registry.add_node(
+                name=f"spark-{index + 1:02d}", address=address, **fields
+            )
+            fields = {}
+        # A verified apply is the only thing that writes these, and a fleet
+        # without them can only ever show the fallback — so the simulated one
+        # has them, exactly as ``mock.node_registry`` seeds the two it ships.
+        tools.node_registry.update_node(
+            node.id, **fields, fabric_addresses=FABRIC[address]
         )
     with (
         patch.object(tools.deployment_records, "RECORDS_FILE", tmp_path / "deps.json"),
@@ -1155,19 +1173,83 @@ class TestLlamaCppSpansNodesOverRpc:
 
         head, worker = plan.ranks
         assert head["command"].startswith("llama-server --metrics -hf ")
-        assert f"--rpc {PEERS[0]}:50052" in head["command"]
+        assert f"--rpc {FABRIC[PEERS[0]][0]}:50052" in head["command"]
         assert worker["command"] == "ggml-rpc-server -H 0.0.0.0 -p 50052"
         assert [r["node_rank"] for r in plan.ranks] == [0, 1]
         assert [r.node for r in plan.rank_plans] == [CONTROL, PEERS[0]]
         assert plan.rank_plans[0].is_head is True
 
-    def test_the_head_names_the_worker_by_the_address_the_deploy_named(self, fleet):
-        """The registered address, the same one vLLM's --master-addr carries.
-        Not the fabric one — that would be faster and is a change of its own."""
+    def test_the_head_dials_the_worker_over_the_fabric_the_registry_verified(
+        self, fleet
+    ):
+        """The one launch address that is not the registered one.
+
+        RPC carries every activation tensor, and the registered address on a
+        Spark is usually the management NIC. The worker is still *named* — and
+        reached, and deployed to — at the address the deploy named; only the
+        wire the head dials is the fabric's.
+        """
+        plan = self.plan()
+        fabric = FABRIC[PEERS[0]][0]
+
+        assert f"--rpc {fabric}:50052" in plan.launch_command
+        assert PEERS[0] not in plan.launch_command
+        assert plan.rank_plans[1].host == PEERS[0]
+        assert plan.rank_plans[1].node == PEERS[0]
+
+    def test_the_head_rank_reports_every_endpoint_and_why_that_address(self, fleet):
         plan = self.plan()
 
+        assert plan.rank_plans[0].rpc_endpoints == [
+            {
+                "node": PEERS[0],
+                "address": FABRIC[PEERS[0]][0],
+                "port": 50052,
+                "via_fabric": True,
+                "reason": plan.rank_plans[0].rpc_endpoints[0]["reason"],
+            }
+        ]
+        assert "ConnectX fabric" in plan.rank_plans[0].rpc_endpoints[0]["reason"]
+        # Only the head dials anybody, so only the head carries a list.
+        assert plan.rank_plans[1].rpc_endpoints == []
+        assert not [w for w in plan.warnings if "RPC traffic" in w]
+
+    def test_a_worker_with_no_verified_fabric_falls_back_and_the_plan_warns(
+        self, fleet
+    ):
+        """No apply, no fabric address, no guess: the registered address, and
+        a warning that says what to run rather than leaving an operator to
+        read the rate."""
+        node = next(
+            n for n in tools.node_registry.list_nodes() if n.address == PEERS[0]
+        )
+        tools.node_registry.update_node(node.id, fabric_addresses=[])
+
+        plan = self.plan(deployment_id="rpc-nofabric")
+
         assert f"--rpc {PEERS[0]}:50052" in plan.launch_command
-        assert plan.rank_plans[1].host == PEERS[0]
+        endpoint = plan.rank_plans[0].rpc_endpoints[0]
+        assert endpoint["via_fabric"] is False
+        assert "no verified fabric address is recorded" in endpoint["reason"]
+        warning = next(w for w in plan.warnings if "RPC traffic" in w)
+        assert PEERS[0] in warning
+        assert "fabric apply from Fleet" in warning
+
+    def test_a_worker_on_another_cable_than_the_head_falls_back_too(self, fleet):
+        """A fabric address that shares no /24 with the head's is a cable
+        that does not run between these two machines."""
+        node = next(
+            n for n in tools.node_registry.list_nodes() if n.address == PEERS[0]
+        )
+        tools.node_registry.update_node(node.id, fabric_addresses=["192.168.197.12"])
+
+        plan = self.plan(deployment_id="rpc-othercable")
+
+        assert f"--rpc {PEERS[0]}:50052" in plan.launch_command
+        assert (
+            "no cable runs between them"
+            in plan.rank_plans[0].rpc_endpoints[0]["reason"]
+        )
 
     def test_the_ports_booked_are_the_api_port_and_the_workers_rpc_port(self, fleet):
         plan = self.plan()
@@ -1223,6 +1305,99 @@ class TestLlamaCppSpansNodesOverRpc:
         assert kinds == ["run", "launch"]
         assert containers_on(fleet, PEERS[0]) == ["spark-pulse-rpc2-r1-g1"]
         assert local_containers() == ["spark-pulse-rpc2-r0-g1"]
+
+    def test_the_head_is_held_back_until_every_worker_answers_on_its_port(self, fleet):
+        """Launched after is not the same as launched when it is listening.
+
+        On the real pair the two started in the same second, the head dialled
+        0.27s later, every endpoint refused — and llama.cpp carried on with
+        the model on one GPU. So the head waits for the evidence, and the
+        evidence is a TCP connect to the worker's *registered* address: the
+        control plane is always able to reach that one.
+        """
+        plan = self.plan(deployment_id="rpc-gate")
+        launched: list[int] = []
+        asked: list[tuple[str, int]] = []
+        seen_while_asking: list[list[int]] = []
+
+        def probe(address: str, port: int) -> bool:
+            asked.append((address, port))
+            seen_while_asking.append(list(launched))
+            return len(asked) >= 3
+
+        with (
+            patch.object(nr, "rpc_listening", probe),
+            patch.object(nr, "RPC_READY_INTERVAL", 0),
+            patch.object(
+                nr,
+                "_launch_rank",
+                lambda d, p, r: launched.append(r.rank),
+            ),
+        ):
+            nr.start(plan, wait=True)
+
+        assert asked == [(PEERS[0], 50052)] * 3
+        # The worker had launched; the head had not, for as long as the port
+        # said nothing — and it went last, once it did.
+        assert seen_while_asking == [[1], [1], [1]]
+        assert launched == [1, 0]
+
+    def test_a_worker_that_never_listens_fails_the_deploy_and_names_itself(self, fleet):
+        """Not a warning and not a slow start: a head launched against a
+        worker that is not there is a run on one machine that reports two."""
+        plan = self.plan(deployment_id="rpc-deaf")
+        launched: list[int] = []
+        real_launch = nr._launch_rank
+
+        def launch(docker: Any, plan_obj: Any, rank_plan: Any) -> None:
+            launched.append(rank_plan.rank)
+            real_launch(docker, plan_obj, rank_plan)
+
+        with (
+            patch.object(nr, "rpc_listening", lambda *_a: False),
+            patch.object(nr, "RPC_READY_TIMEOUT", 0),
+            patch.object(nr, "_launch_rank", launch),
+        ):
+            record = nr.start(plan, wait=True)
+
+        assert record["status"] == "error"
+        message = record["error_message"]
+        assert PEERS[0] in message
+        assert "did not accept a connection on RPC port 50052" in message
+        # The worker launched, the head never did, and nothing was left behind.
+        assert launched == [1]
+        assert local_containers() == []
+
+    def test_a_worker_whose_container_died_fails_without_waiting_it_out(self, fleet):
+        """A container that has exited will not open a port. Sitting out the
+        deadline for it tells an operator nothing the logs do not."""
+        plan = self.plan(deployment_id="rpc-dead")
+        docker = peer_docker(fleet, PEERS[0])
+
+        def probe(*_a: Any) -> bool:
+            for container in docker.list_managed_containers():
+                docker.stop_container(container.name)
+            return False
+
+        with patch.object(nr, "rpc_listening", probe):
+            record = nr.start(plan, wait=True)
+
+        assert record["status"] == "error"
+        assert "exited before it began serving RPC on port 50052" in (
+            record["error_message"]
+        )
+
+    def test_a_rendezvous_engine_is_not_gated_on_a_port_it_never_binds(self, fleet):
+        """vLLM's workers bind nothing; the plan books no rpc_port, so there
+        is nothing to wait for and nobody is asked."""
+        plan = plan_for(2, deployment_id="rpc-none")
+        asked: list[Any] = []
+
+        with patch.object(nr, "rpc_listening", lambda *a: asked.append(a) or True):
+            nr.start(plan, wait=True)
+
+        assert plan.rpc_port is None
+        assert asked == []
 
     def test_the_default_variant_is_still_refused_above_one_node(self, fleet):
         """Nothing about ``llama-cpp/default`` changed: it declares

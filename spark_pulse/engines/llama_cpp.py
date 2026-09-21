@@ -34,15 +34,25 @@ Three consequences, all of them deliberate:
   shape *is* the ``--rpc`` list, one server per worker, so the gang occupies
   exactly the nodes it was planned across. Hence
   :attr:`Engine.parallelism_in_command` is false here.
+* **The ``--rpc`` list is the one launch address that is not the registered
+  one.** Every other engine names a node the way the control plane reaches it,
+  and for a rendezvous that is right — a few bytes at startup. This list is
+  not that. RPC carries every activation tensor of every token, and a DGX
+  Spark's registered address is very often the Wi-Fi NIC: on the real pair an
+  operator had to write ``--rpc 192.168.177.12:50052`` by hand to get a run
+  onto the ConnectX links. So :func:`rpc_endpoint` prefers the worker's
+  verified fabric address and says, in the plan, when it could not.
 """
 
 from __future__ import annotations
 
+import ipaddress
 from typing import Any
 
 from spark_pulse.engines.base import (
     EngineError,
     LaunchScript,
+    NodeInfo,
     Topology,
 )
 from spark_pulse.engines.solo import SoloEngine
@@ -60,6 +70,94 @@ RPC_SERVER = "ggml-rpc-server"
 #: Port a worker listens on when the spec names none — the one every
 #: example in upstream's README uses.
 DEFAULT_RPC_PORT = 50052
+
+#: The prefix length a recorded fabric address is read as. ``_pin_record``
+#: stores the bare address, not the mask it was assigned with, so the mask has
+#: to come from the scheme that assigned it: ``NETWORKING.md`` gives every
+#: cable its own ``/24`` (``192.168.<link>.11``, ``.12``, ``.13``), and
+#: ``fabric_plan.plan_fabric`` is that scheme's implementation. If the registry
+#: ever records prefixes, this is an assumption to delete rather than widen.
+FABRIC_PREFIX_BITS = 24
+
+#: What an operator does about a worker still reached on its management NIC.
+FABRIC_REMEDY = (
+    "run a fabric apply from Fleet to move RPC traffic onto the ConnectX links"
+)
+
+
+def _fabric_network(address: str) -> Any:
+    """The network an address sits on, or ``None`` if it is not an address."""
+    try:
+        return ipaddress.ip_interface(
+            f"{str(address).strip()}/{FABRIC_PREFIX_BITS}"
+        ).network
+    except ValueError:
+        return None
+
+
+def rpc_endpoint(head: NodeInfo, worker: NodeInfo, port: int) -> tuple[str, str]:
+    """Which address the head dials this worker on, and why that one.
+
+    The rule is the registry's, not the network's. A *verified* fabric apply is
+    what writes ``fabric_addresses`` onto a node's record
+    (``routers/fabric.py::_pin_record``), so "this node has a fabric address"
+    means this control plane configured one on it and read it back — the same
+    evidence :func:`spark_pulse.tools.node_service.transfer_route` acts on for
+    bulk bytes. Nothing is probed from here: the connection that has to hold is
+    the head's, not the control plane's, and an address this machine can reach
+    proves nothing about a peer that must.
+
+    A mesh node holds one address per cable and only one of them faces the
+    head, so the address chosen is the worker's that shares a network with
+    *any* of the head's — that is the cable between these two machines, read
+    at the prefix :data:`FABRIC_PREFIX_BITS` documents. Which is also why this
+    cannot be answered one node at a time: an endpoint is a pair.
+
+    Args:
+        head: Rank zero — the machine that opens the connections.
+        worker: The rank being named on the head's ``--rpc`` list.
+        port: The port that worker binds. Present so a caller reads the whole
+            endpoint from one place; the choice is the address alone.
+
+    Returns:
+        ``(address, reason)``. The worker's fabric address when one faces the
+        head, its registered address otherwise — slow beats failed, and the
+        reason carries what to do about it.
+    """
+    registered = worker.address()
+    name = worker.host or registered
+    if not worker.fabric_addresses:
+        return registered, (
+            f"no verified fabric address is recorded for {name}; using the "
+            f"registered address {registered} — {FABRIC_REMEDY}"
+        )
+    if not head.fabric_addresses:
+        return registered, (
+            f"no verified fabric address is recorded for the head "
+            f"{head.host or head.address()}, so there is no cable to match "
+            f"{name} against; using the registered address {registered} — "
+            f"{FABRIC_REMEDY}"
+        )
+    head_networks = {
+        network
+        for network in (_fabric_network(a) for a in head.fabric_addresses)
+        if network is not None
+    }
+    for candidate in worker.fabric_addresses:
+        network = _fabric_network(candidate)
+        if network is not None and network in head_networks:
+            return candidate, (
+                f"{candidate} is on the ConnectX fabric this control plane "
+                f"verified, sharing a /{FABRIC_PREFIX_BITS} with the head's "
+                f"{', '.join(head.fabric_addresses)}"
+            )
+    return registered, (
+        f"none of {name}'s fabric addresses "
+        f"({', '.join(worker.fabric_addresses)}) share a "
+        f"/{FABRIC_PREFIX_BITS} with the head's "
+        f"({', '.join(head.fabric_addresses)}), so no cable runs between them; "
+        f"using the registered address {registered} — {FABRIC_REMEDY}"
+    )
 
 
 class LlamaCppEngine(SoloEngine):
@@ -153,6 +251,32 @@ class LlamaCppEngine(SoloEngine):
             return self._worker_launch(recipe, topology, node_rank)
         return self._head_launch(recipe, model, params, extra_args, topology)
 
+    def rpc_endpoints(self, topology: Topology) -> list[dict[str, Any]]:
+        """Every worker endpoint the head will dial, with the reason for each.
+
+        The head's ``--rpc`` list is rendered from exactly this, and the plan
+        reports exactly this on rank zero, so what an operator reads and what
+        the engine is handed cannot drift apart. Empty for a solo launch and
+        for a variant that does not span nodes — there is no worker to name.
+        """
+        if not self.spans_nodes() or topology.size <= 1:
+            return []
+        port = self.rpc_port()
+        head = topology.head
+        endpoints: list[dict[str, Any]] = []
+        for worker in topology.nodes[1:]:
+            address, reason = rpc_endpoint(head, worker, int(port or 0))
+            endpoints.append(
+                {
+                    "node": worker.address(),
+                    "address": address,
+                    "port": int(port or 0),
+                    "via_fabric": address in worker.fabric_addresses,
+                    "reason": reason,
+                }
+            )
+        return endpoints
+
     def _head_launch(
         self,
         recipe: dict[str, Any],
@@ -163,19 +287,16 @@ class LlamaCppEngine(SoloEngine):
     ) -> LaunchScript:
         """Rank zero: the solo command plus one ``--rpc`` endpoint per worker.
 
-        The addresses are the ones every rank is named by — the registered
-        address, the same one vLLM's ``--master-addr`` carries. Worth being
-        explicit that this is not the fastest wire available: what crosses it
-        is tensor traffic, which is bulk bytes by any measure, and
-        ``node_service.transfer_route`` already picks a node's ConnectX
-        address over its management one for exactly that reason. It is not
-        consulted here — the launch names nodes the way every other launch
-        does — and moving it would be its own change, with its own evidence:
-        a fabric address that is reachable for an rsync is not yet proof that
-        the head can hold an RPC session open on it for the life of a run.
+        The addresses are *not* the ones every other rank is named by. Every
+        rendezvous engine names a node at its registered address and should;
+        this list is tensor traffic for the life of the run, so it takes the
+        fabric the registry verified when there is one — :func:`rpc_endpoint`
+        decides, per pair, and the fallback carries its own reason.
         """
         port = self.rpc_port()
-        endpoints = ",".join(f"{n.address()}:{port}" for n in topology.nodes[1:])
+        endpoints = ",".join(
+            f"{e['address']}:{port}" for e in self.rpc_endpoints(topology)
+        )
         tail = ["--rpc", endpoints, *self.spec.runtime.multi_node.extra_args]
         return self._serve_launch(
             recipe,

@@ -22,6 +22,7 @@ from spark_pulse.engines.llama_cpp import (
     RPC_SERVER,
     RPC_STYLE,
     LlamaCppEngine,
+    rpc_endpoint,
 )
 from spark_pulse.engines.registry import ENGINE_CLASSES, load_bundled_specs
 
@@ -247,3 +248,151 @@ def test_the_prism_spec_declares_what_the_renderer_reads():
     assert spec.runtime.ports.rpc == DEFAULT_RPC_PORT
     assert spec.runtime.container.network_host is True
     assert spec.sources["llama_cpp"]["repo"].endswith("PrismML-Eng/llama.cpp.git")
+
+
+# ── Which wire the head dials ────────────────────────────────────────────────
+#
+# Every node above carries no fabric address, which is what a fleet looks like
+# before anyone has run a fabric apply — so every test above it renders the
+# registered address, unchanged. These are about the other case.
+
+#: A verified apply's work: NETWORKING.md's scheme, one /24 per cable.
+FABRIC_HEAD = NodeInfo(
+    host="spark-a",
+    ip="10.0.0.11",
+    eth_if="enp1s0f0np0",
+    ib_if="rocep1s0",
+    fabric_addresses=("192.168.177.11", "192.168.178.11"),
+)
+FABRIC_WORKER = NodeInfo(
+    host="spark-b",
+    ip="10.0.0.12",
+    eth_if="enp1s0f0np0",
+    fabric_addresses=("192.168.177.12", "192.168.178.12"),
+)
+FABRIC_THIRD = NodeInfo(
+    host="spark-c",
+    ip="10.0.0.13",
+    eth_if="enp1s0f0np0",
+    fabric_addresses=("192.168.177.13", "192.168.178.13"),
+)
+
+
+def test_the_fabric_address_sharing_the_heads_subnet_is_the_one_chosen():
+    address, reason = rpc_endpoint(FABRIC_HEAD, FABRIC_WORKER, DEFAULT_RPC_PORT)
+
+    assert address == "192.168.177.12"
+    assert "ConnectX fabric this control plane verified" in reason
+    assert "192.168.177.11" in reason
+
+
+def test_a_worker_with_no_verified_fabric_address_keeps_the_registered_one():
+    address, reason = rpc_endpoint(FABRIC_HEAD, WORKER, DEFAULT_RPC_PORT)
+
+    assert address == WORKER.address()
+    assert "no verified fabric address is recorded for spark-b" in reason
+    assert "run a fabric apply from Fleet" in reason
+
+
+def test_a_head_with_no_verified_fabric_address_has_no_cable_to_match():
+    """Both ends or neither: an endpoint is a pair, and a worker address on
+    a cable the head is not addressed on is not reachable from the head."""
+    address, reason = rpc_endpoint(HEAD, FABRIC_WORKER, DEFAULT_RPC_PORT)
+
+    assert address == FABRIC_WORKER.address()
+    assert "no verified fabric address is recorded for the head spark-a" in reason
+
+
+def test_a_fabric_address_on_another_cable_is_not_a_cable_to_this_head():
+    """The mesh case that must not be guessed: an address exists, it is
+    verified, and it faces a different machine."""
+    elsewhere = NodeInfo(
+        host="spark-c", ip="10.0.0.13", fabric_addresses=("192.168.197.13",)
+    )
+
+    address, reason = rpc_endpoint(FABRIC_HEAD, elsewhere, DEFAULT_RPC_PORT)
+
+    assert address == "10.0.0.13"
+    assert "no cable runs between them" in reason
+    assert "192.168.197.13" in reason
+
+
+def test_the_mesh_worker_holds_one_address_per_cable_and_the_heads_wins():
+    """A ring member is addressed on two cables. Only one of them runs to the
+    head, and it is the one the head is addressed on too — the second, here,
+    so that a renderer that simply took the first would fail this."""
+    head = NodeInfo(
+        host="spark-a", ip="10.0.0.11", fabric_addresses=("192.168.187.11",)
+    )
+    worker = NodeInfo(
+        host="spark-b",
+        ip="10.0.0.12",
+        fabric_addresses=("192.168.197.12", "192.168.187.12"),
+    )
+
+    address, _ = rpc_endpoint(head, worker, DEFAULT_RPC_PORT)
+
+    assert address == "192.168.187.12"
+
+
+def test_something_that_is_not_an_address_is_never_matched():
+    """A registry record is data. A malformed entry falls back rather than
+    being compared as a string."""
+    worker = NodeInfo(host="spark-b", ip="10.0.0.12", fabric_addresses=("not-an-ip",))
+
+    address, reason = rpc_endpoint(FABRIC_HEAD, worker, DEFAULT_RPC_PORT)
+
+    assert address == "10.0.0.12"
+    assert "no cable runs between them" in reason
+
+
+def test_the_head_command_names_the_fabric_addresses_not_the_registered_ones():
+    result = engine().render(
+        RECIPE, topology=Topology(nodes=[FABRIC_HEAD, FABRIC_WORKER])
+    )
+
+    assert "--rpc 192.168.177.12:50052" in result.command
+    assert "10.0.0.12" not in result.command
+
+
+def test_three_nodes_list_two_endpoints_in_rank_order():
+    topology = Topology(nodes=[FABRIC_HEAD, FABRIC_WORKER, FABRIC_THIRD])
+
+    endpoints = engine().rpc_endpoints(topology)
+
+    assert [e["node"] for e in endpoints] == ["10.0.0.12", "10.0.0.13"]
+    assert [e["address"] for e in endpoints] == ["192.168.177.12", "192.168.177.13"]
+    assert all(e["via_fabric"] for e in endpoints)
+    # Three nodes needs the mesh claim, as it does for every other engine.
+    meshed = engine("prism", **{"capabilities.mesh": True})
+    assert (
+        "--rpc 192.168.177.12:50052,192.168.177.13:50052"
+        in meshed.render(RECIPE, topology=topology).command
+    )
+
+
+def test_the_reported_endpoints_are_what_the_command_was_rendered_from():
+    topology = Topology(nodes=[FABRIC_HEAD, WORKER])
+
+    endpoints = engine().rpc_endpoints(topology)
+
+    assert endpoints == [
+        {
+            "node": "10.0.0.12",
+            "address": "10.0.0.12",
+            "port": DEFAULT_RPC_PORT,
+            "via_fabric": False,
+            "reason": endpoints[0]["reason"],
+        }
+    ]
+    assert (
+        f"--rpc {endpoints[0]['address']}:{endpoints[0]['port']}"
+        in engine().render(RECIPE, topology=topology).command
+    )
+
+
+def test_nothing_that_does_not_span_nodes_reports_an_endpoint():
+    """A solo launch dials nobody, and neither does a rendezvous engine —
+    the base class answers with an empty list for exactly that reason."""
+    assert engine().rpc_endpoints(ONE_NODE) == []
+    assert engine("default").rpc_endpoints(TWO_NODES) == []

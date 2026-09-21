@@ -25,6 +25,11 @@ class RenderNode(BaseModel):
     ip: str = ""
     eth_if: str = ""
     ib_if: str = ""
+    #: What a verified fabric apply recorded for this machine. A dry run that
+    #: passes them renders the ``--rpc`` list a deploy would; one that does
+    #: not sees the fallback, which is what a fleet with no apply behind it
+    #: really gets.
+    fabric_addresses: list[str] = Field(default_factory=list)
 
 
 class RenderRequest(BaseModel):
@@ -41,7 +46,13 @@ class RenderRequest(BaseModel):
 def _to_node(node: RenderNode | str) -> NodeInfo:
     if isinstance(node, str):
         return NodeInfo(host=node, ip=node)
-    return NodeInfo(host=node.host, ip=node.ip, eth_if=node.eth_if, ib_if=node.ib_if)
+    return NodeInfo(
+        host=node.host,
+        ip=node.ip,
+        eth_if=node.eth_if,
+        ib_if=node.ib_if,
+        fabric_addresses=tuple(node.fabric_addresses),
+    )
 
 
 @router.get("")

@@ -38,6 +38,7 @@ from spark_pulse.tools.native_runtime import (
     rank_container_name as rank_container_name,
     rank_entries as rank_entries,
     rank_services as rank_services,
+    rpc_listening as rpc_listening,
     register_event_loop as register_event_loop,
     start as start,
     status as status,

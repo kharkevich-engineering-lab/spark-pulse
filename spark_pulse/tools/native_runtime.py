@@ -300,6 +300,13 @@ class RankPlan:
     command: str
     script: str
     is_head: bool = False
+    #: For the head of an engine whose workers are the servers — llama.cpp
+    #: over RPC, and nothing else today — one entry per worker: ``node`` (who),
+    #: ``address``/``port`` (which wire), ``via_fabric`` and the ``reason``
+    #: that address was chosen. Empty on every other rank and every other
+    #: engine. The same list the ``--rpc`` flag was rendered from, so the
+    #: preview cannot disagree with the command.
+    rpc_endpoints: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -1057,6 +1064,12 @@ def _resolve_topology(node_list: list[str], warnings: list[str]) -> Topology:
             NodeInfo(
                 host=address,
                 ip=address,
+                # Only a verified fabric apply writes these, so an empty tuple
+                # means "this control plane has not configured a fabric
+                # address on that machine" — never a guess about cabling. An
+                # engine that can use a second wire reads them; nothing else
+                # about the launch changes.
+                fabric_addresses=tuple(record.fabric_addresses),
                 eth_if=record.ethernet_interface,
                 # NCCL_IB_HCA takes a comma-separated selector list, which is
                 # the order discovery reported the fabric ports in. It holds
@@ -1251,6 +1264,19 @@ def plan(
     shm_size = float(profile.get("shm_size_gb") or config.docker_shm_size_gb)
     privileged = bool(profile.get("privileged", True))
 
+    # Which wire the head will dial each worker on. Empty for the rendezvous
+    # engines and for a solo launch; llama.cpp over RPC is the one that picks.
+    rpc_endpoints = engine_obj.rpc_endpoints(topology)
+    fell_back = [e for e in rpc_endpoints if not e.get("via_fabric")]
+    if fell_back:
+        warnings.append(
+            "RPC traffic will take the registered address for "
+            + ", ".join(str(e["node"]) for e in fell_back)
+            + ", not the ConnectX fabric: "
+            + "; ".join(str(e["reason"]) for e in fell_back)
+            + ". Every activation tensor of every token crosses that link"
+        )
+
     rank_plans: list[RankPlan] = []
     for rank, launch in enumerate(ranks):
         metadata = ContainerMetadata(
@@ -1279,6 +1305,7 @@ def plan(
                 command=launch.command,
                 script=launch.script,
                 is_head=rank == 0,
+                rpc_endpoints=list(rpc_endpoints) if rank == 0 else [],
                 container=ContainerSpec(
                     image=image_ref,
                     name=rank_container_name(dep_id, rank, generation),
@@ -1536,6 +1563,122 @@ def probe_ready(url: str, timeout: float = 3.0) -> bool:
     except Exception:
         return False
     return response.status_code < 400
+
+
+#: How long a head waits for its RPC workers to start listening, and how
+#: often it asks. Ninety seconds is a container start plus a binary that binds
+#: a socket before it does anything else; a second between asks is cheap
+#: against the alternative, which is a run that quietly uses one GPU.
+RPC_READY_TIMEOUT = 90.0
+RPC_READY_INTERVAL = 1.0
+#: A worker one hop away either answers this connect or is not up yet.
+RPC_PROBE_TIMEOUT = 2.0
+
+
+def rpc_listening(address: str, port: int, timeout: float = RPC_PROBE_TIMEOUT) -> bool:
+    """Whether a worker's RPC server is accepting connections yet.
+
+    The *registered* address is probed, not the fabric one the head will dial:
+    the control plane can always reach a node at the address it is registered
+    at — that is what registration means — while the fabric is a wire between
+    two peers that this machine may not be on at all. What is being answered
+    here is "has ``ggml-rpc-server`` bound its socket", and a bound socket is
+    bound on every interface (``-H 0.0.0.0``).
+
+    Simulation has no server to bind anything, and the mock container service
+    is already pretending the rest of the lifecycle worked, so the probe
+    succeeds there — the same short-circuit :func:`probe_ready` makes.
+    """
+    if tools.is_simulation():
+        return True
+    try:
+        with socket.create_connection((address, int(port)), timeout=timeout):
+            return True
+    except OSError as exc:
+        logger.debug("RPC port %s on %s is not open yet: %s", port, address, exc)
+        return False
+
+
+def _wait_rpc_workers(
+    services: Callable[[str], Any],
+    plan_obj: DeployPlan,
+    timeout: float | None = None,
+    interval: float | None = None,
+    probe: Callable[[str, int], bool] | None = None,
+) -> None:
+    """Hold rank zero back until every worker's RPC port answers.
+
+    Ordering is not enough, and a real two-node Bonsai run is what says so:
+    the worker container and the head started in the same second, the head
+    dialled ``--rpc …:50052`` 0.27s later, got *Failed to connect* for every
+    endpoint — and llama.cpp **carried on**. An unreachable RPC device is an
+    absent device to it, so the model loaded onto the head's own GPU and
+    served from one machine while the record said two. Nothing failed, which
+    is the whole problem: the only evidence was a token rate.
+
+    So the gang's head is launched against evidence rather than against a
+    sequence. A worker that never listens fails the deploy, named, instead of
+    becoming a run that is quietly half the cluster. A worker whose container
+    has already exited fails immediately — waiting out the deadline for a
+    container that is gone tells nobody anything.
+
+    Only for an engine whose workers are the servers: no
+    :attr:`DeployPlan.rpc_port`, nothing to wait for.
+    """
+    port = plan_obj.rpc_port
+    if not port or plan_obj.node_count <= 1:
+        return
+    timeout = RPC_READY_TIMEOUT if timeout is None else timeout
+    interval = RPC_READY_INTERVAL if interval is None else interval
+    check = probe or rpc_listening
+    pending = [r for r in plan_obj.rank_plans if not r.is_head]
+    deadline = time.monotonic() + timeout
+    while True:
+        waiting: list[RankPlan] = []
+        for rank_plan in pending:
+            address = rank_plan.node or rank_plan.host
+            if check(address, int(port)):
+                logger.info(
+                    "rank %s of %s is listening on %s:%s",
+                    rank_plan.rank,
+                    plan_obj.deployment_id,
+                    address,
+                    port,
+                )
+                continue
+            docker = services(rank_plan.node)
+            name = rank_plan.container.name
+            try:
+                status = docker.get_container_status(name)
+            except Exception as exc:  # a node that stopped answering
+                logger.debug("could not check rank %s: %s", rank_plan.rank, exc)
+                status = {}
+            if status and not status.get("running"):
+                raise NativeRuntimeError(
+                    f"container {name} on {rank_plan.node or 'this machine'} "
+                    f"exited before it began serving RPC on port {port} "
+                    f"({status.get('status')}). Last log lines:\n"
+                    f"{logs_for_container(docker, name, 50)}"
+                )
+            waiting.append(rank_plan)
+        if not waiting:
+            return
+        pending = waiting
+        if time.monotonic() >= deadline:
+            named = ", ".join(
+                f"{r.node or r.host} (rank {r.rank})"
+                for r in sorted(pending, key=lambda r: r.rank)
+            )
+            raise NativeRuntimeError(
+                f"{named} did not accept a connection on RPC port {port} "
+                f"within {timeout:g}s, so rank zero was not started. llama.cpp "
+                "treats an RPC device it cannot reach as one that is not "
+                "there: a head launched now would load the whole model onto "
+                "its own GPU and serve from one machine while this record "
+                "said several. Check that the worker's container is running "
+                f"and that port {port} is reachable from the control plane"
+            )
+        time.sleep(interval)
 
 
 def _wait_ready(
@@ -2366,6 +2509,13 @@ def start(
             return _cancelled()
 
         for rank_plan in plan_obj.start_order():
+            # Workers first, then the head — and for an engine whose workers
+            # are the servers, not merely after them but after they answer.
+            if rank_plan.is_head:
+                try:
+                    _wait_rpc_workers(services, plan_obj)
+                except NativeRuntimeError as exc:
+                    return _abort(rank_plan, exc, "launch")
             try:
                 _launch_rank(services(rank_plan.node), plan_obj, rank_plan)
             except NativeRuntimeError as exc:

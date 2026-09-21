@@ -223,6 +223,15 @@ class NodeInfo:
     #: NCCL settings a single-cable fabric must not get; see
     #: :data:`~spark_pulse.tools.discovery.MESH_NCCL_ENV`.
     mesh: bool = False
+    #: Every address this machine holds on the ConnectX fabric, as a *verified*
+    #: fabric apply read them back and wrote them onto its registry record
+    #: (``routers/fabric.py::_pin_record``). Empty means no apply has verified
+    #: one, never that a cable is absent — the control plane does not guess a
+    #: fabric address, it reports the one it configured. A launch that names a
+    #: node still names :meth:`address`; this is the second, faster wire, for
+    #: the one kind of traffic that is worth moving onto it (see
+    #: :func:`spark_pulse.engines.llama_cpp.rpc_endpoint`).
+    fabric_addresses: tuple[str, ...] = ()
 
     def address(self) -> str:
         return self.ip or self.host
@@ -393,6 +402,18 @@ class Engine:
         engine that answers with a port.
         """
         return None
+
+    def rpc_endpoints(self, topology: Topology) -> list[dict[str, Any]]:
+        """Which address the head will dial each worker on, and why that one.
+
+        Empty for every engine that forms a rendezvous: there the ranks find
+        each other at the addresses they are named by, and there is no second
+        choice to report. llama.cpp's RPC style is the one that chooses — see
+        :func:`spark_pulse.engines.llama_cpp.rpc_endpoint` — and the plan
+        carries what it answers on rank zero so the choice is visible before
+        the deploy rather than inferred from a token rate afterwards.
+        """
+        return []
 
     def supports_mods(self) -> bool:
         return bool(self.spec.capabilities.mods)
