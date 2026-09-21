@@ -48,6 +48,19 @@ __all__ = [
 #: diagnostic that names it is the whole reason identity is a minted id.
 _SHARED_MACHINE_ID = "0f5c9e1a7b2d43c8a6e0f1928374b5c6"
 
+#: The fabric addresses a verified apply would have written onto each seeded
+#: node — ``NETWORKING.md``'s scheme, one ``/24`` per cable with ``.11`` for
+#: the first node and ``.12`` for the second (``fabric_plan.plan_fabric``
+#: renders exactly these). They are seeded because the choice they drive is
+#: invisible without them: a simulated fleet whose nodes hold no fabric
+#: address can only ever demonstrate the fallback, and the registered
+#: addresses here are deliberately a different network — the management NIC,
+#: which is what the real pair's Wi-Fi is.
+_FABRIC = {
+    "192.168.1.100": ("192.168.177.11", "192.168.178.11"),
+    "10.0.0.11": ("192.168.177.12", "192.168.178.12"),
+}
+
 _nodes: list[NodeRecord] = []
 
 
@@ -60,6 +73,7 @@ def _seed() -> list[NodeRecord]:
             is_control_plane=True,
             ethernet_interface="eth0",
             infiniband_interfaces=(),
+            fabric_addresses=_FABRIC["192.168.1.100"],
             state="healthy",
             last_seen="2026-09-04T09:00:00+00:00",
             machine_id=_SHARED_MACHINE_ID,
@@ -71,6 +85,7 @@ def _seed() -> list[NodeRecord]:
             ssh_user="spark",
             ethernet_interface="eth0",
             infiniband_interfaces=("ib0", "ib1"),
+            fabric_addresses=_FABRIC["10.0.0.11"],
             state="unknown",
             last_seen="2026-09-04T08:41:00+00:00",
             machine_id=_SHARED_MACHINE_ID,

@@ -301,10 +301,12 @@ class TestShapesAndPinning:
         peer = next(n for n in body["nodes"] if n["node_id"] == PEER_ID)
         assert peer["mode"] == "dual"
         assert peer["ib_hca"] == "rocep1s0f0,rocep1s0f1,roceP2p1s0f0,roceP2p1s0f1"
+        # The simulated registry seeds the addresses a verified apply would
+        # have recorded on this pair; nothing in this request wrote them.
         assert peer["pinned"] == {
             "ethernet_interface": "eth0",
             "infiniband_interfaces": ["ib0", "ib1"],
-            "fabric_addresses": [],
+            "fabric_addresses": ["192.168.177.12", "192.168.178.12"],
             "fabric_mode": "",
         }
 
