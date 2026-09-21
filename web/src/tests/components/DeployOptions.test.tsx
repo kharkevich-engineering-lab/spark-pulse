@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import DeployOptions, {
   deployParams,
   describeImagePresence, describeModelPresence,
+  describeModelSource,
   describeOccupancy,
   eligibleEngines,
   engineChoices,
@@ -1098,5 +1099,85 @@ describe("DeployOptions when the form's own lookups fail", () => {
     await user.click(ticked);
 
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ nodes: undefined }));
+  });
+});
+
+describe("describeModelSource", () => {
+  const PATH = "/home/spark/.cache/huggingface/hub/models--a--b/snapshots/r/m.gguf";
+
+  it("names the cache and the file, because the path is the evidence", () => {
+    expect(describeModelSource({ model_source: "hf-cache", model_path: PATH }, EN)).toBe(
+      `the model cache on the node · ${PATH}`,
+    );
+  });
+
+  it("says the engine will fetch its own copy when nothing was resolved", () => {
+    expect(describeModelSource({ model_source: "engine-download", model_path: "" }, EN)).toBe(
+      "the engine fetches its own copy",
+    );
+  });
+});
+
+describe("DeployOptions model source", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(fetchEngines).mockResolvedValue({ engines: [engine("vllm")] } as never);
+    vi.mocked(fetchModels).mockResolvedValue([] as never);
+    vi.mocked(fetchNodes).mockResolvedValue([CONTROL_NODE]);
+  });
+
+  async function preview() {
+    render(<DeployOptions recipe={V1_RECIPE} value={{ engine: "vllm" }} onChange={vi.fn()} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /deploy options/i }));
+    await user.click(screen.getByRole("button", { name: /preview/i }));
+  }
+
+  it("shows the resolved file when the node already holds it", async () => {
+    vi.mocked(planDeployment).mockResolvedValue({
+      ...PLAN,
+      model: "PrismML/Bonsai-2-27B-GGUF",
+      model_source: "hf-cache",
+      model_path: "/home/spark/.cache/huggingface/hub/models--a--b/snapshots/r/m.gguf",
+    } as never);
+
+    await preview();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("deploy-plan-model-source")).toHaveTextContent("m.gguf"),
+    );
+  });
+
+  it("says so when the engine will download a second copy", async () => {
+    vi.mocked(planDeployment).mockResolvedValue({
+      ...PLAN,
+      model: "PrismML/Bonsai-2-27B-GGUF",
+      model_source: "engine-download",
+      model_path: "",
+    } as never);
+
+    await preview();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("deploy-plan-model-source")).toHaveTextContent(
+        "fetches its own copy",
+      ),
+    );
+  });
+
+  /** Every other engine reads the snapshot the catalogue lists, so there is no
+   *  choice to report and a row claiming one would be noise. */
+  it("says nothing for an engine that is handed a model id", async () => {
+    vi.mocked(planDeployment).mockResolvedValue({
+      ...PLAN,
+      model: "Qwen/Qwen3-8B",
+      model_source: "",
+      model_path: "",
+    } as never);
+
+    await preview();
+
+    await waitFor(() => expect(screen.getByText(/preview/i)).toBeInTheDocument());
+    expect(screen.queryByTestId("deploy-plan-model-source")).toBeNull();
   });
 });

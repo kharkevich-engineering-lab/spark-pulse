@@ -1218,7 +1218,12 @@ class TestLlamaCppSpansNodesOverRpc:
         plan = self.plan()
 
         head, worker = plan.ranks
-        assert head["command"].startswith("llama-server --metrics -hf ")
+        # ``-m``, not ``-hf``: the simulated node holds the GGUF, so the
+        # control plane hands the head the file it already has rather than
+        # letting llama-server fetch a second copy of it.
+        assert head["command"].startswith("llama-server --metrics -m ")
+        assert ".gguf --host 0.0.0.0" in head["command"]
+        assert plan.model_source == "hf-cache"
         assert f"--rpc {FABRIC[PEERS[0]][0]}:50052" in head["command"]
         assert worker["command"] == "ggml-rpc-server -H 0.0.0.0 -p 50052"
         assert [r["node_rank"] for r in plan.ranks] == [0, 1]

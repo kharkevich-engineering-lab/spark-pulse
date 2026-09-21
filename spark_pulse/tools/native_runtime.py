@@ -115,6 +115,13 @@ CONTAINER_PREFIX = "spark-pulse-"
 CONTAINER_HOME = "/home/spark"
 HF_CACHE_IN_CONTAINER = CONTAINER_HOME + "/.cache/huggingface"
 
+#: Where the model an engine serves came from, on a plan and on every rank
+#: that loads one. Only engines that would otherwise fetch their own copy
+#: carry either value — see :meth:`Engine.resolves_model_file`; the rest carry
+#: neither, because "the engine read the cache" is not a choice anybody made.
+MODEL_SOURCE_CACHE = "hf-cache"
+MODEL_SOURCE_ENGINE = "engine-download"
+
 #: Who the engine container runs as. Resolved on the node — see
 #: :func:`spark_pulse.tools.docker.resolve_user` — because the control plane
 #: cannot know a peer's uid.
@@ -307,6 +314,14 @@ class RankPlan:
     #: engine. The same list the ``--rpc`` flag was rendered from, so the
     #: preview cannot disagree with the command.
     rpc_endpoints: list[dict[str, Any]] = field(default_factory=list)
+    #: :data:`MODEL_SOURCE_CACHE` when this rank was handed a file out of the
+    #: mounted Hugging Face cache, :data:`MODEL_SOURCE_ENGINE` when the engine
+    #: will fetch its own copy, and empty for every rank that does not load a
+    #: model — an RPC worker — and every engine that is handed a model id.
+    model_source: str = ""
+    #: The file that rank loads, as the container sees it. Set only alongside
+    #: :data:`MODEL_SOURCE_CACHE`.
+    model_path: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -359,6 +374,11 @@ class DeployPlan:
     #: missing model; this is how the preview says so before the deploy
     #: that would not.
     model_present: bool = True
+    #: The head rank's :attr:`RankPlan.model_source` and
+    #: :attr:`RankPlan.model_path`, hoisted so the preview can say where the
+    #: bytes come from without walking the ranks.
+    model_source: str = ""
+    model_path: str = ""
     workdir: str = ""
     warnings: list[str] = field(default_factory=list)
     runtime: str = RUNTIME_NAME
@@ -782,6 +802,93 @@ def _resolve_model(
     return resolved, True
 
 
+def _container_cache_path(host_path: str) -> str:
+    """A path inside this machine's Hugging Face cache, as the engine sees it.
+
+    Composed from the host path *relative to* ``HF_HOME`` rather than by
+    reassembling the hub layout a second time, so the one thing that has to
+    hold — that ``HF_HOME`` is bind-mounted at
+    :data:`HF_CACHE_IN_CONTAINER` — is the only thing assumed. A path that is
+    not under the cache is left to the generic home rewrite, which is what
+    every other mount goes through.
+    """
+    hf_home = _hf_home()
+    if host_path == hf_home or host_path.startswith(hf_home.rstrip("/") + "/"):
+        return f"{HF_CACHE_IN_CONTAINER}/{os.path.relpath(host_path, hf_home)}"
+    return _container_path(host_path)
+
+
+def _resolve_model_file(
+    engine_obj: Engine,
+    recipe: dict[str, Any],
+    model_id: str,
+    model_present: bool,
+    node_address: str,
+    services: Callable[[str], Any],
+    warnings: list[str],
+) -> tuple[str, str]:
+    """The file the engine is handed, and where those bytes come from.
+
+    Only for an engine that would otherwise fetch its own copy — llama.cpp,
+    whose ``-hf`` downloads the GGUF into ``LLAMA_CACHE`` beside the one the
+    control plane put in the Hugging Face cache, replicated to every node and
+    then ignored. Every other engine reads the snapshot the catalogue lists,
+    so being handed the id *is* being handed the file.
+
+    Two questions, and they are asked of two different things. *Which file* is
+    the engine's, and it is pure: :meth:`Engine.choose_model_file` reads the
+    recipe's ``--hf-file`` against the names the node answered with. *Is it
+    there* is the node's, asked through its own agent (``ListSnapshot``) — the
+    node the rank that loads the model runs on, which for an RPC gang is the
+    head and only the head, because a worker loads nothing.
+
+    Nothing here is a refusal. A file that cannot be resolved — an unreadable
+    node, a snapshot without it, a repository holding several packings and a
+    recipe naming none — leaves ``-hf`` exactly as it was and says so as a
+    plan warning, because a slow deploy is better than a refused one and the
+    operator is the one who can tell which they have.
+    """
+    if not engine_obj.resolves_model_file() or not model_id:
+        return "", ""
+    where = node_address or "this node"
+    if not model_present:
+        # `_resolve_model` has already warned that the model is not in the
+        # catalogue. There is no snapshot to look inside, and saying so twice
+        # would not add anything.
+        return "", MODEL_SOURCE_ENGINE
+
+    repo_dir = f"{tools.models.hub_dir()}/{tools.models.repo_dir_name(model_id)}"
+    try:
+        entry = tools.models.get_model(model_id) or {}
+        revision = str(entry.get("revision") or "")
+        listing = services(node_address).list_snapshot(repo_dir, revision, False)
+    except Exception as exc:  # noqa: BLE001 — a node that cannot be asked
+        logger.debug("could not list %s on %s: %s", model_id, where, exc)
+        warnings.append(
+            f"could not ask {where} whether it holds the model files for "
+            f"'{model_id}' ({exc}), so the engine will resolve the model "
+            "itself and download its own copy"
+        )
+        return "", MODEL_SOURCE_ENGINE
+
+    # A dangling symlink is not a file: a snapshot copied without its blobs
+    # lists every name and resolves none of them.
+    files = [f.path for f in listing.files if f.resolved] if listing.present else []
+    chosen, reason = engine_obj.choose_model_file(recipe, files)
+    if not chosen:
+        warnings.append(
+            f"the model file for '{model_id}' was not resolved on {where} "
+            f"({reason}), so the engine will download its own copy into its "
+            "cache, beside the one the control plane already holds"
+        )
+        return "", MODEL_SOURCE_ENGINE
+    commit = listing.revision or revision
+    return (
+        _container_cache_path(f"{repo_dir}/snapshots/{commit}/{chosen}"),
+        MODEL_SOURCE_CACHE,
+    )
+
+
 def _container_profile(engine_obj: Engine) -> dict[str, Any]:
     """Engine profile with the user's ``docker:`` block layered on top."""
     profile = dict(engine_obj.container_profile())
@@ -1176,12 +1283,20 @@ def plan(
     name: str = "",
     deployment_id: str | None = None,
     allow_missing_model: bool = False,
+    services: Callable[[str], Any] | None = None,
 ) -> DeployPlan:
     """Resolve a deployment without starting anything.
 
     Raises :class:`NativeRuntimeError` with an explained reason whenever the
     deployment cannot run — that is the whole point of the dry run.
+
+    ``services`` resolves a node address to its service, the same resolver the
+    deploy path takes. A plan asks one node one question through it — whether
+    the machine that will load the model already holds the file — so the
+    parameter exists for the same reason it does everywhere else here: a test
+    hands one in rather than the module reaching for a daemon.
     """
+    services = services or rank_services()
     registry = get_registry()
     recipe = tools.recipes.get_recipe(recipe_id)
     if recipe is None:
@@ -1240,6 +1355,18 @@ def plan(
     resolved_model, model_present = _resolve_model(
         recipe, model, allow_missing_model, warnings
     )
+    # The rank that loads the model is rank zero, on every engine: the RPC
+    # workers load nothing and a rendezvous rank reads its own shard from the
+    # same snapshot. So one node is asked, and it is the head's.
+    model_file, model_source = _resolve_model_file(
+        engine_obj,
+        recipe,
+        resolved_model,
+        model_present,
+        node_list[0] if node_list else "",
+        services,
+        warnings,
+    )
 
     mods = engine_obj.block_mods(recipe)
     if mods and not engine_obj.supports_mods():
@@ -1287,6 +1414,7 @@ def plan(
                 extra_args=extra_args or [],
                 topology=topology,
                 node_rank=rank,
+                model_file=model_file,
             )
             for rank in range(topology.size)
         ]
@@ -1351,6 +1479,8 @@ def plan(
                 script=launch.script,
                 is_head=rank == 0,
                 rpc_endpoints=list(rpc_endpoints) if rank == 0 else [],
+                model_source=model_source if rank == 0 else "",
+                model_path=model_file if rank == 0 else "",
                 container=ContainerSpec(
                     image=image_ref,
                     name=rank_container_name(dep_id, rank, generation),
@@ -1426,6 +1556,8 @@ def plan(
         image_present=image_present,
         image_size_bytes=image_size,
         model_present=model_present,
+        model_source=model_source,
+        model_path=model_file,
         warnings=warnings,
     )
 

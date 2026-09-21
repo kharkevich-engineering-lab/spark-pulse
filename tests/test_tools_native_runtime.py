@@ -107,6 +107,49 @@ V2_RECIPE = {
     "env": {},
 }
 
+#: llama.cpp is the one engine the control plane resolves a *file* for, so
+#: these describe a GGUF repository rather than a model id: the repository as
+#: the node's hub holds it, the revision the catalogue records, and the two
+#: shapes a snapshot comes in — one packing, or one per quantisation.
+GGUF_MODEL = "PrismML/Bonsai-2-27B-GGUF"
+GGUF_REV = "abc123def456"
+GGUF_REPO = "/home/user/.cache/huggingface/hub/models--PrismML--Bonsai-2-27B-GGUF"
+GGUF_FILE = (
+    "/home/spark/.cache/huggingface/hub/models--PrismML--Bonsai-2-27B-GGUF"
+    "/snapshots/abc123def456/bonsai-q4.gguf"
+)
+ONE_GGUF = [("README.md", 4096), ("bonsai-q4.gguf", 17_000_000_000)]
+MANY_GGUF = [*ONE_GGUF, ("bonsai-q8.gguf", 29_000_000_000)]
+
+LLAMA_RECIPE = {
+    "id": "bonsai-gguf",
+    "name": "Bonsai GGUF",
+    "model": GGUF_MODEL,
+    "recipe_version": "2",
+    "engine": "llama-cpp",
+    "container": "",
+    "command": "",
+    "defaults": {"port": 8080},
+    "mods": [],
+    "env": {},
+}
+
+#: The same recipe naming which packing it wants, which is the only place a
+#: packing is ever named.
+LLAMA_SELECTED = {
+    **LLAMA_RECIPE,
+    "id": "bonsai-gguf-q8",
+    "args": "--hf-file bonsai-q8.gguf",
+}
+
+#: And one whose model is in no catalogue at all.
+LLAMA_MISSING = {
+    **LLAMA_RECIPE,
+    "id": "bonsai-gguf-missing",
+    "model": "PrismML/Never-Downloaded-GGUF",
+}
+
+
 RECIPES = {
     r["id"]: r
     for r in (
@@ -120,10 +163,21 @@ RECIPES = {
         V1_SOLO_ONLY,
         V1_CLUSTER_ONLY,
         V1_MIN_NODES,
+        LLAMA_RECIPE,
+        LLAMA_SELECTED,
+        LLAMA_MISSING,
     )
 }
 
-CATALOGUE = [{"id": "Qwen/Qwen3-8B", "source": "hf", "path": "/models/qwen3-8b"}]
+CATALOGUE = [
+    {"id": "Qwen/Qwen3-8B", "source": "hf", "path": "/models/qwen3-8b"},
+    {
+        "id": GGUF_MODEL,
+        "source": "hf",
+        "path": f"{GGUF_REPO}/snapshots/{GGUF_REV}",
+        "revision": GGUF_REV,
+    },
+]
 
 
 @pytest.fixture
@@ -2430,3 +2484,138 @@ class TestADeletedDeploymentStaysDeleted:
             "a record deleted while a background thread held a stale copy came "
             "back from the dead"
         )
+
+
+class TestLlamaCppModelSource:
+    """Where llama.cpp's bytes come from, decided before the deploy.
+
+    ``-hf`` makes ``llama-server`` fetch the GGUF itself, into a cache of its
+    own, beside the copy the control plane downloaded to satisfy its own
+    catalogue check and then replicated to every node. So the plan asks the
+    node that will load the model whether it already holds the file, and
+    renders ``-m`` when it does. The fallback is never a refusal: it is the
+    old command plus a warning saying what it will cost.
+    """
+
+    def node(self, files: list[tuple[str, int]] | None):
+        """A resolver for one simulated node holding ``files``, or nothing."""
+        service = MockDockerService(MockDockerClient())
+        service.snapshots = (
+            {} if files is None else {GGUF_REPO: {GGUF_REV: list(files)}}
+        )
+        return lambda _address: service
+
+    def test_a_snapshot_the_node_holds_is_served_as_a_path(self, native):
+        plan = native.plan("bonsai-gguf", services=self.node(ONE_GGUF))
+
+        assert plan.launch_command.startswith(f"llama-server --metrics -m {GGUF_FILE}")
+        assert plan.model_source == "hf-cache"
+        assert plan.model_path == GGUF_FILE
+        assert plan.rank_plans[0].model_source == "hf-cache"
+        assert plan.rank_plans[0].model_path == GGUF_FILE
+        assert [w for w in plan.warnings if "download its own copy" in w] == []
+
+    def test_the_path_is_the_cache_as_the_container_sees_it(self, native):
+        """Composed from the host path relative to HF_HOME, which is the one
+        thing the mount guarantees — not by reassembling the hub layout."""
+        plan = native.plan("bonsai-gguf", services=self.node(ONE_GGUF))
+
+        assert plan.model_path.startswith("/home/spark/.cache/huggingface/hub/")
+        assert plan.model_path.endswith("/snapshots/abc123def456/bonsai-q4.gguf")
+
+    def test_the_recipes_hf_file_selects_and_is_then_dropped(self, native):
+        """It named the packing; leaving it in would send llama-server back to
+        the hub for the file it was just handed."""
+        plan = native.plan("bonsai-gguf-q8", services=self.node(MANY_GGUF))
+
+        assert plan.launch_command.endswith(
+            "/bonsai-q8.gguf --host 0.0.0.0 --port 8080"
+        )
+        assert "--hf-file" not in plan.launch_command
+        assert plan.model_source == "hf-cache"
+
+    def test_a_node_without_the_file_keeps_hf_and_the_plan_says_why(self, native):
+        plan = native.plan("bonsai-gguf-q8", services=self.node(None))
+
+        assert f"-hf {GGUF_MODEL}" in plan.launch_command
+        assert "--hf-file bonsai-q8.gguf" in plan.launch_command
+        assert plan.model_source == "engine-download"
+        assert plan.model_path == ""
+        warning = next(w for w in plan.warnings if "download its own copy" in w)
+        assert "does not hold" in warning
+
+    def test_several_ggufs_and_no_selector_is_llama_cpps_choice_and_warns(self, native):
+        plan = native.plan("bonsai-gguf", services=self.node(MANY_GGUF))
+
+        assert f"-hf {GGUF_MODEL}" in plan.launch_command
+        assert plan.model_source == "engine-download"
+        warning = next(w for w in plan.warnings if "download its own copy" in w)
+        assert "--hf-file" in warning
+
+    def test_a_dangling_symlink_is_not_a_file(self, native):
+        """A snapshot copied without its blobs lists every name and resolves
+        none of them, which is the whole reason the node is asked to *list*."""
+
+        def unresolved(_address):
+            service = MockDockerService(MockDockerClient())
+            service.snapshots = {GGUF_REPO: {GGUF_REV: list(ONE_GGUF)}}
+            listing = service.list_snapshot(GGUF_REPO, GGUF_REV, False)
+            for entry in listing.files:
+                entry.resolved = False
+            service.list_snapshot = lambda *a, **kw: listing
+            return service
+
+        plan = native.plan("bonsai-gguf", services=unresolved)
+
+        assert plan.model_source == "engine-download"
+        assert f"-hf {GGUF_MODEL}" in plan.launch_command
+
+    def test_a_node_that_cannot_be_asked_falls_back_and_names_itself(self, native):
+        """Unknown is not absent, and neither is a refusal: the deploy still
+        plans, on the engine's own resolution, with the reason attached."""
+
+        def unreachable(_address):
+            raise RuntimeError("no agent for 10.0.0.9")
+
+        plan = native.plan("bonsai-gguf", services=unreachable)
+
+        assert plan.model_source == "engine-download"
+        warning = next(w for w in plan.warnings if "could not ask" in w)
+        assert "no agent for 10.0.0.9" in warning
+
+    def test_a_model_that_is_not_in_the_catalogue_says_so_once(self, native):
+        """`_resolve_model` has already warned; there is no snapshot to look
+        inside and repeating it would add nothing."""
+        plan = native.plan(
+            "bonsai-gguf-missing",
+            allow_missing_model=True,
+            services=self.node(ONE_GGUF),
+        )
+
+        assert plan.model_present is False
+        assert plan.model_source == "engine-download"
+        assert [w for w in plan.warnings if "download its own copy" in w] == []
+
+    def test_an_engine_that_takes_a_model_id_carries_no_source_at_all(self, native):
+        """ "The engine read the cache" is not a choice anybody made, so vLLM's
+        plan says nothing rather than saying hf-cache."""
+        plan = native.plan("qwen3-8b", services=self.node(ONE_GGUF))
+
+        assert plan.model_source == ""
+        assert plan.model_path == ""
+        assert plan.rank_plans[0].model_source == ""
+
+    def test_only_the_rank_that_loads_the_model_carries_the_source(self, native):
+        """An RPC worker runs ggml-rpc-server and loads nothing."""
+        plan = native.plan(
+            "bonsai-gguf",
+            nodes=PAIR,
+            solo=False,
+            variant="prism",
+            services=self.node(ONE_GGUF),
+        )
+
+        head, worker = plan.rank_plans
+        assert head.model_source == "hf-cache" and head.model_path == GGUF_FILE
+        assert worker.model_source == "" and worker.model_path == ""
+        assert worker.command.startswith("ggml-rpc-server")

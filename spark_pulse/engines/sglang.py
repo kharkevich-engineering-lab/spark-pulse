@@ -70,6 +70,10 @@ class SglangEngine(Engine):
         extra_args: list[str] | None = None,
         topology: Topology | None = None,
         node_rank: int = 0,
+        # Accepted so every engine renders through one signature, and ignored:
+        # this engine is handed a model id and reads the same snapshot the
+        # catalogue lists, so there is no second copy to steer it away from.
+        model_file: str = "",
     ) -> LaunchScript:
         ok, reason = self.supports(recipe)
         if not ok:

@@ -723,6 +723,13 @@ export interface DeployPlan {
   /** Whether the model is in the local catalogue. A plan permits a missing
    *  model — this is how the preview can say so before the deploy refuses. */
   model_present: boolean;
+  /** Where the bytes the engine loads come from — `hf-cache` when the control
+   *  plane resolved a file inside the mounted cache, `engine-download` when
+   *  the engine will fetch its own copy. Empty for every engine that is handed
+   *  a model id, because that is nobody's choice to report. */
+  model_source: "" | "hf-cache" | "engine-download";
+  /** The resolved file, as the container sees it. Set only with `hf-cache`. */
+  model_path: string;
   warnings: string[];
   runtime: string;
   created_at: string;

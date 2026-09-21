@@ -411,3 +411,39 @@ def test_the_empty_address_is_this_machine():
 
     assert node_service.is_local_address("") is True
     assert node_service.node_for("").is_self is True
+
+
+def test_the_model_file_is_resolved_by_asking_the_node_that_will_load_it():
+    """Which files a machine holds is that machine's answer, not this one's.
+
+    llama.cpp is the one engine the control plane picks a *file* for, and the
+    obvious way to write it is to walk this host's hub cache — which is the
+    same mistake `tools.system` made about GPUs: right on a single-node
+    install, and quietly wrong on every other node, where it would render a
+    path into a snapshot that machine does not have. So the plan asks through
+    the node's own service (`ListSnapshot`), and the layout it composes the
+    container path from comes from `tools.models`, the allowlisted seam.
+    """
+    source = (TOOLS / "native_runtime.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    function = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "_resolve_model_file"
+    )
+
+    body = ast.get_source_segment(source, function) or ""
+
+    assert "list_snapshot" in body, (
+        "_resolve_model_file no longer asks the node what it holds. The "
+        "answer belongs to the machine that will load the model."
+    )
+    walks = [
+        name
+        for name in ("os.listdir", "os.walk", "glob.glob", "iterdir", "rglob")
+        if name in body
+    ]
+    assert walks == [], (
+        "_resolve_model_file reads this machine's filesystem "
+        f"({', '.join(walks)}). On a two-node deploy that is the wrong disk."
+    )

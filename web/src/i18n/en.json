@@ -578,6 +578,7 @@
     "onThisHost": "On this host",
     "model": "Model",
     "inCatalogue": "In the catalogue",
+    "servedFrom": "Served from",
     "port": "Port",
     "mods": "Mods",
     "command": "Command",
@@ -602,6 +603,8 @@
     "severalGb": "several GB",
     "modelHere": "downloaded",
     "modelMissing": "not downloaded — Deploy will offer to fetch it",
+    "sourceCache": "the model cache on the node",
+    "sourceEngineDownload": "the engine fetches its own copy",
     "nodeWord": {
       "one": "{count} node",
       "other": "{count} nodes"

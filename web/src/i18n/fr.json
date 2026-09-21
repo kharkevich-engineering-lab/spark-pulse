@@ -578,6 +578,7 @@
     "onThisHost": "Sur cet hôte",
     "model": "Modèle",
     "inCatalogue": "Dans le catalogue",
+    "servedFrom": "Servi depuis",
     "port": "Port",
     "mods": "Mods",
     "command": "Commande",
@@ -602,6 +603,8 @@
     "severalGb": "plusieurs Go",
     "modelHere": "téléchargé",
     "modelMissing": "non téléchargé — Déployer proposera de le récupérer",
+    "sourceCache": "le cache de modèles du nœud",
+    "sourceEngineDownload": "le moteur récupère sa propre copie",
     "nodeWord": {
       "one": "{count} nœud",
       "other": "{count} nœuds"

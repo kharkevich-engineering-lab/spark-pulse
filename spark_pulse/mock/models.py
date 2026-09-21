@@ -142,6 +142,36 @@ def _entry(
     }
 
 
+#: The GGUF repository this simulated cluster holds, the revision it holds it
+#: at, and the one file inside it. Named here rather than written inline so
+#: the catalogue entry, the snapshot every simulated node lists, and the tests
+#: that read the resolved path all say the same thing once.
+GGUF_MODEL = "PrismML/Bonsai-2-27B-GGUF"
+GGUF_REVISION = "e6f708192a3b4c5d6e7f8091a2b3c4d5e6f70819"
+GGUF_FILE = "Bonsai-2-27B-Q4_K_M.gguf"
+GGUF_SIZE = int(16.4 * GB)
+
+
+def simulated_snapshots() -> dict[str, dict[str, list[tuple[str, int]]]]:
+    """What every simulated node holds, in the shape ``ListSnapshot`` answers.
+
+    One repository, because this is about a code path rather than about a
+    plausible disk: the llama.cpp plan asks the node that will load the model
+    whether it holds the GGUF, and something has to be there for it to find.
+    Each ``MockDockerService`` takes its own copy — two simulated nodes are
+    two machines, and a removal on one must not empty the other.
+    """
+    repo = str(local_repo_path(GGUF_MODEL))
+    return {
+        repo: {
+            GGUF_REVISION: [
+                ("README.md", 4_096),
+                (GGUF_FILE, GGUF_SIZE),
+            ]
+        }
+    }
+
+
 _CATALOGUE: list[dict[str, Any]] = [
     _entry(
         "openai/gpt-oss-120b",
@@ -211,6 +241,21 @@ _CATALOGUE: list[dict[str, Any]] = [
         model_type="qwen3_moe",
         quantization=["activation_scheme", "fmt", "quant_method"],
         quantization_method="fp8",
+    ),
+    # The GGUF repository. llama.cpp is the one engine the control plane
+    # resolves a *file* for rather than handing over a repository id, so
+    # without a GGUF in the catalogue every simulated llama.cpp plan would
+    # only ever exercise the fallback — and the fallback is the path that
+    # downloads the model twice.
+    _entry(
+        GGUF_MODEL,
+        revision=GGUF_REVISION,
+        size_bytes=GGUF_SIZE,
+        days_ago=5,
+        architectures=["BonsaiForCausalLM"],
+        model_type="bonsai",
+        quantization=["quant_method"],
+        quantization_method="gguf",
     ),
     _entry(
         "local-team/internal-8b-sft",
