@@ -39,9 +39,16 @@ test("deploys a recipe, shows it on the Runs page and stops it", async ({ page, 
   expect(created, "the deploy should have created exactly one deployment").toHaveLength(1);
   const deployment = created[0];
   // The native runtime really starts a container — a simulated one, against
-  // the mock Docker service — so the deployment comes up running rather than
-  // sitting in a status nothing ever advances.
-  expect(deployment.status).toBe("running");
+  // the mock Docker service — so the deployment reaches running rather than
+  // sitting in a status nothing ever advances. Polled for rather than read
+  // once: "running" is written where readiness is *observed*, on the
+  // watcher's own thread, and the POST answers before that.
+  await expect
+    .poll(
+      async () => (await listDeployments(request)).find((d) => d.id === deployment.id)?.status,
+      { message: "the deployment should reach running" },
+    )
+    .toBe("running");
 
   await (await openNav(page)).getByRole("link", { name: "Runs" }).click();
   await expect(page.getByRole("heading", { name: "What is serving.", exact: true })).toBeVisible();
@@ -75,7 +82,11 @@ test("shows the log stream for a run", async ({ page, request }) => {
   });
   expect(created.ok(), "POST /api/deployments should succeed").toBeTruthy();
   const deployment = (await created.json()) as { id: string; status: string };
-  expect(deployment.status, "the native runtime starts a simulated container").toBe("running");
+  // "starting", not "running": the POST answers once the container is up and
+  // the launch script has been exec'd, and readiness is what writes running.
+  expect(deployment.status, "the native runtime starts a simulated container").toBe(
+    "starting",
+  );
 
   await gotoPage(page, "/jobs");
   const row = page.getByTestId(`deployment-${deployment.id}`);

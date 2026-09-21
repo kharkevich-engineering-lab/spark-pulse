@@ -626,6 +626,42 @@ def _update_record(deployment_id: str, **fields: Any) -> dict[str, Any] | None:
         return None
 
 
+#: What an error says when the code that wrote it did not. Nothing should
+#: ever read this — a record that does is a bug with a name on it, which is
+#: still better than the blank field it replaces.
+UNEXPLAINED_ERROR = (
+    "this deploy failed and nothing recorded why — please report it, and read "
+    "the run's logs for the engine's own last words"
+)
+
+
+def _error_text(message: Any) -> str:
+    """An error message that is never empty."""
+    return str(message or "").strip() or UNEXPLAINED_ERROR
+
+
+def _record_error(
+    deployment_id: str, message: Any, **fields: Any
+) -> dict[str, Any] | None:
+    """Move a record to ``error`` — the one state that has to say why.
+
+    Every path into ``error`` comes through here, and the same text goes onto
+    the record and onto the ``DEPLOYMENT_ERROR`` frame, so the stream and the
+    row cannot disagree about what happened. Twice on the cluster a record
+    ended in ``error`` with ``error_message: null`` and the reason was only in
+    ``docker logs``; an empty message is refused here rather than written.
+    """
+    text = _error_text(message)
+    publish_event(EventType.DEPLOYMENT_ERROR, deployment_id, text)
+    return _update_record(
+        deployment_id,
+        status="error",
+        error_message=text,
+        stopped_at=_now(),
+        **fields,
+    )
+
+
 def get_deployment(deployment_id: str) -> dict[str, Any] | None:
     """The persisted record for ``deployment_id``, native or not."""
     return next((r for r in _load_records() if r.get("id") == deployment_id), None)
@@ -1399,6 +1435,11 @@ def _record_from_plan(plan_obj: DeployPlan, status: str) -> dict[str, Any]:
         "status": status,
         "created_at": plan_obj.created_at,
         "started_at": None,
+        # When the engine was first *observed* serving. Not an inference from
+        # a running container: the container runs a keepalive and outlives the
+        # engine inside it, which is how a record read "running" in the list
+        # and "starting" in the detail over an engine that had already died.
+        "ready_at": None,
         "stopped_at": None,
         "error_message": None,
         "pid": None,
@@ -1565,6 +1606,127 @@ def probe_ready(url: str, timeout: float = 3.0) -> bool:
     return response.status_code < 400
 
 
+#: How many log lines an error message quotes back. Twenty is a llama.cpp or
+#: vLLM argument complaint plus the banner above it — enough to say why
+#: without turning a record's ``error_message`` into a log file. The rest is
+#: still there: a readiness failure does not tear the container down, so
+#: ``GET /api/deployments/{id}/logs`` still has the whole log.
+ERROR_LOG_LINES = 20
+
+#: What the liveness probe exits with when it could not find out. Any code
+#: that is neither "alive" (0) nor "no such process" (1) means the same
+#: thing; this is the one the probe chooses when the image has no ``pgrep``.
+PROBE_CANNOT_TELL = 111
+
+#: A bound on the probe, which is one ``pgrep`` in a container that is up.
+LIVENESS_PROBE_TIMEOUT = 10
+
+#: Characters an ERE gives a meaning to. ``pgrep -f`` takes an ERE and every
+#: pattern here is a literal — a path, a program name.
+_ERE_SPECIAL = frozenset(".[]\\()*+?{}|^$")
+
+#: Leading words that are not the program: ``env`` and its friends, and the
+#: ``VAR=value`` assignments a recipe may prefix its command with.
+_COMMAND_WRAPPERS = frozenset({"env", "exec", "nohup", "setsid", "stdbuf", "time"})
+
+
+def _ere_literal(text: str) -> str:
+    """``text`` as an ERE that matches nothing but itself."""
+    return "".join("\\" + ch if ch in _ERE_SPECIAL else ch for ch in text)
+
+
+def _self_excluding_pattern(text: str) -> str:
+    """An ERE matching ``text`` in *another* process's command line.
+
+    ``pgrep -f`` reads every command line in the namespace, and the shell
+    asking the question carries the pattern in its own — so a naive probe
+    finds itself and every serve process is alive forever. The first character
+    goes into a bracket expression: ``[l]lama-server`` matches
+    ``llama-server`` and does not match the literal ``[l]lama-server`` that
+    the probe's own command line holds.
+
+    A first character a bracket expression cannot carry falls back to the
+    plain literal, which self-matches — a probe that says "alive" when it
+    cannot tell, which is the direction that fails no deploy wrongly.
+    """
+    if not text:
+        return ""
+    head, rest = text[0], text[1:]
+    if not (head.isalnum() or head in "/_-"):
+        return _ere_literal(text)
+    return f"[{head}]{_ere_literal(rest)}"
+
+
+def serve_program(command: str) -> str:
+    """The program a rendered launch command actually runs.
+
+    ``pgrep -f`` matches a command line, and an engine's command line starts
+    with its program: ``llama-server``, ``ggml-rpc-server``, ``vllm``. Leading
+    environment assignments are skipped because they are not *in* a command
+    line at all — they are the environment — and a probe looking for
+    ``NCCL_DEBUG=INFO`` would find nothing and call a healthy engine dead.
+    """
+    try:
+        tokens = shlex.split(command)
+    except ValueError:  # an unbalanced quote in a recipe's template
+        tokens = command.split()
+    for token in tokens:
+        if token.startswith("-"):
+            continue
+        if "=" in token and not token.startswith("/"):
+            continue
+        if token in _COMMAND_WRAPPERS:
+            continue
+        return token
+    return ""
+
+
+def serve_process_alive(docker: Any, name: str, command: str) -> bool | None:
+    """Whether the process the launch script exec'd is still in the container.
+
+    The serve command is an ``exec`` inside a keepalive container, so the
+    container outlives it. On the two-node cluster ``llama-server`` exited at
+    t=0.4s on a flag llama.cpp had removed, the container stayed ``running``
+    with nothing listening on the port, and the only thing that eventually
+    noticed was the readiness deadline — minutes later, with no reason
+    attached. This is what notices within one poll instead.
+
+    The question is asked on the node, through that node's container service,
+    as one ``pgrep -f`` per poll. Two patterns, because bash may or may not
+    have replaced itself with the engine by the time we look: the launch
+    script's own path, and the program the script runs.
+
+    Three answers, and the third is the point. ``True`` is alive, ``False`` is
+    *no such process* — evidence, not inference — and ``None`` is a probe that
+    could not answer: an image without ``pgrep``, a node that stopped
+    replying, an agent that refused the exec. Only ``False`` fails a deploy.
+    """
+    patterns = [p for p in (_self_excluding_pattern(SCRIPT_PATH),) if p]
+    program = serve_program(command)
+    if program:
+        patterns.append(_self_excluding_pattern(program))
+    script = f"command -v pgrep >/dev/null 2>&1 || exit {PROBE_CANNOT_TELL}\n"
+    script += "".join(
+        f"pgrep -f {shlex.quote(pattern)} >/dev/null 2>&1 && exit 0\n"
+        for pattern in patterns
+    )
+    script += "exit 1\n"
+    try:
+        result = docker.exec_in_container(
+            name, ["bash", "-lc", script], timeout=LIVENESS_PROBE_TIMEOUT
+        )
+    except Exception as exc:
+        logger.debug("could not probe the serve process in %s: %s", name, exc)
+        return None
+    code = getattr(result, "returncode", None)
+    if code == 0:
+        return True
+    if code == 1:
+        return False
+    logger.debug("the serve-process probe in %s could not answer (%s)", name, code)
+    return None
+
+
 #: How long a head waits for its RPC workers to start listening, and how
 #: often it asks. Ninety seconds is a container start plus a binary that binds
 #: a socket before it does anything else; a second between asks is cheap
@@ -1681,18 +1843,87 @@ def _wait_rpc_workers(
         time.sleep(interval)
 
 
+def _exit_code_of(status: dict[str, Any]) -> int | None:
+    """Docker's exit code for a container that has stopped, when it gave one."""
+    state = status.get("state")
+    if not isinstance(state, dict):
+        return None
+    code = state.get("ExitCode", state.get("exit_code"))
+    return code if isinstance(code, int) else None
+
+
+def _log_tail(docker: Any, name: str) -> str:
+    """The container's last words, for an error that would otherwise have none."""
+    return logs_for_container(docker, name, ERROR_LOG_LINES)
+
+
+def _container_exit_message(
+    docker: Any, rank_plan: RankPlan, status: dict[str, Any]
+) -> str:
+    name = rank_plan.container.name
+    code = _exit_code_of(status)
+    coda = f" with exit code {code}" if code is not None else ""
+    return (
+        f"container {name} on {rank_plan.node or 'this machine'} "
+        f"exited before the engine became ready{coda} "
+        f"({status.get('status')}). Last log lines:\n{_log_tail(docker, name)}"
+    )
+
+
+def _serve_process_gone_message(docker: Any, rank_plan: RankPlan) -> str:
+    name = rank_plan.container.name
+    program = serve_program(rank_plan.command) or "the engine"
+    return (
+        f"the serve process in {name} on {rank_plan.node or 'this machine'} "
+        f"is gone: {program} exited before the engine became ready, and the "
+        "container is still up because what it runs is a keepalive — the "
+        f"engine is an exec inside it. Last log lines:\n{_log_tail(docker, name)}"
+    )
+
+
+def _readiness_deadline_message(
+    services: Callable[[str], Any], plan_obj: DeployPlan, timeout: int
+) -> str:
+    """Why the wait ended, with the engine's own last words attached.
+
+    A record that ends in ``error`` saying only that a deadline passed sends
+    the operator to ``docker logs`` on a machine they may not be sitting at.
+    Twice on the cluster that was the whole diagnosis — a refused flag, a
+    cache it could not write — and both were in the log the whole time.
+    """
+    head = plan_obj.head
+    message = (
+        f"engine did not become ready within {timeout}s at " f"{plan_obj.readiness_url}"
+    )
+    try:
+        tail = _log_tail(services(head.node), head.container.name)
+    except Exception as exc:  # pragma: no cover - a node that stopped answering
+        logger.debug("could not read the logs of %s: %s", head.container.name, exc)
+        return message
+    return f"{message}. Last log lines:\n{tail}" if tail.strip() else message
+
+
 def _wait_ready(
     services: Callable[[str], Any],
     plan_obj: DeployPlan,
     timeout: int,
     interval: float = 2.0,
 ) -> None:
-    """Poll rank zero's readiness, failing fast when any rank exits first.
+    """Poll rank zero's readiness, failing fast when a rank stops serving.
+
+    There are two ways to stop serving and until the Bonsai run only one was
+    watched. A rank's *container* exiting was. The serve process inside it
+    exiting was not — the engine is an ``exec`` in a keepalive container, and
+    the keepalive does not care — so a removed ``--draft-max`` killed
+    ``llama-server`` at t=0.4s and the deploy sat there until the readiness
+    deadline, minutes later, reporting a timeout against a container that had
+    been empty the whole time. Both are checked now, every poll.
 
     A worker that dies takes the gang with it, so every rank is watched even
     though only rank zero answers the readiness endpoint. A rank on a node we
-    cannot reach is *not* evidence of death — the exception is swallowed and
-    the deadline is what eventually decides.
+    cannot reach is *not* evidence of death: the status read's exception is
+    swallowed, :func:`serve_process_alive` answers ``None`` rather than
+    ``False``, and the deadline is what eventually decides.
     """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -1705,18 +1936,15 @@ def _wait_ready(
                 logger.debug("could not check rank %s: %s", rank_plan.rank, exc)
                 continue
             if not status.get("running"):
-                logs = logs_for_container(docker, name, 50)
                 raise NativeRuntimeError(
-                    f"container {name} exited before the engine "
-                    f"became ready ({status.get('status')}). "
-                    f"Last log lines:\n{logs}"
+                    _container_exit_message(docker, rank_plan, status)
                 )
+            if serve_process_alive(docker, name, rank_plan.command) is False:
+                raise NativeRuntimeError(_serve_process_gone_message(docker, rank_plan))
         if probe_ready(plan_obj.readiness_url):
             return
         time.sleep(interval)
-    raise NativeRuntimeError(
-        f"engine did not become ready within {timeout}s at " f"{plan_obj.readiness_url}"
-    )
+    raise NativeRuntimeError(_readiness_deadline_message(services, plan_obj, timeout))
 
 
 # ── Reaping, confirmation and teardown ───────────────────────────────────────
@@ -2388,16 +2616,17 @@ def start(
         orphans: list[dict[str, Any]] | None = None,
         final_logs: dict[str, str] | None = None,
     ) -> dict:
-        publish_event(EventType.DEPLOYMENT_ERROR, dep_id, message)
-        updated = _update_record(
+        updated = _record_error(
             dep_id,
-            status="error",
-            error_message=message,
-            stopped_at=_now(),
+            message,
             orphans=orphans or [],
             final_logs=final_logs or {},
         )
-        return updated or {**record, "status": "error", "error_message": message}
+        return updated or {
+            **record,
+            "status": "error",
+            "error_message": _error_text(message),
+        }
 
     # Nothing of an earlier attempt may still be alive when this one claims
     # the names and the GPUs.
@@ -2528,7 +2757,9 @@ def start(
         # marking stopped, and then these writes resurrecting it to "running"
         # over a gang that no longer exists.
         started = _now()
-        _update_record(dep_id, status="starting", started_at=started, warnings=warnings)
+        launched = _update_record(
+            dep_id, status="starting", started_at=started, warnings=warnings
+        )
         publish_event(
             EventType.DEPLOYMENT_SERVING,
             dep_id,
@@ -2537,7 +2768,12 @@ def start(
         )
 
         if not wait:
-            return _update_record(dep_id, status="running") or record
+            # Still "starting". The script has been exec'd and nothing has
+            # answered yet, and writing "running" here is what made the list
+            # say running while the detail said starting — over a container
+            # whose engine had exited 0.4s in. Readiness is written where it
+            # is observed, which on this path is `create_deployment._watch`.
+            return launched or record
 
     # Readiness is awaited without the lock, so a stop can interrupt a starting
     # deployment. Each terminal write then re-checks teardown under the lock: a
@@ -2561,7 +2797,12 @@ def start(
             f"{plan_obj.recipe_id} is serving on port {plan_obj.port}",
             {"port": plan_obj.port, "readiness_url": plan_obj.readiness_url},
         )
-        return _update_record(dep_id, status="running", error_message=None) or record
+        return (
+            _update_record(
+                dep_id, status="running", ready_at=_now(), error_message=None
+            )
+            or record
+        )
 
 
 def create_deployment(
@@ -2614,22 +2855,23 @@ def create_deployment(
             # — would report one. Leave the teardown's verdict standing.
             if _is_torn_down(dep_id):
                 return
-            publish_event(EventType.DEPLOYMENT_ERROR, dep_id, str(exc))
+            _record_error(dep_id, exc)
+            return
+        # Readiness is observed here, so it is written here: this thread owns
+        # the record from the launch to the first answer, and until it wrote
+        # one the row said "running" from the moment the script was exec'd.
+        with _lifecycle_lock(dep_id):
+            if _is_torn_down(dep_id):
+                return
             _update_record(
-                dep_id,
-                status="error",
-                error_message=str(exc),
-                stopped_at=_now(),
+                dep_id, status="running", ready_at=_now(), error_message=None
             )
-            return
-        if _is_torn_down(dep_id):
-            return
-        publish_event(
-            EventType.DEPLOYMENT_READY,
-            dep_id,
-            f"{plan_obj.recipe_id} is serving on port {plan_obj.port}",
-            {"port": plan_obj.port},
-        )
+            publish_event(
+                EventType.DEPLOYMENT_READY,
+                dep_id,
+                f"{plan_obj.recipe_id} is serving on port {plan_obj.port}",
+                {"port": plan_obj.port},
+            )
 
     if _image_missing(services, plan_obj):
         record = persist_planned_record(plan_obj, "pulling")
@@ -2647,13 +2889,8 @@ def create_deployment(
                 # stalled pull became a deployment that downloaded forever.
                 logger.exception("the background start of %s failed", dep_id)
                 if not _is_torn_down(dep_id):
-                    message = f"the deploy of {dep_id} failed to start: {exc}"
-                    publish_event(EventType.DEPLOYMENT_ERROR, dep_id, message)
-                    _update_record(
-                        dep_id,
-                        status="error",
-                        error_message=message,
-                        stopped_at=_now(),
+                    _record_error(
+                        dep_id, f"the deploy of {dep_id} failed to start: {exc}"
                     )
                 return
             if started.get("status") in ("error", "stopped"):
@@ -2909,7 +3146,25 @@ def _derive_status(
         return "starting"
     if not container.get("running"):
         return "stopped"
-    return "running" if ready else "starting"
+    # A running container is not a running engine. The container runs a
+    # keepalive and the engine is an exec inside it, so "the container is up"
+    # answered *running* over a `llama-server` that had exited 0.4s in — while
+    # the list, which reads the row, still said starting. The verdict is
+    # readiness: observed now, or observed once and written down.
+    return "running" if (ready or _ever_ready(record)) else "starting"
+
+
+def _ever_ready(record: dict[str, Any]) -> bool:
+    """Whether this deployment was ever *observed* serving.
+
+    ``ready_at`` is written where readiness is seen — `start`'s terminal write
+    and `create_deployment._watch` — so it is evidence rather than inference.
+    A record adopted from a container this control plane did not start carries
+    none and never will: nothing watched it come up, its own row is all there
+    is, and the alternative is a list and a detail that disagree about it
+    forever.
+    """
+    return bool(record.get("ready_at") or record.get("reconciled"))
 
 
 def list_deployments(docker: Any | None = None) -> list[dict[str, Any]]:
@@ -2941,13 +3196,23 @@ def list_deployments(docker: Any | None = None) -> list[dict[str, Any]]:
     changed = False
 
     for record in native:
-        # "pulling" and "starting" are records mid-creation: their containers
-        # legitimately do not exist yet, and `start()` owns that transition
-        # under the lifecycle lock. Marking them "stopped" on the absence of a
-        # container that has not been created would race the creator into
-        # aborting itself — so this reconcile only judges records that should
-        # already have containers.
-        if record.get("status") in ("stopped", "error", "pulling", "starting"):
+        # "pulling" and a not-yet-launched "starting" are records mid-creation:
+        # their containers legitimately do not exist yet, and `start()` owns
+        # that transition under the lifecycle lock. Marking them "stopped" on
+        # the absence of a container that has not been created would race the
+        # creator into aborting itself — so this reconcile only judges records
+        # that should already have containers.
+        #
+        # `started_at` is what tells the two apart, and it is written in the
+        # same locked block as "starting", strictly after every rank has been
+        # created and launched. A record that stays "starting" now stays there
+        # for the whole readiness window — up to `deploy_ready_timeout_seconds`
+        # — because "running" is only written where readiness is observed, and
+        # a control plane that restarts inside that window takes the watcher
+        # with it. Without this, that record would say *starting* forever.
+        if record.get("status") in ("stopped", "error", "pulling"):
+            continue
+        if record.get("status") == "starting" and not record.get("started_at"):
             continue
         # Only ranks on the machine we just enumerated produce evidence. A
         # rank on a node we did not ask about says nothing either way, and
@@ -2980,6 +3245,9 @@ def list_deployments(docker: Any | None = None) -> list[dict[str, Any]]:
             "status": "running" if container.status == "running" else "stopped",
             "created_at": container.metadata.created_at or _now(),
             "started_at": container.metadata.created_at,
+            # Nothing watched this one start, so there is nothing to record;
+            # `_ever_ready` reads `reconciled` for exactly this case.
+            "ready_at": None,
             "stopped_at": None,
             "error_message": None,
             "pid": None,
