@@ -265,6 +265,34 @@ def has_customization(recipe_id: str) -> bool:
     return get_customization(recipe_id) is not None
 
 
+def get_customization_for(recipe: dict) -> dict | None:
+    """The stored overrides for a parsed recipe, under any id it has had.
+
+    Rows are keyed by recipe id, and an OCI recipe's id is its file stem — so
+    an install made before recipe ids were slugs was customized under an id
+    that the rename has since replaced. Asking by the current id alone would
+    report an operator's overrides as absent and deploy the recipe without
+    them. The row is left where it is and the old ids are asked for in turn,
+    because a rewrite that half-finished would lose the only copy.
+    """
+    stored = get_customization(recipe.get("id", ""))
+    if stored is not None:
+        return stored
+
+    from spark_pulse.tools import recipe_sources
+
+    for alias in recipe_sources.legacy_ids(recipe):
+        stored = get_customization(alias)
+        if stored is not None:
+            return stored
+    return None
+
+
+def has_customization_for(recipe: dict) -> bool:
+    """Whether a parsed recipe has overrides under any id it has had."""
+    return get_customization_for(recipe) is not None
+
+
 def get_customized_recipe(recipe_id: str) -> dict | None:
     """Load a recipe and merge any user customizations on top.
 
@@ -282,7 +310,9 @@ def get_customized_recipe(recipe_id: str) -> dict | None:
     if recipe is None:
         return None
 
-    customization = get_customization(recipe_id)
+    # By the recipe, not by the id asked for: an OCI recipe that was renamed
+    # to its slug is customized under the id it had before.
+    customization = get_customization_for(recipe)
     if not customization:
         return recipe
 

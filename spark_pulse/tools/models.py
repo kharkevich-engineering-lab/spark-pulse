@@ -485,13 +485,28 @@ def get_download(job_id: str) -> dict[str, Any] | None:
         return dict(job) if job else None
 
 
-def estimate_size(
+def _plan_files(
     model: str,
     source: dict[str, Any],
     revision: str | None = None,
     allow_patterns: list[str] | None = None,
-) -> int:
-    """Best-effort total download size from the hub API. 0 when unknown."""
+) -> list[dict[str, Any]]:
+    """The job's own file set: what the hub lists, narrowed by the patterns.
+
+    This is the difference between a download that can be stopped and one that
+    cannot. With a plan the worker fetches one file at a time and looks at the
+    cancel flag between them; without one it falls back to a single
+    ``snapshot_download`` that runs to completion whatever is asked of it.
+
+    It is also what ``bytes_done`` is counted against. The whole cache entry is
+    not this job's business — blobs a wider, earlier download left behind live
+    in the same directory, which is how a 7.2 GB filtered download came to
+    report 10.3 GB done.
+
+    Empty when the hub will not answer; the caller then takes the fallback.
+    ``fnmatch`` on the repo-relative path is the same rule
+    ``huggingface_hub`` filters ``allow_patterns`` by.
+    """
     try:
         from fnmatch import fnmatch
 
@@ -501,15 +516,33 @@ def estimate_size(
             endpoint=source.get("endpoint") or None, token=_source_token(source) or None
         )
         info = api.model_info(model, revision=revision, files_metadata=True)
-        total = 0
+        plan: list[dict[str, Any]] = []
         for sibling in getattr(info, "siblings", None) or []:
             name = getattr(sibling, "rfilename", "")
+            if not name:
+                continue
             if allow_patterns and not any(fnmatch(name, p) for p in allow_patterns):
                 continue
-            total += getattr(sibling, "size", None) or 0
-        return int(total)
+            plan.append(
+                {"path": name, "size": int(getattr(sibling, "size", None) or 0)}
+            )
+        return plan
     except Exception:
-        return 0
+        return []
+
+
+def _plan_bytes(plan: list[dict[str, Any]]) -> int:
+    return sum(int(entry.get("size") or 0) for entry in plan)
+
+
+def estimate_size(
+    model: str,
+    source: dict[str, Any],
+    revision: str | None = None,
+    allow_patterns: list[str] | None = None,
+) -> int:
+    """Best-effort total download size from the hub API. 0 when unknown."""
+    return _plan_bytes(_plan_files(model, source, revision, allow_patterns))
 
 
 def check_disk_space(estimated_bytes: int, target: Path | None = None) -> None:
@@ -535,25 +568,57 @@ def check_disk_space(estimated_bytes: int, target: Path | None = None) -> None:
 _ACTIVE_DOWNLOAD_STATES = ("queued", "running")
 
 
-def _active_download_for(
-    model: str, source: str | None, revision: str | None
-) -> dict[str, Any] | None:
-    """An unfinished job for this exact model, source and revision, if any.
+def _active_download_for(model: str) -> dict[str, Any] | None:
+    """An unfinished job for this model, whatever it was asked to fetch.
 
-    Keyed on all three because they are what decides *what lands on disk*: the
-    same name from a different mirror, or a different revision, is a different
-    download and must not be collapsed into one.
+    Keyed on the model alone because the model is what decides *which cache
+    entry is being written*: one ``models--org--name`` directory, one set of
+    ``.locks``, one blob store. Two jobs there are not two downloads whatever
+    revision or mirror they name.
     """
     with _jobs_lock:
         for job in _jobs.values():
             if (
                 job.get("status") in _ACTIVE_DOWNLOAD_STATES
                 and job.get("model") == model
-                and job.get("source") == source
-                and (job.get("revision") or None) == (revision or None)
             ):
                 return dict(job)
     return None
+
+
+def _same_request(
+    job: dict[str, Any],
+    source: str | None,
+    revision: str | None,
+    allow_patterns: list[str] | None,
+) -> bool:
+    """Whether a running job is fetching exactly what is being asked for."""
+    return (
+        job.get("source") == source
+        and (job.get("revision") or None) == (revision or None)
+        and list(job.get("allow_patterns") or []) == list(allow_patterns or [])
+    )
+
+
+class DownloadInProgress(RuntimeError):
+    """A *different* download of this model is already running.
+
+    Handing back the running job when the request is identical is right: it is
+    the same bytes into the same directory, and a deploy that offers to fetch a
+    missing model has to be safe to retry. Handing it back when the caller
+    asked for different files, a different revision or a different mirror is
+    answering a question nobody asked — an operator who cancelled a 68 GB
+    unfiltered download and started a filtered one would be handed the job they
+    were trying to get away from. That is a 409, naming the job to cancel.
+    """
+
+    def __init__(self, job: dict[str, Any]):
+        self.job = dict(job)
+        super().__init__(
+            f"{job.get('model')} is already downloading as job "
+            f"{job.get('id')}; cancel it before starting a different download "
+            "of the same model"
+        )
 
 
 def start_download(
@@ -572,20 +637,19 @@ def start_download(
             f"Source '{src.get('name')}' is a local path — nothing to download"
         )
 
-    # Already downloading? Hand back the job that is doing it.
+    # Already downloading? Two jobs for one model are not two downloads: they
+    # write into the same HuggingFace cache directory, so both fetch the same
+    # files, both report the size of that shared directory as their own
+    # progress, and cancelling one leaves the other running. What an operator
+    # sees is the same model listed twice at identical byte counts.
     #
-    # Two jobs for one model are not two downloads: `snapshot_download` writes
-    # into the same HuggingFace cache directory, so both fetch the same files,
-    # both report the size of that shared directory as their own progress, and
-    # cancelling one leaves the other running. What an operator sees is the
-    # same model listed twice at identical byte counts, which is exactly as
-    # confusing as it sounds.
-    #
-    # It matters more than a double click: a deploy that offers to fetch a
-    # missing model has to be safe to retry, and without this every retry
-    # starts another copy.
-    existing = _active_download_for(model, src.get("name"), revision)
+    # The same request gets the running job back — a deploy that offers to
+    # fetch a missing model has to be safe to retry. A *different* one gets a
+    # refusal instead: see ``DownloadInProgress``.
+    existing = _active_download_for(model)
     if existing is not None:
+        if not _same_request(existing, src.get("name"), revision, allow_patterns):
+            raise DownloadInProgress(existing)
         logger.info(
             "download of %s is already %s (job %s); returning it rather than "
             "starting a second",
@@ -595,7 +659,8 @@ def start_download(
         )
         return existing
 
-    estimated = estimate_size(model, src, revision, allow_patterns)
+    plan = _plan_files(model, src, revision, allow_patterns)
+    estimated = _plan_bytes(plan)
     check_disk_space(estimated)
 
     job_id = uuid.uuid4().hex[:12]
@@ -609,6 +674,7 @@ def start_download(
         "status": "queued",
         "bytes_done": 0,
         "bytes_total": estimated,
+        "files_total": len(plan),
         "current_file": None,
         "path": None,
         "error": None,
@@ -621,17 +687,99 @@ def start_download(
         snapshot = dict(job)
     _publish_job(EVENT_QUEUED, snapshot)
 
+    # The plan travels as a thread argument rather than on the job: it is
+    # thirty paths of bookkeeping, and the job is what every SSE frame and
+    # every `/api/models/downloads` response carries.
     thread = threading.Thread(
-        target=_run_download, args=(job_id, src), name=f"model-dl-{job_id}", daemon=True
+        target=_run_download,
+        args=(job_id, src, plan),
+        name=f"model-dl-{job_id}",
+        daemon=True,
     )
     thread.start()
     return snapshot
 
 
-def _progress_monitor(job_id: str, repo_path: Path, stop: threading.Event) -> None:
-    """Poll the repo directory size and publish progress events."""
+class _DownloadCancelled(Exception):
+    """The operator asked this job to stop, and the loop between files did."""
+
+
+class _PlanProgress:
+    """How much of *this job's* file set has landed.
+
+    The whole-directory poll this replaces counted every byte in the cache
+    entry, blobs a wider earlier download left behind included: cancel an
+    unfiltered 68 GB job, start a filtered 7.2 GB one into the same directory,
+    and the new job reports 10.3 GB of 7.2 GB done. Here nothing outside the
+    plan is counted and no file counts for more than its own size, so
+    ``bytes_done`` cannot pass ``bytes_total`` — including on a resume, where
+    the bytes were already there when the job started.
+    """
+
+    def __init__(self, entries: list[dict[str, Any]]):
+        self.entries = list(entries)
+        self.total = _plan_bytes(self.entries)
+        self._lock = threading.Lock()
+        self._done = 0
+        self._current = 0
+
+    @property
+    def done(self) -> int:
+        with self._lock:
+            return self._done
+
+    def begin(self, expected: int) -> None:
+        """A file is in flight, and it weighs this much in the plan."""
+        with self._lock:
+            self._current = max(0, expected)
+
+    def finish(self, landed: int) -> None:
+        with self._lock:
+            self._done += max(0, landed)
+            self._current = 0
+
+    def bytes_done(self, repo_path: Path) -> int:
+        """Finished files, plus what the file in flight has landed so far."""
+        with self._lock:
+            done, current = self._done, self._current
+        if current:
+            done += min(_incomplete_bytes(repo_path), current)
+        return min(done, self.total) if self.total else done
+
+
+def _incomplete_bytes(repo_path: Path) -> int:
+    """The largest half-written blob under the entry, or 0.
+
+    ``hf_hub_download`` writes into ``blobs/<hash>.incomplete`` and renames on
+    success, so this is how far the file in flight has got — and, on a resume,
+    what a cancelled job already fetched of it. The largest rather than the
+    sum: a leftover from some earlier cancelled file is still sitting there,
+    and counting both would report bytes twice.
+    """
+    try:
+        return max(
+            (
+                path.stat().st_size
+                for path in (repo_path / "blobs").glob("*.incomplete")
+            ),
+            default=0,
+        )
+    except OSError:
+        return 0
+
+
+def _progress_monitor(
+    job_id: str,
+    repo_path: Path,
+    stop: threading.Event,
+    plan: _PlanProgress | None = None,
+) -> None:
+    """Poll how far the job has got and publish progress events."""
     while not stop.wait(_PROGRESS_INTERVAL):
-        size, _ = _dir_stats(repo_path)
+        if plan is not None:
+            size = plan.bytes_done(repo_path)
+        else:
+            size, _ = _dir_stats(repo_path)
         job = _set_job(job_id, bytes_done=size)
         if job is None or job.get("status") != "running":
             return
@@ -662,7 +810,118 @@ def _download_error(exc: BaseException) -> str:
     )
 
 
-def _run_download(job_id: str, source: dict[str, Any]) -> None:
+def _snapshot_root(local_file: str, rel_path: str) -> str:
+    """``…/snapshots/<commit>`` from one file inside it and its repo path."""
+    root = local_file
+    for _ in range(rel_path.count("/") + 1):
+        root = os.path.dirname(root)
+    return root
+
+
+def _landed(local_file: str, expected: int) -> int:
+    """What this file adds to ``bytes_done``, never more than its own size."""
+    try:
+        actual = os.path.getsize(local_file)
+    except OSError:  # pragma: no cover — the file was just written
+        actual = expected
+    return min(actual, expected) if expected else actual
+
+
+def _download_plan(
+    job_id: str,
+    job: dict[str, Any],
+    source: dict[str, Any],
+    plan: _PlanProgress,
+) -> str:
+    """Fetch the job's files one at a time, stopping when asked to.
+
+    ``snapshot_download`` is one blocking call with nowhere to put a cancel
+    check: cancelling a 68 GB download did nothing at all — twenty requests
+    over two minutes, and only restarting the control plane stopped it. One
+    ``hf_hub_download`` per file gives the loop a place to look at the flag,
+    between files, which is the granularity the bytes already have.
+
+    Nothing is cleaned up on the way out. The interrupted file's
+    ``blobs/<hash>.incomplete`` is exactly what the next job resumes from, and
+    the files already fetched are real files somebody may still want.
+    """
+    from huggingface_hub import hf_hub_download
+
+    token = _source_token(source) or None
+    endpoint = source.get("endpoint") or None
+    snapshot = ""
+    for entry in plan.entries:
+        if job_id in _cancelled:
+            raise _DownloadCancelled(job_id)
+        rel_path = str(entry.get("path") or "")
+        expected = int(entry.get("size") or 0)
+        plan.begin(expected)
+        _set_job(job_id, current_file=rel_path)
+        # ``endpoint`` is passed straight to the call rather than through the
+        # ``HF_ENDPOINT`` environment variable: the variable is process-global
+        # but downloads run on concurrent daemon threads, so two downloads
+        # from different sources racing each other would clobber each other's
+        # endpoint mid-flight.
+        local_file = hf_hub_download(
+            repo_id=job["model"],
+            filename=rel_path,
+            revision=job.get("revision") or None,
+            cache_dir=str(hub_dir()),
+            token=token,
+            endpoint=endpoint,
+        )
+        plan.finish(_landed(local_file, expected))
+        snapshot = snapshot or _snapshot_root(local_file, rel_path)
+    if job_id in _cancelled:
+        raise _DownloadCancelled(job_id)
+    return snapshot or str(hub_dir() / repo_dir_name(job["model"]))
+
+
+def _record_download(job: dict[str, Any], snapshot_path: str) -> None:
+    """Record an ``allow_patterns`` download beside the cache entry it made.
+
+    Only a filtered one. A download of the whole revision needs no marker:
+    the manifest already says what should be there. A filtered one is a
+    deliberate subset — one GGUF quantisation out of nine — and nothing on
+    disk said so, so the verifier counted the eight nobody asked for as
+    missing and called a finished download ``partial`` for ever after, which
+    also made it unreplicable. The marker names the filter; ``hub_cache``
+    reads it back and expects what was asked for.
+    """
+    patterns = list(job.get("allow_patterns") or [])
+    if not patterns:
+        return
+    repo = str(hub_dir() / repo_dir_name(job["model"]))
+    commit = os.path.basename(snapshot_path.rstrip("/"))
+    if not hub_cache.is_commit_hash(commit):
+        commit = hub_cache.resolve_commit(repo, job.get("revision") or None) or ""
+    if not commit:
+        return
+    try:
+        hub_cache.write_marker(
+            repo,
+            {
+                "model": job.get("model"),
+                "revision": commit,
+                "bytes": int(job.get("bytes_done") or 0),
+                "files": int(job.get("files_total") or 0),
+                "evidence": hub_cache.EVIDENCE_DOWNLOAD,
+                "allow_patterns": patterns,
+                "source": job.get("source") or "",
+            },
+        )
+    except OSError as exc:
+        # A marker that could not be written is a verifier that will call this
+        # entry partial — worth a line in the log, never worth failing a
+        # download that has already landed.
+        logger.warning("could not record the download marker for %s: %s", repo, exc)
+
+
+def _run_download(
+    job_id: str,
+    source: dict[str, Any],
+    plan: list[dict[str, Any]] | None = None,
+) -> None:
     job = get_download(job_id)
     if job is None:
         return
@@ -677,55 +936,62 @@ def _run_download(job_id: str, source: dict[str, Any]) -> None:
         _publish_job(EVENT_STARTED, started)
 
     repo_path = hub_dir() / repo_dir_name(job["model"])
+    progress = _PlanProgress(plan) if plan else None
     stop = threading.Event()
     monitor = threading.Thread(
-        target=_progress_monitor, args=(job_id, repo_path, stop), daemon=True
+        target=_progress_monitor,
+        args=(job_id, repo_path, stop, progress),
+        daemon=True,
     )
     monitor.start()
 
     try:
-        from huggingface_hub import snapshot_download
+        if progress is not None:
+            path = _download_plan(job_id, job, source, progress)
+            done = progress.done
+        else:
+            from huggingface_hub import snapshot_download
 
-        # ``endpoint`` is passed straight to the call rather than through the
-        # ``HF_ENDPOINT`` environment variable: the variable is process-global
-        # but downloads run on concurrent daemon threads, so two downloads
-        # from different sources racing each other would clobber each other's
-        # endpoint mid-flight.
-        path = snapshot_download(
-            repo_id=job["model"],
-            revision=job.get("revision") or None,
-            allow_patterns=job.get("allow_patterns") or None,
-            cache_dir=str(hub_dir()),
-            token=_source_token(source) or None,
-            endpoint=source.get("endpoint") or None,
-        )
+            # No file list from the hub, so no loop to check the cancel flag
+            # in: this is one blocking call that always runs to completion.
+            # The bytes are on disk regardless of what was asked, so reporting
+            # it "cancelled" would call a real, usable download a failure and
+            # fail any scheduled deploy waiting on a model that has, in fact,
+            # arrived. Only a cancel made *before* the call started (checked
+            # above, and on the exception path below) stops anything.
+            path = snapshot_download(
+                repo_id=job["model"],
+                revision=job.get("revision") or None,
+                allow_patterns=job.get("allow_patterns") or None,
+                cache_dir=str(hub_dir()),
+                token=_source_token(source) or None,
+                endpoint=source.get("endpoint") or None,
+            )
+            done, _ = _dir_stats(Path(path))
         stop.set()
-        # ``snapshot_download`` is one blocking call with no way to interrupt
-        # it, so a cancel requested while it is running (``job_id in
-        # _cancelled`` here) cannot actually stop it — it always runs to
-        # completion. The bytes are on disk regardless of the request, so
-        # reporting this as "cancelled" would call a real, usable download a
-        # failure and would fail any scheduled deploy waiting on it for a
-        # model that has, in fact, arrived. Only a cancel made *before* the
-        # call started (checked above, and on the exception path below) keeps
-        # anything from actually happening.
-        size, _ = _dir_stats(Path(path))
         finished = _set_job(
             job_id,
             status="completed",
             path=str(path),
-            bytes_done=size,
-            bytes_total=max(size, job.get("bytes_total") or 0),
+            bytes_done=done,
+            bytes_total=max(done, job.get("bytes_total") or 0),
             current_file=None,
             cancel_requested=False,
             finished_at=_now(),
         )
         if finished:
+            _record_download(finished, str(path))
             _publish_job(EVENT_COMPLETED, finished)
     except BaseException as exc:  # noqa: BLE001 — surface any failure on the job
         stop.set()
         if job_id in _cancelled:
-            finished = _set_job(job_id, status="cancelled", finished_at=_now())
+            finished = _set_job(
+                job_id,
+                status="cancelled",
+                current_file=None,
+                cancel_requested=False,
+                finished_at=_now(),
+            )
             if finished:
                 _publish_job(EVENT_CANCELLED, finished)
             return
@@ -1165,8 +1431,15 @@ def replicate_to_nodes(
     ssh = client or _make_ssh_client(ssh_user)
     final_dir = f"{hub_dir()}/{repo_dir_name(model_id)}"
     staging_dir = f"{_staging_root()}/{repo_dir_name(model_id)}"
+    # The node is shipped exactly what is here, which for a filtered download
+    # is the subset that was asked for — so the marker it verifies against has
+    # to name the same filter, or the node counts files nobody fetched.
     marker = hub_cache.marker_payload(
-        model_id, commit, source, source=_control_hostname()
+        model_id,
+        commit,
+        source,
+        source=_control_hostname(),
+        allow_patterns=source.get("allow_patterns"),
     )
 
     def _one(node: str) -> dict[str, Any]:
@@ -1490,6 +1763,10 @@ def presence(
         hub_cache.EVIDENCE_HASHES,
     )
     manifest = hub_cache.read_manifest(str(repo_path), str(commit)) if commit else None
+    # What a filtered download fetched here is what replication shipped there.
+    # The node's own marker is not in the listing — it sits beside the
+    # snapshot, not inside it — so the filter travels from this side.
+    allow_patterns = local_report.get("allow_patterns")
     remote_dir = f"{hub_dir()}/{repo_dir_name(model_id)}"
     resolve = _node_services(services)
 
@@ -1510,6 +1787,7 @@ def presence(
             manifest=manifest,
             deep=deep,
             require_manifest=require_manifest,
+            allow_patterns=allow_patterns,
         )
         return _presence_entry(node, report)
 
@@ -1524,6 +1802,9 @@ def presence(
         # is now the verified verdict rather than a directory listing.
         "local": local_report["state"] == hub_cache.STATE_VERIFIED,
         "local_state": local_report["state"],
+        # A deliberately narrowed download is verified, and says which files
+        # it was narrowed to — never "partial" for the ones nobody asked for.
+        "local_filtered": bool(local_report.get("filtered")),
         "local_report": local_report,
         "nodes": results,
     }
@@ -1556,6 +1837,7 @@ def _presence_entry(
         return {
             "node": node,
             "state": hub_cache.STATE_ABSENT,
+            "filtered": False,
             "present": False,
             "reason": "no verification report" if error is None else "",
             "revision": None,
@@ -1572,6 +1854,7 @@ def _presence_entry(
     return {
         "node": node,
         "state": state,
+        "filtered": bool(report.get("filtered")),
         # "Verified", never "a directory exists" — which is what the check
         # this replaced actually tested.
         "present": state == hub_cache.STATE_VERIFIED,

@@ -19,6 +19,7 @@ from spark_pulse.tools.hub_cache import (
 )
 from spark_pulse.tools.models import (  # noqa: F401 — shared constants/helpers
     DEFAULT_SOURCES,
+    DownloadInProgress,
     EVENT_CANCELLED,
     EVENT_COMPLETED,
     EVENT_DELETED,
@@ -35,6 +36,7 @@ from spark_pulse.tools.models import (  # noqa: F401 — shared constants/helper
     TOKEN_ENV_KEYS,
     _notified,
     _notify_finished,
+    _same_request,
     add_finish_listener,
     publish_event,
     register_event_loop,
@@ -140,6 +142,36 @@ def _entry(
     }
 
 
+#: The GGUF repository this simulated cluster holds, the revision it holds it
+#: at, and the one file inside it. Named here rather than written inline so
+#: the catalogue entry, the snapshot every simulated node lists, and the tests
+#: that read the resolved path all say the same thing once.
+GGUF_MODEL = "PrismML/Bonsai-2-27B-GGUF"
+GGUF_REVISION = "e6f708192a3b4c5d6e7f8091a2b3c4d5e6f70819"
+GGUF_FILE = "Bonsai-2-27B-Q4_K_M.gguf"
+GGUF_SIZE = int(16.4 * GB)
+
+
+def simulated_snapshots() -> dict[str, dict[str, list[tuple[str, int]]]]:
+    """What every simulated node holds, in the shape ``ListSnapshot`` answers.
+
+    One repository, because this is about a code path rather than about a
+    plausible disk: the llama.cpp plan asks the node that will load the model
+    whether it holds the GGUF, and something has to be there for it to find.
+    Each ``MockDockerService`` takes its own copy — two simulated nodes are
+    two machines, and a removal on one must not empty the other.
+    """
+    repo = str(local_repo_path(GGUF_MODEL))
+    return {
+        repo: {
+            GGUF_REVISION: [
+                ("README.md", 4_096),
+                (GGUF_FILE, GGUF_SIZE),
+            ]
+        }
+    }
+
+
 _CATALOGUE: list[dict[str, Any]] = [
     _entry(
         "openai/gpt-oss-120b",
@@ -209,6 +241,21 @@ _CATALOGUE: list[dict[str, Any]] = [
         model_type="qwen3_moe",
         quantization=["activation_scheme", "fmt", "quant_method"],
         quantization_method="fp8",
+    ),
+    # The GGUF repository. llama.cpp is the one engine the control plane
+    # resolves a *file* for rather than handing over a repository id, so
+    # without a GGUF in the catalogue every simulated llama.cpp plan would
+    # only ever exercise the fallback — and the fallback is the path that
+    # downloads the model twice.
+    _entry(
+        GGUF_MODEL,
+        revision=GGUF_REVISION,
+        size_bytes=GGUF_SIZE,
+        days_ago=5,
+        architectures=["BonsaiForCausalLM"],
+        model_type="bonsai",
+        quantization=["quant_method"],
+        quantization_method="gguf",
     ),
     _entry(
         "local-team/internal-8b-sft",
@@ -461,17 +508,10 @@ def _simulate(job_id: str) -> None:
         _publish_job(EVENT_COMPLETED, finished)
 
 
-def _active_download_for(
-    model: str, source: str | None, revision: str | None
-) -> dict[str, Any] | None:
+def _active_download_for(model: str) -> dict[str, Any] | None:
     with _jobs_lock:
         for job in _jobs.values():
-            if (
-                job.get("status") in ("queued", "running")
-                and job.get("model") == model
-                and job.get("source") == source
-                and (job.get("revision") or None) == (revision or None)
-            ):
+            if job.get("status") in ("queued", "running") and job.get("model") == model:
                 return dict(job)
     return None
 
@@ -490,10 +530,13 @@ def start_download(
         raise ValueError(
             f"Source '{src.get('name')}' is a local path — nothing to download"
         )
-    # Same rule as production: one active job per model+source+revision. See
+    # Same rule as production: one active job per model — the same request
+    # gets the running job back, a different one gets a refusal. See
     # ``tools.models.start_download`` for why two are never two downloads.
-    existing = _active_download_for(model, src.get("name"), revision)
+    existing = _active_download_for(model)
     if existing is not None:
+        if not _same_request(existing, src.get("name"), revision, allow_patterns):
+            raise DownloadInProgress(existing)
         return existing
 
     estimated = estimate_size(model, src, revision, allow_patterns)
@@ -510,6 +553,7 @@ def start_download(
         "status": "queued",
         "bytes_done": 0,
         "bytes_total": estimated,
+        "files_total": _TICKS,
         "current_file": None,
         "path": None,
         "error": None,

@@ -507,6 +507,84 @@ class TestVerifyBeforePublish:
         assert nodes.copy_dirs == []
 
 
+# ── A filtered download, replicated ──────────────────────────────────────────
+
+
+@requires_rsync
+class TestFilteredReplication:
+    """What a narrowed download fetched here is what the node is shipped.
+
+    Before this, a filtered entry could not be replicated at all: the source
+    check compares against the whole-repo manifest, called it ``partial``, and
+    ``replicate_to_nodes`` refuses a partial source rather than spreading one.
+    """
+
+    FILTER = ["config.json", "model-00001-*.safetensors"]
+    KEPT = {"config.json", "model-00001-of-00002.safetensors"}
+
+    @pytest.fixture
+    def filtered_hub(self, hub):
+        """The control node's entry as a filtered download leaves it."""
+        repo = hub / hub_cache.repo_dir_name(SAMPLE_MODEL)
+        for name in SAMPLE_FILES:
+            if name not in self.KEPT:
+                (repo / "snapshots" / SAMPLE_COMMIT / name).unlink()
+        hub_cache.write_marker(
+            str(repo),
+            {
+                "model": SAMPLE_MODEL,
+                "revision": SAMPLE_COMMIT,
+                "allow_patterns": self.FILTER,
+                "evidence": hub_cache.EVIDENCE_DOWNLOAD,
+            },
+        )
+        return hub
+
+    def test_the_filtered_set_is_shipped_and_the_node_verifies_it(
+        self, filtered_hub, nodes
+    ):
+        result = models_tool.replicate_to_nodes(SAMPLE_MODEL, ["n1"], client=nodes)
+
+        assert result["ok"] is True
+        assert result["local"]["filtered"] is True
+        snapshot = nodes.node_repo("n1") / "snapshots" / SAMPLE_COMMIT
+        assert sorted(p.name for p in snapshot.iterdir()) == sorted(self.KEPT)
+
+    def test_the_marker_written_on_the_node_carries_the_same_filter(
+        self, filtered_hub, nodes
+    ):
+        models_tool.replicate_to_nodes(SAMPLE_MODEL, ["n1"], client=nodes)
+
+        marker = hub_cache.read_marker(str(nodes.node_repo("n1")))
+        assert marker["allow_patterns"] == self.FILTER
+        assert marker["files"] == len(self.KEPT)
+        assert marker["bytes"] == sum(len(SAMPLE_FILES[n]) for n in self.KEPT)
+
+    def test_presence_calls_a_filtered_copy_verified_here_and_there(
+        self, filtered_hub, nodes, agents
+    ):
+        models_tool.replicate_to_nodes(SAMPLE_MODEL, ["n1"], client=nodes)
+
+        answer = models_tool.presence(SAMPLE_MODEL, ["n1"], services=agents)
+
+        assert answer["local"] is True
+        assert answer["local_state"] == hub_cache.STATE_VERIFIED
+        assert answer["local_filtered"] is True
+        assert answer["nodes"][0]["state"] == hub_cache.STATE_VERIFIED
+        assert answer["nodes"][0]["filtered"] is True
+
+    def test_a_node_missing_a_file_from_inside_the_filter_is_still_partial(
+        self, filtered_hub, nodes, agents
+    ):
+        models_tool.replicate_to_nodes(SAMPLE_MODEL, ["n1"], client=nodes)
+        (nodes.node_repo("n1") / "snapshots" / SAMPLE_COMMIT / "config.json").unlink()
+
+        answer = models_tool.presence(SAMPLE_MODEL, ["n1"], services=agents)
+
+        assert answer["nodes"][0]["state"] == hub_cache.STATE_PARTIAL
+        assert answer["nodes"][0]["missing"] == ["config.json"]
+
+
 # ── Resume ───────────────────────────────────────────────────────────────────
 
 

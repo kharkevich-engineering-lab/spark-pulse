@@ -24,6 +24,10 @@ build_args:
 runtime:
   workdir: /workspace
   serve: llama-server --metrics
+  # The fallback, not the normal path: declaring `-hf` is what tells the
+  # control plane this engine would otherwise download its own copy, so the
+  # plan resolves the GGUF in the mounted cache and renders `-m <path>` when
+  # the head holds it. See spark_pulse/engines/llama_cpp.py.
   model_arg: -hf
   readiness: /health
   models_endpoint: /v1/models

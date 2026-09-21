@@ -23,6 +23,7 @@ from spark_pulse.engines.llama_cpp import (
     RPC_STYLE,
     LlamaCppEngine,
     rpc_endpoint,
+    split_hf_file,
 )
 from spark_pulse.engines.registry import ENGINE_CLASSES, load_bundled_specs
 
@@ -396,3 +397,157 @@ def test_nothing_that_does_not_span_nodes_reports_an_endpoint():
     the base class answers with an empty list for exactly that reason."""
     assert engine().rpc_endpoints(ONE_NODE) == []
     assert engine("default").rpc_endpoints(TWO_NODES) == []
+
+
+# ── The model file the control plane already holds ───────────────────────────
+#
+# The engine's half of the rule is pure and is all that is tested here: given
+# the names a node answered with, which file — and what the serve line says
+# once one was resolved. Whether the node holds it is the runtime's question,
+# and `test_tools_native_runtime` and `test_multinode` ask it.
+
+#: A snapshot that holds one quantisation, plus the files every repo carries.
+ONE_GGUF = ["README.md", "Bonsai-2-27B-Q4_K_M.gguf"]
+
+#: A snapshot that holds several, which is what a real GGUF repo looks like.
+MANY_GGUF = [
+    "README.md",
+    "Bonsai-2-27B-Q4_K_M.gguf",
+    "Bonsai-2-27B-Q8_0.gguf",
+    "Bonsai-2-27B-F16.gguf",
+]
+
+#: Where the resolved file lands inside the container, as `native_runtime`
+#: composes it. Written out once so the assertions read as a path.
+IN_CONTAINER = (
+    "/home/spark/.cache/huggingface/hub/models--PrismML--Bonsai-2-27B-GGUF"
+    "/snapshots/abc123/Bonsai-2-27B-Q4_K_M.gguf"
+)
+
+
+def with_args(args: str) -> dict[str, Any]:
+    return {**RECIPE, "args": args}
+
+
+def test_both_bundled_variants_ask_the_control_plane_to_resolve_the_file():
+    """The claim is the spec's ``model_arg: -hf``, not the class.
+
+    Both bundled variants declare it, which is what makes this engine the one
+    that would otherwise fetch a second copy of bytes the control plane has
+    already downloaded and replicated.
+    """
+    assert engine("default").resolves_model_file() is True
+    assert engine("prism").resolves_model_file() is True
+    assert engine(**{"runtime.model_arg": "positional"}).resolves_model_file() is False
+
+
+def test_the_recipes_hf_file_picks_the_packing_out_of_the_snapshot():
+    chosen, reason = engine().choose_model_file(
+        with_args("--hf-file Bonsai-2-27B-Q8_0.gguf"), MANY_GGUF
+    )
+
+    assert chosen == "Bonsai-2-27B-Q8_0.gguf"
+    assert "in the snapshot on this node" in reason
+
+
+def test_the_selector_is_read_from_either_spelling():
+    """A recipe is written by hand and both are what somebody types."""
+    assert split_hf_file("--hf-file a.gguf --foo 1") == ("a.gguf", "--foo 1")
+    assert split_hf_file("--foo 1 --hf-file=a.gguf") == ("a.gguf", "--foo 1")
+    assert split_hf_file("--foo 1") == ("", "--foo 1")
+    # A trailing flag with nothing after it names nothing, and takes nothing
+    # with it — the args it did not select still have to render.
+    assert split_hf_file("--foo 1 --hf-file") == ("", "--foo 1")
+
+
+def test_a_snapshot_with_one_gguf_needs_no_selector():
+    chosen, reason = engine().choose_model_file(RECIPE, ONE_GGUF)
+
+    assert chosen == "Bonsai-2-27B-Q4_K_M.gguf"
+    assert "nothing to choose between" in reason
+
+
+def test_several_ggufs_and_no_selector_stays_llama_cpps_own_choice():
+    """Picking for an operator who named none would be choosing their
+    quantisation for them — a 27B repo holds one file per packing and they
+    differ by tens of gigabytes."""
+    chosen, reason = engine().choose_model_file(RECIPE, MANY_GGUF)
+
+    assert chosen == ""
+    assert "3 .gguf files" in reason and "--hf-file" in reason
+
+
+def test_a_selector_the_snapshot_does_not_hold_resolves_nothing():
+    chosen, reason = engine().choose_model_file(
+        with_args("--hf-file Bonsai-2-27B-IQ2_XS.gguf"), MANY_GGUF
+    )
+
+    assert chosen == ""
+    assert "does not hold" in reason
+
+
+def test_a_snapshot_with_no_gguf_resolves_nothing():
+    chosen, reason = engine().choose_model_file(RECIPE, ["config.json"])
+
+    assert chosen == ""
+    assert "no .gguf file" in reason
+
+
+def test_a_resolved_file_is_served_as_m_and_the_selector_is_dropped():
+    """``--hf-file`` alongside ``-m`` sends llama-server back to the hub for
+    the copy it was just handed, which is the download this exists to avoid."""
+    result = engine("default").render(
+        with_args("--hf-file Bonsai-2-27B-Q4_K_M.gguf --flash-attn on"),
+        params={"port": 9000},
+        topology=ONE_NODE,
+        model_file=IN_CONTAINER,
+    )
+
+    assert result.command == (
+        f"llama-server --metrics -m {IN_CONTAINER} --host 0.0.0.0 --port 9000 "
+        "--ctx-size 8192 --parallel 4 --flash-attn on"
+    )
+    assert "--hf-file" not in result.command
+    assert f" -hf {MODEL}" not in result.command
+
+
+def test_without_a_resolved_file_the_command_is_exactly_what_it_was():
+    """The fallback is the point: a node that does not hold the model still
+    deploys, slowly, with the engine fetching its own copy."""
+    recipe = with_args("--hf-file Bonsai-2-27B-Q4_K_M.gguf")
+
+    result = engine("default").render(recipe, params={"port": 9000}, topology=ONE_NODE)
+
+    assert result.command == (
+        f"llama-server --metrics -hf {MODEL} --host 0.0.0.0 --port 9000 "
+        "--ctx-size 8192 --parallel 4 --hf-file Bonsai-2-27B-Q4_K_M.gguf"
+    )
+
+
+def test_the_rpc_head_serves_the_resolved_file_and_the_worker_is_unchanged():
+    """Only rank zero loads a model, so only rank zero is handed a path."""
+    recipe = with_args("--hf-file Bonsai-2-27B-Q4_K_M.gguf")
+
+    head = engine().render(
+        recipe, topology=TWO_NODES, node_rank=0, model_file=IN_CONTAINER
+    )
+    worker = engine().render(
+        recipe, topology=TWO_NODES, node_rank=1, model_file=IN_CONTAINER
+    )
+
+    assert f"-m {IN_CONTAINER}" in head.command
+    assert "--hf-file" not in head.command
+    assert f"--rpc {WORKER.ip}:{DEFAULT_RPC_PORT}" in head.command
+    assert worker.command == f"{RPC_SERVER} -H 0.0.0.0 -p {DEFAULT_RPC_PORT}"
+
+
+def test_an_engine_that_takes_a_model_id_ignores_a_resolved_file():
+    """The gate is the spec's own ``model_arg``. A variant that declares a
+    positional model is not one whose engine downloads a second copy, so a
+    path handed to it changes nothing."""
+    bent = engine(**{"runtime.model_arg": "positional"})
+
+    result = bent.render(RECIPE, topology=ONE_NODE, model_file=IN_CONTAINER)
+
+    assert f"llama-server --metrics {MODEL}" in result.command
+    assert IN_CONTAINER not in result.command

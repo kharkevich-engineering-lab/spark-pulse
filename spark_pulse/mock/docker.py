@@ -523,7 +523,14 @@ class MockDockerService(DockerService):
         #: Bind-mount sources a real run would have created here.
         self.ensured: list[str] = []
         #: Snapshots this simulated node holds: repo path -> revision -> files.
-        self.snapshots: dict[str, dict[str, list[tuple[str, int]]]] = {}
+        #: Seeded from the catalogue so a plan that asks the node whether it
+        #: holds a model's files gets the answer a downloaded model gives.
+        from spark_pulse.mock import models as _models
+
+        self.snapshots: dict[str, dict[str, list[tuple[str, int]]]] = {
+            repo: {rev: list(files) for rev, files in revisions.items()}
+            for repo, revisions in _models.simulated_snapshots().items()
+        }
         #: Processes a caller asked this node to signal.
         self.terminated: list[tuple[int, bool]] = []
         self.fabric_applied: list = []

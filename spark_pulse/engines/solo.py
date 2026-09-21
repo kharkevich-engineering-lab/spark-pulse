@@ -76,6 +76,7 @@ class SoloEngine(Engine):
         extra_args: list[str] | None = None,
         topology: Topology | None = None,
         node_rank: int = 0,
+        model_file: str = "",
     ) -> LaunchScript:
         ok, reason = self.supports(recipe)
         if not ok:
@@ -92,7 +93,9 @@ class SoloEngine(Engine):
             raise EngineError(
                 f"node_rank {node_rank} is out of range for a single-node engine"
             )
-        return self._serve_launch(recipe, model, params, extra_args, topology, 0)
+        return self._serve_launch(
+            recipe, model, params, extra_args, topology, 0, model_file=model_file
+        )
 
     def _serve_launch(
         self,
@@ -103,6 +106,7 @@ class SoloEngine(Engine):
         topology: Topology | None = None,
         node_rank: int = 0,
         tail: list[str] | None = None,
+        model_file: str = "",
     ) -> LaunchScript:
         """The serve line for one rank, with nothing refused.
 
@@ -110,6 +114,10 @@ class SoloEngine(Engine):
         — llama.cpp's RPC head — builds the same command rather than its own
         near-copy. ``tail`` lands after the mapped params and before the
         recipe's own arguments, so what an operator wrote still comes last.
+
+        ``model_file`` is a path the control plane resolved inside the mounted
+        cache; :meth:`_model_parts` and :meth:`_recipe_args` are where an
+        engine that can use one says what it changes.
         """
         topology = topology or Topology.solo()
         overrides = {k: v for k, v in (params or {}).items() if v is not None}
@@ -125,17 +133,12 @@ class SoloEngine(Engine):
                 f"engine '{self.spec.key}' declares no serve command, so there "
                 "is nothing to launch"
             )
-        model_arg = self.spec.runtime.model_arg or "positional"
-
         parts = [serve]
-        if model_arg == "positional":
-            parts.append(resolved_model)
-        else:
-            parts.extend([model_arg, resolved_model])
+        parts.extend(self._model_parts(resolved_model, model_file))
         parts.extend(self._flag_args(resolved, order=_PARAM_ORDER))
         parts.extend(tail or [])
 
-        args = " ".join(self._block_args(recipe).split())
+        args = self._recipe_args(recipe, model_file)
         if args:
             parts.append(args)
 
@@ -162,6 +165,25 @@ class SoloEngine(Engine):
             env=env,
             script=self._script(env, command),
         )
+
+    # -- the two halves a resolved model file changes -----------------------
+
+    def _model_parts(self, resolved_model: str, model_file: str) -> list[str]:
+        """How this engine names the model on its serve line.
+
+        Read from the spec, which is the whole point: ``model_arg`` says
+        whether the model is positional or takes a flag, and nothing about it
+        is written per engine. ``model_file`` is ignored here — an engine that
+        can be handed a path says so by overriding this.
+        """
+        model_arg = self.spec.runtime.model_arg or "positional"
+        if model_arg == "positional":
+            return [resolved_model]
+        return [model_arg, resolved_model]
+
+    def _recipe_args(self, recipe: dict[str, Any], model_file: str) -> str:
+        """The recipe's own argument tail, normalised to one line."""
+        return " ".join(self._block_args(recipe).split())
 
 
 class TrtllmEngine(SoloEngine):

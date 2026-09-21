@@ -14,6 +14,7 @@ import pytest
 from spark_pulse.mock.oci_registry import (
     mock_check_updates,
     mock_install_collection,
+    mock_install_oci_recipe,
     mock_list_collection_recipes,
     mock_list_collections,
     mock_list_oci_recipes,
@@ -41,6 +42,8 @@ class TestCollections:
             "llama-3-70b",
             "mistral-22b",
             "mixtral-8x7b",
+            # A collection names its recipes for people, and one of these does.
+            "Bonsai-2-27B (ternary, llama.cpp)",
         ]
         assert recipes[0].solo_only is True
         assert recipes[2].cluster_only is True
@@ -53,7 +56,11 @@ class TestInstall:
     def test_an_install_answers_with_the_files_it_would_write(self):
         """And writes none of them: simulation shares the operator's own
         ``~/.config/spark-pulse/recipes``, so a pretend install that left real
-        files behind would be indistinguishable from one they asked for."""
+        files behind would be indistinguishable from one they asked for.
+
+        The last one is the point: a display name is written as its slug, here
+        as in the real installer, because the file stem is the recipe's id.
+        """
         installed = mock_install_collection(name="spark-recipes", version="1.0.0")
 
         assert installed == [
@@ -62,7 +69,18 @@ class TestInstall:
             "llama-3-70b.yaml",
             "mistral-22b.yaml",
             "mixtral-8x7b.yaml",
+            "bonsai-2-27b-ternary-llama.cpp.yaml",
         ]
+
+    def test_installing_one_recipe_answers_with_its_id(self):
+        """The name asked for and the id it got, kept apart."""
+        result = mock_install_oci_recipe(
+            collection_name="spark-recipes",
+            recipe_name="Bonsai-2-27B (ternary, llama.cpp)",
+        )
+
+        assert result["recipe"] == "Bonsai-2-27B (ternary, llama.cpp)"
+        assert result["recipe_id"] == "oci-bonsai-2-27b-ternary-llama.cpp"
 
     def test_a_version_nobody_offers_is_refused(self):
         """``ValueError`` is what the real installer raises, and it is what the

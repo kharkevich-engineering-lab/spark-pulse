@@ -16,7 +16,7 @@ is rendered that way; ``llama-cpp/prism`` is the first that does, because
 PrismML's fork is the only build that runs their ternary Bonsai GGUFs and a
 27B ternary model is what an operator wants two Sparks for.
 
-Three consequences, all of them deliberate:
+The consequences, all of them deliberate:
 
 * **There is no rendezvous, so the order matters more.** No NCCL, no Gloo, no
   store to form: the head opens a TCP connection to each worker *at load time*
@@ -34,6 +34,13 @@ Three consequences, all of them deliberate:
   shape *is* the ``--rpc`` list, one server per worker, so the gang occupies
   exactly the nodes it was planned across. Hence
   :attr:`Engine.parallelism_in_command` is false here.
+* **The model comes from the cache the control plane already fills.**
+  ``-hf`` makes ``llama-server`` resolve the repository *itself* and download
+  the GGUF into ``LLAMA_CACHE`` — a second copy of bytes the control plane had
+  already put in the Hugging Face cache (it refuses a deploy whose model is
+  not in the catalogue) and already replicates to every node, and one it then
+  ignores. So the control plane resolves the file instead: see
+  :meth:`LlamaCppEngine.choose_model_file` and the paragraph below it.
 * **The ``--rpc`` list is the one launch address that is not the registered
   one.** Every other engine names a node the way the control plane reaches it,
   and for a rendezvous that is right — a few bytes at startup. This list is
@@ -83,6 +90,52 @@ FABRIC_PREFIX_BITS = 24
 FABRIC_REMEDY = (
     "run a fabric apply from Fleet to move RPC traffic onto the ConnectX links"
 )
+
+#: The ``runtime.model_arg`` that means "this engine resolves the repo itself".
+#: A spec declaring it is a spec whose engine would download its own copy, and
+#: is therefore one the control plane resolves a file for.
+HF_MODEL_ARG = "-hf"
+
+#: ``llama-server``'s flag for a GGUF that is already on disk.
+MODEL_FILE_ARG = "-m"
+
+#: The recipe argument that names *which* packing of a GGUF repository to
+#: serve. It is llama.cpp's own selector for ``-hf`` and it stays the single
+#: place the packing is named: the control plane reads it to pick the file out
+#: of the snapshot, and drops it from the rendered args when it renders
+#: ``-m``, because ``--hf-file`` alongside a local path sends ``llama-server``
+#: back to the hub for the copy it was handed.
+HF_FILE_ARG = "--hf-file"
+
+#: The extension llama.cpp reads. Lower-cased before matching.
+GGUF_SUFFIX = ".gguf"
+
+
+def split_hf_file(args: str) -> tuple[str, str]:
+    """Pull ``--hf-file <name>`` out of an argument line.
+
+    Returns ``(selector, remaining args)``. Both spellings the shell accepts
+    are understood — ``--hf-file x`` and ``--hf-file=x`` — because a recipe is
+    written by hand and either is what somebody types.
+    """
+    parts = args.split()
+    selector = ""
+    kept: list[str] = []
+    skip = False
+    for index, part in enumerate(parts):
+        if skip:
+            skip = False
+            continue
+        if part == HF_FILE_ARG:
+            if index + 1 < len(parts):
+                selector = parts[index + 1]
+                skip = True
+            continue
+        if part.startswith(HF_FILE_ARG + "="):
+            selector = part[len(HF_FILE_ARG) + 1 :]
+            continue
+        kept.append(part)
+    return selector, " ".join(kept)
 
 
 def _fabric_network(address: str) -> Any:
@@ -174,6 +227,61 @@ class LlamaCppEngine(SoloEngine):
         """Whether this spec asks to be rendered as an RPC gang."""
         return self.spec.runtime.multi_node.style == RPC_STYLE
 
+    def resolves_model_file(self) -> bool:
+        """True for any variant whose spec declares ``model_arg: -hf``.
+
+        Keyed on the spec rather than on the class, because the declaration is
+        the claim: a spec that says ``-hf`` is one whose ``llama-server``
+        would resolve the repository itself and fetch its own copy into
+        ``LLAMA_CACHE``. Both bundled variants say it, and the fallback is
+        deliberately left in place — ``-hf`` is still what renders when the
+        node does not hold the file.
+        """
+        return (self.spec.runtime.model_arg or "") == HF_MODEL_ARG
+
+    def choose_model_file(
+        self, recipe: dict[str, Any], snapshot_files: list[str]
+    ) -> tuple[str, str]:
+        """Which GGUF of this node's snapshot to serve, and why.
+
+        The recipe's ``--hf-file`` is the selector, and it stays the only
+        place the packing is named: a repository holds one file per
+        quantisation and picking for an operator who named none would be
+        choosing their quantisation for them. So:
+
+        * a selector that matches a file in the snapshot wins, by full path or
+          by name — a name is what a recipe writes and what the hub calls it;
+        * a selector that matches nothing keeps ``-hf``, because the snapshot
+          on this node is not the packing the recipe asked for;
+        * no selector and exactly one ``.gguf`` is unambiguous, so it wins;
+        * no selector and several is llama.cpp's own choice to make.
+
+        A file that did not resolve is not in ``snapshot_files``: the caller
+        filters dangling symlinks out, which is the whole reason the node is
+        asked to *list* rather than asked whether a directory exists.
+        """
+        selector = split_hf_file(self._block_args(recipe))[0]
+        ggufs = [p for p in snapshot_files if p.lower().endswith(GGUF_SUFFIX)]
+        if selector:
+            for path in ggufs:
+                if path == selector or path.rsplit("/", 1)[-1] == selector:
+                    return path, f"{selector} is in the snapshot on this node"
+            return "", (
+                f"the recipe asks for {HF_FILE_ARG} {selector}, which this "
+                "node's snapshot does not hold"
+            )
+        if len(ggufs) == 1:
+            return ggufs[0], (
+                f"the snapshot holds one {GGUF_SUFFIX} file, {ggufs[0]}, so "
+                "there is nothing to choose between"
+            )
+        if not ggufs:
+            return "", "the snapshot on this node holds no .gguf file"
+        return "", (
+            f"the snapshot holds {len(ggufs)} {GGUF_SUFFIX} files and the "
+            f"recipe names none with {HF_FILE_ARG}"
+        )
+
     def rpc_port(self) -> int | None:
         """The port each worker binds, or None when this variant is solo.
 
@@ -219,6 +327,7 @@ class LlamaCppEngine(SoloEngine):
         extra_args: list[str] | None = None,
         topology: Topology | None = None,
         node_rank: int = 0,
+        model_file: str = "",
     ) -> LaunchScript:
         ok, reason = self.supports(recipe)
         if not ok:
@@ -234,6 +343,7 @@ class LlamaCppEngine(SoloEngine):
                 extra_args=extra_args,
                 topology=topology,
                 node_rank=node_rank,
+                model_file=model_file,
             )
 
         # Above one node the claim decides, and it is the same claim the plan
@@ -248,8 +358,11 @@ class LlamaCppEngine(SoloEngine):
                 f"node_rank {node_rank} is out of range for {topology.size} node(s)"
             )
         if node_rank > 0:
+            # A worker loads nothing, so a resolved file means nothing to it.
             return self._worker_launch(recipe, topology, node_rank)
-        return self._head_launch(recipe, model, params, extra_args, topology)
+        return self._head_launch(
+            recipe, model, params, extra_args, topology, model_file
+        )
 
     def rpc_endpoints(self, topology: Topology) -> list[dict[str, Any]]:
         """Every worker endpoint the head will dial, with the reason for each.
@@ -284,6 +397,7 @@ class LlamaCppEngine(SoloEngine):
         params: dict[str, Any] | None,
         extra_args: list[str] | None,
         topology: Topology,
+        model_file: str = "",
     ) -> LaunchScript:
         """Rank zero: the solo command plus one ``--rpc`` endpoint per worker.
 
@@ -306,7 +420,34 @@ class LlamaCppEngine(SoloEngine):
             topology=topology,
             node_rank=0,
             tail=tail,
+            model_file=model_file,
         )
+
+    def _model_parts(self, resolved_model: str, model_file: str) -> list[str]:
+        """``-m <path>`` when the control plane resolved one, else ``-hf``.
+
+        The fallback is the point: ``-hf`` is what the spec declares and what
+        still renders whenever the node was not found to hold the file, so a
+        deploy onto a machine the model has not reached yet works exactly as
+        it did — slowly, with the engine fetching its own copy, and with the
+        plan saying so.
+        """
+        if model_file and self.resolves_model_file():
+            return [MODEL_FILE_ARG, model_file]
+        return super()._model_parts(resolved_model, model_file)
+
+    def _recipe_args(self, recipe: dict[str, Any], model_file: str) -> str:
+        """The recipe's args, less ``--hf-file`` once ``-m`` is rendered.
+
+        Left in, ``llama-server`` takes it as an instruction to fetch that
+        file from the hub, which is the download this whole path exists to
+        avoid — and it would be fetched *beside* the local copy the same
+        command was just handed.
+        """
+        args = super()._recipe_args(recipe, model_file)
+        if model_file and self.resolves_model_file():
+            return split_hf_file(args)[1]
+        return args
 
     def _worker_launch(
         self, recipe: dict[str, Any], topology: Topology, node_rank: int

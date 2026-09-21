@@ -265,6 +265,20 @@ export function describeModelPresence(
   return i18n.t(plan.model_present ? "deployOptions.modelHere" : "deployOptions.modelMissing");
 }
 
+/** Where the engine reads the model from, for the engines that get a choice.
+ *
+ * llama.cpp is the only one today: `-hf` makes it download its own copy beside
+ * the one already on the node, so the plan resolves the file and this says
+ * which of the two happened — with the path, because that is the evidence.
+ */
+export function describeModelSource(
+  plan: Pick<DeployPlan, "model_source" | "model_path">,
+  i18n: Translator,
+): string {
+  if (plan.model_source !== "hf-cache") return i18n.t("deployOptions.sourceEngineDownload");
+  return `${i18n.t("deployOptions.sourceCache")} · ${plan.model_path}`;
+}
+
 /** Engines that may actually run this recipe. */
 export function eligibleEngines(
   engines: EngineSummary[],
@@ -654,6 +668,21 @@ export default function DeployOptions({
                         data-testid="deploy-plan-model-presence"
                       >
                         {describeModelPresence(plan, i18n)}
+                      </dd>
+                    </>
+                  )}
+                  {plan.model_source && (
+                    <>
+                      <dt className="text-muted">{t("deployOptions.servedFrom")}</dt>
+                      <dd
+                        className={
+                          plan.model_source === "hf-cache"
+                            ? "font-mono break-all"
+                            : "font-mono break-all text-warn"
+                        }
+                        data-testid="deploy-plan-model-source"
+                      >
+                        {describeModelSource(plan, i18n)}
                       </dd>
                     </>
                   )}

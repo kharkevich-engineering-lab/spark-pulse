@@ -1216,7 +1216,9 @@ class TestOneDownloadPerModel:
         return importlib.import_module("spark_pulse.tools.models")
 
     def _stub(self, monkeypatch, models):
-        monkeypatch.setattr(models, "estimate_size", lambda *a, **k: 1_000)
+        monkeypatch.setattr(
+            models, "_plan_files", lambda *a, **k: [{"path": "w.bin", "size": 1_000}]
+        )
         monkeypatch.setattr(models, "check_disk_space", lambda *a, **k: None)
         # Never actually run the download thread.
         monkeypatch.setattr(models, "_run_download", lambda *a, **k: None)
@@ -1231,14 +1233,32 @@ class TestOneDownloadPerModel:
         active = [j for j in models.list_downloads() if j["model"] == "org/model"]
         assert len(active) == 1, "a second job was created for the same model"
 
-    def test_a_different_revision_is_a_different_download(self, monkeypatch):
-        """Same name, different revision, different bytes on disk."""
+    def test_a_different_revision_is_refused_while_one_is_running(self, monkeypatch):
+        """One cache entry, one blob store, one set of locks — one job.
+
+        A different revision used to start a second job, on the reasoning that
+        it is different bytes on disk. It is not a different *directory*: both
+        write into ``models--org--model``, take the same ``.locks`` and read
+        each other's blobs. The refusal names the job to cancel.
+        """
         models = self._real_models()
         self._stub(monkeypatch, models)
         first = models.start_download("org/model", revision="v1")
-        second = models.start_download("org/model", revision="v2")
 
-        assert second["id"] != first["id"]
+        with pytest.raises(models.DownloadInProgress) as raised:
+            models.start_download("org/model", revision="v2")
+
+        assert raised.value.job["id"] == first["id"]
+
+    def test_a_different_filter_is_refused_naming_the_running_job(self, monkeypatch):
+        models = self._real_models()
+        self._stub(monkeypatch, models)
+        first = models.start_download("org/model")
+
+        with pytest.raises(models.DownloadInProgress) as raised:
+            models.start_download("org/model", allow_patterns=["*.gguf"])
+
+        assert first["id"] in str(raised.value)
 
     def test_a_finished_download_does_not_block_a_new_one(self, monkeypatch):
         """Re-downloading after a failure has to be possible."""

@@ -415,6 +415,38 @@ class Engine:
         """
         return []
 
+    def resolves_model_file(self) -> bool:
+        """Whether the control plane picks the model *file* for this engine.
+
+        False for every engine that is handed a model *id* and resolves the
+        bytes itself from a local cache it shares with us — vLLM, SGLang and
+        the solo engines all read the same snapshot the catalogue lists, so
+        naming the repository is naming the file.
+
+        True only where the engine would otherwise fetch its own second copy.
+        llama.cpp is the one that does: ``-hf`` makes ``llama-server``
+        download the GGUF into ``LLAMA_CACHE``, beside the copy the control
+        plane already holds in the Hugging Face cache and already replicates
+        to every node. See :mod:`spark_pulse.engines.llama_cpp`.
+        """
+        return False
+
+    def choose_model_file(
+        self, recipe: dict[str, Any], snapshot_files: list[str]
+    ) -> tuple[str, str]:
+        """Which file of the node's snapshot to serve, and why that one.
+
+        ``snapshot_files`` are the repo-relative paths the node answered with
+        (``ListSnapshot``), already filtered to the ones that resolve. The
+        answer is ``(path, reason)``; an empty path means *this engine's own
+        resolution stands*, and the reason says why — which is what the plan
+        reports as a warning, because it costs a second download.
+
+        Pure: the I/O is the caller's, so the rule can be read and tested
+        without a node.
+        """
+        return "", ""
+
     def supports_mods(self) -> bool:
         return bool(self.spec.capabilities.mods)
 
@@ -592,7 +624,17 @@ class Engine:
         extra_args: list[str] | None = None,
         topology: Topology | None = None,
         node_rank: int = 0,
+        model_file: str = "",
     ) -> LaunchScript:
+        """Render one rank's launch.
+
+        ``model_file`` is the path *inside the container* of the file the
+        control plane resolved for this launch — empty unless
+        :meth:`resolves_model_file` is true and the node the rank runs on was
+        found to hold it. Every other engine ignores it: being handed a model
+        id is what they want, and a path would be a second way to say the
+        same thing.
+        """
         raise NotImplementedError
 
     def supports(self, recipe: dict[str, Any]) -> tuple[bool, str]:

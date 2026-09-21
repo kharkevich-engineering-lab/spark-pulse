@@ -31,6 +31,11 @@ runtime:
   # llama.cpp reads GGUF, and `-hf` resolves a GGUF from a HuggingFace repo.
   # So the model this engine is given must be a GGUF repository (…-GGUF), not
   # the safetensors repository the other engines take.
+  #
+  # It is also the *fallback*, not the normal path: declaring `-hf` is what
+  # tells the control plane this engine would otherwise download its own copy,
+  # so the plan resolves the file in the mounted cache and renders `-m <path>`
+  # when the node holds it. See spark_pulse/engines/llama_cpp.py.
   model_arg: -hf
   readiness: /health
   models_endpoint: /v1/models

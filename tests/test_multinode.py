@@ -848,6 +848,52 @@ class TestSizeOneIsUntouched:
         plan = nr.plan("multinode", deployment_id="solo")
         assert plan.warnings == []
 
+    def test_naming_one_node_is_still_one_node(self, fleet):
+        """``nodes: ["192.168.29.60"]`` is how a run is pinned to a machine.
+
+        It went down the multi-node path — which it has to, because the
+        interface names it pins are that node's — and came back carrying "fabric
+        bandwidth, three or four nodes and SGLang across machines have not yet
+        been measured" about a deployment that crosses no wire at all. The
+        warning is about a collective spanning machines, and one machine is
+        not that.
+        """
+        plan = plan_for(1)
+
+        assert plan.node_count == 1
+        assert plan.nodes == [CONTROL]
+        assert nr.MULTI_NODE_UNPROVEN not in plan.warnings
+        assert plan.warnings == []
+
+    def test_a_node_with_no_interface_names_is_not_warned_about_either(self, fleet):
+        """The other half of the same block, and the same reason.
+
+        "NCCL will choose a link itself" is a warning about a link NCCL is
+        never asked to choose: one rank runs no inter-node collective.
+        """
+        node = next(
+            n for n in tools.node_registry.list_nodes() if n.address == PEERS[0]
+        )
+        tools.node_registry.update_node(
+            node.id, ethernet_interface="", infiniband_interfaces=()
+        )
+
+        plan = nr.plan(
+            "multinode",
+            nodes=[PEERS[0]],
+            solo=False,
+            params={"tensor_parallel": 1},
+            deployment_id="pinned-one",
+        )
+
+        assert plan.warnings == []
+
+    def test_two_nodes_are_still_warned_about(self, fleet):
+        """The guard is the size, not the shape of the call."""
+        plan = plan_for(2)
+
+        assert nr.MULTI_NODE_UNPROVEN in plan.warnings
+
     def test_a_solo_plan_renders_the_rendezvous_flags_all_the_same(self, fleet):
         plan = nr.plan("multinode", deployment_id="solo")
 
@@ -1172,7 +1218,12 @@ class TestLlamaCppSpansNodesOverRpc:
         plan = self.plan()
 
         head, worker = plan.ranks
-        assert head["command"].startswith("llama-server --metrics -hf ")
+        # ``-m``, not ``-hf``: the simulated node holds the GGUF, so the
+        # control plane hands the head the file it already has rather than
+        # letting llama-server fetch a second copy of it.
+        assert head["command"].startswith("llama-server --metrics -m ")
+        assert ".gguf --host 0.0.0.0" in head["command"]
+        assert plan.model_source == "hf-cache"
         assert f"--rpc {FABRIC[PEERS[0]][0]}:50052" in head["command"]
         assert worker["command"] == "ggml-rpc-server -H 0.0.0.0 -p 50052"
         assert [r["node_rank"] for r in plan.ranks] == [0, 1]

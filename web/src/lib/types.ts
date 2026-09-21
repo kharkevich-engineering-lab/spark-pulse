@@ -723,6 +723,13 @@ export interface DeployPlan {
   /** Whether the model is in the local catalogue. A plan permits a missing
    *  model — this is how the preview can say so before the deploy refuses. */
   model_present: boolean;
+  /** Where the bytes the engine loads come from — `hf-cache` when the control
+   *  plane resolved a file inside the mounted cache, `engine-download` when
+   *  the engine will fetch its own copy. Empty for every engine that is handed
+   *  a model id, because that is nobody's choice to report. */
+  model_source: "" | "hf-cache" | "engine-download";
+  /** The resolved file, as the container sees it. Set only with `hf-cache`. */
+  model_path: string;
   warnings: string[];
   runtime: string;
   created_at: string;
@@ -893,7 +900,16 @@ export interface ModelPresence {
    *  where `local` is only its "verified" case. A partial copy here is a real
    *  answer, and a boolean has nowhere to put it. */
   local_state?: string;
-  nodes: { node: string; present: boolean; state?: string; error: string | null }[];
+  /** An `allow_patterns` download fetched a deliberate subset, so the files it
+   *  skipped are not missing — they were never asked for. */
+  local_filtered?: boolean;
+  nodes: {
+    node: string;
+    present: boolean;
+    state?: string;
+    filtered?: boolean;
+    error: string | null;
+  }[];
 }
 
 export interface ModelDeleteResult {
