@@ -80,6 +80,8 @@ export function describePrecision(model: ModelEntry): string {
 interface PresenceEntry {
   node: string;
   state?: string;
+  /** Verified against what the download asked for, not the whole repository. */
+  filtered?: boolean;
   error?: string | null;
 }
 
@@ -119,7 +121,11 @@ export function describeWhere(
   }
 
   const holders = entries.filter((e) => e.state === "verified");
-  const title = failed.length > 0 ? failed.map((e) => `${e.node}: ${e.error}`).join("\n") : undefined;
+  const notes = failed.map((e) => `${e.node}: ${e.error}`);
+  // A filtered copy is verified, and the hover says so — a short file count
+  // with nothing explaining it reads as a copy that went wrong.
+  if (holders.some((e) => e.filtered)) notes.push(t("library.whereFiltered"));
+  const title = notes.length > 0 ? notes.join("\n") : undefined;
   if (holders.length === entries.length) {
     return {
       state: "ok",
@@ -217,6 +223,7 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
       const here: PresenceEntry = {
         node: controlName,
         state: answer.local_state ?? (answer.local ? "verified" : "absent"),
+        filtered: answer.local_filtered,
       };
       return describeWhere([here, ...answer.nodes], t);
     },

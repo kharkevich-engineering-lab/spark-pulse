@@ -893,7 +893,16 @@ export interface ModelPresence {
    *  where `local` is only its "verified" case. A partial copy here is a real
    *  answer, and a boolean has nowhere to put it. */
   local_state?: string;
-  nodes: { node: string; present: boolean; state?: string; error: string | null }[];
+  /** An `allow_patterns` download fetched a deliberate subset, so the files it
+   *  skipped are not missing — they were never asked for. */
+  local_filtered?: boolean;
+  nodes: {
+    node: string;
+    present: boolean;
+    state?: string;
+    filtered?: boolean;
+    error: string | null;
+  }[];
 }
 
 export interface ModelDeleteResult {

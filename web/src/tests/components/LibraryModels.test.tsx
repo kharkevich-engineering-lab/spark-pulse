@@ -864,6 +864,18 @@ describe("Library — where a model is", () => {
     expect(answer.title).toContain("connection reset");
   });
 
+  /** An `allow_patterns` download fetched one quantisation on purpose. The
+   *  files it skipped are not missing, so the verdict stays "verified" — the
+   *  hover is where the reason for a short file count goes. */
+  it("says on hover that a copy was filtered, and still counts it a holder", () => {
+    const answer = describeWhere(
+      [{ node: "a", state: "verified", filtered: true }, entry("b", "verified")],
+      t,
+    );
+    expect(answer).toMatchObject({ state: "ok", label: "2 of 2 nodes" });
+    expect(answer.title).toContain("file filter");
+  });
+
   it("has no verdict before anything has been asked", () => {
     expect(describeWhere(null, t).label).toBe("not checked");
     expect(describeWhere([], t).label).toBe("not checked");

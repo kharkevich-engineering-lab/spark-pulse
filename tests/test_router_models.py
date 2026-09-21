@@ -125,6 +125,35 @@ class TestDownloads:
         assert response.status_code == 400
         assert "Unknown model source" in response.json()["detail"]
 
+    def test_an_identical_second_request_gets_the_running_job_back(self, client):
+        """A deploy waiting on a model retries this; it must not fork a copy."""
+        first = client.post(
+            "/api/models/download",
+            json={"model": "acme/tiny", "source": "hf", "allow_patterns": ["*.gguf"]},
+        ).json()
+        second = client.post(
+            "/api/models/download",
+            json={"model": "acme/tiny", "source": "hf", "allow_patterns": ["*.gguf"]},
+        )
+
+        assert second.status_code == 200
+        assert second.json()["id"] == first["id"]
+
+    def test_a_different_request_while_one_runs_is_409_naming_the_job(self, client):
+        first = client.post(
+            "/api/models/download", json={"model": "acme/tiny", "source": "hf"}
+        ).json()
+
+        response = client.post(
+            "/api/models/download",
+            json={"model": "acme/tiny", "source": "hf", "allow_patterns": ["*.gguf"]},
+        )
+
+        assert response.status_code == 409
+        detail = response.json()["detail"]
+        assert detail["job"]["id"] == first["id"]
+        assert first["id"] in detail["message"]
+
     def test_download_status_404(self, client):
         assert client.get("/api/models/downloads/nope").status_code == 404
 

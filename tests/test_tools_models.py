@@ -299,13 +299,20 @@ class TestDownloadJobs:
         (snapshot_path / "model.safetensors").write_bytes(b"y" * 1000)
 
         with (
-            patch.object(models_tool, "estimate_size", return_value=1000),
+            patch.object(
+                models_tool,
+                "_plan_files",
+                return_value=[{"path": "model.safetensors", "size": 1000}],
+            ),
             patch.object(
                 models_tool,
                 "publish_event",
                 side_effect=lambda event, resource, metadata: events.append(event),
             ),
-            patch("huggingface_hub.snapshot_download", return_value=str(snapshot_path)),
+            patch(
+                "huggingface_hub.hf_hub_download",
+                return_value=str(snapshot_path / "model.safetensors"),
+            ),
         ):
             job = models_tool.start_download("acme/plain-7b")
             assert job["status"] == "queued"
@@ -313,8 +320,9 @@ class TestDownloadJobs:
             done = _wait_for(job["id"], ("completed", "failed"))
 
         assert done["status"] == "completed"
+        # The snapshot directory, worked back from the file inside it.
         assert done["path"] == str(snapshot_path)
-        assert done["bytes_done"] >= 1000
+        assert done["bytes_done"] == 1000
         assert done["finished_at"]
         assert models_tool.EVENT_QUEUED in events
         assert models_tool.EVENT_STARTED in events
@@ -322,7 +330,7 @@ class TestDownloadJobs:
 
     def test_failure_records_error(self, hf_home):
         with (
-            patch.object(models_tool, "estimate_size", return_value=0),
+            patch.object(models_tool, "_plan_files", return_value=[]),
             patch(
                 "huggingface_hub.snapshot_download", side_effect=RuntimeError("boom")
             ),
@@ -342,7 +350,7 @@ class TestDownloadJobs:
         """
         lock = models_tool.hub_dir() / ".locks" / "models--acme--plain-7b"
         with (
-            patch.object(models_tool, "estimate_size", return_value=0),
+            patch.object(models_tool, "_plan_files", return_value=[]),
             patch(
                 "huggingface_hub.snapshot_download",
                 side_effect=PermissionError(13, "Permission denied", str(lock)),
@@ -362,7 +370,7 @@ class TestDownloadJobs:
             "token_secret": "",
         }
         with (
-            patch.object(models_tool, "estimate_size", return_value=0),
+            patch.object(models_tool, "_plan_files", return_value=[]),
             patch.object(models_tool, "list_sources", return_value=[source]),
             patch(
                 "huggingface_hub.snapshot_download", return_value=str(hf_home)
@@ -434,7 +442,7 @@ class TestDownloadJobs:
         monkeypatch.setattr(models_tool.threading, "Thread", DeferredThread)
 
         with (
-            patch.object(models_tool, "estimate_size", return_value=0),
+            patch.object(models_tool, "_plan_files", return_value=[]),
             patch("huggingface_hub.snapshot_download") as download,
         ):
             job = models_tool.start_download("acme/plain-7b")
@@ -463,7 +471,7 @@ class TestDownloadJobs:
             return str(models_tool.hub_dir())
 
         with (
-            patch.object(models_tool, "estimate_size", return_value=0),
+            patch.object(models_tool, "_plan_files", return_value=[]),
             patch("huggingface_hub.snapshot_download", side_effect=_slow),
         ):
             job = models_tool.start_download("acme/plain-7b")
@@ -473,12 +481,176 @@ class TestDownloadJobs:
             done = _wait_for(job["id"], ("cancelled", "completed", "failed"))
         assert done["status"] == "completed"
 
+    def test_a_cancel_stops_the_job_before_the_next_file(self, hf_home):
+        """The bug this closes: cancelling a running download did nothing.
+
+        ``snapshot_download`` is one blocking call, so the flag was only ever
+        read before it started and after it returned — twenty cancel requests
+        over two minutes of a 68 GB download, and only a restart stopped it.
+        With a file plan the loop reads the flag between files, so the cancel
+        lands on the next boundary and the job says ``cancelled``.
+        """
+        hub = hf_home / "hub"
+        snapshot = hub / "models--acme--plain-7b" / "snapshots" / "x"
+        snapshot.mkdir(parents=True, exist_ok=True)
+        plan = [{"path": f"shard-{i}.safetensors", "size": 100} for i in range(1, 5)]
+        fetched: list[str] = []
+        cancel_after_first = threading.Event()
+
+        def _fetch(**kwargs):
+            name = kwargs["filename"]
+            fetched.append(name)
+            path = snapshot / name
+            path.write_bytes(b"z" * 100)
+            cancel_after_first.set()
+            # Give the cancel a moment to arrive, so the stop is the flag
+            # being read rather than the loop simply running out of files.
+            time.sleep(0.05)
+            return str(path)
+
+        with (
+            patch.object(models_tool, "_plan_files", return_value=plan),
+            patch("huggingface_hub.hf_hub_download", side_effect=_fetch),
+        ):
+            job = models_tool.start_download("acme/plain-7b")
+            assert cancel_after_first.wait(3)
+            models_tool.cancel_download(job["id"])
+            done = _wait_for(job["id"], ("cancelled", "completed", "failed"))
+
+        assert done["status"] == "cancelled"
+        assert done["error"] is None
+        assert len(fetched) < len(plan), "the loop ran to the end anyway"
+        # Nothing is swept up: the files already fetched stay, and so would the
+        # `.incomplete` blob of the one that was interrupted — which is what
+        # the next job resumes from.
+        assert (snapshot / fetched[0]).exists()
+
+    def test_a_second_request_for_different_files_is_refused_by_id(self, hf_home):
+        """Not silently handed the running job — that is the other half of #134.
+
+        An operator who cancels an unfiltered download and asks for one
+        quantisation must not be handed back the job they were escaping.
+        """
+        release = threading.Event()
+
+        def _slow(**kwargs):
+            release.wait(3)
+            return str(models_tool.hub_dir())
+
+        plan = [{"path": "big.gguf", "size": 10}]
+        with (
+            patch.object(models_tool, "_plan_files", return_value=plan),
+            patch("huggingface_hub.hf_hub_download", side_effect=_slow),
+        ):
+            first = models_tool.start_download("acme/plain-7b")
+            _wait_for(first["id"], ("running",))
+
+            # The same request is the same download, and comes back as itself.
+            assert models_tool.start_download("acme/plain-7b")["id"] == first["id"]
+
+            with pytest.raises(models_tool.DownloadInProgress) as raised:
+                models_tool.start_download(
+                    "acme/plain-7b", allow_patterns=["*PQ2_0.gguf"]
+                )
+            release.set()
+            _wait_for(first["id"], ("completed", "failed", "cancelled"))
+
+        assert raised.value.job["id"] == first["id"]
+        assert first["id"] in str(raised.value)
+
+    def test_bytes_done_never_passes_bytes_total_on_a_resumed_job(self, hf_home):
+        """A resumed partial counts up to its file's size in the set, no more.
+
+        The 10.3 GB of 7.2 GB an operator saw came from counting the whole
+        cache entry: a cancelled unfiltered job's blobs were still sitting in
+        it, and the filtered job that followed reported them as its own.
+        """
+        hub = hf_home / "hub"
+        repo = hub / "models--acme--plain-7b"
+        snapshot = repo / "snapshots" / "x"
+        snapshot.mkdir(parents=True, exist_ok=True)
+        # What an earlier, wider download left behind in the same entry.
+        blobs = repo / "blobs"
+        blobs.mkdir(parents=True, exist_ok=True)
+        (blobs / "leftover-from-the-cancelled-job").write_bytes(b"x" * 50_000)
+
+        plan = [{"path": "only.gguf", "size": 1000}]
+
+        def _fetch(**kwargs):
+            # The resumed file arrives bigger than the plan says it weighs,
+            # which is the clamp's whole reason for being.
+            path = snapshot / kwargs["filename"]
+            path.write_bytes(b"y" * 4000)
+            return str(path)
+
+        with (
+            patch.object(models_tool, "_plan_files", return_value=plan),
+            patch("huggingface_hub.hf_hub_download", side_effect=_fetch),
+        ):
+            job = models_tool.start_download("acme/plain-7b")
+            done = _wait_for(job["id"], ("completed", "failed"))
+
+        assert done["status"] == "completed"
+        assert done["bytes_total"] == 1000
+        assert done["bytes_done"] == 1000
+
+    def test_a_filtered_download_records_its_filter_on_the_marker(self, hf_home):
+        """#135: nothing on disk said the download was deliberately narrow."""
+        hub = hf_home / "hub"
+        repo = hub / "models--acme--plain-7b"
+        snapshot = repo / "snapshots" / "aaaa1111"
+        snapshot.mkdir(parents=True, exist_ok=True)
+
+        def _fetch(**kwargs):
+            path = snapshot / kwargs["filename"]
+            path.write_bytes(b"g" * 10)
+            return str(path)
+
+        with (
+            patch.object(
+                models_tool,
+                "_plan_files",
+                return_value=[{"path": "model.PQ2_0.gguf", "size": 10}],
+            ),
+            patch("huggingface_hub.hf_hub_download", side_effect=_fetch),
+        ):
+            job = models_tool.start_download(
+                "acme/plain-7b", allow_patterns=["*PQ2_0.gguf"]
+            )
+            _wait_for(job["id"], ("completed", "failed"))
+
+        marker = models_tool.hub_cache.read_marker(str(repo))
+        assert marker["allow_patterns"] == ["*PQ2_0.gguf"]
+        assert marker["revision"] == "aaaa1111"
+
+    def test_an_unfiltered_download_records_no_marker(self, hf_home):
+        """The manifest already says what a whole-revision download owes."""
+        hub = hf_home / "hub"
+        repo = hub / "models--acme--plain-7b"
+        snapshot = repo / "snapshots" / "aaaa1111"
+
+        with (
+            patch.object(
+                models_tool,
+                "_plan_files",
+                return_value=[{"path": "model.safetensors", "size": 4096}],
+            ),
+            patch(
+                "huggingface_hub.hf_hub_download",
+                return_value=str(snapshot / "model.safetensors"),
+            ),
+        ):
+            job = models_tool.start_download("acme/plain-7b")
+            _wait_for(job["id"], ("completed", "failed"))
+
+        assert models_tool.hub_cache.read_marker(str(repo)) is None
+
     def test_cancel_unknown_job(self):
         assert models_tool.cancel_download("nope") is None
 
     def test_list_and_clear_downloads(self, hf_home):
         with (
-            patch.object(models_tool, "estimate_size", return_value=0),
+            patch.object(models_tool, "_plan_files", return_value=[]),
             patch("huggingface_hub.snapshot_download", return_value=str(hf_home)),
         ):
             job = models_tool.start_download("acme/plain-7b")
@@ -510,7 +682,11 @@ class TestDiskSpaceGuard:
 
     def test_start_download_refuses_without_space(self, hf_home):
         with (
-            patch.object(models_tool, "estimate_size", return_value=10**15),
+            patch.object(
+                models_tool,
+                "_plan_files",
+                return_value=[{"path": "model.safetensors", "size": 10**15}],
+            ),
             patch.object(
                 models_tool, "check_disk_space", side_effect=ValueError("no space")
             ),

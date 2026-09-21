@@ -1054,6 +1054,7 @@
     "updateFailed": "Update failed",
     "updateOutcome": "{succeeded} succeeded, {failed} failed",
     "updatesApplied": "Updates applied",
+    "whereFiltered": "Downloaded with a file filter; only the files it asked for are expected.",
     "whereNodes": "{count} of {total} nodes",
     "whereOnly": "{node} only",
     "wherePartial": "partial on {node}",
