@@ -160,7 +160,7 @@ describe("RecipeCard", () => {
     expect(screen.getByText("vllm · sglang")).toBeInTheDocument();
   });
 
-  it("names a non-upstream source, and stays quiet about upstream", () => {
+  it("names the source it knows, and stays quiet about an unknown one", () => {
     const { unmount } = render(
       <RecipeCard
         r={recipe({ source: "oci" })}
@@ -174,13 +174,13 @@ describe("RecipeCard", () => {
 
     render(
       <RecipeCard
-        r={recipe({ source: "upstream" })}
+        r={recipe({ source: "unknown" })}
         isRunning={false}
         clusterBlocked={false}
         onSelect={vi.fn()}
       />,
     );
-    expect(screen.queryByText("upstream")).not.toBeInTheDocument();
+    expect(screen.queryByText("unknown")).not.toBeInTheDocument();
   });
 
   /** Resetting a customised recipe throws away local edits, so the button
@@ -253,17 +253,20 @@ describe("RecipeCard", () => {
     expect(screen.getByTitle("Managed recipe — cannot be deleted")).toBeInTheDocument();
   });
 
-  it("hints the same way for an upstream recipe", () => {
+  /** An id no source claims is `unknown`: nothing knows where it came from,
+   *  so it gets neither the badge nor the managed hint that would claim
+   *  otherwise. */
+  it("neither manages nor labels a recipe whose source is unknown", () => {
     render(
       <RecipeCard
-        r={recipe({ source: "upstream" })}
+        r={recipe({ source: "unknown" })}
         isRunning={false}
         clusterBlocked={false}
         onSelect={vi.fn()}
       />,
     );
 
-    expect(screen.getByTitle("Managed recipe — cannot be deleted")).toBeInTheDocument();
+    expect(screen.queryByTitle("Managed recipe — cannot be deleted")).not.toBeInTheDocument();
   });
 
   it("offers neither an uninstall nor the managed hint for a custom recipe", () => {

@@ -409,7 +409,7 @@ Phases 0 to 4 are done; phase 5 is open.
 
 **Phase 3, recipe v2 and second engine.** Schema in `spark_pulse/schemas/`, v1 importer, v2 renderer, `engines/sglang.py` behind a flag, engine and model pickers in the deploy form. `spark-pulse-recipes` validates against the published schema, gains `recipe_version`, index/ref mismatch and stale docs fixed.
 
-**Phase 4, native cluster. Done.** Node registry, non-interactive discovery including mesh, no-Ray topology with engine-specific rank args, per-node env. `runtime: native` is the default and the only value; the `run-recipe.sh` invocation and the symlink code are gone, along with `mock/deployments.py` and `mock/custom_files.py`. `config.runtime` now falls back to `native` rather than `upstream` — the fallback exists so a typo cannot pick a runtime that does not exist, and the one that does not exist is `upstream`. Multi-node remains behind `cluster_experimental` until a two-node bring-up is verified on hardware.
+**Phase 4, native cluster. Done.** Node registry, non-interactive discovery including mesh, no-Ray topology with engine-specific rank args, per-node env. `runtime: native` is the default and the only value; the `run-recipe.sh` invocation and the symlink code are gone, along with `mock/deployments.py` and `mock/custom_files.py`. `config.runtime` fell back to `native` rather than `upstream` for a while, so a typo could not pick a runtime that does not exist; it is a constant now, with no setting and no environment variable behind it. Multi-node remains behind `cluster_experimental` until a two-node bring-up is verified on hardware.
 
 **Phase 5, extras.** Metrics scraping, benchmark runner, OCI-distributed mods, `vllm-mxfp4` and further engine variants.
 

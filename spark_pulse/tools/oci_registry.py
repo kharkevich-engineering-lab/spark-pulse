@@ -1338,7 +1338,7 @@ def list_oci_recipes() -> list[RecipeMeta]:
     result = []
     for meta_file in sorted(RECIPES_DIR.glob("*.meta")):
         # Derive the recipe filename from the meta filename
-        base = meta_file.stem  # e.g. "spark-vllm-7b.yaml"
+        base = meta_file.stem  # e.g. "qwen3-8b.yaml"
         recipe_filename = f"{base}.yaml" if not base.endswith(".yaml") else base
         meta = _read_recipe_meta(recipe_filename)
         if meta:

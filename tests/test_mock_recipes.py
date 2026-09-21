@@ -129,7 +129,7 @@ class TestListRecipes:
         for entry in entries:
             assert entry["id"] == entry["name"]
             assert entry["params"] == entry["defaults"]
-            assert entry["source"] == recipe_sources.SOURCE_UPSTREAM
+            assert entry["source"] == recipe_sources.SOURCE_UNKNOWN
             assert entry["is_customized"] is False
             assert {s["engine"] for s in entry["engine_support"]} >= {
                 "vllm",

@@ -175,11 +175,13 @@ exec`, execs the rendered launch script with its output redirected to PID 1's
 stdout (so `docker logs` carries it), and waits on the engine's readiness
 endpoint. A deployment of N nodes is the same path, one container per rank.
 
-The `upstream` runtime — fork `spark-vllm-docker/run-recipe.sh`, track a PID,
-SIGTERM the process group — was removed. `runtime` stays a settings key
-because deployment *records* carry it, but `native` is the only value that
-resolves; anything else, including a `runtime: upstream` left in an older
-install's settings.json, reads as `native`.
+There was a second runtime once — fork a script out of a checkout on disk,
+track a PID, SIGTERM the process group — and `runtime` was the setting that
+chose between them. It is a constant now: `/api/config` and `/api/settings`
+report it so an operator can see what runs, nothing reads it to decide a path,
+and no value in settings.json or the environment changes it. Deployment
+*records* still carry a `runtime` field, which is a note about how a run was
+made.
 
 A deployment made by the removed runner before an upgrade is not abandoned: it
 is still listed, its log file is still readable, and stopping it still signals
@@ -332,6 +334,5 @@ Environment variables > ~/.config/spark-pulse/settings.json > config.yaml
 | `oidc_provider_url` | string | *(empty)* | OIDC provider URL |
 | `oidc_client_id` | string | *(empty)* | OIDC client ID |
 | `mcp_enabled` | bool | `true` | Enable MCP server |
-| `runtime` | string | `native` | The deployment runtime. `native` (Docker driven from Python) is the only value; anything else resolves to it. Env: `SPARK_PULSE_RUNTIME` |
 | `deploy_ready_timeout_seconds` | int | `900` | How long a native deploy waits for the engine's readiness endpoint |
 | `simulation_mode` | bool | *(env only)* | Set `SIMULATION_MODE=1` to mock tools |

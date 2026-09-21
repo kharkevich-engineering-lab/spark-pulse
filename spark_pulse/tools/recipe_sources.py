@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_CONTAINER = "vllm-node"
 
 #: Recipes shipped inside the package. Ids are prefixed so they never collide
-#: with an upstream, ``custom-`` or ``oci-`` recipe.
+#: with a ``custom-`` or ``oci-`` recipe.
 BUNDLED_SOURCE_PREFIX = "bundled"
 BUNDLED_RECIPES_DIR = Path(__file__).resolve().parent.parent / "recipes"
 
@@ -43,14 +43,15 @@ BUNDLED_RECIPES_DIR = Path(__file__).resolve().parent.parent / "recipes"
 #: the removed ``recipes/oci-*`` symlink used, so ids did not change.
 OCI_PREFIX = "oci-"
 
-#: Source labels a payload can carry, in listing order.
+#: Source labels a payload can carry, in listing order. ``unknown`` is last
+#: because it is not a source: it is what an id no prefix claims resolves to.
 SOURCE_BUNDLED = "bundled"
 SOURCE_CUSTOM = "custom"
 SOURCE_OCI = "oci"
-SOURCE_UPSTREAM = "upstream"
+SOURCE_UNKNOWN = "unknown"
 
-#: Placeholders that only Spark Pulse ever understood — upstream's
-#: ``run-recipe.py`` has no such thing. Deprecated in favour of plain
+#: Placeholders that only Spark Pulse ever understood — the recipe format has
+#: no such thing. Deprecated in favour of plain
 #: ``{tensor_parallel}`` / ``{gpu_memory_utilization}`` / ``{max_model_len}``
 #: substitutions; still expanded so existing recipes keep working.
 DEPRECATED_PLACEHOLDERS = ("{-tp}", "{--gpu-memory-utilization}", "{--max-model-len}")
@@ -102,10 +103,13 @@ def _bundled_recipe_id(recipe_file: Path) -> str:
 def source_of(recipe_id: str) -> str:
     """Label the source a recipe id came from.
 
-    ``upstream`` is what an id matching none of the three prefixes gets — a
-    deployment record written before the managed directories existed, or
-    simulation's canned catalogue. It names a recipe *format*, not a place on
-    disk: nothing is read out of a checkout any more.
+    Three sources mint ids, and each claims a prefix: ``bundled/``, ``custom-``
+    and ``oci-``. An id claimed by none of them came from somewhere this
+    process cannot name — a deployment record written before the managed
+    directories existed, or simulation's canned catalogue — and the honest
+    answer is ``unknown``, which the recipe card renders as no badge at all.
+    It used to answer ``upstream``, which named a checkout that is no longer
+    read and a place the recipe had demonstrably not come from.
     """
     if recipe_id.startswith(f"{BUNDLED_SOURCE_PREFIX}/"):
         return SOURCE_BUNDLED
@@ -114,7 +118,7 @@ def source_of(recipe_id: str) -> str:
         return SOURCE_CUSTOM
     if leaf.startswith("oci-"):
         return SOURCE_OCI
-    return SOURCE_UPSTREAM
+    return SOURCE_UNKNOWN
 
 
 def _flat_dir_files(directory: Path, id_prefix: str) -> list[tuple[str, Path]]:

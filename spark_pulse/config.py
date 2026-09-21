@@ -16,7 +16,6 @@ _SETTINGS_PATH = Path.home() / ".config" / "spark-pulse" / "settings.json"
 #: The one deployment runtime. Kept as a named constant because deployment
 #: records carry the string, and because a second runtime would be added here.
 RUNTIME_NATIVE = "native"
-_KNOWN_RUNTIMES = (RUNTIME_NATIVE,)
 
 # Fields that can be overridden by environment variables.
 # key = settings field name, value = env var name
@@ -226,24 +225,14 @@ class _Config:
     def runtime(self) -> str:
         """Deployment runtime. ``native`` is the only one there is.
 
-        The ``upstream`` runtime — fork upstream's ``run-recipe.sh`` out of a
-        checkout on disk — was removed, so anything unrecognised
-        (a typo, or a stale ``runtime: upstream`` left in a user's
-        settings.json by an older install) resolves to ``native`` rather than
-        to a path that no longer exists. Deployment *records* still carry their
-        own ``runtime``; that is what keeps a pre-upgrade deployment stoppable,
-        and it is read from the record, never from here.
+        A constant, not a setting: there is one way to run a deployment, so
+        nothing an operator could put in settings.json or the environment
+        would select anything else. Reported by ``/api/config`` and
+        ``/api/settings`` so an operator can see what runs; never read to
+        decide a path. Deployment *records* still carry their own ``runtime``
+        field, which is data about how a run was made, not a choice.
         """
-        value = (
-            str(
-                os.environ.get(
-                    "SPARK_PULSE_RUNTIME", self._data.get("runtime", RUNTIME_NATIVE)
-                )
-            )
-            .strip()
-            .lower()
-        )
-        return value if value in _KNOWN_RUNTIMES else RUNTIME_NATIVE
+        return RUNTIME_NATIVE
 
     @property
     def deploy_ready_timeout_seconds(self) -> int:
