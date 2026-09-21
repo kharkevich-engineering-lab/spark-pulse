@@ -12,7 +12,6 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import RunsPage from "@/pages/RunsPage";
-import { MULTI_NODE_BADGE_TITLE, MULTI_NODE_UNPROVEN } from "@/lib/experimental";
 import type { BenchmarkResult, Deployment, EngineMetricsWindow } from "@/lib/types";
 
 vi.mock("@/lib/api", () => ({
@@ -218,7 +217,6 @@ describe("RunsPage row", () => {
 
     const row = await screen.findByTestId("deployment-gang");
     expect(row).toHaveTextContent("tp 2 · 10.0.0.10 + 10.0.0.11");
-    expect(within(row).getByTitle(MULTI_NODE_BADGE_TITLE)).toBeInTheDocument();
   });
 
   it("says nothing multi-node about a run on one machine", async () => {
@@ -226,7 +224,6 @@ describe("RunsPage row", () => {
 
     const row = await screen.findByTestId("deployment-solo");
     expect(row).toHaveTextContent("this node");
-    expect(within(row).queryByTitle(MULTI_NODE_BADGE_TITLE)).toBeNull();
   });
 
   it("leaves a record with no node_count alone rather than failing on it", async () => {
@@ -234,7 +231,6 @@ describe("RunsPage row", () => {
 
     const row = await screen.findByTestId("deployment-legacy");
     expect(row).toHaveTextContent("legacy job");
-    expect(within(row).queryByTitle(MULTI_NODE_BADGE_TITLE)).toBeNull();
   });
 
   it("shows the port, the engine and the model as chips", async () => {
@@ -561,15 +557,14 @@ describe("RunsPage expanded detail", () => {
     vi.mocked(connectLogStream).mockReturnValue(() => {});
   });
 
-  it("carries the unproven list into the expanded view of a multi-node run", async () => {
+  /** A multi-node run's expanded view carried a warning box naming what had
+   *  not been run on hardware. Two nodes have run and been measured, so the
+   *  expanded view is the run's facts and nothing else. */
+  it("warns about nothing when a multi-node run is opened", async () => {
     show();
     await expand("native job");
 
-    const note = within(screen.getByTestId("deployment-nat1")).getByRole("note");
-    expect(note).toHaveTextContent(/runs on two Sparks; some of it is still unproven/i);
-    for (const item of MULTI_NODE_UNPROVEN) {
-      expect(note).toHaveTextContent(item);
-    }
+    expect(within(screen.getByTestId("deployment-nat1")).queryByRole("note")).toBeNull();
   });
 
   it("does not warn about multi-node when a solo run is opened", async () => {

@@ -1,7 +1,7 @@
 /** Runtime configuration: `/api/config`, fetched once and shared.
  *
  * Every feature gate in the SPA reads this — the Benchmarking route, the login
- * button, the experimental marking on Cluster. Two properties matter and both
+ * button, the cluster recipes. Two properties matter and both
  * are about failure: the fetch happens exactly once however many components
  * ask, and a backend that cannot answer must not leave the app with no config
  * at all. The module caches in a module-level variable, so each test imports
@@ -23,7 +23,6 @@ const SERVED = {
   auth_enabled: true,
   mcp_enabled: false,
   cluster_enabled: true,
-  cluster_experimental: false,
   benchmarking_enabled: true,
   simulation_mode: false,
   runtime: "native",
@@ -67,14 +66,14 @@ describe("loadConfig", () => {
   });
 
   // A config the SPA cannot load must not blank the app: the defaults are
-  // the conservative reading — no auth, and Cluster still marked unproven.
+  // the conservative reading — no auth, and no cluster recipes forced on.
   it("falls back to defaults when the backend answers with an error status", async () => {
     const { loadConfig } = await freshConfig();
     fetchMock().mockResolvedValue({ ok: false, statusText: "Bad Gateway", json: async () => ({}) });
 
     const config = await loadConfig();
     expect(config.auth_enabled).toBe(false);
-    expect(config.cluster_experimental).toBe(true);
+    expect(config.cluster_enabled).toBe(false);
     expect(config.runtime).toBe("native");
   });
 

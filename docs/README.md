@@ -47,4 +47,4 @@ Nothing in the control plane touches a node's Docker daemon, GPU or model cache 
 
 ## Status, honestly
 
-Single-node is what this has been run on. **Multi-node is implemented and unverified** — the deploy path, the agent transport and the per-node views all handle N machines, and no two-machine bring-up has confirmed it. The UI says so where it matters rather than in a footnote, and `cluster_experimental` in the config turns the marking off once you have proven it yourself.
+**Two DGX Sparks is what this has been run on.** vLLM tensor-parallel across the pair (2026-09-17) and llama.cpp over its RPC backend (2026-09-21) have both served and been benchmarked there, so the UI no longer disclaims a run that crosses machines. Three and four nodes, the fabric's full bandwidth and SGLang across machines have not been measured; [the parity document](upstream-cluster-parity.md) lists each one and says what would settle it.

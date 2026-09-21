@@ -62,7 +62,6 @@ const SETTINGS: Settings = {
   default_port_range_end: 9100,
   webui_port: 8100,
   cluster_enabled: false,
-  cluster_experimental: true,
   job_retention_days: 7,
   benchmarking_enabled: false,
   runtime: "native",
@@ -92,7 +91,6 @@ const SETTINGS: Settings = {
     oidc_provider_url: "https://id.acme.test",
     mcp_enabled: true,
     mcp_path: "/mcp",
-    cluster_experimental: true,
     thread_pool_size: 40,
     image_registry: { mode: "proxy", address: "10.0.0.1", port: 5000, upstream: "https://ghcr.io" },
   },
@@ -326,13 +324,6 @@ describe("SettingsPage features tab", () => {
         expect.objectContaining({ cluster_enabled: true }),
       ),
     );
-  });
-
-  it("says multi-node is experimental when the build says so", async () => {
-    renderPage();
-    await openTab(/features/i);
-
-    expect(await screen.findByText(/marked experimental in this build/)).toBeInTheDocument();
   });
 
   it("carries the agent auto-update switch into the saved form", async () => {

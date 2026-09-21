@@ -20,8 +20,6 @@
 
 import { useT } from "@/lib/i18n";
 import { StatusBadge, Button, isSettling } from "@/ui";
-import { ExperimentalBadge } from "@/components/Experimental";
-import { MULTI_NODE_BADGE_TITLE } from "@/lib/experimental";
 import { formatDuration } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { isLiveRun } from "@/hooks/useDeployments";
@@ -111,7 +109,6 @@ export default function RunRow({
   const t = useT();
   const live = isLiveRun(run);
   const settling = isSettling(run.sync);
-  const multiNode = (run.node_count ?? 1) > 1;
 
   const throughput = metric(benchmark, "throughput");
   // No engine publishes a time-to-first-token of its own, so the first-token
@@ -163,10 +160,7 @@ export default function RunRow({
               </Chip>
             )}
             {run.model && <Chip title={run.model}>{run.model}</Chip>}
-            <span className="inline-flex max-w-full items-center gap-1.5">
-              <Chip>{placement(run, t("runs.thisNode"))}</Chip>
-              {multiNode && <ExperimentalBadge title={MULTI_NODE_BADGE_TITLE} />}
-            </span>
+            <Chip>{placement(run, t("runs.thisNode"))}</Chip>
             {run.port && (
               <span className="font-mono text-[13px] text-muted">:{run.port}</span>
             )}

@@ -160,7 +160,6 @@ def _environment_block() -> dict:
         "oidc_provider_url": config.oidc_provider_url,
         "mcp_enabled": config.mcp_enabled,
         "mcp_path": config.mcp_path,
-        "cluster_experimental": config.cluster_experimental,
         "thread_pool_size": config.thread_pool_size,
         # The control node's own image registry: how a worker node gets an
         # engine image without every node pulling from the internet. It had no

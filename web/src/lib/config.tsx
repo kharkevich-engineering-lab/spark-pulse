@@ -10,7 +10,6 @@ export interface AppConfig {
   auth_enabled: boolean;
   mcp_enabled: boolean;
   cluster_enabled: boolean;
-  cluster_experimental: boolean;
   benchmarking_enabled: boolean;
   simulation_mode: boolean;
   /** The deployment runtime. "native" — containers we drive ourselves — is the only one. */
@@ -21,7 +20,6 @@ const DEFAULT_CONFIG: AppConfig = {
   auth_enabled: false,
   mcp_enabled: true,
   cluster_enabled: false,
-  cluster_experimental: true,
   benchmarking_enabled: false,
   simulation_mode: true,
   runtime: "native",

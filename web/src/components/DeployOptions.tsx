@@ -16,13 +16,6 @@ import { AlertCircle, ChevronDown, Eye } from "lucide-react";
 import { Button, ErrorLine, Field, Input, Select } from "@/ui";
 import { formatSize } from "@/lib/utils";
 import PreflightPanel from "@/components/PreflightPanel";
-import { ExperimentalBadge, ExperimentalBanner } from "@/components/Experimental";
-import {
-  MULTI_NODE_BADGE_TITLE,
-  MULTI_NODE_REASON,
-  MULTI_NODE_TITLE,
-  MULTI_NODE_UNPROVEN,
-} from "@/lib/experimental";
 
 export interface DeployOptionsValue {
   engine?: string;
@@ -579,10 +572,7 @@ export default function DeployOptions({
 
           {nodes.length >= 2 && (
             <div data-testid="deploy-node-selector" className="space-y-2">
-              <span className="flex items-center gap-2 text-[13px] font-medium">
-                {t("deployOptions.nodes")}
-                <ExperimentalBadge title={MULTI_NODE_BADGE_TITLE} />
-              </span>
+              <span className="text-[13px] font-medium">{t("deployOptions.nodes")}</span>
               {/* A node is a name and an address, which together are wider
                   than a phone: each row wraps rather than clipping. */}
               <div
@@ -623,14 +613,6 @@ export default function DeployOptions({
               <p className="text-[13px] text-muted" data-testid="deploy-world-size">
                 {plural("deployOptions.worldSize", worldSize, { last: worldSize - 1 })}
               </p>
-              {worldSize > 1 && (
-                <ExperimentalBanner
-                  className="mt-2"
-                  title={MULTI_NODE_TITLE}
-                  reason={MULTI_NODE_REASON}
-                  items={MULTI_NODE_UNPROVEN}
-                />
-              )}
             </div>
           )}
 

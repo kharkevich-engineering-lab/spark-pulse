@@ -350,7 +350,6 @@ export interface Settings {
   webui_port: number;
   cluster_enabled: boolean;
   agent_auto_update?: boolean;
-  cluster_experimental: boolean;
   job_retention_days: number;
   benchmarking_enabled: boolean;
   runtime?: string;
@@ -414,7 +413,6 @@ export interface EnvironmentReport {
   oidc_provider_url: string;
   mcp_enabled: boolean;
   mcp_path: string;
-  cluster_experimental: boolean;
   thread_pool_size: number;
   /** The control node's own image registry: how a worker node gets an engine
    *  image without every node pulling from the internet. Empty when it could

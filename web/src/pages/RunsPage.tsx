@@ -45,12 +45,6 @@ import EngineMetricsPanel from "@/components/EngineMetrics";
 import RunRow from "@/components/RunRow";
 import BenchmarkLauncher from "@/components/BenchmarkLauncher";
 import BenchmarksPanel from "@/components/BenchmarksPanel";
-import { ExperimentalBanner } from "@/components/Experimental";
-import {
-  MULTI_NODE_REASON,
-  MULTI_NODE_TITLE,
-  MULTI_NODE_UNPROVEN,
-} from "@/lib/experimental";
 import { Terminal } from "lucide-react";
 import type { BenchmarkResult, Deployment, EngineMetricsWindow } from "@/lib/types";
 
@@ -267,14 +261,6 @@ export default function RunsPage({ initialTab }: RunsPageProps = {}) {
 
   const renderExpanded = (run: Deployment) => (
     <>
-      {(run.node_count ?? 1) > 1 && (
-        <ExperimentalBanner
-          className="m-4"
-          title={MULTI_NODE_TITLE}
-          reason={MULTI_NODE_REASON}
-          items={MULTI_NODE_UNPROVEN}
-        />
-      )}
       <dl className="grid grid-cols-[auto,1fr] gap-x-4 gap-y-1 border-b border-line bg-bg px-4 py-3 text-[13px]">
         <dt className="text-muted">{t("runs.recipe")}</dt>
         <dd className="truncate font-mono">{run.recipe_id}</dd>

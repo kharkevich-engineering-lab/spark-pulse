@@ -162,11 +162,8 @@ test("enrol, select, preview, deploy, see the ranks, stop", async ({ page, reque
   // the server, with no control on the page able to raise it.
   await expect(page.getByLabel("Tensor parallel")).toHaveValue("2");
   await expect(occupancy).toContainText("tp=2 pp=1 occupies 2 nodes");
-  // Two machines is the experimental case; one is not.
-  await expect(page.getByTestId("deploy-node-selector").getByRole("note")).toBeVisible();
 
-  // Changing your mind puts you back where you started — including the
-  // marking, which is what says whether this deploy is the unproven kind.
+  // Changing your mind puts you back where you started.
   await page
     .getByTestId("deploy-nodes")
     .locator("label")
@@ -174,7 +171,6 @@ test("enrol, select, preview, deploy, see the ranks, stop", async ({ page, reque
     .getByRole("checkbox")
     .uncheck();
   await expect(worldSize).toHaveText("1 node, ranks 0-0");
-  await expect(page.getByTestId("deploy-node-selector").getByRole("note")).toHaveCount(0);
   // Including the shape: a form left asking for two nodes' worth of tensor
   // width on one node is a form that will be refused for the opposite reason.
   await expect(page.getByLabel("Tensor parallel")).toHaveValue("1");
@@ -200,7 +196,6 @@ test("enrol, select, preview, deploy, see the ranks, stop", async ({ page, reque
   await expect(command).toContainText(CATALOGUED_MODEL);
   await expect(command).toContainText("--node-rank 0");
   await expect(command).toContainText(`--master-addr ${CONTROL}`);
-  await expect(plan).toContainText("has run on two DGX Sparks");
 
   const preflight = page.getByTestId("preflight");
   await expect(preflight).toBeVisible();

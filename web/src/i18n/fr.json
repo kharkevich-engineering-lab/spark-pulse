@@ -225,7 +225,6 @@
     }
   },
   "cluster": {
-    "experimental": "Le multi-nœud est encore expérimental.",
     "heading": "Les nœuds."
   },
   "monitoring": {
@@ -655,7 +654,6 @@
     "cacheDirsHelp": "Un par ligne. Montés dans chaque conteneur, pour qu'un noyau compilé survive au conteneur qui l'a produit — la différence entre un démarrage à chaud et plusieurs minutes de recompilation.",
     "caches": "Caches et point d'entrée",
     "clearToken": "Effacer le jeton",
-    "clusterExperimental": "Le multi-nœud est marqué expérimental dans cette version.",
     "clusterMode": "Forcer le mode grappe",
     "clusterModeHelp": "Force l'affichage des recettes qui exigent plusieurs nœuds. Elles sont proposées d'office dès qu'un second nœud est inscrit ; ceci sert donc à une grappe encore en construction.",
     "defaultPath": "{backend} (chemin par défaut)",
@@ -1125,10 +1123,5 @@
     "toolsHint": "Demandés au point de terminaison lui-même : c'est donc ce qu'un client verrait, et non une liste tenue à la main ici.",
     "toolsFailed": "Impossible de lire la liste des outils depuis {endpoint}.",
     "guidesHint": "Chaque extrait porte le point de terminaison ci-dessus : il n'y a rien à compléter."
-  },
-  "experimental": {
-    "tooltip": "Expérimental : pas encore vérifié sur du matériel réel",
-    "chip": "exp",
-    "feature": "Fonction expérimentale"
   }
 }

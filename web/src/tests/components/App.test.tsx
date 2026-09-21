@@ -75,7 +75,6 @@ describe("App routing", () => {
       auth_enabled: false,
       mcp_enabled: true,
       cluster_enabled: false,
-      cluster_experimental: true,
       benchmarking_enabled: false,
       simulation_mode: true,
       runtime: "native",

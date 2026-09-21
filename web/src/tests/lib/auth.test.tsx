@@ -32,7 +32,6 @@ const AUTH_ON: AppConfig = {
   auth_enabled: true,
   mcp_enabled: true,
   cluster_enabled: false,
-  cluster_experimental: true,
   benchmarking_enabled: false,
   simulation_mode: true,
   runtime: "native",

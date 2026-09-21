@@ -12,7 +12,6 @@ export interface AppConfig {
   auth_enabled: boolean;
   mcp_enabled: boolean;
   cluster_enabled: boolean;
-  cluster_experimental: boolean;
   benchmarking_enabled: boolean;
   simulation_mode: boolean;
   runtime: string;
