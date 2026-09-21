@@ -38,6 +38,7 @@ which prints one JSON object on stdout.
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import hashlib
 import json
 import os
@@ -76,6 +77,12 @@ EVIDENCE_NONE = "none"
 EVIDENCE_STRUCTURE = "structure"
 EVIDENCE_MANIFEST = "manifest"
 EVIDENCE_HASHES = "hashes"
+
+#: What a completion marker written by a *download* claims.  Not a verdict of
+#: this module's: the files arrived one at a time and each was sized by
+#: ``huggingface_hub`` as it landed.  It is on the marker so a reader can tell
+#: a marker a download wrote from one a verified replication wrote.
+EVIDENCE_DOWNLOAD = "download"
 
 #: Cap on how many offending paths a report carries, so a wholly-missing tree
 #: does not return fifty thousand strings over SSH.
@@ -238,6 +245,51 @@ def manifest_bytes(manifest: dict[str, dict[str, Any]]) -> int:
     return sum(int(entry.get("size") or 0) for entry in manifest.values())
 
 
+# ── A download's own file set ────────────────────────────────────────────────
+
+
+def marker_patterns(
+    marker: dict[str, Any] | None, commit: str | None = None
+) -> list[str] | None:
+    """The ``allow_patterns`` a completion marker records, when it records any.
+
+    A download started with ``allow_patterns`` fetches a deliberate subset —
+    one GGUF quantisation out of a repo carrying nine — and nothing on disk
+    said so, which is why a finished filtered download verified as ``partial``
+    for ever after and could never be replicated.  The marker names the filter;
+    this reads it back.
+
+    The patterns are only honoured for the revision the marker names: a filter
+    recorded for one commit says nothing about what another commit should hold.
+    """
+    if not isinstance(marker, dict):
+        return None
+    patterns = marker.get("allow_patterns")
+    if not isinstance(patterns, list) or not patterns:
+        return None
+    revision = marker.get("revision")
+    if commit and revision and str(revision) != str(commit):
+        return None
+    return [str(p) for p in patterns]
+
+
+def filter_manifest(
+    manifest: dict[str, dict[str, Any]], patterns: list[str] | None
+) -> dict[str, dict[str, Any]]:
+    """The manifest narrowed to the files ``patterns`` admits.
+
+    The same ``fnmatch`` rule ``huggingface_hub`` filters a download by, so
+    what is expected back is exactly what was asked for.
+    """
+    if not patterns:
+        return manifest
+    return {
+        path: entry
+        for path, entry in manifest.items()
+        if any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
+    }
+
+
 # ── Hashing ──────────────────────────────────────────────────────────────────
 
 
@@ -295,6 +347,14 @@ def _blank_report(state: str, reason: str, revision: str | None) -> dict[str, An
         "dangling": [],
         "dangling_count": 0,
         "marker": None,
+        # A deliberately narrowed download — ``allow_patterns`` — is not a
+        # broken one.  When the entry's marker records a filter, the files it
+        # excludes are *not expected*, the verdict is reached over what was
+        # asked for, and these two say so rather than leaving a caller to
+        # wonder why the file count is short.
+        "filtered": False,
+        "allow_patterns": None,
+        "files_excluded": 0,
         # What the operator would have to do about it, when there is something
         # to do. Present on every report so a caller can render it without
         # asking which kind of failure it is looking at.
@@ -323,6 +383,14 @@ def verify_snapshot(
       wrong.
     * ``verified`` — every file the manifest lists is present at the size it
       lists, reachable through the snapshot's symlinks.
+
+    A download made with ``allow_patterns`` is a fourth thing that used to
+    read as the second: the files it deliberately did not fetch are missing
+    from the snapshot and the whole-repo manifest counts them against it.  When
+    the entry's completion marker records the filter, those files are *not
+    expected* — the verdict is reached over the files the patterns admit, and
+    the report comes back ``verified`` with ``filtered`` set and the patterns
+    on it.  A file missing from *inside* the filter is still ``partial``.
 
     Args:
         repo: The cache entry directory (``…/hub/models--org--name``).
@@ -359,7 +427,46 @@ def verify_snapshot(
     manifest = read_manifest(repo, commit)
     if manifest is None:
         return _verify_structurally(repo, commit, snapshot, report, require_manifest)
-    return _verify_against_manifest(manifest, snapshot, commit, report, deep)
+    return _verify_against_manifest(
+        manifest,
+        snapshot,
+        commit,
+        report,
+        deep,
+        allow_patterns=marker_patterns(report["marker"], commit),
+    )
+
+
+def _apply_filter(
+    manifest: dict[str, dict[str, Any]],
+    allow_patterns: list[str] | None,
+    report: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """Narrow the manifest to the download's own file set, and say so.
+
+    A filter that admits nothing is not applied: an entry checked against an
+    empty manifest would come back ``verified`` having proved nothing at all,
+    which is a worse answer than the ``partial`` it replaces.
+    """
+    if not allow_patterns:
+        return manifest
+    narrowed = filter_manifest(manifest, allow_patterns)
+    if not narrowed:
+        return manifest
+    report["filtered"] = True
+    report["allow_patterns"] = list(allow_patterns)
+    report["files_excluded"] = len(manifest) - len(narrowed)
+    return narrowed
+
+
+def _verified_reason(files: int, commit: str | None, report: dict[str, Any]) -> str:
+    """The one line a passing report carries, filter named when there is one."""
+    if report.get("filtered"):
+        return (
+            f"{files} file(s) match the manifest for {commit}, "
+            f"filtered to {', '.join(report.get('allow_patterns') or [])}"
+        )
+    return f"{files} files match the manifest for {commit}"
 
 
 def _verify_against_manifest(
@@ -368,8 +475,10 @@ def _verify_against_manifest(
     commit: str,
     report: dict[str, Any],
     deep: bool,
+    allow_patterns: list[str] | None = None,
 ) -> dict[str, Any]:
     """Compare the snapshot against the hub's own manifest for the commit."""
+    manifest = _apply_filter(manifest, allow_patterns, report)
     missing: list[str] = []
     dangling: list[str] = []
     mismatched: list[dict[str, Any]] = []
@@ -446,7 +555,7 @@ def _verify_against_manifest(
         report["reason"] = _describe(len(missing), len(dangling), len(mismatched))
         return report
     report["state"] = STATE_VERIFIED
-    report["reason"] = f"{len(manifest)} files match the manifest for {commit}"
+    report["reason"] = _verified_reason(len(manifest), commit, report)
     marker = report.get("marker")
     if isinstance(marker, dict) and marker.get("revision") == commit:
         report["verified_at"] = marker.get("verified_at")
@@ -461,6 +570,7 @@ def verify_listing(
     manifest: dict[str, dict[str, Any]] | None = None,
     deep: bool = False,
     require_manifest: bool = False,
+    allow_patterns: list[str] | None = None,
 ) -> dict[str, Any]:
     """Decide the same three states from a *listing* rather than from disk.
 
@@ -484,6 +594,10 @@ def verify_listing(
             entry with only a git blob id has no comparable digest, exactly as
             the on-disk verifier skips it when the hub published no hash.
         require_manifest: Refuse ``verified`` on structure alone.
+        allow_patterns: The download filter the copy was made with, when it
+            was made with one. The node holds what replication shipped it,
+            which is the control node's own filtered set, so the filter comes
+            from here rather than from a marker the listing cannot see.
     """
     if not present:
         return _blank_report(
@@ -497,6 +611,7 @@ def verify_listing(
 
     if manifest is None:
         return _listing_structurally(by_path, report, require_manifest)
+    manifest = _apply_filter(manifest, allow_patterns, report)
 
     missing: list[str] = []
     dangling: list[str] = []
@@ -571,7 +686,7 @@ def verify_listing(
         report["reason"] = _describe(len(missing), len(dangling), len(mismatched))
         return report
     report["state"] = STATE_VERIFIED
-    report["reason"] = f"{len(manifest)} files match the manifest for {commit}"
+    report["reason"] = _verified_reason(len(manifest), commit, report)
     return report
 
 
@@ -812,8 +927,14 @@ def marker_payload(
     commit: str,
     report: dict[str, Any],
     source: str = "",
+    allow_patterns: list[str] | None = None,
 ) -> dict[str, Any]:
-    """The completion marker for a verified replica of ``commit``."""
+    """The completion marker for a verified replica of ``commit``.
+
+    ``allow_patterns`` travels with the copy: a replica of a filtered download
+    holds the same subset, and a marker that did not say so would leave the
+    node's own verify counting the files nobody ever asked for.
+    """
     return {
         "marker_version": MARKER_VERSION,
         "model": model_id,
@@ -821,6 +942,7 @@ def marker_payload(
         "bytes": int(report.get("bytes_present") or 0),
         "files": int(report.get("files_present") or 0),
         "evidence": report.get("evidence"),
+        "allow_patterns": list(allow_patterns) if allow_patterns else None,
         "verified_at": _now(),
         "source": source,
     }

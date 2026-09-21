@@ -19,6 +19,7 @@ from spark_pulse.tools.hub_cache import (
 )
 from spark_pulse.tools.models import (  # noqa: F401 — shared constants/helpers
     DEFAULT_SOURCES,
+    DownloadInProgress,
     EVENT_CANCELLED,
     EVENT_COMPLETED,
     EVENT_DELETED,
@@ -35,6 +36,7 @@ from spark_pulse.tools.models import (  # noqa: F401 — shared constants/helper
     TOKEN_ENV_KEYS,
     _notified,
     _notify_finished,
+    _same_request,
     add_finish_listener,
     publish_event,
     register_event_loop,
@@ -461,17 +463,10 @@ def _simulate(job_id: str) -> None:
         _publish_job(EVENT_COMPLETED, finished)
 
 
-def _active_download_for(
-    model: str, source: str | None, revision: str | None
-) -> dict[str, Any] | None:
+def _active_download_for(model: str) -> dict[str, Any] | None:
     with _jobs_lock:
         for job in _jobs.values():
-            if (
-                job.get("status") in ("queued", "running")
-                and job.get("model") == model
-                and job.get("source") == source
-                and (job.get("revision") or None) == (revision or None)
-            ):
+            if job.get("status") in ("queued", "running") and job.get("model") == model:
                 return dict(job)
     return None
 
@@ -490,10 +485,13 @@ def start_download(
         raise ValueError(
             f"Source '{src.get('name')}' is a local path — nothing to download"
         )
-    # Same rule as production: one active job per model+source+revision. See
+    # Same rule as production: one active job per model — the same request
+    # gets the running job back, a different one gets a refusal. See
     # ``tools.models.start_download`` for why two are never two downloads.
-    existing = _active_download_for(model, src.get("name"), revision)
+    existing = _active_download_for(model)
     if existing is not None:
+        if not _same_request(existing, src.get("name"), revision, allow_patterns):
+            raise DownloadInProgress(existing)
         return existing
 
     estimated = estimate_size(model, src, revision, allow_patterns)
@@ -510,6 +508,7 @@ def start_download(
         "status": "queued",
         "bytes_done": 0,
         "bytes_total": estimated,
+        "files_total": _TICKS,
         "current_file": None,
         "path": None,
         "error": None,

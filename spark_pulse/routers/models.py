@@ -31,6 +31,21 @@ def put_sources(req: dict):
 
 @router.post("/download")
 def start_download(req: dict):
+    """Start a snapshot download, or answer about the one already running.
+
+    One model is one cache entry, one blob store and one set of locks, so one
+    download of it at a time. What happens when a second request arrives
+    depends on whether it asks for the same thing:
+
+    * **The same** ``source``, ``revision`` and ``allow_patterns`` — the
+      running job comes back, 200. Retrying is how a deploy offers to fetch a
+      model it is waiting for, and a retry must not start a second copy.
+    * **Anything different** — 409, with ``detail.job`` naming the job that is
+      running and has to be cancelled first. Handing back a job fetching
+      other files would answer a question nobody asked: an operator who
+      cancelled an unfiltered download and asked for one GGUF would be given
+      back the 68 GB job they were trying to get away from.
+    """
     model = str(req.get("model") or "").strip()
     if not model:
         raise HTTPException(status_code=400, detail="model is required")
@@ -44,6 +59,11 @@ def start_download(req: dict):
             revision=req.get("revision"),
             allow_patterns=allow_patterns,
         )
+    except tools.models.DownloadInProgress as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": str(exc), "job": exc.job},
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

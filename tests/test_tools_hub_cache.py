@@ -240,6 +240,141 @@ class TestWithoutAManifest:
         assert "unfinished" in report["reason"]
 
 
+# ── A download that was deliberately narrow ──────────────────────────────────
+
+
+class TestFilteredDownloads:
+    """``allow_patterns`` fetches a subset on purpose; that is not ``partial``.
+
+    An operator who wants one GGUF quantisation out of nine asks for it by
+    pattern. Every other file the repo lists is then missing from the snapshot
+    — and the whole-repo manifest counted all of them against the entry, so a
+    finished download verified as ``partial`` for ever after and replication
+    refused to ship it. The completion marker records the filter; the verifier
+    expects what was asked for and nothing else.
+    """
+
+    def _filtered(self, repo: Path, patterns: list[str], **overrides) -> None:
+        """Write a marker recording ``patterns`` for the sample commit."""
+        payload = {
+            "model": SAMPLE_MODEL,
+            "revision": SAMPLE_COMMIT,
+            "allow_patterns": patterns,
+            "evidence": hub_cache.EVIDENCE_DOWNLOAD,
+        }
+        payload.update(overrides)
+        hub_cache.write_marker(str(repo), payload)
+
+    def _keep_only(self, repo: Path, keep: set[str]) -> None:
+        """Delete everything the filter did not ask for, as hf would never fetch it."""
+        for name in SAMPLE_FILES:
+            if name in keep:
+                continue
+            (repo / "snapshots" / SAMPLE_COMMIT / name).unlink()
+
+    def test_a_filtered_entry_verifies_as_verified_and_says_it_was_filtered(self, repo):
+        keep = {"config.json", "model-00001-of-00002.safetensors"}
+        self._keep_only(repo, keep)
+        self._filtered(repo, ["config.json", "model-00001-*.safetensors"])
+
+        report = hub_cache.verify_snapshot(str(repo))
+
+        assert report["state"] == hub_cache.STATE_VERIFIED
+        assert report["filtered"] is True
+        assert report["allow_patterns"] == [
+            "config.json",
+            "model-00001-*.safetensors",
+        ]
+        assert report["files_expected"] == len(keep)
+        assert report["files_excluded"] == len(SAMPLE_FILES) - len(keep)
+        assert report["bytes_expected"] == sum(len(SAMPLE_FILES[n]) for n in keep)
+        assert "filtered to" in report["reason"]
+
+    def test_a_file_missing_inside_the_filter_is_still_partial(self, repo):
+        """The filter narrows what is expected; it does not excuse a gap in it."""
+        self._keep_only(repo, {"config.json", "model-00001-of-00002.safetensors"})
+        self._filtered(repo, ["config.json", "*.safetensors"])
+
+        report = hub_cache.verify_snapshot(str(repo))
+
+        assert report["state"] == hub_cache.STATE_PARTIAL
+        assert report["missing"] == ["model-00002-of-00002.safetensors"]
+
+    def test_an_unfiltered_entry_is_unchanged(self, repo):
+        report = hub_cache.verify_snapshot(str(repo))
+        assert report["state"] == hub_cache.STATE_VERIFIED
+        assert report["filtered"] is False
+        assert report["allow_patterns"] is None
+
+    def test_a_filter_that_admits_nothing_is_not_applied(self, repo):
+        """Verified against an empty manifest would prove nothing at all."""
+        self._keep_only(repo, {"config.json"})
+        self._filtered(repo, ["*.nothing-matches-this"])
+
+        report = hub_cache.verify_snapshot(str(repo))
+
+        assert report["state"] == hub_cache.STATE_PARTIAL
+        assert report["filtered"] is False
+
+    def test_a_filter_recorded_for_another_revision_is_ignored(self, repo):
+        """A filter says what one commit holds, never what another one owes."""
+        self._keep_only(repo, {"config.json"})
+        self._filtered(repo, ["config.json"], revision="b" * 40)
+
+        report = hub_cache.verify_snapshot(str(repo))
+
+        assert report["state"] == hub_cache.STATE_PARTIAL
+        assert report["filtered"] is False
+
+    def test_a_listing_is_filtered_by_the_patterns_it_is_given(self, repo):
+        """Presence asks the node for a listing and decides here.
+
+        The node's own marker sits beside the snapshot rather than inside it,
+        so the filter travels from the control plane, which knows what it
+        shipped.
+        """
+        manifest = hub_cache.read_manifest(str(repo), SAMPLE_COMMIT)
+        files = [
+            {
+                "path": "config.json",
+                "size": len(SAMPLE_FILES["config.json"]),
+                "resolved": True,
+            }
+        ]
+
+        filtered = hub_cache.verify_listing(
+            files,
+            commit=SAMPLE_COMMIT,
+            manifest=manifest,
+            allow_patterns=["config.json"],
+        )
+        unfiltered = hub_cache.verify_listing(
+            files, commit=SAMPLE_COMMIT, manifest=manifest
+        )
+
+        assert filtered["state"] == hub_cache.STATE_VERIFIED
+        assert filtered["filtered"] is True
+        assert unfiltered["state"] == hub_cache.STATE_PARTIAL
+
+    def test_filter_manifest_uses_the_same_rule_the_hub_filters_a_download_by(
+        self, repo
+    ):
+        manifest = hub_cache.read_manifest(str(repo), SAMPLE_COMMIT)
+
+        assert set(hub_cache.filter_manifest(manifest, ["*.safetensors"])) == {
+            "model-00001-of-00002.safetensors",
+            "model-00002-of-00002.safetensors",
+        }
+        assert hub_cache.filter_manifest(manifest, None) == manifest
+
+    def test_marker_patterns_reads_only_a_real_list(self):
+        assert hub_cache.marker_patterns(None) is None
+        assert hub_cache.marker_patterns({}) is None
+        assert hub_cache.marker_patterns({"allow_patterns": []}) is None
+        assert hub_cache.marker_patterns({"allow_patterns": "*.gguf"}) is None
+        assert hub_cache.marker_patterns({"allow_patterns": ["*.gguf"]}) == ["*.gguf"]
+
+
 # ── The completion marker ────────────────────────────────────────────────────
 
 
@@ -259,6 +394,7 @@ class TestMarker:
         assert stored["bytes"] == sum(len(v) for v in SAMPLE_FILES.values())
         assert stored["files"] == len(SAMPLE_FILES)
         assert stored["source"] == "control-1"
+        assert stored["allow_patterns"] is None
         assert stored["verified_at"]
         assert stored["marker_version"] == hub_cache.MARKER_VERSION
         leftovers = list(Path(hub_cache.marker_dir(str(repo))).glob("*.tmp"))

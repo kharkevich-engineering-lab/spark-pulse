@@ -1054,6 +1054,7 @@
     "updateFailed": "Échec de la mise à jour",
     "updateOutcome": "{succeeded} réussies, {failed} échouées",
     "updatesApplied": "Mises à jour appliquées",
+    "whereFiltered": "Téléchargé avec un filtre de fichiers ; seuls les fichiers demandés sont attendus.",
     "whereNodes": "{count} nœuds sur {total}",
     "whereOnly": "{node} seulement",
     "wherePartial": "partiel sur {node}",
