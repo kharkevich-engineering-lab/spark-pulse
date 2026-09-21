@@ -238,6 +238,25 @@ def get_logs(deployment_id: str, lines: int = 200):
     return {"logs": logs}
 
 
+@router.get("/{deployment_id}/events")
+def get_deployment_events(
+    deployment_id: str, limit: int = 200, before: str | None = None
+) -> dict[str, Any]:
+    """This run's own timeline, newest first.
+
+    The expanded row on Runs seeds itself from here and then appends the live
+    SSE frames, which is what lets a run that finished before the page was
+    opened show what happened to it. The frames are the same shape the stream
+    carries — ``event_id`` included, so the page can tell a frame it already
+    has from a new one.
+
+    No 404: this answers about the event log, not about the record. A run
+    whose record has been cleared has no events either, and "nothing happened
+    that we still hold" is the true answer rather than an error.
+    """
+    return tools.event_log.history(deployment_id, limit=limit, before=before)
+
+
 @router.get("/{deployment_id}/metrics")
 def get_engine_metrics(deployment_id: str) -> dict[str, Any]:
     """The engine's own metrics for this deployment, as a bounded window.

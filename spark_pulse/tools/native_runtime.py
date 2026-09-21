@@ -219,8 +219,19 @@ def publish_event(
     message: str = "",
     metadata: dict[str, Any] | None = None,
 ) -> None:
-    """Emit a deployment event on the shared broadcaster from any thread."""
+    """Record a deployment event and emit it on the shared broadcaster.
+
+    Recorded *first*, and on the calling thread: the broadcaster reaches
+    whoever happens to be listening, and with nobody listening there is simply
+    nothing to deliver — which is how a run that was deployed, pulled, started
+    and benchmarked came to show an empty event panel an hour later. The write
+    is what makes the timeline exist; the broadcast is what makes it live.
+
+    The write can never fail the publish: ``event_log.record`` swallows its own
+    errors, and the broadcast below happens whatever it returned.
+    """
     from spark_pulse.sse import _get_event_broadcaster
+    from spark_pulse.tools import event_log
 
     event = DeploymentEvent(
         event_type=event_type,
@@ -229,6 +240,7 @@ def publish_event(
         message=message or event_type.value,
         metadata=metadata or {},
     )
+    event_log.record(event)
     try:
         broadcaster = _get_event_broadcaster()
     except Exception:  # pragma: no cover - defensive

@@ -100,6 +100,44 @@ test("shows the log stream for a run", async ({ page, request }) => {
   await expectNoCrash(page);
 });
 
+/** A run's event stream, from the store rather than from the open tab.
+ *
+ * The panel used to carry only the frames that had arrived over SSE since the
+ * browser tab was opened, under a footer promising thirty days of retention:
+ * a run deployed a moment before the page was loaded showed "No events to
+ * display · 0 events". The deploy below finishes *before* the page is opened,
+ * so everything the panel shows had to come from the store.
+ */
+test("shows a run's stored event timeline on the expanded row", async ({ page, request }) => {
+  const created = await request.post("/api/deployments", {
+    data: { recipe_id: RECIPE_ID, name: RECIPE_NAME, params: {} },
+  });
+  expect(created.ok(), "POST /api/deployments should succeed").toBeTruthy();
+  const deployment = (await created.json()) as { id: string };
+
+  // The history is there to be read before any browser has connected.
+  const stored = await request.get(`/api/deployments/${deployment.id}/events`);
+  expect(stored.ok(), "GET /api/deployments/{id}/events should succeed").toBeTruthy();
+  const history = (await stored.json()) as {
+    total: number;
+    events: { type: string; message: string; event_id: string }[];
+  };
+  expect(history.total, "the deploy should have left a timeline").toBeGreaterThan(0);
+  expect(history.events.map((e) => e.type)).toContain("deployment_planned");
+
+  await gotoPage(page, "/jobs");
+  const row = page.getByTestId(`deployment-${deployment.id}`);
+  await row.getByRole("button", { name: "Logs" }).click();
+
+  await expect(row.getByText("Event stream", { exact: true })).toBeVisible();
+  await expect(row.getByText("No events to display")).toHaveCount(0);
+  // The oldest event of the lifecycle, rendered from the store.
+  const planned = history.events[history.events.length - 1];
+  await expect(row.getByText(planned.message, { exact: true })).toBeVisible();
+  await expect(row.getByText(/\d+ events?/).first()).toBeVisible();
+  await expectNoCrash(page);
+});
+
 /** The engine's own metrics on an open row.
  *
  * This is the one place a reader can see that the sampler is actually running:

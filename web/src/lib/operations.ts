@@ -95,6 +95,76 @@ export interface DeploymentEvent {
   severity?: "info" | "warning" | "error";
 }
 
+/** One event as the wire carries it.
+ *
+ * The same shape twice over: `/sse/events/deployments` streams it as it
+ * happens and `GET /api/deployments/{id}/events` hands back what was stored.
+ * One shape means one parser — `eventFromFrame` below — rather than a panel
+ * that renders live frames one way and history another.
+ */
+export interface DeploymentEventFrame {
+  event_id?: string;
+  timestamp?: string;
+  type?: string;
+  message?: string;
+  resource?: string;
+  resource_type?: string;
+  node?: string;
+  severity?: string;
+}
+
+/** One run's stored timeline: a page of it, and how much there is in all. */
+export interface DeploymentEventPage {
+  resource: string;
+  events: DeploymentEventFrame[];
+  /** Everything held for this run, not just this page — what the chip says. */
+  total: number;
+  limit: number;
+}
+
+/** A wire frame as the panel renders it.
+ *
+ * `event_id` comes from the backend, which mints it on the event itself: it is
+ * what lets a seeded panel tell a frame it already has from one that just
+ * happened. A frame from a build that predates that falls back to a generated
+ * id, which is only ever unique to this browser — so it can be shown, and it
+ * cannot be deduplicated.
+ */
+export function eventFromFrame(frame: DeploymentEventFrame): DeploymentEvent {
+  return {
+    event_id: frame.event_id || crypto.randomUUID(),
+    timestamp: frame.timestamp || new Date().toISOString(),
+    event_type: (frame.type as EventType) || ("unknown" as EventType),
+    message: frame.message || "",
+    resource: frame.resource || "",
+    resource_type: (frame.resource_type as OperationResourceType) || "deployment",
+    node: frame.node || undefined,
+    severity: (frame.severity as DeploymentEvent["severity"]) || undefined,
+  };
+}
+
+/** Every event once, newest first.
+ *
+ * The expanded row holds two sources for the same timeline — the history it
+ * seeded itself with and the frames that have arrived since — and the moment
+ * they overlap is the moment an operator sees the same event twice. Earlier
+ * lists win a tie, so the live frame (passed first) is what stands.
+ */
+export function mergeEvents(...lists: DeploymentEvent[][]): DeploymentEvent[] {
+  const seen = new Set<string>();
+  const merged: DeploymentEvent[] = [];
+  for (const list of lists) {
+    for (const event of list) {
+      if (seen.has(event.event_id)) continue;
+      seen.add(event.event_id);
+      merged.push(event);
+    }
+  }
+  return merged.sort(
+    (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+  );
+}
+
 // ── Health ───────────────────────────────────────────────────────────────────
 //
 // The four words a deployment's status badge can say. This is derived from the

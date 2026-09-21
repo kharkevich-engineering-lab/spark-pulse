@@ -119,12 +119,22 @@ function getEventLabel(eventType: EventType): string {
 interface EventStreamViewerProps {
   events: DeploymentEvent[];
   resource: string;
+  /** Everything the store holds for this run, which is usually more than one
+   *  page of it. The chip says this rather than "what happens to be in the
+   *  list", except while a filter is narrowing the list — then it says what
+   *  the filter left. */
+  total?: number;
+  /** The history is still being read. "No events" would be a lie here: the
+   *  panel does not yet know whether there are any. */
+  loading?: boolean;
   onClear?: () => void;
   className?: string;
 }
 
 export default function EventStreamViewer({
   events,
+  total,
+  loading = false,
   onClear,
   className = "",
 }: EventStreamViewerProps) {
@@ -145,6 +155,9 @@ export default function EventStreamViewer({
     return Array.from(nodes).sort();
   }, [events]);
 
+  const filtering = filterSeverity !== "all" || filterNode !== "all";
+  const counted = filtering ? filteredEvents.length : (total ?? events.length);
+
   return (
     <div className={`space-y-4 ${className}`}>
       {/* Header */}
@@ -153,7 +166,7 @@ export default function EventStreamViewer({
           <Activity size={20} className="text-blue2" />
           <h3 className="text-lg font-semibold">{t("eventStream.title")}</h3>
           <span className="text-xs text-text-muted bg-surface-hover px-2 py-0.5 rounded-full">
-            {plural("eventStream.eventCount", filteredEvents.length)}
+            {plural("eventStream.eventCount", counted)}
           </span>
         </div>
         {onClear && events.length > 0 && (
@@ -196,7 +209,7 @@ export default function EventStreamViewer({
       <div className="space-y-1 max-h-96 overflow-y-auto">
         {filteredEvents.length === 0 ? (
           <div className="p-8 text-center text-text-muted text-sm">
-            {t("eventStream.noEvents")}
+            {loading ? t("common.loading") : t("eventStream.noEvents")}
           </div>
         ) : (
           filteredEvents.map((event) => {

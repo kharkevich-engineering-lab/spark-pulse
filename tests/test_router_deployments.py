@@ -472,3 +472,93 @@ class TestUnreadableRecordFile:
             p for p in env["records"].parent.iterdir() if p.name.endswith(".tmp")
         ]
         assert leftovers == []
+
+
+class TestTheRunsOwnEventHistory:
+    """``GET /api/deployments/{id}/events`` — the panel's missing half.
+
+    The expanded row used to show only the frames that had arrived since the
+    browser tab was opened, under a line promising thirty days of retention.
+    Every published event is now stored, and this is what the row seeds itself
+    from before it starts appending live frames.
+    """
+
+    def test_a_deploy_leaves_a_timeline_behind_it(self, client):
+        created = client.post(
+            "/api/deployments",
+            json={"recipe_id": "qwen3-8b", "name": "x", "engine": "vllm"},
+        )
+        assert created.status_code == 200
+        deployment_id = created.json()["id"]
+
+        page = client.get(f"/api/deployments/{deployment_id}/events")
+
+        assert page.status_code == 200
+        body = page.json()
+        assert body["total"] >= 1
+        assert "deployment_planned" in {event["type"] for event in body["events"]}
+        first = body["events"][0]
+        assert set(first) == {
+            "event_id",
+            "timestamp",
+            "type",
+            "message",
+            "resource",
+            "resource_type",
+            "node",
+            "severity",
+        }
+        assert first["resource"] == deployment_id
+
+    def test_the_newest_event_comes_first(self, client):
+        from spark_pulse.tools import event_log
+        from spark_pulse.tools.events import EventType
+
+        nr.publish_event(EventType.DEPLOYMENT_PLANNED, "dep-x", "planned")
+        nr.publish_event(EventType.DEPLOYMENT_READY, "dep-x", "serving")
+
+        body = client.get("/api/deployments/dep-x/events").json()
+
+        assert [event["message"] for event in body["events"]] == ["serving", "planned"]
+        assert body["total"] == event_log.history("dep-x")["total"] == 2
+
+    def test_limit_pages_the_list_and_before_walks_backwards(self, client):
+        from spark_pulse.tools.events import EventType
+
+        for index in range(5):
+            nr.publish_event(EventType.DEPLOYMENT_PLANNED, "dep-y", f"event {index}")
+
+        page = client.get("/api/deployments/dep-y/events?limit=2").json()
+        assert [e["message"] for e in page["events"]] == ["event 4", "event 3"]
+        assert page["total"] == 5
+
+        cursor = page["events"][-1]["timestamp"]
+        older = client.get(
+            f"/api/deployments/dep-y/events?limit=2&before={cursor}"
+        ).json()
+
+        assert [e["message"] for e in older["events"]] == ["event 2", "event 1"]
+
+    def test_a_run_nobody_has_heard_of_is_empty_rather_than_a_404(self, client):
+        """The endpoint answers about the log, not about the record."""
+        response = client.get("/api/deployments/never-existed/events")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "resource": "never-existed",
+            "events": [],
+            "total": 0,
+            "limit": 200,
+        }
+
+    def test_removing_a_run_takes_its_timeline_with_it(self, client):
+        from spark_pulse.tools.events import EventType
+
+        nr.publish_event(EventType.DEPLOYMENT_PLANNED, "dep-z", "planned")
+        tools.deployment_records.save(
+            {"id": "dep-z", "status": "stopped", "runtime": "native"}
+        )
+
+        tools.deployment_records.delete("dep-z")
+
+        assert client.get("/api/deployments/dep-z/events").json()["total"] == 0

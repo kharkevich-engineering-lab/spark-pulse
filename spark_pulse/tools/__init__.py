@@ -19,7 +19,10 @@ import os
 # in simulation as in production, so there is one store and not two); and
 # ``recipe_schema``/``recipe_sources``, which both the real and the mock
 # ``recipes`` import (they are not listed below for exactly that reason — the
-# switch must not see them), ``scheduled_deploys``, which is a database table and reaches everything it
+# switch must not see them); ``event_log``, which is a database table written
+# on the way to the broadcaster and read back by the run's own history — the
+# same code and the same table in both modes, only a different database file;
+# ``scheduled_deploys``, which is a database table and reaches everything it
 # acts on *through* the switch, so it is the same code in both modes; and
 # ``reconciler``, which is a thread over the records and reaches every node
 # through the switch, for the same reason; and ``node_stats``, which asks each
@@ -29,6 +32,7 @@ from spark_pulse.tools import atomic_json as atomic_json
 from spark_pulse.tools import custom_files as custom_files
 from spark_pulse.tools import custom_recipes as custom_recipes
 from spark_pulse.tools import deployment_records as deployment_records
+from spark_pulse.tools import event_log as event_log
 from spark_pulse.tools import hub_cache as hub_cache
 from spark_pulse.tools import labels as labels
 from spark_pulse.tools import node_stats as node_stats

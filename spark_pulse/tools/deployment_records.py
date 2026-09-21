@@ -33,6 +33,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from spark_pulse.config import config
 from spark_pulse.db import Base, engine, is_done, mark_done_within, session_scope
+from spark_pulse.tools import event_log
 from spark_pulse.tools.atomic_json import (
     StateFileError as StateFileError,
     read_state_file,
@@ -375,17 +376,28 @@ def delete_many(deployment_ids: Iterable[str]) -> int:
     Retention purging is the caller: naming the rows to remove keeps it from
     having to express "delete these three" as "the set is now these forty",
     which would also delete anything created while it was deciding.
+
+    A record's event log goes with it. The log is that run's timeline and
+    nothing else can reach it once the row is gone, so leaving it would be a
+    table that only grows — best-effort, because failing to forget a timeline
+    must not leave a record somebody asked to remove.
     """
+    named = list(deployment_ids)
     with transaction():
         _migrate_from_json()
         removed = 0
         with session_scope() as db:
-            for deployment_id in deployment_ids:
+            for deployment_id in named:
                 row = db.get(DeploymentRow, deployment_id)
                 if row is not None:
                     db.delete(row)
                     removed += 1
-        return removed
+    for deployment_id in named:
+        try:
+            event_log.forget(deployment_id)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("could not forget events for %s: %s", deployment_id, exc)
+    return removed
 
 
 def purge_expired(records: list[dict[str, Any]]) -> list[dict[str, Any]]:

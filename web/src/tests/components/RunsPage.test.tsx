@@ -21,6 +21,11 @@ vi.mock("@/lib/api", () => ({
   // Also inert by default: the metrics panel is exercised in its own file and
   // in the tests below that stub this deliberately.
   fetchEngineMetrics: vi.fn(() => Promise.resolve(undefined)),
+  // An empty history by default — every run that has not had one stubbed has
+  // nothing stored, which is what the old behaviour looked like.
+  fetchDeploymentEvents: vi.fn(() =>
+    Promise.resolve({ resource: "", events: [], total: 0, limit: 200 }),
+  ),
   stopDeployment: vi.fn(),
   connectLogStream: vi.fn(() => () => {}),
   runBenchmark: vi.fn(),
@@ -40,6 +45,7 @@ import {
   connectLogStream,
   fetchBenchmarks,
   fetchDeployment,
+  fetchDeploymentEvents,
   fetchDeployments,
   fetchEngineMetrics,
   runBenchmark,
@@ -787,6 +793,152 @@ describe("RunsPage event stream", () => {
     expect(
       within(screen.getByTestId("deployment-d1")).getByText("No events to display"),
     ).toBeInTheDocument();
+  });
+
+  it("seeds the panel from the run's stored history", async () => {
+    // The defect this fixes: everything below happened before the page was
+    // opened, so the stream carries none of it and the panel said "No events
+    // to display" under a footer promising thirty days of retention.
+    vi.mocked(fetchDeploymentEvents).mockResolvedValue({
+      resource: "d1",
+      events: [
+        {
+          event_id: "h2",
+          timestamp: "2026-01-01T00:01:00Z",
+          type: "deployment_ready",
+          message: "qwen3 is serving on port 8000",
+          resource: "d1",
+          resource_type: "deployment",
+          node: "",
+          severity: "info",
+        },
+        {
+          event_id: "h1",
+          timestamp: "2026-01-01T00:00:00Z",
+          type: "deployment_planned",
+          message: "planned qwen3 on vllm",
+          resource: "d1",
+          resource_type: "deployment",
+          node: "",
+          severity: "info",
+        },
+      ],
+      total: 2,
+      limit: 200,
+    });
+
+    show();
+    await expand("first job");
+
+    const first = screen.getByTestId("deployment-d1");
+    expect(await within(first).findByText("planned qwen3 on vllm")).toBeInTheDocument();
+    expect(within(first).getByText("qwen3 is serving on port 8000")).toBeInTheDocument();
+    expect(within(first).queryByText("No events to display")).toBeNull();
+    expect(fetchDeploymentEvents).toHaveBeenCalledWith("d1", { limit: 200 });
+  });
+
+  it("counts everything the store holds, not the page it was sent", async () => {
+    vi.mocked(fetchDeploymentEvents).mockResolvedValue({
+      resource: "d1",
+      events: [
+        {
+          event_id: "h1",
+          timestamp: "2026-01-01T00:00:00Z",
+          type: "deployment_planned",
+          message: "planned",
+          resource: "d1",
+          resource_type: "deployment",
+          node: "",
+          severity: "info",
+        },
+      ],
+      total: 412,
+      limit: 200,
+    });
+
+    show();
+    await expand("first job");
+
+    const first = screen.getByTestId("deployment-d1");
+    expect(await within(first).findByText("412 events")).toBeInTheDocument();
+  });
+
+  it("appends a live frame to the history without showing it twice", async () => {
+    vi.mocked(fetchDeploymentEvents).mockResolvedValue({
+      resource: "d1",
+      events: [
+        {
+          event_id: "e1",
+          timestamp: "2026-01-01T00:00:00Z",
+          type: "deployment_planned",
+          message: "planned qwen3 on vllm",
+          resource: "d1",
+          resource_type: "deployment",
+          node: "",
+          severity: "info",
+        },
+      ],
+      total: 1,
+      limit: 200,
+    });
+
+    show();
+    await expand("first job");
+    await waitFor(() => expect(stream()).toBeDefined());
+    const first = screen.getByTestId("deployment-d1");
+    await within(first).findByText("planned qwen3 on vllm");
+
+    // The same event again — the id is what makes that knowable, and it is
+    // minted on the backend precisely so the two sources can agree.
+    act(() =>
+      stream().emit({
+        event_id: "e1",
+        type: "deployment_planned",
+        timestamp: "2026-01-01T00:00:00Z",
+        message: "planned qwen3 on vllm",
+        resource: "d1",
+        resource_type: "deployment",
+      }),
+    );
+    // And one that really is new.
+    act(() =>
+      stream().emit({
+        event_id: "e2",
+        type: "deployment_ready",
+        timestamp: "2026-01-01T00:02:00Z",
+        message: "qwen3 is serving on port 8000",
+        resource: "d1",
+        resource_type: "deployment",
+      }),
+    );
+
+    expect(
+      await within(first).findByText("qwen3 is serving on port 8000"),
+    ).toBeInTheDocument();
+    expect(within(first).getAllByText("planned qwen3 on vllm")).toHaveLength(1);
+    expect(within(first).getByText("2 events")).toBeInTheDocument();
+  });
+
+  it("keeps the live frames when the history cannot be read", async () => {
+    vi.mocked(fetchDeploymentEvents).mockRejectedValue(new Error("nope"));
+
+    show();
+    await expand("first job");
+    await waitFor(() => expect(stream()).toBeDefined());
+
+    act(() =>
+      stream().emit({
+        event_id: "e9",
+        type: "deployment_error",
+        timestamp: "2026-01-01T00:03:00Z",
+        message: "the engine exited",
+        resource: "d1",
+        resource_type: "deployment",
+      }),
+    );
+
+    const first = screen.getByTestId("deployment-d1");
+    expect(await within(first).findByText("the engine exited")).toBeInTheDocument();
   });
 
   it("clears the events of one run without touching the others", async () => {
