@@ -1144,14 +1144,23 @@ def _resolve_topology(node_list: list[str], warnings: list[str]) -> Topology:
             "behind a QSFP switch and re-run discovery so the nodes report a "
             "single cable"
         )
-    warnings.append(MULTI_NODE_UNPROVEN)
-    if unpinned:
-        warnings.append(
-            f"no interface names are recorded for {', '.join(unpinned)}, so "
-            "NCCL will choose a link itself — usually the management one, "
-            "which is a performance bug rather than a failure. Record them on "
-            "the node's registry entry (PATCH /api/nodes/{id})"
-        )
+    # Both of these are about a collective that crosses machines, and naming
+    # one node explicitly is not that. `nodes: ["192.168.29.60"]` is how the
+    # UI pins a solo run to a particular Spark, and it arrived here reading
+    # "multi-node has not been measured" about a deployment that spans no
+    # wire at all — and, on a node with no interface names recorded, that
+    # NCCL would pick a link, which one rank never asks it to do. The size is
+    # the topology's, so it is the same test `Topology.is_solo` makes.
+    if len(nodes) > 1:
+        warnings.append(MULTI_NODE_UNPROVEN)
+        if unpinned:
+            warnings.append(
+                f"no interface names are recorded for {', '.join(unpinned)}, "
+                "so NCCL will choose a link itself — usually the management "
+                "one, which is a performance bug rather than a failure. "
+                "Record them on the node's registry entry "
+                "(PATCH /api/nodes/{id})"
+            )
     return Topology(nodes=nodes)
 
 

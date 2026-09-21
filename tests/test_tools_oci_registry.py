@@ -8,6 +8,7 @@ import pytest
 
 import yaml
 
+from spark_pulse.tools import oci_registry as oci
 from spark_pulse.tools.oci_registry import (
     BUNDLED_REGISTRIES_CONFIG,
     _safe_layer_filename,
@@ -983,3 +984,181 @@ class TestExtractRecipesFromLayout:
 
         # Restore permissions for test cleanup
         bad_file.chmod(0o644)
+
+
+# ── A recipe id is a slug ────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def recipes_dir(tmp_path, monkeypatch):
+    """An empty OCI recipe directory, restored afterwards."""
+    directory = tmp_path / "recipes"
+    directory.mkdir()
+    monkeypatch.setattr(oci, "RECIPES_DIR", directory)
+    return directory
+
+
+class TestRecipeSlug:
+    """The rule, on its own.
+
+    A collection names its recipes for people — ``Bonsai-2-27B (ternary,
+    llama.cpp)`` — and installing that verbatim made the recipe id
+    ``oci-Bonsai-2-27B (ternary, llama.cpp)``, which then travelled in a URL,
+    in every deployment record that deployed it, and through the MCP tools.
+    """
+
+    @pytest.mark.parametrize(
+        "raw, expected",
+        [
+            ("Bonsai-2-27B (ternary, llama.cpp)", "bonsai-2-27b-ternary-llama.cpp"),
+            ("bonsai-2-27b-ternary.yaml", "bonsai-2-27b-ternary"),
+            ("Gemma4-26B-A4B", "gemma4-26b-a4b"),
+            ("a  b", "a-b"),
+            ("--edges--", "edges"),
+            ("", ""),
+            ("(((", ""),
+        ],
+    )
+    def test_the_slug_of_a_name(self, raw, expected):
+        assert oci.recipe_slug(raw) == expected
+
+    def test_a_version_number_survives_it(self):
+        """``qwen3.8-27b`` is a stem this project has always used.
+
+        The dot is allowed for exactly that reason: re-spelling it would churn
+        an id that was never the problem.
+        """
+        assert oci.recipe_slug("Qwen3.8-27B") == "qwen3.8-27b"
+        assert oci.recipe_slug("GLM-4.7-Flash-AWQ") == "glm-4.7-flash-awq"
+
+    def test_it_is_idempotent(self):
+        """Which is what lets the rename sweep run on every listing."""
+        for raw in ("Bonsai-2-27B (ternary, llama.cpp)", "Qwen3.8-27B", "a  b"):
+            once = oci.recipe_slug(raw)
+            assert oci.recipe_slug(once) == once
+
+    def test_the_extension_a_collection_ships_is_kept(self):
+        assert oci._installed_filename("My Recipe.yml") == "my-recipe.yml"
+        assert oci._installed_filename("My Recipe.yaml") == "my-recipe.yaml"
+        assert oci._installed_filename("My Recipe") == "my-recipe.yaml"
+
+
+class TestTheOldNameStillResolves:
+    """The one compatibility path this keeps, because the files are somebody's.
+
+    A recipe installed before the slug rule is on disk under the name it was
+    given, and the deployment records that deployed it name it that way.
+    """
+
+    def test_a_display_name_file_is_renamed_once(self, recipes_dir):
+        installed = recipes_dir / "Bonsai-2-27B (ternary, llama.cpp).yaml"
+        installed.write_text("name: Bonsai-2-27B (ternary, llama.cpp)\n")
+        oci._write_recipe_meta(installed.name, "reg", "pack", "1.0.0", "sha256:b")
+
+        renamed = oci.normalize_installed_recipe_names()
+
+        assert renamed == [
+            (
+                "oci-Bonsai-2-27B (ternary, llama.cpp)",
+                "oci-bonsai-2-27b-ternary-llama.cpp",
+            )
+        ]
+        assert sorted(p.name for p in recipes_dir.iterdir()) == [
+            "bonsai-2-27b-ternary-llama.cpp.yaml",
+            "bonsai-2-27b-ternary-llama.cpp.yaml.meta",
+        ]
+        # Once: a second sweep finds nothing left to do.
+        assert oci.normalize_installed_recipe_names() == []
+
+    def test_the_rename_is_recorded_on_the_sidecar(self, recipes_dir):
+        installed = recipes_dir / "My Recipe.yaml"
+        installed.write_text("name: My Recipe\n")
+        oci._write_recipe_meta(installed.name, "reg", "pack", "1.0.0", "sha256:m")
+
+        oci.normalize_installed_recipe_names()
+
+        meta = yaml.safe_load((recipes_dir / "my-recipe.yaml.meta").read_text())
+        assert meta["previous_names"] == ["My Recipe"]
+        # And it survives the next install, which rewrites the same file.
+        oci._write_recipe_meta("my-recipe.yaml", "reg", "pack", "2.0.0", "sha256:m2")
+        meta = yaml.safe_load((recipes_dir / "my-recipe.yaml.meta").read_text())
+        assert meta["previous_names"] == ["My Recipe"]
+        assert meta["version"] == "2.0.0"
+
+    def test_a_slug_that_is_already_taken_is_left_alone(self, recipes_dir):
+        """Two recipes are not one recipe, whatever they slug to."""
+        (recipes_dir / "my-recipe.yaml").write_text("name: mine\n")
+        (recipes_dir / "My Recipe.yaml").write_text("name: My Recipe\n")
+
+        assert oci.normalize_installed_recipe_names() == []
+        assert sorted(p.name for p in recipes_dir.iterdir()) == [
+            "My Recipe.yaml",
+            "my-recipe.yaml",
+        ]
+        assert (recipes_dir / "my-recipe.yaml").read_text() == "name: mine\n"
+
+    def test_a_file_already_named_for_its_slug_is_untouched(self, recipes_dir):
+        (recipes_dir / "qwen3.8-27b.yaml").write_text("name: q\n")
+
+        assert oci.normalize_installed_recipe_names() == []
+        assert (recipes_dir / "qwen3.8-27b.yaml").exists()
+
+    def test_the_meta_lookup_follows_the_rename(self, recipes_dir):
+        installed = recipes_dir / "Bonsai-2-27B (ternary, llama.cpp).yaml"
+        installed.write_text("name: Bonsai-2-27B (ternary, llama.cpp)\n")
+        oci._write_recipe_meta(
+            installed.name,
+            "reg",
+            "pack",
+            "1.0.0",
+            "sha256:b",
+            display_name="Bonsai-2-27B (ternary, llama.cpp)",
+        )
+        oci.normalize_installed_recipe_names()
+
+        meta = oci.get_oci_meta("Bonsai-2-27B (ternary, llama.cpp)")
+
+        assert meta is not None
+        assert meta.name == "bonsai-2-27b-ternary-llama.cpp.yaml"
+        assert meta.collection == "pack"
+
+    def test_uninstall_by_the_display_name_a_collection_uses(self, recipes_dir):
+        """The browse drawer's Uninstall button sends the display name.
+
+        The file is named for the artifact, which need not be a spelling of
+        that name at all — the sidecar is what knows they are one recipe.
+        """
+        (recipes_dir / "bonsai-2-27b-ternary.yaml").write_text("name: whatever\n")
+        oci._write_recipe_meta(
+            "bonsai-2-27b-ternary.yaml",
+            "reg",
+            "pack",
+            "1.0.0",
+            "sha256:b",
+            display_name="Bonsai-2-27B (ternary, llama.cpp)",
+        )
+
+        result = oci.uninstall_oci_recipe("Bonsai-2-27B (ternary, llama.cpp)")
+
+        assert result["success"] is True
+        assert list(recipes_dir.iterdir()) == []
+
+    def test_former_stems_names_what_the_id_used_to_be(self, recipes_dir):
+        (recipes_dir / "bonsai-2-27b-ternary.yaml").write_text("name: whatever\n")
+        oci._write_recipe_meta(
+            "bonsai-2-27b-ternary.yaml",
+            "reg",
+            "pack",
+            "1.0.0",
+            "sha256:b",
+            display_name="Bonsai-2-27B (ternary, llama.cpp)",
+        )
+
+        assert oci.former_stems("bonsai-2-27b-ternary") == [
+            "Bonsai-2-27B (ternary, llama.cpp)"
+        ]
+
+    def test_a_recipe_with_no_sidecar_has_no_recorded_history(self, recipes_dir):
+        (recipes_dir / "handwritten.yaml").write_text("name: handwritten\n")
+
+        assert oci.former_stems("handwritten") == []

@@ -24,6 +24,8 @@ from spark_pulse.tools.oci_registry import (
     CollectionRecipe,
     RecipeMeta,
     UpdateInfo,
+    installed_recipe_id,
+    recipe_slug,
 )
 
 # ── The canned catalogue ─────────────────────────────────────────────────────
@@ -37,7 +39,7 @@ _COLLECTIONS: list[CollectionInfo] = [
         description="Spark Pulse recipe collection",
         vendor="Kharkevich Engineering Lab",
         license="MIT",
-        recipe_count=5,
+        recipe_count=6,
         digest="sha256:abc123def456",
         registry="ghcr.io/kharkevich-engineering-lab/spark-pulse-recipes",
     ),
@@ -92,6 +94,18 @@ _COLLECTION_RECIPES: dict[str, list[CollectionRecipe]] = {
             description="Mixtral 8x7B inference with vLLM",
             model="mistralai/Mixtral-8x7B-Instruct-v0.1",
             container="vllm-node",
+            recipe_version="1.0.0",
+        ),
+        # Named the way a collection really names a recipe — for a person, with
+        # spaces, parentheses and a comma in it. An install writes the *slug*
+        # of this and never this, because the file stem is the recipe's id and
+        # an id travels in a URL, in a deployment record and through the MCP
+        # tools. Simulation carries one so the rule can be seen at all.
+        CollectionRecipe(
+            name="Bonsai-2-27B (ternary, llama.cpp)",
+            description="Bonsai 2 27B, ternary weights, on llama.cpp",
+            model="deepgrove/Bonsai-2-27B",
+            container="llama-cpp-node",
             recipe_version="1.0.0",
         ),
     ],
@@ -231,7 +245,11 @@ def mock_install_collection(
     if not any(c.name == name and c.version == version for c in _COLLECTIONS):
         raise ValueError(f"Collection '{name}:{version}' not found")
     recipes = _COLLECTION_RECIPES.get(name, [])
-    return [f"{r.name}.yaml" for r in recipes] or [f"{name}.yaml"]
+    # The slug, which is what the real installer writes: these filenames are
+    # the stems the recipes will be listed under, and so their ids.
+    return [f"{recipe_slug(r.name)}.yaml" for r in recipes] or [
+        f"{recipe_slug(name)}.yaml"
+    ]
 
 
 # ── Single recipes ───────────────────────────────────────────────────────────
@@ -248,12 +266,27 @@ def mock_install_oci_recipe(
     registry_name: str | None = None,
     overwrite: bool = False,
 ) -> dict:
-    """Install one recipe; installing it twice is a no-op, not an error."""
-    key = f"{collection_name}/{recipe_name}"
+    """Install one recipe; installing it twice is a no-op, not an error.
+
+    Keyed by the slug, because that is the file the real install writes and two
+    spellings of one display name are one recipe.
+    """
+    recipe_id = installed_recipe_id(recipe_slug(recipe_name))
+    key = f"{collection_name}/{recipe_slug(recipe_name)}"
     if key in _INSTALLED_RECIPES:
-        return {"success": True, "recipe": recipe_name, "action": "up_to_date"}
+        return {
+            "success": True,
+            "recipe": recipe_name,
+            "recipe_id": recipe_id,
+            "action": "up_to_date",
+        }
     _INSTALLED_RECIPES.add(key)
-    return {"success": True, "recipe": recipe_name, "action": "installed"}
+    return {
+        "success": True,
+        "recipe": recipe_name,
+        "recipe_id": recipe_id,
+        "action": "installed",
+    }
 
 
 def mock_update_oci_recipe(
@@ -263,9 +296,14 @@ def mock_update_oci_recipe(
     registry_name: str | None = None,
 ) -> dict:
     """Update one installed recipe. ``ValueError`` when it was never installed."""
-    if f"{collection_name}/{recipe_name}" not in _INSTALLED_RECIPES:
+    if f"{collection_name}/{recipe_slug(recipe_name)}" not in _INSTALLED_RECIPES:
         raise ValueError(f"Recipe '{recipe_name}' is not installed")
-    return {"success": True, "recipe": recipe_name, "action": "updated"}
+    return {
+        "success": True,
+        "recipe": recipe_name,
+        "recipe_id": installed_recipe_id(recipe_slug(recipe_name)),
+        "action": "updated",
+    }
 
 
 # ── Updates and metadata ─────────────────────────────────────────────────────

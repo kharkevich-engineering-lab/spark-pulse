@@ -805,9 +805,30 @@ class TestSimulationBranches:
         assert first.json() == {
             "success": True,
             "recipe": "qwen3-8b",
+            # The id the recipe now has, which is not always the name the
+            # install was asked for — see the display-name case below.
+            "recipe_id": "oci-qwen3-8b",
             "action": "installed",
         }
         assert second.json()["action"] == "up_to_date"
+
+    def test_a_display_name_installs_under_its_slug(self, sim_client):
+        """The id a browse-drawer install produces is a slug, not the name.
+
+        ``Bonsai-2-27B (ternary, llama.cpp)`` is what the collection calls the
+        recipe and what the drawer's Install button sends; the id it comes back
+        with is what a URL, a deployment record and an MCP tool will carry.
+        """
+        response = sim_client.post(
+            "/api/oci/recipes/install",
+            json={
+                "collection": "spark-recipes",
+                "recipe": "Bonsai-2-27B (ternary, llama.cpp)",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["recipe_id"] == "oci-bonsai-2-27b-ternary-llama.cpp"
 
     def test_updating_an_installed_recipe_reports_updated(self, sim_client):
         sim_client.post(
@@ -822,6 +843,7 @@ class TestSimulationBranches:
         assert response.json() == {
             "success": True,
             "recipe": "qwen3-8b",
+            "recipe_id": "oci-qwen3-8b",
             "action": "updated",
         }
 

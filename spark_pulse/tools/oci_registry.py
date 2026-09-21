@@ -9,6 +9,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import threading
 import time
 from dataclasses import dataclass, field
@@ -955,10 +956,15 @@ def install_collection(
 
     # Install recipes
     RECIPES_DIR.mkdir(parents=True, exist_ok=True)
+    # Before writing anything: a recipe already installed under a name from
+    # before the slug rule is renamed to the name this install would give it,
+    # so the install updates that file rather than leaving a second copy of
+    # the same recipe under two ids.
+    normalize_installed_recipe_names()
     installed = []
 
     for recipe in recipes:
-        filename = recipe["filename"]
+        filename = _installed_filename(recipe["filename"])
         dest = RECIPES_DIR / filename
 
         # Check for local modifications
@@ -976,7 +982,14 @@ def install_collection(
         write_text_atomic(dest, recipe["content"])
 
         # Create metadata sidecar
-        _write_recipe_meta(filename, reg["name"], name, version, recipe["digest"])
+        _write_recipe_meta(
+            filename,
+            reg["name"],
+            name,
+            version,
+            recipe["digest"],
+            display_name=_declared_name(recipe["content"]),
+        )
         installed.append(filename)
 
     logger.info("Installed %d recipes from %s:%s", len(installed), name, version)
@@ -1018,11 +1031,18 @@ def install_oci_recipe(
 
     # Extract recipes and find the target
     recipes = _extract_recipes_from_layout(cache_dir, extract_dir)
+    wanted = recipe_slug(recipe_name)
     target = None
     for r in recipes:
-        # Match by filename (without .yaml/.yml) or by name in content
-        base_name = _recipe_stem(r["filename"])
-        if base_name == _recipe_stem(recipe_name):
+        # Match by file stem or by the ``name:`` the file declares, both
+        # slugged. The browse drawer's Install button sends what the collection
+        # *calls* the recipe, which is a display name; the artifact is named
+        # for the file. Comparing raw stems matched only when a collection
+        # happened to spell them the same way.
+        if recipe_slug(r["filename"]) == wanted:
+            target = r
+            break
+        if wanted and recipe_slug(_declared_name(r["content"])) == wanted:
             target = r
             break
 
@@ -1031,8 +1051,12 @@ def install_oci_recipe(
             f"Recipe '{recipe_name}' not found in collection '{collection_name}'"
         )
 
-    # Check if already installed
-    dest = RECIPES_DIR / target["filename"]
+    # Check if already installed. The sweep first, for the same reason the
+    # collection install runs it: update the file this recipe is already in.
+    RECIPES_DIR.mkdir(parents=True, exist_ok=True)
+    normalize_installed_recipe_names()
+    filename = _installed_filename(target["filename"])
+    dest = RECIPES_DIR / filename
     action = "installed"
 
     if dest.exists() and not overwrite:
@@ -1040,23 +1064,32 @@ def install_oci_recipe(
             with open(dest) as f:
                 existing = f.read()
             if existing == target["content"]:
-                return {"success": True, "recipe": recipe_name, "action": "up_to_date"}
+                return {
+                    "success": True,
+                    "recipe": recipe_name,
+                    "recipe_id": installed_recipe_id(filename),
+                    "action": "up_to_date",
+                }
             else:
                 action = "updated"
                 logger.info(
                     "Local modifications detected for %s — overwriting",
-                    target["filename"],
+                    filename,
                 )
         except OSError:
             action = "updated"
 
     # Install/update the recipe
-    RECIPES_DIR.mkdir(parents=True, exist_ok=True)
     write_text_atomic(dest, target["content"])
 
     # Update metadata
     _write_recipe_meta(
-        target["filename"], reg["name"], collection_name, version, target["digest"]
+        filename,
+        reg["name"],
+        collection_name,
+        version,
+        target["digest"],
+        display_name=_declared_name(target["content"]) or _recipe_stem(recipe_name),
     )
 
     logger.info(
@@ -1066,7 +1099,16 @@ def install_oci_recipe(
         collection_name,
         version,
     )
-    return {"success": True, "recipe": recipe_name, "action": action}
+    # ``recipe`` is what the caller asked for; ``recipe_id`` is what it is now
+    # called everywhere else — the id a deploy, a customization and an MCP tool
+    # name it by. They differ whenever a collection's display name is not a
+    # slug, which is the whole of this.
+    return {
+        "success": True,
+        "recipe": recipe_name,
+        "recipe_id": installed_recipe_id(filename),
+        "action": action,
+    }
 
 
 def update_oci_recipe(
@@ -1213,6 +1255,273 @@ class RecipeMeta:
     installed_at: str
     updated_at: str
     local_changes: bool
+    #: The recipe's own ``name:`` — what a collection listing calls it, and
+    #: what an id minted before the slug rule was made of. Recorded so a
+    #: display name still finds the file it was installed as.
+    display_name: str = ""
+    #: Every stem this recipe has been on disk under, oldest first. Written by
+    #: :func:`normalize_installed_recipe_names` when it renames one.
+    previous_names: list[str] = field(default_factory=list)
+
+
+# ── Recipe ids are slugs ─────────────────────────────────────────────────────
+
+#: Everything a recipe file's stem — and so its ``oci-`` id — may carry.
+#:
+#: A collection names its recipes for people: ``Bonsai-2-27B (ternary,
+#: llama.cpp)``. Installing that verbatim made the recipe id
+#: ``oci-Bonsai-2-27B (ternary, llama.cpp)``, which then travelled in a URL
+#: (``/api/recipes/customize/{id}``), in every deployment record that deployed
+#: it, and through the MCP tools. The other two sources have never had this
+#: problem because they are named by their file stem — ``bundled/qwen3.8-27b``,
+#: ``custom-my-recipe`` — and this is that same rule, written down.
+#:
+#: The dot survives because recipe names carry version numbers and
+#: ``qwen3.8-27b`` is a stem this project has always used: re-spelling it would
+#: churn an id that was never the problem.
+_SLUG_DISALLOWED = re.compile(r"[^a-z0-9._-]+")
+_SLUG_RUNS = re.compile(r"-{2,}")
+
+
+def recipe_slug(recipe_name: str) -> str:
+    """The file stem an install writes, and so the id the recipe answers to.
+
+    Lowercase; every run of anything outside ``a-z0-9._-`` becomes one dash.
+    Idempotent — ``recipe_slug(recipe_slug(x)) == recipe_slug(x)`` — which is
+    what lets the rename sweep below be run on every listing.
+    """
+    stem = _recipe_stem(recipe_name).lower()
+    slug = _SLUG_RUNS.sub("-", _SLUG_DISALLOWED.sub("-", stem)).strip("-.")
+    return slug
+
+
+def _installed_filename(recipe_filename: str) -> str:
+    """The name an install writes ``recipe_filename`` under, extension kept.
+
+    A collection may ship ``.yml`` and that extension is preserved on disk, so
+    only the stem is rewritten.
+    """
+    suffix = ".yml" if str(recipe_filename).endswith(".yml") else ".yaml"
+    slug = recipe_slug(recipe_filename)
+    return f"{slug or _recipe_stem(recipe_filename)}{suffix}"
+
+
+def installed_recipe_id(recipe_filename: str) -> str:
+    """The recipe id an installed file answers to.
+
+    One definition, imported from the module that owns the prefix, so the id
+    the OCI code reports and the id the listing mints cannot drift apart.
+    """
+    from spark_pulse.tools.recipe_sources import OCI_PREFIX
+
+    return f"{OCI_PREFIX}{_recipe_stem(recipe_filename)}"
+
+
+def _sidecar_stems() -> list[tuple[str, dict]]:
+    """``(stem, raw sidecar)`` for every metadata file, cheaply.
+
+    Read directly rather than through :func:`_read_recipe_meta`, which resolves
+    a name through *this* — the scan is the fallback in that resolution, so it
+    must not re-enter it.
+    """
+    if not RECIPES_DIR.is_dir():
+        return []
+    out: list[tuple[str, dict]] = []
+    for meta_file in sorted(RECIPES_DIR.glob("*.meta")):
+        try:
+            with open(meta_file) as handle:
+                data = yaml.safe_load(handle) or {}
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        out.append((_recipe_stem(meta_file.stem), data))
+    return out
+
+
+def _blocked_by(source: Path, target: Path) -> bool:
+    """Is a *different* file already sitting at ``target``?
+
+    Not just ``target.exists()``: on a case-insensitive filesystem that
+    answers yes for the same file under another spelling, which is the very
+    rename being asked for.
+    """
+    if not target.exists():
+        return False
+    try:
+        return not source.samefile(target)
+    except OSError:  # pragma: no cover - a path we cannot stat
+        return True
+
+
+def _installed_stems() -> dict[str, str]:
+    """``{stem: suffix}`` for every recipe file in the directory.
+
+    The directory is *listed* rather than probed with ``exists()`` because a
+    case-insensitive filesystem answers yes to ``Gemma4-26B-A4B.yaml`` when
+    what is there is ``gemma4-26b-a4b.yaml`` — and then the stem that came back
+    would be the one asked for rather than the one on disk, which is the id.
+    macOS is that filesystem; the Sparks are not. A rule that holds on one of
+    them is not a rule.
+    """
+    if not RECIPES_DIR.is_dir():
+        return {}
+    out: dict[str, str] = {}
+    for path in sorted(RECIPES_DIR.iterdir()):
+        if not path.is_file() or path.name.startswith("."):
+            continue
+        if path.suffix.lower() not in {".yaml", ".yml"}:
+            continue
+        out.setdefault(path.stem, path.suffix)
+    return out
+
+
+def _installed_stem(recipe_name: str) -> str:
+    """The stem the named recipe actually has on disk.
+
+    Four answers, in order, and the order is the point. The literal name wins
+    when a file is there under it — a recipe installed before the slug rule
+    that nothing has listed since is still that file. Then the slug, which is
+    what every install writes. Then the sidecars, because a collection's
+    display name and its artifact's file name are two different strings and
+    only the sidecar knows they are one recipe (the Uninstall button in the
+    browse drawer sends the first; the file is named the second). Failing all
+    of that, the slug: a caller asking where a recipe *would* go gets the name
+    it would be given.
+    """
+    stem = _recipe_stem(recipe_name)
+    on_disk = _installed_stems()
+    for candidate in (stem, recipe_slug(stem)):
+        if candidate and candidate in on_disk:
+            return candidate
+
+    wanted = recipe_slug(stem)
+    if wanted:
+        for sidecar_stem, data in _sidecar_stems():
+            names = [data.get("display_name", "")]
+            names.extend(data.get("previous_names") or [])
+            if any(name and recipe_slug(name) == wanted for name in names):
+                return sidecar_stem
+    return wanted or stem
+
+
+def former_stems(recipe_name: str) -> list[str]:
+    """Every stem the named recipe has been known by, newest name aside.
+
+    The sidecar is the record: its ``display_name`` is what a collection calls
+    the recipe and what an id minted before the slug rule was made of, and
+    ``previous_names`` is what the rename sweep found on disk. An id built from
+    either one is an id somebody's deployment record or customization may still
+    be holding.
+    """
+    stem = _installed_stem(recipe_name)
+    meta_file = RECIPES_DIR / f"{stem}.yaml.meta"
+    if not meta_file.exists():
+        return []
+    try:
+        with open(meta_file) as handle:
+            data = yaml.safe_load(handle) or {}
+    except Exception:
+        return []
+    if not isinstance(data, dict):
+        return []
+    out: list[str] = []
+    for name in [data.get("display_name", ""), *(data.get("previous_names") or [])]:
+        name = str(name or "").strip()
+        if name and name != stem and name not in out:
+            out.append(name)
+    return out
+
+
+def normalize_installed_recipe_names() -> list[tuple[str, str]]:
+    """Rename any installed recipe whose stem is not a slug. Idempotent.
+
+    The one compatibility path this change keeps, and it is kept because the
+    files are somebody's: a recipe installed before the slug rule sits in
+    ``~/.config/spark-pulse/recipes`` under the name it was given, and the
+    deployment records that deployed it name it that way too. Renaming it once,
+    the first time anything lists the directory, is what makes *one* id true
+    rather than two; :func:`spark_pulse.tools.recipe_sources.resolve_recipe`
+    and :func:`spark_pulse.tools.custom_recipes.get_customized_recipe` are what
+    keep the old one resolving afterwards.
+
+    Nothing is ever overwritten: a stem whose slug is already taken by another
+    file is left exactly where it is, because two recipes are not one recipe.
+
+    Returns the ``(old id, new id)`` pairs it renamed, for the log and the
+    tests; the sweep is otherwise silent and safe to call on every listing.
+    """
+    if not RECIPES_DIR.is_dir():
+        return []
+
+    on_disk = _installed_stems()
+    renamed: list[tuple[str, str]] = []
+    for stem, suffix in sorted(on_disk.items()):
+        slug = recipe_slug(stem)
+        if not slug or slug == stem:
+            continue
+        if slug in on_disk:
+            logger.warning(
+                "Not renaming %s%s to %s%s: a different recipe is already there",
+                stem,
+                suffix,
+                slug,
+                suffix,
+            )
+            continue
+        path = RECIPES_DIR / f"{stem}{suffix}"
+        target = RECIPES_DIR / f"{slug}{suffix}"
+        try:
+            path.rename(target)
+        except OSError as exc:
+            logger.warning("Could not rename %s to %s: %s", path.name, target.name, exc)
+            continue
+        on_disk[slug] = suffix
+
+        old_meta = RECIPES_DIR / f"{stem}.yaml.meta"
+        new_meta = RECIPES_DIR / f"{slug}.yaml.meta"
+        if old_meta.exists() and not _blocked_by(old_meta, new_meta):
+            try:
+                old_meta.rename(new_meta)
+            except OSError as exc:
+                logger.warning("Could not rename %s: %s", old_meta.name, exc)
+        _record_previous_name(new_meta, stem)
+        logger.info("Renamed OCI recipe %s to %s", path.name, target.name)
+        renamed.append((installed_recipe_id(stem), installed_recipe_id(slug)))
+    return renamed
+
+
+def _record_previous_name(meta_path: Path, stem: str) -> None:
+    """Append ``stem`` to a sidecar's ``previous_names``, if there is a sidecar.
+
+    A recipe with no sidecar — one an operator dropped into the directory by
+    hand — keeps resolving through its own ``name:``, which is the other half
+    of the alias and needs nothing written down.
+    """
+    if not meta_path.exists():
+        return
+    try:
+        with open(meta_path) as handle:
+            data = yaml.safe_load(handle) or {}
+        if not isinstance(data, dict):
+            return
+        previous = [str(n) for n in (data.get("previous_names") or [])]
+        if stem in previous:
+            return
+        previous.append(stem)
+        data["previous_names"] = previous
+        write_text_atomic(meta_path, yaml.dump(data, default_flow_style=False))
+    except Exception as exc:  # pragma: no cover - a sidecar we cannot rewrite
+        logger.debug("Could not record the previous name of %s: %s", stem, exc)
+
+
+def _declared_name(content: str) -> str:
+    """The ``name:`` a recipe file declares, or an empty string."""
+    try:
+        data = yaml.safe_load(content) or {}
+    except Exception:
+        return ""
+    return str(data.get("name", "")).strip() if isinstance(data, dict) else ""
 
 
 def _recipe_stem(recipe_name: str) -> str:
@@ -1236,9 +1545,12 @@ def _recipe_stem(recipe_name: str) -> str:
 def _meta_path(recipe_filename: str) -> Path:
     """Where the metadata for a recipe lives.
 
-    Always ``<stem>.yaml.meta``, which is what every install has written.
+    Always ``<stem>.yaml.meta``, which is what every install has written —
+    with the stem resolved by :func:`_installed_stem`, so a name that is not
+    the one on disk (a display name, or one from before the slug rule) finds
+    the sidecar that is.
     """
-    return RECIPES_DIR / f"{_recipe_stem(recipe_filename)}.yaml.meta"
+    return RECIPES_DIR / f"{_installed_stem(recipe_filename)}.yaml.meta"
 
 
 def _recipe_path(recipe_name: str) -> Path:
@@ -1249,7 +1561,7 @@ def _recipe_path(recipe_name: str) -> Path:
     form is the answer when neither does — a caller asking where a recipe
     *would* go gets the name it would be given.
     """
-    stem = _recipe_stem(recipe_name)
+    stem = _installed_stem(recipe_name)
     for suffix in (".yaml", ".yml"):
         candidate = RECIPES_DIR / f"{stem}{suffix}"
         if candidate.exists():
@@ -1263,6 +1575,7 @@ def _write_recipe_meta(
     collection: str,
     version: str,
     digest: str,
+    display_name: str = "",
 ) -> None:
     """Write (or update) a recipe's metadata sidecar file."""
     meta_path = _meta_path(recipe_filename)
@@ -1284,6 +1597,13 @@ def _write_recipe_meta(
         "installed_at": existing.get("installed_at", now),
         "updated_at": now,
         "local_changes": existing.get("local_changes", False),
+        # What the collection calls this recipe, and every stem it has been on
+        # disk under: the two halves of the alias that keeps an id minted
+        # before the slug rule resolving. Carried forward rather than rebuilt,
+        # because an update writes this file again and losing them here would
+        # lose the only record that the rename happened.
+        "display_name": display_name or existing.get("display_name", ""),
+        "previous_names": list(existing.get("previous_names") or []),
     }
 
     meta_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1319,7 +1639,10 @@ def _read_recipe_meta(recipe_filename: str) -> RecipeMeta | None:
             pass
 
     return RecipeMeta(
-        name=f"{_recipe_stem(recipe_filename)}.yaml",
+        # The stem on disk, not the one asked for: a display name resolves to
+        # the file it was installed as, and the installed list must name the
+        # file, because that name is the recipe's id.
+        name=f"{_installed_stem(recipe_filename)}.yaml",
         source=data.get("source", ""),
         collection=data.get("collection", ""),
         version=data.get("version", ""),
@@ -1327,11 +1650,14 @@ def _read_recipe_meta(recipe_filename: str) -> RecipeMeta | None:
         installed_at=data.get("installed_at", ""),
         updated_at=data.get("updated_at", ""),
         local_changes=local_changes,
+        display_name=str(data.get("display_name", "") or ""),
+        previous_names=[str(n) for n in (data.get("previous_names") or [])],
     )
 
 
 def list_oci_recipes() -> list[RecipeMeta]:
     """List all recipes that were installed from OCI collections."""
+    normalize_installed_recipe_names()
     if not RECIPES_DIR.is_dir():
         return []
 

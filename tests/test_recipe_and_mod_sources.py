@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from spark_pulse.tools import custom_files, recipe_sources
+from spark_pulse.tools import custom_files, custom_recipes, recipe_sources
 
 # The real modules: ``mods`` and ``recipes`` are both swapped under
 # SIMULATION_MODE, and it is the real lookup that has to find these files.
@@ -81,6 +81,77 @@ class TestCustomAndOciRecipes:
         assert payload is not None
         assert payload["id"] == "oci-thing"
         assert payload["source"] == "oci"
+
+    def test_an_oci_recipe_is_listed_under_a_slug(self):
+        """The file stem is the id, so an install that is named for a person
+        is renamed to a slug the first time anything lists the directory."""
+        directory = oci_registry.RECIPES_DIR
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "Bonsai-2-27B (ternary, llama.cpp).yaml").write_text(
+            "name: Bonsai-2-27B (ternary, llama.cpp)\nmodel: org/bonsai\n"
+            "container: llama-cpp-node\ncommand: llama-server\n",
+            encoding="utf-8",
+        )
+
+        ids = dict(recipe_sources.candidate_files())
+
+        assert "oci-bonsai-2-27b-ternary-llama.cpp" in ids
+        assert "oci-Bonsai-2-27B (ternary, llama.cpp)" not in ids
+        # The rename happened on disk, once.
+        assert sorted(p.name for p in directory.iterdir()) == [
+            "bonsai-2-27b-ternary-llama.cpp.yaml"
+        ]
+
+    def test_the_old_id_still_resolves_after_the_rename(self):
+        """This is somebody's data: a deployment record names the old id."""
+        directory = oci_registry.RECIPES_DIR
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "Bonsai-2-27B (ternary, llama.cpp).yaml").write_text(
+            "name: Bonsai-2-27B (ternary, llama.cpp)\nmodel: org/bonsai\n"
+            "container: llama-cpp-node\ncommand: llama-server\n",
+            encoding="utf-8",
+        )
+
+        payload = real_recipes.get_recipe("oci-Bonsai-2-27B (ternary, llama.cpp)")
+
+        assert payload is not None
+        # Resolved, and under the id it has now — never the one asked for,
+        # because two ids for one recipe is how the pages disagree.
+        assert payload["id"] == "oci-bonsai-2-27b-ternary-llama.cpp"
+        assert payload["model"] == "org/bonsai"
+
+    def test_an_old_id_that_differed_only_in_case_resolves(self):
+        directory = oci_registry.RECIPES_DIR
+        directory.mkdir(parents=True, exist_ok=True)
+        _write_recipe(directory, "Gemma4-26B-A4B")
+
+        payload = real_recipes.get_recipe("oci-Gemma4-26B-A4B")
+
+        assert payload is not None
+        assert payload["id"] == "oci-gemma4-26b-a4b"
+
+    def test_an_id_no_recipe_answers_to_is_still_nothing(self):
+        _write_recipe(oci_registry.RECIPES_DIR, "thing")
+
+        assert real_recipes.get_recipe("oci-something-else") is None
+
+    def test_a_customization_saved_under_the_old_id_is_still_applied(self):
+        """The row is keyed by the id, and the id changed under it."""
+        directory = oci_registry.RECIPES_DIR
+        directory.mkdir(parents=True, exist_ok=True)
+        _write_recipe(directory, "My Recipe")
+        custom_recipes.save_customization("oci-My Recipe", {"model": "org/overridden"})
+
+        payload = real_recipes.get_recipe("oci-my-recipe")
+
+        assert payload is not None
+        assert payload["model"] == "org/overridden"
+        assert custom_recipes.get_customized_recipe("oci-my-recipe")["model"] == (
+            "org/overridden"
+        )
+        # And the listing says so, rather than showing an uncustomized recipe.
+        listed = {r["id"]: r for r in real_recipes.list_recipes()}
+        assert listed["oci-my-recipe"]["is_customized"] is True
 
     def test_a_non_yaml_file_in_the_custom_dir_is_ignored(self):
         directory = custom_files.custom_recipes_dir()

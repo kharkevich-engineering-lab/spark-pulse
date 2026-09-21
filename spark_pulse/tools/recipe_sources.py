@@ -155,11 +155,31 @@ def _managed_recipe_dirs() -> list[tuple[str, Path]]:
     ]
 
 
+def _settle_oci_names() -> None:
+    """Rename any OCI recipe still installed under a name that is not a slug.
+
+    Here because this is where ids are *minted*: the stem of the file is the
+    id, so the moment a listing reads the directory is the moment a display
+    name becomes ``oci-Bonsai-2-27B (ternary, llama.cpp)``. The sweep itself
+    lives in ``oci_registry``, which owns that directory and is the module the
+    agent-only ratchet excuses for writing to it. Idempotent, and it never
+    overwrites, so calling it on every listing costs one directory scan and
+    settles an install made by an older build exactly once.
+    """
+    from spark_pulse.tools import oci_registry
+
+    try:
+        oci_registry.normalize_installed_recipe_names()
+    except OSError as exc:  # pragma: no cover - a directory we cannot write
+        logger.debug("Could not settle OCI recipe names: %s", exc)
+
+
 def candidate_files() -> list[tuple[str, Path]]:
     """Return ``(recipe_id, file)`` pairs for every known recipe source.
 
     Ids are unique — the first source to claim one keeps it.
     """
+    _settle_oci_names()
     pairs: list[tuple[str, Path]] = []
     for path in iter_bundled_recipe_files():
         pairs.append((_bundled_recipe_id(path), path))
@@ -317,8 +337,72 @@ def iter_recipe_payloads() -> list[dict[str, Any]]:
     return payloads
 
 
+def legacy_ids(payload: dict[str, Any]) -> list[str]:
+    """Ids this recipe answered to before its file was renamed to a slug.
+
+    An OCI recipe's id is its file stem, and installs made before the slug rule
+    wrote the collection's *display* name there. Renaming the file settles the
+    id, but a deployment record and a saved customization written in the
+    meantime still name the old one, and those are somebody's data. Two things
+    know the old name: the recipe's own ``name:``, which is what the display
+    name was, and the sidecar, where the rename recorded every stem the file
+    has had.
+    """
+    if payload.get("source") != SOURCE_OCI:
+        return []
+
+    from spark_pulse.tools import oci_registry
+
+    recipe_id = payload.get("id", "")
+    stem = recipe_id[len(OCI_PREFIX) :] if recipe_id.startswith(OCI_PREFIX) else ""
+    names: list[str] = [str(payload.get("name", "") or "")]
+    if stem:
+        try:
+            names.extend(oci_registry.former_stems(stem))
+        except OSError:  # pragma: no cover - a sidecar we cannot read
+            pass
+
+    out: list[str] = []
+    for name in names:
+        candidate = f"{OCI_PREFIX}{name}" if name else ""
+        if candidate and candidate != recipe_id and candidate not in out:
+            out.append(candidate)
+    return out
+
+
+def _is_the_same_recipe(
+    recipe_id: str, candidate_id: str, parsed: RecipeV1 | RecipeV2
+) -> bool:
+    """Does ``recipe_id`` name the recipe found at ``candidate_id``?
+
+    The display-name match is older than the slug rule and stays: an id that
+    is just a recipe's ``name:`` has always resolved. The two OCI clauses are
+    the alias that keeps an id minted before the rule working — ``oci-`` plus
+    the display name, which is exactly what those ids were, and ``oci-`` plus
+    anything that slugs to the same stem, which covers a name that differed
+    only in case or punctuation. Both are confined to the OCI prefix, because
+    a bundled recipe's id has never been anything but its path.
+    """
+    if parsed.name == recipe_id:
+        return True
+    if not (recipe_id.startswith(OCI_PREFIX) and candidate_id.startswith(OCI_PREFIX)):
+        return False
+
+    from spark_pulse.tools.oci_registry import recipe_slug
+
+    wanted = recipe_id[len(OCI_PREFIX) :]
+    if parsed.name == wanted:
+        return True
+    return bool(wanted) and recipe_slug(wanted) == candidate_id[len(OCI_PREFIX) :]
+
+
 def resolve_recipe(recipe_id: str) -> dict[str, Any] | None:
-    """Find and parse one recipe by id or display name, without customization."""
+    """Find and parse one recipe by id or display name, without customization.
+
+    An OCI id from before recipe ids were slugs resolves too — see
+    :func:`_is_the_same_recipe`.
+    """
+    _settle_oci_names()
     candidates: list[tuple[str, Path]] = []
     if recipe_id.startswith(f"{BUNDLED_SOURCE_PREFIX}/"):
         rel = recipe_id[len(BUNDLED_SOURCE_PREFIX) + 1 :]
@@ -332,11 +416,15 @@ def resolve_recipe(recipe_id: str) -> dict[str, Any] | None:
         for prefix, directory in _managed_recipe_dirs():
             if not recipe_id.startswith(prefix):
                 continue
-            stem = recipe_id[len(prefix) :]
-            for suffix in (".yaml", ".yml"):
-                path = directory / f"{stem}{suffix}"
-                if path.is_file():
-                    candidates.append((recipe_id, path))
+            # Matched against the directory's own listing rather than by
+            # building a path and asking whether it is a file: on a
+            # case-insensitive filesystem the second says yes to
+            # ``oci-Gemma4-26B-A4B`` for a file named ``gemma4-26b-a4b.yaml``,
+            # and the id would then come back as the one asked for instead of
+            # the one the recipe has.
+            for candidate_id, path in _flat_dir_files(directory, prefix):
+                if candidate_id == recipe_id:
+                    candidates.append((candidate_id, path))
                     break
 
     if not candidates and recipe_id:
@@ -346,7 +434,9 @@ def resolve_recipe(recipe_id: str) -> dict[str, Any] | None:
         parsed = parse_file(path, candidate_id)
         if parsed is None:
             continue
-        if candidate_id != recipe_id and parsed.name != recipe_id:
+        if candidate_id != recipe_id and not _is_the_same_recipe(
+            recipe_id, candidate_id, parsed
+        ):
             continue
         return to_payload(parsed, candidate_id, Path(path).stem)
     return None
