@@ -243,11 +243,54 @@ export interface MemoryResponse {
 
 export interface CacheEntry {
   name: string;
+  /** The path as *that node* resolved it — `~` is expanded on the machine. */
   path: string;
   size_bytes: number;
   file_count: number;
   description: string;
-  size_human?: string;
+  /** False when the directory was never created. Not the same as empty. */
+  exists: boolean;
+  /** The node's walk stopped at its ceiling, so the size is a floor. */
+  truncated: boolean;
+  /** Why this one directory could not be measured, when it could not. */
+  error: string | null;
+}
+
+/** One node's caches, or why it could not be asked.
+ *
+ * `reachable: false` keeps the section and carries the reason: a node that did
+ * not answer has not told us it holds nothing, and a page that drops it reads
+ * as a cluster with one fewer machine. */
+export interface CacheNode {
+  node_id: string;
+  name: string;
+  address: string;
+  is_control_plane: boolean;
+  reachable: boolean;
+  reason: string | null;
+  total_bytes: number;
+  dirs: CacheEntry[];
+}
+
+export interface CacheResponse {
+  /** Every registered node, control plane first. */
+  nodes: CacheNode[];
+}
+
+/** What one node's clean freed, per cache it was asked about. */
+export interface CacheCleanResult {
+  name: string;
+  path: string;
+  removed: boolean;
+  freed_bytes: number;
+  error: string | null;
+}
+
+export interface CacheCleanResponse {
+  node: string;
+  reachable: boolean;
+  reason: string | null;
+  results: CacheCleanResult[];
 }
 
 export interface SecretsResponse {

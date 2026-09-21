@@ -109,11 +109,10 @@
       "one": "{count} file",
       "other": "{count} files"
     },
-    "confirmAllTitle": "Clean all caches",
-    "confirmAllBody": "This will clean ALL caches. This cannot be undone.",
     "confirmOneTitle": "Clean cache",
-    "confirmOneBody": "Clean cache \"{name}\"? This cannot be undone.",
-    "failed": "Failed"
+    "confirmOneBody": "Clean cache \"{name}\" on {node}? This cannot be undone.",
+    "failed": "Failed",
+    "atLeast": "at least {size}"
   },
   "errorBoundary": {
     "heading": "Something went wrong",
@@ -1007,12 +1006,15 @@
   },
   "library": {
     "browse": "Browse",
+    "cacheUnreachable": "Could not ask",
     "caches": "Caches",
-    "cachesHint": "Build and download caches. Emptying one costs time, never a model.",
+    "cachesHint": "Engine caches, per node. Emptying one costs time; the model cache is emptied from its own card.",
     "cancelPull": "Cancel pull of {ref}",
     "check": "Check",
-    "cleanCaches": "Clean caches",
-    "cleanOne": "Clean the {name} cache",
+    "cleanNode": "Clean all on this node",
+    "cleanNodeBody": "Empty every cache on {node} except the downloaded models? This cannot be undone.",
+    "cleanNodeTitle": "Clean this node's caches",
+    "cleanOne": "Clean the {name} cache on {node}",
     "colQuant": "Quant",
     "colWhere": "Where",
     "connectionFailed": "Registry did not answer",

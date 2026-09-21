@@ -467,6 +467,28 @@ def list_mock_containers() -> list[dict[str, Any]]:
 
 # ── Mock DockerService ───────────────────────────────────────────────────────
 
+#: The home a simulated node expands `~` against, and what its caches hold.
+#:
+#: The agent does this expansion for real, against the login user's `$HOME`;
+#: the control plane never sees the tilde form come back, so simulation must
+#: not either — a page showing `~/.cache/vllm` would be showing a path that
+#: exists on no machine.
+SIMULATED_HOME = "/home/spark"
+
+#: Plausible sizes for a Spark that has served a few models: bytes and files
+#: per `~`-relative cache path.
+#: The one cache the Models section owns, `~`-relative — the agent refuses it
+#: without ``include_hub``, and so does this.
+HUB_CACHE_RELATIVE = ".cache/huggingface/hub"
+
+SIMULATED_CACHES: dict[str, tuple[int, int]] = {
+    HUB_CACHE_RELATIVE: (48_542_741_504, 1_284),
+    ".cache/vllm": (2_254_857_830, 46),
+    ".cache/flashinfer": (933_232_128, 231),
+    ".triton": (1_503_238_553, 674),
+}
+
+
 # The real DockerService drives any duck-typed client, so the mock service is
 # just the real one wired to MockDockerClient. No monkey-patching: the real
 # implementation stays intact for the contract tests.
@@ -491,6 +513,11 @@ class MockDockerService(DockerService):
         #: Processes a caller asked this node to signal.
         self.terminated: list[tuple[int, bool]] = []
         self.fabric_applied: list = []
+        #: This node's own caches: ``~``-relative path -> (bytes, files).
+        #: One table per simulated machine, because that is the property the
+        #: real thing has and the one the page is about — two nodes hold two
+        #: sets of caches, and emptying one must not empty the other.
+        self.caches: dict[str, tuple[int, int]] = dict(SIMULATED_CACHES)
 
     # ── Beyond containers: what the agent answers about its machine ──────
 
@@ -557,6 +584,70 @@ class MockDockerService(DockerService):
             )
         )
         return processes
+
+    def scan_cache(self, paths: Any) -> Any:
+        """Measure this simulated node's caches, from its own table.
+
+        Tilde expansion happens here rather than in the caller, because that is
+        where it happens on a real node: the agent knows its own ``$HOME`` and
+        the control plane does not.
+        """
+        from spark_pulse.agent import agent_pb2 as pb
+
+        scan = pb.CacheScan()
+        for raw in paths or []:
+            relative = self._cache_key(str(raw))
+            size, files = self.caches.get(relative, (0, 0))
+            scan.dirs.append(
+                pb.CacheDir(
+                    path=f"{SIMULATED_HOME}/{relative}",
+                    exists=relative in self.caches,
+                    bytes=size,
+                    files=files,
+                )
+            )
+        return scan
+
+    def clean_cache(self, paths: Any, include_hub: bool = False) -> Any:
+        """Empty this simulated node's caches, and refuse the hub without leave.
+
+        The refusal is simulated because it is real: the agent enforces it, and
+        a simulation that always said yes would leave the branch the whole flag
+        exists for untested.
+        """
+        from spark_pulse.agent import agent_pb2 as pb
+
+        cleaned = pb.CacheClean()
+        for raw in paths or []:
+            relative = self._cache_key(str(raw))
+            shown = f"{SIMULATED_HOME}/{relative}"
+            if relative == HUB_CACHE_RELATIVE and not include_hub:
+                cleaned.results.append(
+                    pb.CacheDirResult(
+                        path=shown,
+                        error=(
+                            "refused: the hub cache holds downloaded models, "
+                            "which the Models section removes"
+                        ),
+                    )
+                )
+                continue
+            size, _files = self.caches.get(relative, (0, 0))
+            if relative in self.caches:
+                self.caches[relative] = (0, 0)
+            cleaned.results.append(
+                pb.CacheDirResult(path=shown, removed=size > 0, freed_bytes=size)
+            )
+        return cleaned
+
+    @staticmethod
+    def _cache_key(raw: str) -> str:
+        """The `~`-relative form of a path, however it was addressed."""
+        path = raw.strip()
+        for prefix in ("~/", f"{SIMULATED_HOME}/"):
+            if path.startswith(prefix):
+                return path[len(prefix) :]
+        return path.lstrip("/")
 
     def terminate_process(self, pid: int, force: bool = False) -> Any:
         """Signal a simulated process.

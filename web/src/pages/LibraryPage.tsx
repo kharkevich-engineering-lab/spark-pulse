@@ -13,13 +13,13 @@
  * and Playwright spec that named them still arrives somewhere true.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useI18n } from "@/lib/i18n";
-import { cleanCache, fetchCache, fetchImages, fetchModels, fetchOciRegistries } from "@/lib/api";
+import { fetchCache, fetchImages, fetchModels, fetchOciRegistries } from "@/lib/api";
 import { useQuery } from "@/hooks/useQuery";
 import { formatSize } from "@/lib/utils";
-import { AlertModal, Button, ConfirmModal, PageHeader, Tabs } from "@/ui";
+import { PageHeader, Tabs } from "@/ui";
 import ModelsTab from "@/components/library/ModelsTab";
 import EnginesTab from "@/components/library/EnginesTab";
 import RegistriesTab from "@/components/library/RegistriesTab";
@@ -53,10 +53,6 @@ export default function LibraryPage() {
   const images = useQuery(fetchImages);
   const registries = useQuery(fetchOciRegistries);
 
-  const [cleaningAll, setCleaningAll] = useState(false);
-  const [confirmClean, setConfirmClean] = useState(false);
-  const [alert, setAlert] = useState<{ title: string; message: string } | null>(null);
-
   const tab = tabForPath(location.pathname);
   const atCaches = location.pathname === "/cache";
 
@@ -68,8 +64,14 @@ export default function LibraryPage() {
     () => (images.data ?? []).reduce((sum, i) => sum + (i.present ? i.size_bytes : 0), 0),
     [images.data],
   );
+  // Every node that answered, summed. A node that could not be asked is not a
+  // zero — it is unknown — so it contributes nothing here and says so in its
+  // own section rather than dragging the headline figure down silently.
   const cacheBytes = useMemo(
-    () => (cache.data?.entries ?? []).reduce((sum, e) => sum + e.size_bytes, 0),
+    () =>
+      (cache.data?.nodes ?? [])
+        .filter((node) => node.reachable)
+        .reduce((sum, node) => sum + node.total_bytes, 0),
     [cache.data],
   );
 
@@ -77,21 +79,6 @@ export default function LibraryPage() {
     (next: string) => navigate(PATH_FOR[next as LibraryTab]),
     [navigate],
   );
-
-  const cleanAll = async () => {
-    setCleaningAll(true);
-    try {
-      await cleanCache(["all"]);
-      cache.refetch();
-    } catch (e) {
-      setAlert({
-        title: t("common.error"),
-        message: e instanceof Error ? e.message : t("cache.failed"),
-      });
-    } finally {
-      setCleaningAll(false);
-    }
-  };
 
   return (
     <div className="space-y-8">
@@ -102,11 +89,6 @@ export default function LibraryPage() {
           total: formatSize(modelBytes + imageBytes + cacheBytes),
           cache: formatSize(cacheBytes),
         })}
-        actions={
-          <Button loading={cleaningAll} onClick={() => setConfirmClean(true)}>
-            {t("library.cleanCaches")}
-          </Button>
-        }
       />
 
       <Tabs
@@ -127,29 +109,6 @@ export default function LibraryPage() {
       {tab === "engines" && <EnginesTab images={images} />}
       {tab === "registries" && <RegistriesTab registries={registries} />}
 
-      {confirmClean && (
-        <ConfirmModal
-          open
-          onClose={() => setConfirmClean(false)}
-          onConfirm={() => {
-            setConfirmClean(false);
-            cleanAll();
-          }}
-          title={t("cache.confirmAllTitle")}
-          message={t("cache.confirmAllBody")}
-          confirmLabel={t("cache.clean")}
-          confirmVariant="danger"
-        />
-      )}
-
-      {alert && (
-        <AlertModal
-          open
-          onClose={() => setAlert(null)}
-          title={alert.title}
-          message={alert.message}
-        />
-      )}
     </div>
   );
 }

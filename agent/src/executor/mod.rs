@@ -17,6 +17,7 @@
 //! There is no leader election to be on the wrong side of.
 
 pub mod bounded;
+pub mod cache;
 pub mod containers;
 pub mod copy;
 pub mod fabric;
@@ -350,6 +351,14 @@ impl Executor {
                         let probe = blocking!(probe::run(&req));
                         return ok!(Outcome::HostProbe(probe));
                     }
+                    Op::ScanCache(req) => {
+                        let scan = blocking!(cache::scan(&req));
+                        return ok!(Outcome::CacheScan(scan));
+                    }
+                    Op::CleanCache(req) => {
+                        let cleaned = blocking!(cache::clean(&req));
+                        return ok!(Outcome::CacheClean(cleaned));
+                    }
                     _ => {}
                 }
                 return failure(id, &error.kind, error.message);
@@ -359,9 +368,10 @@ impl Executor {
         match op {
             Op::GetFacts(_) => ok!(Outcome::Facts(self.collect_facts().await)),
 
-            // Four operations that need no Docker daemon: they read this
-            // machine's own hardware and its own disk, or signal one of its
-            // processes. They are reached above only when a daemon *is*
+            // The operations that need no Docker daemon: they read this
+            // machine's own hardware and its own disk, empty its caches, or
+            // signal one of its processes. They are reached above only when a
+            // daemon *is*
             // present, which is the wrong gate for them — see the `docker`
             // binding, which lets `GetFacts` through for exactly this reason.
             Op::GetNodeStats(_) => {
@@ -391,6 +401,14 @@ impl Executor {
             Op::RunHostProbe(req) => {
                 let probe = blocking!(probe::run(&req));
                 ok!(Outcome::HostProbe(probe))
+            }
+            Op::ScanCache(req) => {
+                let scan = blocking!(cache::scan(&req));
+                ok!(Outcome::CacheScan(scan))
+            }
+            Op::CleanCache(req) => {
+                let cleaned = blocking!(cache::clean(&req));
+                ok!(Outcome::CacheClean(cleaned))
             }
 
             Op::RunContainer(req) => {

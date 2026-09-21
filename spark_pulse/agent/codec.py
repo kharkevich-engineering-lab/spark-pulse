@@ -40,6 +40,10 @@ __all__ = [
     "decode_pull_outcome",
     "encode_pull_progress",
     "decode_pull_progress",
+    "encode_cache_scan",
+    "decode_cache_scan",
+    "encode_cache_clean",
+    "decode_cache_clean",
     "set_optional",
 ]
 
@@ -280,6 +284,73 @@ def decode_pull_progress(message: pb.PullProgress) -> dict[str, Any]:
         "bytes_total": message.bytes_total,
         "percent": message.percent,
     }
+
+
+# ── Caches ──────────────────────────────────────────────────────────────────
+
+
+def encode_cache_scan(dirs: list[dict[str, Any]]) -> pb.CacheScan:
+    """A list of measured directories, as the node would have answered."""
+    return pb.CacheScan(
+        dirs=[
+            pb.CacheDir(
+                path=str(entry.get("path") or ""),
+                exists=bool(entry.get("exists")),
+                bytes=int(entry.get("bytes") or 0),
+                files=int(entry.get("files") or 0),
+                error=str(entry.get("error") or ""),
+                truncated=bool(entry.get("truncated")),
+            )
+            for entry in dirs
+        ]
+    )
+
+
+def decode_cache_scan(message: pb.CacheScan) -> list[dict[str, Any]]:
+    """One dict per directory, in the order they were asked for.
+
+    ``exists``, ``error`` and ``truncated`` all survive as themselves: a
+    directory that is not there, one that could not be read and one whose walk
+    stopped at its ceiling are three different answers, and collapsing any of
+    them into a zero is how a page comes to report a full disk as empty.
+    """
+    return [
+        {
+            "path": entry.path,
+            "exists": entry.exists,
+            "bytes": entry.bytes,
+            "files": entry.files,
+            "error": entry.error,
+            "truncated": entry.truncated,
+        }
+        for entry in message.dirs
+    ]
+
+
+def encode_cache_clean(results: list[dict[str, Any]]) -> pb.CacheClean:
+    return pb.CacheClean(
+        results=[
+            pb.CacheDirResult(
+                path=str(entry.get("path") or ""),
+                removed=bool(entry.get("removed")),
+                freed_bytes=int(entry.get("freed_bytes") or 0),
+                error=str(entry.get("error") or ""),
+            )
+            for entry in results
+        ]
+    )
+
+
+def decode_cache_clean(message: pb.CacheClean) -> list[dict[str, Any]]:
+    return [
+        {
+            "path": entry.path,
+            "removed": entry.removed,
+            "freed_bytes": entry.freed_bytes,
+            "error": entry.error,
+        }
+        for entry in message.results
+    ]
 
 
 # ── Building a RunContainer ─────────────────────────────────────────────────

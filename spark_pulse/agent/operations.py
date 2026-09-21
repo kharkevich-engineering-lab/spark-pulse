@@ -424,6 +424,37 @@ class NodeOperations:
         )
         return await self._call(command, "removal")
 
+    # ── Caches ───────────────────────────────────────────────────────────
+
+    async def scan_cache(self, paths: Iterable[str]) -> pb.CacheScan:
+        """Measure the engine caches on this node.
+
+        The paths travel in their ``~/...`` form and the node expands them
+        against its own ``$HOME``: the control plane cannot know a peer's home
+        directory, and inventing one would be a guess applied to somebody
+        else's filesystem.
+        """
+        command = self.hub.new_command(
+            scan_cache=pb.ScanCache(paths=[str(path) for path in paths])
+        )
+        return await self._call(command, "cache_scan")
+
+    async def clean_cache(
+        self, paths: Iterable[str], include_hub: bool = False
+    ) -> pb.CacheClean:
+        """Empty the contents of these caches on this node.
+
+        ``include_hub`` is the one thing the caller may unlock: the agent
+        refuses ``~/.cache/huggingface/hub`` without it, because that is the
+        model cache and the Library's Models section owns removing models.
+        """
+        command = self.hub.new_command(
+            clean_cache=pb.CleanCache(
+                paths=[str(path) for path in paths], include_hub=bool(include_hub)
+            )
+        )
+        return await self._call(command, "cache_clean")
+
     # ── Processes ────────────────────────────────────────────────────────
 
     async def install_bundle(

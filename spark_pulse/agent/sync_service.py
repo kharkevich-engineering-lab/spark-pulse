@@ -369,6 +369,14 @@ class AgentNodeService:
         """Delete a model snapshot from the node."""
         return self._run(self.ops.remove_snapshot(repo_path, revision))
 
+    def scan_cache(self, paths: list[str]) -> Any:
+        """Measure the engine caches on the node."""
+        return self._run(self.ops.scan_cache(paths))
+
+    def clean_cache(self, paths: list[str], include_hub: bool = False) -> Any:
+        """Empty the engine caches on the node."""
+        return self._run(self.ops.clean_cache(paths, include_hub))
+
     def terminate_process(self, pid: int, force: bool = False) -> Any:
         """Signal one process on the node."""
         return self._run(self.ops.terminate_process(pid, force))
