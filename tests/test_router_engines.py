@@ -90,7 +90,14 @@ class TestGetEngine:
         assert response.status_code == 200
         data = response.json()
         assert data["engine"] == "sglang"
-        assert data["runtime"]["ports"] == {"api": 30000, "rendezvous": 50000}
+        # ``rpc`` is declared for every engine and filled by one: the port a
+        # worker binds when the engine spans nodes by serving rather than by a
+        # rendezvous. SGLang forms a rendezvous, so it is null here.
+        assert data["runtime"]["ports"] == {
+            "api": 30000,
+            "rendezvous": 50000,
+            "rpc": None,
+        }
         assert data["runtime"]["container"]["shm_size_gb"] == 32
 
     def test_get_defaults_the_variant(self, client):
@@ -198,7 +205,7 @@ class TestRender:
         assert response.status_code == 200
         data = response.json()
         assert data["engine"] == "sglang"
-        assert data["ports"] == {"api": 30000, "rendezvous": 50000}
+        assert data["ports"] == {"api": 30000, "rendezvous": 50000, "rpc": None}
         assert data["container"]["privileged"] is False
         assert "--dist-init-addr 127.0.0.1:50000" in data["ranks"][0]["command"]
 

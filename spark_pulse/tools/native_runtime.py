@@ -324,6 +324,11 @@ class DeployPlan:
     node_count: int
     port: int
     rendezvous_port: int | None
+    #: The port every rank above zero listens on, when the engine spans nodes
+    #: by having its workers serve rather than by forming a rendezvous —
+    #: llama.cpp's RPC backend, and nothing else today. ``None`` at one node,
+    #: where no worker exists to bind it.
+    rpc_port: int | None
     readiness_path: str
     readiness_url: str
     metrics_path: str | None
@@ -1190,20 +1195,26 @@ def plan(
     overrides = {k: v for k, v in (params or {}).items() if v is not None}
     defaults = recipe.get("defaults") or {}
     rendezvous_port = engine_obj.rendezvous_port()
+    # Only above one node: at one node there is no worker to run an
+    # rpc-server, so nothing binds it and it is not a port this deploy holds.
+    rpc_port = engine_obj.rpc_port() if topology.size > 1 else None
     port = overrides.get("port") or defaults.get("port")
     if port in (None, "", 0):
         taken = _ports_in_use()
         if rendezvous_port:
             taken.add(rendezvous_port)
+        if rpc_port:
+            taken.add(rpc_port)
         port = allocate_port(taken)
         overrides["port"] = port
     port = int(port)
-    if rendezvous_port and port == rendezvous_port:
-        raise NativeRuntimeError(
-            f"port {port} is the rendezvous port of engine "
-            f"'{engine_name}/{resolved_variant}'; the launch binds it itself, "
-            "so pick another API port"
-        )
+    for reserved, role in ((rendezvous_port, "rendezvous"), (rpc_port, "RPC")):
+        if reserved and port == int(reserved):
+            raise NativeRuntimeError(
+                f"port {port} is the {role} port of engine "
+                f"'{engine_name}/{resolved_variant}'; the launch binds it "
+                "itself, so pick another API port"
+            )
     if "port" in overrides:
         overrides["port"] = port
     merged = {**defaults, **overrides, "port": port}
@@ -1224,7 +1235,8 @@ def plan(
     except EngineError as exc:
         raise NativeRuntimeError(str(exc)) from exc
 
-    _check_capacity(recipe_id, ranks[0].command, topology.size)
+    if engine_obj.parallelism_in_command:
+        _check_capacity(recipe_id, ranks[0].command, topology.size)
 
     dep_id = deployment_id or uuid.uuid4().hex[:12]
     generation = _next_generation(dep_id)
@@ -1286,7 +1298,19 @@ def plan(
                     nofile_limit=config.docker_nofile_limit,
                     # Only rank zero serves the API; a worker publishes
                     # nothing, and two ranks binding one host port collide.
-                    port_mappings=list(port_mappings) if rank == 0 else [],
+                    # The exception is an engine whose workers are the servers
+                    # (llama.cpp over RPC): the head connects to them from
+                    # another machine, so off the host network their port has
+                    # to be published or nothing can reach it.
+                    port_mappings=(
+                        list(port_mappings)
+                        if rank == 0
+                        else (
+                            []
+                            if network_host or not rpc_port
+                            else [f"{rpc_port}:{rpc_port}"]
+                        )
+                    ),
                     entrypoint_clear=not config.docker_keep_entrypoint,
                 ),
             )
@@ -1313,6 +1337,7 @@ def plan(
         node_count=topology.size,
         port=port,
         rendezvous_port=rendezvous_port,
+        rpc_port=rpc_port,
         readiness_path=readiness,
         readiness_url=f"http://127.0.0.1:{port}{readiness}",
         metrics_path=engine_obj.metrics_path(),
@@ -1352,6 +1377,7 @@ def _record_from_plan(plan_obj: DeployPlan, status: str) -> dict[str, Any]:
         "pid": None,
         "port": plan_obj.port,
         "rendezvous_port": plan_obj.rendezvous_port,
+        "rpc_port": plan_obj.rpc_port,
         "launch_command": plan_obj.launch_command,
         "log_path": None,
         # Native additions.

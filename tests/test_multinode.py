@@ -100,9 +100,31 @@ SGLANG_RECIPE = {
     "env": {},
 }
 
-RECIPES = {r["id"]: r for r in (RECIPE, SGLANG_RECIPE)}
+#: llama.cpp over its RPC backend. The variant is not in the recipe: a recipe
+#: names the *engine*, and ``llama-cpp/prism`` is what a deploy asks for.
+LLAMA_RPC_RECIPE = {
+    "id": "multinode-llama-rpc",
+    "name": "Bonsai over RPC",
+    "model": "PrismML/Bonsai-2-27B-GGUF",
+    "recipe_version": "2",
+    "engine": "llama-cpp",
+    "container": "",
+    "command": "",
+    "defaults": {"port": 8080},
+    "mods": [],
+    "env": {},
+}
 
-CATALOGUE = [{"id": "Qwen/Qwen3-8B", "source": "hf", "path": "/models/qwen3-8b"}]
+RECIPES = {r["id"]: r for r in (RECIPE, SGLANG_RECIPE, LLAMA_RPC_RECIPE)}
+
+CATALOGUE = [
+    {"id": "Qwen/Qwen3-8B", "source": "hf", "path": "/models/qwen3-8b"},
+    {
+        "id": "PrismML/Bonsai-2-27B-GGUF",
+        "source": "hf",
+        "path": "/models/bonsai-2-27b",
+    },
+]
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -1104,3 +1126,116 @@ class TestConcurrencyStaysUnderTheSessionCeiling:
             live = nr.status("solo")
 
         assert [r["rank"] for r in live["ranks"]] == [0]
+
+
+# ── llama.cpp over RPC ───────────────────────────────────────────────────────
+
+
+class TestLlamaCppSpansNodesOverRpc:
+    """The third multi-node shape, and the one with no rendezvous at all.
+
+    Everything here is about a *plan*: what each rank is handed, which ports
+    are booked, and which rank the readiness probe is pointed at. Whether a
+    ``ggml-rpc-server`` on another Spark answers the head is not something
+    simulation can witness, and nothing below pretends it is.
+    """
+
+    def plan(self, size: int = 2, **overrides: Any):
+        return nr.plan(
+            "multinode-llama-rpc",
+            nodes=FLEET[:size],
+            solo=False,
+            variant=overrides.pop("variant", "prism"),
+            deployment_id=overrides.pop("deployment_id", f"rpc{size}"),
+            **overrides,
+        )
+
+    def test_the_head_serves_and_every_worker_runs_the_rpc_server(self, fleet):
+        plan = self.plan()
+
+        head, worker = plan.ranks
+        assert head["command"].startswith("llama-server --metrics -hf ")
+        assert f"--rpc {PEERS[0]}:50052" in head["command"]
+        assert worker["command"] == "ggml-rpc-server -H 0.0.0.0 -p 50052"
+        assert [r["node_rank"] for r in plan.ranks] == [0, 1]
+        assert [r.node for r in plan.rank_plans] == [CONTROL, PEERS[0]]
+        assert plan.rank_plans[0].is_head is True
+
+    def test_the_head_names_the_worker_by_the_address_the_deploy_named(self, fleet):
+        """The registered address, the same one vLLM's --master-addr carries.
+        Not the fabric one — that would be faster and is a change of its own."""
+        plan = self.plan()
+
+        assert f"--rpc {PEERS[0]}:50052" in plan.launch_command
+        assert plan.rank_plans[1].host == PEERS[0]
+
+    def test_the_ports_booked_are_the_api_port_and_the_workers_rpc_port(self, fleet):
+        plan = self.plan()
+
+        assert plan.port == 8080
+        assert plan.rpc_port == 50052
+        # No rendezvous exists to book: llama.cpp forms none.
+        assert plan.rendezvous_port is None
+
+    def test_a_solo_plan_books_no_rpc_port_because_no_worker_binds_one(self, fleet):
+        plan = nr.plan("multinode-llama-rpc", variant="prism", deployment_id="rpc-solo")
+
+        assert plan.node_count == 1
+        assert plan.rpc_port is None
+        assert "--rpc" not in plan.launch_command
+
+    def test_readiness_is_rank_zeros_api_port_and_no_worker_answers_one(self, fleet):
+        """A worker serves no HTTP, which is the same shape a headless vLLM
+        worker has: one readiness URL for the gang, rank zero's."""
+        plan = self.plan()
+
+        assert plan.readiness_path == "/health"
+        assert plan.readiness_url == f"http://127.0.0.1:{plan.port}/health"
+        assert plan.metrics_path == "/metrics"
+
+    def test_only_rank_zero_publishes_a_port_on_the_host_network(self, fleet):
+        """The engine's container is on the host network, so every port the
+        launch binds is already the node's own — publishing one would be
+        Docker binding it a second time."""
+        plan = self.plan()
+
+        assert plan.rank_plans[0].container.network_host is True
+        assert all(not r.container.port_mappings for r in plan.rank_plans)
+
+    def test_the_gang_starts_workers_first_so_the_head_can_connect(self, fleet):
+        """The head opens a TCP connection to each worker at load time and
+        fails if nothing is listening, so the order is not a preference here.
+        It is the order the runtime already used for the rendezvous engines:
+        every container created first, then workers launched, rank zero last.
+        """
+        plan = self.plan()
+
+        assert [r.rank for r in plan.start_order()] == [1, 0]
+        assert [r.rank for r in plan.teardown_order()] == [0, 1]
+
+        nr.start(plan, wait=True)
+
+        kinds = [
+            "run" if entry["op"] == "run_container" else "launch"
+            for entry in fleet.calls
+            if entry["op"] == "run_container" or _is_launch(entry)
+        ]
+        assert kinds == ["run", "launch"]
+        assert containers_on(fleet, PEERS[0]) == ["spark-pulse-rpc2-r1-g1"]
+        assert local_containers() == ["spark-pulse-rpc2-r0-g1"]
+
+    def test_the_default_variant_is_still_refused_above_one_node(self, fleet):
+        """Nothing about ``llama-cpp/default`` changed: it declares
+        cluster: false, and a plan says so before anything is rendered."""
+        with pytest.raises(nr.NativeRuntimeError, match="cluster: false"):
+            self.plan(variant="default")
+
+    def test_the_launch_is_not_refused_for_stating_no_parallelism(self, fleet):
+        """The capacity check reads -tp/-pp/-dp off the command. There is no
+        such flag here — the shape is the --rpc list — so a check that read
+        this command would see one GPU on two nodes and refuse a correct
+        deploy."""
+        plan = self.plan()
+
+        assert "-tp" not in plan.launch_command
+        assert plan.node_count == 2

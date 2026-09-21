@@ -42,10 +42,10 @@ from pydantic import ValidationError
 
 from spark_pulse.config import config
 from spark_pulse.engines.base import Engine, EngineError, EngineSpec
+from spark_pulse.engines.llama_cpp import LlamaCppEngine
 from spark_pulse.engines.sglang import SglangEngine
 from spark_pulse.engines.solo import (
     AtlasEngine,
-    LlamaCppEngine,
     ModularMaxEngine,
     TrtllmEngine,
 )
@@ -59,9 +59,13 @@ CACHE_DIR = Path.home() / ".cache" / "spark-pulse" / "engines"
 ENGINE_CLASSES: dict[str, type[Engine]] = {
     "vllm": VllmEngine,
     "sglang": SglangEngine,
-    # Single-node engines, all rendered by the same class: see
-    # ``spark_pulse.engines.solo`` for why one is enough for the five.
+    # Keyed by engine name, so every *variant* of an engine is rendered by
+    # the same class: ``llama-cpp/default`` is solo and ``llama-cpp/prism``
+    # spans nodes over RPC, and which of the two happens is the spec's
+    # ``multi_node.style``, never a second entry here.
     "llama-cpp": LlamaCppEngine,
+    # Single-node engines, all rendered by the same class: see
+    # ``spark_pulse.engines.solo`` for why one is enough for the rest.
     "trtllm": TrtllmEngine,
     "modular-max": ModularMaxEngine,
     "atlas": AtlasEngine,

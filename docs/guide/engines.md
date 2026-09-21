@@ -2,7 +2,7 @@
 
 An **engine** is a plugin plus a published container image. The plugin knows how to render a launch command, which ports the engine listens on, how to tell when it is ready and where its metrics are. The image is what actually runs.
 
-Bundled today: `vllm`, `sglang`, `llama-cpp`, `trtllm`, `modular-max`, `atlas`. A recipe names an engine, or takes the configured default.
+Bundled today: `vllm`, `sglang`, `llama-cpp`, `trtllm`, `modular-max`, `atlas`. A recipe names an engine, or takes the configured default. An engine can have several **variants** — `llama-cpp/default` and `llama-cpp/prism` are one engine with two images — and a deploy picks one.
 
 ## What a spec says
 
@@ -27,6 +27,21 @@ runtime:
 `framework_version` is checked at plan time and is not decoration: the rendered launch flags need a recent vLLM, and a tag can resolve to an older image than its name suggests.
 
 **Capabilities** say which topologies an engine claims: `solo` (one node), `cluster` (two — the size NVIDIA publishes guidance for), `mesh` (three or four, which needs either a QSFP switch or the switchless ring, and different NCCL settings from a pair). An engine that does not claim a size is not offered for it.
+
+## Spanning nodes
+
+`multi_node.style` says *how* an engine crosses machines, and each style is a different shape:
+
+| Style | Engine | What each rank runs |
+| --- | --- | --- |
+| `torchrun` | vLLM | Every rank `vllm serve` with `--nnodes/--node-rank/--master-addr/--master-port`; ranks above zero add `--headless`. |
+| `sglang` | SGLang | Every rank the launch server with `--nnodes/--node-rank/--dist-init-addr`. |
+| `llama-rpc` | llama.cpp | Workers run `ggml-rpc-server -H 0.0.0.0 -p <ports.rpc>`; rank zero runs `llama-server` and is handed `--rpc host:port,…` naming every worker. |
+| `none` | the rest | One node. A second is refused at plan time, with why. |
+
+The RPC style is the one without a rendezvous. Rank zero is the only rank that loads the model, and it connects out to the workers *when it loads it* — so workers are launched first and rank zero last, which is the order every deployment already uses. A worker serves no HTTP and answers no readiness endpoint: readiness is rank zero's, and the other ranks are watched for having exited. The pre-flight checks `ports.rpc` on the workers, which are the machines that bind it.
+
+A variant opts in by declaring both halves — `capabilities.cluster: true` and `multi_node: {style: llama-rpc}`. `llama-cpp/default` declares neither and stays solo; `llama-cpp/prism` (PrismML's fork, for their ternary GGUFs) declares both. Claiming the size without naming a style is refused, and the refusal says what to declare.
 
 ## Where images come from
 

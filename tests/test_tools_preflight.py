@@ -677,6 +677,87 @@ def test_a_busy_rendezvous_port_only_warns_at_one_node():
     assert report["verdict"] == VERDICT_READY
 
 
+def rpc_plan(**over: Any) -> dict[str, Any]:
+    """A two-node llama.cpp-over-RPC plan: the workers are the servers."""
+    return make_plan(
+        nodes=[CONTROL.address, PEER.address],
+        node_count=2,
+        engine="llama-cpp",
+        variant="prism",
+        port=8080,
+        rendezvous_port=None,
+        rpc_port=50052,
+        **over,
+    )
+
+
+def rpc_check(report: dict[str, Any], node: str) -> dict[str, Any] | None:
+    for check in report["checks"]:
+        if (
+            check["id"] == preflight.CHECK_PORTS
+            and check["detail"].get("role") == "RPC port"
+            and check["node"] == node
+        ):
+            return check
+    return None
+
+
+def test_a_busy_rpc_port_fails_on_the_worker_that_would_bind_it():
+    report = run(
+        targets=[CONTROL, PEER],
+        plan=rpc_plan(),
+        probes={
+            CONTROL.id: Probe(CONTROL.address),
+            PEER.id: Probe(PEER.address, overrides={"ss -H": busy(50052)}),
+        },
+        services={
+            CONTROL.id: FakeService(image_present()),
+            PEER.id: FakeService(image_present()),
+        },
+    )
+    check = rpc_check(report, "spark-02")
+    assert_named_failure(check, "spark-02", "50052")
+    assert report["verdict"] == VERDICT_BLOCKED
+
+
+def test_the_rpc_port_is_not_checked_on_the_head_which_binds_nothing():
+    """The mirror image of the rendezvous port. Rank zero is the RPC *client*:
+    reporting a conflict there would block a deploy over a port this
+    deployment never touches on that machine."""
+    report = run(
+        targets=[CONTROL, PEER],
+        plan=rpc_plan(),
+        probes={
+            CONTROL.id: Probe(CONTROL.address, overrides={"ss -H": busy(50052)}),
+            PEER.id: Probe(PEER.address),
+        },
+        services={
+            CONTROL.id: FakeService(image_present()),
+            PEER.id: FakeService(image_present()),
+        },
+    )
+    assert rpc_check(report, "spark-01") is None
+    assert rpc_check(report, "spark-02")["status"] == STATUS_PASS
+    assert report["verdict"] == VERDICT_READY
+
+
+def test_a_free_rpc_port_names_the_role_so_a_reader_knows_which_port_it_is():
+    check = rpc_check(
+        run(
+            targets=[CONTROL, PEER],
+            plan=rpc_plan(),
+            services={
+                CONTROL.id: FakeService(image_present()),
+                PEER.id: FakeService(image_present()),
+            },
+        ),
+        "spark-02",
+    )
+    assert check["status"] == STATUS_PASS
+    assert check["title"] == "RPC port 50052"
+    assert "50052" in check["observed"]
+
+
 def test_ports_we_cannot_list_warn_rather_than_claim_they_are_free():
     nothing = ProbeResult(reachable=True, returncode=1, stderr="ss: not found")
     check = check_of(
