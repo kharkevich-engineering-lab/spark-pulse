@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -84,9 +85,52 @@ class EventType(str, Enum):
     IMAGE_SYNCED = "image.synced"
 
 
+#: Event types an operator should read as a failure.
+ERROR_EVENTS = frozenset(
+    {
+        EventType.DEPLOYMENT_ERROR,
+        EventType.HEALTH_CHECK_FAILED,
+        EventType.CLUSTER_ROLLBACK_STARTED,
+        EventType.MODEL_DOWNLOAD_FAILED,
+        EventType.MODEL_REPLICATION_FAILED,
+        EventType.IMAGE_PULL_FAILED,
+    }
+)
+
+#: Event types that are neither a failure nor progress: something an operator
+#: or a teardown stopped on purpose.
+WARNING_EVENTS = frozenset(
+    {
+        EventType.MODEL_DOWNLOAD_CANCELLED,
+        EventType.IMAGE_PULL_CANCELLED,
+    }
+)
+
+
+def severity_of(event_type: EventType) -> str:
+    """``error``, ``warning`` or ``info`` — what the event stream filters on.
+
+    Derived rather than carried, because every publisher would otherwise have
+    to remember to set it and the one that forgot would make an error read as
+    routine progress.
+    """
+    if event_type in ERROR_EVENTS:
+        return "error"
+    if event_type in WARNING_EVENTS:
+        return "warning"
+    return "info"
+
+
 @dataclass(frozen=True, slots=True)
 class DeploymentEvent:
-    """Structured deployment event."""
+    """Structured deployment event.
+
+    ``event_id`` is minted here rather than by whoever renders the event: the
+    same event is broadcast over SSE *and* written to the event log, and the
+    page that seeds itself from the log and then appends live frames needs the
+    two to be recognisably the same thing. Without an id from the source, a
+    frame that arrived while the history was in flight appeared twice.
+    """
 
     event_type: EventType
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -94,21 +138,35 @@ class DeploymentEvent:
     resource_type: str = ""  # "cluster" or "deployment"
     message: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
+    event_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+
+    @property
+    def node(self) -> str:
+        """Which node the event is about, when it is about one."""
+        return str(self.metadata.get("node") or "")
+
+    @property
+    def severity(self) -> str:
+        return severity_of(self.event_type)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize for SSE broadcast."""
         return {
+            "event_id": self.event_id,
             "type": self.event_type.value,
             "timestamp": self.timestamp.isoformat(),
             "resource": self.resource,
             "resource_type": self.resource_type,
             "message": self.message,
+            "node": self.node,
+            "severity": self.severity,
             "metadata": self.metadata,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DeploymentEvent:
         """Deserialize from dict."""
+        event_id = data.get("event_id")
         return cls(
             event_type=EventType(data["type"]),
             timestamp=datetime.fromisoformat(data["timestamp"]),
@@ -116,6 +174,7 @@ class DeploymentEvent:
             resource_type=data.get("resource_type", ""),
             message=data.get("message", ""),
             metadata=data.get("metadata", {}),
+            **({"event_id": event_id} if event_id else {}),
         )
 
 

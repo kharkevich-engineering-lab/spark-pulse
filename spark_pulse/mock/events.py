@@ -12,8 +12,11 @@ from typing import Any
 # of thing a real one is, or a consumer reading ``tools.events`` through the
 # switch would see a different enum in simulation than in production.
 from spark_pulse.tools.events import (
+    ERROR_EVENTS as ERROR_EVENTS,
+    WARNING_EVENTS as WARNING_EVENTS,
     DeploymentEvent as DeploymentEvent,
     EventType as EventType,
+    severity_of as severity_of,
 )
 
 

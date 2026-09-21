@@ -439,7 +439,7 @@
     "allNodes": "All nodes",
     "timeline": "Run timeline",
     "noEvents": "No events to display",
-    "retention": "Events older than 30 days are archived. At most 1000 events per resource."
+    "retention": "Events older than 30 days are dropped. At most 1000 events per run."
   },
   "nodes": {
     "addNode": "Add node",

@@ -3,6 +3,7 @@ import {
   ApiError,
   createDeployment,
   fetchDeployment,
+  fetchDeploymentEvents,
   fetchDeployments,
   planDeployment,
 } from "@/lib/api";
@@ -41,6 +42,29 @@ describe("deployment api", () => {
     const [url, init] = fetchMock().mock.calls[0];
     expect(url).toBe("/api/deployments");
     expect((init?.method ?? "GET").toUpperCase()).toBe("GET");
+  });
+
+  it("fetchDeploymentEvents reads one run's stored timeline", async () => {
+    fetchMock().mockReturnValue(ok({ resource: "d1", events: [], total: 0, limit: 200 }));
+
+    const page = await fetchDeploymentEvents("d1");
+
+    expect(page.total).toBe(0);
+    const [url] = fetchMock().mock.calls[0];
+    expect(url).toBe("/api/deployments/d1/events");
+  });
+
+  it("fetchDeploymentEvents encodes the cursor, because a plus is a space", async () => {
+    // The cursor is an ISO timestamp with a `+00:00` offset, and an unencoded
+    // `+` arrives at the backend as a space.
+    fetchMock().mockReturnValue(ok({ resource: "d1", events: [], total: 0, limit: 2 }));
+
+    await fetchDeploymentEvents("d1", { limit: 2, before: "2026-01-01T00:00:00+00:00" });
+
+    const [url] = fetchMock().mock.calls[0];
+    expect(url).toBe(
+      "/api/deployments/d1/events?limit=2&before=2026-01-01T00%3A00%3A00%2B00%3A00",
+    );
   });
 
   it("planDeployment POSTs the dry run to /api/deployments/plan", async () => {

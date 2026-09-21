@@ -1,5 +1,7 @@
 import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheResponse, CacheCleanResponse, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, CustomRecipeInfo, CustomModInfo, ModFileMap, BenchmarkResult, OciRegistry, OciRegistryUpdate, OciCollection, OciCollectionRecipe, OciRecipeMeta, OciUpdateCheck, OciUpdateApply, OciUpdateResult, OciAutoUpdateSettings, EngineListResponse, EngineDetail, EngineIndexRefreshResult, RenderRequest, RenderResult, ModelEntry, ModelSource, ModelDownloadJob, ModelSyncResult, ModelPresence, ModelDeleteResult, ImageEntry, ImagePullJob, ImageSyncResult, ImagePresence, ImageDeleteResult, DeployPlan, DeployPlanRequest, PreflightReport, EngineMetricsWindow, ScheduledDeploy } from "@/lib/types";
 
+import type { DeploymentEventPage } from "@/lib/operations";
+
 const API = "/api";
 
 // ── CSRF token ───────────────────────────────────────────────────────────────
@@ -114,6 +116,24 @@ export async function fetchLogs(id: string, n = 200): Promise<{ logs: string }> 
 /** The engine's own metrics window for one deployment. Empty with a stated
  *  reason whenever the engine publishes nothing — see `EngineMetricsWindow`. */
 export async function fetchEngineMetrics(id: string): Promise<EngineMetricsWindow> { return json<EngineMetricsWindow>(`/deployments/${id}/metrics`); }
+
+/** One run's stored event timeline, newest first.
+ *
+ * The panel used to show only what the open tab had seen, so a run that
+ * finished before the page was opened had no timeline at all. `before` is a
+ * timestamp from a previous page and is encoded, because a `+` in a query
+ * string arrives as a space.
+ */
+export async function fetchDeploymentEvents(
+  id: string,
+  options: { limit?: number; before?: string } = {},
+): Promise<DeploymentEventPage> {
+  const query = new URLSearchParams();
+  if (options.limit !== undefined) query.set("limit", String(options.limit));
+  if (options.before) query.set("before", options.before);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return json<DeploymentEventPage>(`/deployments/${id}/events${suffix}`);
+}
 
 // ── Memory ──────────────────────────────────────────────────────────────────
 

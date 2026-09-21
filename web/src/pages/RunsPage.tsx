@@ -24,10 +24,13 @@ import { useConfig } from "@/lib/config";
 import {
   fetchBenchmarks,
   fetchDeployment,
+  fetchDeploymentEvents,
   fetchEngineMetrics,
   stopDeployment,
   connectLogStream,
 } from "@/lib/api";
+import { eventFromFrame, mergeEvents } from "@/lib/operations";
+import type { DeploymentEvent } from "@/lib/operations";
 import { useQuery } from "@/hooks/useQuery";
 import { useDeployments, isLiveRun } from "@/hooks/useDeployments";
 import {
@@ -56,6 +59,10 @@ const RANK_POLL_MS = 10000;
  *  Matches the backend sampler's own cadence: reading faster would return the
  *  same window twice and would not make a new measurement exist. */
 const METRICS_POLL_MS = 5000;
+
+/** How many stored events the open row reads. One page, newest first: a
+ *  thousand-event run is a scroll, not a reason to hold a thousand rows. */
+const EVENT_HISTORY_LIMIT = 200;
 
 export type RunTab = "live" | "finished" | "benchmarks";
 
@@ -120,6 +127,20 @@ export default function RunsPage({ initialTab }: RunsPageProps = {}) {
   const logRef = useRef<Record<string, HTMLDivElement | null>>({});
   const stopRef = useRef<Record<string, () => void>>({});
   const atBottomRef = useRef<Record<string, boolean>>({});
+  /** The open row's stored event history, and which row it belongs to.
+   *
+   * The SSE connection carries only what has happened since the page loaded,
+   * which is nothing at all for a run that finished an hour ago — the panel
+   * said "No events to display" under a footer promising thirty days of
+   * retention. The row now reads `GET /deployments/{id}/events` when it opens
+   * and the live frames are appended to that. */
+  const [history, setHistory] = useState<{
+    id: string;
+    events: DeploymentEvent[];
+    total: number;
+  } | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const historyWantedRef = useRef<string | null>(null);
   /** The open row's engine metrics window, and which row it belongs to. */
   const [metrics, setMetrics] = useState<EngineMetricsWindow | null>(null);
   const [metricsLoading, setMetricsLoading] = useState(false);
@@ -205,6 +226,48 @@ export default function RunsPage({ initialTab }: RunsPageProps = {}) {
   /** The open row's metrics window, or nothing when it belongs to another. */
   const metricsFor = (id: string) =>
     metrics && metrics.deployment_id === id ? metrics : null;
+
+  /** Read one run's stored timeline. Read once, when the row opens: the store
+   *  is append-only and the live stream carries everything that lands after.
+   *
+   * A failure leaves the panel on the live frames alone — which is what it
+   * had before this existed — rather than replacing a working list with an
+   * error about the half of it that could not be read. */
+  useEffect(() => {
+    historyWantedRef.current = expandedId;
+    setHistory(null);
+    if (!expandedId) {
+      setHistoryLoading(false);
+      return;
+    }
+    const id = expandedId;
+    setHistoryLoading(true);
+    fetchDeploymentEvents(id, { limit: EVENT_HISTORY_LIMIT })
+      .then((page) => {
+        if (historyWantedRef.current !== id) return;
+        setHistory({
+          id,
+          events: page.events.map(eventFromFrame),
+          total: page.total,
+        });
+        setHistoryLoading(false);
+      })
+      .catch(() => {
+        if (historyWantedRef.current === id) setHistoryLoading(false);
+      });
+  }, [expandedId]);
+
+  /** What the panel shows: the live frames for this run over its history,
+   *  every event once. The live frame wins a tie — it and the stored row are
+   *  the same event under the same id, and the id is what makes that
+   *  knowable. */
+  const timelineFor = (id: string) => {
+    const live = events.filter((e) => e.resource === id);
+    const stored = history && history.id === id ? history.events : [];
+    const merged = mergeEvents(live, stored);
+    const held = history && history.id === id ? history.total : 0;
+    return { events: merged, total: Math.max(held, merged.length) };
+  };
 
   // Auto-scroll only if already pinned to the bottom
   useEffect(() => {
@@ -318,11 +381,24 @@ export default function RunsPage({ initialTab }: RunsPageProps = {}) {
         ))}
       </div>
       <div className="border-t border-line p-4">
-        <EventStreamViewer
-          events={events.filter((e) => e.resource === run.id)}
-          resource={run.id}
-          onClear={() => clearEvents(run.id)}
-        />
+        {(() => {
+          const timeline = timelineFor(run.id);
+          return (
+            <EventStreamViewer
+              events={timeline.events}
+              total={timeline.total}
+              loading={historyLoading && expandedId === run.id}
+              resource={run.id}
+              onClear={() => {
+                // The panel is cleared, not the store: re-opening the row
+                // reads the timeline back. Nothing an operator can click here
+                // should be able to destroy the history of a run.
+                clearEvents(run.id);
+                setHistory({ id: run.id, events: [], total: 0 });
+              }}
+            />
+          );
+        })()}
       </div>
     </>
   );

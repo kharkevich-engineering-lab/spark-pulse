@@ -25,7 +25,8 @@ import { useCallback, useEffect, useState } from "react";
 import { fetchDeployments } from "@/lib/api";
 import { useQuery } from "@/hooks/useQuery";
 import { useSSEConnection } from "@/hooks/useSSEConnection";
-import type { DeploymentEvent } from "@/lib/operations";
+import { eventFromFrame } from "@/lib/operations";
+import type { DeploymentEvent, DeploymentEventFrame } from "@/lib/operations";
 import type { Deployment } from "@/lib/types";
 
 /** How often the list is re-read while a run is live, in ms. */
@@ -81,22 +82,8 @@ export function useDeployments(): UseDeploymentsResult {
   const onMessage = useCallback(
     (_event: string, payload: unknown) => {
       if (!payload || typeof payload !== "object" || !("type" in payload)) return;
-      const frame = payload as Record<string, unknown>;
-      setEvents((prev) =>
-        [
-          {
-            event_id: (frame.event_id as string) || crypto.randomUUID(),
-            timestamp: (frame.timestamp as string) || new Date().toISOString(),
-            event_type: (frame.type as DeploymentEvent["event_type"]) || "unknown",
-            message: (frame.message as string) || "",
-            resource: (frame.resource as string) || "",
-            resource_type:
-              (frame.resource_type as DeploymentEvent["resource_type"]) || "deployment",
-            node: frame.node as string | undefined,
-          },
-          ...prev,
-        ].slice(0, EVENT_LIMIT),
-      );
+      const frame = payload as DeploymentEventFrame;
+      setEvents((prev) => [eventFromFrame(frame), ...prev].slice(0, EVENT_LIMIT));
       if (REFETCH_ON.has(frame.type as string)) refetch();
     },
     [refetch],

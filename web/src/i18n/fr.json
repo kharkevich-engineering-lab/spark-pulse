@@ -439,7 +439,7 @@
     "allNodes": "Tous les nœuds",
     "timeline": "Chronologie de l'exécution",
     "noEvents": "Aucun événement à afficher",
-    "retention": "Les événements de plus de 30 jours sont archivés. Au plus 1000 événements par ressource."
+    "retention": "Les événements de plus de 30 jours sont supprimés. Au plus 1000 événements par exécution."
   },
   "nodes": {
     "addNode": "Ajouter un nœud",

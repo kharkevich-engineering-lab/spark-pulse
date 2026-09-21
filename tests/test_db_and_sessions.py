@@ -109,6 +109,27 @@ def test_every_table_emits_postgresql_ddl():
         assert "DATETIME" not in statement.upper()
 
 
+def test_the_event_log_is_part_of_the_portable_schema():
+    """The newest table, named rather than left to the sweep above.
+
+    It is the one whose ordering column had to be chosen for both backends:
+    an insertion sequence rather than a timestamp, and epoch seconds rather
+    than a ``DATETIME`` SQLite would have accepted and PostgreSQL would not.
+    """
+    from spark_pulse.tools import event_log  # noqa: F401 — registers the table
+
+    table = db.Base.metadata.tables["deployment_events"]
+    statement = str(CreateTable(table).compile(dialect=postgresql.dialect()))
+
+    assert "DATETIME" not in statement.upper()
+    assert "AUTOINCREMENT" not in statement.upper()
+    assert {"resource", "recorded_at", "event_id", "seq"} <= set(table.columns.keys())
+    assert any(
+        [column.name for column in index.columns] == ["resource", "recorded_at"]
+        for index in table.indexes
+    ), "a run's history is read by resource and time, so that is the index"
+
+
 def test_the_schema_is_created_on_first_use(tmp_path):
     """No migration step to forget, and no empty-database failure mode."""
     path = tmp_path / "fresh.db"

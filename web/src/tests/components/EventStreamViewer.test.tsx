@@ -61,6 +61,30 @@ describe("EventStreamViewer", () => {
     expect(screen.getByText("3 events")).toBeInTheDocument();
   });
 
+  it("counts everything the store holds rather than the page it was given", () => {
+    // The panel shows one page of a long timeline; the chip is about the run,
+    // not about the page.
+    render(<EventStreamViewer events={mockEvents} resource="cluster-1" total={412} />);
+    expect(screen.getByText("412 events")).toBeInTheDocument();
+  });
+
+  it("counts what the filter left once a filter is on", () => {
+    render(<EventStreamViewer events={mockEvents} resource="cluster-1" total={412} />);
+
+    fireEvent.change(screen.getAllByRole("combobox")[0], { target: { value: "error" } });
+
+    expect(screen.getByText("1 event")).toBeInTheDocument();
+  });
+
+  it("says it is reading rather than that there is nothing", () => {
+    // "No events to display" while the history is still in flight is a claim
+    // the panel cannot yet make.
+    render(<EventStreamViewer events={[]} resource="cluster-1" loading />);
+
+    expect(screen.getByText("Loading…")).toBeInTheDocument();
+    expect(screen.queryByText("No events to display")).toBeNull();
+  });
+
   it("shows empty state when no events", () => {
     render(
       <EventStreamViewer
