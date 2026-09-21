@@ -20,6 +20,7 @@ from spark_pulse.engines.base import (
     NodeInfo,
     Topology,
 )
+from spark_pulse.engines.llama_cpp import LlamaCppEngine
 from spark_pulse.engines.registry import (
     ENGINE_CLASSES,
     EngineNotFound,
@@ -30,7 +31,6 @@ from spark_pulse.engines.registry import (
 from spark_pulse.engines.sglang import SglangEngine
 from spark_pulse.engines.solo import (
     AtlasEngine,
-    LlamaCppEngine,
     ModularMaxEngine,
     SoloEngine,
     TrtllmEngine,

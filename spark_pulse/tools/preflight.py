@@ -1092,21 +1092,34 @@ def _check_model(target: NodeTarget, ctx: _Context) -> Check:
 
 
 def _check_ports(target: NodeTarget, ctx: _Context) -> list[Check]:
-    """The API port and the rendezvous port, on every node that runs a rank.
+    """Every port this deployment binds on *this* node, and nothing else.
 
     Checked on peers too, not only the control plane: a rank binds its API port
     on its own machine, and the port that is free here is a statement about
     here.
 
-    The rendezvous port is nuanced on purpose. Above one node the launch binds
-    it and a conflict is fatal; at one node vLLM derives a file-based store and
-    never binds it at all, so a busy port there is worth saying and not worth
-    failing over.
+    Which ports those are differs by role, and reporting one on the wrong
+    machine is how a pre-flight comes to block a deploy over a port it never
+    touches there:
+
+    * the **API port** is rank zero's, but it is checked everywhere — a rank
+      that lands on a node whose API port is taken is a rank that cannot
+      serve, and the plan can still be re-pointed;
+    * the **rendezvous port** is nuanced on purpose. Above one node the launch
+      binds it and a conflict is fatal; at one node vLLM derives a file-based
+      store and never binds it at all, so a busy port there is worth saying and
+      not worth failing over;
+    * the **RPC port** is the mirror image. llama.cpp's RPC style has no
+      rendezvous: the *workers* are the servers, so the port is checked on
+      every rank above zero and not on the head, which binds nothing and is
+      merely the client that connects out.
     """
     facts = ctx.facts[target.id]
     checks: list[Check] = []
     api_port = int(ctx.plan.get("port") or 0)
     rendezvous = ctx.plan.get("rendezvous_port")
+    rpc = int(ctx.plan.get("rpc_port") or 0)
+    runs_a_worker = any(rank > 0 for rank in target.ranks)
 
     if facts.ports is None or not facts.ports.ok:
         return [
@@ -1124,10 +1137,14 @@ def _check_ports(target: NodeTarget, ctx: _Context) -> list[Check]:
             )
         ]
 
-    for port, label, fatal in (
+    wanted: list[tuple[int, str, bool]] = [
         (api_port, "API port", True),
         (int(rendezvous or 0), "rendezvous port", ctx.node_count > 1),
-    ):
+    ]
+    if runs_a_worker:
+        wanted.append((rpc, "RPC port", True))
+
+    for port, label, fatal in wanted:
         if not port:
             continue
         title = f"{label} {port}"
@@ -1145,6 +1162,14 @@ def _check_ports(target: NodeTarget, ctx: _Context) -> list[Check]:
             )
             continue
         if fatal:
+            # Where the number comes from is where it can be changed: the API
+            # port is a plan parameter, the other two are the engine spec's.
+            instead = (
+                " or pick another API port with the port parameter"
+                if label == "API port"
+                else f" — the {label} comes from the engine spec, so changing "
+                "it means a different engine variant"
+            )
             checks.append(
                 _check(
                     CHECK_PORTS,
@@ -1154,8 +1179,7 @@ def _check_ports(target: NodeTarget, ctx: _Context) -> list[Check]:
                     f"{port} is already bound on {target.label}",
                     f"The launch binds this port on {target.label} and will "
                     "fail. Find the holder there with "
-                    f"sudo ss -ltnp 'sport = :{port}' and stop it, or pick "
-                    "another API port with the port parameter.",
+                    f"sudo ss -ltnp 'sport = :{port}' and stop it{instead}.",
                     port=port,
                     role=label,
                 )

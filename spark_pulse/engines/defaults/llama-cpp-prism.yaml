@@ -1,0 +1,57 @@
+schema_version: "1"
+engine: llama-cpp
+variant: prism
+description: PrismML's llama.cpp fork, the only build that runs their ternary Bonsai GGUFs, with the RPC backend for spanning nodes.
+image: ghcr.io/kharkevich-engineering-lab/spark-pulse-engine/llama-cpp-prism
+version: 0.1.0
+legacy_tags: []
+arch: [linux/arm64]
+gpu_arch: ["12.1a"]
+
+sources:
+  base: {image: nvidia/cuda:13.0.2-devel-ubuntu24.04}
+  runtime: {image: nvidia/cuda:13.0.2-runtime-ubuntu24.04}
+  # PrismML's fork. Bonsai 2 27B is a ternary GGUF that upstream llama.cpp
+  # does not read, so the pin is their commit rather than an upstream tag.
+  llama_cpp:
+    repo: https://github.com/PrismML-Eng/llama.cpp.git
+    ref: 9a9394a895b96003ca842a6041cb28ac49a108f7
+
+build_args:
+  CUDA_DOCKER_ARCH: 121
+  GCC_VERSION: 14
+
+runtime:
+  workdir: /workspace
+  serve: llama-server --metrics
+  model_arg: -hf
+  readiness: /health
+  models_endpoint: /v1/models
+  metrics: /metrics
+  # `rpc` is the port each *worker* binds: above one node every rank but
+  # zero runs `ggml-rpc-server -H 0.0.0.0 -p 50052`, and rank zero is handed
+  # all of them as `--rpc host:50052,…`. The API port is rank zero's alone.
+  ports: {api: 8080, rpc: 50052}
+  cache_mounts: [~/.cache/huggingface, ~/.cache/llama.cpp]
+  env:
+    LLAMA_ARG_HOST: 0.0.0.0
+    LLAMA_CACHE: /home/spark/.cache/llama.cpp
+    HF_HOME: /home/spark/.cache/huggingface
+  container:
+    privileged: false
+    ipc_host: true
+    network_host: true
+    keepalive: sleep infinity
+  # The RPC backend, not a rendezvous: the workers are the servers and the
+  # head is the client that loads the model and offloads layers onto them.
+  # See spark_pulse/engines/llama_cpp.py for what each rank is handed.
+  multi_node:
+    style: llama-rpc
+  param_flags:
+    port: --port
+    host: --host
+    max_model_len: --ctx-size
+    max_num_seqs: --parallel
+
+capabilities: {mods: false, pr_mods: false, solo: true, cluster: true, mesh: false}
+verified: []

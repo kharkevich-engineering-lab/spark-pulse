@@ -580,6 +580,9 @@ export interface EngineVerification {
 export interface EnginePorts {
   api: number;
   rendezvous?: number | null;
+  /** The port each worker rank listens on when the engine spans nodes by
+   *  serving rather than by forming a rendezvous — llama.cpp's RPC backend. */
+  rpc?: number | null;
 }
 
 export interface EngineSummary {

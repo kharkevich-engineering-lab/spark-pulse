@@ -41,6 +41,11 @@ class EnginePorts(BaseModel):
 
     api: int = 8000
     rendezvous: int | None = None
+    #: The port a *worker* rank listens on when an engine spans nodes by
+    #: having its workers serve rather than by forming a rendezvous. Only
+    #: llama.cpp's RPC backend does that; see
+    #: :mod:`spark_pulse.engines.llama_cpp`.
+    rpc: int | None = None
 
 
 class EngineContainer(BaseModel):
@@ -326,6 +331,20 @@ class Engine:
     Empty means the renderer makes no version demand.
     """
 
+    parallelism_in_command: bool = True
+    """Whether the rendered command states how many GPUs the launch wants.
+
+    True for both rendezvous engines: ``-tp``/``-pp``/``-dp`` are on the
+    command line, so ``native_runtime._check_capacity`` reads the shape off it
+    and refuses a launch that does not fit the nodes. False for llama.cpp's
+    RPC style, which says it structurally instead — one ``ggml-rpc-server``
+    per worker, every one of them named on the head's ``--rpc`` list, so the
+    launch occupies exactly the nodes it was planned across and there is
+    nothing on the command line to parse. Reading a missing ``-tp`` there as
+    "this launch wants one GPU" would refuse a two-node deploy that is
+    correct.
+    """
+
     def __init__(self, spec: EngineSpec):
         self.spec = spec
 
@@ -362,6 +381,18 @@ class Engine:
 
     def rendezvous_port(self) -> int | None:
         return self.spec.runtime.ports.rendezvous
+
+    def rpc_port(self) -> int | None:
+        """The port every rank *above zero* listens on, if this engine has one.
+
+        ``None`` for both rendezvous engines, and that is the whole point of
+        the distinction: there the head binds the rendezvous port and a worker
+        binds nothing, so a port check belongs on the head. llama.cpp's RPC
+        style is the other way round — the workers are the servers — and
+        :class:`~spark_pulse.engines.llama_cpp.LlamaCppEngine` is the one
+        engine that answers with a port.
+        """
+        return None
 
     def supports_mods(self) -> bool:
         return bool(self.spec.capabilities.mods)

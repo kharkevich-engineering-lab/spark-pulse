@@ -83,6 +83,9 @@ BUNDLED = {
     "vllm/default",
     "sglang/default",
     "llama-cpp/default",
+    # A second variant of the same engine, which is what the registry has to
+    # keep apart: same engine name, same plugin class, a different spec.
+    "llama-cpp/prism",
     "trtllm/default",
     "modular-max/default",
     "atlas/default",
