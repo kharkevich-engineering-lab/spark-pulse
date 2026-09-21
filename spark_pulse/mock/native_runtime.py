@@ -40,6 +40,8 @@ from spark_pulse.tools.native_runtime import (
     rank_services as rank_services,
     rpc_listening as rpc_listening,
     register_event_loop as register_event_loop,
+    serve_process_alive as serve_process_alive,
+    serve_program as serve_program,
     start as start,
     status as status,
     stop_deployment as stop_deployment,

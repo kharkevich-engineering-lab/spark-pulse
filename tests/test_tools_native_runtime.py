@@ -546,10 +546,18 @@ class TestStart:
         assert [r.rank for r in plan.rank_plans] == [0, 1]
         assert len(plan.ranks) == 2
 
-    def test_start_without_waiting_returns_immediately(self, native, docker):
+    def test_start_without_waiting_returns_starting_not_running(self, native, docker):
+        """It returns at once, and it says what is actually true.
+
+        It used to write "running" here, before anything had answered — which
+        is what made ``GET /api/deployments`` say *Running* over an engine
+        that had exited 0.4s in, while ``GET /api/deployments/{id}``, which
+        probes, said *starting*.
+        """
         plan = native.plan("qwen3-8b")
         record = native.start(plan, docker=docker, wait=False)
-        assert record["status"] == "running"
+        assert record["status"] == "starting"
+        assert record.get("ready_at") is None
 
     def test_a_stop_during_readiness_is_not_overwritten_by_running(
         self, native, docker, monkeypatch
@@ -587,6 +595,263 @@ class TestStart:
         record = native.start(plan, docker=docker, wait=True)
         assert record["status"] == "stopped"
         assert tools.deployment_records.load()[0]["status"] == "stopped"
+
+
+# ── The serve process, and what an errored record says ──────────────────────
+
+
+#: What ``get_container_status`` answers for a container that is not there.
+_MISSING = {"status": "missing", "running": False, "id": None, "state": {}}
+
+
+class TestServeProcessLiveness:
+    """The engine is an exec in a keepalive container, so the container lies.
+
+    Seen on the two-node cluster: ``llama-server`` exited at t=0.4s on a flag
+    llama.cpp had removed. The container stayed up — what it runs is ``sleep
+    infinity`` — so the list said *Running* with nothing on the port, the
+    detail said *starting*, and the only thing that eventually noticed was the
+    readiness deadline, minutes later, with no reason attached.
+    """
+
+    def test_the_pattern_matches_the_program_and_not_the_probe(self):
+        """``pgrep -f`` would otherwise find the shell asking the question."""
+        import re
+
+        pattern = nr._self_excluding_pattern("llama-server")
+
+        assert re.search(pattern, "llama-server --model /m/q.gguf")
+        # The probe's own command line carries the pattern *literally*.
+        assert not re.search(pattern, f"bash -lc pgrep -f {pattern}")
+
+    def test_the_script_path_is_matched_too(self):
+        import re
+
+        pattern = nr._self_excluding_pattern(nr.SCRIPT_PATH)
+
+        assert re.search(pattern, f"bash {nr.SCRIPT_PATH}")
+        assert not re.search(pattern, f"pgrep -f {pattern}")
+
+    def test_the_program_is_the_command_not_its_environment(self):
+        """A recipe may prefix its command; an environment is not a process."""
+        assert nr.serve_program("llama-server --port 8000") == "llama-server"
+        assert nr.serve_program("NCCL_DEBUG=INFO vllm serve Qwen") == "vllm"
+        assert nr.serve_program("env FOO=1 ggml-rpc-server -p 50052") == (
+            "ggml-rpc-server"
+        )
+        assert nr.serve_program("") == ""
+
+    def test_a_probe_that_cannot_answer_is_not_a_dead_process(self, docker):
+        """An image without ``pgrep`` must not fail every deploy onto it.
+
+        Three answers, and the third is the point: only *no such process*
+        fails a deploy. Anything else is a probe that could not tell.
+        """
+        from spark_pulse.tools.docker import ExecResult
+
+        with patch.object(
+            docker,
+            "exec_in_container",
+            return_value=ExecResult(returncode=nr.PROBE_CANNOT_TELL),
+        ):
+            assert nr.serve_process_alive(docker, "c", "llama-server") is None
+
+        with patch.object(
+            docker, "exec_in_container", side_effect=RuntimeError("node is gone")
+        ):
+            assert nr.serve_process_alive(docker, "c", "llama-server") is None
+
+    def test_the_simulated_container_answers_the_probe(self, native, docker):
+        """The mock exec is what makes the failure reproducible at all."""
+        plan = native.plan("qwen3-8b")
+        native.start(plan, docker=docker, wait=True)
+        name = plan.container.name
+        command = plan.rank_plans[0].command
+
+        container = docker.client.containers.get(name)
+        assert nr.serve_process_alive(docker, name, command) is True
+
+        container.serve_process_running = False
+        assert nr.serve_process_alive(docker, name, command) is False
+
+        # A probe is a question, not a command: none of it reaches the log
+        # the error message is about to quote.
+        assert not [line for line in container.log_lines if "pgrep" in line]
+
+    def test_a_dead_serve_process_fails_the_deploy_within_one_poll(
+        self, native, docker
+    ):
+        """Not at the deadline: at the next poll, with the engine's own words."""
+        plan = native.plan("qwen3-8b")
+
+        def _engine_dies(name):
+            try:
+                container = docker.client.containers.get(name)
+            except Exception:  # nothing created yet
+                return dict(_MISSING)
+            container.log_lines.append(
+                'error while handling argument "--draft-max": '
+                "the argument has been removed"
+            )
+            container.serve_process_running = False
+            return {
+                "status": "running",
+                "running": True,
+                "id": container.id,
+                "state": {},
+            }
+
+        started = time.monotonic()
+        with patch.object(docker, "get_container_status", side_effect=_engine_dies):
+            with patch.object(native, "probe_ready", return_value=False):
+                record = native.start(plan, docker=docker, wait=True, ready_timeout=60)
+        elapsed = time.monotonic() - started
+
+        assert record["status"] == "error"
+        assert "the serve process" in record["error_message"]
+        assert "--draft-max" in record["error_message"]
+        # The whole point: it did not sit out the sixty-second deadline.
+        assert elapsed < 10, "the deploy waited for the readiness deadline"
+
+    def test_list_and_detail_agree_when_the_container_is_up_but_never_ready(
+        self, native, docker
+    ):
+        """The defect, in one assertion. The Runs row reads the list."""
+        plan = native.plan("qwen3-8b")
+        native.start(plan, docker=docker, wait=False)
+
+        with patch.object(native, "probe_ready", return_value=False):
+            listed = native.list_deployments(docker=docker)
+            detail = native.status(plan.deployment_id, docker=docker)
+
+        assert detail["ready"] is False
+        assert detail["status"] == "starting"
+        assert [d["status"] for d in listed] == ["starting"]
+
+    def test_once_readiness_is_observed_both_say_running(self, native, docker):
+        """And it keeps saying so when a probe blinks: it was ready once."""
+        plan = native.plan("qwen3-8b")
+        record = native.start(plan, docker=docker, wait=True)
+
+        assert record["ready_at"]
+        with patch.object(native, "probe_ready", return_value=False):
+            listed = native.list_deployments(docker=docker)
+            detail = native.status(plan.deployment_id, docker=docker)
+
+        assert detail["status"] == "running"
+        assert [d["status"] for d in listed] == ["running"]
+
+
+class TestAnErroredRecordSaysWhy:
+    """``status: error`` with ``error_message: null`` sends nobody anywhere.
+
+    Seen twice on the cluster — a refused flag, a cache the engine could not
+    write — and both times the reason was in ``docker logs`` and nowhere else.
+    """
+
+    def test_a_readiness_timeout_carries_the_log_tail(self, native, docker):
+        plan = native.plan("qwen3-8b")
+        complaint = "failed to open /root/.cache/llama.cpp: Permission denied"
+
+        def _running_and_silent(name):
+            try:
+                container = docker.client.containers.get(name)
+            except Exception:  # nothing created yet
+                return dict(_MISSING)
+            if complaint not in container.log_lines:
+                container.log_lines.append(complaint)
+            return {
+                "status": "running",
+                "running": True,
+                "id": container.id,
+                "state": {},
+            }
+
+        with patch.object(
+            docker, "get_container_status", side_effect=_running_and_silent
+        ):
+            with patch.object(native, "probe_ready", return_value=False):
+                record = native.start(plan, docker=docker, wait=True, ready_timeout=1)
+
+        assert record["status"] == "error"
+        assert "did not become ready" in record["error_message"]
+        assert complaint in record["error_message"]
+
+    def test_a_dead_container_names_its_exit_code(self, native, docker):
+        plan = native.plan("qwen3-8b")
+
+        def _die(name):
+            container = docker.client.containers.get(name)
+            container.log_lines.append("CUDA error: out of memory")
+            container.status = "exited"
+            return {
+                "status": "exited",
+                "running": False,
+                "id": container.id,
+                "state": {"ExitCode": 137},
+            }
+
+        with patch.object(docker, "get_container_status", side_effect=_die):
+            record = native.start(plan, docker=docker, wait=True, ready_timeout=5)
+
+        assert record["status"] == "error"
+        assert "exit code 137" in record["error_message"]
+        assert "CUDA error: out of memory" in record["error_message"]
+
+    def test_the_error_event_carries_the_records_own_text(self, native, docker):
+        captured: list[tuple[str, str]] = []
+
+        def _capture(event_type, deployment_id, message="", metadata=None):
+            captured.append((event_type.value, message))
+
+        plan = native.plan("qwen3-8b")
+        with patch.object(nr, "publish_event", side_effect=_capture):
+            with patch.object(native, "probe_ready", return_value=False):
+                record = native.start(plan, docker=docker, wait=True, ready_timeout=1)
+
+        errors = [text for name, text in captured if name == "deployment_error"]
+        assert errors == [record["error_message"]]
+
+    def test_an_empty_reason_is_refused_rather_than_written(self, native, docker):
+        """The blank field is the bug; a named one is at least reportable."""
+        plan = native.plan("qwen3-8b")
+        native.start(plan, docker=docker, wait=False)
+
+        record = nr._record_error(plan.deployment_id, "")
+
+        assert record["status"] == "error"
+        assert record["error_message"] == nr.UNEXPLAINED_ERROR
+
+    def test_every_error_transition_goes_through_one_place(self):
+        """The ratchet: a new failure path cannot forget to say why.
+
+        Read off the source rather than exercised, because the property is
+        *which function does the writing* — the same reason
+        ``test_no_local_operations`` reads the source.
+        """
+        import ast
+
+        tree = ast.parse(Path(nr.__file__).read_text())
+        writers = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for call in ast.walk(node):
+                if not isinstance(call, ast.Call):
+                    continue
+                if any(
+                    kw.arg == "status"
+                    and isinstance(kw.value, ast.Constant)
+                    and kw.value.value == "error"
+                    for kw in call.keywords
+                ):
+                    writers.add(node.name)
+
+        assert writers == {"_record_error"}, (
+            f"{sorted(writers)} write status=error directly; route them through "
+            "_record_error so the record and the DEPLOYMENT_ERROR frame carry "
+            "the same non-empty reason"
+        )
 
 
 # ── Image pull ──────────────────────────────────────────────────────────────
@@ -1146,12 +1411,32 @@ class TestLifecycle:
         listed = native.list_deployments(docker=docker)
         assert [d["status"] for d in listed] == ["pulling"]
 
-    def test_list_leaves_a_starting_record_alone(self, native, docker):
+    def test_list_leaves_an_unlaunched_starting_record_alone(self, native, docker):
+        """No `started_at`: the creator still owns it under the lifecycle lock."""
         plan = native.plan("qwen3-8b")
         native.persist_planned_record(plan, "starting")
 
         listed = native.list_deployments(docker=docker)
         assert [d["status"] for d in listed] == ["starting"]
+
+    def test_list_judges_a_launched_starting_record_whose_container_is_gone(
+        self, native, docker
+    ):
+        """A record now stays "starting" for the whole readiness window.
+
+        Fifteen minutes, by default — and a control plane that restarts inside
+        it takes the readiness watcher with it. Without this the record would
+        say *starting* forever over a container that is not there. `started_at`
+        is the evidence the gang was launched, written in the same locked block
+        as "starting" and strictly after every rank exists.
+        """
+        plan = native.plan("qwen3-8b")
+        native.start(plan, docker=docker, wait=False)
+        docker.stop_container(plan.container.name)
+
+        listed = native.list_deployments(docker=docker)
+
+        assert [d["status"] for d in listed] == ["stopped"]
 
     def test_list_adopts_an_unknown_labelled_container(self, native, docker, records):
         """Reconciliation: a managed container with no record is adopted."""
@@ -1290,7 +1575,9 @@ class TestDeployDoesNotBlockOnAPull:
         with _one_service(docker):
             record = native.create_deployment("qwen3-8b")
 
-        assert record["status"] == "running"
+        # "starting": the container is up and the watcher has the readiness
+        # poll. The POST answers immediately either way.
+        assert record["status"] == "starting"
         names = [c.name for c in docker.client.containers.list(all=True)]
         assert record["container_name"] in names
 
@@ -1435,7 +1722,7 @@ class TestTeardownDoesNotStrandAContainer:
             with patch.object(nr, "_wait_ready", side_effect=_blocking_wait):
                 record = native.create_deployment("qwen3-8b")
                 dep_id = record["id"]
-                assert record["status"] == "running"
+                assert record["status"] == "starting"
 
                 # Stop it while the watcher is parked on readiness.
                 native.stop_deployment(dep_id, docker=docker)
@@ -1611,11 +1898,15 @@ class TestSizeOneIsUnchanged:
         native.start(plan, docker=docker, wait=True)
 
         name = plan.container.name
-        # Create the idle container, copy the script in, chmod it, exec it.
-        # That is the pre-rank sequence, unchanged.
+        # Create the idle container, copy the script in, chmod it, exec it —
+        # the pre-rank sequence, unchanged — and then one more exec per
+        # readiness poll, which is the serve-process liveness probe. It is an
+        # exec rather than anything new because a process inside a container
+        # can only be asked about from inside that container.
         assert journal == [
             ("run_container", "", name),
             ("copy_to_container", "", name),
+            ("exec_in_container", "", name),
             ("exec_in_container", "", name),
             ("exec_in_container", "", name),
         ]

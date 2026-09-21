@@ -57,6 +57,13 @@ class MockContainer:
     #: stops asking for one.
     executed_as: list[tuple[str, str]] = field(default_factory=list)
     log_lines: list[str] = field(default_factory=list)
+    #: Whether the process the launch script exec'd is still in here. A
+    #: keepalive container outlives the engine inside it — that is the whole
+    #: of the failure ``native_runtime.serve_process_alive`` exists to catch —
+    #: so a simulation that could not show a live container with a dead serve
+    #: process could not show the bug either. Flip it to ``False`` and the
+    #: liveness probe below answers the way a real ``pgrep`` would.
+    serve_process_running: bool = True
     #: Docker's ``--user``, as resolved by the service before the call.
     user: str | None = None
     _removed: bool = field(default=False, repr=False)
@@ -101,6 +108,13 @@ class MockContainer:
         text = command if isinstance(command, str) else " ".join(command)
         self.executed_commands.append(text)
         self.executed_as.append((text, user))
+        if "pgrep -f" in text:
+            # A liveness probe is a question, not a command: the answer is the
+            # exit code, and nothing of it reaches ``docker logs`` — an exec's
+            # output does not on a real daemon either.
+            code = 0 if self.serve_process_running else 1
+            out = b"1\n" if code == 0 else b""
+            return MockExecResult(exit_code=code, output=(out, None) if demux else out)
         self.log_lines.append(f"[mock] exec: {text}")
         output = f"{text.split()[-1] if text else ''}\n".encode()
         return MockExecResult(exit_code=0, output=(output, None) if demux else output)
