@@ -681,6 +681,16 @@ def manifest_digest(
 # ── Seeding ──────────────────────────────────────────────────────────────────
 
 
+#: skopeo's own image, run over the local Docker when the binary is absent.
+#: Multi-arch (arm64 included), and the same ``copy --all --preserve-digests``
+#: as the binary — so a control node needs nothing installed to seed exactly.
+SKOPEO_IMAGE = "quay.io/skopeo/stable:latest"
+
+#: Running it: host networking, because the destination is this host's
+#: loopback registry.
+SKOPEO_CONTAINER = ["docker", "run", "--rm", "--network", "host", SKOPEO_IMAGE]
+
+
 def _skopeo_available(runner: CommandRunner | None) -> bool:
     return _run(runner)(["skopeo", "--version"], 30).ok
 
@@ -690,6 +700,7 @@ def _copy_with_skopeo(
     destination: str,
     runner: CommandRunner | None,
     timeout: int,
+    skopeo: list[str] | None = None,
 ) -> None:
     """``skopeo copy --all --preserve-digests`` — every hop byte-identical.
 
@@ -697,9 +708,12 @@ def _copy_with_skopeo(
     manifest, and ``--preserve-digests`` refuses the copy outright rather than
     re-encoding anything, which is what makes the destination digest equal to
     the source one instead of merely similar.
+
+    ``skopeo`` is the command that runs it: the binary, or
+    :data:`SKOPEO_CONTAINER` on a host without one.
     """
     argv = [
-        "skopeo",
+        *(skopeo or ["skopeo"]),
         "copy",
         "--all",
         "--preserve-digests",
@@ -792,8 +806,23 @@ def seed(
         tool = "skopeo"
         _copy_with_skopeo(ref, destination, runner, timeout)
     else:
-        tool = "docker"
-        _copy_with_docker(ref, destination, runner, timeout)
+        # Without skopeo, `docker push` is the only other way in, and it
+        # cannot carry an index: it pushes the one platform image the daemon
+        # unpacked, under a new digest. Every engine image is an index (the
+        # image plus its attestation), so on the cluster that fallback was
+        # refused by the digest check below on every seed. skopeo's own image
+        # needs nothing but the Docker this host already has.
+        try:
+            tool = "skopeo-container"
+            _copy_with_skopeo(ref, destination, runner, timeout, SKOPEO_CONTAINER)
+        except SeedError as exc:
+            logger.warning(
+                "skopeo in a container could not copy %s (%s); trying docker push",
+                ref,
+                exc,
+            )
+            tool = "docker"
+            _copy_with_docker(ref, destination, runner, timeout)
 
     observed = manifest_digest(path, tag, settings, http)
     if not observed:
@@ -950,6 +979,8 @@ __all__ = [
     "RegistryError",
     "RegistrySettings",
     "SeedError",
+    "SKOPEO_CONTAINER",
+    "SKOPEO_IMAGE",
     "cluster_address",
     "describe",
     "ensure_running",

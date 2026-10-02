@@ -345,8 +345,27 @@ class TestSeeding:
 
         assert "authentication required" in str(raised.value)
 
-    def test_without_skopeo_it_falls_back_to_pull_tag_and_push(self, settings):
+    def test_without_skopeo_it_runs_skopeo_s_own_image(self, settings):
+        """The cluster's control node had no skopeo, and `docker push` cannot
+        carry an index: every seed came back re-digested and was refused."""
         sim = SimulatedRegistry(skopeo=False)
+
+        result = _seed(sim, settings)
+
+        run = next(c for c in sim.commands if registry.SKOPEO_IMAGE in c)
+        assert run[: len(registry.SKOPEO_CONTAINER)] == registry.SKOPEO_CONTAINER
+        assert "--network" in run and "host" in run
+        copy = run[len(registry.SKOPEO_CONTAINER) :]
+        assert copy[:3] == ["copy", "--all", "--preserve-digests"]
+        assert copy[-1].startswith("docker://127.0.0.1:5000/")
+        assert result["tool"] == "skopeo-container"
+        assert result["digest"] == DIGEST
+        assert not any(c[:2] == ["docker", "push"] for c in sim.commands)
+
+    def test_without_skopeo_or_its_image_it_falls_back_to_pull_tag_and_push(
+        self, settings
+    ):
+        sim = SimulatedRegistry(skopeo=False, skopeo_container=False)
 
         result = _seed(sim, settings)
 
@@ -400,7 +419,7 @@ class TestSeeding:
         assert result["pull_ref"].startswith("10.0.0.1:5000/")
 
     def test_the_docker_fallback_push_also_targets_loopback(self, settings):
-        sim = SimulatedRegistry(skopeo=False)
+        sim = SimulatedRegistry(skopeo=False, skopeo_container=False)
 
         result = _seed(sim, settings)
 

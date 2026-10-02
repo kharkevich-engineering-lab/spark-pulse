@@ -31,6 +31,8 @@ from spark_pulse.tools.registry import (  # noqa: F401 — shared machinery
     MODES as MODES,
     PROXY_TTL_NEVER as PROXY_TTL_NEVER,
     REGISTRY_IMAGE as REGISTRY_IMAGE,
+    SKOPEO_CONTAINER as SKOPEO_CONTAINER,
+    SKOPEO_IMAGE as SKOPEO_IMAGE,
     CommandResult,
     CommandRunner as CommandRunner,
     HeadRequest,
@@ -91,16 +93,25 @@ def _digest_for(ref: str) -> str:
 class SimulatedRegistry:
     """One control node's registry: a container record and some manifests."""
 
-    def __init__(self, skopeo: bool = True, rewrite_digest: bool = False):
+    def __init__(
+        self,
+        skopeo: bool = True,
+        rewrite_digest: bool = False,
+        skopeo_container: bool = True,
+    ):
         """Simulate the registry container and its API.
 
         Args:
             skopeo: Whether ``skopeo`` is on the simulated control node. False
-                exercises the ``docker pull``/tag/push fallback.
+                exercises skopeo's own image run over docker.
+            skopeo_container: Whether that image can be run. False (with
+                ``skopeo`` False) exercises the ``docker pull``/tag/push
+                fallback.
             rewrite_digest: Re-digest every copy, the way ``docker save |
                 docker load`` did. Seeding must then fail loudly.
         """
         self.skopeo = skopeo
+        self.skopeo_container = skopeo_container
         self.rewrite_digest = rewrite_digest
         #: Every argv the module asked for, for assertions.
         self.commands: list[list[str]] = []
@@ -142,6 +153,10 @@ class SimulatedRegistry:
             if self._container is None:
                 return CommandResult(0, "", "")
             return CommandResult(0, json.dumps(self._container) + "\n", "")
+        if verb == "run" and SKOPEO_IMAGE in argv:
+            if not self.skopeo_container:
+                return CommandResult(125, "", f"Unable to find image '{SKOPEO_IMAGE}'")
+            return self._skopeo(["skopeo", *argv[argv.index(SKOPEO_IMAGE) + 1 :]])
         if verb == "run":
             binds = [argv[i + 1] for i, arg in enumerate(argv) if arg == "-p"]
             self._binds = binds
@@ -363,6 +378,8 @@ __all__ = [
     "MODE_PROXY",
     "PROXY_TTL_NEVER",
     "REGISTRY_IMAGE",
+    "SKOPEO_CONTAINER",
+    "SKOPEO_IMAGE",
     "ImageLocation",
     "RegistryError",
     "RegistrySettings",
