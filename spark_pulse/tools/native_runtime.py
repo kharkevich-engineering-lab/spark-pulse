@@ -2247,6 +2247,37 @@ def _teardown_entry(docker: Any, entry: dict[str, Any]) -> dict[str, Any] | None
     return _orphan(entry, "the container was still present after being stopped")
 
 
+def _fail_launched_gang(
+    services: Callable[[str], Any], plan_obj: DeployPlan, message: Any
+) -> dict[str, Any] | None:
+    """Settle a gang that launched and never became ready: down, then ``error``.
+
+    Each rank's container runs a keepalive and the engine is an exec inside
+    it, so an engine that dies leaves its container up — and on a cluster the
+    other ranks with it, a worker blocked in a rendezvous nobody will join. On
+    the two-node cluster every failed run left both ranks running on both
+    machines until somebody stopped them by hand. A launch failure already
+    tore the gang down (``_abort``); a readiness failure is the same verdict
+    later. Each rank's last log lines are kept first, as ``_abort`` keeps
+    them, because the teardown removes the container that held them.
+
+    Caller holds the lifecycle lock and has checked the record is not torn
+    down.
+    """
+    entries = [_rank_record(r) for r in plan_obj.rank_plans]
+    orphans = _teardown_entries(services, entries)
+    return _record_error(
+        plan_obj.deployment_id,
+        message,
+        orphans=orphans,
+        final_logs={
+            str(e.get("rank", 0)): e["final_logs"]
+            for e in entries
+            if e.get("final_logs")
+        },
+    )
+
+
 def _teardown_entries(
     services: Callable[[str], Any], entries: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
@@ -3039,7 +3070,11 @@ def start(
         with _lifecycle_lock(dep_id):
             if _is_torn_down(dep_id):
                 return get_deployment(dep_id) or {**record, "status": "stopped"}
-            return _fail(str(exc))
+            return _fail_launched_gang(services, plan_obj, exc) or {
+                **record,
+                "status": "error",
+                "error_message": _error_text(exc),
+            }
 
     with _lifecycle_lock(dep_id):
         if _is_torn_down(dep_id):
@@ -3106,9 +3141,10 @@ def create_deployment(
             # readiness timeout after a deliberate teardown is not a crash, and
             # writing "error" over "stopped" — or resurrecting a deleted record
             # — would report one. Leave the teardown's verdict standing.
-            if _is_torn_down(dep_id):
-                return
-            _record_error(dep_id, exc)
+            with _lifecycle_lock(dep_id):
+                if _is_torn_down(dep_id):
+                    return
+                _fail_launched_gang(services, plan_obj, exc)
             return
         # Readiness is observed here, so it is written here: this thread owns
         # the record from the launch to the first answer, and until it wrote

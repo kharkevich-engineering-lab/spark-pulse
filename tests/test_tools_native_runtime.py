@@ -767,6 +767,65 @@ class TestServeProcessLiveness:
         # The whole point: it did not sit out the sixty-second deadline.
         assert elapsed < 10, "the deploy waited for the readiness deadline"
 
+    @staticmethod
+    def _engine_dies_in(docker):
+        def _status(name):
+            try:
+                container = docker.client.containers.get(name)
+            except Exception:  # nothing created yet, or already removed
+                return dict(_MISSING)
+            container.log_lines.append("vllm: command not found")
+            container.serve_process_running = False
+            return {"status": "running", "running": True, "id": container.id}
+
+        return _status
+
+    def test_a_gang_that_never_became_ready_is_torn_down(self, native, docker):
+        """The cluster's failed runs left both ranks up on both machines: a
+        keepalive outlives the engine it was there for."""
+        plan = native.plan("qwen3-8b")
+
+        with patch.object(
+            docker, "get_container_status", side_effect=self._engine_dies_in(docker)
+        ):
+            with patch.object(native, "probe_ready", return_value=False):
+                record = native.start(plan, docker=docker, wait=True, ready_timeout=60)
+
+        assert record["status"] == "error"
+        with pytest.raises(Exception):
+            docker.client.containers.get(plan.container.name)
+        stored = native.get_deployment(plan.deployment_id)
+        # The engine's last words were kept before the container went.
+        assert "command not found" in stored["final_logs"]["0"]
+        assert stored["orphans"] == []
+
+    def test_the_background_watcher_tears_the_gang_down_too(self, native, docker):
+        """`create_deployment` returns at launch; its watcher owns the verdict."""
+        with (
+            _one_service(docker),
+            patch.object(
+                docker,
+                "get_container_status",
+                side_effect=self._engine_dies_in(docker),
+            ),
+            patch.object(native, "probe_ready", return_value=False),
+        ):
+            record = native.create_deployment("qwen3-8b")
+            dep_id = record["id"]
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                stored = native.get_deployment(dep_id) or {}
+                if stored.get("status") == "error":
+                    break
+                time.sleep(0.05)
+
+        assert stored["status"] == "error"
+        assert "command not found" in stored["error_message"]
+        assert "command not found" in stored["final_logs"]["0"]
+        assert not [
+            c for c in docker.client.containers.list(all=True) if dep_id in c.name
+        ]
+
     def test_list_and_detail_agree_when_the_container_is_up_but_never_ready(
         self, native, docker
     ):
