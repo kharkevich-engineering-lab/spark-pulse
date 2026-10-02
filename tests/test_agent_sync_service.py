@@ -274,6 +274,34 @@ async def test_a_pull_failure_the_table_does_not_name_stays_an_agent_error(
     assert caught.value.error_type == "ValueError"
 
 
+async def test_a_relay_travels_to_the_node_and_is_absent_when_not_asked_for(
+    agent_server, join_agent
+):
+    """The relay is how a node reaches the control node's plain-HTTP registry
+    on its own loopback. Unset must stay unset: an empty string on the wire
+    would ask the node to relay to nowhere."""
+    seen: list = []
+
+    def _record(command):
+        seen.append(command.pull_image)
+        return _failure(command, "ValueError", "recorded")
+
+    node = await join_agent("spark-relay", handler=_record)
+    service = service_for_node(agent_server, node)
+
+    with pytest.raises(NodeOperationError):
+        await asyncio.to_thread(
+            service.pull_image,
+            "127.0.0.1:5000/org/vllm@sha256:ab",
+            relay="10.0.0.1:5000",
+        )
+    with pytest.raises(NodeOperationError):
+        await call(service, "pull_image", "ghcr.io/org/vllm:1")
+
+    assert seen[0].relay == "10.0.0.1:5000"
+    assert not seen[1].HasField("relay")
+
+
 async def test_the_translation_table_is_small_and_explicit():
     """It maps contract failures only; everything else stays an agent error."""
     assert set(CONTRACT_EXCEPTIONS) == {"PullCancelled", "PullStalled"}

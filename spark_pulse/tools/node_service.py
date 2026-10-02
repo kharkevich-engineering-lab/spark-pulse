@@ -469,8 +469,14 @@ class NodeService(Protocol):
         interval: float = PULL_PROGRESS_INTERVAL,
         cancel: Callable[[], bool] | None = None,
         stall_timeout: float | None = None,
+        relay: str | None = None,
     ) -> dict[str, Any]:
-        """Pull an image onto the node, reporting aggregated progress."""
+        """Pull an image onto the node, reporting aggregated progress.
+
+        ``relay`` (``host:port``) asks the node to reach a ``127.0.0.1:<port>``
+        reference's registry through a loopback relay to that address — how a
+        node pulls from the control node's plain-HTTP registry.
+        """
         ...
 
     def remove_image(self, ref: str, force: bool = False) -> bool:

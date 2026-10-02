@@ -300,6 +300,7 @@ class NodeOperations:
         stall_timeout: float | None = None,
         timeout: float | None = None,
         cancel: Callable[[], bool] | None = None,
+        relay: str | None = None,
     ) -> dict[str, Any]:
         """Pull an image onto the node, streaming progress back as it goes.
 
@@ -328,6 +329,7 @@ class NodeOperations:
         message = pb.PullImage(ref=ref, want_progress=progress is not None)
         codec.set_optional(message, "interval", interval)
         codec.set_optional(message, "stall_timeout", stall_timeout)
+        codec.set_optional(message, "relay", relay or None)
         command = self.hub.new_command(pull_image=message)
         call = asyncio.ensure_future(
             self._call(command, "pull", timeout=timeout, progress=progress)

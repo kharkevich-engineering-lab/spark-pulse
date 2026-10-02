@@ -346,6 +346,14 @@ message PullImage {
   bool want_progress = 2;
   optional double interval = 3;
   optional double stall_timeout = 4;
+  // Reach the reference's registry through a loopback relay. When set, `ref`
+  // names a registry on 127.0.0.1:<port>, and the node opens that port for
+  // the length of the pull, forwarding every connection to `relay`
+  // (host:port) — the control node's registry. Docker trusts a plain-HTTP
+  // registry on loopback by default and nowhere else, so this is what lets a
+  // node pull from that registry without an `insecure-registries` entry, a
+  // daemon restart or root.
+  optional string relay = 5;
 }
 
 message RemoveImage {

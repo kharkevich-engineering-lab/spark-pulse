@@ -340,9 +340,10 @@ class TestDeletion:
         back, rather than running docker anywhere but here.
         """
         synced = images.sync_to_nodes(VLLM_REF, ["n1", "n2"], services=nodes.services)
-        # A node holds what it pulled: the registry-hosted, digest-pinned
-        # reference, not the ghcr.io tag this host calls the image.
-        pull_ref = synced["pull_ref"]
+        # A node holds what it pulled: the registry copy under the loopback
+        # name its relay served, not the ghcr.io tag this host calls the image.
+        pull_ref = synced["results"][0]["pull_ref"]
+        assert pull_ref.startswith("127.0.0.1:5000/")
         assert nodes.docker("n1").image_exists(pull_ref) is True
 
         result = images.delete_image(
@@ -498,8 +499,11 @@ class TestSync:
         assert result["pull_ref"].startswith(f"{result['registry_base']}/")
         assert not result["registry_base"].startswith("ghcr.io")
         assert result["repository"] == VLLM_REPO.partition("/")[2]
-        # Two nodes, one set of three fields, one composed reference each.
-        assert {r["pull_ref"] for r in result["results"]} == {result["pull_ref"]}
+        # Every peer pulls the same loopback name through its relay to the
+        # registry: Docker trusts plain HTTP on loopback and nowhere else.
+        node_ref = f"127.0.0.1:5000/{result['repository']}@{result['digest']}"
+        assert {r["pull_ref"] for r in result["results"]} == {node_ref}
+        assert {r["relay"] for r in result["results"]} == {result["registry_base"]}
         assert {r["digest"] for r in result["results"]} == {advertised}
 
     def test_every_node_pulls_and_none_is_skipped_the_first_time(
@@ -509,7 +513,37 @@ class TestSync:
 
         assert result["ok"] is True
         assert [r["skipped"] for r in result["results"]] == [False, False]
-        assert nodes.pulled("n1") == nodes.pulled("n2") == [result["pull_ref"]]
+        node_ref = result["results"][0]["pull_ref"]
+        assert nodes.pulled("n1") == nodes.pulled("n2") == [node_ref]
+        assert nodes.docker("n1").relayed_pulls == [(node_ref, result["registry_base"])]
+
+    def test_the_control_node_pulls_the_loopback_name_without_a_relay(
+        self, catalogue, nodes, monkeypatch
+    ):
+        """The registry is on the control node's own loopback; a relay there
+        would try to bind the port the registry already holds."""
+        monkeypatch.setattr(images, "_is_local", lambda address: address == "n1")
+
+        result = images.sync_to_nodes(VLLM_REF, ["n1", "n2"], services=nodes.services)
+
+        by_node = {r["node"]: r for r in result["results"]}
+        assert by_node["n1"]["relay"] is None
+        assert by_node["n2"]["relay"] == result["registry_base"]
+        assert nodes.docker("n1").relayed_pulls == []
+        assert nodes.pulled("n1") == [by_node["n1"]["pull_ref"]]
+
+    def test_a_registry_only_on_loopback_says_why_a_peer_cannot_have_it(
+        self, catalogue, nodes, monkeypatch
+    ):
+        from spark_pulse import tools
+
+        monkeypatch.setattr(tools.registry, "relay_target", lambda: "")
+
+        result = images.sync_to_nodes(VLLM_REF, ["n1"], services=nodes.services)
+
+        assert result["ok"] is False
+        assert "only on this machine's loopback" in result["results"][0]["error"]
+        assert nodes.pulled("n1") == []
 
     def test_a_node_that_already_has_it_is_skipped(self, catalogue, nodes):
         images.sync_to_nodes(VLLM_REF, ["n1", "n2"], services=nodes.services)
@@ -581,7 +615,8 @@ class TestSync:
         assert result["ok"] is True
         assert result["digest"]
         assert result["pull_ref"].endswith(f"@{result['digest']}")
-        assert nodes.pulled("n1") == [result["pull_ref"]]
+        assert nodes.pulled("n1") == [result["results"][0]["pull_ref"]]
+        assert result["results"][0]["pull_ref"].endswith(f"@{result['digest']}")
 
     def test_save_and_load_is_gone(self):
         """No fallback: a silently wrong transfer is worse than no transfer."""

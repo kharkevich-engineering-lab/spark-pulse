@@ -31,6 +31,8 @@ from spark_pulse.tools.registry import (  # noqa: F401 — shared machinery
     MODES as MODES,
     PROXY_TTL_NEVER as PROXY_TTL_NEVER,
     REGISTRY_IMAGE as REGISTRY_IMAGE,
+    SKOPEO_CONTAINER as SKOPEO_CONTAINER,
+    SKOPEO_IMAGE as SKOPEO_IMAGE,
     CommandResult,
     CommandRunner as CommandRunner,
     HeadRequest,
@@ -46,10 +48,12 @@ from spark_pulse.tools.registry import (  # noqa: F401 — shared machinery
     is_digest as is_digest,
     load_settings as load_settings,
     location_for as location_for,
+    loopback_reference as loopback_reference,
     manifest_digest as _real_manifest_digest,
     node_reference as _real_node_reference,
     pull_reference as pull_reference,
     registry_host as registry_host,
+    relay_target as relay_target,
     repository_path as repository_path,
     seed as _real_seed,
     seed_tag as seed_tag,
@@ -89,22 +93,32 @@ def _digest_for(ref: str) -> str:
 class SimulatedRegistry:
     """One control node's registry: a container record and some manifests."""
 
-    def __init__(self, skopeo: bool = True, rewrite_digest: bool = False):
+    def __init__(
+        self,
+        skopeo: bool = True,
+        rewrite_digest: bool = False,
+        skopeo_container: bool = True,
+    ):
         """Simulate the registry container and its API.
 
         Args:
             skopeo: Whether ``skopeo`` is on the simulated control node. False
-                exercises the ``docker pull``/tag/push fallback.
+                exercises skopeo's own image run over docker.
+            skopeo_container: Whether that image can be run. False (with
+                ``skopeo`` False) exercises the ``docker pull``/tag/push
+                fallback.
             rewrite_digest: Re-digest every copy, the way ``docker save |
                 docker load`` did. Seeding must then fail loudly.
         """
         self.skopeo = skopeo
+        self.skopeo_container = skopeo_container
         self.rewrite_digest = rewrite_digest
         #: Every argv the module asked for, for assertions.
         self.commands: list[list[str]] = []
         #: ``repository -> {tag or digest: digest}``.
         self.manifests: dict[str, dict[str, str]] = {}
         self._container: dict[str, Any] | None = None
+        self._binds: list[str] = []
         self._staged: tuple[str, str] | None = None
 
     # ── The command seam ─────────────────────────────────────────────────
@@ -139,19 +153,26 @@ class SimulatedRegistry:
             if self._container is None:
                 return CommandResult(0, "", "")
             return CommandResult(0, json.dumps(self._container) + "\n", "")
+        if verb == "run" and SKOPEO_IMAGE in argv:
+            if not self.skopeo_container:
+                return CommandResult(125, "", f"Unable to find image '{SKOPEO_IMAGE}'")
+            return self._skopeo(["skopeo", *argv[argv.index(SKOPEO_IMAGE) + 1 :]])
         if verb == "run":
+            binds = [argv[i + 1] for i, arg in enumerate(argv) if arg == "-p"]
+            self._binds = binds
             self._container = {
                 "Names": argv[argv.index("--name") + 1],
                 "Image": argv[-1],
                 "State": "running",
                 "Status": "Up 1 second",
-                "Ports": argv[argv.index("-p") + 1],
+                "Ports": self._ports(binds),
             }
             return CommandResult(0, uuid.uuid4().hex[:12] + "\n", "")
         if verb == "start":
             if self._container is None:
                 return CommandResult(1, "", "No such container")
             self._container["State"] = "running"
+            self._container["Ports"] = self._ports(self._binds)
             return CommandResult(0, argv[-1] + "\n", "")
         if verb == "rm":
             if self._container is None:
@@ -167,6 +188,21 @@ class SimulatedRegistry:
             self._commit(argv[-1])
             return CommandResult(0, f"Pushed {argv[-1]}\n", "")
         return CommandResult(1, "", f"unsupported docker verb: {verb}")
+
+    @staticmethod
+    def _ports(binds: list[str]) -> str:
+        """``docker ps``'s ``Ports`` column for these ``-p`` arguments."""
+        rendered = []
+        for bind in binds:
+            host, _, inner = bind.rpartition(":")
+            rendered.append(f"{host}->{inner}/tcp")
+        return ", ".join(rendered)
+
+    def lose_bindings(self) -> None:
+        """What a reboot did on the cluster: up, and published on nothing."""
+        if self._container is not None:
+            self._container["Ports"] = ""
+            self._binds = []
 
     # ── The manifest store ───────────────────────────────────────────────
 
@@ -342,6 +378,8 @@ __all__ = [
     "MODE_PROXY",
     "PROXY_TTL_NEVER",
     "REGISTRY_IMAGE",
+    "SKOPEO_CONTAINER",
+    "SKOPEO_IMAGE",
     "ImageLocation",
     "RegistryError",
     "RegistrySettings",
@@ -354,10 +392,12 @@ __all__ = [
     "is_digest",
     "load_settings",
     "location_for",
+    "loopback_reference",
     "manifest_digest",
     "node_reference",
     "pull_reference",
     "registry_host",
+    "relay_target",
     "repository_path",
     "reset",
     "seed",

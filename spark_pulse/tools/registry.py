@@ -30,12 +30,15 @@ a :class:`CommandRunner` for the docker and skopeo CLIs, and a head-request
 callable for the registry HTTP API — so ``spark_pulse.mock.registry`` runs
 *this* module's logic over simulated transports rather than reimplementing it.
 
-Not yet done, and it needs the second machine to test: the registry serves
-plain HTTP on the LAN, so a node's Docker daemon will refuse it until
-``<control>:5000`` is in that node's ``insecure-registries``. Nothing here
-writes a node's ``daemon.json``; that belongs with the node registry and
-pre-flight of the plan's phase C, which is where a node's configuration first
-becomes something we own.
+The registry serves plain HTTP, and a node's Docker daemon refuses that
+anywhere but ``127.0.0.0/8`` unless ``<control>:5000`` is in its
+``insecure-registries`` — root-owned configuration whose change restarts the
+daemon and every engine on it. So nothing writes a node's ``daemon.json``.
+A node pulls :func:`loopback_reference` (``127.0.0.1:<port>/…``) instead, and
+its agent opens that port for the length of the pull as a relay to
+:func:`relay_target` (``PullImage.relay``). The name is the same on every
+node, which is also how a deploy finds a synced copy without asking where it
+came from (``native_runtime._image_on_node``).
 
 The same restriction bites the *control node's own* push, and it was found on
 a real two-node cluster: with ``address`` a LAN IP rather than loopback,
@@ -452,6 +455,40 @@ def _is_running(record: dict[str, Any] | None) -> bool:
     return state.startswith("running") or state.startswith("up")
 
 
+_PUBLISHED = re.compile(r"(\[[^\]]*\]|[0-9.]+):(\d+)->")
+
+
+def _published(record: dict[str, Any] | None) -> set[str]:
+    """Every ``host:port`` the container is actually published on.
+
+    Read from ``docker ps``'s ``Ports`` column
+    (``127.0.0.1:5000->5000/tcp, 192.168.1.5:5000->5000/tcp``), which is what
+    the daemon holds now rather than what the container was created asking
+    for.
+    """
+    ports = str((record or {}).get("Ports") or "")
+    return {f"{host}:{port}" for host, port in _PUBLISHED.findall(ports)}
+
+
+def _expected(settings: RegistrySettings) -> set[str]:
+    """The ``host:port`` pairs :attr:`RegistrySettings.publish_binds` asks for."""
+    return {bind.rsplit(":", 1)[0] for bind in settings.publish_binds}
+
+
+def _serving(record: dict[str, Any] | None, settings: RegistrySettings) -> bool:
+    """Running *and* published where nodes and this host's push look for it.
+
+    A running container is not a registry anyone can reach. Seen on the
+    two-node cluster: the container was created bound to the control node's
+    Wi-Fi address, the machine rebooted, and it came back up publishing no
+    port at all — while this module, asking only whether it ran, reported it
+    up and every push to it was refused. The control node's address also
+    moves (a wired link appeared and became the route to the peer), and a
+    container bound to the old one is just as unreachable on the new one.
+    """
+    return _is_running(record) and _expected(settings) <= _published(record)
+
+
 def _env_args(settings: RegistrySettings) -> list[str]:
     """Registry environment: proxying, TTL and deletion."""
     env = [
@@ -490,10 +527,20 @@ def status(
     except RegistryError as exc:
         record, error = None, str(exc)
     user, password = upstream_credentials()
+    serving = _serving(record, settings)
+    if error is None and _is_running(record) and not serving:
+        error = (
+            f"the registry container is up but not published on "
+            f"{', '.join(sorted(_expected(settings) - _published(record)))}; "
+            "starting it again recreates it with the right bindings"
+        )
     return {
         "mode": settings.mode,
         "default_mode": DEFAULT_MODE,
-        "running": _is_running(record),
+        # Reachable, not merely up: see `_serving`.
+        "running": serving,
+        "container_running": _is_running(record),
+        "published": sorted(_published(record)),
         "exists": record is not None,
         "container": settings.container_name,
         "image": settings.image,
@@ -517,21 +564,37 @@ def start(
 ) -> dict[str, Any]:
     """Start the registry, idempotently.
 
-    Already running is success. Present but stopped is started in place, so a
-    reboot does not lose the seeded blobs.
+    Serving is success. Present but stopped is started in place. A container
+    that is up — or comes up — without the bindings it needs is recreated:
+    the blobs live in ``data_dir`` on the host, so nothing seeded is lost,
+    and a ``docker start`` cannot change what a container is published on.
     """
     settings = settings or load_settings()
     run = _run(runner)
     record = _inspect_container(settings, runner)
-    if _is_running(record):
+    if _serving(record, settings):
         return status(settings, runner)
-    if record is not None:
+    if record is not None and not _is_running(record):
         result = run(["docker", "start", settings.container_name], 60)
         if not result.ok:
             raise RegistryError(
                 f"could not start the registry container: {result.message}"
             )
-        return status(settings, runner)
+        record = _inspect_container(settings, runner)
+        if _serving(record, settings):
+            return status(settings, runner)
+    if record is not None:
+        logger.warning(
+            "registry container %s is published on %s, not %s; recreating it",
+            settings.container_name,
+            ", ".join(sorted(_published(record))) or "nothing",
+            ", ".join(sorted(_expected(settings))),
+        )
+        result = run(["docker", "rm", "-f", settings.container_name], 120)
+        if not result.ok:
+            raise RegistryError(
+                f"could not replace the registry container: {result.message}"
+            )
 
     Path(settings.data_dir).expanduser().mkdir(parents=True, exist_ok=True)
     publish_args: list[str] = []
@@ -584,6 +647,8 @@ def ensure_running(
     state = status(settings, runner)
     if state.get("running"):
         return state
+    # `start` both starts a stopped container and replaces one that is up
+    # without the bindings it needs; `running` is false in either case.
     return start(settings, runner)
 
 
@@ -616,6 +681,16 @@ def manifest_digest(
 # ── Seeding ──────────────────────────────────────────────────────────────────
 
 
+#: skopeo's own image, run over the local Docker when the binary is absent.
+#: Multi-arch (arm64 included), and the same ``copy --all --preserve-digests``
+#: as the binary — so a control node needs nothing installed to seed exactly.
+SKOPEO_IMAGE = "quay.io/skopeo/stable:latest"
+
+#: Running it: host networking, because the destination is this host's
+#: loopback registry.
+SKOPEO_CONTAINER = ["docker", "run", "--rm", "--network", "host", SKOPEO_IMAGE]
+
+
 def _skopeo_available(runner: CommandRunner | None) -> bool:
     return _run(runner)(["skopeo", "--version"], 30).ok
 
@@ -625,6 +700,7 @@ def _copy_with_skopeo(
     destination: str,
     runner: CommandRunner | None,
     timeout: int,
+    skopeo: list[str] | None = None,
 ) -> None:
     """``skopeo copy --all --preserve-digests`` — every hop byte-identical.
 
@@ -632,9 +708,12 @@ def _copy_with_skopeo(
     manifest, and ``--preserve-digests`` refuses the copy outright rather than
     re-encoding anything, which is what makes the destination digest equal to
     the source one instead of merely similar.
+
+    ``skopeo`` is the command that runs it: the binary, or
+    :data:`SKOPEO_CONTAINER` on a host without one.
     """
     argv = [
-        "skopeo",
+        *(skopeo or ["skopeo"]),
         "copy",
         "--all",
         "--preserve-digests",
@@ -727,8 +806,23 @@ def seed(
         tool = "skopeo"
         _copy_with_skopeo(ref, destination, runner, timeout)
     else:
-        tool = "docker"
-        _copy_with_docker(ref, destination, runner, timeout)
+        # Without skopeo, `docker push` is the only other way in, and it
+        # cannot carry an index: it pushes the one platform image the daemon
+        # unpacked, under a new digest. Every engine image is an index (the
+        # image plus its attestation), so on the cluster that fallback was
+        # refused by the digest check below on every seed. skopeo's own image
+        # needs nothing but the Docker this host already has.
+        try:
+            tool = "skopeo-container"
+            _copy_with_skopeo(ref, destination, runner, timeout, SKOPEO_CONTAINER)
+        except SeedError as exc:
+            logger.warning(
+                "skopeo in a container could not copy %s (%s); trying docker push",
+                ref,
+                exc,
+            )
+            tool = "docker"
+            _copy_with_docker(ref, destination, runner, timeout)
 
     observed = manifest_digest(path, tag, settings, http)
     if not observed:
@@ -809,6 +903,42 @@ def node_reference(
         return ref
 
 
+def loopback_reference(
+    ref: str, digest: str = "", settings: RegistrySettings | None = None
+) -> str:
+    """What a node calls its copy of ``ref`` out of this registry.
+
+    ``127.0.0.1:<port>/<repository>@<digest>``: a node reaches the registry
+    through a loopback relay its agent opens (``PullImage.relay``), because
+    Docker trusts a plain-HTTP registry on loopback and nowhere else without
+    root-owned daemon configuration and a restart. The name is the same on
+    every node — the control node's own push already uses it — so a deploy
+    can look for the copy by name without asking where it came from.
+
+    Empty when ``ref`` carries no digest: a copy is only ever found by the
+    identity a deploy pins, never by a tag.
+    """
+    settings = settings or load_settings()
+    location = location_for(ref, digest)
+    if not location.repository or not location.digest:
+        return ""
+    return ImageLocation(
+        settings.push_base, location.repository, location.digest
+    ).reference()
+
+
+def relay_target(settings: RegistrySettings | None = None) -> str:
+    """Where a peer's relay forwards to — this registry as the LAN sees it.
+
+    Empty when the registry is only on loopback (a single-node install): a
+    peer relaying to ``127.0.0.1`` would reach its own relay, not this one.
+    """
+    settings = settings or load_settings()
+    if settings.address.startswith("127.") or settings.address in ("", "localhost"):
+        return ""
+    return settings.base
+
+
 def describe(
     ref: str, digest: str = "", settings: RegistrySettings | None = None
 ) -> dict[str, Any]:
@@ -849,6 +979,8 @@ __all__ = [
     "RegistryError",
     "RegistrySettings",
     "SeedError",
+    "SKOPEO_CONTAINER",
+    "SKOPEO_IMAGE",
     "cluster_address",
     "describe",
     "ensure_running",
@@ -856,10 +988,12 @@ __all__ = [
     "is_digest",
     "load_settings",
     "location_for",
+    "loopback_reference",
     "manifest_digest",
     "node_reference",
     "pull_reference",
     "registry_host",
+    "relay_target",
     "repository_path",
     "seed",
     "seed_tag",

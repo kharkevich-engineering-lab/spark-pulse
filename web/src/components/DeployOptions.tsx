@@ -8,7 +8,7 @@ The engine picker is limited to engines that can actually run this recipe: a v1
 recipe carries a vLLM `command` template and therefore pins itself to vLLM.
 */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useI18n, type Translator } from "@/lib/i18n";
 import { fetchEngines, fetchModels, fetchNodes, planDeployment, runPreflight } from "@/lib/api";
 import type { ClusterNode, DeployPlan, EngineSummary, PreflightReport, RecipeDetail } from "@/lib/types";
@@ -85,6 +85,30 @@ export function proposeParallelism(nodeCount: number, current: Parallelism): Par
     return { tensor_parallel: nodes / pp, pipeline_parallel: pp };
   }
   return { tensor_parallel: nodes, pipeline_parallel: 1 };
+}
+
+/** The peers a recipe's own shape asks for, before the operator ticks any.
+ *
+ * A recipe declaring `tensor_parallel: 2` is a two-node recipe, and the form
+ * used to open it on one: the peer sat unticked inside a collapsed section,
+ * so Deploy sent a solo request the server refused with "does not fit 1
+ * node(s)" on a control plane with a second Spark enrolled and healthy. The
+ * shape is the recipe's statement of how many nodes it wants, so the form
+ * starts there.
+ *
+ * Registry order, and only peers that can be asked — a node marked dead is
+ * not offered as a default. When too few are left the answer is no peers at
+ * all rather than a partial set: a partial set is refused just the same, and
+ * solo with the occupancy line saying why is the plainer state to land in.
+ */
+export function defaultPeers(nodes: ClusterNode[], shape: Parallelism): string[] {
+  const wanted = occupancy(shape) - 1;
+  if (wanted < 1) return [];
+  const usable = nodes.filter(
+    (n) => !n.is_control_plane && n.state !== "dead" && n.agent?.connected !== false,
+  );
+  if (usable.length < wanted) return [];
+  return usable.slice(0, wanted).map((n) => n.address);
 }
 
 /** The occupancy line: what this shape occupies against what is selected.
@@ -328,19 +352,45 @@ export default function DeployOptions({
 
   const declared = useMemo(() => recipeParallelism(recipe), [recipe]);
 
+  // A registry of one (or zero, before the control node has registered
+  // itself) has exactly one possible value for "which nodes take part" — the
+  // control node, solo — so there is nothing for a selector to select.
+  const controlNode = useMemo(() => nodes.find((n) => n.is_control_plane), [nodes]);
+  const otherNodes = useMemo(() => nodes.filter((n) => !n.is_control_plane), [nodes]);
+
   // Seed from the recipe, once per recipe. Seeding the *parent's* value —
   // rather than only the text on screen — is the point: the plan, the
   // pre-flight and the create all read it, so a form that displayed 2 while
   // sending nothing would preview a deployment nobody asked for.
+  //
+  // The nodes are seeded the same way, once the registry has answered: the
+  // peers the recipe's shape occupies, ticked. One effect rather than two,
+  // because both write the parent's value and two writes in one commit would
+  // each start from the same stale `value` and the second would drop the first.
+  const seededFor = useRef<string | null>(null);
+  const nodesSeededFor = useRef<string | null>(null);
   useEffect(() => {
-    setTpText(String(declared.tensor_parallel));
-    setPpText(String(declared.pipeline_parallel));
-    setTpTouched(false);
-    onChange({ ...value, ...declared });
-    // Deliberately only `recipe.id`: `value` and `onChange` are read fresh
-    // from the render that changed it, and re-running on every value change
-    // would undo the operator's own edits on the next keystroke.
-  }, [recipe.id]);
+    let next: DeployOptionsValue | null = null;
+    if (seededFor.current !== recipe.id) {
+      seededFor.current = recipe.id;
+      nodesSeededFor.current = null;
+      setTpText(String(declared.tensor_parallel));
+      setPpText(String(declared.pipeline_parallel));
+      setTpTouched(false);
+      next = { ...value, ...declared, nodes: undefined };
+    }
+    if (nodes.length > 0 && nodesSeededFor.current !== recipe.id) {
+      nodesSeededFor.current = recipe.id;
+      const peers = defaultPeers(nodes, declared);
+      if (peers.length > 0 && controlNode) {
+        next = { ...(next ?? value), nodes: [controlNode.address, ...peers] };
+      }
+    }
+    if (next) onChange(next);
+    // Deliberately only `recipe.id` and the registry: `value` and `onChange`
+    // are read fresh from the render that changed it, and re-running on every
+    // value change would undo the operator's own edits on the next keystroke.
+  }, [recipe.id, nodes]);
 
   /** What the form is currently asking for, whether or not the parent kept it. */
   const shape: Parallelism = {
@@ -352,11 +402,6 @@ export default function DeployOptions({
   const available = useMemo(() => choices.filter((c) => c.supported), [choices]);
   const unavailable = useMemo(() => choices.filter((c) => !c.supported), [choices]);
 
-  // A registry of one (or zero, before the control node has registered
-  // itself) has exactly one possible value for "which nodes take part" — the
-  // control node, solo — so there is nothing for a selector to select.
-  const controlNode = useMemo(() => nodes.find((n) => n.is_control_plane), [nodes]);
-  const otherNodes = useMemo(() => nodes.filter((n) => !n.is_control_plane), [nodes]);
   const selectedAddresses = useMemo(() => new Set(value.nodes ?? []), [value.nodes]);
   const worldSize = 1 + otherNodes.filter((n) => selectedAddresses.has(n.address)).length;
   // Live, so the mismatch is on screen before Preview is pressed rather than

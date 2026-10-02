@@ -6,6 +6,7 @@ import DeployOptions, {
   deployParams,
   describeImagePresence, describeModelPresence,
   describeModelSource,
+  defaultPeers,
   describeOccupancy,
   eligibleEngines,
   engineChoices,
@@ -675,6 +676,33 @@ describe("proposeParallelism", () => {
   });
 });
 
+describe("defaultPeers", () => {
+  const two = { tensor_parallel: 2, pipeline_parallel: 1 };
+
+  it("picks as many peers as the shape occupies beyond the control node", () => {
+    expect(defaultPeers([CONTROL_NODE, PEER_NODE, PEER_NODE_2], two)).toEqual([PEER_NODE.address]);
+    expect(
+      defaultPeers([CONTROL_NODE, PEER_NODE, PEER_NODE_2], { tensor_parallel: 3, pipeline_parallel: 1 }),
+    ).toEqual([PEER_NODE.address, PEER_NODE_2.address]);
+  });
+
+  it("picks none for a solo shape", () => {
+    expect(defaultPeers([CONTROL_NODE, PEER_NODE], { tensor_parallel: 1, pipeline_parallel: 1 })).toEqual([]);
+  });
+
+  it("passes over a dead node and one whose agent is off the wire", () => {
+    const dead = node("dead", "10.0.0.20", { state: "dead" });
+    const gone = node("gone", "10.0.0.21", {
+      agent: { enrolled: true, connected: false } as ClusterNode["agent"],
+    });
+    expect(defaultPeers([CONTROL_NODE, dead, gone, PEER_NODE], two)).toEqual([PEER_NODE.address]);
+  });
+
+  it("picks none rather than a partial set when too few peers are usable", () => {
+    expect(defaultPeers([CONTROL_NODE, PEER_NODE], { tensor_parallel: 4, pipeline_parallel: 1 })).toEqual([]);
+  });
+});
+
 describe("describeOccupancy", () => {
   it("says a matching shape occupies exactly the nodes selected", () => {
     const fit = describeOccupancy({ tensor_parallel: 2, pipeline_parallel: 1 }, 2, EN);
@@ -781,13 +809,50 @@ describe("DeployOptions parallelism", () => {
     expect(screen.getByTestId("deploy-occupancy")).toHaveTextContent("occupies 1 node");
   });
 
-  it("leaves a recipe that already fits two nodes alone", async () => {
-    render(<ControlledDeployOptions recipe={TP2_RECIPE} />);
-    const user = await openOptions();
+  /** The bug from the cluster: a tp=2 recipe on a two-Spark control plane
+   *  opened with the peer unticked inside a collapsed section, so Deploy sent
+   *  a solo request and the server answered "does not fit 1 node(s)". */
+  it("opens a two-node recipe on two nodes, without the section being opened", async () => {
+    const onChange = vi.fn();
+    function Spy() {
+      const [value, setValue] = useState<DeployOptionsValue>({});
+      return (
+        <DeployOptions
+          recipe={TP2_RECIPE}
+          value={value}
+          onChange={(next) => {
+            onChange(next);
+            setValue(next);
+          }}
+        />
+      );
+    }
+    render(<Spy />);
 
+    await waitFor(() =>
+      expect(onChange).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          nodes: [CONTROL_NODE.address, PEER_NODE.address],
+          tensor_parallel: 2,
+        }),
+      ),
+    );
+    const user = await openOptions();
+    expect(screen.getByLabelText(new RegExp(PEER_NODE.name))).toBeChecked();
+    expect(screen.getByLabelText(new RegExp(PEER_NODE_2.name))).not.toBeChecked();
+    expect(screen.getByTestId("deploy-occupancy")).toHaveTextContent("tp=2 pp=1 occupies 2 nodes");
+
+    // Unticking it is still the operator's call, and the shape follows.
     await user.click(screen.getByLabelText(new RegExp(PEER_NODE.name)));
-    await waitFor(() => expect(screen.getByTestId("deploy-world-size")).toHaveTextContent("2 nodes"));
-    expect(screen.getByLabelText("Tensor parallel")).toHaveValue(2);
+    await waitFor(() => expect(screen.getByLabelText("Tensor parallel")).toHaveValue(1));
+  });
+
+  it("ticks no peer for a recipe that runs on one node", async () => {
+    render(<ControlledDeployOptions recipe={V1_RECIPE} />);
+    await openOptions();
+
+    expect(screen.getByLabelText(new RegExp(PEER_NODE.name))).not.toBeChecked();
+    expect(screen.getByTestId("deploy-world-size")).toHaveTextContent("1 node");
   });
 
   /** A proposal is for a form still showing the recipe's number. Once an
