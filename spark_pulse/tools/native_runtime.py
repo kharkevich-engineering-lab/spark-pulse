@@ -2380,6 +2380,68 @@ def _pull_targets(plan_obj: DeployPlan) -> list[str]:
     return seen
 
 
+def _upstream_ref(plan_obj: DeployPlan) -> str:
+    """The image the plan names, before any node is pointed at its own copy."""
+    return plan_obj.image_ref or plan_obj.container.image
+
+
+def _registry_copy(ref: str) -> str:
+    """The name a node holds ``ref`` under when it came out of the control
+    node's registry, or "" when ``ref`` carries no digest to find it by."""
+    try:
+        return str(tools.registry.loopback_reference(ref) or "")
+    except Exception as exc:  # pragma: no cover — no registry configured
+        logger.debug("could not compose the registry copy of %s: %s", ref, exc)
+        return ""
+
+
+def _image_on_node(docker: Any, ref: str) -> str:
+    """The name ``ref`` is present under on this node, or "".
+
+    Its own name first. Then the copy image sync leaves behind —
+    ``127.0.0.1:<port>/<repo>@<digest>`` — which is the same bytes under the
+    same digest, and which ``docker run ghcr.io/…@<digest>`` would not find:
+    a digest reference is resolved per repository. Without this a synced
+    node pulled the whole image again from its upstream.
+    """
+    if docker.image_exists(ref):
+        return ref
+    copy = _registry_copy(ref)
+    if copy and docker.image_exists(copy):
+        return copy
+    return ""
+
+
+def _run_from(plan_obj: DeployPlan, node: str, image: str) -> None:
+    """Point every rank on ``node`` at the name the image has there."""
+    for rank_plan in plan_obj.rank_plans:
+        if rank_plan.node == node:
+            rank_plan.container.image = image
+
+
+def _relayed_source(node: str, ref: str) -> tuple[str, str | None] | None:
+    """``(name, relay)`` to pull ``ref`` from the control node's registry.
+
+    None when the registry does not hold it — a deploy is never pointed at a
+    registry with nothing in it — or when a peer could not reach it. The
+    control node pulls the loopback name directly: the registry is on its
+    loopback already, and a relay there would collide with it.
+    """
+    copy = _registry_copy(ref)
+    if not copy:
+        return None
+    try:
+        if tools.registry.node_reference(ref) == ref:
+            return None
+        if _rank_is_here({"node": node}):
+            return copy, None
+        relay = str(tools.registry.relay_target() or "")
+    except Exception as exc:  # noqa: BLE001 — an unreachable registry is a no-op
+        logger.debug("could not consult the registry for %s: %s", ref, exc)
+        return None
+    return (copy, relay) if relay else None
+
+
 def _image_missing(services: Callable[[str], Any], plan_obj: DeployPlan) -> bool:
     """Whether this deploy has to pull before it can start anything.
 
@@ -2390,7 +2452,7 @@ def _image_missing(services: Callable[[str], Any], plan_obj: DeployPlan) -> bool
     """
     for address in _pull_targets(plan_obj):
         try:
-            if not services(address).image_exists(plan_obj.container.image):
+            if not _image_on_node(services(address), _upstream_ref(plan_obj)):
                 return True
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug("image presence check failed on %s: %s", address, exc)
@@ -2520,6 +2582,53 @@ def _pull_with_retries(
     raise NativeRuntimeError(f"could not pull image {ref} on {where}")
 
 
+def _pull_from_registry(
+    docker: Any,
+    dep_id: str,
+    node: str,
+    ref: str,
+    where: str,
+    progress: Callable[[dict[str, Any]], None],
+) -> tuple[str, Any]:
+    """Pull ``ref`` out of the control node's registry, when it holds it.
+
+    Returns ``(name pulled, outcome)``, or ``("", None)`` when the registry
+    is not a source for this node or the pull from it failed — in which case
+    the caller pulls from upstream exactly as it always has. Slow beats
+    failed: an agent too old to open a relay, a registry gone quiet, are
+    reasons to take the long way, not to fail the deploy.
+    """
+    source = _relayed_source(node, ref)
+    if source is None:
+        return "", None
+    copy, relay = source
+    try:
+        outcome = docker.pull_image(
+            copy,
+            progress,
+            cancel=lambda: _pull_cancel_requested(dep_id),
+            relay=relay,
+        )
+        return copy, outcome
+    except PullCancelled:
+        raise
+    except Exception as exc:
+        if _teardown_requested(dep_id):
+            raise PullCancelled(f"pull of {copy} cancelled") from exc
+        message = (
+            f"could not pull {copy} from the control node's registry on "
+            f"{where} ({exc}); pulling {ref} from its own registry instead"
+        )
+        logger.warning(message)
+        publish_event(
+            EventType.IMAGE_PULL_PROGRESS,
+            dep_id,
+            message,
+            {"image_ref": ref, "node": where},
+        )
+        return "", None
+
+
 def _pull_image_if_missing(docker: Any, plan_obj: DeployPlan, node: str = "") -> bool:
     """Pull the plan's image before the container is created, with progress.
 
@@ -2536,10 +2645,12 @@ def _pull_image_if_missing(docker: Any, plan_obj: DeployPlan, node: str = "") ->
     a caller that is told neither leaves it there with no pull behind it.
     """
     dep_id = plan_obj.deployment_id
-    ref = plan_obj.container.image
+    ref = _upstream_ref(plan_obj)
     where = node or getattr(docker, "label", "") or "this machine"
     try:
-        if docker.image_exists(ref):
+        present = _image_on_node(docker, ref)
+        if present:
+            _run_from(plan_obj, node, present)
             return False
     except Exception as exc:  # pragma: no cover - defensive
         logger.debug("image presence check failed for %s: %s", ref, exc)
@@ -2565,16 +2676,22 @@ def _pull_image_if_missing(docker: Any, plan_obj: DeployPlan, node: str = "") ->
 
     _register_pull(dep_id)
     try:
-        result = _pull_with_retries(docker, dep_id, ref, where, _progress, last)
+        pulled, result = _pull_from_registry(
+            docker, dep_id, node, ref, where, _progress
+        )
+        if not pulled:
+            result = _pull_with_retries(docker, dep_id, ref, where, _progress, last)
+            pulled = ref
     finally:
         _unregister_pull(dep_id)
+    _run_from(plan_obj, node, pulled)
 
     publish_event(
         EventType.IMAGE_PULL_COMPLETED,
         dep_id,
-        f"pulled {ref}",
+        f"pulled {pulled}",
         {
-            "image_ref": ref,
+            "image_ref": pulled,
             "node": where,
             **(result if isinstance(result, dict) else {}),
         },

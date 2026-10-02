@@ -631,6 +631,7 @@ class DockerService:
         interval: float = PULL_PROGRESS_INTERVAL,
         cancel: Callable[[], bool] | None = None,
         stall_timeout: float | None = None,
+        relay: str | None = None,
     ) -> dict[str, Any]:
         """Pull ``ref``, reporting aggregated progress through ``progress``.
 
@@ -647,7 +648,11 @@ class DockerService:
             stall_timeout: Seconds of silence that fail the pull with
                 :class:`PullStalled`. Defaults to
                 ``config.docker_pull_stall_timeout_seconds``; pass 0 to disable.
+            relay: Accepted for the node-service contract and not used: the
+                relay is something a node's agent opens, and a daemon reached
+                directly pulls ``ref`` exactly as named.
         """
+        del relay
         if not ref:
             raise RuntimeError("pull_image needs an image reference")
         if stall_timeout is None:

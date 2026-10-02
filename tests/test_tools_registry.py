@@ -158,6 +158,66 @@ class TestLifecycle:
         assert any(c[:2] == ["docker", "start"] for c in sim.commands)
         assert len([c for c in sim.commands if c[:2] == ["docker", "run"]]) == 1
 
+    def test_a_running_container_published_on_nothing_is_not_running(
+        self, sim, settings
+    ):
+        """The cluster's registry after a reboot: up, bound to nothing, and
+        reported running while every push to it was refused."""
+        registry.start(settings, sim.run)
+        sim.lose_bindings()
+
+        state = registry.status(settings, sim.run)
+
+        assert state["running"] is False
+        assert state["container_running"] is True
+        assert state["published"] == []
+        assert "not published on 10.0.0.1:5000, 127.0.0.1:5000" in state["error"]
+
+    def test_start_recreates_a_container_without_its_bindings(self, sim, settings):
+        """`docker start` cannot change what a container is published on, so
+        the only repair is a new one — over the same data directory."""
+        registry.start(settings, sim.run)
+        sim.lose_bindings()
+
+        state = registry.ensure_running(settings, sim.run)
+
+        assert state["running"] is True
+        assert state["published"] == ["10.0.0.1:5000", "127.0.0.1:5000"]
+        assert ["docker", "rm", "-f", settings.container_name] in sim.commands
+        runs = [c for c in sim.commands if c[:2] == ["docker", "run"]]
+        assert len(runs) == 2
+        assert f"{settings.data_dir}:/var/lib/registry" in runs[-1]
+
+    def test_a_container_bound_to_an_address_the_host_moved_off_is_recreated(
+        self, sim, settings, tmp_path
+    ):
+        """A wired link appeared on the control node and became its address;
+        the container still listened on the Wi-Fi one."""
+        registry.start(settings, sim.run)
+        moved = registry.RegistrySettings(
+            mode=registry.MODE_LOCAL,
+            address="10.0.0.9",
+            port=5000,
+            data_dir=settings.data_dir,
+        )
+
+        state = registry.start(moved, sim.run)
+
+        assert state["published"] == ["10.0.0.9:5000", "127.0.0.1:5000"]
+        assert ["docker", "rm", "-f", moved.container_name] in sim.commands
+
+    def test_a_stopped_container_that_comes_back_bound_is_not_recreated(
+        self, sim, settings
+    ):
+        registry.start(settings, sim.run)
+        sim._container["State"] = "exited"
+        sim._container["Ports"] = ""
+
+        state = registry.start(settings, sim.run)
+
+        assert state["running"] is True
+        assert not any(c[:2] == ["docker", "rm"] for c in sim.commands)
+
     def test_status_reports_where_it_listens_and_that_nodes_need_nothing(
         self, sim, settings
     ):
@@ -413,3 +473,26 @@ class TestNodeReference:
         assert described["upstream"]["registry_base"] == "ghcr.io"
         assert described["digest"] == described["upstream"]["digest"] == DIGEST
         assert described["nodes_need_credentials"] is False
+
+
+class TestLoopbackReference:
+    def test_a_node_names_its_copy_by_loopback_and_digest(self, settings):
+        assert (
+            registry.loopback_reference(f"ghcr.io/org/vllm@{DIGEST}", settings=settings)
+            == f"127.0.0.1:5000/org/vllm@{DIGEST}"
+        )
+
+    def test_a_tag_alone_names_no_copy(self, settings):
+        assert (
+            registry.loopback_reference("ghcr.io/org/vllm:1", settings=settings) == ""
+        )
+
+    def test_a_peer_relays_to_the_lan_address(self, settings):
+        assert registry.relay_target(settings) == "10.0.0.1:5000"
+
+    def test_a_loopback_only_registry_is_no_relay_target(self, tmp_path):
+        """A peer relaying to 127.0.0.1 would reach its own relay."""
+        only_here = registry.RegistrySettings(
+            mode=registry.MODE_LOCAL, address="127.0.0.1", data_dir=str(tmp_path)
+        )
+        assert registry.relay_target(only_here) == ""

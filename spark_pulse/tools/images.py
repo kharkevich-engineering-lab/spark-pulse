@@ -716,13 +716,18 @@ def _delete_on_nodes(
 
     # A node rarely holds the image under the reference this host calls it.
     # `sync_to_nodes` seeds the control node's registry and has each node pull
-    # `<control>:5000/owner/repo@sha256:D`, so removing `ghcr.io/owner/repo:tag`
-    # there would report success and free nothing. Both names are tried, and a
-    # node that carries neither is already in the state the caller wanted.
+    # `127.0.0.1:5000/owner/repo@sha256:D` through its relay — and, before the
+    # relay, `<control>:5000/owner/repo@sha256:D` — so removing
+    # `ghcr.io/owner/repo:tag` there would report success and free nothing.
+    # Every name is tried, and a node that carries none of them is already in
+    # the state the caller wanted.
+    from spark_pulse import tools
+
     candidates = [ref]
     seeded = _seeded_reference(ref)
-    if seeded and seeded != ref:
-        candidates.append(seeded)
+    for name in (seeded, tools.registry.loopback_reference(seeded) if seeded else ""):
+        if name and name not in candidates:
+            candidates.append(name)
 
     def _one(address: str) -> dict[str, Any]:
         from spark_pulse import tools
@@ -774,6 +779,16 @@ def _node_services(services: Any | None = None) -> Callable[[Any], Any]:
     return tools.node_service.NodeServices()
 
 
+def _is_local(address: str) -> bool:
+    """Whether ``address`` is this machine, whose loopback holds the registry."""
+    from spark_pulse import tools
+
+    try:
+        return bool(tools.node_service.is_local_address(address))
+    except Exception:  # pragma: no cover — discovery is best effort
+        return False
+
+
 def _node_has(info: dict[str, Any] | None, digest: str, image_id: str) -> bool:
     """Whether a node already carries this exact content.
 
@@ -812,7 +827,13 @@ def sync_to_nodes(
     1. The image is copied into the registry on this node, digest preserved
        and *verified* against what the index advertises.
     2. Each node pulls from that registry, **anonymously**. No registry
-       credential is sent anywhere; it stays in this node's secrets.
+       credential is sent anywhere; it stays in this node's secrets. A peer
+       pulls ``127.0.0.1:<port>/…`` through a loopback relay its agent opens
+       to the registry (:func:`registry.loopback_reference`): Docker refuses
+       a plain-HTTP registry on a LAN address, and the alternative is an
+       ``insecure-registries`` entry — root-owned daemon configuration whose
+       change restarts every engine on the node. The control node pulls the
+       same name directly; the registry is on its loopback already.
     3. A node already holding that digest is skipped.
 
     Args:
@@ -844,17 +865,22 @@ def sync_to_nodes(
     seeded = tools.registry.seed(ref, advertised, timeout=timeout)
     pull_ref = str(seeded["pull_ref"])
     seed_digest = str(seeded["digest"])
+    node_ref = tools.registry.loopback_reference(pull_ref, seed_digest)
+    relay = tools.registry.relay_target()
 
     resolve = _node_services(services)
 
     def _one(address: str) -> dict[str, Any]:
         started = time.monotonic()
         node = tools.node_service.node_for(address, ssh_user=ssh_user or "")
+        local = _is_local(address)
+        via = None if local else relay
 
         def _result(ok: bool, skipped: bool, error: str | None) -> dict[str, Any]:
             payload = {
                 "node": address,
-                "pull_ref": pull_ref,
+                "pull_ref": node_ref,
+                "relay": via,
                 "digest": seed_digest,
                 "ok": ok,
                 "skipped": skipped,
@@ -870,13 +896,21 @@ def sync_to_nodes(
 
         try:
             service = resolve(node)
-            if _node_has(service.image_info(pull_ref), seed_digest, local_id):
+            if _node_has(service.image_info(node_ref), seed_digest, local_id):
                 return _result(True, True, None)
         except (OSError, RuntimeError) as exc:
             return _result(False, False, str(exc))
+        if not local and not relay:
+            return _result(
+                False,
+                False,
+                f"the registry is only on this machine's loopback "
+                f"({seeded['registry_base']}), so {address} cannot reach it; "
+                "set image_registry.address to an address the nodes share",
+            )
 
         try:
-            service.pull_image(pull_ref)
+            service.pull_image(node_ref, relay=via)
         except (OSError, RuntimeError) as exc:
             return _result(False, False, str(exc))
         return _result(True, False, None)

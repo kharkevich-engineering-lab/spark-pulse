@@ -274,9 +274,91 @@ pub async fn pull_image(
     })
 }
 
+/// Where a relayed pull has to listen: the reference's own registry host.
+///
+/// A relay exists to put the control node's registry on this node's
+/// loopback, so the reference must name loopback — `127.0.0.1:<port>/…` —
+/// and anything else is refused rather than bound: listening on an address
+/// the caller did not mean is how a relay ends up open to the LAN.
+pub fn relay_listen_address(reference: &str) -> Result<String, OpError> {
+    let (repository, _) = split_ref(reference);
+    let host = repository.split('/').next().unwrap_or_default();
+    match host.split_once(':') {
+        Some(("127.0.0.1", port)) if port.parse::<u16>().is_ok() && repository.contains('/') => {
+            Ok(host.to_string())
+        }
+        _ => Err(OpError::new(
+            "ValueError",
+            format!("a relayed pull needs a 127.0.0.1:<port> reference, not {reference}"),
+        )),
+    }
+}
+
+/// A loopback listener forwarding every connection to the control node's
+/// registry, for exactly as long as it is held.
+///
+/// Docker refuses a plain-HTTP registry anywhere but `127.0.0.0/8`, and the
+/// daemon is a host process, so a listener here is one it will talk to. The
+/// alternative — an `insecure-registries` entry — is root-owned daemon
+/// configuration whose change restarts the daemon and every engine on it.
+pub struct Relay {
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for Relay {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+/// Open the relay a pull of `reference` through `upstream` needs.
+///
+/// A port that is already taken fails the pull with `RelayUnavailable`
+/// rather than pulling from whatever holds it: that would be some other
+/// registry, answering for content we did not seed.
+pub async fn open_relay(reference: &str, upstream: &str) -> DockerResult<Relay> {
+    let listen = relay_listen_address(reference)?;
+    let upstream = upstream.trim().to_string();
+    if upstream.is_empty() {
+        return Err(OpError::new(
+            "ValueError",
+            "a relayed pull needs an upstream",
+        ));
+    }
+    let listener = tokio::net::TcpListener::bind(&listen)
+        .await
+        .map_err(|error| {
+            OpError::new(
+                "RelayUnavailable",
+                format!("could not listen on {listen} to relay to {upstream}: {error}"),
+            )
+        })?;
+    let task = tokio::spawn(async move {
+        loop {
+            let Ok((mut inbound, _)) = listener.accept().await else {
+                // Out of descriptors, say: back off rather than spin.
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            };
+            let upstream = upstream.clone();
+            tokio::spawn(async move {
+                match tokio::net::TcpStream::connect(&upstream).await {
+                    Ok(mut outbound) => {
+                        let _ = tokio::io::copy_bidirectional(&mut inbound, &mut outbound).await;
+                    }
+                    Err(error) => {
+                        tracing::warn!("relay could not reach {upstream}: {error}");
+                    }
+                }
+            });
+        }
+    });
+    Ok(Relay { task })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::split_ref;
+    use super::{open_relay, relay_listen_address, split_ref};
 
     #[test]
     fn a_reference_splits_the_way_python_splits_it() {
@@ -297,5 +379,68 @@ mod tests {
             ("repo".into(), "sha256:abc".into())
         );
         assert_eq!(split_ref(""), (String::new(), String::new()));
+    }
+
+    #[test]
+    fn a_relay_listens_only_on_the_loopback_the_reference_names() {
+        assert_eq!(
+            relay_listen_address("127.0.0.1:5000/org/vllm@sha256:abc").unwrap(),
+            "127.0.0.1:5000"
+        );
+        for refused in [
+            "192.168.1.5:5000/org/vllm@sha256:abc",
+            "ghcr.io/org/vllm:1",
+            "127.0.0.1:notaport/org/vllm:1",
+            "vllm",
+        ] {
+            assert_eq!(
+                relay_listen_address(refused).unwrap_err().kind,
+                "ValueError"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_relay_forwards_to_its_upstream_and_closes_when_dropped() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let upstream = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream_addr = upstream.local_addr().unwrap().to_string();
+        tokio::spawn(async move {
+            let (mut socket, _) = upstream.accept().await.unwrap();
+            let mut buf = [0u8; 4];
+            socket.read_exact(&mut buf).await.unwrap();
+            socket.write_all(b"pong").await.unwrap();
+        });
+        // A free port to relay on.
+        let port = {
+            let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            probe.local_addr().unwrap().port()
+        };
+        let reference = format!("127.0.0.1:{port}/org/vllm@sha256:abc");
+        let relay = open_relay(&reference, &upstream_addr).await.unwrap();
+
+        let mut client = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        client.write_all(b"ping").await.unwrap();
+        let mut reply = [0u8; 4];
+        client.read_exact(&mut reply).await.unwrap();
+        assert_eq!(&reply, b"pong");
+
+        drop(relay);
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn a_taken_port_is_refused_not_shared() {
+        let holder = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = holder.local_addr().unwrap().port();
+        let reference = format!("127.0.0.1:{port}/org/vllm@sha256:abc");
+        let error = open_relay(&reference, "127.0.0.1:1").await.err().unwrap();
+        assert_eq!(error.kind, "RelayUnavailable");
     }
 }

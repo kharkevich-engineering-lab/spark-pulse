@@ -935,6 +935,140 @@ def _no_pull_backoff():
         yield
 
 
+DIGEST_REF = "ghcr.io/example/vllm@sha256:" + "ab" * 32
+REGISTRY_COPY = "127.0.0.1:5000/example/vllm@sha256:" + "ab" * 32
+
+
+def _digest_pinned(plan):
+    """The plan as the engine index hands it out: pinned by digest."""
+    plan.image_ref = DIGEST_REF
+    for rank_plan in plan.rank_plans:
+        rank_plan.container.image = DIGEST_REF
+    return plan
+
+
+def _started_from(events) -> list[str]:
+    return [
+        meta["image_ref"]
+        for name, meta in events
+        if name == "deployment_container_started"
+    ]
+
+
+class TestRegistryCopy:
+    """A node that image sync filled holds the image as
+    `127.0.0.1:<port>/<repo>@<digest>`, and `docker run ghcr.io/…@<digest>`
+    does not find it: a digest reference resolves per repository."""
+
+    @pytest.fixture
+    def events(self):
+        class _Events(list):
+            messages: list[tuple[str, str]]
+
+        captured = _Events()
+        captured.messages = []
+
+        def _capture(event_type, deployment_id, message="", metadata=None):
+            captured.append((event_type.value, metadata or {}))
+            captured.messages.append((event_type.value, message))
+
+        with patch.object(nr, "publish_event", side_effect=_capture):
+            yield captured
+
+    def test_a_node_holding_the_synced_copy_runs_from_it(self, native, docker, events):
+        plan = _digest_pinned(native.plan("qwen3-8b"))
+        _forget_image(docker, DIGEST_REF)
+        docker.client.images.add(REGISTRY_COPY)
+
+        record = native.start(plan, docker=docker, wait=True)
+
+        assert record["status"] == "running"
+        assert not [name for name, _ in events if name.startswith("image.pull")]
+        assert _started_from(events) == [REGISTRY_COPY]
+
+    def test_a_peer_pulls_through_its_relay_when_the_registry_holds_it(
+        self, native, docker, events
+    ):
+        plan = _digest_pinned(native.plan("qwen3-8b"))
+        _forget_image(docker, DIGEST_REF)
+        with (
+            patch.object(
+                tools.registry, "node_reference", return_value="10.0.0.1:5000/x"
+            ),
+            patch.object(tools.registry, "relay_target", return_value="10.0.0.1:5000"),
+            patch.object(nr, "_rank_is_here", return_value=False),
+        ):
+            record = native.start(plan, docker=docker, wait=True)
+
+        assert record["status"] == "running"
+        assert docker.relayed_pulls == [(REGISTRY_COPY, "10.0.0.1:5000")]
+        assert _started_from(events) == [REGISTRY_COPY]
+
+    def test_the_control_node_pulls_the_copy_without_a_relay(
+        self, native, docker, events
+    ):
+        plan = _digest_pinned(native.plan("qwen3-8b"))
+        _forget_image(docker, DIGEST_REF)
+        pulled: list[tuple[str, object]] = []
+        real_pull = docker.pull_image
+
+        def _pull(ref, *args, relay=None, **kwargs):
+            pulled.append((ref, relay))
+            return real_pull(ref, *args, relay=relay, **kwargs)
+
+        with (
+            patch.object(
+                tools.registry, "node_reference", return_value="10.0.0.1:5000/x"
+            ),
+            patch.object(docker, "pull_image", side_effect=_pull),
+        ):
+            native.start(plan, docker=docker, wait=True)
+
+        assert pulled == [(REGISTRY_COPY, None)]
+
+    def test_a_failed_relayed_pull_falls_back_to_upstream(self, native, docker, events):
+        """An agent too old to open a relay is a reason to take the long way,
+        not to fail the deploy."""
+        plan = _digest_pinned(native.plan("qwen3-8b"))
+        _forget_image(docker, DIGEST_REF)
+        real_pull = docker.pull_image
+
+        def _pull(ref, *args, relay=None, **kwargs):
+            if ref == REGISTRY_COPY:
+                raise RuntimeError("connection refused")
+            return real_pull(ref, *args, **kwargs)
+
+        with (
+            patch.object(
+                tools.registry, "node_reference", return_value="10.0.0.1:5000/x"
+            ),
+            patch.object(tools.registry, "relay_target", return_value="10.0.0.1:5000"),
+            patch.object(nr, "_rank_is_here", return_value=False),
+            patch.object(docker, "pull_image", side_effect=_pull),
+        ):
+            record = native.start(plan, docker=docker, wait=True)
+
+        assert record["status"] == "running"
+        assert _started_from(events) == [DIGEST_REF]
+        said = [message for _, message in events.messages]
+        assert any(
+            "from the control node's registry" in m
+            and f"pulling {DIGEST_REF} from its own registry instead" in m
+            for m in said
+        )
+
+    def test_a_registry_without_the_image_is_never_a_source(
+        self, native, docker, events
+    ):
+        plan = _digest_pinned(native.plan("qwen3-8b"))
+        _forget_image(docker, DIGEST_REF)
+        with patch.object(tools.registry, "node_reference", side_effect=lambda r: r):
+            native.start(plan, docker=docker, wait=True)
+
+        assert docker.relayed_pulls == []
+        assert _started_from(events) == [DIGEST_REF]
+
+
 class TestImagePull:
     """The pull is explicit and visible — the worst of the first hardware run."""
 

@@ -522,6 +522,7 @@ class MockDockerService(DockerService):
         super().__init__(client or _get_mock_client())
         #: Bind-mount sources a real run would have created here.
         self.ensured: list[str] = []
+        self.relayed_pulls: list[tuple[str, str]] = []
         #: Snapshots this simulated node holds: repo path -> revision -> files.
         #: Seeded from the catalogue so a plan that asks the node whether it
         #: holds a model's files gets the answer a downloaded model gives.
@@ -824,6 +825,7 @@ class MockDockerService(DockerService):
         interval: float = 0.0,
         cancel: Any | None = None,
         stall_timeout: float | None = None,
+        relay: str | None = None,
     ) -> dict[str, Any]:
         """Pull through the real aggregation code over the simulated stream.
 
@@ -832,6 +834,10 @@ class MockDockerService(DockerService):
         watchdog is kept on, driven by the same config value as production, so
         simulation exercises the watched path rather than a shortcut around it.
         """
+        if relay:
+            # What the node would have been asked to open, kept for the tests
+            # that assert a peer is pulled through its relay.
+            self.relayed_pulls.append((ref, relay))
         return super().pull_image(
             ref,
             progress,

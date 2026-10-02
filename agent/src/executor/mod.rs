@@ -513,6 +513,13 @@ impl Executor {
             }
             Op::PullImage(req) => {
                 let sink = req.want_progress.then_some(context.progress).flatten();
+                // Held until the pull returns; dropping it closes the port.
+                let _relay = match req.relay.as_deref().filter(|r| !r.trim().is_empty()) {
+                    Some(upstream) => {
+                        Some(attempt!(images::open_relay(&req.r#ref, upstream).await))
+                    }
+                    None => None,
+                };
                 let outcome = attempt!(
                     images::pull_image(
                         docker,

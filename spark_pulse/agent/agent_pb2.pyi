@@ -433,16 +433,18 @@ class ListImages(_message.Message):
     def __init__(self) -> None: ...
 
 class PullImage(_message.Message):
-    __slots__ = ("ref", "want_progress", "interval", "stall_timeout")
+    __slots__ = ("ref", "want_progress", "interval", "stall_timeout", "relay")
     REF_FIELD_NUMBER: _ClassVar[int]
     WANT_PROGRESS_FIELD_NUMBER: _ClassVar[int]
     INTERVAL_FIELD_NUMBER: _ClassVar[int]
     STALL_TIMEOUT_FIELD_NUMBER: _ClassVar[int]
+    RELAY_FIELD_NUMBER: _ClassVar[int]
     ref: str
     want_progress: bool
     interval: float
     stall_timeout: float
-    def __init__(self, ref: _Optional[str] = ..., want_progress: _Optional[bool] = ..., interval: _Optional[float] = ..., stall_timeout: _Optional[float] = ...) -> None: ...
+    relay: str
+    def __init__(self, ref: _Optional[str] = ..., want_progress: _Optional[bool] = ..., interval: _Optional[float] = ..., stall_timeout: _Optional[float] = ..., relay: _Optional[str] = ...) -> None: ...
 
 class RemoveImage(_message.Message):
     __slots__ = ("ref", "force")

@@ -306,6 +306,7 @@ class AgentNodeService:
         interval: float = PULL_PROGRESS_INTERVAL,
         cancel: Callable[[], bool] | None = None,
         stall_timeout: float | None = None,
+        relay: str | None = None,
     ) -> dict[str, Any]:
         """Pull an image onto the node, reporting aggregated progress.
 
@@ -331,6 +332,7 @@ class AgentNodeService:
                 stall_timeout=stall_timeout,
                 cancel=cancel,
                 timeout=PULL_TIMEOUT,
+                relay=relay,
             ),
             timeout=PULL_TIMEOUT,
         )

@@ -46,10 +46,12 @@ from spark_pulse.tools.registry import (  # noqa: F401 — shared machinery
     is_digest as is_digest,
     load_settings as load_settings,
     location_for as location_for,
+    loopback_reference as loopback_reference,
     manifest_digest as _real_manifest_digest,
     node_reference as _real_node_reference,
     pull_reference as pull_reference,
     registry_host as registry_host,
+    relay_target as relay_target,
     repository_path as repository_path,
     seed as _real_seed,
     seed_tag as seed_tag,
@@ -105,6 +107,7 @@ class SimulatedRegistry:
         #: ``repository -> {tag or digest: digest}``.
         self.manifests: dict[str, dict[str, str]] = {}
         self._container: dict[str, Any] | None = None
+        self._binds: list[str] = []
         self._staged: tuple[str, str] | None = None
 
     # ── The command seam ─────────────────────────────────────────────────
@@ -140,18 +143,21 @@ class SimulatedRegistry:
                 return CommandResult(0, "", "")
             return CommandResult(0, json.dumps(self._container) + "\n", "")
         if verb == "run":
+            binds = [argv[i + 1] for i, arg in enumerate(argv) if arg == "-p"]
+            self._binds = binds
             self._container = {
                 "Names": argv[argv.index("--name") + 1],
                 "Image": argv[-1],
                 "State": "running",
                 "Status": "Up 1 second",
-                "Ports": argv[argv.index("-p") + 1],
+                "Ports": self._ports(binds),
             }
             return CommandResult(0, uuid.uuid4().hex[:12] + "\n", "")
         if verb == "start":
             if self._container is None:
                 return CommandResult(1, "", "No such container")
             self._container["State"] = "running"
+            self._container["Ports"] = self._ports(self._binds)
             return CommandResult(0, argv[-1] + "\n", "")
         if verb == "rm":
             if self._container is None:
@@ -167,6 +173,21 @@ class SimulatedRegistry:
             self._commit(argv[-1])
             return CommandResult(0, f"Pushed {argv[-1]}\n", "")
         return CommandResult(1, "", f"unsupported docker verb: {verb}")
+
+    @staticmethod
+    def _ports(binds: list[str]) -> str:
+        """``docker ps``'s ``Ports`` column for these ``-p`` arguments."""
+        rendered = []
+        for bind in binds:
+            host, _, inner = bind.rpartition(":")
+            rendered.append(f"{host}->{inner}/tcp")
+        return ", ".join(rendered)
+
+    def lose_bindings(self) -> None:
+        """What a reboot did on the cluster: up, and published on nothing."""
+        if self._container is not None:
+            self._container["Ports"] = ""
+            self._binds = []
 
     # ── The manifest store ───────────────────────────────────────────────
 
@@ -354,10 +375,12 @@ __all__ = [
     "is_digest",
     "load_settings",
     "location_for",
+    "loopback_reference",
     "manifest_digest",
     "node_reference",
     "pull_reference",
     "registry_host",
+    "relay_target",
     "repository_path",
     "reset",
     "seed",
