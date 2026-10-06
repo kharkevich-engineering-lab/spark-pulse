@@ -132,3 +132,15 @@ test("the deploy form and its preview fit the viewport", async ({ page }) => {
   );
   expect(overflow, "the page body must not scroll horizontally").toBeLessThanOrEqual(1);
 });
+
+/** A typed port is a pin: the plan keeps it as given, and the command carries
+ *  it. Empty is the recipe's preference, which the planner may move. */
+test("a typed port is the port the preview plans", async ({ page }) => {
+  await openDeployOptions(page);
+
+  await page.getByLabel("API port").fill("8123");
+  await page.getByRole("button", { name: "Preview" }).click();
+
+  await expect(page.getByTestId("deploy-plan-port")).toHaveText("8123");
+  await expect(page.getByTestId("deploy-plan").locator("pre")).toContainText("--port 8123");
+});

@@ -377,6 +377,11 @@ class DeployPlan:
     #: bytes come from without walking the ranks.
     model_source: str = ""
     model_path: str = ""
+    #: The model the readiness answer has to name, where the readiness path
+    #: *is* the engine's model listing (vLLM's ``/v1/models``). A 200 there
+    #: says only that *a* server holds the port; this is what makes it ours.
+    #: Empty for an engine whose readiness is ``/health``, which names nothing.
+    served_model: str = ""
     workdir: str = ""
     warnings: list[str] = field(default_factory=list)
     runtime: str = RUNTIME_NAME
@@ -554,24 +559,19 @@ def _container_path(host_path: str) -> str:
     return host_path
 
 
-def _port_free(port: int) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            sock.bind(("127.0.0.1", port))
-        except OSError:
-            return False
-    return True
-
-
 def allocate_port(taken: set[int] | None = None) -> int:
-    """First free port in the configured range, skipping ``taken``."""
+    """First port in the configured range that ``taken`` does not name.
+
+    ``taken`` is the whole answer. This used to bind each candidate on
+    127.0.0.1 as well, which is a statement about the control plane — and the
+    API port is bound on rank zero's node, which is a peer as often as not.
+    What a node is listening on is asked of that node (:func:`_node_listeners`)
+    and arrives here already folded into ``taken``.
+    """
     taken = taken or set()
     start, end = config.default_port_range_start, config.default_port_range_end
     for port in range(start, end + 1):
-        if port in taken:
-            continue
-        if _port_free(port):
+        if port not in taken:
             return port
     raise NativeRuntimeError(
         f"no free port in the configured range {start}-{end}; "
@@ -579,27 +579,155 @@ def allocate_port(taken: set[int] | None = None) -> int:
     )
 
 
-def _ports_in_use() -> set[int]:
-    """Ports live deployments hold — API *and* rendezvous.
+def _node_key(address: Any) -> str:
+    """One name per machine: the empty string for this one, else its address.
 
-    A launch binds its rendezvous port exactly as surely as its API port, so
-    handing the same number out twice would break a deployment that never
-    mentioned it.
-
-    A stopped deployment with outstanding orphans still holds its ports. Its
-    ranks on unreachable nodes were never confirmed gone, and every orphan bug
-    in this class comes from releasing a resource on inference — "we asked it
-    to stop" — rather than on evidence that it did.
+    A solo record names no node and a cluster record may name this machine by
+    its address; both are the same ports on the same host, so they have to
+    land under the same key or a run here would not see the other.
     """
-    ports: set[int] = set()
+    text = str(address or "").strip()
+    if not text:
+        return ""
+    try:
+        if tools.node_service.is_local_address(text):
+            return ""
+    except Exception:  # pragma: no cover — best effort; the address still names it
+        pass
+    return text
+
+
+def _ports_in_use(exclude: str = "") -> dict[str, dict[int, str]]:
+    """Ports live deployments hold, per node — API, rendezvous *and* RPC.
+
+    Keyed by :func:`_node_key`, valued ``{port: the run's name}`` so a plan
+    that moves off a port can say who holds it. Per node because a port is a
+    property of a machine: two runs on two different nodes may both serve on
+    8000, and pooling them made the second node's run move for nothing.
+
+    A launch binds its rendezvous and RPC ports exactly as surely as its API
+    port, so handing the same number out twice would break a deployment that
+    never mentioned it. Every port a run holds is counted on every node it
+    occupies — rank zero binds the API and rendezvous ports, the workers the
+    RPC one, and the pre-flight checks the API port on all of them anyway.
+
+    A stopped deployment with outstanding orphans still holds its ports on the
+    orphans' nodes. Its ranks on unreachable nodes were never confirmed gone,
+    and every orphan bug in this class comes from releasing a resource on
+    inference — "we asked it to stop" — rather than on evidence that it did.
+
+    ``exclude`` is the deployment being planned: a record written ahead of
+    its own plan (a scheduled deploy, a re-plan of the same id) is not
+    somebody else holding the port.
+    """
+    held: dict[str, dict[int, str]] = {}
     for record in _load_records():
-        if record.get("status") in ("stopped", "error") and not record.get("orphans"):
+        if exclude and record.get("id") == exclude:
             continue
-        for key in ("port", "rendezvous_port"):
-            value = record.get(key)
-            if isinstance(value, int):
-                ports.add(value)
-    return ports
+        finished = record.get("status") in ("stopped", "error")
+        orphans = record.get("orphans") or []
+        if finished and not orphans:
+            continue
+        if finished:
+            nodes = {_node_key(o.get("node")) for o in orphans if isinstance(o, dict)}
+        elif isinstance(record.get("ranks"), list) and record["ranks"]:
+            nodes = {_node_key(entry.get("node")) for entry in rank_entries(record)}
+        else:
+            nodes = {_node_key(n) for n in (record.get("nodes") or [])}
+        holder = str(record.get("name") or record.get("id") or "")
+        for node in nodes or {""}:
+            ports = held.setdefault(node, {})
+            for key in ("port", "rendezvous_port", "rpc_port"):
+                value = record.get(key)
+                if isinstance(value, int) and value:
+                    ports.setdefault(value, holder)
+    return held
+
+
+def _node_listeners(
+    node_list: list[str],
+) -> list[tuple[str, str, set[int] | None, str]]:
+    """What each node the run will occupy is listening on, asked of the node.
+
+    ``(node key, label, ports, why not)`` per node; ``ports`` is ``None`` when
+    the node could not be asked. The question is the pre-flight's own — the
+    same ``ss`` command through the same host probe (``RunHostProbe`` on the
+    node's agent, the control node over loopback; the simulated host under
+    ``SIMULATION_MODE``), parsed by the same function — so the planner and the
+    check that follows it cannot disagree about what is free.
+    """
+    try:
+        targets = tools.preflight.targets_for({"nodes": node_list})
+    except Exception as exc:  # noqa: BLE001 — an unreadable registry cannot be asked
+        return [
+            (_node_key(a), str(a or "this machine"), None, str(exc))
+            for a in (node_list or [""])
+        ]
+    answers: list[tuple[str, str, set[int] | None, str]] = []
+    for target in targets:
+        key = "" if target.is_control_plane else _node_key(target.address)
+        try:
+            result = tools.preflight.probe_for(target).run(
+                tools.preflight.PORTS_COMMAND
+            )
+        except Exception as exc:  # noqa: BLE001 — a probe that raised went unanswered
+            answers.append((key, target.label, None, str(exc)))
+            continue
+        if result.ok:
+            ports = tools.preflight.parse_listening_ports(result.stdout)
+            answers.append((key, target.label, ports, ""))
+        else:
+            why = result.error or result.message or f"exit {result.returncode}"
+            answers.append((key, target.label, None, why))
+    return answers
+
+
+def _choose_port(
+    preferred: int | None,
+    node_list: list[str],
+    reserved: list[tuple[int | None, str]],
+    exclude: str,
+    warnings: list[str],
+) -> int:
+    """The API port for a run whose port is a preference, not a pin.
+
+    Every recipe in the OCI collection says ``port: 8000``, so a second run on
+    a node asked for 8000 again and the pre-flight blocked it. A recipe's port
+    is what it would like: it is kept when it is free on every node the run
+    occupies and moved into the configured range when it is not, with the
+    holder named — a run on record, or whatever the node says is listening.
+
+    A node that cannot be asked is not assumed free. Its ports are judged from
+    the records alone and the plan says so; the pre-flight asks again before
+    anything is launched, and a pinned port never comes through here at all.
+    """
+    in_use = _ports_in_use(exclude=exclude)
+    taken: dict[int, str] = {}
+    for key in {_node_key(a) for a in node_list} or {""}:
+        for port, holder in in_use.get(key, {}).items():
+            taken.setdefault(port, f"run {holder}")
+    for _key, label, listening, why in _node_listeners(node_list):
+        if listening is None:
+            warnings.append(
+                f"could not list the ports in use on {label} ({why}); the API "
+                "port was chosen from the runs on record alone, and the "
+                "pre-flight checks it again before launch"
+            )
+            continue
+        for port in listening:
+            taken.setdefault(port, f"a process on {label}")
+    for port, role in reserved:
+        if port:
+            taken.setdefault(int(port), f"the engine's own {role} port")
+    if preferred and int(preferred) not in taken:
+        return int(preferred)
+    port = allocate_port(set(taken))
+    if preferred:
+        warnings.append(
+            f"port {preferred} is held by {taken[int(preferred)]}; "
+            f"this run gets {port}"
+        )
+    return port
 
 
 # ── Persistence (shared deployments.json) ────────────────────────────────────
@@ -1378,25 +1506,33 @@ def plan(
     # Only above one node: at one node there is no worker to run an
     # rpc-server, so nothing binds it and it is not a port this deploy holds.
     rpc_port = engine_obj.rpc_port() if topology.size > 1 else None
-    port = overrides.get("port") or defaults.get("port")
-    if port in (None, "", 0):
-        taken = _ports_in_use()
-        if rendezvous_port:
-            taken.add(rendezvous_port)
-        if rpc_port:
-            taken.add(rpc_port)
-        port = allocate_port(taken)
-        overrides["port"] = port
-    port = int(port)
-    for reserved, role in ((rendezvous_port, "rendezvous"), (rpc_port, "RPC")):
-        if reserved and port == int(reserved):
-            raise NativeRuntimeError(
-                f"port {port} is the {role} port of engine "
-                f"'{engine_name}/{resolved_variant}'; the launch binds it "
-                "itself, so pick another API port"
-            )
-    if "port" in overrides:
-        overrides["port"] = port
+    reserved_ports = [(rendezvous_port, "rendezvous"), (rpc_port, "RPC")]
+    if overrides.get("port") not in (None, "", 0):
+        # The caller named it: a pin. Kept exactly as asked, and a port that
+        # turns out to be taken is the pre-flight's to block, not ours to move
+        # — somebody chose that number for a client that will dial it.
+        port = int(overrides["port"])
+        for reserved, role in reserved_ports:
+            if reserved and port == int(reserved):
+                raise NativeRuntimeError(
+                    f"port {port} is the {role} port of engine "
+                    f"'{engine_name}/{resolved_variant}'; the launch binds it "
+                    "itself, so pick another API port"
+                )
+    else:
+        # The recipe's port, or none at all: a preference, moved when the
+        # nodes this run occupies already hold it.
+        preferred = defaults.get("port")
+        port = _choose_port(
+            int(preferred) if preferred not in (None, "", 0) else None,
+            node_list,
+            reserved_ports,
+            deployment_id or "",
+            warnings,
+        )
+    # Handed to the engine as an override, so what it renders is the port the
+    # plan chose rather than the recipe's preference it was moved off.
+    overrides["port"] = port
     merged = {**defaults, **overrides, "port": port}
     merged.setdefault("host", "0.0.0.0")
 
@@ -1520,6 +1656,9 @@ def plan(
     image_present, image_size = _inspect_image(image_ref, warnings)
 
     readiness = engine_obj.readiness_path()
+    served_model = ""
+    if readiness and readiness == engine_obj.models_path():
+        served_model = _served_model_name(ranks[0].command) or resolved_model
     return DeployPlan(
         deployment_id=dep_id,
         recipe_id=str(recipe.get("id") or recipe_id),
@@ -1553,6 +1692,7 @@ def plan(
         model_present=model_present,
         model_source=model_source,
         model_path=model_file,
+        served_model=served_model,
         warnings=warnings,
     )
 
@@ -1597,6 +1737,7 @@ def _record_from_plan(plan_obj: DeployPlan, status: str) -> dict[str, Any]:
         "node_count": plan_obj.node_count,
         "mods": plan_obj.mods,
         "readiness_url": plan_obj.readiness_url,
+        "served_model": plan_obj.served_model,
         # The engine's Prometheus path, persisted so the metrics sampler can
         # address this deployment without re-resolving a spec that may since
         # have been withdrawn from the index. It was computed into the plan and
@@ -1724,8 +1865,54 @@ def _deploy_script(docker: Any, rank_plan: RankPlan) -> None:
     )
 
 
-def probe_ready(url: str, timeout: float = 3.0) -> bool:
-    """Whether the engine answers its readiness endpoint.
+def _served_model_name(command: str) -> str:
+    """The name a rendered command serves its model under, if it says.
+
+    The first ``--served-model-name`` (either spelling; vLLM takes several and
+    lists them all). Without one, vLLM lists the model exactly as it was
+    handed — the argument after ``serve`` — and that is read too, because a
+    v1 template may hand it a local path the recipe's ``model:`` never names,
+    and waiting for the recipe's id there would wait out every deadline. A
+    command that says neither, or does not parse, names nothing, and the plan
+    falls back to the model id.
+    """
+    try:
+        tokens = shlex.split(command or "")
+    except ValueError:
+        return ""
+    for index, token in enumerate(tokens):
+        if token.startswith("--served-model-name="):
+            return token.split("=", 1)[1].strip()
+        if token == "--served-model-name" and index + 1 < len(tokens):
+            if not tokens[index + 1].startswith("-"):
+                return tokens[index + 1]
+    for index, token in enumerate(tokens[:-1]):
+        if token == "serve" and not tokens[index + 1].startswith("-"):
+            return tokens[index + 1]
+    return ""
+
+
+def _listed_models(response: Any) -> list[str] | None:
+    """The ids in an OpenAI ``/v1/models`` body, or ``None`` when it is not one."""
+    try:
+        body = response.json()
+    except Exception:  # noqa: BLE001 — not JSON is "not a listing", not an error
+        return None
+    data = body.get("data") if isinstance(body, dict) else None
+    if not isinstance(data, list):
+        return None
+    return [str(e.get("id")) for e in data if isinstance(e, dict) and e.get("id")]
+
+
+def probe_ready(url: str, timeout: float = 3.0, model: str = "") -> bool:
+    """Whether *this run's* engine answers its readiness endpoint.
+
+    Any 200 used to do, and a port is not a server: when the plan's port was
+    already held, the deploy watched somebody else's engine answer and wrote
+    ``running`` over its own, which had failed to bind. So where the readiness
+    path is the model listing, ``model`` is the name it has to carry — a 200
+    naming another model is not ready. A body that is not a listing at all
+    names nobody, and is read as before rather than refused on a technicality.
 
     Simulation mode has no engine to answer, so the probe succeeds — the mock
     container service is already pretending the rest of the lifecycle worked.
@@ -1739,7 +1926,27 @@ def probe_ready(url: str, timeout: float = 3.0) -> bool:
         response = httpx.get(url, timeout=timeout)
     except Exception:
         return False
-    return response.status_code < 400
+    if response.status_code >= 400:
+        return False
+    if not model:
+        return True
+    served = _listed_models(response)
+    return served is None or model in served
+
+
+def _models_answering(url: str, timeout: float = 3.0) -> list[str] | None:
+    """Which models the server on ``url`` lists, for the error that names them."""
+    import httpx
+
+    if tools.is_simulation():
+        return None
+    try:
+        response = httpx.get(url, timeout=timeout)
+    except Exception:
+        return None
+    if response.status_code >= 400:
+        return None
+    return _listed_models(response)
 
 
 #: How many log lines an error message quotes back. Twenty is a llama.cpp or
@@ -2031,6 +2238,15 @@ def _readiness_deadline_message(
     message = (
         f"engine did not become ready within {timeout}s at " f"{plan_obj.readiness_url}"
     )
+    if plan_obj.served_model:
+        # The port answered all along, for somebody else: that is the reason,
+        # and the log tail of an engine that could not bind would only hint it.
+        answered = _models_answering(plan_obj.readiness_url)
+        if answered and plan_obj.served_model not in answered:
+            message += (
+                f"; port {plan_obj.port} answered for {', '.join(answered)}, "
+                f"not {plan_obj.served_model} — another server holds it"
+            )
     try:
         tail = _log_tail(services(head.node), head.container.name)
     except Exception as exc:  # pragma: no cover - a node that stopped answering
@@ -2077,7 +2293,7 @@ def _wait_ready(
                 )
             if serve_process_alive(docker, name, rank_plan.command) is False:
                 raise NativeRuntimeError(_serve_process_gone_message(docker, rank_plan))
-        if probe_ready(plan_obj.readiness_url):
+        if probe_ready(plan_obj.readiness_url, model=plan_obj.served_model):
             return
         time.sleep(interval)
     raise NativeRuntimeError(_readiness_deadline_message(services, plan_obj, timeout))
@@ -3409,7 +3625,9 @@ def status(
     container = ranks[0]["container"]
     port = record.get("port")
     url = record.get("readiness_url") or (f"http://127.0.0.1:{port}/v1/models")
-    ready = bool(container.get("running")) and probe_ready(url)
+    ready = bool(container.get("running")) and probe_ready(
+        url, model=str(record.get("served_model") or "")
+    )
     return {
         **record,
         "container": container,

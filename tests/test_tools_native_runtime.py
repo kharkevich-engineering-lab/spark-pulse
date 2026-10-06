@@ -1995,9 +1995,9 @@ class TestAllocatePort:
         assert nr.allocate_port({first}) != first
 
     def test_raises_when_the_range_is_exhausted(self):
-        with patch.object(nr, "_port_free", return_value=False):
-            with pytest.raises(nr.NativeRuntimeError) as exc:
-                nr.allocate_port()
+        start, end = config.default_port_range_start, config.default_port_range_end
+        with pytest.raises(nr.NativeRuntimeError) as exc:
+            nr.allocate_port(set(range(start, end + 1)))
         assert "no free port" in str(exc.value)
 
 
@@ -2507,7 +2507,8 @@ class TestOrphans:
 
         # Stopped, but not released: nothing has confirmed rank 2 is gone, and
         # handing its port out again is the orphan bug this design refuses.
-        assert plan.port in nr._ports_in_use()
+        # Held on the orphan's node, which is the one nothing has confirmed.
+        assert plan.port in nr._ports_in_use()["10.0.0.3"]
 
     def test_ports_are_released_once_the_node_answers(self, native, fleet):
         plan = self._running(native, fleet)
@@ -2522,7 +2523,7 @@ class TestOrphans:
 
         assert cleared == 1
         assert native.get_deployment("dep1")["orphans"] == []
-        assert plan.port not in nr._ports_in_use()
+        assert plan.port not in nr._ports_in_use().get("10.0.0.3", {})
 
     def test_listing_sweeps_orphans_with_the_real_resolver(self, native, fleet):
         """The sweep runs off the node resolver, never off one passed service.
@@ -2812,3 +2813,355 @@ class TestLlamaCppModelSource:
         assert head.model_source == "hf-cache" and head.model_path == GGUF_FILE
         assert worker.model_source == "" and worker.model_path == ""
         assert worker.command.startswith("ggml-rpc-server")
+
+
+# ── A recipe's port is a preference; the caller's is a pin ──────────────────
+
+
+def _live(record_id: str, name: str, port: int, nodes: list[str] | None = None):
+    """A live record holding ``port`` on ``nodes`` (this machine when none)."""
+    return {
+        "id": record_id,
+        "name": name,
+        "status": "running",
+        "port": port,
+        "rendezvous_port": None,
+        "nodes": nodes,
+        "ranks": [
+            {"rank": rank, "node": node, "container_name": f"c-{record_id}-{rank}"}
+            for rank, node in enumerate(nodes or [""])
+        ],
+    }
+
+
+@pytest.fixture
+def sim_host():
+    """The simulated host the planner asks, reset after every test."""
+    import spark_pulse.mock.preflight as sim
+
+    yield sim
+    sim.reset()
+
+
+class TestPortPreference:
+    def test_a_free_preference_is_kept(self, native):
+        plan = native.plan("qwen3-8b")
+
+        assert plan.port == 8000
+        assert not [w for w in plan.warnings if "port" in w]
+
+    def test_a_preference_held_by_a_run_on_the_node_moves(self, native, docker):
+        first = native.plan("qwen3-8b", name="first")
+        native.start(first, docker=docker, wait=True)
+
+        second = native.plan("qwen3-8b", name="second")
+
+        start = config.default_port_range_start
+        assert second.port == start
+        assert f"port 8000 is held by run first; this run gets {start}" in (
+            second.warnings
+        )
+        # The record, the launch and the readiness probe all carry the move.
+        assert f"--port {start}" in second.launch_command
+        assert second.readiness_url == f"http://127.0.0.1:{start}/v1/models"
+        assert second.params["port"] == start
+        record = native.start(second, docker=docker, wait=True)
+        assert record["port"] == start
+
+    def test_a_pinned_port_is_kept_even_when_held(self, native, docker):
+        native.start(native.plan("qwen3-8b", name="first"), docker=docker, wait=True)
+
+        pinned = native.plan("qwen3-8b", params={"port": 8000})
+
+        # The pre-flight is what blocks it; the planner never moves a pin.
+        assert pinned.port == 8000
+        assert not [w for w in pinned.warnings if "this run gets" in w]
+
+    def test_a_run_on_another_node_does_not_move_it(self, native):
+        nr._save_records([_live("far", "far", 8000, ["10.0.0.3"])])
+
+        assert native.plan("qwen3-8b").port == 8000
+        assert native.plan("qwen3-8b-tp2", nodes=PAIR, solo=False).port == 8000
+
+    def test_a_run_on_one_of_its_nodes_moves_it(self, native):
+        nr._save_records([_live("near", "near", 8000, ["10.0.0.2"])])
+
+        plan = native.plan("qwen3-8b-tp2", nodes=PAIR, solo=False)
+
+        assert plan.port == config.default_port_range_start
+        assert any("held by run near" in w for w in plan.warnings)
+
+    def test_ports_are_kept_per_node(self, native):
+        nr._save_records(
+            [
+                _live("a", "solo-run", 8000),
+                _live("b", "pair-run", 8001, PAIR),
+                {**_live("c", "done", 8002, ["10.0.0.3"]), "status": "stopped"},
+            ]
+        )
+
+        held = nr._ports_in_use()
+
+        assert held[""] == {8000: "solo-run"}
+        assert held["10.0.0.1"] == {8001: "pair-run"}
+        assert held["10.0.0.2"] == {8001: "pair-run"}
+        # A finished run with nothing outstanding holds nothing anywhere.
+        assert "10.0.0.3" not in held
+
+    def test_a_record_without_ranks_holds_on_its_nodes(self, native):
+        record = {**_live("p", "planned", 8000, PAIR), "status": "pulling"}
+        del record["ranks"]
+        nr._save_records([record, {**_live("q", "here", 8001), "ranks": []}])
+
+        held = nr._ports_in_use()
+
+        assert held["10.0.0.1"] == {8000: "planned"}
+        assert held[""] == {8001: "here"}
+
+    def test_a_record_of_the_same_deployment_is_not_a_holder(self, native):
+        nr._save_records([{**_live("dep9", "me", 8000), "status": "pending"}])
+
+        assert native.plan("qwen3-8b", deployment_id="dep9").port == 8000
+
+    def test_a_listener_the_node_reports_moves_it(self, native, sim_host):
+        with patch.object(sim_host, "SIM_LISTENING_PORTS", (22, 8000)):
+            plan = native.plan("qwen3-8b-tp2", nodes=PAIR, solo=False)
+
+        assert plan.port == config.default_port_range_start
+        assert any(
+            w.startswith("port 8000 is held by a process on fleet-0")
+            for w in plan.warnings
+        )
+
+    def test_the_range_skips_listeners_too(self, native, sim_host):
+        start = config.default_port_range_start
+        with patch.object(sim_host, "SIM_LISTENING_PORTS", (8000, start)):
+            plan = native.plan("qwen3-8b")
+
+        assert plan.port == start + 1
+
+    def test_an_unreachable_node_is_judged_by_the_records_and_says_so(
+        self, native, sim_host
+    ):
+        sim_host.UNREACHABLE.add(PAIR[1])
+        with patch.object(sim_host, "SIM_LISTENING_PORTS", (22,)):
+            plan = native.plan("qwen3-8b-tp2", nodes=PAIR, solo=False)
+
+        # Nothing on record holds 8000, so it is kept — and the plan says the
+        # node was not asked rather than calling it free.
+        assert plan.port == 8000
+        assert any(
+            "could not list the ports in use on fleet-1" in w for w in plan.warnings
+        )
+
+    def test_an_unreachable_nodes_records_still_move_it(self, native, sim_host):
+        sim_host.UNREACHABLE.add(PAIR[1])
+        nr._save_records([_live("near", "near", 8000, [PAIR[1]])])
+
+        plan = native.plan("qwen3-8b-tp2", nodes=PAIR, solo=False)
+
+        assert plan.port == config.default_port_range_start
+        assert any("held by run near" in w for w in plan.warnings)
+
+    def test_a_probe_that_raises_is_not_an_answer(self, native):
+        with patch.object(tools.preflight, "probe_for", side_effect=OSError("boom")):
+            plan = native.plan("qwen3-8b")
+
+        assert plan.port == 8000
+        assert any(
+            "could not list the ports" in w and "boom" in w for w in plan.warnings
+        )
+
+    def test_a_failed_command_is_not_an_answer(self, native):
+        class Failing:
+            def run(self, command, timeout=0):
+                return tools.preflight.ProbeResult(
+                    reachable=True, returncode=127, stderr="ss: not found"
+                )
+
+        with patch.object(tools.preflight, "probe_for", return_value=Failing()):
+            plan = native.plan("qwen3-8b")
+
+        assert any("ss: not found" in w for w in plan.warnings)
+
+    def test_an_unreadable_registry_is_not_an_answer(self, native):
+        with patch.object(tools.preflight, "targets_for", side_effect=OSError("db")):
+            plan = native.plan("qwen3-8b")
+
+        assert plan.port == 8000
+        assert any("this machine (db)" in w for w in plan.warnings)
+
+    def test_a_preference_on_the_rendezvous_port_moves(self, native):
+        recipe = {
+            **V1_RECIPE,
+            "id": "on-rdzv",
+            "defaults": {"port": 29501, "tensor_parallel": 1},
+        }
+        with patch.dict(RECIPES, {"on-rdzv": recipe}):
+            plan = native.plan("on-rdzv")
+
+        assert plan.port == config.default_port_range_start
+        assert any("the engine's own rendezvous port" in w for w in plan.warnings)
+
+    def test_a_pin_on_the_rendezvous_port_is_refused(self, native):
+        with pytest.raises(native.NativeRuntimeError) as exc:
+            native.plan("qwen3-8b", params={"port": 29501})
+        assert "rendezvous port" in str(exc.value)
+
+    def test_no_port_at_all_takes_the_range(self, native):
+        plan = native.plan("qwen3-8b-noport")
+
+        assert plan.port == config.default_port_range_start
+        assert not [w for w in plan.warnings if "this run gets" in w]
+
+    def test_the_planner_binds_no_local_socket(self):
+        """Whether a port is free is the node's answer, never this machine's."""
+        source = Path(nr.__file__).read_text(encoding="utf-8")
+        assert "_port_free" not in source
+        assert ".bind((" not in source
+
+
+# ── Readiness is this run's server ──────────────────────────────────────────
+
+
+class _Response:
+    def __init__(self, status: int = 200, body: object = None):
+        self.status_code = status
+        self._body = body
+
+    def json(self):
+        if isinstance(self._body, Exception):
+            raise self._body
+        return self._body
+
+
+def _models(*ids: str) -> dict:
+    return {"object": "list", "data": [{"id": i, "object": "model"} for i in ids]}
+
+
+@contextmanager
+def _real_probe(response):
+    with (
+        patch.object(tools, "is_simulation", return_value=False),
+        patch("httpx.get", return_value=response) as get,
+    ):
+        yield get
+
+
+class TestServedModel:
+    def test_the_served_name_is_read_from_the_command(self):
+        name = nr._served_model_name
+        assert name("vllm serve m --served-model-name qwen") == "qwen"
+        assert name("vllm serve m --served-model-name=qwen") == "qwen"
+        assert name("vllm serve m --served-model-name a b") == "a"
+        assert name("vllm serve m --served-model-name") == "m"
+        assert name("vllm serve m --served-model-name --x") == "m"
+        # Without the flag vLLM lists the model as it was handed — a path too.
+        assert name("vllm serve /models/qwen --port 8000") == "/models/qwen"
+        assert name("vllm serve --port 8000") == ""
+        assert name("python -m sglang.launch_server --model-path m") == ""
+        assert name("vllm serve m") == "m"
+        assert name("vllm serve 'unbalanced") == ""
+
+    def test_vllm_waits_for_the_model_id(self, native):
+        plan = native.plan("qwen3-8b")
+        assert plan.readiness_path == "/v1/models"
+        assert plan.served_model == "Qwen/Qwen3-8B"
+
+    def test_vllm_waits_for_the_served_name_when_one_is_given(self, native):
+        plan = native.plan("qwen3-8b", extra_args=["--served-model-name", "qwen"])
+        assert plan.served_model == "qwen"
+
+    def test_a_v2_vllm_recipe_waits_for_the_model_it_renders(self, native):
+        assert native.plan("generic", engine="vllm").served_model == "Qwen/Qwen3-8B"
+
+    def test_a_template_serving_a_path_waits_for_the_path(self, native):
+        """vLLM lists the model as handed; the recipe's id is not that name."""
+        recipe = {
+            **V1_RECIPE,
+            "id": "by-path",
+            "command": "vllm serve /models/qwen3-8b --port {port}",
+        }
+        with patch.dict(RECIPES, {"by-path": recipe}):
+            assert native.plan("by-path").served_model == "/models/qwen3-8b"
+
+    def test_an_engine_ready_on_health_names_nothing(self, native):
+        assert native.plan("generic", engine="sglang").served_model == ""
+
+    def test_the_record_carries_it(self, native, docker):
+        record = native.start(native.plan("qwen3-8b"), docker=docker, wait=True)
+        assert record["served_model"] == "Qwen/Qwen3-8B"
+
+
+class TestProbeReadyNamesTheModel:
+    URL = "http://127.0.0.1:8000/v1/models"
+
+    def test_the_right_model_is_ready(self):
+        with _real_probe(_Response(200, _models("Qwen/Qwen3-8B"))):
+            assert nr.probe_ready(self.URL, model="Qwen/Qwen3-8B") is True
+
+    def test_another_model_on_the_port_is_not_ready(self):
+        with _real_probe(_Response(200, _models("other/model"))):
+            assert nr.probe_ready(self.URL, model="Qwen/Qwen3-8B") is False
+
+    def test_no_served_name_accepts_any_200(self):
+        with _real_probe(_Response(200, _models("other/model"))):
+            assert nr.probe_ready(self.URL) is True
+
+    def test_a_body_that_is_not_a_listing_names_nobody(self):
+        with _real_probe(_Response(200, ValueError("not json"))):
+            assert nr.probe_ready(self.URL, model="Qwen/Qwen3-8B") is True
+        with _real_probe(_Response(200, {"status": "ok"})):
+            assert nr.probe_ready(self.URL, model="Qwen/Qwen3-8B") is True
+
+    def test_an_error_status_is_not_ready(self):
+        with _real_probe(_Response(503, _models("Qwen/Qwen3-8B"))):
+            assert nr.probe_ready(self.URL, model="Qwen/Qwen3-8B") is False
+
+    def test_a_refused_connection_is_not_ready(self):
+        with (
+            patch.object(tools, "is_simulation", return_value=False),
+            patch("httpx.get", side_effect=OSError("refused")),
+        ):
+            assert nr.probe_ready(self.URL, model="Qwen/Qwen3-8B") is False
+            assert nr._models_answering(self.URL) is None
+
+    def test_models_answering_reads_only_a_listing(self):
+        with _real_probe(_Response(200, _models("a", "b"))):
+            assert nr._models_answering(self.URL) == ["a", "b"]
+        with _real_probe(_Response(404, None)):
+            assert nr._models_answering(self.URL) is None
+        # Simulation has no engine, so nothing answered for anybody.
+        assert nr._models_answering(self.URL) is None
+
+    def test_the_deadline_names_the_model_that_answered(self, native, docker):
+        plan = native.plan("qwen3-8b")
+        native.start(plan, docker=docker, wait=True)
+
+        with _real_probe(_Response(200, _models("other/model"))):
+            message = nr._readiness_deadline_message(lambda _a: docker, plan, 5)
+
+        assert "port 8000 answered for other/model, not Qwen/Qwen3-8B" in message
+
+    def test_the_deadline_says_nothing_extra_when_ours_answered(self, native, docker):
+        plan = native.plan("qwen3-8b")
+        native.start(plan, docker=docker, wait=True)
+
+        with _real_probe(_Response(200, _models("Qwen/Qwen3-8B"))):
+            message = nr._readiness_deadline_message(lambda _a: docker, plan, 5)
+
+        assert "answered for" not in message
+
+    def test_wait_ready_keeps_polling_past_another_model(self, native, docker):
+        plan = native.plan("qwen3-8b")
+        native.start(plan, docker=docker, wait=True)
+
+        with (
+            _real_probe(_Response(200, _models("other/model"))) as get,
+            patch.object(nr, "serve_process_alive", return_value=True),
+        ):
+            with pytest.raises(nr.NativeRuntimeError) as exc:
+                nr._wait_ready(lambda _a: docker, plan, timeout=0.3, interval=0.05)
+
+        assert get.call_count > 2
+        assert "answered for other/model" in str(exc.value)

@@ -13,8 +13,10 @@ import DeployOptions, {
   engineLabel,
   occupancy,
   parseExtraArgs,
+  parsePort,
   proposeParallelism,
   recipeParallelism,
+  recipePort,
   type DeployOptionsValue,
 } from "@/components/DeployOptions";
 import type { ClusterNode, EngineSummary, RecipeDetail } from "@/lib/types";
@@ -1226,5 +1228,148 @@ describe("DeployOptions model source", () => {
 
     await waitFor(() => expect(screen.getByText(/preview/i)).toBeInTheDocument());
     expect(screen.queryByTestId("deploy-plan-model-source")).toBeNull();
+  });
+});
+
+/** A recipe from the OCI collection: every one of them says `port: 8000`. */
+const PORT_RECIPE = {
+  ...V2_RECIPE,
+  id: "oci-port",
+  defaults: { port: 8000 },
+  params: { port: 8000 },
+} as unknown as RecipeDetail;
+
+describe("recipePort and parsePort", () => {
+  it("reads the recipe's preference, and nothing that is not a port", () => {
+    expect(recipePort(PORT_RECIPE)).toBe(8000);
+    expect(recipePort(V1_RECIPE)).toBeUndefined();
+    expect(recipePort({ ...V2_RECIPE, params: { port: "9001" } } as unknown as RecipeDetail)).toBe(
+      9001,
+    );
+  });
+
+  it("takes only a whole number from 1 to 65535", () => {
+    expect(parsePort("8000")).toBe(8000);
+    expect(parsePort(" 9001 ")).toBe(9001);
+    expect(parsePort("0")).toBeUndefined();
+    expect(parsePort("65536")).toBeUndefined();
+    expect(parsePort("80a")).toBeUndefined();
+    expect(parsePort("")).toBeUndefined();
+  });
+});
+
+describe("deployParams port", () => {
+  /** The recipe's port stays with the recipe: sent, it would become a pin. */
+  it("sends no port when none was typed", () => {
+    expect(deployParams(PORT_RECIPE, {})).not.toHaveProperty("port");
+  });
+
+  it("sends a typed port, which the server keeps as a pin", () => {
+    expect(deployParams(PORT_RECIPE, { port: 8123 })).toMatchObject({ port: 8123 });
+  });
+});
+
+describe("DeployOptions port", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(fetchEngines).mockResolvedValue({ engines: [engine("vllm")] } as never);
+    vi.mocked(fetchModels).mockResolvedValue([] as never);
+    vi.mocked(fetchNodes).mockResolvedValue([CONTROL_NODE]);
+    vi.mocked(planDeployment).mockResolvedValue({ ...PLAN, port: 8000, warnings: [] } as never);
+    vi.mocked(runPreflight).mockResolvedValue(REPORT as never);
+  });
+
+  const open = async (recipe: RecipeDetail = PORT_RECIPE) => {
+    render(<ControlledDeployOptions recipe={recipe} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /deploy options/i }));
+    return user;
+  };
+
+  it("is empty with the recipe's port as its placeholder", async () => {
+    await open();
+
+    const field = screen.getByTestId("deploy-port");
+    expect(field).toHaveValue("");
+    expect(field).toHaveAttribute("placeholder", "8000");
+    expect(screen.getByLabelText("API port")).toBe(field);
+  });
+
+  it("says the planner picks one when the recipe names none", async () => {
+    await open(V1_RECIPE);
+
+    expect(screen.getByTestId("deploy-port")).toHaveAttribute("placeholder", "next free");
+  });
+
+  it("previews without a port when the field is empty", async () => {
+    const user = await open();
+
+    await user.click(screen.getByRole("button", { name: /preview/i }));
+
+    await waitFor(() => expect(planDeployment).toHaveBeenCalled());
+    expect(vi.mocked(planDeployment).mock.calls[0][0].params).not.toHaveProperty("port");
+  });
+
+  it("sends a typed port as a pin, to the plan and the pre-flight alike", async () => {
+    const user = await open();
+
+    await user.type(screen.getByTestId("deploy-port"), "8123");
+    await user.click(screen.getByRole("button", { name: /preview/i }));
+
+    await waitFor(() => expect(runPreflight).toHaveBeenCalled());
+    expect(vi.mocked(planDeployment).mock.calls[0][0].params).toMatchObject({ port: 8123 });
+    expect(vi.mocked(runPreflight).mock.calls[0][0].params).toMatchObject({ port: 8123 });
+  });
+
+  it("refuses what is not a port, and sends nothing for it", async () => {
+    const user = await open();
+
+    const field = screen.getByTestId("deploy-port");
+    await user.type(field, "99999");
+
+    expect(screen.getByText("A port is a whole number from 1 to 65535.")).toBeInTheDocument();
+    expect(field).toHaveAttribute("aria-invalid", "true");
+    await user.click(screen.getByRole("button", { name: /preview/i }));
+    await waitFor(() => expect(planDeployment).toHaveBeenCalled());
+    expect(vi.mocked(planDeployment).mock.calls[0][0].params).not.toHaveProperty("port");
+  });
+
+  it("goes back to the preference when the field is cleared", async () => {
+    const user = await open();
+
+    const field = screen.getByTestId("deploy-port");
+    await user.type(field, "8123");
+    await user.clear(field);
+    await user.click(screen.getByRole("button", { name: /preview/i }));
+
+    await waitFor(() => expect(planDeployment).toHaveBeenCalled());
+    expect(vi.mocked(planDeployment).mock.calls[0][0].params).not.toHaveProperty("port");
+  });
+
+  it("shows the port the plan chose, and that it moved", async () => {
+    vi.mocked(planDeployment).mockResolvedValue({
+      ...PLAN,
+      port: 9000,
+      warnings: ["port 8000 is held by run first; this run gets 9000"],
+    } as never);
+    const user = await open();
+
+    await user.click(screen.getByRole("button", { name: /preview/i }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("deploy-plan-port")).toHaveTextContent("9000 · moved from 8000"),
+    );
+    expect(
+      screen.getByText("port 8000 is held by run first; this run gets 9000"),
+    ).toBeInTheDocument();
+  });
+
+  it("says nothing moved when the plan kept the preference", async () => {
+    const user = await open();
+
+    await user.click(screen.getByRole("button", { name: /preview/i }));
+
+    await waitFor(() => expect(screen.getByTestId("deploy-plan-port")).toHaveTextContent("8000"));
+    expect(screen.getByTestId("deploy-plan-port")).not.toHaveTextContent("moved");
   });
 });
