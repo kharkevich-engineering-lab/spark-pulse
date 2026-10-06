@@ -354,6 +354,18 @@ class Engine:
     correct.
     """
 
+    serves: frozenset[str] = frozenset({"chat"})
+    """What this engine can be launched to serve, by a recipe's ``serves``.
+
+    Chat only unless a subclass knows the flag that turns its server into
+    something else *and* renders it. Deliberately narrower than what the
+    frameworks can do — SGLang has ``--is-embedding`` and ``llama-server``
+    ``--embedding`` — because a kind this renderer has never launched would be
+    a promise made on the strength of someone else's documentation. An engine
+    that does not claim a kind refuses the recipe in :meth:`supports`, which is
+    both the plan-time check and what the recipe page's engine table reads.
+    """
+
     def __init__(self, spec: EngineSpec):
         self.spec = spec
 
@@ -640,7 +652,7 @@ class Engine:
     def supports(self, recipe: dict[str, Any]) -> tuple[bool, str]:
         """Whether this engine can run *recipe*; second item is the reason.
 
-        Three signals, in order:
+        Three signals, in order, and then what the recipe serves:
 
         * a top-level ``command`` template is written in one engine's flags and
           pins the recipe to it (a v1 recipe names no engine and is vLLM's);
@@ -665,6 +677,14 @@ class Engine:
                 return False, f"recipe only declares engines: {', '.join(declared)}"
         elif pin and pin != self.name:
             return False, f"recipe names engine '{pin}'"
+        # Absent is chat — the same default ``recipe_schema.serves_of`` reads,
+        # restated rather than imported because ``tools`` imports this package.
+        kind = str(recipe.get("serves") or "chat")
+        if kind not in self.serves:
+            return False, (
+                f"recipe serves {kind}, and {self.name} here serves only "
+                f"{', '.join(sorted(self.serves))}"
+            )
         return True, ""
 
     # -- helpers shared by concrete engines --------------------------------

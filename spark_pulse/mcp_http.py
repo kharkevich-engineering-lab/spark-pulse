@@ -21,12 +21,17 @@ from spark_pulse.config import config
 TOOLS = [
     {
         "name": "list_recipes",
-        "description": "List all deployment recipes",
+        "description": (
+            "List all deployment recipes. Each says what it serves (`serves`: "
+            "chat, embedding, image, video or speech; chat when absent)"
+        ),
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
         "name": "get_recipe",
-        "description": "Get details of a specific recipe",
+        "description": (
+            "Get details of a specific recipe, including what it serves (`serves`)"
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {"name": {"type": "string", "description": "Recipe name"}},
@@ -48,7 +53,10 @@ TOOLS = [
     },
     {
         "name": "list_deployments",
-        "description": "List all deployments",
+        "description": (
+            "List all deployments. `serves` is what each run was started as; "
+            "only a chat run can be benchmarked"
+        ),
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
@@ -264,7 +272,8 @@ TOOLS = [
         "name": "plan_deployment",
         "description": (
             "Dry run a deployment: resolve engine, image, model, mods, port, "
-            "rendered command and container profile without starting anything"
+            "rendered command, container profile and what the run will serve "
+            "without starting anything"
         ),
         "inputSchema": {
             "type": "object",

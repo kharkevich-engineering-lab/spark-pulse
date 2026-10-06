@@ -564,7 +564,19 @@ class TestExtractRecipeFromLayer:
             "recipe_version": "1.0.0",
             "solo_only": False,
             "cluster_only": True,
+            "serves": "chat",
         }
+
+    def test_serves_is_read_from_the_yaml(self):
+        registry = FakeRegistry(
+            manifest_by_digest={"sha256:m1": {"layers": [{"digest": "sha256:b"}]}},
+            blobs={"sha256:b": "recipe_version: '2'\nname: e\nserves: embedding\n"},
+        )
+        with patch("oras.client.OrasClient", self._client(registry)):
+            info = oci._extract_recipe_from_layer(
+                "ghcr.io/x/y", {"digest": "sha256:m1"}, "1.0.0"
+            )
+        assert info["serves"] == "embedding"
 
     def test_auth_headers_are_applied_to_the_client_session(self):
         registry = FakeRegistry(
@@ -682,6 +694,35 @@ class TestListCollectionRecipes:
         )
         assert r.recipe_version == "3.1"
         assert r.solo_only is True and r.cluster_only is False
+        assert r.serves == "chat"
+
+    def test_string_annotations_are_read_as_what_they_say(self, env, fake_client):
+        """An OCI annotation is a string, and ``"false"`` is not true.
+
+        The recipes repo publishes every flag quoted, so ``bool()`` on the
+        value read every one of its recipes as solo-only and cluster-only.
+        """
+        oci._save_registries([_registry("reg")])
+        fake_client.tags = ["1.0.0"]
+        fake_client.index_by_tag = {
+            "1.0.0": _index(
+                manifests=[
+                    {
+                        "digest": "sha256:m1",
+                        "annotations": {
+                            "name": "qwen3-embedding",
+                            "model": "Qwen/Qwen3-Embedding-4B",
+                            "solo_only": "true",
+                            "cluster_only": "false",
+                            "serves": "embedding",
+                        },
+                    }
+                ]
+            )
+        }
+        (r,) = oci.list_collection_recipes("pack")
+        assert r.solo_only is True and r.cluster_only is False
+        assert r.serves == "embedding"
 
     def test_other_collections_in_the_registry_are_ignored(self, env, fake_client):
         oci._save_registries([_registry("reg")])

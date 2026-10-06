@@ -63,6 +63,28 @@ The waiting deployment is recorded, so a restart in the middle of a 26 GB downlo
 
 The same form. A recipe declares what it needs; if you name several nodes, the deployment is a gang of ranks — one container per rank, each started through its own node's agent, all carrying the same generation so a half-started attempt can be told from a running one.
 
+## What a recipe serves
+
+A v2 recipe can say what kind of endpoint it starts with a top-level `serves:` — `chat`, `embedding`, `image`, `video` or `speech`. Absent means `chat`, so every recipe written before the field existed is unchanged.
+
+```yaml
+recipe_version: "2"
+name: Qwen3-Embedding-4B
+model: Qwen/Qwen3-Embedding-4B
+serves: embedding
+engine: vllm
+engines:
+  vllm: {}
+```
+
+- **vLLM** renders `--runner pooling` for `embedding`, unless the recipe's own args (or the deploy's extra args) already name a `--runner`.
+- **Every other engine** refuses a kind it does not claim, at plan time and in the recipe's engine table, with the reason. SGLang's `--is-embedding` and `llama-server`'s `--embedding` exist, but nothing here has launched them; a refusal is cheaper than a run that starts and answers the wrong API.
+- **The run keeps it.** The deployment record carries `serves` from the moment it is planned, so editing or uninstalling the recipe later does not change what an existing run says it is. A record without the field is `chat`.
+- **Benchmarks are chat only.** llama-benchy drives chat completions, so `POST /api/benchmarks` answers 409 for a run that serves anything else, and the run row does not offer the button.
+- **v1 serves chat.** Its `command` is a verbatim `vllm serve` line nothing rewrites, so a v1 recipe that claims another kind fails validation; declare it in v2.
+
+`image`, `video` and `speech` are reserved for an engine that serves them; today no engine claims them, so a recipe naming one is refused at plan time. The published schemas are in `spark_pulse/schemas/`.
+
 ## Stopping and removing
 
 Both are the same button in different states, and they are different operations:

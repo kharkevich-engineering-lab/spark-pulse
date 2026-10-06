@@ -150,9 +150,23 @@ LLAMA_MISSING = {
 }
 
 
+#: An embeddings recipe, flattened the way the listing serves it.
+V2_EMBEDDING = {
+    **V2_RECIPE,
+    "id": "qwen3-embedding",
+    "name": "Qwen3 Embedding",
+    "model": "Qwen/Qwen3-8B",
+    "engine": "vllm",
+    # Both engines are described, so the refusal below is about the kind and
+    # not about the engine list.
+    "engines": ["vllm", "sglang"],
+    "serves": "embedding",
+}
+
 RECIPES = {
     r["id"]: r
     for r in (
+        V2_EMBEDDING,
         V1_RECIPE,
         V1_TP2,
         V1_TP3,
@@ -259,6 +273,31 @@ class TestPlan:
         )
         assert plan.solo is True
         assert plan.node_count == 1
+
+
+class TestServes:
+    """A recipe's ``serves`` reaches the plan, the record and the command."""
+
+    def test_an_embedding_recipe_plans_with_the_pooling_runner(self, native):
+        plan = native.plan("qwen3-embedding")
+        assert plan.serves == "embedding"
+        assert plan.to_dict()["serves"] == "embedding"
+        assert "--runner pooling" in plan.launch_command
+
+    def test_the_record_keeps_what_the_run_serves(self, native):
+        plan = native.plan("qwen3-embedding")
+        assert native._record_from_plan(plan, "pending")["serves"] == "embedding"
+
+    def test_a_recipe_without_the_field_plans_as_chat(self, native):
+        plan = native.plan("qwen3-8b")
+        assert plan.serves == "chat"
+        assert native._record_from_plan(plan, "pending")["serves"] == "chat"
+        assert "--runner" not in plan.launch_command
+
+    def test_an_engine_that_cannot_serve_it_refuses_at_plan_time(self, native):
+        with pytest.raises(native.NativeRuntimeError) as exc:
+            native.plan("qwen3-embedding", engine="sglang")
+        assert "serves embedding" in str(exc.value)
 
 
 class TestTopologyConstraints:

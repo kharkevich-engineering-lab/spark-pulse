@@ -712,6 +712,21 @@ class CollectionRecipe:
     recipe_version: str
     solo_only: bool = False
     cluster_only: bool = False
+    #: What the recipe serves (``recipe_schema.SERVES``). Chat when the
+    #: collection does not say, which is every collection published before
+    #: the field existed.
+    serves: str = "chat"
+
+
+def _annotation_flag(value: object) -> bool:
+    """A boolean out of an OCI annotation, which is always a string.
+
+    ``bool("false")`` is ``True``, which is how a collection publishing
+    ``solo_only: "false"`` came to have every recipe read as solo-only.
+    """
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes")
+    return bool(value)
 
 
 def _extract_recipe_from_layer(
@@ -774,6 +789,7 @@ def _extract_recipe_from_layer(
     container = recipe_data.get("container", "")
     solo_only = bool(recipe_data.get("solo_only", False))
     cluster_only = bool(recipe_data.get("cluster_only", False))
+    serves = str(recipe_data.get("serves") or "chat")
 
     return {
         "name": name,
@@ -783,6 +799,7 @@ def _extract_recipe_from_layer(
         "recipe_version": tag,
         "solo_only": solo_only,
         "cluster_only": cluster_only,
+        "serves": serves,
     }
 
 
@@ -860,11 +877,14 @@ def list_collection_recipes(
                                     recipe_version=layer_annotations.get(
                                         "recipe_version", tag
                                     ),
-                                    solo_only=bool(
+                                    solo_only=_annotation_flag(
                                         layer_annotations.get("solo_only", False)
                                     ),
-                                    cluster_only=bool(
+                                    cluster_only=_annotation_flag(
                                         layer_annotations.get("cluster_only", False)
+                                    ),
+                                    serves=str(
+                                        layer_annotations.get("serves") or "chat"
                                     ),
                                 )
                             )

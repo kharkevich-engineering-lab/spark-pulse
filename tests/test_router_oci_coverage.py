@@ -332,6 +332,7 @@ class TestCollectionRecipes:
                 "recipe_version": "1.0.0",
                 "solo_only": True,
                 "cluster_only": False,
+                "serves": "chat",
             }
         ]
         assert lister.call_args == call(
@@ -353,6 +354,7 @@ class TestCollectionRecipes:
                 "recipe_version": "",
                 "solo_only": False,
                 "cluster_only": False,
+                "serves": "chat",
             }
         ]
 

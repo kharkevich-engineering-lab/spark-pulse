@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Union
+from typing import Any, Literal, Union, get_args
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -42,6 +42,9 @@ __all__ = [
     "schema_registry",
     "detect_version",
     "SUPPORTED_VERSIONS",
+    "SERVES",
+    "DEFAULT_SERVES",
+    "serves_of",
 ]
 
 SCHEMA_DIR = Path(__file__).resolve().parent.parent / "schemas"
@@ -50,6 +53,34 @@ SUPPORTED_VERSIONS = ("1", "2")
 
 #: Engines a v1 recipe can run on. v1 command templates are vLLM flags.
 V1_ENGINES = ["vllm"]
+
+#: What a recipe serves: the kind of endpoint its engine exposes. One value,
+#: not a list — a ``vllm serve`` process is started as one runner, so a recipe
+#: that wanted both chat and embeddings would be two recipes and two runs
+#: anyway. The set is wider than what renders today (``embedding``, on vLLM):
+#: ``image``, ``video`` and ``speech`` are reserved for the vllm-omni engine
+#: so that it reuses this field rather than adding a second one.
+Serves = Literal["chat", "embedding", "image", "video", "speech"]
+SERVES: tuple[str, ...] = get_args(Serves)
+
+#: Absent means chat, which is what every recipe written before the field
+#: existed serves — so none of them needs an edit.
+DEFAULT_SERVES = "chat"
+
+
+def serves_of(source: Any) -> str:
+    """What a recipe payload or a deployment record serves.
+
+    A record written before the field existed, a v1 payload and anything
+    unrecognisable all read as :data:`DEFAULT_SERVES`, because that is what
+    they were started as. Never raises: this is called on the read path, and a
+    stored value this build does not know is still reported verbatim rather
+    than rewritten into a kind it is not.
+    """
+    value = source.get("serves") if isinstance(source, dict) else None
+    if not value or not isinstance(value, str):
+        return DEFAULT_SERVES
+    return value
 
 
 # ── Errors ───────────────────────────────────────────────────────────────────
@@ -122,6 +153,12 @@ class RecipeV1(BaseModel):
     env: dict[str, Any] = Field(default_factory=dict)
     solo_only: bool = False
     cluster_only: bool = False
+    #: v1 is upstream's format, which has no such field, and its ``command``
+    #: is a verbatim ``vllm serve`` line nothing here rewrites — so a v1 recipe
+    #: serves chat, and one that says otherwise is refused rather than read as
+    #: a promise the launch would not keep. Declaring another kind is what v2
+    #: is for.
+    serves: Literal["chat"] = DEFAULT_SERVES
 
     @model_validator(mode="before")
     @classmethod
@@ -130,6 +167,8 @@ class RecipeV1(BaseModel):
             data = dict(data)
             if "recipe_version" in data and data["recipe_version"] is not None:
                 data["recipe_version"] = str(data["recipe_version"])
+            if data.get("serves") is None:
+                data.pop("serves", None)
             for key in ("mods", "build_args"):
                 value = data.get(key)
                 if isinstance(value, str):
@@ -210,6 +249,7 @@ class RecipeV2(BaseModel):
     model: str
     description: str = ""
     engine: str | None = None
+    serves: Serves = DEFAULT_SERVES
     constraints: RecipeConstraints = Field(default_factory=RecipeConstraints)
     params: RecipeParams = Field(default_factory=RecipeParams)
     engines: dict[str, EngineSpec] = Field(default_factory=dict)
@@ -222,6 +262,10 @@ class RecipeV2(BaseModel):
             data = dict(data)
             if "recipe_version" in data and data["recipe_version"] is not None:
                 data["recipe_version"] = str(data["recipe_version"])
+            # ``serves:`` with no value is the YAML of someone who meant the
+            # default, not a request for a kind called ``None``.
+            if data.get("serves") is None:
+                data.pop("serves", None)
         return data
 
     @model_validator(mode="after")

@@ -1141,5 +1141,13 @@
     "unread": "Shares {node} with {runs}. Its memory could not be read.",
     "unknown": "unknown",
     "apply": "Use {max}"
+  },
+  "serves": {
+    "embedding": "Embeddings",
+    "image": "Image",
+    "video": "Video",
+    "speech": "Speech",
+    "hint": "What this serves. Only chat runs can be benchmarked.",
+    "benchmarkChatOnly": "This run does not serve chat, so it cannot be benchmarked."
   }
 }
