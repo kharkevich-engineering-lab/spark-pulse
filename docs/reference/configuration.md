@@ -21,7 +21,7 @@ Later wins. Secrets live apart, in `~/.config/spark-pulse/secrets.json` (mode `0
 | `deploy_ready_timeout_seconds` | `900` | How long a deploy waits for an engine to report ready. |
 | `docker_pull_stall_timeout_seconds` | `600` | Seconds of *silence* from a pull — no bytes at all, not merely slow — before it is failed rather than left holding a worker thread. A pull is also retried up to three times before the deployment is failed. `0` disables. |
 | `thread_pool_size` | `40` | Worker threads for synchronous request handlers. |
-| `default_port_range_start` / `_end` | `9000` / `9100` | Port range deployments are allocated from. |
+| `default_port_range_start` / `_end` | `9000` / `9100` | Port range a run takes when its recipe names no port, or when a node already holds the one it names. |
 | `database_url` | *(empty)* | Empty means SQLite under `~/.config/spark-pulse`. A SQLAlchemy URL otherwise. |
 | `cors_allowed_origins` | `[]` | Browser origins allowed to call this API. Empty means the sensible defaults. **Never `*`** — see the [browser boundary](../architecture/overview.md). |
 

@@ -1123,5 +1123,12 @@
     "toolsHint": "Demandés au point de terminaison lui-même : c'est donc ce qu'un client verrait, et non une liste tenue à la main ici.",
     "toolsFailed": "Impossible de lire la liste des outils depuis {endpoint}.",
     "guidesHint": "Chaque extrait porte le point de terminaison ci-dessus : il n'y a rien à compléter."
+  },
+  "deployPort": {
+    "label": "Port de l'API",
+    "hint": "Vide : le port de la recette, déplacé s'il est pris ; un port saisi est gardé.",
+    "invalid": "Un port est un entier de 1 à 65535.",
+    "auto": "premier libre",
+    "moved": "déplacé depuis {port}"
   }
 }

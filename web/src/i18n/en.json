@@ -1123,5 +1123,12 @@
     "toolsHint": "Asked of the endpoint itself, so this is what a client would see — not a list kept by hand here.",
     "toolsFailed": "Could not read the tool list from {endpoint}.",
     "guidesHint": "Each snippet carries the endpoint above, so there is nothing to fill in."
+  },
+  "deployPort": {
+    "label": "API port",
+    "hint": "Empty uses the recipe's port, moved if taken; a typed port is kept.",
+    "invalid": "A port is a whole number from 1 to 65535.",
+    "auto": "next free",
+    "moved": "moved from {port}"
   }
 }

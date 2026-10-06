@@ -30,6 +30,10 @@ export interface DeployOptionsValue {
   tensor_parallel?: number;
   /** Pipeline-parallel depth, same convention as `tensor_parallel`. */
   pipeline_parallel?: number;
+  /** A port the operator typed: a pin, kept even when taken (the pre-flight
+   *  then blocks). Undefined leaves the recipe's port as a preference, which
+   *  the planner moves when a node the run occupies already holds it. */
+  port?: number;
 }
 
 /** The parallelism shape the form can express. `dp` is deliberately absent:
@@ -58,6 +62,19 @@ export function recipeParallelism(recipe: RecipeDetail): Parallelism {
     return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 1;
   };
   return { tensor_parallel: read("tensor_parallel"), pipeline_parallel: read("pipeline_parallel") };
+}
+
+/** The port a recipe would like, if it names one. A preference, not a pin. */
+export function recipePort(recipe: RecipeDetail): number | undefined {
+  const declared = { ...(recipe.defaults ?? {}), ...(recipe.params ?? {}) };
+  return parsePort(String(declared.port ?? ""));
+}
+
+/** A typed port, when it is one: a whole number from 1 to 65535. */
+export function parsePort(raw: string): number | undefined {
+  if (!/^\d+$/.test(raw.trim())) return undefined;
+  const n = Number.parseInt(raw, 10);
+  return n >= 1 && n <= 65535 ? n : undefined;
 }
 
 /** How many nodes a shape occupies. One GPU per node, so this is the product. */
@@ -169,6 +186,9 @@ export function deployParams(
   return {
     tensor_parallel: value.tensor_parallel ?? declared.tensor_parallel,
     pipeline_parallel: value.pipeline_parallel ?? declared.pipeline_parallel,
+    // Only a typed port is sent. The recipe's own stays with the recipe, where
+    // the planner reads it as a preference; sending it here would pin it.
+    ...(value.port !== undefined ? { port: value.port } : {}),
   };
 }
 
@@ -327,6 +347,10 @@ export default function DeployOptions({
   // "12". The parent only ever hears whole numbers >= 1.
   const [tpText, setTpText] = useState("");
   const [ppText, setPpText] = useState("");
+  // Empty is a choice here, not a half-typed number: it means "the recipe's
+  // port, moved if taken". Anything typed that is not a port stays on screen
+  // with an error and is not sent.
+  const [portText, setPortText] = useState("");
   // Whether the operator has spoken about tensor width. The node-count
   // proposal below is for a form that is still showing the recipe's number;
   // once an operator has typed one, changing the node count must not quietly
@@ -377,7 +401,8 @@ export default function DeployOptions({
       setTpText(String(declared.tensor_parallel));
       setPpText(String(declared.pipeline_parallel));
       setTpTouched(false);
-      next = { ...value, ...declared, nodes: undefined };
+      setPortText("");
+      next = { ...value, ...declared, nodes: undefined, port: undefined };
     }
     if (nodes.length > 0 && nodesSeededFor.current !== recipe.id) {
       nodesSeededFor.current = recipe.id;
@@ -446,6 +471,16 @@ export default function DeployOptions({
     const parsed = Number.parseInt(raw, 10);
     if (!/^\d+$/.test(raw.trim()) || !Number.isFinite(parsed) || parsed < 1) return;
     onChange({ ...value, [key]: parsed });
+  };
+
+  const preferredPort = recipePort(recipe);
+  const portInvalid = portText.trim() !== "" && parsePort(portText) === undefined;
+  // Unlike parallelism, the last good value is not kept: "8000" typed on the
+  // way to "80001" would otherwise stay pinned under an error that says the
+  // field holds no port. Text that is not a port sends none.
+  const editPort = (raw: string) => {
+    setPortText(raw);
+    onChange({ ...value, port: parsePort(raw) });
   };
 
   const preview = async () => {
@@ -537,6 +572,27 @@ export default function DeployOptions({
                     ))}
                   </datalist>
                 </>
+              )}
+            </Field>
+
+            <Field
+              label={t("deployPort.label")}
+              hint={t("deployPort.hint")}
+              error={portInvalid ? t("deployPort.invalid") : undefined}
+            >
+              {(control) => (
+                <Input
+                  {...control}
+                  mono
+                  type="text"
+                  inputMode="numeric"
+                  data-testid="deploy-port"
+                  value={portText}
+                  placeholder={
+                    preferredPort !== undefined ? String(preferredPort) : t("deployPort.auto")
+                  }
+                  onChange={(e) => editPort(e.target.value)}
+                />
               )}
             </Field>
 
@@ -714,7 +770,16 @@ export default function DeployOptions({
                     </>
                   )}
                   <dt className="text-muted">{t("deployOptions.port")}</dt>
-                  <dd className="font-mono">{plan.port}</dd>
+                  <dd className="font-mono" data-testid="deploy-plan-port">
+                    {plan.port}
+                    {value.port === undefined &&
+                      preferredPort !== undefined &&
+                      plan.port !== preferredPort && (
+                        <span className="text-warn">
+                          {` · ${t("deployPort.moved", { port: preferredPort })}`}
+                        </span>
+                      )}
+                  </dd>
                   {plan.mods.length > 0 && (
                     <>
                       <dt className="text-muted">{t("deployOptions.mods")}</dt>

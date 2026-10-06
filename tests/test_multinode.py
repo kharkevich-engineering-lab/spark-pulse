@@ -1028,7 +1028,7 @@ class TestRankStateIsThreeStates:
         fleet.unreachable.add(PEERS[0])
         nr.stop_deployment("dep3")
         assert [o["node"] for o in nr.get_deployment("dep3")["orphans"]] == [PEERS[0]]
-        assert held <= nr._ports_in_use()
+        assert held <= set(nr._ports_in_use()[PEERS[0]])
 
         # The node comes back and its container really is gone — but its
         # Docker daemon is not answering, so we cannot know that, and the
@@ -1039,7 +1039,7 @@ class TestRankStateIsThreeStates:
 
         assert nr.sweep_orphans("dep3") == 0
         assert [o["node"] for o in nr.get_deployment("dep3")["orphans"]] == [PEERS[0]]
-        assert held <= nr._ports_in_use()
+        assert held <= set(nr._ports_in_use()[PEERS[0]])
 
         # Once a daemon answers, the same absence becomes evidence and the
         # ports are released — on evidence, which is the only way they ever
@@ -1048,7 +1048,7 @@ class TestRankStateIsThreeStates:
 
         assert nr.sweep_orphans("dep3") == 1
         assert nr.get_deployment("dep3")["orphans"] == []
-        assert not (held & nr._ports_in_use())
+        assert not (held & set(nr._ports_in_use().get(PEERS[0], {})))
 
     def test_a_teardown_against_a_dead_daemon_leaves_an_orphan(self, fleet):
         """Stopping a rank we cannot confirm gone must not read as success."""

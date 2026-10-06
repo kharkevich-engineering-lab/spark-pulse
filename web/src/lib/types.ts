@@ -728,6 +728,9 @@ export interface DeployPlan {
   model_source: "" | "hf-cache" | "engine-download";
   /** The resolved file, as the container sees it. Set only with `hf-cache`. */
   model_path: string;
+  /** The model readiness has to name, where readiness is the model listing
+   *  (vLLM's `/v1/models`); empty for an engine ready on `/health`. */
+  served_model?: string;
   warnings: string[];
   runtime: string;
   created_at: string;
