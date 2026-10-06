@@ -72,6 +72,7 @@ from spark_pulse.engines import (
     Topology,
     get_registry,
 )
+from spark_pulse.tools import memory_budget
 from spark_pulse.tools.discovery import FABRIC_MESH, MESH_RING_NODES
 from spark_pulse.tools.docker import (
     AGENT_USER,
@@ -382,6 +383,17 @@ class DeployPlan:
     #: says only that *a* server holds the port; this is what makes it ours.
     #: Empty for an engine whose readiness is ``/health``, which names nothing.
     served_model: str = ""
+    #: The fraction of each node's memory this run claims, where its engine
+    #: takes one (vLLM's ``--gpu-memory-utilization``, SGLang's
+    #: ``--mem-fraction-static``) — read from the rendered command, since that
+    #: is what the engine will be handed. ``None`` for an engine that
+    #: allocates as it goes and so claims no fraction at all.
+    gpu_memory_utilization: float | None = None
+    #: One entry per node the run occupies: its total memory, the other runs
+    #: on it and what each claims, what is left and the largest fraction that
+    #: fits (:class:`~spark_pulse.tools.memory_budget.NodeBudget`). The
+    #: pre-flight judges it; the preview shows it.
+    memory_budget: list[dict[str, Any]] = field(default_factory=list)
     workdir: str = ""
     warnings: list[str] = field(default_factory=list)
     runtime: str = RUNTIME_NAME
@@ -597,6 +609,29 @@ def _node_key(address: Any) -> str:
     return text
 
 
+def _occupied_nodes(record: dict[str, Any]) -> set[str] | None:
+    """The nodes a run still occupies, by :func:`_node_key`; ``None`` if none.
+
+    A live run occupies every node a rank of it is on. A finished run occupies
+    nothing — unless it left orphans, and then it occupies their nodes: its
+    ranks there were never confirmed gone, and a port or a gigabyte released
+    on "we asked it to stop" is how every orphan bug in this class began. The
+    one rule both the port choice and the memory budget read, so a node cannot
+    be busy for one and free for the other.
+    """
+    finished = record.get("status") in ("stopped", "error")
+    orphans = record.get("orphans") or []
+    if finished and not orphans:
+        return None
+    if finished:
+        nodes = {_node_key(o.get("node")) for o in orphans if isinstance(o, dict)}
+    elif isinstance(record.get("ranks"), list) and record["ranks"]:
+        nodes = {_node_key(entry.get("node")) for entry in rank_entries(record)}
+    else:
+        nodes = {_node_key(n) for n in (record.get("nodes") or [])}
+    return nodes or {""}
+
+
 def _ports_in_use(exclude: str = "") -> dict[str, dict[int, str]]:
     """Ports live deployments hold, per node — API, rendezvous *and* RPC.
 
@@ -624,24 +659,116 @@ def _ports_in_use(exclude: str = "") -> dict[str, dict[int, str]]:
     for record in _load_records():
         if exclude and record.get("id") == exclude:
             continue
-        finished = record.get("status") in ("stopped", "error")
-        orphans = record.get("orphans") or []
-        if finished and not orphans:
+        nodes = _occupied_nodes(record)
+        if nodes is None:
             continue
-        if finished:
-            nodes = {_node_key(o.get("node")) for o in orphans if isinstance(o, dict)}
-        elif isinstance(record.get("ranks"), list) and record["ranks"]:
-            nodes = {_node_key(entry.get("node")) for entry in rank_entries(record)}
-        else:
-            nodes = {_node_key(n) for n in (record.get("nodes") or [])}
         holder = str(record.get("name") or record.get("id") or "")
-        for node in nodes or {""}:
+        for node in nodes:
             ports = held.setdefault(node, {})
             for key in ("port", "rendezvous_port", "rpc_port"):
                 value = record.get(key)
                 if isinstance(value, int) and value:
                     ports.setdefault(value, holder)
     return held
+
+
+def _claimed_fraction(
+    engine_obj: Engine, command: str, params: dict[str, Any]
+) -> float | None:
+    """The fraction of a node's memory a rendered run will take, if any.
+
+    Only an engine whose spec maps ``gpu_memory_utilization`` takes one, and
+    the rendered command is read before the params because it is what the
+    engine is actually handed — a v1 template may spell the flag out with a
+    literal of its own. A fraction engine handed none takes its default.
+    """
+    flag = engine_obj.spec.runtime.param_flags.get("gpu_memory_utilization")
+    if not flag:
+        return None
+    found = memory_budget.fraction_in_command(command, (str(flag),))
+    if found is not None:
+        return found
+    try:
+        value = float(params.get("gpu_memory_utilization"))
+    except (TypeError, ValueError):
+        return memory_budget.ENGINE_DEFAULT_FRACTION
+    return value if 0 < value <= 1 else memory_budget.ENGINE_DEFAULT_FRACTION
+
+
+def _node_labels() -> tuple[dict[str, str], str]:
+    """Registered names by address, and the control node's, for the budget."""
+    try:
+        records = list(tools.node_registry.list_nodes())
+    except Exception:  # noqa: BLE001 — a name is a courtesy, not a fact we need
+        return {}, "this machine"
+    control = next((r for r in records if r.is_control_plane), None)
+    return (
+        {r.address: r.label for r in records if r.address},
+        control.label if control is not None else "this machine",
+    )
+
+
+def _memory_budget(
+    node_list: list[str],
+    fraction: float | None,
+    exclude: str,
+    services: Callable[[str], Any],
+) -> list[dict[str, Any]]:
+    """Each node's memory budget, beside the runs already on it.
+
+    The runs are the ones :func:`_occupied_nodes` says occupy the node — the
+    same rule the port choice uses. A co-tenant whose record carries a
+    fraction claims that fraction of the node's total; one that does not is
+    measured, by asking the node what its containers hold (``GetNodeStats``
+    through the node's agent, attributed by :mod:`node_stats`). The node is
+    asked only when somebody else is on it: alone on a node, a run is judged
+    by the engine's own startup check exactly as before.
+    """
+    tenants: dict[str, list[tuple[str, str, float | None]]] = {}
+    for record in _load_records():
+        if exclude and record.get("id") == exclude:
+            continue
+        nodes = _occupied_nodes(record)
+        if nodes is None:
+            continue
+        holder = (
+            str(record.get("id") or ""),
+            str(record.get("name") or record.get("id") or ""),
+            memory_budget.record_fraction(record),
+        )
+        for node in nodes:
+            tenants.setdefault(node, []).append(holder)
+
+    labels, control_label = _node_labels()
+    budgets: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for address in node_list or [""]:
+        key = _node_key(address)
+        if key in seen:
+            continue
+        seen.add(key)
+        label = labels.get(address) or (control_label if not key else address)
+        holders = tenants.get(key, [])
+        if not holders:
+            budgets.append(
+                memory_budget.budget_for_node(
+                    address, key, label, [], None, {}, fraction
+                ).to_dict()
+            )
+            continue
+        total: int | None = None
+        measured: dict[str, int | None] | None = None
+        reason = ""
+        try:
+            total, measured = tools.node_stats.memory_by_deployment(services(address))
+        except Exception as exc:  # noqa: BLE001 — an unanswered node is unknown
+            reason = f"could not ask {label} for its memory: {str(exc)[:200]}"
+        budgets.append(
+            memory_budget.budget_for_node(
+                address, key, label, holders, total, measured, fraction, reason=reason
+            ).to_dict()
+        )
+    return budgets
 
 
 def _node_listeners(
@@ -1659,6 +1786,9 @@ def plan(
     served_model = ""
     if readiness and readiness == engine_obj.models_path():
         served_model = _served_model_name(ranks[0].command) or resolved_model
+
+    fraction = _claimed_fraction(engine_obj, ranks[0].command, merged)
+    budget = _memory_budget(node_list, fraction, dep_id, services)
     return DeployPlan(
         deployment_id=dep_id,
         recipe_id=str(recipe.get("id") or recipe_id),
@@ -1693,6 +1823,8 @@ def plan(
         model_source=model_source,
         model_path=model_file,
         served_model=served_model,
+        gpu_memory_utilization=fraction,
+        memory_budget=budget,
         warnings=warnings,
     )
 
@@ -1738,6 +1870,11 @@ def _record_from_plan(plan_obj: DeployPlan, status: str) -> dict[str, Any]:
         "mods": plan_obj.mods,
         "readiness_url": plan_obj.readiness_url,
         "served_model": plan_obj.served_model,
+        # What the run claims of each node's memory, so the next plan on the
+        # same node can budget around it without re-rendering this one's
+        # command. ``None`` is an engine that takes no fraction — measured,
+        # not assumed, when somebody plans beside it.
+        "gpu_memory_utilization": plan_obj.gpu_memory_utilization,
         # The engine's Prometheus path, persisted so the metrics sampler can
         # address this deployment without re-resolving a spec that may since
         # have been withdrawn from the index. It was computed into the plan and

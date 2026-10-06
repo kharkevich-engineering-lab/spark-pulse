@@ -731,9 +731,44 @@ export interface DeployPlan {
   /** The model readiness has to name, where readiness is the model listing
    *  (vLLM's `/v1/models`); empty for an engine ready on `/health`. */
   served_model?: string;
+  /** The fraction of each node's memory this run claims; null for an engine
+   *  that takes none (llama.cpp allocates as it goes). */
+  gpu_memory_utilization?: number | null;
+  /** One entry per node the run occupies: who else is on it and what is left. */
+  memory_budget?: MemoryBudget[];
   warnings: string[];
   runtime: string;
   created_at: string;
+}
+
+/** Another run's claim on a node. `bytes` null is unknown, never zero. */
+export interface MemoryHolder {
+  id: string;
+  name: string;
+  fraction: number | null;
+  bytes: number | null;
+  source: "fraction" | "measured" | "unknown";
+  reason: string;
+}
+
+/** A node's memory beside the runs already on it (`tools/memory_budget.py`). */
+export interface MemoryBudget {
+  node: string;
+  key: string;
+  label: string;
+  total_bytes: number | null;
+  reserve_bytes: number;
+  holders: MemoryHolder[];
+  held_bytes: number;
+  left_bytes: number | null;
+  /** The largest fraction that still fits, rounded down to 0.01. */
+  max_fraction: number | null;
+  claim_fraction: number | null;
+  claim_bytes: number | null;
+  fits: boolean | null;
+  complete: boolean;
+  reason: string;
+  unknown: string[];
 }
 
 // ── Pre-flight ──────────────────────────────────────────────────────────────

@@ -6,6 +6,7 @@ import DeployOptions, {
   deployParams,
   describeImagePresence, describeModelPresence,
   describeModelSource,
+  describeBudget,
   defaultPeers,
   describeOccupancy,
   eligibleEngines,
@@ -13,13 +14,16 @@ import DeployOptions, {
   engineLabel,
   occupancy,
   parseExtraArgs,
+  parseFraction,
   parsePort,
   proposeParallelism,
   recipeParallelism,
+  recipeFraction,
   recipePort,
+  sharedNodes,
   type DeployOptionsValue,
 } from "@/components/DeployOptions";
-import type { ClusterNode, EngineSummary, RecipeDetail } from "@/lib/types";
+import type { ClusterNode, EngineSummary, MemoryBudget, RecipeDetail } from "@/lib/types";
 import { translatorFor } from "@/lib/i18n";
 
 /** The helpers below take a translator; the dictionary they read is the one
@@ -1371,5 +1375,221 @@ describe("DeployOptions port", () => {
 
     await waitFor(() => expect(screen.getByTestId("deploy-plan-port")).toHaveTextContent("8000"));
     expect(screen.getByTestId("deploy-plan-port")).not.toHaveTextContent("moved");
+  });
+});
+
+/** A recipe that names its memory fraction, as the bundled smoke test does. */
+const FRACTION_RECIPE = {
+  ...V2_RECIPE,
+  id: "fraction",
+  defaults: { gpu_memory_utilization: 0.2 },
+  params: { gpu_memory_utilization: 0.2 },
+} as unknown as RecipeDetail;
+
+const GIB = 1024 ** 3;
+
+/** The control node, with run `qwen` already holding 0.80 of it. */
+const SHARED: MemoryBudget = {
+  node: "",
+  key: "",
+  label: "spark-01",
+  total_bytes: 121 * GIB,
+  reserve_bytes: 4 * GIB,
+  holders: [
+    {
+      id: "q1",
+      name: "qwen",
+      fraction: 0.8,
+      bytes: 96.8 * GIB,
+      source: "fraction",
+      reason: "",
+    },
+  ],
+  held_bytes: 96.8 * GIB,
+  left_bytes: 20.2 * GIB,
+  max_fraction: 0.16,
+  claim_fraction: 0.5,
+  claim_bytes: 60.5 * GIB,
+  fits: false,
+  complete: true,
+  reason: "",
+  unknown: [],
+};
+
+describe("recipeFraction and parseFraction", () => {
+  it("reads the recipe's fraction, and nothing that is not one", () => {
+    expect(recipeFraction(FRACTION_RECIPE)).toBe(0.2);
+    expect(recipeFraction(V1_RECIPE)).toBeUndefined();
+  });
+
+  it("takes only a number above 0 and at most 1", () => {
+    expect(parseFraction("0.5")).toBe(0.5);
+    expect(parseFraction(" .16 ")).toBe(0.16);
+    expect(parseFraction("1")).toBe(1);
+    expect(parseFraction("0")).toBeUndefined();
+    expect(parseFraction("1.2")).toBeUndefined();
+    expect(parseFraction("half")).toBeUndefined();
+    expect(parseFraction("")).toBeUndefined();
+  });
+});
+
+describe("deployParams gpu_memory_utilization", () => {
+  it("sends none when none was typed, and a typed one as given", () => {
+    expect(deployParams(FRACTION_RECIPE, {})).not.toHaveProperty("gpu_memory_utilization");
+    expect(deployParams(FRACTION_RECIPE, { gpu_memory_utilization: 0.3 })).toMatchObject({
+      gpu_memory_utilization: 0.3,
+    });
+  });
+});
+
+describe("describeBudget", () => {
+  it("names the node, who holds it and how much still fits", () => {
+    expect(describeBudget(SHARED, EN)).toBe("Shares spark-01 with qwen (0.80). Up to 0.16 fits.");
+  });
+
+  it("gives a measured run its bytes and an unsized one its ignorance", () => {
+    const entry: MemoryBudget = {
+      ...SHARED,
+      holders: [
+        { ...SHARED.holders[0], name: "bonsai", fraction: null, bytes: 8 * GIB, source: "measured" },
+        { ...SHARED.holders[0], name: "x", fraction: null, bytes: null, source: "unknown" },
+      ],
+    };
+    expect(describeBudget(entry, EN)).toBe(
+      "Shares spark-01 with bonsai (8.0 GB), x (unknown). Up to 0.16 fits.",
+    );
+  });
+
+  it("says nothing more fits, and when the node's memory was not read", () => {
+    expect(describeBudget({ ...SHARED, max_fraction: 0 }, EN)).toBe(
+      "Shares spark-01 with qwen (0.80). Nothing more fits.",
+    );
+    expect(describeBudget({ ...SHARED, total_bytes: null, max_fraction: null }, EN)).toBe(
+      "Shares spark-01 with qwen (0.80). Its memory could not be read.",
+    );
+  });
+
+  it("keeps only the nodes somebody else is on", () => {
+    expect(sharedNodes({ memory_budget: [SHARED, { ...SHARED, key: "b", holders: [] }] })).toEqual(
+      [SHARED],
+    );
+    expect(sharedNodes({})).toEqual([]);
+  });
+});
+
+describe("DeployOptions GPU memory", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(fetchEngines).mockResolvedValue({ engines: [engine("vllm")] } as never);
+    vi.mocked(fetchModels).mockResolvedValue([] as never);
+    vi.mocked(fetchNodes).mockResolvedValue([CONTROL_NODE]);
+    vi.mocked(planDeployment).mockResolvedValue({
+      ...PLAN,
+      warnings: [],
+      gpu_memory_utilization: 0.5,
+      memory_budget: [SHARED],
+    } as never);
+    vi.mocked(runPreflight).mockResolvedValue(REPORT as never);
+  });
+
+  const open = async (recipe: RecipeDetail = FRACTION_RECIPE) => {
+    render(<ControlledDeployOptions recipe={recipe} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /deploy options/i }));
+    return user;
+  };
+
+  it("is empty with the recipe's fraction as its placeholder", async () => {
+    await open();
+
+    const field = screen.getByTestId("deploy-gpu-memory");
+    expect(field).toHaveValue("");
+    expect(field).toHaveAttribute("placeholder", "0.2");
+    expect(screen.getByLabelText("GPU memory")).toBe(field);
+  });
+
+  it("says the engine decides when the recipe names none", async () => {
+    await open(V1_RECIPE);
+
+    expect(screen.getByTestId("deploy-gpu-memory")).toHaveAttribute(
+      "placeholder",
+      "engine default",
+    );
+  });
+
+  it("sends a typed fraction to the plan and the pre-flight", async () => {
+    const user = await open();
+
+    await user.type(screen.getByTestId("deploy-gpu-memory"), "0.5");
+    await user.click(screen.getByRole("button", { name: /preview/i }));
+
+    await waitFor(() => expect(runPreflight).toHaveBeenCalled());
+    expect(vi.mocked(planDeployment).mock.calls[0][0].params).toMatchObject({
+      gpu_memory_utilization: 0.5,
+    });
+    expect(vi.mocked(runPreflight).mock.calls[0][0].params).toMatchObject({
+      gpu_memory_utilization: 0.5,
+    });
+  });
+
+  it("refuses what is not a fraction, and sends nothing for it", async () => {
+    const user = await open();
+
+    const field = screen.getByTestId("deploy-gpu-memory");
+    await user.type(field, "1.5");
+
+    expect(screen.getByText("A fraction above 0, up to 1.")).toBeInTheDocument();
+    expect(field).toHaveAttribute("aria-invalid", "true");
+    await user.click(screen.getByRole("button", { name: /preview/i }));
+    await waitFor(() => expect(planDeployment).toHaveBeenCalled());
+    expect(vi.mocked(planDeployment).mock.calls[0][0].params).not.toHaveProperty(
+      "gpu_memory_utilization",
+    );
+  });
+
+  it("shows who shares the node and applies the fraction that fits", async () => {
+    const user = await open();
+
+    await user.click(screen.getByRole("button", { name: /preview/i }));
+
+    const line = await screen.findByTestId("deploy-memory-budget");
+    expect(line).toHaveTextContent("Shares spark-01 with qwen (0.80). Up to 0.16 fits.");
+    await user.click(screen.getByTestId("deploy-memory-apply"));
+    expect(screen.getByTestId("deploy-gpu-memory")).toHaveValue("0.16");
+
+    await user.click(screen.getByRole("button", { name: /preview/i }));
+    await waitFor(() => expect(planDeployment).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(planDeployment).mock.calls[1][0].params).toMatchObject({
+      gpu_memory_utilization: 0.16,
+    });
+  });
+
+  it("offers nothing to apply when the run already fits", async () => {
+    vi.mocked(planDeployment).mockResolvedValue({
+      ...PLAN,
+      warnings: [],
+      gpu_memory_utilization: 0.1,
+      memory_budget: [{ ...SHARED, claim_fraction: 0.1, fits: true }],
+    } as never);
+    const user = await open();
+
+    await user.click(screen.getByRole("button", { name: /preview/i }));
+
+    await screen.findByTestId("deploy-memory-budget");
+    expect(screen.queryByTestId("deploy-memory-apply")).toBeNull();
+  });
+
+  it("says nothing when the node is the run's alone", async () => {
+    vi.mocked(planDeployment).mockResolvedValue({
+      ...PLAN,
+      warnings: [],
+      memory_budget: [{ ...SHARED, holders: [] }],
+    } as never);
+    const user = await open();
+
+    await user.click(screen.getByRole("button", { name: /preview/i }));
+
+    await screen.findByTestId("deploy-plan");
+    expect(screen.queryByTestId("deploy-memory-budget")).toBeNull();
   });
 });

@@ -204,6 +204,48 @@ def _owners(service: Any) -> dict[str, dict[str, str]]:
     return owners
 
 
+def memory_by_deployment(service: Any) -> tuple[int | None, dict[str, int | None]]:
+    """A node's total memory, and what each deployment's containers hold on it.
+
+    The same two halves :func:`_processes` joins for the page — the node says
+    which container a GPU process is in and how much it holds, the managed
+    container list says which deployment that container belongs to — summed
+    per deployment, for the memory budget a deploy is planned against.
+
+    The total is a GPU's own when one reports it, and ``MemTotal`` otherwise:
+    on a GB10 the pool is unified and ``nvidia-smi`` says ``[N/A]``, so the
+    host figure *is* the figure a fraction is taken of. ``None`` when neither
+    is reported. A deployment whose process reports no memory maps to
+    ``None`` — unknown, not zero — and a deployment with no process at all is
+    absent. Raises when the node cannot be asked; the caller decides what an
+    unanswered node means.
+    """
+    stats = service.get_node_stats()
+    total: int | None = None
+    for gpu in stats.gpus:
+        if gpu.HasField("memory_total_bytes") and gpu.memory_total_bytes > 0:
+            # One GPU per node is what a rank occupies; the first is the one.
+            total = int(gpu.memory_total_bytes)
+            break
+    if total is None and stats.HasField("memory") and stats.memory.total_bytes > 0:
+        total = int(stats.memory.total_bytes)
+
+    owners = _owners(service)
+    held: dict[str, int | None] = {}
+    for process in stats.processes:
+        container = (process.container_id or "")[:12]
+        deployment = (owners.get(container) or {}).get("deployment", "")
+        if not container or not deployment:
+            continue
+        if not process.HasField("used_memory_bytes"):
+            held[deployment] = None
+        elif deployment not in held or held[deployment] is not None:
+            held[deployment] = (held.get(deployment) or 0) + int(
+                process.used_memory_bytes
+            )
+    return total, held
+
+
 def _empty_block(**fields: Any) -> dict[str, Any]:
     block = {
         "gpu": [],
@@ -368,4 +410,4 @@ def _owner_of(service: Any, pid: int) -> dict[str, str] | None:
     return _owners(service).get(container[:12])
 
 
-__all__ = ["MIB", "collect", "for_node", "terminate"]
+__all__ = ["MIB", "collect", "for_node", "memory_by_deployment", "terminate"]
