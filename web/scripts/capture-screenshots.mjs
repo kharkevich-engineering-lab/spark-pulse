@@ -73,6 +73,14 @@ const SHOTS = [
   { name: "library", path: "/models", settle: "text=What is on disk." },
   { name: "library-engines", path: "/engines", settle: "text=Engine indexes are configured" },
   { name: "library-registries", path: "/oci", settle: "text=Registries" },
+  // One collection open: the simulated one carries a recipe in every state,
+  // which is the thing this view exists to show.
+  {
+    name: "library-collection",
+    path: "/oci",
+    settle: "text=spark-recipes",
+    expand: "text=spark-recipes",
+  },
   // There is no MCP shot any more: `/mcp` is a tab of Settings, and a page
   // that is one tab of another page is documented by that page's screenshot.
   { name: "settings", path: "/settings", settle: "text=Settings." },

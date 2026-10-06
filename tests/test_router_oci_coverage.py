@@ -622,12 +622,125 @@ class TestApplyUpdates:
         assert response.json()["detail"] == "half done"
 
 
+# ── The collection view ──────────────────────────────────────────────────────
+
+
+class TestCollectionState:
+    def test_the_state_is_what_the_tool_reports(self, client):
+        state = {"collection": "c", "recipes": []}
+        with patch.object(oci_router, "collection_state", return_value=state) as reader:
+            response = client.get("/api/oci/collections/c/state?registry=ghcr")
+        assert response.status_code == 200
+        assert response.json() == state
+        assert reader.call_args == call("c", registry_name="ghcr")
+
+    def test_an_unknown_collection_is_404(self, client):
+        with patch.object(
+            oci_router, "collection_state", side_effect=ValueError("no such")
+        ):
+            response = client.get("/api/oci/collections/ghost/state")
+        assert response.status_code == 404
+
+    def test_a_registry_failure_is_500(self, client):
+        with patch.object(
+            oci_router, "collection_state", side_effect=RuntimeError("down")
+        ):
+            response = client.get("/api/oci/collections/c/state")
+        assert response.status_code == 500
+        assert response.json()["detail"] == "down"
+
+    def test_simulation_shows_every_state(self, sim_client):
+        response = sim_client.get("/api/oci/collections/spark-recipes/state")
+        assert response.status_code == 200
+        states = {r["state"] for r in response.json()["recipes"]}
+        assert states == {
+            "not_installed",
+            "installed",
+            "update",
+            "local_edits",
+            "removed",
+        }
+
+
+class TestCollectionApply:
+    def test_the_body_reaches_the_tool(self, client):
+        result = {"collection": "c", "version": "1", "results": []}
+        with patch.object(
+            oci_router, "apply_collection_recipes", return_value=result
+        ) as applier:
+            response = client.post(
+                "/api/oci/collections/c/apply",
+                json={
+                    "recipes": ["a", "b"],
+                    "version": "1.2.0",
+                    "registry": "ghcr",
+                    "overwrite_local": True,
+                },
+            )
+        assert response.status_code == 200
+        assert response.json() == result
+        assert applier.call_args == call(
+            collection_name="c",
+            recipe_names=["a", "b"],
+            version="1.2.0",
+            registry_name="ghcr",
+            overwrite_local=True,
+        )
+
+    def test_overwrite_is_off_unless_asked(self, client):
+        with patch.object(
+            oci_router, "apply_collection_recipes", return_value={}
+        ) as applier:
+            client.post("/api/oci/collections/c/apply", json={"recipes": ["a"]})
+        assert applier.call_args.kwargs["overwrite_local"] is False
+        assert applier.call_args.kwargs["version"] is None
+
+    @pytest.mark.parametrize("body", [{}, {"recipes": []}, {"recipes": "a"}])
+    def test_recipes_are_required(self, client, body):
+        with patch.object(oci_router, "apply_collection_recipes") as applier:
+            response = client.post("/api/oci/collections/c/apply", json=body)
+        assert response.status_code == 400
+        applier.assert_not_called()
+
+    def test_an_unknown_collection_is_404(self, client):
+        with patch.object(
+            oci_router, "apply_collection_recipes", side_effect=ValueError("nope")
+        ):
+            response = client.post(
+                "/api/oci/collections/c/apply", json={"recipes": ["a"]}
+            )
+        assert response.status_code == 404
+
+    def test_a_pull_failure_is_500(self, client):
+        with patch.object(
+            oci_router, "apply_collection_recipes", side_effect=RuntimeError("pull")
+        ):
+            response = client.post(
+                "/api/oci/collections/c/apply", json={"recipes": ["a"]}
+            )
+        assert response.status_code == 500
+
+    def test_simulation_reports_per_recipe(self, sim_client):
+        response = sim_client.post(
+            "/api/oci/collections/spark-recipes/apply",
+            json={"recipes": ["llama-3-8b", "Bonsai-2-27B (ternary, llama.cpp)"]},
+        )
+        assert response.status_code == 200
+        assert [r["action"] for r in response.json()["results"]] == [
+            "updated",
+            "skipped_local_edits",
+        ]
+
+
 # ── Metadata ─────────────────────────────────────────────────────────────────
 
 
 class TestMetadata:
     def test_installed_recipe_metadata_is_serialised(self, client):
-        with patch.object(oci_router, "list_oci_recipes", return_value=[_meta()]):
+        meta = _meta()
+        meta.display_name = "Qwen3 8B (solo)"
+        meta.previous_names = ["Qwen3 8B (solo)"]
+        with patch.object(oci_router, "list_oci_recipes", return_value=[meta]):
             response = client.get("/api/oci/recipes/meta")
         assert response.status_code == 200
         assert response.json() == [
@@ -640,6 +753,10 @@ class TestMetadata:
                 "installed_at": "2026-06-15T02:00:00Z",
                 "updated_at": "2026-06-16T02:00:00Z",
                 "local_changes": False,
+                # What the collection calls it and what it was on disk as:
+                # the two names a listed recipe can be matched by.
+                "display_name": "Qwen3 8B (solo)",
+                "previous_names": ["Qwen3 8B (solo)"],
             }
         ]
 
@@ -651,6 +768,7 @@ class TestMetadata:
         assert response.status_code == 200
         assert response.json()["local_changes"] is True
         assert response.json()["collection"] == "spark-recipes"
+        assert response.json()["display_name"] == ""
         assert getter.call_args == call("qwen3-8b.yaml")
 
     def test_a_recipe_without_metadata_is_404(self, client):
@@ -760,12 +878,12 @@ class TestCacheAndBackgroundUpdater:
 
 @pytest.fixture(autouse=True)
 def clean_mock_recipe_state():
-    """The simulated install set is process-wide; keep it per-test."""
+    """The simulated install state is process-wide; keep it per-test."""
     from spark_pulse.mock import oci_registry as simulated
 
-    simulated._INSTALLED_RECIPES.clear()
+    simulated.reset_installed()
     yield
-    simulated._INSTALLED_RECIPES.clear()
+    simulated.reset_installed()
 
 
 class TestSimulationBranches:
@@ -777,7 +895,7 @@ class TestSimulationBranches:
     def test_registry_versions_are_canned(self, sim_client):
         response = sim_client.get("/api/oci/registries/any-registry/versions")
         assert response.status_code == 200
-        assert response.json() == {"versions": ["1.0.0", "1.0.1", "latest"]}
+        assert response.json() == {"versions": ["1.1.0", "1.0.0", "latest"]}
 
     def test_installing_an_unknown_collection_version_is_404(self, sim_client):
         response = sim_client.post(
@@ -801,15 +919,15 @@ class TestSimulationBranches:
         assert response.json() == []
 
     def test_installing_a_recipe_twice_is_idempotent(self, sim_client):
-        body = {"collection": "spark-recipes", "recipe": "qwen3-8b"}
+        body = {"collection": "spark-recipes", "recipe": "mistral-22b"}
         first = sim_client.post("/api/oci/recipes/install", json=body)
         second = sim_client.post("/api/oci/recipes/install", json=body)
         assert first.json() == {
             "success": True,
-            "recipe": "qwen3-8b",
+            "recipe": "mistral-22b",
             # The id the recipe now has, which is not always the name the
             # install was asked for — see the display-name case below.
-            "recipe_id": "oci-qwen3-8b",
+            "recipe_id": "oci-mistral-22b",
             "action": "installed",
         }
         assert second.json()["action"] == "up_to_date"
@@ -835,24 +953,24 @@ class TestSimulationBranches:
     def test_updating_an_installed_recipe_reports_updated(self, sim_client):
         sim_client.post(
             "/api/oci/recipes/install",
-            json={"collection": "spark-recipes", "recipe": "qwen3-8b"},
+            json={"collection": "spark-recipes", "recipe": "mistral-22b"},
         )
         response = sim_client.post(
-            "/api/oci/recipes/update/qwen3-8b",
+            "/api/oci/recipes/update/mistral-22b",
             json={"collection": "spark-recipes"},
         )
         assert response.status_code == 200
         assert response.json() == {
             "success": True,
-            "recipe": "qwen3-8b",
-            "recipe_id": "oci-qwen3-8b",
+            "recipe": "mistral-22b",
+            "recipe_id": "oci-mistral-22b",
             "action": "updated",
         }
 
     def test_updating_a_recipe_that_was_never_installed_is_404(self, sim_client):
         response = sim_client.post(
-            "/api/oci/recipes/update/qwen3-8b",
+            "/api/oci/recipes/update/mistral-22b",
             json={"collection": "spark-recipes"},
         )
         assert response.status_code == 404
-        assert response.json()["detail"] == "Recipe 'qwen3-8b' is not installed"
+        assert response.json()["detail"] == "Recipe 'mistral-22b' is not installed"

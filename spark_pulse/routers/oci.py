@@ -13,9 +13,11 @@ from fastapi import APIRouter, HTTPException, Query
 from spark_pulse.tools import is_simulation
 from spark_pulse.tools.oci_registry import (
     add_registry,
+    apply_collection_recipes,
     apply_updates,
     check_updates,
     clear_oci_cache,
+    collection_state,
     get_oci_meta,
     install_collection,
     install_oci_recipe,
@@ -238,6 +240,61 @@ def get_collection_recipes(
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@router.get("/collections/{name}/state")
+def get_collection_state(
+    name: str,
+    registry: str = Query(None, description="Registry name to filter by"),
+):
+    """A collection's newest version, and each recipe's one state in it.
+
+    ``not_installed`` · ``installed`` · ``update`` · ``local_edits``, plus
+    ``removed`` for a recipe installed from this collection that its newest
+    version no longer ships. Matching a listed recipe to an installed one is
+    the backend's job (``tools.oci_registry.match_installed``), because it
+    takes the slug rule and the sidecars, and the browser has neither.
+    """
+    reader = _simulated().mock_collection_state if is_simulation() else collection_state
+    try:
+        return reader(name, registry_name=registry)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        logger.error("Failed to read collection state: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/collections/{name}/apply")
+def post_collection_apply(name: str, body: dict):
+    """Install or update the named recipes of a collection, one result each.
+
+    One endpoint for Install, Update, Install all and Update all, because the
+    bulk ones must report per recipe — a loop in the browser would pull the
+    whole collection once per recipe — and a recipe with local edits is
+    skipped unless ``overwrite_local``, which the view sends only after asking.
+    """
+    recipes = body.get("recipes")
+    if not isinstance(recipes, list) or not recipes:
+        raise HTTPException(status_code=400, detail="recipes must be a non-empty list")
+    applier = (
+        _simulated().mock_apply_collection_recipes
+        if is_simulation()
+        else apply_collection_recipes
+    )
+    try:
+        return applier(
+            collection_name=name,
+            recipe_names=[str(r) for r in recipes],
+            version=body.get("version") or None,
+            registry_name=body.get("registry") or None,
+            overwrite_local=bool(body.get("overwrite_local", False)),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        logger.error("Collection apply failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 # ── Install ──────────────────────────────────────────────────────────────────
 
 
@@ -407,6 +464,8 @@ def get_oci_recipes_meta():
             "installed_at": m.installed_at,
             "updated_at": m.updated_at,
             "local_changes": m.local_changes,
+            "display_name": m.display_name,
+            "previous_names": m.previous_names,
         }
         for m in metas
     ]
@@ -430,6 +489,8 @@ def get_oci_recipe_meta(recipe_name: str):
         "installed_at": meta.installed_at,
         "updated_at": meta.updated_at,
         "local_changes": meta.local_changes,
+        "display_name": meta.display_name,
+        "previous_names": meta.previous_names,
     }
 
 

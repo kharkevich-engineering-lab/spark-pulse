@@ -25,9 +25,7 @@ describe("CollectionCard", () => {
     render(
       <CollectionCard
         collection={collection()}
-        installed={false}
         onView={vi.fn()}
-        onInstall={vi.fn()}
       />,
     );
 
@@ -43,9 +41,7 @@ describe("CollectionCard", () => {
     render(
       <CollectionCard
         collection={collection({ description: "" })}
-        installed={false}
         onView={vi.fn()}
-        onInstall={vi.fn()}
       />,
     );
     expect(screen.getByText("No description.")).toBeInTheDocument();
@@ -55,9 +51,7 @@ describe("CollectionCard", () => {
     render(
       <CollectionCard
         collection={collection({ vendor: "", license: "" })}
-        installed={false}
         onView={vi.fn()}
-        onInstall={vi.fn()}
       />,
     );
     expect(screen.queryByText("kharkevich")).not.toBeInTheDocument();
@@ -70,13 +64,21 @@ describe("CollectionCard", () => {
     render(
       <CollectionCard
         collection={collection()}
-        installed={false}
         onView={onView}
-        onInstall={vi.fn()}
       />,
     );
 
     fireEvent.click(screen.getByRole("button", { name: /spark-recipes/ }));
     expect(onView).toHaveBeenCalledTimes(1);
+  });
+
+  it("says how many of its recipes are installed, and nothing when none are", () => {
+    const { rerender } = render(
+      <CollectionCard collection={collection()} installedCount={3} onView={vi.fn()} />,
+    );
+    expect(screen.getByTestId("collection-installed-count")).toHaveTextContent("3 installed");
+
+    rerender(<CollectionCard collection={collection()} installedCount={0} onView={vi.fn()} />);
+    expect(screen.queryByTestId("collection-installed-count")).not.toBeInTheDocument();
   });
 });

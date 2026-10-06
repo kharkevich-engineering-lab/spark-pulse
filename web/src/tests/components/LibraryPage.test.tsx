@@ -44,18 +44,13 @@ vi.mock("@/lib/api", () => ({
   updateSettings: vi.fn(),
   fetchOciCollections: vi.fn(() => Promise.resolve([])),
   fetchOciMeta: vi.fn(() => Promise.resolve([])),
-  checkOciUpdates: vi.fn(() => Promise.resolve([])),
-  applyOciUpdates: vi.fn(),
-  installOciCollection: vi.fn(),
+  fetchOciCollectionState: vi.fn(),
+  applyOciCollection: vi.fn(),
   addOciRegistry: vi.fn(),
   updateOciRegistry: vi.fn(),
   removeOciRegistry: vi.fn(),
   testOciRegistry: vi.fn(),
-  fetchOciCollectionRecipes: vi.fn(() => Promise.resolve([])),
   fetchOciRegistryVersions: vi.fn(() => Promise.resolve({ versions: [] })),
-  installOciRecipe: vi.fn(),
-  updateOciRecipe: vi.fn(),
-  uninstallOciRecipe: vi.fn(),
 }));
 
 import { fetchCache, fetchImages, fetchModels, fetchOciRegistries } from "@/lib/api";
@@ -165,7 +160,7 @@ describe("Library — the shell", () => {
   it("opens the registries tab at its own address", async () => {
     renderAt("/oci");
 
-    expect(await screen.findByRole("tab", { name: "Browse" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Collections" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /Registries/ })).toHaveAttribute(
       "aria-selected",
       "true",
