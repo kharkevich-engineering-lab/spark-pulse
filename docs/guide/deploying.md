@@ -26,6 +26,20 @@ A port you type in **Deploy options** (or send as `params.port`) is a **pin**: k
 
 Readiness is checked against *this* run's server. Where the engine's readiness path is its model listing (vLLM's `/v1/models`), a 200 has to name the run's served model — `--served-model-name` if the command sets one, else the model as the command hands it to the engine. A 200 naming another model is somebody else on that port: the deploy keeps waiting, and if the deadline passes the error says which model answered.
 
+## Sharing a node
+
+A port is the first thing two runs on one node collide on; memory is the second. `gpu_memory_utilization` (SGLang's `--mem-fraction-static`) is a fraction of the node's **total** memory — on a GB10, the 121 GiB unified pool — and the engine takes all of it at startup. vLLM checks that fraction against what is *free* and refuses with *"Free memory on device … is less than desired GPU memory utilization"*, but only after the image is pulled and the container started.
+
+So the plan does the arithmetic first. For each node the run occupies, it lists the runs already there — live ones, and a stopped one whose containers were never confirmed gone — and what each claims:
+
+- a run whose engine takes a fraction claims that fraction of the node's total;
+- a run whose engine allocates as it goes (llama.cpp) claims what the node, asked through its agent, says its containers hold;
+- a run whose claim cannot be read — the node did not answer, or reports no memory for it — is **unknown**, never zero.
+
+What is left is the total, less those claims, less 4 GiB for the host itself (the kernel, Docker, the agent: memory no run's fraction may count on). A run that asks for more is **blocked** — *run qwen holds 0.80 (96.9 GiB); at most 0.16 is left and this run asks 0.50* — and an unknown co-tenant turns the check into a warning instead, since the budget has a hole in it. A run alone on its node is judged by the engine, as before.
+
+**GPU memory** in Deploy options sets the fraction (empty takes the recipe's). After a preview, a node somebody else is on gets one line — *Shares spark-01 with qwen (0.80). Up to 0.16 fits.* — and, when the run does not fit, a button that takes that value. The plan carries the same figures as `memory_budget`, one entry per node.
+
 ## Deploying a model that is not downloaded
 
 The create is not refused. It comes back with a structured `detail.missing_model`, which the UI turns into an offer:

@@ -11,7 +11,14 @@ recipe carries a vLLM `command` template and therefore pins itself to vLLM.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useI18n, type Translator } from "@/lib/i18n";
 import { fetchEngines, fetchModels, fetchNodes, planDeployment, runPreflight } from "@/lib/api";
-import type { ClusterNode, DeployPlan, EngineSummary, PreflightReport, RecipeDetail } from "@/lib/types";
+import type {
+  ClusterNode,
+  DeployPlan,
+  EngineSummary,
+  MemoryBudget,
+  PreflightReport,
+  RecipeDetail,
+} from "@/lib/types";
 import { AlertCircle, ChevronDown, Eye } from "lucide-react";
 import { Button, ErrorLine, Field, Input, Select } from "@/ui";
 import { formatSize } from "@/lib/utils";
@@ -34,6 +41,9 @@ export interface DeployOptionsValue {
    *  then blocks). Undefined leaves the recipe's port as a preference, which
    *  the planner moves when a node the run occupies already holds it. */
   port?: number;
+  /** A memory fraction the operator typed, sent as `params.gpu_memory_utilization`.
+   *  Undefined leaves the recipe's own. */
+  gpu_memory_utilization?: number;
 }
 
 /** The parallelism shape the form can express. `dp` is deliberately absent:
@@ -68,6 +78,47 @@ export function recipeParallelism(recipe: RecipeDetail): Parallelism {
 export function recipePort(recipe: RecipeDetail): number | undefined {
   const declared = { ...(recipe.defaults ?? {}), ...(recipe.params ?? {}) };
   return parsePort(String(declared.port ?? ""));
+}
+
+/** The memory fraction a recipe declares, if it declares one. */
+export function recipeFraction(recipe: RecipeDetail): number | undefined {
+  const declared = { ...(recipe.defaults ?? {}), ...(recipe.params ?? {}) };
+  return parseFraction(String(declared.gpu_memory_utilization ?? ""));
+}
+
+/** A typed memory fraction, when it is one: above 0, at most 1. */
+export function parseFraction(raw: string): number | undefined {
+  const text = raw.trim();
+  if (!/^(\d+(\.\d*)?|\.\d+)$/.test(text)) return undefined;
+  const n = Number.parseFloat(text);
+  return n > 0 && n <= 1 ? n : undefined;
+}
+
+/** The nodes in a plan's budget that somebody else is already on. Only those
+ *  get a line: alone on a node, the engine's own startup check is the judge. */
+export function sharedNodes(plan: Pick<DeployPlan, "memory_budget">): MemoryBudget[] {
+  return (plan.memory_budget ?? []).filter((entry) => entry.holders.length > 0);
+}
+
+/** One node's budget in one line: who is there, and how much fits beside them. */
+export function describeBudget(entry: MemoryBudget, i18n: Translator): string {
+  const runs = entry.holders
+    .map((h) => {
+      const claim =
+        h.bytes === null
+          ? i18n.t("memoryBudget.unknown")
+          : h.fraction !== null
+            ? h.fraction.toFixed(2)
+            : formatSize(h.bytes);
+      return `${h.name} (${claim})`;
+    })
+    .join(", ");
+  const args = { node: entry.label, runs };
+  if (entry.total_bytes === null || entry.max_fraction === null) {
+    return i18n.t("memoryBudget.unread", args);
+  }
+  if (entry.max_fraction <= 0) return i18n.t("memoryBudget.full", args);
+  return i18n.t("memoryBudget.shares", { ...args, max: entry.max_fraction.toFixed(2) });
 }
 
 /** A typed port, when it is one: a whole number from 1 to 65535. */
@@ -189,6 +240,11 @@ export function deployParams(
     // Only a typed port is sent. The recipe's own stays with the recipe, where
     // the planner reads it as a preference; sending it here would pin it.
     ...(value.port !== undefined ? { port: value.port } : {}),
+    // Same rule as the port: only a typed fraction is sent, so an empty field
+    // means the recipe's own and not a copy of it frozen into the request.
+    ...(value.gpu_memory_utilization !== undefined
+      ? { gpu_memory_utilization: value.gpu_memory_utilization }
+      : {}),
   };
 }
 
@@ -351,6 +407,8 @@ export default function DeployOptions({
   // port, moved if taken". Anything typed that is not a port stays on screen
   // with an error and is not sent.
   const [portText, setPortText] = useState("");
+  // The same contract for the memory fraction: empty is the recipe's.
+  const [fractionText, setFractionText] = useState("");
   // Whether the operator has spoken about tensor width. The node-count
   // proposal below is for a form that is still showing the recipe's number;
   // once an operator has typed one, changing the node count must not quietly
@@ -402,7 +460,14 @@ export default function DeployOptions({
       setPpText(String(declared.pipeline_parallel));
       setTpTouched(false);
       setPortText("");
-      next = { ...value, ...declared, nodes: undefined, port: undefined };
+      setFractionText("");
+      next = {
+        ...value,
+        ...declared,
+        nodes: undefined,
+        port: undefined,
+        gpu_memory_utilization: undefined,
+      };
     }
     if (nodes.length > 0 && nodesSeededFor.current !== recipe.id) {
       nodesSeededFor.current = recipe.id;
@@ -481,6 +546,13 @@ export default function DeployOptions({
   const editPort = (raw: string) => {
     setPortText(raw);
     onChange({ ...value, port: parsePort(raw) });
+  };
+
+  const preferredFraction = recipeFraction(recipe);
+  const fractionInvalid = fractionText.trim() !== "" && parseFraction(fractionText) === undefined;
+  const editFraction = (raw: string) => {
+    setFractionText(raw);
+    onChange({ ...value, gpu_memory_utilization: parseFraction(raw) });
   };
 
   const preview = async () => {
@@ -592,6 +664,29 @@ export default function DeployOptions({
                     preferredPort !== undefined ? String(preferredPort) : t("deployPort.auto")
                   }
                   onChange={(e) => editPort(e.target.value)}
+                />
+              )}
+            </Field>
+
+            <Field
+              label={t("memoryBudget.label")}
+              hint={t("memoryBudget.hint")}
+              error={fractionInvalid ? t("memoryBudget.invalid") : undefined}
+            >
+              {(control) => (
+                <Input
+                  {...control}
+                  mono
+                  type="text"
+                  inputMode="decimal"
+                  data-testid="deploy-gpu-memory"
+                  value={fractionText}
+                  placeholder={
+                    preferredFraction !== undefined
+                      ? String(preferredFraction)
+                      : t("memoryBudget.auto")
+                  }
+                  onChange={(e) => editFraction(e.target.value)}
                 />
               )}
             </Field>
@@ -788,6 +883,39 @@ export default function DeployOptions({
                   )}
                 </dl>
               </div>
+
+              {sharedNodes(plan).map((entry) => {
+                // Offered only where it would change the answer: a fraction
+                // engine asking for more than is left, with something left.
+                const suggest =
+                  plan.gpu_memory_utilization != null &&
+                  entry.fits === false &&
+                  entry.max_fraction !== null &&
+                  entry.max_fraction > 0
+                    ? entry.max_fraction.toFixed(2)
+                    : null;
+                return (
+                  <p
+                    key={entry.key}
+                    className={`flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] ${
+                      entry.fits === false ? "text-warn" : "text-muted"
+                    }`}
+                    data-testid="deploy-memory-budget"
+                  >
+                    <span>{describeBudget(entry, i18n)}</span>
+                    {suggest !== null && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        data-testid="deploy-memory-apply"
+                        onClick={() => editFraction(suggest)}
+                      >
+                        {t("memoryBudget.apply", { max: suggest })}
+                      </Button>
+                    )}
+                  </p>
+                );
+              })}
 
               {plan.warnings.map((warning) => (
                 <p key={warning} className="text-[13px] text-warn">

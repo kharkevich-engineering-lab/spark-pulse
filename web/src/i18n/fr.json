@@ -1130,5 +1130,16 @@
     "invalid": "Un port est un entier de 1 à 65535.",
     "auto": "premier libre",
     "moved": "déplacé depuis {port}"
+  },
+  "memoryBudget": {
+    "label": "Mémoire GPU",
+    "hint": "Vide : la valeur de la recette ; une fraction saisie de la mémoire du nœud est gardée.",
+    "invalid": "Une fraction au-dessus de 0, jusqu'à 1.",
+    "auto": "défaut du moteur",
+    "shares": "Partage {node} avec {runs}. {max} au plus y tient.",
+    "full": "Partage {node} avec {runs}. Plus rien n'y tient.",
+    "unread": "Partage {node} avec {runs}. Sa mémoire n'a pas pu être lue.",
+    "unknown": "inconnu",
+    "apply": "Prendre {max}"
   }
 }

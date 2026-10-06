@@ -95,6 +95,7 @@ CHECK_INTERFACES = "interfaces"
 CHECK_FABRIC = "fabric"
 CHECK_DISK = "disk"
 CHECK_VRAM = "vram"
+CHECK_MEMORY = "memory"
 
 CHECK_ORDER = (
     CHECK_REACHABILITY,
@@ -107,6 +108,7 @@ CHECK_ORDER = (
     CHECK_INTERFACES,
     CHECK_FABRIC,
     CHECK_DISK,
+    CHECK_MEMORY,
     CHECK_VRAM,
 )
 
@@ -1734,6 +1736,12 @@ def _check_vram(target: NodeTarget, ctx: _Context) -> Check:
     operators to skim past the one that means something. It still says, in
     full, what it could not work out and why — as a passing check whose text
     is worth reading, not as an alarm.
+
+    It is not the only memory signal any more. On a node another run already
+    shares, :func:`_check_memory_budget` judges the claim against what the
+    others hold — and that one blocks, because it is the engine's own startup
+    refusal run early. When it does, this line is dropped from the node's
+    report rather than left to say something softer underneath it.
     """
     title = "GPU memory"
     plan = ctx.plan
@@ -1748,20 +1756,7 @@ def _check_vram(target: NodeTarget, ctx: _Context) -> Check:
             "the recipe names no model of its own, so there is nothing to size",
         )
 
-    facts = ctx.facts[target.id]
-    row = ctx.model_rows.get(target.id) or {}
-
-    # The weights as they are on this node, not as the catalogue remembers
-    # them: a half-transferred snapshot is exactly the case a fit estimate
-    # must not silently round up into "fits".
-    weight_bytes = _int_or_none(row.get("bytes_expected"))
-
-    config = ctx.model_config
-    shape = vram.shape_from_config(config, weight_bytes=weight_bytes)
-    workload = _workload_from_plan(plan, config)
-    available = _available_bytes(facts)
-
-    estimate = vram.estimate(shape, workload, available_bytes=available)
+    estimate, workload = _vram_estimate(target, ctx)
     detail = estimate.to_dict()
     detail["max_model_len"] = workload.max_model_len
 
@@ -1810,6 +1805,175 @@ def _check_vram(target: NodeTarget, ctx: _Context) -> Check:
         "tensor_parallel shards the weights and the cache across more nodes.",
         **detail,
     )
+
+
+def _vram_estimate(
+    target: NodeTarget, ctx: _Context
+) -> tuple[vram.VramEstimate, vram.Workload]:
+    """The weights-plus-KV estimate for this node, and the workload behind it."""
+    facts = ctx.facts[target.id]
+    row = ctx.model_rows.get(target.id) or {}
+    # The weights as they are on this node, not as the catalogue remembers
+    # them: a half-transferred snapshot is exactly the case a fit estimate
+    # must not silently round up into "fits".
+    weight_bytes = _int_or_none(row.get("bytes_expected"))
+    config = ctx.model_config
+    shape = vram.shape_from_config(config, weight_bytes=weight_bytes)
+    workload = _workload_from_plan(ctx.plan, config)
+    available = _available_bytes(facts)
+    return vram.estimate(shape, workload, available_bytes=available), workload
+
+
+def _gib(value: int | float | None) -> str:
+    """A memory figure the way the engine's own refusal states it."""
+    return f"{(value or 0) / _GIB:.1f} GiB"
+
+
+def _holder_text(holder: dict[str, Any]) -> str:
+    """One co-tenant's claim, in the fewest words that say where it came from."""
+    name = f"run {holder.get('name') or holder.get('id')}"
+    if holder.get("bytes") is None:
+        return f"{name} (unknown: {holder.get('reason') or 'not reported'})"
+    if holder.get("fraction") is not None:
+        return f"{name} holds {holder['fraction']:.2f} ({_gib(holder['bytes'])})"
+    return f"{name} holds {_gib(holder['bytes'])} (measured)"
+
+
+def _budget_for(target: NodeTarget, ctx: _Context) -> dict[str, Any] | None:
+    """The plan's memory budget entry for this node, if it planned one."""
+    key = "" if target.is_control_plane else target.address
+    for entry in ctx.plan.get("memory_budget") or []:
+        if isinstance(entry, dict) and str(entry.get("key") or "") == key:
+            return entry
+    return None
+
+
+def _check_memory_budget(target: NodeTarget, ctx: _Context) -> list[Check]:
+    """Does this run fit beside the runs already on the node?
+
+    The planner did the accounting (``memory_budget`` on the plan, one entry
+    per node: who is there, what each claims, what is left); this is where it
+    becomes a verdict. Over budget **fails**, unlike the estimate after it,
+    because this is not arithmetic about a model the engine may still squeeze
+    in — it is the engine's own startup check, run early. vLLM compares its
+    fraction of the node's *total* with what is *free* and refuses with
+    "Free memory on device … is less than desired GPU memory utilization",
+    but only after the pull and the wait; refusing here costs neither.
+
+    A co-tenant whose claim could not be determined makes the budget
+    incomplete, and that is a warning, not a pass: the line says which run is
+    unknown and why. A node nobody else is on gets no line at all — alone,
+    a run is judged by the engine itself, exactly as before.
+    """
+    entry = _budget_for(target, ctx)
+    holders = list((entry or {}).get("holders") or [])
+    if entry is None or not holders:
+        return []
+    title = "Shared memory"
+    held = "; ".join(_holder_text(h) for h in holders)
+    detail = {"budget": entry}
+    if not entry.get("total_bytes"):
+        return [
+            _check(
+                CHECK_MEMORY,
+                title,
+                target,
+                STATUS_WARN,
+                f"{held}; "
+                f"{entry.get('reason') or 'the node reported no total memory'}",
+                "The budget could not be completed. Check the node's agent, or "
+                "stop the run beside this one before deploying.",
+                **detail,
+            )
+        ]
+
+    left = int(entry.get("left_bytes") or 0)
+    max_fraction = float(entry.get("max_fraction") or 0)
+    claim_fraction = entry.get("claim_fraction")
+    claim = entry.get("claim_bytes")
+    estimated = False
+    if claim is None:
+        # An engine that takes no fraction claims what it will allocate, and
+        # the weights-plus-KV estimate is the one figure there is for that.
+        estimate, _workload = _vram_estimate(target, ctx)
+        if estimate.total_bytes:
+            claim = int(estimate.total_bytes)
+            estimated = True
+
+    if claim is not None and claim > left:
+        if claim_fraction is not None:
+            observed = (
+                f"{held}; at most {max_fraction:.2f} is left and this run "
+                f"asks {float(claim_fraction):.2f} ({_gib(claim)})"
+            )
+            remedy = (
+                f"Lower gpu_memory_utilization to {max_fraction:.2f} or less, "
+                "or stop a run on this node."
+            )
+        else:
+            observed = (
+                f"{held}; {_gib(left)} is left and this run needs about "
+                f"{_gib(claim)}"
+            )
+            remedy = "Lower max_model_len or max_num_seqs, or stop a run on this node."
+        return [
+            _check(CHECK_MEMORY, title, target, STATUS_FAIL, observed, remedy, **detail)
+        ]
+
+    unknown = [h for h in holders if h.get("bytes") is None]
+    if unknown or claim is None:
+        missing = (
+            "this run's own claim is unknown"
+            if claim is None
+            else f"{len(unknown)} run(s) could not be sized"
+        )
+        return [
+            _check(
+                CHECK_MEMORY,
+                title,
+                target,
+                STATUS_WARN,
+                f"{held}; {_gib(left)} is left on the known claims, but {missing}",
+                "The budget is incomplete, so the engine's own startup check "
+                "decides. Check the node's agent, or keep "
+                "gpu_memory_utilization well under the known room.",
+                **detail,
+            )
+        ]
+
+    asks = (
+        f"{float(claim_fraction):.2f} ({_gib(claim)})"
+        if claim_fraction is not None
+        else f"about {_gib(claim)}{' (estimated)' if estimated else ''}"
+    )
+    if claim_fraction is not None:
+        # Fitting beside the others is half the question once the fraction has
+        # been lowered to make room: the engine then has to fit *inside* it.
+        need = _vram_estimate(target, ctx)[0].total_bytes
+        if need and need > claim:
+            return [
+                _check(
+                    CHECK_MEMORY,
+                    title,
+                    target,
+                    STATUS_WARN,
+                    f"{held}; this run's {asks} fits beside them, but the "
+                    f"model needs about {_gib(need)}",
+                    "Lower max_model_len or max_num_seqs so the model fits the "
+                    "fraction, or stop a run on this node to raise it.",
+                    **detail,
+                )
+            ]
+    return [
+        _check(
+            CHECK_MEMORY,
+            title,
+            target,
+            STATUS_PASS,
+            f"{held}; this run's {asks} fits in the {_gib(left)} left",
+            **detail,
+        )
+    ]
 
 
 def _int_or_none(value: Any) -> int | None:
@@ -1877,6 +2041,7 @@ _CHECKS: tuple[tuple[str, Callable[[NodeTarget, _Context], Any]], ...] = (
     (CHECK_INTERFACES, _check_interfaces),
     (CHECK_FABRIC, _check_fabric),
     (CHECK_DISK, _check_disk),
+    (CHECK_MEMORY, _check_memory_budget),
     (CHECK_VRAM, _check_vram),
 )
 
@@ -1897,6 +2062,12 @@ def checks_for_node(target: NodeTarget, ctx: _Context) -> list[Check]:
             results.append(produced)
         else:
             results.extend(produced)
+    if any(c.id == CHECK_MEMORY and c.failed for c in results):
+        # A refused budget is the memory answer. The estimate after it
+        # compares the model with what is free *now* — a figure the run being
+        # refused beside already explains — and a second memory line saying
+        # "fits" under one saying "does not" is two answers to one question.
+        results = [c for c in results if c.id != CHECK_VRAM]
     return results
 
 

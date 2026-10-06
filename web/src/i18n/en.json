@@ -1130,5 +1130,16 @@
     "invalid": "A port is a whole number from 1 to 65535.",
     "auto": "next free",
     "moved": "moved from {port}"
+  },
+  "memoryBudget": {
+    "label": "GPU memory",
+    "hint": "Empty uses the recipe's value; a typed fraction of the node's memory is kept.",
+    "invalid": "A fraction above 0, up to 1.",
+    "auto": "engine default",
+    "shares": "Shares {node} with {runs}. Up to {max} fits.",
+    "full": "Shares {node} with {runs}. Nothing more fits.",
+    "unread": "Shares {node} with {runs}. Its memory could not be read.",
+    "unknown": "unknown",
+    "apply": "Use {max}"
   }
 }
