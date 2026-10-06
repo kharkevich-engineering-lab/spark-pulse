@@ -50,6 +50,7 @@ import SlideDrawer from "@/components/SlideDrawer";
 import RegistryCard from "@/components/RegistryCard";
 import EditRegistryDialog from "@/components/EditRegistryDialog";
 import CollectionCard from "@/components/CollectionCard";
+import ServesChip from "@/components/ServesChip";
 
 type SubTab = "browse" | "installed";
 
@@ -502,6 +503,7 @@ export default function RegistriesTab({ registries: registriesQuery }: Registrie
                           <span className="text-[13px] text-muted font-mono">
                             v{recipe.recipe_version}
                           </span>
+                          <ServesChip serves={recipe.serves} />
                         </div>
                         <p className="text-[13px] text-muted mt-1">{recipe.description}</p>
                         <p className="text-[13px] text-muted mt-2 font-mono">

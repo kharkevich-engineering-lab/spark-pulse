@@ -394,6 +394,10 @@ class DeployPlan:
     #: fits (:class:`~spark_pulse.tools.memory_budget.NodeBudget`). The
     #: pre-flight judges it; the preview shows it.
     memory_budget: list[dict[str, Any]] = field(default_factory=list)
+    #: What the recipe serves (``recipe_schema.SERVES``), copied onto the
+    #: record so a run keeps answering for what it was started as after its
+    #: recipe is edited or uninstalled — the benchmark refusal reads it there.
+    serves: str = "chat"
     workdir: str = ""
     warnings: list[str] = field(default_factory=list)
     runtime: str = RUNTIME_NAME
@@ -1825,6 +1829,7 @@ def plan(
         served_model=served_model,
         gpu_memory_utilization=fraction,
         memory_budget=budget,
+        serves=tools.recipe_schema.serves_of(recipe),
         warnings=warnings,
     )
 
@@ -1862,6 +1867,7 @@ def _record_from_plan(plan_obj: DeployPlan, status: str) -> dict[str, Any]:
         "variant": plan_obj.variant,
         "image_ref": plan_obj.image_ref,
         "model": plan_obj.model,
+        "serves": plan_obj.serves,
         # Rank zero's name, kept as a scalar alias so every existing reader
         # — the health router, the UI, the upstream path — still resolves.
         "container_name": plan_obj.container.name,

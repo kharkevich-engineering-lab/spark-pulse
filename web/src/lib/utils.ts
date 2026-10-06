@@ -19,6 +19,15 @@ export function formatDuration(seconds: number): string {
   return `${h}h ${m}m`;
 }
 
+/** Whether a recipe or a run serves chat — the default, and what absence means.
+ *
+ * A record written before `serves` existed carries nothing and was started as
+ * chat, since nothing else could be. Benchmarks drive chat completions, so this
+ * is also the test for whether the Benchmark action is offered. */
+export function servesChat(serves?: string | null): boolean {
+  return !serves || serves === "chat";
+}
+
 export function timeAgo(dateStr: string): string {
   const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
   return formatDuration(diff) + " ago";

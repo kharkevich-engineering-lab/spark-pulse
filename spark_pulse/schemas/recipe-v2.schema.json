@@ -29,6 +29,11 @@
       "description": "Preferred engine name (e.g. vllm, sglang). Omit to use the configured default engine.",
       "minLength": 1
     },
+    "serves": {
+      "description": "What the recipe serves: the kind of endpoint its engine exposes. Absent means chat. vLLM renders `--runner pooling` for embedding; an engine that cannot serve the kind refuses the recipe at plan time. Benchmarks drive chat completions, so only a chat run can be benchmarked. image, video and speech are reserved for engines that serve them.",
+      "enum": ["chat", "embedding", "image", "video", "speech"],
+      "default": "chat"
+    },
     "constraints": {
       "type": "object",
       "description": "Topology constraints enforced at plan time.",

@@ -54,6 +54,7 @@ describe("the dictionaries", () => {
     // initialisms.
     "runs.image",
     "engines.colImage",
+    "serves.image",
     "monitoring.ram",
     "engines.colActions",
     // "Mods" is the term of art the recipes themselves use, in both languages.

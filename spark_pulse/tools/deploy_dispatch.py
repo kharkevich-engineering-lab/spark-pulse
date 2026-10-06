@@ -15,10 +15,22 @@ from typing import Any
 from spark_pulse import tools
 
 
+def _with_serves(record: dict[str, Any]) -> dict[str, Any]:
+    """The record as served, with ``serves`` always said.
+
+    A record written before the field existed — or adopted from a container
+    nobody recorded — was started as chat, since nothing else could be. Filled
+    in on the way out rather than written back: the row stays what was stored.
+    """
+    if record.get("serves"):
+        return record
+    return {**record, "serves": tools.recipe_schema.serves_of(record)}
+
+
 def list_deployments() -> list[dict[str, Any]]:
     """Every deployment, reconciled against what the nodes are running."""
     return sorted(
-        tools.native_runtime.list_deployments(),
+        (_with_serves(d) for d in tools.native_runtime.list_deployments()),
         key=lambda d: str(d.get("created_at") or ""),
     )
 
@@ -93,4 +105,5 @@ def get_deployment(deployment_id: str) -> dict[str, Any] | None:
     """One deployment, with the status the nodes report rather than the row."""
     if tools.deployment_records.get(deployment_id) is None:
         return None
-    return tools.native_runtime.status(deployment_id)
+    live = tools.native_runtime.status(deployment_id)
+    return _with_serves(live) if live is not None else None

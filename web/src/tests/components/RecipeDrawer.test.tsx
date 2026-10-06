@@ -77,6 +77,13 @@ describe("RecipeDrawer", () => {
     renderDrawer();
     expect(screen.getByRole("heading", { name: "Qwen3 8B" })).toBeInTheDocument();
     expect(screen.getByText("Qwen/Qwen3-8B")).toBeInTheDocument();
+    // Chat is the default and says nothing.
+    expect(screen.queryByTestId("serves-chip")).toBeNull();
+  });
+
+  it("says in the header when a recipe serves something other than chat", () => {
+    renderDrawer({ recipe: { ...RECIPE, serves: "embedding" } as RecipeDetail });
+    expect(screen.getByTestId("serves-chip")).toHaveTextContent("Embeddings");
   });
 
   it("deploys under the name the form holds and closes itself", async () => {

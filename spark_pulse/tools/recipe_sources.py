@@ -73,6 +73,7 @@ SUMMARY_FIELDS = (
     "engines",
     "engine_support",
     "source",
+    "serves",
 )
 
 
@@ -297,6 +298,7 @@ def to_payload(
             "engines": recipe.engine_names(),
             "engine_specs": _engine_specs(recipe),
             "source": source_of(recipe_id),
+            "serves": recipe.serves,
         }
         payload["engine_support"] = engine_support(payload)
         return payload
@@ -321,6 +323,7 @@ def to_payload(
         "engines": recipe.engines,
         "engine_specs": {},
         "source": source_of(recipe_id),
+        "serves": recipe.serves,
     }
     payload["engine_support"] = engine_support(payload)
     return payload

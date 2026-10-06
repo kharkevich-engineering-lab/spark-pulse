@@ -37,6 +37,10 @@
       "type": "boolean",
       "description": "This recipe requires more than one node."
     },
+    "serves": {
+      "description": "What the recipe serves. A v1 command is a verbatim vLLM line nothing rewrites, so v1 serves chat only; declare another kind in v2.",
+      "enum": ["chat"]
+    },
     "solo_only": {
       "type": "boolean",
       "description": "This recipe can only run on a single node."

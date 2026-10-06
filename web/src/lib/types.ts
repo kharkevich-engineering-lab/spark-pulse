@@ -22,6 +22,9 @@ export interface RecipeSummary {
   source: string;
   /** Whether each known engine can run this recipe, and why not when it cannot. */
   engine_support: RecipeEngineSupport[];
+  /** What the recipe serves: chat, embedding, image, video or speech. Absent
+   *  from an older backend, which means chat. */
+  serves?: string;
 }
 
 /** One engine's verdict on a recipe, as the backend's engine plugin reports it. */
@@ -120,6 +123,9 @@ export interface Deployment {
   variant?: string;
   image_ref?: string;
   model?: string;
+  /** What the run was started to serve, kept from its recipe. Chat when
+   *  absent; only a chat run can be benchmarked. */
+  serves?: string;
   container_name?: string;
   node_count?: number;
   mods?: string[];
@@ -499,6 +505,8 @@ export interface OciCollectionRecipe {
   recipe_version: string;
   solo_only: boolean;
   cluster_only: boolean;
+  /** What the recipe serves, as the collection annotates it; chat when absent. */
+  serves?: string;
 }
 
 export interface OciRecipeMeta {
@@ -736,6 +744,8 @@ export interface DeployPlan {
   gpu_memory_utilization?: number | null;
   /** One entry per node the run occupies: who else is on it and what is left. */
   memory_budget?: MemoryBudget[];
+  /** What the run will serve; the record keeps the same value. */
+  serves?: string;
   warnings: string[];
   runtime: string;
   created_at: string;

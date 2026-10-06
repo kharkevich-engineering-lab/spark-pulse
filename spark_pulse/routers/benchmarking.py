@@ -146,7 +146,25 @@ def compare_runs(req: CompareRunsRequest):
 
 @router.post("")
 def run_benchmark(req: RunBenchmarkRequest, background_tasks: BackgroundTasks):
-    """Start a new benchmark. Returns immediately with status='running'."""
+    """Start a new benchmark. Returns immediately with status='running'.
+
+    409 for a run that does not serve chat: llama-benchy drives chat
+    completions, so against an embeddings endpoint it would record a failure
+    that says nothing about the run. The kind is read off the deployment
+    record, which kept it from the recipe when the run started. An id with no
+    record is left to the benchmark itself, as it always was.
+    """
+    deployment = tools.deployment_records.get(req.deployment_id)
+    if deployment is not None:
+        serves = tools.recipe_schema.serves_of(deployment)
+        if serves != tools.recipe_schema.DEFAULT_SERVES:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"run {req.deployment_id} serves {serves}; benchmarks drive "
+                    "chat completions, so only a chat run can be benchmarked"
+                ),
+            )
     record = tools.benchmarking.create_benchmark(
         deployment_id=req.deployment_id,
         baseline_id=req.baseline_id,

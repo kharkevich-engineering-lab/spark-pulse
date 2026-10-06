@@ -43,6 +43,14 @@ from spark_pulse.engines.base import (
 )
 
 _DEB_RE = re.compile(r"\s*--distributed-executor-backend(?:=|\s+)\S+")
+_RUNNER_RE = re.compile(r"(?:^|\s)--runner(?:=|\s|$)")
+
+#: The runner each kind of recipe needs, by its ``serves``. Chat is vLLM's own
+#: default (``--runner auto`` resolves a generative checkpoint to ``generate``),
+#: so it renders nothing. Embedding is ``pooling``: vLLM's pooling-models
+#: guide names it for ``Qwen/Qwen3-Embedding-*``, and ``auto`` cannot be
+#: trusted to find it — those checkpoints declare a causal-LM architecture.
+_RUNNER_FOR = {"embedding": "pooling"}
 
 # Order in which engine-neutral params become flags for a v2 render.
 _PARAM_ORDER = (
@@ -106,6 +114,10 @@ class VllmEngine(Engine):
     # became stock ``vllm serve`` flags in 0.11.1. An older image would not
     # understand them, and this renderer emits them at every size.
     min_framework_version = (0, 11, 1)
+
+    # ``--runner pooling`` is how ``vllm serve`` becomes an embeddings server
+    # (it replaced ``--task embed`` before the 0.11.1 floor above).
+    serves = frozenset({"chat", "embedding"})
 
     def base_env(
         self,
@@ -197,9 +209,12 @@ class VllmEngine(Engine):
         # No Ray at any size: the backend flag never survives, and vLLM
         # resolves its own executor (``uni`` at one node, ``mp`` above).
         command = strip_distributed_executor_backend(command)
+        tail = self._quote_extra(extra_args)
+        runner = self._runner_args(recipe, f"{command} {tail}")
+        if runner:
+            command = f"{command} {runner}"
         command = f"{command} {self._rendezvous_args(topology, node_rank)}"
 
-        tail = self._quote_extra(extra_args)
         if tail:
             command = f"{command} {tail}"
         command = command.strip()
@@ -238,6 +253,20 @@ class VllmEngine(Engine):
 
     def _engine_args(self, recipe: dict[str, Any]) -> str:
         return self._block_args(recipe)
+
+    @staticmethod
+    def _runner_args(recipe: dict[str, Any], rendered: str) -> str:
+        """``--runner <kind>`` for what the recipe serves, or nothing.
+
+        Nothing when the recipe's own args (or the caller's extra args) already
+        name a runner: the author who wrote one knows something about the
+        checkpoint this table does not, and a second ``--runner`` would leave
+        argparse to pick the last and the reader to guess.
+        """
+        runner = _RUNNER_FOR.get(str(recipe.get("serves") or "chat"))
+        if not runner or _RUNNER_RE.search(rendered):
+            return ""
+        return f"--runner {runner}"
 
     def _rendezvous_args(self, topology: Topology, node_rank: int) -> str:
         """Rendezvous flags, rendered identically at every topology size."""

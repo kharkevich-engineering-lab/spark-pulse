@@ -227,6 +227,7 @@ def get_collection_recipes(
                 "recipe_version": r.recipe_version or "",
                 "solo_only": r.solo_only,
                 "cluster_only": r.cluster_only,
+                "serves": r.serves,
             }
             for r in recipes
         ]

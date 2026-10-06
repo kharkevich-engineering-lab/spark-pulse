@@ -7,6 +7,7 @@ import DeployOptions, { deployParams, type DeployOptionsValue } from "./DeployOp
 import { Button, ConfirmModal } from "@/ui";
 import { X } from "lucide-react";
 import SlideDrawer from "./SlideDrawer";
+import ServesChip from "./ServesChip";
 import type { RecipeDetail, RecipeCustomization, RecipeFormRef } from "@/lib/types";
 
 export default function RecipeDrawer({ recipe, customization, isRunning, clusterAvailable, onClose, onError, onDeploy, onSaveCustomization, onReset }: {
@@ -69,6 +70,7 @@ export default function RecipeDrawer({ recipe, customization, isRunning, cluster
         <div>
           <div className="flex items-center gap-2">
             <h3 className="text-xl font-bold truncate">{recipe.name}</h3>
+            <ServesChip serves={recipe.serves} className="shrink-0" />
             {isRunning && <span className="flex items-center gap-1.5 text-xs text-success font-medium px-2 py-0.5 rounded-full bg-success/15 shrink-0"><span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />{t("recipeCard.running")}</span>}
           </div>
           <p className="text-sm text-text-muted mt-1 truncate">{recipe.model}</p>

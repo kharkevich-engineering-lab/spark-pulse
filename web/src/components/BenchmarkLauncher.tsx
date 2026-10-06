@@ -19,6 +19,7 @@ import { useI18n } from "@/lib/i18n";
 import { runBenchmark } from "@/lib/api";
 import { Button, ErrorLine, Field, Input, Modal } from "@/ui";
 import { Flame } from "lucide-react";
+import { servesChat } from "@/lib/utils";
 import type { Deployment } from "@/lib/types";
 
 /** Every metric the backend knows how to measure. */
@@ -47,6 +48,10 @@ export default function BenchmarkLauncher({ run, onClose, onStarted }: Benchmark
   const [baseline, setBaseline] = useState("");
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The row does not offer this for a run that serves something other than
+  // chat, but the launcher is a component somebody else can open; saying why
+  // here beats a 409 after the click.
+  const chat = servesChat(run.serves);
 
   const start = async () => {
     setRunning(true);
@@ -84,7 +89,7 @@ export default function BenchmarkLauncher({ run, onClose, onStarted }: Benchmark
             size="sm"
             variant="primary"
             loading={running}
-            disabled={types.length === 0}
+            disabled={types.length === 0 || !chat}
             onClick={start}
           >
             {running ? t("common.working") : t("runs.benchmarkRun")}
@@ -94,6 +99,7 @@ export default function BenchmarkLauncher({ run, onClose, onStarted }: Benchmark
     >
       <div className="space-y-4">
         <p className="text-[14px] text-muted">{t("runs.benchmarkOn", { name: run.name })}</p>
+        {!chat && <ErrorLine>{t("serves.benchmarkChatOnly")}</ErrorLine>}
 
         <div>
           <p className="mb-1.5 text-[13px] font-medium">{t("benchmarking.types")}</p>

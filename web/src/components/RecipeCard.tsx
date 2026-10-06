@@ -3,6 +3,7 @@
 import { Box, Cpu, Layers, Network, Package, RotateCcw, Zap } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import BaseCard from "./BaseCard";
+import ServesChip from "./ServesChip";
 import type { RecipeSummary } from "@/lib/types";
 
 /** Engines that can actually run this recipe, as the API reports them. */
@@ -40,6 +41,7 @@ export default function RecipeCard({ r, isRunning, clusterBlocked, onSelect, onR
           <Package size={11} />{r.source}
         </span>
       )}
+      <ServesChip serves={r.serves} />
       {engines.length > 1 && (
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-success/15 text-success">
           <Layers size={11} />{engines.join(" · ")}

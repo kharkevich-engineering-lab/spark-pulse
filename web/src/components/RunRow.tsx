@@ -20,8 +20,9 @@
 
 import { useT } from "@/lib/i18n";
 import { StatusBadge, Button, isSettling } from "@/ui";
-import { formatDuration } from "@/lib/utils";
+import { formatDuration, servesChat } from "@/lib/utils";
 import { cn } from "@/lib/utils";
+import ServesChip from "./ServesChip";
 import { isLiveRun } from "@/hooks/useDeployments";
 import { ChevronDown, ChevronUp, Flame, Square, Trash2, X } from "lucide-react";
 import type { BenchmarkResult, Deployment } from "@/lib/types";
@@ -132,7 +133,10 @@ export default function RunRow({
       ? t("runs.cancel")
       : t("runs.stop");
 
-  const actionCount = live ? 3 : 2;
+  // Benchmarks drive chat completions; against an embeddings endpoint the
+  // button would only start a run the backend refuses.
+  const benchmarkable = live && servesChat(run.serves);
+  const actionCount = benchmarkable ? 3 : 2;
 
   return (
     <div
@@ -160,6 +164,8 @@ export default function RunRow({
               </Chip>
             )}
             {run.model && <Chip title={run.model}>{run.model}</Chip>}
+            <ServesChip serves={run.serves} />
+
             <Chip>{placement(run, t("runs.thisNode"))}</Chip>
             {run.port && (
               <span className="font-mono text-[13px] text-muted">:{run.port}</span>
@@ -190,7 +196,7 @@ export default function RunRow({
             >
               {t("runs.logs")}
             </Button>
-            {live && (
+            {benchmarkable && (
               <Button size="sm" icon={Flame} onClick={onBenchmark} disabled={run.status !== "running"}>
                 {t("runs.benchmark")}
               </Button>

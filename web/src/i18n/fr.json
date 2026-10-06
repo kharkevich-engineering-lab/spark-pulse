@@ -1141,5 +1141,13 @@
     "unread": "Partage {node} avec {runs}. Sa mémoire n'a pas pu être lue.",
     "unknown": "inconnu",
     "apply": "Prendre {max}"
+  },
+  "serves": {
+    "embedding": "Plongements",
+    "image": "Image",
+    "video": "Vidéo",
+    "speech": "Parole",
+    "hint": "Ce qu'elle sert. Seule une exécution de chat peut être analysée.",
+    "benchmarkChatOnly": "Cette exécution ne sert pas de chat : elle ne peut pas être analysée."
   }
 }
