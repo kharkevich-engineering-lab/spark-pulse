@@ -497,16 +497,52 @@ export interface OciCollection {
   registry: string;
 }
 
-export interface OciCollectionRecipe {
+/** One recipe in the collection view. `removed` is a recipe installed from
+ *  this collection that its newest version no longer ships. */
+export type OciRecipeStateName = "not_installed" | "installed" | "update" | "local_edits" | "removed";
+
+export interface OciRecipeState {
+  /** What the collection calls it — the display name. */
   name: string;
+  /** The id it is, or would be, installed as (`oci-<slug>`). */
+  recipe_id: string;
   description: string;
   model: string;
   container: string;
-  recipe_version: string;
   solo_only: boolean;
   cluster_only: boolean;
-  /** What the recipe serves, as the collection annotates it; chat when absent. */
   serves?: string;
+  state: OciRecipeStateName;
+  installed_version: string;
+  /** Upstream content differs from what was installed. Separate from `state`
+   *  because a locally edited recipe can also be behind. */
+  update_available: boolean;
+  local_changes: boolean;
+}
+
+export interface OciCollectionState {
+  collection: string;
+  registry: string;
+  description: string;
+  latest_version: string;
+  display_version: string;
+  /** The oldest version anything here was installed from; empty when nothing is. */
+  installed_version: string;
+  /** False when the newest version's files could not be read to compare. */
+  checked: boolean;
+  recipes: OciRecipeState[];
+}
+
+export interface OciCollectionApplyResult {
+  collection: string;
+  version: string;
+  results: {
+    recipe: string;
+    recipe_id: string;
+    success: boolean;
+    action?: "installed" | "updated" | "up_to_date" | "skipped_local_edits";
+    error?: string;
+  }[];
 }
 
 export interface OciRecipeMeta {
@@ -518,30 +554,10 @@ export interface OciRecipeMeta {
   installed_at: string;
   updated_at: string;
   local_changes: boolean;
-}
-
-export interface OciUpdateCheck {
-  collection: string;
-  current_version: string;
-  latest_version: string;
-  current_digest: string;
-  latest_digest: string;
-  local_changes: boolean;
-  added_recipes: string[];
-  modified_recipes: string[];
-}
-
-export interface OciUpdateApply {
-  collection: string;
-  target_version: string;
-  registry: string;
-}
-
-export interface OciUpdateResult {
-  collection: string;
-  success: boolean;
-  installed: string[];
-  error?: string;
+  /** What the collection calls the recipe. */
+  display_name?: string;
+  /** Stems the file was on disk under before the slug rule renamed it. */
+  previous_names?: string[];
 }
 
 export interface OciAutoUpdateSettings {

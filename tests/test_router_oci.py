@@ -162,7 +162,7 @@ class TestOciInstall:
             "/api/oci/install",
             json={
                 "name": "spark-recipes",
-                "version": "1.0.0",
+                "version": "1.1.0",
                 "registry": "ghcr.io/kharkevich-engineering-lab/spark-pulse-recipes",
             },
         )

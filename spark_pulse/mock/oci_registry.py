@@ -24,8 +24,10 @@ from spark_pulse.tools.oci_registry import (
     CollectionRecipe,
     RecipeMeta,
     UpdateInfo,
+    _version_sort_key,
     installed_recipe_id,
     recipe_slug,
+    recipe_states,
 )
 
 # ── The canned catalogue ─────────────────────────────────────────────────────
@@ -35,11 +37,13 @@ from spark_pulse.tools.oci_registry import (
 _COLLECTIONS: list[CollectionInfo] = [
     CollectionInfo(
         name="spark-recipes",
-        version="1.0.0",
+        # Ahead of what is installed below, so the collection view has an
+        # update to show: ``1.0.0 → 1.1.0``, as ``mock_check_updates`` says.
+        version="1.1.0",
         description="Spark Pulse recipe collection",
         vendor="Kharkevich Engineering Lab",
         license="MIT",
-        recipe_count=6,
+        recipe_count=7,
         digest="sha256:abc123def456",
         registry="ghcr.io/kharkevich-engineering-lab/spark-pulse-recipes",
     ),
@@ -107,6 +111,15 @@ _COLLECTION_RECIPES: dict[str, list[CollectionRecipe]] = {
             model="deepgrove/Bonsai-2-27B",
             container="llama-cpp-node",
             recipe_version="1.0.0",
+        ),
+        # Not chat: the collection view marks it, as the recipe card does.
+        CollectionRecipe(
+            name="Qwen3-Embedding-4B",
+            description="Qwen3 embeddings at 4B, pooling runner",
+            model="Qwen/Qwen3-Embedding-4B",
+            container="vllm-node",
+            recipe_version="1.1.0",
+            serves="embedding",
         ),
     ],
     "community-recipes": [
@@ -204,7 +217,7 @@ def mock_test_registry_connection(name: str) -> bool:
 
 def mock_list_tags(name: str) -> list[str]:
     """The version tags a simulated registry offers."""
-    return ["1.0.0", "1.0.1", "latest"]
+    return ["1.1.0", "1.0.0", "latest"]
 
 
 # ── Collections ──────────────────────────────────────────────────────────────
@@ -252,11 +265,91 @@ def mock_install_collection(
     ]
 
 
-# ── Single recipes ───────────────────────────────────────────────────────────
+# ── What is installed ────────────────────────────────────────────────────────
 
-#: Which recipes this process has been asked to install, so a second install
-#: can answer "up to date" and an update can answer at all.
-_INSTALLED_RECIPES: set[str] = set()
+#: The content digest of each recipe in the newest version of its collection —
+#: what the real collection view reads off the pulled files. A recipe whose
+#: installed digest differs from its entry here has an update waiting.
+_LATEST_DIGESTS: dict[str, dict[str, str]] = {
+    collection: {r.name: f"sha256:{recipe_slug(r.name)}-latest" for r in recipes}
+    for collection, recipes in _COLLECTION_RECIPES.items()
+}
+
+
+def _initial_installed() -> dict[str, RecipeMeta]:
+    """What a simulated control plane holds before anybody touches it.
+
+    One of every state the collection view can show, so a simulated Library is
+    a rehearsal of all of them: one installed and current, one with an update
+    waiting, one the operator edited (with an update behind it, so the
+    overwrite question is asked), and one the collection no longer ships.
+    """
+    latest = _LATEST_DIGESTS["spark-recipes"]
+
+    def meta(stem: str, version: str, digest: str, **extra) -> RecipeMeta:
+        return RecipeMeta(
+            name=f"{stem}.yaml",
+            source="ghcr.io/kharkevich-engineering-lab/spark-pulse-recipes",
+            collection="spark-recipes",
+            version=version,
+            digest=digest,
+            installed_at="2026-06-15T02:00:00Z",
+            updated_at="2026-06-15T02:00:00Z",
+            local_changes=extra.pop("local_changes", False),
+            **extra,
+        )
+
+    return {
+        "qwen3-8b": meta("qwen3-8b", "1.1.0", latest["qwen3-8b"]),
+        "llama-3-8b": meta("llama-3-8b", "1.0.0", "sha256:llama-3-8b-1.0.0"),
+        "bonsai-2-27b-ternary-llama.cpp": meta(
+            "bonsai-2-27b-ternary-llama.cpp",
+            "1.0.0",
+            "sha256:bonsai-1.0.0",
+            local_changes=True,
+            display_name="Bonsai-2-27B (ternary, llama.cpp)",
+            previous_names=["Bonsai-2-27B (ternary, llama.cpp)"],
+        ),
+        "gemma-2-9b": meta(
+            "gemma-2-9b", "1.0.0", "sha256:gemma-2-9b-1.0.0", display_name="gemma-2-9b"
+        ),
+    }
+
+
+#: Mutable for the life of the process, keyed by stem: an install here is what
+#: the next state read reports, and nothing is written to disk.
+_INSTALLED: dict[str, RecipeMeta] = _initial_installed()
+
+
+def reset_installed() -> None:
+    """Back to the canned starting point. For tests, which share the process."""
+    _INSTALLED.clear()
+    _INSTALLED.update(_initial_installed())
+
+
+def _install(collection_name: str, recipe_name: str) -> str:
+    """Record one recipe as installed at the latest content. Returns its stem."""
+    stem = recipe_slug(recipe_name)
+    version = next(
+        (c.version for c in _COLLECTIONS if c.name == collection_name), "1.0.0"
+    )
+    _INSTALLED[stem] = RecipeMeta(
+        name=f"{stem}.yaml",
+        source=next(
+            (c.registry for c in _COLLECTIONS if c.name == collection_name), ""
+        ),
+        collection=collection_name,
+        version=version,
+        digest=_LATEST_DIGESTS.get(collection_name, {}).get(recipe_name, ""),
+        installed_at="2026-06-15T02:00:00Z",
+        updated_at="2026-06-15T02:00:00Z",
+        local_changes=False,
+        display_name=recipe_name,
+    )
+    return stem
+
+
+# ── Single recipes ───────────────────────────────────────────────────────────
 
 
 def mock_install_oci_recipe(
@@ -272,20 +365,21 @@ def mock_install_oci_recipe(
     spellings of one display name are one recipe.
     """
     recipe_id = installed_recipe_id(recipe_slug(recipe_name))
-    key = f"{collection_name}/{recipe_slug(recipe_name)}"
-    if key in _INSTALLED_RECIPES:
+    current = _INSTALLED.get(recipe_slug(recipe_name))
+    latest = _LATEST_DIGESTS.get(collection_name, {}).get(recipe_name)
+    if current and current.digest == latest and not current.local_changes:
         return {
             "success": True,
             "recipe": recipe_name,
             "recipe_id": recipe_id,
             "action": "up_to_date",
         }
-    _INSTALLED_RECIPES.add(key)
+    _install(collection_name, recipe_name)
     return {
         "success": True,
         "recipe": recipe_name,
         "recipe_id": recipe_id,
-        "action": "installed",
+        "action": "updated" if current else "installed",
     }
 
 
@@ -296,13 +390,88 @@ def mock_update_oci_recipe(
     registry_name: str | None = None,
 ) -> dict:
     """Update one installed recipe. ``ValueError`` when it was never installed."""
-    if f"{collection_name}/{recipe_slug(recipe_name)}" not in _INSTALLED_RECIPES:
+    if recipe_slug(recipe_name) not in _INSTALLED:
         raise ValueError(f"Recipe '{recipe_name}' is not installed")
+    _install(collection_name, recipe_name)
     return {
         "success": True,
         "recipe": recipe_name,
         "recipe_id": installed_recipe_id(recipe_slug(recipe_name)),
         "action": "updated",
+    }
+
+
+# ── The collection view ──────────────────────────────────────────────────────
+
+
+def mock_collection_state(name: str, registry_name: str | None = None) -> dict:
+    """The collection view, derived by the real rule from the canned state.
+
+    Only the inputs are simulated: which recipes are listed, what the newest
+    version's digests are, and what is installed. Matching and the states
+    themselves are :func:`recipe_states`, the code the real view runs.
+    """
+    collection = next((c for c in _COLLECTIONS if c.name == name), None)
+    if collection is None or (registry_name and collection.registry != registry_name):
+        raise ValueError(f"Collection '{name}' not found")
+    metas = [m for m in _INSTALLED.values() if m.collection == name]
+    versions = sorted({m.version for m in metas}, key=_version_sort_key)
+    return {
+        "collection": name,
+        "registry": collection.registry,
+        "description": collection.description,
+        "latest_version": collection.version,
+        "display_version": collection.display_version or collection.version,
+        "installed_version": versions[0] if versions else "",
+        "checked": True,
+        "recipes": recipe_states(
+            _COLLECTION_RECIPES.get(name, []), metas, _LATEST_DIGESTS.get(name, {})
+        ),
+    }
+
+
+def mock_apply_collection_recipes(
+    collection_name: str,
+    recipe_names: list[str],
+    version: str | None = None,
+    registry_name: str | None = None,
+    overwrite_local: bool = False,
+) -> dict:
+    """Install or update several recipes, one result each, as the real one does.
+
+    A recipe edited locally is skipped unless ``overwrite_local``; a name the
+    collection does not carry fails on its own without stopping the rest.
+    """
+    collection = next((c for c in _COLLECTIONS if c.name == collection_name), None)
+    if collection is None:
+        raise ValueError(f"Collection '{collection_name}' not found")
+    latest = _LATEST_DIGESTS.get(collection_name, {})
+    results: list[dict] = []
+    for recipe_name in recipe_names:
+        stem = recipe_slug(recipe_name)
+        result: dict = {
+            "recipe": recipe_name,
+            "recipe_id": installed_recipe_id(stem),
+            "success": False,
+        }
+        current = _INSTALLED.get(stem)
+        if recipe_name not in latest:
+            result["error"] = (
+                f"Recipe '{recipe_name}' is not in "
+                f"{collection_name}:{collection.version}"
+            )
+        elif current and current.digest == latest[recipe_name]:
+            result.update(success=True, action="up_to_date")
+        elif current and current.local_changes and not overwrite_local:
+            result.update(success=True, action="skipped_local_edits")
+        else:
+            _install(collection_name, recipe_name)
+            result.update(success=True, action="updated" if current else "installed")
+        results.append(result)
+    return {
+        "collection": collection_name,
+        "version": version or collection.version,
+        "results": results,
     }
 
 
@@ -328,26 +497,5 @@ def mock_check_updates(
 
 
 def mock_list_oci_recipes() -> list[RecipeMeta]:
-    """The OCI-installed recipes a simulated control plane already holds."""
-    return [
-        RecipeMeta(
-            name="qwen3-8b.yaml",
-            source="spark-official",
-            collection="spark-recipes",
-            version="1.0.0",
-            digest="sha256:abc123",
-            installed_at="2026-06-15T02:00:00Z",
-            updated_at="2026-06-15T02:00:00Z",
-            local_changes=False,
-        ),
-        RecipeMeta(
-            name="llama-3-8b.yaml",
-            source="spark-official",
-            collection="spark-recipes",
-            version="1.0.0",
-            digest="sha256:def456",
-            installed_at="2026-06-15T02:00:00Z",
-            updated_at="2026-06-15T02:00:00Z",
-            local_changes=False,
-        ),
-    ]
+    """The OCI-installed recipes a simulated control plane holds now."""
+    return [_INSTALLED[stem] for stem in sorted(_INSTALLED)]

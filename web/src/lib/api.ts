@@ -1,4 +1,4 @@
-import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheResponse, CacheCleanResponse, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, CustomRecipeInfo, CustomModInfo, ModFileMap, BenchmarkResult, OciRegistry, OciRegistryUpdate, OciCollection, OciCollectionRecipe, OciRecipeMeta, OciUpdateCheck, OciUpdateApply, OciUpdateResult, OciAutoUpdateSettings, EngineListResponse, EngineDetail, EngineIndexRefreshResult, RenderRequest, RenderResult, ModelEntry, ModelSource, ModelDownloadJob, ModelSyncResult, ModelPresence, ModelDeleteResult, ImageEntry, ImagePullJob, ImageSyncResult, ImagePresence, ImageDeleteResult, DeployPlan, DeployPlanRequest, PreflightReport, EngineMetricsWindow, ScheduledDeploy } from "@/lib/types";
+import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheResponse, CacheCleanResponse, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, CustomRecipeInfo, CustomModInfo, ModFileMap, BenchmarkResult, OciRegistry, OciRegistryUpdate, OciCollection, OciCollectionState, OciCollectionApplyResult, OciRecipeMeta, OciAutoUpdateSettings, EngineListResponse, EngineDetail, EngineIndexRefreshResult, RenderRequest, RenderResult, ModelEntry, ModelSource, ModelDownloadJob, ModelSyncResult, ModelPresence, ModelDeleteResult, ImageEntry, ImagePullJob, ImageSyncResult, ImagePresence, ImageDeleteResult, DeployPlan, DeployPlanRequest, PreflightReport, EngineMetricsWindow, ScheduledDeploy } from "@/lib/types";
 
 import type { DeploymentEventPage } from "@/lib/operations";
 
@@ -327,25 +327,24 @@ export async function fetchOciCollections(registry?: string, version?: string, s
   return json<OciCollection[]>(`/oci/collections${query ? `?${query}` : ""}`, { signal });
 }
 
-export async function installOciCollection(name: string, version: string, registry?: string): Promise<{ installed: string[] }> {
-  return json<{ installed: string[] }>("/oci/install", {
-    method: "POST",
-    body: JSON.stringify({ name, version, registry }),
-  });
+/** A collection's newest version and each recipe's one state in it. The
+ *  matching of a listed recipe to an installed file happens on the server,
+ *  which holds the slug rule and the sidecars. */
+export async function fetchOciCollectionState(name: string, registry?: string, signal?: AbortSignal): Promise<OciCollectionState> {
+  const query = registry ? `?${new URLSearchParams({ registry })}` : "";
+  return json<OciCollectionState>(`/oci/collections/${encodeURIComponent(name)}/state${query}`, { signal });
 }
 
-export async function checkOciUpdates(collection?: string, registry?: string, signal?: AbortSignal): Promise<OciUpdateCheck[]> {
-  const params = new URLSearchParams();
-  if (collection) params.set("collection", collection);
-  if (registry) params.set("registry", registry);
-  const query = params.toString();
-  return json<OciUpdateCheck[]>(`/oci/check${query ? `?${query}` : ""}`, { signal });
-}
-
-export async function applyOciUpdates(updates: OciUpdateApply[]): Promise<OciUpdateResult[]> {
-  return json<OciUpdateResult[]>("/oci/update", {
+/** Install or update the named recipes, one result each. Recipes with local
+ *  edits are skipped unless `overwrite_local`, which is sent only after the
+ *  operator has said so. */
+export async function applyOciCollection(
+  name: string,
+  body: { recipes: string[]; version?: string; registry?: string; overwrite_local?: boolean },
+): Promise<OciCollectionApplyResult> {
+  return json<OciCollectionApplyResult>(`/oci/collections/${encodeURIComponent(name)}/apply`, {
     method: "POST",
-    body: JSON.stringify({ updates }),
+    body: JSON.stringify(body),
   });
 }
 
@@ -355,14 +354,6 @@ export async function fetchOciMeta(signal?: AbortSignal): Promise<OciRecipeMeta[
 
 export async function fetchOciMetaByName(name: string): Promise<OciRecipeMeta> {
   return json<OciRecipeMeta>(`/oci/recipes/meta/${encodeURIComponent(name)}`);
-}
-
-export async function fetchOciCollectionRecipes(name: string, version?: string, registry?: string): Promise<OciCollectionRecipe[]> {
-  const params = new URLSearchParams();
-  if (version) params.set("version", version);
-  if (registry) params.set("registry", registry);
-  const query = params.toString();
-  return json<OciCollectionRecipe[]>(`/oci/collections/${encodeURIComponent(name)}/recipes${query ? `?${query}` : ""}`);
 }
 
 export async function fetchOciAutoUpdateSettings(signal?: AbortSignal): Promise<OciAutoUpdateSettings> {
@@ -378,20 +369,6 @@ export async function updateOciAutoUpdateSettings(partial: Partial<OciAutoUpdate
 
 export async function runOciAutoUpdate(): Promise<{ success?: boolean; skipped?: boolean; reason?: string; updated?: number; log?: string[]; error?: string }> {
   return json("/oci/auto-update/run", { method: "POST" });
-}
-
-export async function installOciRecipe(body: { collection: string; recipe: string; version?: string; registry?: string; overwrite?: boolean }): Promise<{ success: boolean; recipe: string; action: string }> {
-  return json<{ success: boolean; recipe: string; action: string }>("/oci/recipes/install", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-}
-
-export async function updateOciRecipe(recipeName: string, body: { collection: string; version?: string; registry?: string }): Promise<{ success: boolean; recipe: string; action: string }> {
-  return json<{ success: boolean; recipe: string; action: string }>(`/oci/recipes/update/${encodeURIComponent(recipeName)}`, {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
 }
 
 export async function uninstallOciRecipe(recipeName: string): Promise<{ success: boolean; recipe: string; action: string }> {

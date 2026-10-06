@@ -1016,6 +1016,26 @@ def install_collection(
     return installed
 
 
+def _find_in_layout(recipes: list[dict], recipe_name: str) -> dict | None:
+    """The pulled recipe a collection listing's name refers to, or ``None``.
+
+    Match by file stem or by the ``name:`` the file declares, both slugged.
+    The collection view sends what the collection *calls* the recipe, which is
+    a display name; the artifact is named for the file. Comparing raw stems
+    matched only when a collection happened to spell them the same way.
+    """
+    wanted = recipe_slug(recipe_name)
+    if not wanted:
+        return None
+    for r in recipes:
+        if recipe_slug(r["filename"]) == wanted:
+            return r
+    for r in recipes:
+        if recipe_slug(_declared_name(r["content"])) == wanted:
+            return r
+    return None
+
+
 def install_oci_recipe(
     collection_name: str,
     recipe_name: str,
@@ -1051,20 +1071,7 @@ def install_oci_recipe(
 
     # Extract recipes and find the target
     recipes = _extract_recipes_from_layout(cache_dir, extract_dir)
-    wanted = recipe_slug(recipe_name)
-    target = None
-    for r in recipes:
-        # Match by file stem or by the ``name:`` the file declares, both
-        # slugged. The browse drawer's Install button sends what the collection
-        # *calls* the recipe, which is a display name; the artifact is named
-        # for the file. Comparing raw stems matched only when a collection
-        # happened to spell them the same way.
-        if recipe_slug(r["filename"]) == wanted:
-            target = r
-            break
-        if wanted and recipe_slug(_declared_name(r["content"])) == wanted:
-            target = r
-            break
+    target = _find_in_layout(recipes, recipe_name)
 
     if not target:
         raise ValueError(
@@ -1737,6 +1744,307 @@ def apply_updates(
             )
 
     return results
+
+
+# ── A collection's recipes, against what is installed ────────────────────────
+#
+# The collection view asks one question per recipe — is it here, and is it the
+# one the collection now ships — and it is answered here rather than in the
+# browser, because the answer needs the slug rule and the sidecars, and a
+# second copy of the slug rule in TypeScript is how the drawer came to offer
+# Install on every installed recipe: it compared the collection's display name
+# to the file's stem, and since the slug rule those are different strings.
+
+#: Every state a recipe in the collection view can be in. ``removed`` is the
+#: one that is not in the listing at all: installed from this collection, gone
+#: from its newest version.
+RECIPE_STATES = ("not_installed", "installed", "update", "local_edits", "removed")
+
+
+def match_installed(
+    listed_names: list[str],
+    metas: list[RecipeMeta],
+    file_stems: dict[str, str] | None = None,
+) -> dict[str, RecipeMeta]:
+    """Which installed recipe each listed one is, by identity.
+
+    Three ways a listed name is an installed recipe, strongest first: its slug
+    — or the slug of the file the collection ships it in, when that is known —
+    *is* the installed stem; it is the ``display_name`` the sidecar recorded at
+    install; it is one of the stems the rename sweep moved the file away from
+    (``previous_names``). Each pass only claims what the passes before it left,
+    so an installed recipe is one listed recipe and never two.
+
+    Equality, never similarity: ``Qwen3.5-X`` and ``Qwen3-5-X`` slug to
+    ``qwen3.5-x`` and ``qwen3-5-x``, and those are two recipes.
+    """
+    file_stems = file_stems or {}
+    by_stem = {_recipe_stem(m.name): m for m in metas}
+    claimed: set[str] = set()
+    out: dict[str, RecipeMeta] = {}
+
+    def claim(name: str, meta: RecipeMeta | None) -> None:
+        if meta is None or name in out:
+            return
+        stem = _recipe_stem(meta.name)
+        if stem in claimed:
+            return
+        claimed.add(stem)
+        out[name] = meta
+
+    for name in listed_names:
+        for stem in (recipe_slug(name), file_stems.get(name, "")):
+            if stem:
+                claim(name, by_stem.get(stem))
+    for name in listed_names:
+        claim(name, next((m for m in metas if m.display_name == name), None))
+    for name in listed_names:
+        claim(name, next((m for m in metas if name in m.previous_names), None))
+    return out
+
+
+def recipe_states(
+    listed: list[CollectionRecipe],
+    metas: list[RecipeMeta],
+    latest_digests: dict[str, str] | None,
+    file_stems: dict[str, str] | None = None,
+) -> list[dict]:
+    """Each listed recipe's one state, then the installed ones no longer listed.
+
+    ``update`` means the content the collection now ships differs from the
+    content installed: ``latest_digests`` is the sha256 of each recipe file in
+    the newest version, the same digest an install records on the sidecar, so
+    the two compare like with like. A recipe whose installed file has been
+    edited is ``local_edits`` whatever upstream did — that is the thing an
+    operator has to know before anything overwrites it — and carries
+    ``update_available`` separately. ``latest_digests`` is ``None`` when the
+    newest version could not be read; nothing is then called an update,
+    because unknown is not changed.
+    """
+    file_stems = file_stems or {}
+    matched = match_installed([r.name for r in listed], metas, file_stems)
+    out: list[dict] = []
+    for r in listed:
+        meta = matched.get(r.name)
+        if meta:
+            stem = _recipe_stem(meta.name)
+        else:
+            stem = file_stems.get(r.name) or recipe_slug(r.name)
+        latest = (latest_digests or {}).get(r.name, "")
+        update_available = bool(meta and latest and latest != meta.digest)
+        if meta is None:
+            state = "not_installed"
+        elif meta.local_changes:
+            state = "local_edits"
+        elif update_available:
+            state = "update"
+        else:
+            state = "installed"
+        out.append(
+            {
+                "name": r.name,
+                "recipe_id": installed_recipe_id(stem),
+                "description": r.description or "",
+                "model": r.model or "",
+                "container": r.container or "",
+                "solo_only": r.solo_only,
+                "cluster_only": r.cluster_only,
+                "serves": r.serves,
+                "state": state,
+                "installed_version": meta.version if meta else "",
+                "update_available": update_available,
+                "local_changes": bool(meta and meta.local_changes),
+            }
+        )
+
+    listed_stems = {_recipe_stem(m.name) for m in matched.values()}
+    for meta in metas:
+        stem = _recipe_stem(meta.name)
+        if stem in listed_stems:
+            continue
+        out.append(
+            {
+                "name": meta.display_name or stem,
+                "recipe_id": installed_recipe_id(stem),
+                "description": "",
+                "model": "",
+                "container": "",
+                "solo_only": False,
+                "cluster_only": False,
+                "serves": "chat",
+                "state": "removed",
+                "installed_version": meta.version,
+                "update_available": False,
+                "local_changes": meta.local_changes,
+            }
+        )
+    return out
+
+
+def _version_sort_key(version: str) -> tuple:
+    """A version tag as something sortable: numbers by value, anything else first."""
+    try:
+        return (1, tuple(int(p) for p in version.lstrip("v").split(".")))
+    except ValueError:
+        return (0, ())
+
+
+def _latest_collection(name: str, registry_name: str | None) -> CollectionInfo:
+    """The newest published version of a collection. ``ValueError`` when none."""
+    matching = [
+        c for c in list_collections(registry_name=registry_name) if c.name == name
+    ]
+    if not matching:
+        raise ValueError(f"Collection '{name}' not found")
+    return max(matching, key=lambda c: _version_sort_key(c.version))
+
+
+def _collection_layout(reg: dict, name: str, tag: str) -> list[dict]:
+    """Every recipe file in one version of a collection, with its content digest.
+
+    Pulled into a directory named for the index's own content, so a tag that
+    is re-pushed with different recipes is a different directory — never the
+    old files with the new ones laid on top — and a version already pulled is
+    read from disk instead of asked for again. A pull that came back short (a
+    layer that would not download is logged and skipped by the puller) is not
+    marked complete, so it is tried again next time rather than cached as the
+    truth.
+    """
+    url = reg.get("url", "")
+    auth = reg.get("auth")
+    index = _fetch_oci_index(url, tag, auth=auth)
+    manifests = index.get("manifests", []) or []
+    key = hashlib.sha256(json.dumps(manifests, sort_keys=True).encode()).hexdigest()
+    layout = OCI_CACHE_DIR / reg["name"] / name / "by-index" / key[:16]
+    marker = layout / ".complete"
+    if not marker.exists():
+        _pull_oci_to_layout(url, tag, layout, auth=auth)
+        pulled = list(layout.glob("*.yaml")) + list(layout.glob("*.yml"))
+        if len(pulled) >= len(manifests):
+            marker.write_text(tag)
+    return _extract_recipes_from_layout(layout, layout / "extracted")
+
+
+def collection_state(name: str, registry_name: str | None = None) -> dict:
+    """The collection view: the newest version, and each recipe's state in it.
+
+    Only recipes installed *from this collection* are compared — the sidecar
+    names its collection, and a recipe of the same name from another one is
+    not this collection's to call installed or out of date.
+    """
+    latest = _latest_collection(name, registry_name)
+    reg = get_registry(latest.registry) or {"name": latest.registry}
+    listed = list_collection_recipes(
+        collection_name=name, registry_name=latest.registry, version=latest.version
+    )
+
+    latest_digests: dict[str, str] | None = None
+    file_stems: dict[str, str] = {}
+    try:
+        pulled = _collection_layout(reg, name, latest.version)
+        latest_digests = {}
+        for r in listed:
+            target = _find_in_layout(pulled, r.name)
+            if target:
+                latest_digests[r.name] = target["digest"]
+                file_stems[r.name] = recipe_slug(target["filename"])
+    except Exception as exc:
+        logger.warning("Could not read %s:%s to compare: %s", name, latest.version, exc)
+
+    metas = [
+        m
+        for m in list_oci_recipes()
+        if m.collection == name and (not m.source or m.source == latest.registry)
+    ]
+    installed_versions = sorted(
+        {m.version for m in metas if m.version}, key=_version_sort_key
+    )
+    return {
+        "collection": name,
+        "registry": latest.registry,
+        "description": latest.description,
+        "latest_version": latest.version,
+        "display_version": latest.display_version or latest.version,
+        # The oldest version anything was installed from: the header's
+        # "1.0.0 → 1.1.0" is about the recipe furthest behind, not the newest.
+        "installed_version": installed_versions[0] if installed_versions else "",
+        # False when the newest version's files could not be read: every
+        # installed recipe is then "installed", and this says it is a guess.
+        "checked": latest_digests is not None,
+        "recipes": recipe_states(listed, metas, latest_digests, file_stems),
+    }
+
+
+def apply_collection_recipes(
+    collection_name: str,
+    recipe_names: list[str],
+    version: str | None = None,
+    registry_name: str | None = None,
+    overwrite_local: bool = False,
+) -> dict:
+    """Install or update several recipes from one version of a collection.
+
+    One pull for all of them, and one result per recipe: a bulk action that
+    stops at the first failure, or reports only a count, leaves the operator
+    guessing which recipes landed. A recipe whose installed file was edited
+    since its install is *skipped* unless ``overwrite_local`` — Update all is
+    not consent to throw an edit away, and saying how many were skipped is
+    what lets the operator decide one at a time.
+    """
+    if version:
+        tag = version
+        reg = get_registry(registry_name) if registry_name else get_default_registry()
+        if not reg:
+            raise ValueError(f"Registry '{registry_name}' not found")
+    else:
+        latest = _latest_collection(collection_name, registry_name)
+        tag = latest.version
+        reg = get_registry(latest.registry) or {"name": latest.registry}
+
+    pulled = _collection_layout(reg, collection_name, tag)
+    RECIPES_DIR.mkdir(parents=True, exist_ok=True)
+    normalize_installed_recipe_names()
+
+    results: list[dict] = []
+    for recipe_name in recipe_names:
+        result: dict = {"recipe": recipe_name, "recipe_id": "", "success": False}
+        try:
+            target = _find_in_layout(pulled, recipe_name)
+            if not target:
+                raise ValueError(
+                    f"Recipe '{recipe_name}' is not in {collection_name}:{tag}"
+                )
+            filename = _installed_filename(target["filename"])
+            result["recipe_id"] = installed_recipe_id(filename)
+            dest = RECIPES_DIR / filename
+            action = "installed"
+            if dest.exists():
+                if dest.read_text() == target["content"]:
+                    result.update(success=True, action="up_to_date")
+                    results.append(result)
+                    continue
+                meta = _read_recipe_meta(filename)
+                # A file with no sidecar was put there by hand: it is somebody's
+                # edit just as surely as a changed one is.
+                if (meta is None or meta.local_changes) and not overwrite_local:
+                    result.update(success=True, action="skipped_local_edits")
+                    results.append(result)
+                    continue
+                action = "updated"
+            write_text_atomic(dest, target["content"])
+            _write_recipe_meta(
+                filename,
+                reg["name"],
+                collection_name,
+                tag,
+                target["digest"],
+                display_name=_declared_name(target["content"]) or recipe_name,
+            )
+            result.update(success=True, action=action)
+        except Exception as exc:
+            result["error"] = str(exc)
+        results.append(result)
+    return {"collection": collection_name, "version": tag, "results": results}
 
 
 # ── Auto-update ──────────────────────────────────────────────────────────────

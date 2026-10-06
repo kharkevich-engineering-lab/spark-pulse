@@ -96,7 +96,11 @@ The switch beside a badge enables or disables the engine, next to the image it g
 
 ![Library — registries](../assets/screenshots/library-registries.png)
 
-Recipe collections published as OCI artifacts: browse a collection, install one recipe from it or all of them, and see which installed recipes have a newer version published. The registries themselves are listed underneath, with whether each one answers — an unreachable registry is why collections are missing, and the fix belongs beside the symptom.
+Recipe collections published as OCI artifacts, one card each, saying how many of its recipes are installed. A card opens the collection: the version you are on and the newest one, and every recipe with one state and at most one action — *not installed* (Install), *installed* (nothing to do), *update available* (Update), *local edits* (shown; updating asks first, because it overwrites them), or *removed upstream* for a recipe the newest version no longer ships. **Update all** leaves local edits alone and says how many it skipped; **Install all** asks before it writes. Uninstalling is on the Recipes page, with every other way a recipe leaves.
+
+![Library — a collection](../assets/screenshots/library-collection.png)
+
+The registries themselves are listed underneath, with whether each one answers — an unreachable registry is why collections are missing, and the fix belongs beside the symptom.
 
 Engine indexes, model sources and the OCI update schedule are configuration, and live in Settings.
 

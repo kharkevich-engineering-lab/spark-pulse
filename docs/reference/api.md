@@ -74,6 +74,11 @@ Applying a mod is not an endpoint: a recipe names its mods and they are copied i
 
 `/api/oci/registries…`, `/api/oci/collections…`, `/api/oci/recipes/install⎮update⎮meta`, `/api/oci/check`, `/api/oci/auto-update/settings`.
 
+| | |
+|---|---|
+| `GET /api/oci/collections/{name}/state?registry=` | The newest version, and each recipe's one state in it: `not_installed`, `installed`, `update`, `local_edits`, or `removed` (installed from this collection, no longer in it). A listed recipe is matched to an installed one by identity — its slug, the sidecar's `display_name`, or a former stem — and `update` means its content digest in the newest version differs from the one recorded at install. |
+| `POST /api/oci/collections/{name}/apply` | `{recipes, version?, registry?, overwrite_local?}` — install or update those recipes from one pull, with a result per recipe. A recipe with local edits is `skipped_local_edits` unless `overwrite_local`. |
+
 ## Settings, config and health
 
 | | |

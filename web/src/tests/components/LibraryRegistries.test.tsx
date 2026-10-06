@@ -1,10 +1,11 @@
-/** The OCI page: registries, collections, and keeping installed recipes current.
+/** The OCI page: registries, their collections, and each recipe's state.
  *
  * Everything on this page mutates what the deploy path will later read, so
- * the properties worth holding are the refusals and the reports: an update
- * that would overwrite a locally-edited recipe is held back, a failed
- * install says which one failed, and nothing is claimed to have been
- * installed that the backend did not confirm.
+ * the properties worth holding are the refusals and the reports: a recipe the
+ * operator edited is not overwritten without asking, Update all leaves it
+ * alone and says so, a bulk action names each recipe that failed, and every
+ * recipe offers at most one thing to do — the drawer used to offer Install on
+ * recipes that were already installed.
  */
 
 import { describe, expect, it, vi, beforeEach } from "vitest";
@@ -14,10 +15,11 @@ import { MemoryRouter } from "react-router-dom";
 import LibraryPage from "@/pages/LibraryPage";
 import type {
   OciCollection,
-  OciCollectionRecipe,
+  OciCollectionApplyResult,
+  OciCollectionState,
   OciRecipeMeta,
+  OciRecipeState,
   OciRegistry,
-  OciUpdateCheck,
 } from "@/lib/types";
 
 vi.mock("@/lib/api", () => ({
@@ -29,35 +31,25 @@ vi.mock("@/lib/api", () => ({
   fetchOciRegistries: vi.fn(),
   fetchOciCollections: vi.fn(),
   fetchOciMeta: vi.fn(),
-  installOciCollection: vi.fn(),
-  checkOciUpdates: vi.fn(),
-  applyOciUpdates: vi.fn(),
+  fetchOciCollectionState: vi.fn(),
+  applyOciCollection: vi.fn(),
   addOciRegistry: vi.fn(),
   updateOciRegistry: vi.fn(),
   removeOciRegistry: vi.fn(),
   testOciRegistry: vi.fn(),
-  fetchOciCollectionRecipes: vi.fn(),
   fetchOciRegistryVersions: vi.fn(),
-  installOciRecipe: vi.fn(),
-  updateOciRecipe: vi.fn(),
-  uninstallOciRecipe: vi.fn(),
 }));
 
 import {
   addOciRegistry,
-  applyOciUpdates,
-  checkOciUpdates,
-  fetchOciCollectionRecipes,
+  applyOciCollection,
+  fetchOciCollectionState,
   fetchOciCollections,
   fetchOciMeta,
   fetchOciRegistries,
   fetchOciRegistryVersions,
-  installOciCollection,
-  installOciRecipe,
   removeOciRegistry,
   testOciRegistry,
-  uninstallOciRecipe,
-  updateOciRecipe,
   updateOciRegistry,
 } from "@/lib/api";
 
@@ -88,18 +80,8 @@ const COLLECTION: OciCollection = {
   registry: "ghcr",
 };
 
-const RECIPE: OciCollectionRecipe = {
-  name: "qwen3-8b",
-  description: "Qwen3 at 8B",
-  model: "Qwen/Qwen3-8B",
-  container: "vllm-node",
-  recipe_version: "2",
-  solo_only: true,
-  cluster_only: false,
-};
-
 const META: OciRecipeMeta = {
-  name: "qwen3-8b",
+  name: "qwen3-8b.yaml",
   source: "ghcr",
   collection: "spark-recipes",
   version: "1.1.0",
@@ -109,26 +91,49 @@ const META: OciRecipeMeta = {
   local_changes: false,
 };
 
-const UPDATE: OciUpdateCheck = {
+const recipe = (name: string, state: OciRecipeState["state"], over: Partial<OciRecipeState> = {}): OciRecipeState => ({
+  name,
+  recipe_id: `oci-${name.toLowerCase().replace(/[^a-z0-9.]+/g, "-")}`,
+  description: `${name} described`,
+  model: "",
+  container: "vllm-node",
+  solo_only: false,
+  cluster_only: false,
+  serves: "chat",
+  state,
+  installed_version: state === "not_installed" ? "" : "1.1.0",
+  update_available: state === "update",
+  local_changes: state === "local_edits",
+  ...over,
+});
+
+/** One recipe in every state, as the simulated backend serves them. */
+const RECIPES: OciRecipeState[] = [
+  recipe("Qwen3.5-397B (PP=3)", "update"),
+  recipe("MiniMax-M2.5", "installed"),
+  recipe("Bonsai-2-27B (ternary)", "local_edits", { update_available: true }),
+  recipe("Gemma-Edited", "local_edits"),
+  recipe("Qwen3-Embedding-4B", "not_installed", { serves: "embedding" }),
+  recipe("Llama-70B", "not_installed"),
+  recipe("Old-Recipe", "removed"),
+];
+
+const STATE: OciCollectionState = {
   collection: "spark-recipes",
-  current_version: "1.1.0",
+  registry: "ghcr",
+  description: "Recipes for the DGX Spark",
   latest_version: "1.2.0",
-  current_digest: "sha256:bbbb",
-  latest_digest: "sha256:aaaa",
-  local_changes: false,
-  added_recipes: ["qwen3-32b"],
-  modified_recipes: ["qwen3-8b"],
+  display_version: "v1.2.0",
+  installed_version: "1.1.0",
+  checked: true,
+  recipes: RECIPES,
 };
 
-// The sub-nav is a real tablist now, so the pills are tabs rather than bare
-// buttons — the selector moves, the coverage does not.
-// The sub-nav is a real tablist now, so the pills are tabs rather than bare
-// buttons — the selector moves, the coverage does not.
-const openTab = (name: string) =>
-  userEvent.click(screen.getByRole("tab", { name: new RegExp(`^${name}`) }));
+const applied = (
+  ...results: OciCollectionApplyResult["results"]
+): OciCollectionApplyResult => ({ collection: "spark-recipes", version: "1.2.0", results });
 
-/** Destructive actions confirm. Two of the three uninstall paths used to act on
- *  the first click and report afterwards. */
+/** Destructive actions confirm. */
 const confirmDialog = async (label: string) =>
   userEvent.click(await screen.findByRole("button", { name: label }));
 
@@ -139,36 +144,40 @@ const renderPage = () =>
     </MemoryRouter>,
   );
 
+const openCollection = async () => {
+  renderPage();
+  await userEvent.click(await screen.findByText("spark-recipes"));
+  return screen.findByTestId("collection-view");
+};
+
+const row = (r: OciRecipeState) => screen.getByTestId(`collection-recipe-${r.recipe_id}`);
+
 describe("Library — registries", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(fetchOciRegistries).mockResolvedValue([REGISTRY]);
     vi.mocked(fetchOciCollections).mockResolvedValue([COLLECTION]);
     vi.mocked(fetchOciMeta).mockResolvedValue([META]);
-    vi.mocked(checkOciUpdates).mockResolvedValue([UPDATE]);
+    vi.mocked(fetchOciCollectionState).mockResolvedValue(STATE);
+    vi.mocked(applyOciCollection).mockResolvedValue(applied());
     vi.mocked(fetchOciRegistryVersions).mockResolvedValue({ versions: ["1.2.0", "1.1.0"] } as never);
-    vi.mocked(fetchOciCollectionRecipes).mockResolvedValue([RECIPE]);
-    vi.mocked(installOciCollection).mockResolvedValue({} as never);
-    vi.mocked(installOciRecipe).mockResolvedValue({} as never);
-    vi.mocked(updateOciRecipe).mockResolvedValue({} as never);
-    vi.mocked(uninstallOciRecipe).mockResolvedValue({} as never);
     vi.mocked(updateOciRegistry).mockResolvedValue(REGISTRY);
     vi.mocked(removeOciRegistry).mockResolvedValue({} as never);
     vi.mocked(addOciRegistry).mockResolvedValue(REGISTRY);
     vi.mocked(testOciRegistry).mockResolvedValue({ ok: true } as never);
-    vi.mocked(applyOciUpdates).mockResolvedValue([
-      { collection: "spark-recipes", success: true, installed: ["qwen3-8b"] },
-    ]);
   });
 
-  describe("browse", () => {
-    it("lists the collections a registry offers, with what is in them", async () => {
+  describe("collections", () => {
+    it("lists the collections a registry offers, with what is in them and what is installed", async () => {
       renderPage();
 
       expect(await screen.findByText("spark-recipes")).toBeInTheDocument();
       expect(screen.getByText("Recipes for the DGX Spark")).toBeInTheDocument();
       expect(screen.getByText("4 recipes")).toBeInTheDocument();
       expect(screen.getByText("Apache-2.0")).toBeInTheDocument();
+      expect(await screen.findByText("1 installed")).toBeInTheDocument();
+      // One view now: no Browse/Installed sub-tabs.
+      expect(screen.queryByRole("tab", { name: /^Browse/ })).not.toBeInTheDocument();
     });
 
     it("points at Settings when no registry has produced a collection", async () => {
@@ -180,235 +189,247 @@ describe("Library — registries", () => {
         screen.getByText("Configure registries in Settings to browse collections"),
       ).toBeInTheDocument();
     });
+  });
 
-    it("opens a collection and lists the recipes it carries", async () => {
-      renderPage();
-      await userEvent.click(await screen.findByText("spark-recipes"));
+  describe("the collection view", () => {
+    it("asks the server for the state of the collection it opened", async () => {
+      await openCollection();
+      expect(fetchOciCollectionState).toHaveBeenCalledWith("spark-recipes", "ghcr", expect.anything());
+      expect(screen.getByTestId("collection-versions")).toHaveTextContent("1.1.0 → 1.2.0 available");
+    });
 
-      await waitFor(() =>
-        expect(fetchOciCollectionRecipes).toHaveBeenCalledWith("spark-recipes", "1.2.0", "ghcr"),
-      );
-      expect(await screen.findByText("qwen3-8b")).toBeInTheDocument();
-      expect(screen.getByText("Qwen3 at 8B")).toBeInTheDocument();
+    it("shows only the newest version when nothing is behind it", async () => {
+      vi.mocked(fetchOciCollectionState).mockResolvedValue({ ...STATE, installed_version: "" });
+      await openCollection();
+      expect(screen.getByTestId("collection-versions")).toHaveTextContent(/^1\.2\.0$/);
+    });
+
+    it("gives every recipe one state and at most one action", async () => {
+      await openCollection();
+      const expected: Record<string, [string, string | null]> = {
+        "Qwen3.5-397B (PP=3)": ["Update available", "Update"],
+        "MiniMax-M2.5": ["Installed", null],
+        "Bonsai-2-27B (ternary)": ["Local edits", "Update"],
+        "Gemma-Edited": ["Local edits", null],
+        "Qwen3-Embedding-4B": ["Not installed", "Install"],
+        "Llama-70B": ["Not installed", "Install"],
+        "Old-Recipe": ["Removed upstream", null],
+      };
+      for (const r of RECIPES) {
+        const [label, action] = expected[r.name];
+        const el = row(r);
+        expect(el).toHaveAttribute("data-state", r.state);
+        expect(el).toHaveTextContent(label);
+        const buttons = within(el).queryAllByRole("button");
+        expect(buttons.map((b) => b.textContent)).toEqual(action ? [action] : []);
+      }
+      // Nothing on this page uninstalls: that is the Recipes page's job.
+      expect(screen.queryByRole("button", { name: /Uninstall/ })).not.toBeInTheDocument();
+      expect(within(row(RECIPES[6])).getByText(/Uninstall it from Recipes/)).toBeInTheDocument();
+    });
+
+    it("marks a recipe that serves something other than chat", async () => {
+      await openCollection();
+      expect(within(row(RECIPES[4])).getByTestId("serves-chip")).toHaveTextContent("Embeddings");
+      expect(within(row(RECIPES[5])).queryByTestId("serves-chip")).not.toBeInTheDocument();
+    });
+
+    it("filters by state", async () => {
+      await openCollection();
+      const names = () =>
+        screen
+          .getAllByTestId(/^collection-recipe-/)
+          .map((el) => el.getAttribute("data-state"));
+
+      await userEvent.click(screen.getByRole("tab", { name: /^Installed/ }));
+      expect(names()).toEqual(["update", "installed", "local_edits", "local_edits", "removed"]);
+
+      await userEvent.click(screen.getByRole("tab", { name: /^Updates/ }));
+      expect(names()).toEqual(["update", "local_edits"]);
+
+      await userEvent.click(screen.getByRole("tab", { name: /^Not installed/ }));
+      expect(names()).toEqual(["not_installed", "not_installed"]);
+
+      await userEvent.click(screen.getByRole("tab", { name: /^All/ }));
+      expect(names()).toHaveLength(RECIPES.length);
+    });
+
+    it("says a filter matched nothing rather than showing a blank list", async () => {
+      vi.mocked(fetchOciCollectionState).mockResolvedValue({
+        ...STATE,
+        recipes: [recipe("MiniMax-M2.5", "installed")],
+      });
+      await openCollection();
+      await userEvent.click(screen.getByRole("tab", { name: /^Updates/ }));
+      expect(screen.getByText("No recipes match this filter.")).toBeInTheDocument();
     });
 
     it("says a collection is empty rather than showing a blank drawer", async () => {
-      vi.mocked(fetchOciCollectionRecipes).mockResolvedValue([]);
+      vi.mocked(fetchOciCollectionState).mockResolvedValue({ ...STATE, recipes: [] });
+      await openCollection();
+      expect(screen.getByText("No recipes found for this collection")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Install all/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Update all/ })).not.toBeInTheDocument();
+    });
+
+    it("reports a state the server could not read", async () => {
+      vi.mocked(fetchOciCollectionState).mockRejectedValue(new Error("registry unreachable"));
       renderPage();
       await userEvent.click(await screen.findByText("spark-recipes"));
-
-      expect(
-        await screen.findByText("No recipes found for this collection"),
-      ).toBeInTheDocument();
-    });
-
-    it("offers Update and Uninstall for a recipe already installed, Install for one that is not", async () => {
-      renderPage();
-      await userEvent.click(await screen.findByText("spark-recipes"));
-      await screen.findByText("qwen3-8b");
-
-      expect(screen.getByRole("button", { name: /Update/ })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /Uninstall/ })).toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: /^Install$/ })).not.toBeInTheDocument();
-    });
-
-    it("installs a single recipe from the version the collection is pinned to", async () => {
-      vi.mocked(fetchOciMeta).mockResolvedValue([]);
-      renderPage();
-      await userEvent.click(await screen.findByText("spark-recipes"));
-      await screen.findByText("qwen3-8b");
-
-      await userEvent.click(screen.getByRole("button", { name: "Install" }));
-
-      await waitFor(() =>
-        expect(installOciRecipe).toHaveBeenCalledWith({
-          collection: "spark-recipes",
-          recipe: "qwen3-8b",
-          version: "1.2.0",
-          registry: "ghcr",
-        }),
-      );
-    });
-
-    it("names the recipe that failed to install rather than a bare error", async () => {
-      vi.mocked(fetchOciMeta).mockResolvedValue([]);
-      vi.mocked(installOciRecipe).mockRejectedValue(new Error("manifest unknown"));
-      renderPage();
-      await userEvent.click(await screen.findByText("spark-recipes"));
-      await screen.findByText("qwen3-8b");
-
-      await userEvent.click(screen.getByRole("button", { name: "Install" }));
-
-      expect(await screen.findByText("Install failed")).toBeInTheDocument();
-      expect(screen.getByText("manifest unknown")).toBeInTheDocument();
-    });
-
-    it("updates one installed recipe", async () => {
-      renderPage();
-      await userEvent.click(await screen.findByText("spark-recipes"));
-      await screen.findByText("qwen3-8b");
-
-      await userEvent.click(screen.getByRole("button", { name: /Update/ }));
-
-      await waitFor(() =>
-        expect(updateOciRecipe).toHaveBeenCalledWith("qwen3-8b", {
-          collection: "spark-recipes",
-          version: "1.2.0",
-          registry: "ghcr",
-        }),
-      );
-    });
-
-    it("reports an update the registry refused", async () => {
-      vi.mocked(updateOciRecipe).mockRejectedValue(new Error("digest mismatch"));
-      renderPage();
-      await userEvent.click(await screen.findByText("spark-recipes"));
-      await screen.findByText("qwen3-8b");
-
-      await userEvent.click(screen.getByRole("button", { name: /Update/ }));
-
-      expect(await screen.findByText("Update failed")).toBeInTheDocument();
-      expect(screen.getByText("digest mismatch")).toBeInTheDocument();
-    });
-
-    it("installs a whole collection and says which version landed", async () => {
-      renderPage();
-      await userEvent.click(await screen.findByText("spark-recipes"));
-
-      await userEvent.click(await screen.findByRole("button", { name: /Install all recipes/ }));
-      await confirmDialog("Install");
-
-      await waitFor(() =>
-        expect(installOciCollection).toHaveBeenCalledWith("spark-recipes", "1.2.0", "ghcr"),
-      );
-      expect(await screen.findByText("Installed spark-recipes:1.2.0")).toBeInTheDocument();
-    });
-
-    it("reports a collection install that failed", async () => {
-      vi.mocked(installOciCollection).mockRejectedValue(new Error("registry unreachable"));
-      renderPage();
-      await userEvent.click(await screen.findByText("spark-recipes"));
-      await userEvent.click(await screen.findByRole("button", { name: /Install all recipes/ }));
-      await confirmDialog("Install");
-
-      expect(await screen.findByText("registry unreachable")).toBeInTheDocument();
-    });
-  });
-
-  describe("installed", () => {
-    it("lists what is installed, from which collection and at what version", async () => {
-      renderPage();
-      await openTab("Installed");
-
-      expect(await screen.findByText("qwen3-8b")).toBeInTheDocument();
-      expect(screen.getByText("spark-recipes@1.1.0")).toBeInTheDocument();
-      expect(screen.getByText("(ghcr)")).toBeInTheDocument();
-    });
-
-    it("says nothing is installed rather than showing an empty list", async () => {
-      vi.mocked(fetchOciMeta).mockResolvedValue([]);
-      vi.mocked(checkOciUpdates).mockResolvedValue([]);
-      renderPage();
-      await openTab("Installed");
-
-      expect(await screen.findByText("No OCI recipes installed")).toBeInTheDocument();
-    });
-
-    it("marks a recipe the operator edited locally", async () => {
-      vi.mocked(fetchOciMeta).mockResolvedValue([{ ...META, local_changes: true }]);
-      renderPage();
-      await openTab("Installed");
-
-      expect(await screen.findByText("Modified")).toBeInTheDocument();
-    });
-
-    it("shows what an update would change before applying it", async () => {
-      renderPage();
-      await openTab("Installed");
-
-      expect(await screen.findByText("Available updates")).toBeInTheDocument();
-      expect(screen.getByText("1.1.0 → 1.2.0")).toBeInTheDocument();
-      expect(screen.getByText("+1")).toBeInTheDocument();
-      expect(screen.getByText("~1")).toBeInTheDocument();
-    });
-
-    /** Applying an update overwrites the file; a collection the operator has
-     *  edited locally would lose that edit, so Apply all is held back. */
-    it("holds back Apply all while any collection carries local changes", async () => {
-      vi.mocked(checkOciUpdates).mockResolvedValue([{ ...UPDATE, local_changes: true }]);
-      renderPage();
-      await openTab("Installed");
-
-      await screen.findByText("Available updates");
-      expect(screen.getByRole("button", { name: "Apply all" })).toBeDisabled();
-      expect(screen.getByText("Local changes")).toBeInTheDocument();
-    });
-
-    it("applies the pending updates and reports how many landed", async () => {
-      vi.mocked(applyOciUpdates).mockResolvedValue([
-        { collection: "spark-recipes", success: true, installed: ["qwen3-8b"] },
-        { collection: "other", success: false, installed: [], error: "boom" },
-      ]);
-      renderPage();
-      await openTab("Installed");
-      await screen.findByText("Available updates");
-
-      await userEvent.click(screen.getByRole("button", { name: "Apply all" }));
-
-      await waitFor(() =>
-        expect(applyOciUpdates).toHaveBeenCalledWith([
-          { collection: "spark-recipes", target_version: "1.2.0", registry: "" },
-        ]),
-      );
-      expect(await screen.findByText("1 succeeded, 1 failed")).toBeInTheDocument();
-    });
-
-    it("reports an apply that never reached the registry", async () => {
-      vi.mocked(applyOciUpdates).mockRejectedValue(new Error("registry unreachable"));
-      renderPage();
-      await openTab("Installed");
-      await screen.findByText("Available updates");
-
-      await userEvent.click(screen.getByRole("button", { name: "Apply all" }));
-
       expect(await screen.findByText("registry unreachable")).toBeInTheDocument();
     });
 
-    it("re-asks the registry when the operator checks for updates", async () => {
-      renderPage();
-      await openTab("Installed");
-      await screen.findByText("Available updates");
-      const before = vi.mocked(checkOciUpdates).mock.calls.length;
+    it("says when the newest version could not be compared", async () => {
+      vi.mocked(fetchOciCollectionState).mockResolvedValue({ ...STATE, checked: false });
+      await openCollection();
+      expect(screen.getByText(/Updates are not shown/)).toBeInTheDocument();
+    });
 
-      await userEvent.click(screen.getByRole("button", { name: "Check" }));
+    it("installs one recipe from the newest version, and refreshes", async () => {
+      vi.mocked(applyOciCollection).mockResolvedValue(
+        applied({ recipe: "Llama-70B", recipe_id: "oci-llama-70b", success: true, action: "installed" }),
+      );
+      await openCollection();
+      await userEvent.click(within(row(RECIPES[5])).getByRole("button", { name: "Install" }));
 
       await waitFor(() =>
-        expect(vi.mocked(checkOciUpdates).mock.calls.length).toBeGreaterThan(before),
+        expect(applyOciCollection).toHaveBeenCalledWith("spark-recipes", {
+          recipes: ["Llama-70B"],
+          version: "1.2.0",
+          registry: "ghcr",
+          overwrite_local: undefined,
+        }),
+      );
+      await waitFor(() => expect(fetchOciCollectionState).toHaveBeenCalledTimes(2));
+      // The card counts come from the sidecars, which just changed.
+      expect(vi.mocked(fetchOciMeta).mock.calls.length).toBeGreaterThan(1);
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    it("updates a recipe with no local edits without asking", async () => {
+      await openCollection();
+      await userEvent.click(within(row(RECIPES[0])).getByRole("button", { name: "Update" }));
+      await waitFor(() =>
+        expect(applyOciCollection).toHaveBeenCalledWith(
+          "spark-recipes",
+          expect.objectContaining({ recipes: ["Qwen3.5-397B (PP=3)"], overwrite_local: undefined }),
+        ),
       );
     });
 
-    it("uninstalls a recipe and says so", async () => {
-      renderPage();
-      await openTab("Installed");
-      await screen.findByText("qwen3-8b");
+    it("asks before an update overwrites local edits, and sends the overwrite only then", async () => {
+      await openCollection();
+      await userEvent.click(within(row(RECIPES[2])).getByRole("button", { name: "Update" }));
 
-      await userEvent.click(screen.getByRole("button", { name: "Uninstall this recipe" }));
-      await confirmDialog("Uninstall");
+      const dialog = await screen.findByRole("dialog");
+      expect(dialog).toHaveTextContent("Bonsai-2-27B (ternary) was edited here");
+      expect(applyOciCollection).not.toHaveBeenCalled();
 
-      await waitFor(() => expect(uninstallOciRecipe).toHaveBeenCalledWith("qwen3-8b"));
-      expect(await screen.findByText("Uninstalled qwen3-8b")).toBeInTheDocument();
+      await userEvent.click(within(dialog).getByRole("button", { name: "Update" }));
+      await waitFor(() =>
+        expect(applyOciCollection).toHaveBeenCalledWith(
+          "spark-recipes",
+          expect.objectContaining({ recipes: ["Bonsai-2-27B (ternary)"], overwrite_local: true }),
+        ),
+      );
     });
 
-    it("reports an uninstall that failed", async () => {
-      vi.mocked(uninstallOciRecipe).mockRejectedValue(new Error("recipe is deployed"));
-      renderPage();
-      await openTab("Installed");
-      await screen.findByText("qwen3-8b");
+    it("leaves local edits alone when the overwrite is cancelled", async () => {
+      await openCollection();
+      await userEvent.click(within(row(RECIPES[2])).getByRole("button", { name: "Update" }));
+      await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Cancel" }));
+      expect(applyOciCollection).not.toHaveBeenCalled();
+    });
 
-      await userEvent.click(screen.getByRole("button", { name: "Uninstall this recipe" }));
-      await confirmDialog("Uninstall");
+    it("names the recipe that failed rather than a bare error", async () => {
+      vi.mocked(applyOciCollection).mockResolvedValue(
+        applied({ recipe: "Llama-70B", recipe_id: "oci-llama-70b", success: false, error: "manifest unknown" }),
+      );
+      await openCollection();
+      await userEvent.click(within(row(RECIPES[5])).getByRole("button", { name: "Install" }));
 
-      expect(await screen.findByText("recipe is deployed")).toBeInTheDocument();
+      expect(await screen.findByText("Could not apply")).toBeInTheDocument();
+      expect(screen.getByText(/Llama-70B: manifest unknown/)).toBeInTheDocument();
+    });
+
+    it("reports a request that never reached the registry", async () => {
+      vi.mocked(applyOciCollection).mockRejectedValue(new Error("registry unreachable"));
+      await openCollection();
+      await userEvent.click(within(row(RECIPES[0])).getByRole("button", { name: "Update" }));
+      expect(await screen.findByText("registry unreachable")).toBeInTheDocument();
+    });
+
+    it("updates all, leaves local edits as they are, and says how many it skipped", async () => {
+      vi.mocked(applyOciCollection).mockResolvedValue(
+        applied(
+          { recipe: "Qwen3.5-397B (PP=3)", recipe_id: "a", success: true, action: "updated" },
+          { recipe: "Bonsai-2-27B (ternary)", recipe_id: "b", success: true, action: "skipped_local_edits" },
+        ),
+      );
+      await openCollection();
+      expect(screen.getByText("Update all skips local edits (1).")).toBeInTheDocument();
+
+      await userEvent.click(screen.getByRole("button", { name: "Update all (1)" }));
+
+      await waitFor(() =>
+        expect(applyOciCollection).toHaveBeenCalledWith("spark-recipes", {
+          recipes: ["Qwen3.5-397B (PP=3)", "Bonsai-2-27B (ternary)"],
+          version: "1.2.0",
+          registry: "ghcr",
+          overwrite_local: undefined,
+        }),
+      );
+      expect(await screen.findByText("Update finished")).toBeInTheDocument();
+      expect(screen.getByText("1 done · 1 skipped for local edits · 0 failed")).toBeInTheDocument();
+    });
+
+    it("installs all the missing recipes only after asking, and names each failure", async () => {
+      vi.mocked(applyOciCollection).mockResolvedValue(
+        applied(
+          { recipe: "Qwen3-Embedding-4B", recipe_id: "a", success: true, action: "installed" },
+          { recipe: "Llama-70B", recipe_id: "b", success: false },
+        ),
+      );
+      await openCollection();
+      await userEvent.click(screen.getByRole("button", { name: "Install all (2)" }));
+
+      const dialog = await screen.findByRole("dialog");
+      expect(dialog).toHaveTextContent("Install 2 recipes from spark-recipes 1.2.0?");
+      expect(applyOciCollection).not.toHaveBeenCalled();
+      await userEvent.click(within(dialog).getByRole("button", { name: "Install" }));
+
+      await waitFor(() =>
+        expect(applyOciCollection).toHaveBeenCalledWith(
+          "spark-recipes",
+          expect.objectContaining({ recipes: ["Qwen3-Embedding-4B", "Llama-70B"] }),
+        ),
+      );
+      expect(await screen.findByText("Install finished")).toBeInTheDocument();
+      expect(screen.getByText(/1 done · 0 skipped for local edits · 1 failed/)).toBeInTheDocument();
+      expect(screen.getByText(/Llama-70B: Unknown error/)).toBeInTheDocument();
+    });
+
+    it("reports a bulk request that failed outright", async () => {
+      vi.mocked(applyOciCollection).mockRejectedValue(new Error("pull failed"));
+      await openCollection();
+      await userEvent.click(screen.getByRole("button", { name: "Update all (1)" }));
+      expect(await screen.findByText("pull failed")).toBeInTheDocument();
+    });
+
+    it("offers no bulk action when there is nothing to do", async () => {
+      vi.mocked(fetchOciCollectionState).mockResolvedValue({
+        ...STATE,
+        recipes: [recipe("MiniMax-M2.5", "installed"), recipe("Gemma-Edited", "local_edits")],
+      });
+      await openCollection();
+      expect(screen.queryByRole("button", { name: /Update all/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Install all/ })).not.toBeInTheDocument();
+    });
+
+    it("closes", async () => {
+      await openCollection();
+      await userEvent.click(screen.getByRole("button", { name: "Close" }));
+      expect(screen.queryByTestId("collection-view")).not.toBeInTheDocument();
     });
   });
 
