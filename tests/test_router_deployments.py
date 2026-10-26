@@ -186,6 +186,32 @@ class TestPlanEndpoint:
         assert data["launch_command"].endswith("--enable-prefix-caching")
         assert data["model"] == "somebody/other-model"
 
+    def test_plan_never_returns_the_hub_token(self, client):
+        """The preview reached a browser with the operator's token in it.
+
+        Every container env carried ``HF_TOKEN`` in clear, so the deploy
+        dialog, the API and the MCP tools all handed it out. The container
+        still gets it; the answer says only that one is set.
+        """
+        token = "hf_do_not_leak_0123456789"
+        with patch.object(type(config), "hf_token", property(lambda self: token)):
+            response = client.post(
+                "/api/deployments/plan", json={"recipe_id": "qwen3-8b"}
+            )
+
+        assert response.status_code == 200
+        assert token not in response.text
+        assert response.json()["container"]["env"]["HF_TOKEN"] == nr.REDACTED
+
+    def test_create_never_returns_the_hub_token(self, client):
+        token = "hf_do_not_leak_0123456789"
+        with patch.object(type(config), "hf_token", property(lambda self: token)):
+            response = client.post("/api/deployments", json={"recipe_id": "qwen3-8b"})
+            _join_deploy_threads()
+
+        assert response.status_code == 200
+        assert token not in response.text
+
     def test_plan_of_an_unknown_recipe_is_400(self, client):
         response = client.post("/api/deployments/plan", json={"recipe_id": "nope"})
         assert response.status_code == 400

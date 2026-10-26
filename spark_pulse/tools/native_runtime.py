@@ -50,6 +50,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import shlex
 import socket
 import tempfile
@@ -259,6 +260,53 @@ def publish_event(
 
 # ── Plan model ───────────────────────────────────────────────────────────────
 
+#: An environment variable whose *name* says it holds a credential. The
+#: container is handed the real value; everything that serialises a plan —
+#: the preview, the create response, every MCP tool that calls them — shows
+#: this placeholder instead, because a plan is something a browser reads.
+REDACTED = "[REDACTED]"
+
+_SECRET_NAME_RE = re.compile(
+    r"TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|ACCESS_KEY|CREDENTIAL", re.IGNORECASE
+)
+
+# ``export NAME="value"``, the line Engine._script renders per variable.
+_EXPORT_RE = re.compile(r"^(export\s+(\w+)=)(.*)$", re.MULTILINE)
+
+
+def is_secret_env(name: str) -> bool:
+    """Whether a variable's name marks its value as a credential."""
+    return bool(_SECRET_NAME_RE.search(name))
+
+
+def redact_env(env: dict[str, str]) -> dict[str, str]:
+    """``env`` with every credential's value replaced by :data:`REDACTED`."""
+    return {k: (REDACTED if is_secret_env(k) else v) for k, v in env.items()}
+
+
+def redact_script(script: str) -> str:
+    """A launch script with each credential's ``export`` value replaced.
+
+    A recipe's own ``env:`` block is rendered into the script, so a recipe
+    that sets ``HF_TOKEN`` there would otherwise ship it in every preview.
+    """
+    return _EXPORT_RE.sub(
+        lambda m: (
+            f'{m.group(1)}"{REDACTED}"' if is_secret_env(m.group(2)) else m.group(0)
+        ),
+        script,
+    )
+
+
+def _redact_rank(rank: dict[str, Any]) -> dict[str, Any]:
+    """One rendered rank (``LaunchScript.to_dict``) with credentials redacted."""
+    out = dict(rank)
+    if isinstance(out.get("env"), dict):
+        out["env"] = redact_env(out["env"])
+    if isinstance(out.get("script"), str):
+        out["script"] = redact_script(out["script"])
+    return out
+
 
 @dataclass
 class ContainerSpec:
@@ -287,7 +335,14 @@ class ContainerSpec:
     user: str | None = ENGINE_USER
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        """The serialised spec, credentials redacted (see :data:`REDACTED`).
+
+        Nothing launches from this dict — the deploy path holds the object —
+        so the real values never need to leave the process.
+        """
+        data = asdict(self)
+        data["env"] = redact_env(self.env)
+        return data
 
 
 @dataclass
@@ -325,6 +380,7 @@ class RankPlan:
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data["container"] = self.container.to_dict()
+        data["script"] = redact_script(self.script)
         return data
 
 
@@ -407,6 +463,7 @@ class DeployPlan:
         data = asdict(self)
         data["container"] = self.container.to_dict()
         data["rank_plans"] = [r.to_dict() for r in self.rank_plans]
+        data["ranks"] = [_redact_rank(rank) for rank in self.ranks]
         return data
 
     @property
@@ -1188,6 +1245,14 @@ def _build_env(
     # The image's own HOME is root's, and the container is not root's. Set
     # after the recipe's block env, so a recipe that names one still wins.
     env.setdefault("HOME", CONTAINER_HOME)
+    # Only rank zero carries the hub token. Every other rank loads from the
+    # snapshot replication put on its node, so the token has no reason to be
+    # there — the rule ``models.worker_env`` already applies to replication —
+    # and on a peer it is readable by anyone who can inspect that container.
+    if node_rank > 0:
+        for key in tools.models.TOKEN_ENV_KEYS:
+            env.pop(key, None)
+        return env
     token = config.hf_token
     if token:
         env["HF_TOKEN"] = token
