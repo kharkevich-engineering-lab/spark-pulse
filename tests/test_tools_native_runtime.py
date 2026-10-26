@@ -2222,6 +2222,85 @@ class TestSizeOneIsUnchanged:
         )
 
 
+class TestTheHubToken:
+    """Where ``HF_TOKEN`` goes: rank zero's container, and nowhere else."""
+
+    TOKEN = "hf_do_not_leak_0123456789"
+
+    @pytest.fixture(autouse=True)
+    def token(self):
+        with patch.object(type(config), "hf_token", property(lambda _: self.TOKEN)):
+            yield
+
+    def test_rank_zero_is_handed_the_token(self, native):
+        plan = native.plan("qwen3-8b-tp2", nodes=PAIR, solo=False)
+
+        assert plan.head.container.env["HF_TOKEN"] == self.TOKEN
+
+    def test_a_peer_rank_is_not(self, native):
+        """A peer loads the snapshot replication put there, as ``worker_env`` says."""
+        plan = native.plan("qwen3-8b-tp2", nodes=PAIR, solo=False)
+
+        assert not any(
+            key in plan.rank_plans[1].container.env
+            for key in tools.models.TOKEN_ENV_KEYS
+        )
+
+    def test_the_serialised_plan_carries_no_token(self, native):
+        plan = native.plan("qwen3-8b-tp2", nodes=PAIR, solo=False)
+
+        data = plan.to_dict()
+
+        assert self.TOKEN not in json.dumps(data)
+        assert data["container"]["env"]["HF_TOKEN"] == nr.REDACTED
+        assert data["rank_plans"][0]["container"]["env"]["HF_TOKEN"] == nr.REDACTED
+
+    def test_serialising_leaves_the_plan_itself_intact(self, native):
+        """Nothing launches from the dict, so redacting it must not touch the object."""
+        plan = native.plan("qwen3-8b-tp2", nodes=PAIR, solo=False)
+
+        plan.to_dict()
+
+        assert plan.head.container.env["HF_TOKEN"] == self.TOKEN
+
+
+class TestRedaction:
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "HF_TOKEN",
+            "HUGGING_FACE_HUB_TOKEN",
+            "OPENAI_API_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "DB_PASSWORD",
+            "client_secret",
+        ],
+    )
+    def test_a_credential_name_is_redacted(self, name):
+        assert nr.redact_env({name: "v"}) == {name: nr.REDACTED}
+
+    @pytest.mark.parametrize(
+        "name", ["NCCL_IB_HCA", "HF_HOME", "VLLM_HOST_IP", "NCCL_SOCKET_IFNAME"]
+    )
+    def test_an_ordinary_name_is_kept(self, name):
+        assert nr.redact_env({name: "v"}) == {name: "v"}
+
+    def test_a_script_export_is_redacted_and_the_rest_kept(self):
+        script = (
+            "#!/usr/bin/env bash\n"
+            'export HF_TOKEN="hf_secret"\n'
+            'export NCCL_IB_HCA="rocep1s0f0"\n'
+            "vllm serve m --api-key-file /x\n"
+        )
+
+        out = nr.redact_script(script)
+
+        assert "hf_secret" not in out
+        assert f'export HF_TOKEN="{nr.REDACTED}"' in out
+        assert 'export NCCL_IB_HCA="rocep1s0f0"' in out
+        assert "vllm serve m --api-key-file /x" in out
+
+
 class TestRankNaming:
     def test_a_rank_container_carries_deployment_rank_and_generation(self, native):
         plan = native.plan(
