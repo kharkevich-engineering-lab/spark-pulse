@@ -466,6 +466,15 @@ def apply_customization(recipe: dict[str, Any], customization: dict | None) -> N
         if field in customization:
             recipe[field] = customization[field]
 
+    # The top-level env and mods of a v2 payload are a copy of the default
+    # engine's block, and an engine reads its block when it has one — so an
+    # override written only to the copy never reaches the launch.
+    block = (recipe.get("engine_specs") or {}).get(recipe.get("engine"))
+    if isinstance(block, dict):
+        for field in ("env", "mods"):
+            if field in customization:
+                block[field] = customization[field]
+
     # A customization can add a ``command``, which pins the recipe to one
     # engine; the support table has to follow it.
     if "command" in customization:
