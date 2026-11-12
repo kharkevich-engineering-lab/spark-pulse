@@ -63,6 +63,7 @@ def facts(**overrides: Any) -> pb.NodeFacts:
         "cpu_count": 20,
         "memory_bytes": 128 * 1024**3,
         "hardware_fingerprint": "fingerprint-1",
+        "stable_fingerprint": "stable-fingerprint-1",
         # A simulated node has a Docker daemon that answers. An *empty*
         # docker_version is how the doctor is told a node's daemon is not
         # running, so leaving it blank would make every simulated node report a

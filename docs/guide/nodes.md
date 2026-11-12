@@ -44,7 +44,9 @@ The node dials the control plane by the control node's registry address (or the 
 
 ### The hardware fingerprint
 
-Enrolment records a fingerprint of the machine — a board serial where one is readable, otherwise a hash of the physical interface names, CPU count, memory and machine-id — and every later connection is compared against it, so a node rebuilt under an already-accepted identity is *denied and surfaced* rather than trusted. Docker's interfaces (`docker0`, `br-*`, and the `veth*` end of every container) are excluded: they come and go with workloads, and a fingerprint that moved when a container stopped would deny a node for running one.
+Enrolment records a fingerprint of the machine — a board serial where one is readable, otherwise a hash of the physical interface names, CPU count and machine-id — and every later connection is compared against it, so a node rebuilt under an already-accepted identity is *denied and surfaced* rather than trusted. Docker's interfaces (`docker0`, `br-*`, and the `veth*` end of every container) are excluded: they come and go with workloads, and a fingerprint that moved when a container stopped would deny a node for running one.
+
+The memory size is excluded for the same reason. The first fingerprint hashed it, and the kernel reports it net of reservations that differ from boot to boot: a DGX Spark came back from a reboot one 4 KiB page larger and was denied as reimaged. The agent still sends that first print as well, unchanged, because a control plane rolled back to before the change compares nothing else; a current one compares only the new print and records it the first time a node that enrolled earlier sends it.
 
 The control node is the one machine that cannot be surfaced to anybody — a denied control node is a control plane that exits at startup — so if its own ledger denies it, it says so in the log and re-enrols under the same identity.
 

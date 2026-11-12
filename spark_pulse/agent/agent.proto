@@ -800,8 +800,12 @@ message NodeFacts {
   uint32 gpu_count = 10;
   repeated NetworkInterface interfaces = 11;
   repeated string infiniband_interfaces = 12;
-  // Stable across reboots, unstable across a reimage. Compared on every
-  // heartbeat against what enrollment recorded.
+  // The first fingerprint: a board serial, else a hash of the interface
+  // names, CPU count, *memory size* and machine-id. The memory size is net of
+  // kernel reservations and moved by one page across a reboot on a DGX Spark,
+  // which read as a reimage. Still sent, unchanged, because it is all a
+  // control plane before `stable_fingerprint` compares; a current one ignores
+  // it whenever `stable_fingerprint` is set.
   string hardware_fingerprint = 13;
   // What `ibdev2netdev` prints: each RoCE device and the netdev it drives,
   // with whether the port is ACTIVE. The control plane builds a node's fabric
@@ -812,6 +816,11 @@ message NodeFacts {
   // plane compares against the binary it packages to say "current": a
   // version string is baked at build time and can lie, bytes cannot.
   string binary_sha256 = 15;
+  // Stable across reboots, unstable across a reimage: the board serial, else
+  // a hash of the interface names, CPU count and machine-id — nothing the
+  // kernel recomputes at boot. Compared on every connection against what
+  // enrollment (or the first connection that carried it) recorded.
+  string stable_fingerprint = 16;
 }
 
 message RoceLink {
