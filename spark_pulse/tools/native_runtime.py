@@ -134,6 +134,10 @@ from spark_pulse.tools.runtime_errors import NativeRuntimeError as NativeRuntime
 logger = logging.getLogger(__name__)
 
 RUNTIME_NAME = "native"
+#: The run backend this module is (``tools.backends.DockerBackend.name``),
+#: written onto every record it makes. ``runtime`` above is the older note and
+#: stays as it is.
+BACKEND_NAME = "docker"
 SCRIPT_PATH = "/workspace/exec-script.sh"
 MODS_DIR = "/workspace/mods"
 CONTAINER_PREFIX = "spark-pulse-"
@@ -418,6 +422,12 @@ class DeployPlan:
     workdir: str = ""
     warnings: list[str] = field(default_factory=list)
     runtime: str = RUNTIME_NAME
+    #: The backend that realised this plan, the intent it realised (redacted;
+    #: ``RunIntent.to_dict``) and that intent's hash, which two runs of the
+    #: same thing share whatever their ids, names and ports turned out to be.
+    backend: str = BACKEND_NAME
+    intent: dict[str, Any] = field(default_factory=dict)
+    intent_hash: str = ""
     created_at: str = field(default_factory=_now)
 
     def to_dict(self) -> dict[str, Any]:
@@ -1198,6 +1208,9 @@ def realise(
         memory_budget=budget,
         serves=intent.serves,
         warnings=warnings,
+        backend=BACKEND_NAME,
+        intent=intent.to_dict(),
+        intent_hash=intent.intent_hash(),
     )
 
 
@@ -1230,6 +1243,12 @@ def _record_from_plan(plan_obj: DeployPlan, status: str) -> dict[str, Any]:
         "log_path": None,
         # Native additions.
         "runtime": RUNTIME_NAME,
+        # Which backend runs it and what it is (#162). The intent is the
+        # redacted one the plan carries; the hash is how a later change can
+        # tell "the same run again" from "a different run under one name".
+        "backend": plan_obj.backend,
+        "intent": plan_obj.intent,
+        "intent_hash": plan_obj.intent_hash,
         "engine": plan_obj.engine,
         "variant": plan_obj.variant,
         "image_ref": plan_obj.image_ref,
@@ -3188,6 +3207,11 @@ def list_deployments(docker: Any | None = None) -> list[dict[str, Any]]:
             "launch_command": "",
             "log_path": None,
             "runtime": RUNTIME_NAME,
+            # Adopted from a container: the backend is known, the intent that
+            # started it is not, so there is no hash to claim.
+            "backend": BACKEND_NAME,
+            "intent": None,
+            "intent_hash": None,
             "engine": "",
             "variant": "",
             "image_ref": container.metadata.image or container.image,

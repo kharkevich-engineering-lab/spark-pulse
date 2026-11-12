@@ -19,8 +19,10 @@ imports.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from spark_pulse import tools
@@ -38,7 +40,30 @@ from spark_pulse.tools.parallelism import (
     parse_parallelism,
     validate_cluster_capacity,
 )
+from spark_pulse.tools.redaction import REDACTED, is_secret_env
 from spark_pulse.tools.runtime_errors import MissingModelError, NativeRuntimeError
+
+#: Recipe keys that are computed against this control plane when a recipe is
+#: listed — which engines are enabled, which support it — rather than written
+#: in the recipe. They would change a run's hash without changing the run.
+RECIPE_ANNOTATIONS = frozenset({"engine_support"})
+
+
+def _redacted(value: Any) -> Any:
+    """``value`` with every credential-named key's value replaced.
+
+    The intent is stored on the run's record, which a browser reads, and a
+    recipe's ``env:`` may name a token. The rule is the plan's own
+    (:func:`~spark_pulse.tools.redaction.is_secret_env`), applied at any depth.
+    """
+    if isinstance(value, dict):
+        return {
+            k: (REDACTED if is_secret_env(str(k)) else _redacted(v))
+            for k, v in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_redacted(v) for v in value]
+    return value
 
 
 @dataclass
@@ -77,6 +102,49 @@ class RunIntent:
     name: str
     serves: str
     warnings: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """The intent as stored on a run: what it is, credentials redacted.
+
+        Not its identity (``deployment_id``, ``name``), which the record holds
+        already, nor what was true when it was resolved (``model_present``,
+        ``warnings``): two runs of the same thing have the same intent.
+        """
+        recipe = {k: v for k, v in self.recipe.items() if k not in RECIPE_ANNOTATIONS}
+        return _redacted(
+            {
+                "recipe_id": self.recipe_id,
+                "recipe": recipe,
+                "engine": self.engine_name,
+                "variant": self.variant,
+                "image_ref": self.image_ref,
+                "model": self.model,
+                "model_requested": self.model_requested,
+                "nodes": list(self.nodes),
+                "topology": [asdict(node) for node in self.topology.nodes],
+                "mods": list(self.mods),
+                "overrides": dict(self.overrides),
+                "defaults": dict(self.defaults),
+                "extra_args": list(self.extra_args),
+                "port_pin": self.port_pin,
+                "port_preference": self.port_preference,
+                "rendezvous_port": self.rendezvous_port,
+                "rpc_port": self.rpc_port,
+                "serves": self.serves,
+            }
+        )
+
+    def intent_hash(self) -> str:
+        """SHA-256 over :meth:`to_dict`'s canonical JSON.
+
+        Canonical — sorted keys, no whitespace, non-JSON values as their string
+        — so the same intent hashes the same in any process on any machine.
+        Over the redacted form, so a rotated token is not a different run.
+        """
+        canonical = json.dumps(
+            self.to_dict(), sort_keys=True, separators=(",", ":"), default=str
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     @property
     def reserved_ports(self) -> list[tuple[int | None, str]]:
