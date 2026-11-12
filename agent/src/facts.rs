@@ -368,16 +368,30 @@ fn serial_fingerprint() -> String {
 ///
 /// Docker's interfaces are excluded because they appear and vanish with
 /// workloads: a fingerprint that changed when a container started would be
-/// useless for detecting a reimage. Which names those are is decided by
-/// [`classify_interface`], which mirrors the control plane's own rule.
+/// useless for detecting a reimage.
+///
+/// **Which names those are is frozen here, not read from
+/// [`classify_interface`].** The ledger compares this print exactly, so a
+/// rule that changed under it would deny every enrolled node it newly
+/// excludes as reimaged on upgrade. Podman's bridges (#169) are container
+/// interfaces to the classifier and still count here; dropping them from the
+/// print waits for a versioned print the ledger can migrate (item 3 of the
+/// v2 rollout), the way `stable_fingerprint` replaced the memory-hashing one.
 pub fn identifying_names(interfaces: &[NetworkInterface]) -> Vec<&str> {
     let mut names: Vec<&str> = interfaces
         .iter()
-        .filter(|i| !i.name.is_empty() && i.r#type != "docker")
+        .filter(|i| !i.name.is_empty() && !excluded_from_print(&i.name))
         .map(|i| i.name.as_str())
         .collect();
     names.sort_unstable();
     names
+}
+
+/// The container interfaces the stable print has always excluded. Frozen.
+fn excluded_from_print(name: &str) -> bool {
+    ["docker", "br-", "veth"]
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
 }
 
 /// The fingerprint of a machine with no board serial. Pure.

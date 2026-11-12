@@ -183,9 +183,11 @@ def _classify_interface(
     Podman's bridges are the same thing under its own names: ``podman*``
     (netavark) and ``cni-podman*`` (CNI), each created by the runtime when a
     network first gets a container. Reported as node interfaces, they were
-    offered to interface discovery and counted in the fingerprint (#169).
-    The class stays ``docker``: it means *a container runtime's*, and the
-    agent's fingerprint already keys on it.
+    offered to interface discovery (#169). The class stays ``docker``: it
+    means *a container runtime's*. The agent's stable fingerprint does not
+    follow this rule — its exclusions are frozen (``identifying_names`` in
+    ``agent/src/facts.rs``), because the ledger compares the print exactly
+    and a newly excluded name would deny an enrolled node on upgrade.
     """
     if name == "lo":
         return "loopback"

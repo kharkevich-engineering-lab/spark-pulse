@@ -252,6 +252,25 @@ fn docker_interfaces_are_not_identifying() {
     assert_eq!(identifying_names(&interfaces), vec!["enp1s0", "ib0"]);
 }
 
+#[test]
+fn podman_bridges_still_count_in_the_print() {
+    // The classifier calls them container interfaces (#169), but the ledger
+    // compares the print exactly: excluding them here would deny, on
+    // upgrade, every enrolled node that has one. Frozen until the print is
+    // versioned and migrated.
+    assert_eq!(classify_interface("podman0"), "docker");
+    let interfaces = [
+        interface("enp1s0"),
+        interface("podman0"),
+        interface("cni-podman0"),
+        interface("veth1"),
+    ];
+    assert_eq!(
+        identifying_names(&interfaces),
+        vec!["cni-podman0", "enp1s0", "podman0"]
+    );
+}
+
 // ── RoCE links, what ibdev2netdev prints ────────────────────────────────────
 
 #[test]
