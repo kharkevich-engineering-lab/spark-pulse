@@ -969,6 +969,12 @@ def _run_download(
             )
             done, _ = _dir_stats(Path(path))
         stop.set()
+        # The marker goes down before the job says ``completed``: whoever
+        # waits on that word — a scheduled deploy, presence, replication —
+        # reads the snapshot next, and a filtered download read before its
+        # filter is recorded is judged against the whole revision (partial).
+        latest = get_download(job_id) or job
+        _record_download({**latest, "bytes_done": done}, str(path))
         finished = _set_job(
             job_id,
             status="completed",
@@ -980,7 +986,6 @@ def _run_download(
             finished_at=_now(),
         )
         if finished:
-            _record_download(finished, str(path))
             _publish_job(EVENT_COMPLETED, finished)
     except BaseException as exc:  # noqa: BLE001 — surface any failure on the job
         stop.set()
