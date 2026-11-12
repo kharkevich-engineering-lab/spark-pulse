@@ -1,0 +1,296 @@
+{
+  "cache_mounts": [
+    "~/.cache/huggingface",
+    "~/.cache/llama.cpp"
+  ],
+  "container": {
+    "cap_add": [],
+    "command": "sleep infinity",
+    "devices": [],
+    "entrypoint_clear": true,
+    "env": {
+      "GLOO_SOCKET_IFNAME": "eth0",
+      "HF_HOME": "/home/spark/.cache/huggingface",
+      "HF_TOKEN": "[REDACTED]",
+      "HOME": "/home/spark",
+      "LLAMA_ARG_HOST": "0.0.0.0",
+      "LLAMA_CACHE": "/home/spark/.cache/llama.cpp",
+      "NCCL_IB_HCA": "ib0,ib1",
+      "NCCL_SOCKET_IFNAME": "eth0"
+    },
+    "image": "ghcr.io/kharkevich-engineering-lab/spark-pulse-engine/llama-cpp-prism:0.1.0",
+    "ipc_host": true,
+    "labels": {
+      "spark-pulse.created_at": "<CREATED_AT>",
+      "spark-pulse.deployment": "golden-llama-rpc-pair",
+      "spark-pulse.generation": "1",
+      "spark-pulse.image": "ghcr.io/kharkevich-engineering-lab/spark-pulse-engine/llama-cpp-prism:0.1.0",
+      "spark-pulse.managed": "true",
+      "spark-pulse.memory_limit_gb": "110.0",
+      "spark-pulse.mode": "cluster",
+      "spark-pulse.privileged": "true",
+      "spark-pulse.rank": "0",
+      "spark-pulse.recipe": "bonsai-gguf",
+      "spark-pulse.shm_size_gb": "64.0",
+      "spark-pulse.version": "1",
+      "spark-pulse.world_size": "2"
+    },
+    "memory_limit_gb": 110.0,
+    "mounts": {
+      "/home/user/.cache/huggingface": "/home/spark/.cache/huggingface",
+      "<HOME>/.cache/llama.cpp": "/home/spark/.cache/llama.cpp",
+      "<HOME>/.cache/spark-pulse/engine-home": "/home/spark"
+    },
+    "name": "spark-pulse-golden-llama-rpc-pair-r0-g1",
+    "network_host": true,
+    "nofile_limit": 1048576,
+    "pids_limit": 4096,
+    "port_mappings": [],
+    "privileged": true,
+    "shm_size_gb": 64.0,
+    "ulimits": {
+      "memlock": "-1"
+    },
+    "user": "agent"
+  },
+  "created_at": "<CREATED_AT>",
+  "deployment_id": "golden-llama-rpc-pair",
+  "engine": "llama-cpp",
+  "extra_args": [],
+  "generation": 1,
+  "gpu_memory_utilization": null,
+  "image_present": false,
+  "image_ref": "ghcr.io/kharkevich-engineering-lab/spark-pulse-engine/llama-cpp-prism:0.1.0",
+  "image_size_bytes": null,
+  "launch_command": "llama-server --metrics -m /home/spark/.cache/huggingface/hub/models--PrismML--Bonsai-2-27B-GGUF/snapshots/abc123def456/bonsai-q4.gguf --host 0.0.0.0 --port 8080 --rpc 10.0.0.2:50052",
+  "memory_budget": [
+    {
+      "claim_bytes": null,
+      "claim_fraction": null,
+      "complete": true,
+      "fits": null,
+      "held_bytes": 0,
+      "holders": [],
+      "key": "10.0.0.1",
+      "label": "fleet-0",
+      "left_bytes": null,
+      "max_fraction": null,
+      "node": "10.0.0.1",
+      "reason": "",
+      "reserve_bytes": 4294967296,
+      "total_bytes": null,
+      "unknown": []
+    },
+    {
+      "claim_bytes": null,
+      "claim_fraction": null,
+      "complete": true,
+      "fits": null,
+      "held_bytes": 0,
+      "holders": [],
+      "key": "10.0.0.2",
+      "label": "fleet-1",
+      "left_bytes": null,
+      "max_fraction": null,
+      "node": "10.0.0.2",
+      "reason": "",
+      "reserve_bytes": 4294967296,
+      "total_bytes": null,
+      "unknown": []
+    }
+  ],
+  "metrics_path": "/metrics",
+  "model": "PrismML/Bonsai-2-27B-GGUF",
+  "model_path": "/home/spark/.cache/huggingface/hub/models--PrismML--Bonsai-2-27B-GGUF/snapshots/abc123def456/bonsai-q4.gguf",
+  "model_present": true,
+  "model_source": "hf-cache",
+  "mods": [],
+  "name": "Bonsai GGUF",
+  "node_count": 2,
+  "nodes": [
+    "10.0.0.1",
+    "10.0.0.2"
+  ],
+  "params": {
+    "host": "0.0.0.0",
+    "port": 8080
+  },
+  "port": 8080,
+  "rank_plans": [
+    {
+      "command": "llama-server --metrics -m /home/spark/.cache/huggingface/hub/models--PrismML--Bonsai-2-27B-GGUF/snapshots/abc123def456/bonsai-q4.gguf --host 0.0.0.0 --port 8080 --rpc 10.0.0.2:50052",
+      "container": {
+        "cap_add": [],
+        "command": "sleep infinity",
+        "devices": [],
+        "entrypoint_clear": true,
+        "env": {
+          "GLOO_SOCKET_IFNAME": "eth0",
+          "HF_HOME": "/home/spark/.cache/huggingface",
+          "HF_TOKEN": "[REDACTED]",
+          "HOME": "/home/spark",
+          "LLAMA_ARG_HOST": "0.0.0.0",
+          "LLAMA_CACHE": "/home/spark/.cache/llama.cpp",
+          "NCCL_IB_HCA": "ib0,ib1",
+          "NCCL_SOCKET_IFNAME": "eth0"
+        },
+        "image": "ghcr.io/kharkevich-engineering-lab/spark-pulse-engine/llama-cpp-prism:0.1.0",
+        "ipc_host": true,
+        "labels": {
+          "spark-pulse.created_at": "<CREATED_AT>",
+          "spark-pulse.deployment": "golden-llama-rpc-pair",
+          "spark-pulse.generation": "1",
+          "spark-pulse.image": "ghcr.io/kharkevich-engineering-lab/spark-pulse-engine/llama-cpp-prism:0.1.0",
+          "spark-pulse.managed": "true",
+          "spark-pulse.memory_limit_gb": "110.0",
+          "spark-pulse.mode": "cluster",
+          "spark-pulse.privileged": "true",
+          "spark-pulse.rank": "0",
+          "spark-pulse.recipe": "bonsai-gguf",
+          "spark-pulse.shm_size_gb": "64.0",
+          "spark-pulse.version": "1",
+          "spark-pulse.world_size": "2"
+        },
+        "memory_limit_gb": 110.0,
+        "mounts": {
+          "/home/user/.cache/huggingface": "/home/spark/.cache/huggingface",
+          "<HOME>/.cache/llama.cpp": "/home/spark/.cache/llama.cpp",
+          "<HOME>/.cache/spark-pulse/engine-home": "/home/spark"
+        },
+        "name": "spark-pulse-golden-llama-rpc-pair-r0-g1",
+        "network_host": true,
+        "nofile_limit": 1048576,
+        "pids_limit": 4096,
+        "port_mappings": [],
+        "privileged": true,
+        "shm_size_gb": 64.0,
+        "ulimits": {
+          "memlock": "-1"
+        },
+        "user": "agent"
+      },
+      "host": "10.0.0.1",
+      "is_head": true,
+      "model_path": "/home/spark/.cache/huggingface/hub/models--PrismML--Bonsai-2-27B-GGUF/snapshots/abc123def456/bonsai-q4.gguf",
+      "model_source": "hf-cache",
+      "node": "10.0.0.1",
+      "rank": 0,
+      "rpc_endpoints": [
+        {
+          "address": "10.0.0.2",
+          "node": "10.0.0.2",
+          "port": 50052,
+          "reason": "no verified fabric address is recorded for 10.0.0.2; using the registered address 10.0.0.2 \u2014 run a fabric apply from Fleet to move RPC traffic onto the ConnectX links",
+          "via_fabric": false
+        }
+      ],
+      "script": "#!/usr/bin/env bash\nset -euo pipefail\n\nexport NCCL_SOCKET_IFNAME=\"eth0\"\nexport GLOO_SOCKET_IFNAME=\"eth0\"\nexport NCCL_IB_HCA=\"ib0,ib1\"\nexport LLAMA_ARG_HOST=\"0.0.0.0\"\nexport LLAMA_CACHE=\"/home/spark/.cache/llama.cpp\"\nexport HF_HOME=\"/home/spark/.cache/huggingface\"\n\nllama-server --metrics -m /home/spark/.cache/huggingface/hub/models--PrismML--Bonsai-2-27B-GGUF/snapshots/abc123def456/bonsai-q4.gguf --host 0.0.0.0 --port 8080 --rpc 10.0.0.2:50052\n"
+    },
+    {
+      "command": "ggml-rpc-server -H 0.0.0.0 -p 50052",
+      "container": {
+        "cap_add": [],
+        "command": "sleep infinity",
+        "devices": [],
+        "entrypoint_clear": true,
+        "env": {
+          "GLOO_SOCKET_IFNAME": "eth0",
+          "HF_HOME": "/home/spark/.cache/huggingface",
+          "HOME": "/home/spark",
+          "LLAMA_ARG_HOST": "0.0.0.0",
+          "LLAMA_CACHE": "/home/spark/.cache/llama.cpp",
+          "NCCL_IB_HCA": "ib0,ib1",
+          "NCCL_SOCKET_IFNAME": "eth0"
+        },
+        "image": "ghcr.io/kharkevich-engineering-lab/spark-pulse-engine/llama-cpp-prism:0.1.0",
+        "ipc_host": true,
+        "labels": {
+          "spark-pulse.created_at": "<CREATED_AT>",
+          "spark-pulse.deployment": "golden-llama-rpc-pair",
+          "spark-pulse.generation": "1",
+          "spark-pulse.image": "ghcr.io/kharkevich-engineering-lab/spark-pulse-engine/llama-cpp-prism:0.1.0",
+          "spark-pulse.managed": "true",
+          "spark-pulse.memory_limit_gb": "110.0",
+          "spark-pulse.mode": "cluster",
+          "spark-pulse.privileged": "true",
+          "spark-pulse.rank": "1",
+          "spark-pulse.recipe": "bonsai-gguf",
+          "spark-pulse.shm_size_gb": "64.0",
+          "spark-pulse.version": "1",
+          "spark-pulse.world_size": "2"
+        },
+        "memory_limit_gb": 110.0,
+        "mounts": {
+          "/home/user/.cache/huggingface": "/home/spark/.cache/huggingface",
+          "<HOME>/.cache/llama.cpp": "/home/spark/.cache/llama.cpp",
+          "<HOME>/.cache/spark-pulse/engine-home": "/home/spark"
+        },
+        "name": "spark-pulse-golden-llama-rpc-pair-r1-g1",
+        "network_host": true,
+        "nofile_limit": 1048576,
+        "pids_limit": 4096,
+        "port_mappings": [],
+        "privileged": true,
+        "shm_size_gb": 64.0,
+        "ulimits": {
+          "memlock": "-1"
+        },
+        "user": "agent"
+      },
+      "host": "10.0.0.2",
+      "is_head": false,
+      "model_path": "",
+      "model_source": "",
+      "node": "10.0.0.2",
+      "rank": 1,
+      "rpc_endpoints": [],
+      "script": "#!/usr/bin/env bash\nset -euo pipefail\n\nexport NCCL_SOCKET_IFNAME=\"eth0\"\nexport GLOO_SOCKET_IFNAME=\"eth0\"\nexport NCCL_IB_HCA=\"ib0,ib1\"\nexport LLAMA_ARG_HOST=\"0.0.0.0\"\nexport LLAMA_CACHE=\"/home/spark/.cache/llama.cpp\"\nexport HF_HOME=\"/home/spark/.cache/huggingface\"\n\nggml-rpc-server -H 0.0.0.0 -p 50052\n"
+    }
+  ],
+  "ranks": [
+    {
+      "command": "llama-server --metrics -m /home/spark/.cache/huggingface/hub/models--PrismML--Bonsai-2-27B-GGUF/snapshots/abc123def456/bonsai-q4.gguf --host 0.0.0.0 --port 8080 --rpc 10.0.0.2:50052",
+      "env": {
+        "GLOO_SOCKET_IFNAME": "eth0",
+        "HF_HOME": "/home/spark/.cache/huggingface",
+        "LLAMA_ARG_HOST": "0.0.0.0",
+        "LLAMA_CACHE": "/home/spark/.cache/llama.cpp",
+        "NCCL_IB_HCA": "ib0,ib1",
+        "NCCL_SOCKET_IFNAME": "eth0"
+      },
+      "host": "10.0.0.1",
+      "node_rank": 0,
+      "script": "#!/usr/bin/env bash\nset -euo pipefail\n\nexport NCCL_SOCKET_IFNAME=\"eth0\"\nexport GLOO_SOCKET_IFNAME=\"eth0\"\nexport NCCL_IB_HCA=\"ib0,ib1\"\nexport LLAMA_ARG_HOST=\"0.0.0.0\"\nexport LLAMA_CACHE=\"/home/spark/.cache/llama.cpp\"\nexport HF_HOME=\"/home/spark/.cache/huggingface\"\n\nllama-server --metrics -m /home/spark/.cache/huggingface/hub/models--PrismML--Bonsai-2-27B-GGUF/snapshots/abc123def456/bonsai-q4.gguf --host 0.0.0.0 --port 8080 --rpc 10.0.0.2:50052\n"
+    },
+    {
+      "command": "ggml-rpc-server -H 0.0.0.0 -p 50052",
+      "env": {
+        "GLOO_SOCKET_IFNAME": "eth0",
+        "HF_HOME": "/home/spark/.cache/huggingface",
+        "LLAMA_ARG_HOST": "0.0.0.0",
+        "LLAMA_CACHE": "/home/spark/.cache/llama.cpp",
+        "NCCL_IB_HCA": "ib0,ib1",
+        "NCCL_SOCKET_IFNAME": "eth0"
+      },
+      "host": "10.0.0.2",
+      "node_rank": 1,
+      "script": "#!/usr/bin/env bash\nset -euo pipefail\n\nexport NCCL_SOCKET_IFNAME=\"eth0\"\nexport GLOO_SOCKET_IFNAME=\"eth0\"\nexport NCCL_IB_HCA=\"ib0,ib1\"\nexport LLAMA_ARG_HOST=\"0.0.0.0\"\nexport LLAMA_CACHE=\"/home/spark/.cache/llama.cpp\"\nexport HF_HOME=\"/home/spark/.cache/huggingface\"\n\nggml-rpc-server -H 0.0.0.0 -p 50052\n"
+    }
+  ],
+  "readiness_path": "/health",
+  "readiness_url": "http://127.0.0.1:8080/health",
+  "recipe_id": "bonsai-gguf",
+  "recipe_name": "Bonsai GGUF",
+  "rendezvous_port": null,
+  "rpc_port": 50052,
+  "runtime": "native",
+  "served_model": "",
+  "serves": "chat",
+  "solo": false,
+  "variant": "prism",
+  "warnings": [
+    "RPC traffic will take the registered address for 10.0.0.2, not the ConnectX fabric: no verified fabric address is recorded for 10.0.0.2; using the registered address 10.0.0.2 \u2014 run a fabric apply from Fleet to move RPC traffic onto the ConnectX links. Every activation tensor of every token crosses that link",
+    "image 'ghcr.io/kharkevich-engineering-lab/spark-pulse-engine/llama-cpp-prism:0.1.0' is not on this host; it will be pulled before the container starts, which can take tens of minutes"
+  ],
+  "workdir": "/workspace"
+}

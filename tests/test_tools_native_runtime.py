@@ -12,6 +12,7 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import re
 import threading
 import time
 from pathlib import Path
@@ -3283,3 +3284,146 @@ class TestProbeReadyNamesTheModel:
 
         assert get.call_count > 2
         assert "answered for other/model" in str(exc.value)
+
+
+# ── Golden plans: what a deploy renders, pinned byte for byte ───────────────
+
+#: Where the snapshots live. Each is the full serialised plan for one shape of
+#: run, so a change to anything a deploy would render (a container field, a
+#: mount, a rank, a warning) shows up as a diff here rather than on a node.
+GOLDEN_DIR = Path(__file__).parent / "golden" / "plan"
+
+#: Set to regenerate the snapshots instead of comparing against them. Never
+#: set in CI: a regenerated snapshot is a change somebody has to read.
+GOLDEN_UPDATE_ENV = "SPARK_PULSE_UPDATE_GOLDEN"
+
+#: Stand-in for the home directory of whoever runs the suite, so a snapshot
+#: does not carry the developer's username and passes in CI.
+GOLDEN_HOME = "<HOME>"
+
+
+def _golden_node(files: list[tuple[str, int]]):
+    """One simulated node holding the GGUF snapshot ``files``."""
+    service = MockDockerService(MockDockerClient())
+    service.snapshots = {GGUF_REPO: {GGUF_REV: list(files)}}
+    return lambda _address: service
+
+
+#: One case per shape of run the backend split has to keep rendering exactly:
+#: ``(name, plan() keyword arguments, services resolver or None)``.
+GOLDEN_CASES = [
+    ("vllm-solo", {"recipe_id": "qwen3-8b"}, None),
+    (
+        "vllm-pair",
+        {"recipe_id": "qwen3-8b-tp2", "nodes": PAIR, "solo": False},
+        None,
+    ),
+    ("sglang-solo", {"recipe_id": "generic", "engine": "sglang"}, None),
+    (
+        "llama-rpc-pair",
+        {
+            "recipe_id": "bonsai-gguf",
+            "nodes": PAIR,
+            "solo": False,
+            "variant": "prism",
+        },
+        ONE_GGUF,
+    ),
+    ("vllm-embedding", {"recipe_id": "qwen3-embedding"}, None),
+    (
+        "vllm-pinned-port",
+        {"recipe_id": "qwen3-8b", "params": {"port": 9123}},
+        None,
+    ),
+    ("llama-hf-cache", {"recipe_id": "bonsai-gguf-q8"}, MANY_GGUF),
+]
+
+
+#: A token the golden plans are made with. It is fixed so the snapshots do
+#: not depend on whether the person running the suite exported one, and it is
+#: distinctive so the test can show it never reaches a serialised plan.
+GOLDEN_HF_TOKEN = "hf_golden_token_must_never_appear"
+
+#: The plan's clock, which reaches the container labels as well as the plan.
+_CREATED_AT_LABEL = re.compile(r'("spark-pulse\.created_at": )"[^"]*"')
+
+
+@pytest.fixture
+def golden_config(monkeypatch):
+    """The bundled ``config.yaml`` alone, and a known token.
+
+    ``config._data`` is loaded at import from the developer's own
+    ``settings.json`` as well, so without this a snapshot would record one
+    machine's memory limit or port range and fail everywhere else.
+    """
+    import yaml
+
+    from spark_pulse import config as config_module
+
+    with open(config_module._CONFIG_PATH) as handle:
+        defaults = yaml.safe_load(handle) or {}
+    defaults["auth_enabled"] = False
+    monkeypatch.setattr(config, "_data", defaults)
+    monkeypatch.setenv("HF_TOKEN", GOLDEN_HF_TOKEN)
+
+
+def _golden_text(plan) -> str:
+    """The plan as the snapshot stores it: stable keys, nothing per-machine.
+
+    The plan's clock (``created_at``, and the label carrying it onto every
+    container) is masked; the home directory is replaced wherever it appears,
+    because every host path a plan mounts is derived from it.
+    """
+    data = plan.to_dict()
+    data["created_at"] = "<CREATED_AT>"
+    # Masked before sorting: a mount is keyed by its host path, so sorting
+    # first would order the keys by wherever this machine keeps its home.
+    text = json.dumps(data)
+    text = _CREATED_AT_LABEL.sub(r'\1"<CREATED_AT>"', text)
+    home = os.path.expanduser("~")
+    if home and home != "/":
+        text = text.replace(home, GOLDEN_HOME)
+    return json.dumps(json.loads(text), indent=2, sort_keys=True) + "\n"
+
+
+class TestGoldenPlans:
+    """The deploy plan, pinned per shape of run.
+
+    The backend split moves most of ``plan()``; every step of it must leave
+    these byte-identical. To regenerate after a change that is meant to alter
+    the plan, run this class with ``SPARK_PULSE_UPDATE_GOLDEN=1`` and read the
+    diff before committing it.
+    """
+
+    @pytest.mark.parametrize(
+        ("case", "kwargs", "files"),
+        GOLDEN_CASES,
+        ids=[case for case, _kwargs, _files in GOLDEN_CASES],
+    )
+    def test_the_plan_matches_its_snapshot(
+        self, native, golden_config, case, kwargs, files
+    ):
+        services = _golden_node(files) if files is not None else None
+        plan = native.plan(**kwargs, deployment_id=f"golden-{case}", services=services)
+        actual = _golden_text(plan)
+        assert GOLDEN_HF_TOKEN not in actual
+        path = GOLDEN_DIR / f"{case}.json"
+
+        if os.environ.get(GOLDEN_UPDATE_ENV):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(actual)
+            return
+
+        missing = f"no snapshot for {case}; run with {GOLDEN_UPDATE_ENV}=1 to write it"
+        assert path.exists(), missing
+        assert actual == path.read_text(), (
+            f"the {case} plan changed; if that is intended, regenerate with "
+            f"{GOLDEN_UPDATE_ENV}=1 and review the diff"
+        )
+
+    def test_every_snapshot_has_a_case(self):
+        """A case that is removed takes its snapshot with it, or a stale file
+        would sit in the tree looking like coverage."""
+        cases = {case for case, _kwargs, _files in GOLDEN_CASES}
+        on_disk = {path.stem for path in GOLDEN_DIR.glob("*.json")}
+        assert on_disk <= cases, f"snapshots without a case: {on_disk - cases}"

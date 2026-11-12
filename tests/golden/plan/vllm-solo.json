@@ -1,0 +1,202 @@
+{
+  "cache_mounts": [
+    "~/.cache/huggingface",
+    "~/.cache/vllm",
+    "~/.cache/flashinfer",
+    "~/.triton",
+    "~/.tilelang"
+  ],
+  "container": {
+    "cap_add": [],
+    "command": "sleep infinity",
+    "devices": [],
+    "entrypoint_clear": true,
+    "env": {
+      "GLOO_SOCKET_IFNAME": "lo",
+      "HF_HOME": "/home/spark/.cache/huggingface",
+      "HF_TOKEN": "[REDACTED]",
+      "HOME": "/home/spark",
+      "NCCL_IB_DISABLE": "0",
+      "NCCL_IGNORE_CPU_AFFINITY": "1",
+      "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+      "VLLM_HOST_IP": "127.0.0.1"
+    },
+    "image": "ghcr.io/kharkevich-engineering-lab/spark-pulse-engine/vllm:0.1.0",
+    "ipc_host": true,
+    "labels": {
+      "spark-pulse.created_at": "<CREATED_AT>",
+      "spark-pulse.deployment": "golden-vllm-solo",
+      "spark-pulse.generation": "1",
+      "spark-pulse.image": "ghcr.io/kharkevich-engineering-lab/spark-pulse-engine/vllm:0.1.0",
+      "spark-pulse.managed": "true",
+      "spark-pulse.memory_limit_gb": "110.0",
+      "spark-pulse.mode": "solo",
+      "spark-pulse.privileged": "true",
+      "spark-pulse.rank": "0",
+      "spark-pulse.recipe": "qwen3-8b",
+      "spark-pulse.shm_size_gb": "64.0",
+      "spark-pulse.version": "1",
+      "spark-pulse.world_size": "1"
+    },
+    "memory_limit_gb": 110.0,
+    "mounts": {
+      "/home/user/.cache/huggingface": "/home/spark/.cache/huggingface",
+      "<HOME>/.cache/flashinfer": "/home/spark/.cache/flashinfer",
+      "<HOME>/.cache/spark-pulse/engine-home": "/home/spark",
+      "<HOME>/.cache/vllm": "/home/spark/.cache/vllm",
+      "<HOME>/.tilelang": "/home/spark/.tilelang",
+      "<HOME>/.triton": "/home/spark/.triton"
+    },
+    "name": "spark-pulse-golden-vllm-solo-r0-g1",
+    "network_host": true,
+    "nofile_limit": 1048576,
+    "pids_limit": 4096,
+    "port_mappings": [],
+    "privileged": true,
+    "shm_size_gb": 64.0,
+    "ulimits": {
+      "memlock": "-1",
+      "nofile": "1048576:1048576"
+    },
+    "user": "agent"
+  },
+  "created_at": "<CREATED_AT>",
+  "deployment_id": "golden-vllm-solo",
+  "engine": "vllm",
+  "extra_args": [],
+  "generation": 1,
+  "gpu_memory_utilization": 0.9,
+  "image_present": true,
+  "image_ref": "ghcr.io/kharkevich-engineering-lab/spark-pulse-engine/vllm:0.1.0",
+  "image_size_bytes": 26843545600,
+  "launch_command": "vllm serve Qwen/Qwen3-8B --port 8000 --tensor-parallel-size 1 --nnodes 1 --node-rank 0 --master-addr 127.0.0.1 --master-port 29501",
+  "memory_budget": [
+    {
+      "claim_bytes": null,
+      "claim_fraction": 0.9,
+      "complete": true,
+      "fits": null,
+      "held_bytes": 0,
+      "holders": [],
+      "key": "",
+      "label": "spark-01",
+      "left_bytes": null,
+      "max_fraction": null,
+      "node": "",
+      "reason": "",
+      "reserve_bytes": 4294967296,
+      "total_bytes": null,
+      "unknown": []
+    }
+  ],
+  "metrics_path": "/metrics",
+  "model": "Qwen/Qwen3-8B",
+  "model_path": "",
+  "model_present": true,
+  "model_source": "",
+  "mods": [],
+  "name": "Qwen3 8B",
+  "node_count": 1,
+  "nodes": [],
+  "params": {
+    "host": "0.0.0.0",
+    "port": 8000,
+    "tensor_parallel": 1
+  },
+  "port": 8000,
+  "rank_plans": [
+    {
+      "command": "vllm serve Qwen/Qwen3-8B --port 8000 --tensor-parallel-size 1 --nnodes 1 --node-rank 0 --master-addr 127.0.0.1 --master-port 29501",
+      "container": {
+        "cap_add": [],
+        "command": "sleep infinity",
+        "devices": [],
+        "entrypoint_clear": true,
+        "env": {
+          "GLOO_SOCKET_IFNAME": "lo",
+          "HF_HOME": "/home/spark/.cache/huggingface",
+          "HF_TOKEN": "[REDACTED]",
+          "HOME": "/home/spark",
+          "NCCL_IB_DISABLE": "0",
+          "NCCL_IGNORE_CPU_AFFINITY": "1",
+          "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+          "VLLM_HOST_IP": "127.0.0.1"
+        },
+        "image": "ghcr.io/kharkevich-engineering-lab/spark-pulse-engine/vllm:0.1.0",
+        "ipc_host": true,
+        "labels": {
+          "spark-pulse.created_at": "<CREATED_AT>",
+          "spark-pulse.deployment": "golden-vllm-solo",
+          "spark-pulse.generation": "1",
+          "spark-pulse.image": "ghcr.io/kharkevich-engineering-lab/spark-pulse-engine/vllm:0.1.0",
+          "spark-pulse.managed": "true",
+          "spark-pulse.memory_limit_gb": "110.0",
+          "spark-pulse.mode": "solo",
+          "spark-pulse.privileged": "true",
+          "spark-pulse.rank": "0",
+          "spark-pulse.recipe": "qwen3-8b",
+          "spark-pulse.shm_size_gb": "64.0",
+          "spark-pulse.version": "1",
+          "spark-pulse.world_size": "1"
+        },
+        "memory_limit_gb": 110.0,
+        "mounts": {
+          "/home/user/.cache/huggingface": "/home/spark/.cache/huggingface",
+          "<HOME>/.cache/flashinfer": "/home/spark/.cache/flashinfer",
+          "<HOME>/.cache/spark-pulse/engine-home": "/home/spark",
+          "<HOME>/.cache/vllm": "/home/spark/.cache/vllm",
+          "<HOME>/.tilelang": "/home/spark/.tilelang",
+          "<HOME>/.triton": "/home/spark/.triton"
+        },
+        "name": "spark-pulse-golden-vllm-solo-r0-g1",
+        "network_host": true,
+        "nofile_limit": 1048576,
+        "pids_limit": 4096,
+        "port_mappings": [],
+        "privileged": true,
+        "shm_size_gb": 64.0,
+        "ulimits": {
+          "memlock": "-1",
+          "nofile": "1048576:1048576"
+        },
+        "user": "agent"
+      },
+      "host": "ark-desktop",
+      "is_head": true,
+      "model_path": "",
+      "model_source": "",
+      "node": "",
+      "rank": 0,
+      "rpc_endpoints": [],
+      "script": "#!/usr/bin/env bash\nset -euo pipefail\n\nexport VLLM_HOST_IP=\"127.0.0.1\"\nexport NCCL_IB_DISABLE=\"0\"\nexport GLOO_SOCKET_IFNAME=\"lo\"\nexport PYTORCH_CUDA_ALLOC_CONF=\"expandable_segments:True\"\nexport NCCL_IGNORE_CPU_AFFINITY=\"1\"\n\nvllm serve Qwen/Qwen3-8B --port 8000 --tensor-parallel-size 1 --nnodes 1 --node-rank 0 --master-addr 127.0.0.1 --master-port 29501\n"
+    }
+  ],
+  "ranks": [
+    {
+      "command": "vllm serve Qwen/Qwen3-8B --port 8000 --tensor-parallel-size 1 --nnodes 1 --node-rank 0 --master-addr 127.0.0.1 --master-port 29501",
+      "env": {
+        "GLOO_SOCKET_IFNAME": "lo",
+        "NCCL_IB_DISABLE": "0",
+        "NCCL_IGNORE_CPU_AFFINITY": "1",
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "VLLM_HOST_IP": "127.0.0.1"
+      },
+      "host": "ark-desktop",
+      "node_rank": 0,
+      "script": "#!/usr/bin/env bash\nset -euo pipefail\n\nexport VLLM_HOST_IP=\"127.0.0.1\"\nexport NCCL_IB_DISABLE=\"0\"\nexport GLOO_SOCKET_IFNAME=\"lo\"\nexport PYTORCH_CUDA_ALLOC_CONF=\"expandable_segments:True\"\nexport NCCL_IGNORE_CPU_AFFINITY=\"1\"\n\nvllm serve Qwen/Qwen3-8B --port 8000 --tensor-parallel-size 1 --nnodes 1 --node-rank 0 --master-addr 127.0.0.1 --master-port 29501\n"
+    }
+  ],
+  "readiness_path": "/v1/models",
+  "readiness_url": "http://127.0.0.1:8000/v1/models",
+  "recipe_id": "qwen3-8b",
+  "recipe_name": "Qwen3 8B",
+  "rendezvous_port": 29501,
+  "rpc_port": null,
+  "runtime": "native",
+  "served_model": "Qwen/Qwen3-8B",
+  "serves": "chat",
+  "solo": true,
+  "variant": "default",
+  "warnings": [],
+  "workdir": "/workspace/vllm"
+}
