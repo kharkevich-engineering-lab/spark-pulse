@@ -12,9 +12,13 @@ acts on (#165).
 
 from __future__ import annotations
 
-from typing import Any
+import importlib
+from typing import TYPE_CHECKING, Any, Callable
 
 from spark_pulse import tools
+
+if TYPE_CHECKING:
+    from spark_pulse.tools.intent import RunIntent
 
 
 class DockerBackend:
@@ -45,6 +49,33 @@ class DockerBackend:
             nodes=nodes,
             solo=solo,
             allow_missing_model=allow_missing_model,
+        )
+
+    def realise(
+        self, intent: RunIntent, services: Callable[[str], Any] | None = None
+    ) -> Any:
+        return tools.native_runtime.realise(intent, services=services)
+
+    def model_location(
+        self,
+        intent: RunIntent,
+        node: str,
+        services: Callable[[str], Any],
+        warnings: list[str],
+    ) -> tuple[str, str]:
+        # The real module, not the switch: the hook is private and the mock
+        # re-exports only the public surface. ``from spark_pulse.tools import
+        # native_runtime`` would hand back the mock under SIMULATION_MODE;
+        # simulation swaps the agent transport underneath this call anyway.
+        runtime = importlib.import_module("spark_pulse.tools.native_runtime")
+        return runtime._resolve_model_file(
+            intent.engine,
+            intent.recipe,
+            intent.model,
+            intent.model_present,
+            node,
+            services,
+            warnings,
         )
 
     def start(

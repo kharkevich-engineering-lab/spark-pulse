@@ -13,7 +13,10 @@ every caller already reads. Nothing here is new behaviour.
 
 from __future__ import annotations
 
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from spark_pulse.tools.intent import RunIntent
 
 
 @runtime_checkable
@@ -40,6 +43,34 @@ class RunBackend(Protocol):
         """Resolve everything a start would, and start nothing.
 
         Answers an object with ``to_dict()``, the shape the preview reads.
+        """
+        ...
+
+    def realise(
+        self, intent: RunIntent, services: Callable[[str], Any] | None = None
+    ) -> Any:
+        """How this backend runs ``intent``: a plan with ``to_dict()``.
+
+        The intent (``tools.intent.resolve_intent``) says what the run is; this
+        decides everything that depends on where it runs — the API port beside
+        what the nodes already serve, where the model file sits, what is
+        launched and the memory budget.
+        """
+        ...
+
+    def model_location(
+        self,
+        intent: RunIntent,
+        node: str,
+        services: Callable[[str], Any],
+        warnings: list[str],
+    ) -> tuple[str, str]:
+        """Where the engine finds the model file: ``(path, source)``.
+
+        A hook rather than part of the intent, because the path is inside
+        whatever the engine runs in — a bind mount on Docker, a volume on
+        Kubernetes. ``("", "")`` for an engine handed a model id; ``source``
+        is ``hf-cache`` or ``engine-download``.
         """
         ...
 

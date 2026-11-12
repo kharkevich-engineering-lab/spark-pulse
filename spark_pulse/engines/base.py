@@ -344,7 +344,7 @@ class Engine:
     """Whether the rendered command states how many GPUs the launch wants.
 
     True for both rendezvous engines: ``-tp``/``-pp``/``-dp`` are on the
-    command line, so ``native_runtime._check_capacity`` reads the shape off it
+    command line, so ``intent._check_capacity`` reads the shape off it
     and refuses a launch that does not fit the nodes. False for llama.cpp's
     RPC style, which says it structurally instead — one ``ggml-rpc-server``
     per worker, every one of them named on the head's ``--rpc`` list, so the

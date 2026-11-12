@@ -55,7 +55,6 @@ import socket
 import tempfile
 import threading
 import time
-import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -66,13 +65,9 @@ from spark_pulse import tools
 from spark_pulse.config import config
 from spark_pulse.engines import (
     Engine,
-    EngineError,
-    EngineNotFound,
-    NodeInfo,
     Topology,
     get_registry,
 )
-from spark_pulse.tools.discovery import FABRIC_MESH, MESH_RING_NODES
 from spark_pulse.tools.docker import (
     AGENT_USER,
     ContainerMetadata,
@@ -90,11 +85,6 @@ from spark_pulse.tools.labels import identity_labels as identity_labels
 
 # Capacity validation is pure arithmetic with no side effect to simulate, so
 # it is imported directly, like ``spark_pulse.engines``.
-from spark_pulse.tools.parallelism import (
-    ClusterCapacity,
-    parse_parallelism,
-    validate_cluster_capacity,
-)
 
 # What a plan is, apart from how Docker runs it: credentials kept out of what
 # a browser reads, the readiness question, and which nodes, ports and memory a
@@ -124,6 +114,21 @@ from spark_pulse.tools.redaction import (  # noqa: F401
     redact_env as redact_env,
     redact_script as redact_script,
 )
+
+# What a run is, apart from how Docker runs it (#161). The helpers are
+# re-exported so callers and tests that reach them here keep working.
+from spark_pulse.tools.intent import (  # noqa: F401
+    RunIntent as RunIntent,
+    _check_capacity as _check_capacity,
+    _check_constraints as _check_constraints,
+    _registry_by_address as _registry_by_address,
+    _resolve_image as _resolve_image,
+    _resolve_model as _resolve_model,
+    _resolve_topology as _resolve_topology,
+    _select_engine as _select_engine,
+    resolve_intent as resolve_intent,
+)
+from spark_pulse.tools.runtime_errors import MissingModelError as MissingModelError
 from spark_pulse.tools.runtime_errors import NativeRuntimeError as NativeRuntimeError
 
 logger = logging.getLogger(__name__)
@@ -196,27 +201,6 @@ CONFIRM_GONE_INTERVAL = 0.5
 #: It is also :data:`~spark_pulse.engines.MAX_CLUSTER_NODES`, so the largest
 #: cluster this hardware has a published topology for is probed in one wave.
 RANK_STATUS_MAX_WORKERS = 4
-
-
-class MissingModelError(NativeRuntimeError):
-    """The model a deployment needs is not in the local catalogue.
-
-    A subclass, and not just a message, because this is the one planning
-    failure with an obvious next step: fetch the model. Callers that can offer
-    that need the model id as a value — parsing it back out of the sentence
-    would be a contract nobody wrote down and the first reworded message would
-    break it.
-    """
-
-    def __init__(self, model: str, message: str = "") -> None:
-        self.model = model
-        super().__init__(
-            message
-            or (
-                f"model '{model}' is not in the local catalogue; "
-                "download it first or deploy with allow_missing_model"
-            )
-        )
 
 
 def _now() -> str:
@@ -699,114 +683,6 @@ def is_native(record: dict[str, Any] | None) -> bool:
 # ── Planning ─────────────────────────────────────────────────────────────────
 
 
-def _select_engine(
-    registry: Any,
-    recipe: dict[str, Any],
-    engine: str | None,
-    variant: str | None,
-) -> tuple[Engine, str, str]:
-    override = engine
-    if override and variant:
-        override = f"{override}/{variant}"
-    elif variant and not override:
-        override = f"{recipe.get('engine') or config.default_engine}/{variant}"
-    try:
-        engine_name, resolved_variant = registry.select(
-            request_override=override,
-            recipe_engine=recipe.get("engine"),
-            default_engine=config.default_engine,
-        )
-        return (
-            registry.engine(engine_name, resolved_variant),
-            engine_name,
-            resolved_variant,
-        )
-    except (EngineNotFound, EngineError) as exc:
-        raise NativeRuntimeError(str(exc)) from exc
-
-
-def _resolve_image(
-    registry: Any,
-    engine_obj: Engine,
-    engine_name: str,
-    variant: str,
-    recipe: dict[str, Any],
-    explicit_engine: bool,
-    warnings: list[str],
-) -> tuple[Engine, str, str, str]:
-    """Resolve the image ref, mapping a v1 ``container:`` tag when possible.
-
-    A v1 recipe names an upstream image tag (``vllm-node``). The engine
-    registry claims those via ``legacy_tags``, so the tag picks the exact spec
-    (and therefore the digest) instead of the engine's default variant. An
-    explicit engine override in the request always wins.
-    """
-    tag = str(recipe.get("container") or "").strip()
-    if tag and not explicit_engine:
-        try:
-            spec = registry.resolve_legacy_tag(tag)
-        except EngineNotFound:
-            warnings.append(
-                f"recipe container tag '{tag}' is not claimed by any engine; "
-                f"using the {engine_name}/{variant} default image"
-            )
-        else:
-            if spec.engine != engine_name:
-                warnings.append(
-                    f"recipe container tag '{tag}' belongs to engine "
-                    f"'{spec.engine}' but '{engine_name}' was selected; "
-                    "using the selected engine's default image"
-                )
-            else:
-                engine_obj = registry.engine(spec.engine, spec.variant)
-                return engine_obj, spec.engine, spec.variant, spec.image_ref
-    image_ref = engine_obj.default_image()
-    if not image_ref:
-        raise NativeRuntimeError(
-            f"engine '{engine_name}/{variant}' declares no image; "
-            "refresh the engine index or pin an image in settings"
-        )
-    return engine_obj, engine_name, variant, image_ref
-
-
-def _resolve_model(
-    recipe: dict[str, Any],
-    model: str | None,
-    allow_missing_model: bool,
-    warnings: list[str],
-) -> tuple[str, bool]:
-    """Resolve the model and say whether it is on this machine.
-
-    The presence check runs even when ``allow_missing_model`` is set, because
-    the two questions are different: *may* this proceed without the model, and
-    *is* the model here. A plan is a dry run and always permits a missing
-    model, which meant the preview could not tell the operator what the deploy
-    was about to refuse — they found out from a 400 after pressing Deploy.
-    The answer now travels on the plan as ``model_present``.
-    """
-    resolved = str(model or recipe.get("model") or "").strip()
-    if not resolved or resolved == "unknown":
-        # v1 recipes embed the model in the command template; nothing to check.
-        return "", True
-    try:
-        entry = tools.models.get_model(resolved)
-    except Exception as exc:  # pragma: no cover - catalogue is best effort
-        warnings.append(f"model catalogue unavailable: {exc}")
-        # Unknown, not absent. Reported as present so an unreachable catalogue
-        # cannot invent a missing model and offer to download one that is
-        # already here.
-        return resolved, True
-    if entry is None:
-        if not allow_missing_model:
-            raise MissingModelError(resolved)
-        warnings.append(
-            f"model '{resolved}' is not in the local catalogue and would have "
-            "to be downloaded before this can run"
-        )
-        return resolved, False
-    return resolved, True
-
-
 def _container_cache_path(host_path: str) -> str:
     """A path inside this machine's Hugging Face cache, as the engine sees it.
 
@@ -1080,207 +956,6 @@ def _bind_sources_to_create(mounts: dict[str, str]) -> list[str]:
     return sorted(wanted)
 
 
-def _check_constraints(recipe_id: str, recipe: dict[str, Any], nodes: int) -> None:
-    """Enforce the recipe's topology constraints against the real node count.
-
-    The recipe parser has produced ``solo_only`` / ``cluster_only`` /
-    ``min_nodes`` all along and nothing read them; a topology that is total is
-    what makes them checkable in one place.
-    """
-    if recipe.get("solo_only") and nodes > 1:
-        raise NativeRuntimeError(
-            f"recipe '{recipe_id}' is marked solo_only, so it cannot be "
-            f"deployed across {nodes} nodes; deploy it on one node"
-        )
-    if recipe.get("cluster_only") and nodes < 2:
-        raise NativeRuntimeError(
-            f"recipe '{recipe_id}' is marked cluster_only, so it needs at "
-            f"least 2 nodes; {nodes} was requested"
-        )
-    minimum = recipe.get("min_nodes")
-    if isinstance(minimum, int) and nodes < minimum:
-        raise NativeRuntimeError(
-            f"recipe '{recipe_id}' needs at least {minimum} nodes; "
-            f"{nodes} was requested"
-        )
-
-
-def _check_capacity(recipe_id: str, command: str, nodes: int) -> None:
-    """Refuse a launch that asks for more GPUs than the nodes hold.
-
-    One GPU per node is the hardware, so tensor parallelism spans nodes and a
-    tp of 2 simply needs a second Spark. This replaces the old silent rewrite
-    of solo deployments to ``tensor_parallel=1``: an operator who asked for
-    two-way parallelism on one node now hears why it cannot happen instead of
-    quietly getting something else.
-    """
-    parallelism = parse_parallelism(command)
-    needed = parallelism["tp"] * parallelism["pp"] * parallelism["dp"]
-    shape = f"tp={parallelism['tp']} pp={parallelism['pp']} dp={parallelism['dp']}"
-    ok, message = validate_cluster_capacity(
-        parallelism, ClusterCapacity.for_nodes(nodes)
-    )
-    if not ok:
-        raise NativeRuntimeError(
-            f"recipe '{recipe_id}' does not fit {nodes} node(s): {message} "
-            f"({shape}). "
-            "This hardware has one GPU per node, so either lower the "
-            f"parallelism or deploy across {needed} nodes"
-        )
-    if needed < nodes:
-        # Upstream trimmed the extra peers silently (launch-cluster.sh line
-        # 1267). Refusing is the honest version, and vLLM agrees: above one
-        # node it requires --nnodes to divide the world size exactly and
-        # raises "must evenly divide the total world size" otherwise
-        # (vllm/engine/arg_utils.py, since 0.11.1). So a trimmed launch does
-        # not hang — it fails on every rank with an argument error, N
-        # containers after the point where we could have said this once.
-        raise NativeRuntimeError(
-            f"recipe '{recipe_id}' asks for {nodes} nodes but its parallelism "
-            f"only occupies {needed} of them ({shape}). One GPU per node means "
-            f"the world size is the node count, and vLLM refuses a --nnodes "
-            f"that does not divide the world size exactly, so this would fail "
-            f"on every rank rather than serve on a subset. Deploy on "
-            f"{needed} node(s), or raise the parallelism until tp*pp*dp is "
-            f"{nodes}"
-        )
-
-
-def _registry_by_address() -> dict[str, Any]:
-    """Every registered node, keyed by the address a deploy would name.
-
-    Raising rather than degrading is deliberate: a multi-node plan reads the
-    registry for the interface names it pins, and pinning is find-or-fail. A
-    registry we cannot read is not "no interfaces", it is "we do not know".
-    """
-    try:
-        nodes = list(tools.node_registry.list_nodes())
-    except Exception as exc:
-        raise NativeRuntimeError(
-            f"the node registry could not be read, so a multi-node "
-            f"deployment cannot resolve its nodes: {exc}"
-        ) from exc
-    return {node.address: node for node in nodes if node.address}
-
-
-def _resolve_topology(node_list: list[str], warnings: list[str]) -> Topology:
-    """The requested addresses as a topology carrying real interface names.
-
-    An empty list is this machine — the size-one case, which never consults
-    the registry at all, so nothing about a solo deployment depends on what
-    the registry holds.
-
-    Above one node the registry is the authority, and it is the *only*
-    authority: it is where an operator records which interface on that
-    particular machine carries the fabric, and interface pinning is
-    find-or-fail. An address we have no record for would be launched with no
-    pinning at all, so it is refused rather than started blind.
-    """
-    if not node_list:
-        return Topology(nodes=[])
-
-    seen: set[str] = set()
-    for address in node_list:
-        if address in seen:
-            raise NativeRuntimeError(
-                f"node '{address}' is listed twice; each rank runs on its own "
-                "machine, and one GPU per node means a machine cannot hold two"
-            )
-        seen.add(address)
-
-    records = _registry_by_address()
-    if len(node_list) > len(records):
-        known = ", ".join(sorted(records)) or "none"
-        raise NativeRuntimeError(
-            f"{len(node_list)} nodes were requested but the registry holds "
-            f"{len(records)} ({known}). Enroll the missing machines on the "
-            "Cluster page (POST /api/nodes) before deploying across them"
-        )
-    unknown = [address for address in node_list if address not in records]
-    if unknown:
-        known = ", ".join(sorted(records)) or "none"
-        raise NativeRuntimeError(
-            f"node(s) {', '.join(unknown)} are not in the node registry "
-            f"(it holds {known}). A peer is deployed to by its registry "
-            "record, which is where its fabric interface names live; NCCL "
-            "pinning is find-or-fail, so an unregistered address would be "
-            "launched with no pinning at all"
-        )
-
-    nodes: list[NodeInfo] = []
-    unpinned: list[str] = []
-    by_fabric: dict[str, list[str]] = {}
-    for address in node_list:
-        record = records[address]
-        if not record.ethernet_interface and not record.infiniband_interfaces:
-            unpinned.append(record.label)
-        if record.fabric_mode:
-            by_fabric.setdefault(record.fabric_mode, []).append(record.label)
-        nodes.append(
-            NodeInfo(
-                host=address,
-                ip=address,
-                # Only a verified fabric apply writes these, so an empty tuple
-                # means "this control plane has not configured a fabric
-                # address on that machine" — never a guess about cabling. An
-                # engine that can use a second wire reads them; nothing else
-                # about the launch changes.
-                fabric_addresses=tuple(record.fabric_addresses),
-                eth_if=record.ethernet_interface,
-                # NCCL_IB_HCA takes a comma-separated selector list, which is
-                # the order discovery reported the fabric ports in. It holds
-                # both RoCE twins of every cabled port; naming one halves the
-                # bandwidth without failing.
-                ib_if=",".join(record.infiniband_interfaces),
-                mesh=record.fabric_mode == FABRIC_MESH,
-            )
-        )
-    if len(by_fabric) > 1:
-        # A mesh is a ring every member takes part in — port 0 of one Spark
-        # into port 1 of the next, all four ports up. One node cabled that way
-        # and another on a single cable is not a fabric, and it decides three
-        # NCCL settings that either apply to the whole collective or to none
-        # of it.
-        described = "; ".join(
-            f"{mode}: {', '.join(sorted(labels))}"
-            for mode, labels in sorted(by_fabric.items())
-        )
-        raise NativeRuntimeError(
-            f"the nodes disagree about how the fabric is cabled ({described}). "
-            "A switchless mesh is a ring every node is part of, and it needs "
-            "NCCL settings a single-cable fabric must not get, so the "
-            "collective cannot be configured for both. Re-run discovery on "
-            "the nodes whose cabling changed, or correct fabric_mode on their "
-            "registry records (PATCH /api/nodes/{id})"
-        )
-    if FABRIC_MESH in by_fabric and len(node_list) != MESH_RING_NODES:
-        raise NativeRuntimeError(
-            f"{', '.join(sorted(by_fabric[FABRIC_MESH]))} report the switchless "
-            f"ring, which NVIDIA documents at exactly {MESH_RING_NODES} nodes "
-            f"and not at {len(node_list)}. Its own NCCL launcher refuses any "
-            "other count outright, and a four-node ring has no published "
-            "cabling, no published NCCL configuration and no reference "
-            "bandwidth. Deploy the ring on three nodes, or put the cluster "
-            "behind a QSFP switch and re-run discovery so the nodes report a "
-            "single cable"
-        )
-    # This is about a collective that crosses machines, and naming one node
-    # explicitly is not that. `nodes: ["192.168.29.60"]` is how the UI pins a
-    # solo run to a particular Spark, and on a node with no interface names
-    # recorded it arrived here saying NCCL would choose a link itself — which
-    # one rank never asks it to do. The size is the topology's, so it is the
-    # same test `Topology.is_solo` makes.
-    if len(nodes) > 1 and unpinned:
-        warnings.append(
-            f"no interface names are recorded for {', '.join(unpinned)}, "
-            "so NCCL will choose a link itself — usually the management "
-            "one, which is a performance bug rather than a failure. "
-            "Record them on the node's registry entry "
-            "(PATCH /api/nodes/{id})"
-        )
-    return Topology(nodes=nodes)
-
-
 def plan(
     recipe_id: str,
     engine: str | None = None,
@@ -1297,8 +972,11 @@ def plan(
 ) -> DeployPlan:
     """Resolve a deployment without starting anything.
 
-    Raises :class:`NativeRuntimeError` with an explained reason whenever the
-    deployment cannot run — that is the whole point of the dry run.
+    Two halves: :func:`~spark_pulse.tools.intent.resolve_intent` says what
+    the run is, with nothing about Docker in it, and :func:`realise` says how
+    Docker runs it. Raises :class:`NativeRuntimeError` with an explained
+    reason whenever the deployment cannot run — that is the whole point of
+    the dry run.
 
     ``services`` resolves a node address to its service, the same resolver the
     deploy path takes. A plan asks one node one question through it — whether
@@ -1306,143 +984,76 @@ def plan(
     parameter exists for the same reason it does everywhere else here: a test
     hands one in rather than the module reaching for a daemon.
     """
+    intent = resolve_intent(
+        recipe_id,
+        registry=get_registry(),
+        engine=engine,
+        variant=variant,
+        model=model,
+        params=params,
+        extra_args=extra_args,
+        nodes=nodes,
+        solo=solo,
+        name=name,
+        deployment_id=deployment_id,
+        allow_missing_model=allow_missing_model,
+    )
+    return realise(intent, services=services)
+
+
+def realise(
+    intent: RunIntent, services: Callable[[str], Any] | None = None
+) -> DeployPlan:
+    """How Docker runs ``intent``: the Docker backend's half of a plan.
+
+    Where the model file sits inside the container (:func:`_resolve_model_file`,
+    which asks the node that will load it), which API port the run gets beside
+    what the nodes already serve, the rendered launch for those two, and then
+    the containers — names, labels, mounts, limits — the image's presence and
+    the memory budget beside the runs already on each node.
+    """
     services = services or rank_services()
-    registry = get_registry()
-    recipe = tools.recipes.get_recipe(recipe_id)
-    if recipe is None:
-        raise NativeRuntimeError(f"recipe '{recipe_id}' not found")
+    warnings = list(intent.warnings)
+    recipe = intent.recipe
+    recipe_id = intent.recipe_id
+    engine_obj = intent.engine
+    node_list = intent.nodes
+    topology = intent.topology
+    image_ref = intent.image_ref
+    rendezvous_port = intent.rendezvous_port
+    rpc_port = intent.rpc_port
 
-    warnings: list[str] = []
-
-    # An empty node list is not "no nodes": it is this machine. The topology
-    # is total, so every size below takes the same code path.
-    node_list = [] if solo else [str(n) for n in (nodes or [])]
-    # The recipe's own constraints are checked against the requested count
-    # first, so "this recipe is solo_only" is reported before anything about
-    # the registry: it is the more specific answer.
-    _check_constraints(recipe_id, recipe, max(1, len(node_list)))
-    topology = _resolve_topology(node_list, warnings)
-
-    engine_obj, engine_name, resolved_variant = _select_engine(
-        registry, recipe, engine, variant
-    )
-
-    supported, reason = engine_obj.supports(recipe)
-    if not supported:
-        raise NativeRuntimeError(
-            f"engine '{engine_name}/{resolved_variant}' cannot run recipe "
-            f"'{recipe_id}': {reason}"
-        )
-
-    engine_obj, engine_name, resolved_variant, image_ref = _resolve_image(
-        registry,
-        engine_obj,
-        engine_name,
-        resolved_variant,
-        recipe,
-        explicit_engine=bool(engine),
-        warnings=warnings,
-    )
-
-    # Checked after the image is resolved, because a legacy container tag can
-    # map to an older image than the engine's default variant would use — and
-    # the capabilities travel with the image, so the size claim does too.
-    size_ok, size_reason = engine_obj.supports_size(topology.size)
-    if not size_ok:
-        raise NativeRuntimeError(
-            f"recipe '{recipe_id}' cannot be planned on {topology.size} "
-            f"node(s): {size_reason}"
-        )
-
-    version_ok, version_reason = engine_obj.version_supported()
-    if not version_ok:
-        raise NativeRuntimeError(
-            f"recipe '{recipe_id}' cannot be planned: {version_reason}"
-        )
-    if version_reason:
-        warnings.append(version_reason)
-
-    resolved_model, model_present = _resolve_model(
-        recipe, model, allow_missing_model, warnings
-    )
     # The rank that loads the model is rank zero, on every engine: the RPC
     # workers load nothing and a rendezvous rank reads its own shard from the
     # same snapshot. So one node is asked, and it is the head's.
     model_file, model_source = _resolve_model_file(
         engine_obj,
         recipe,
-        resolved_model,
-        model_present,
+        intent.model,
+        intent.model_present,
         node_list[0] if node_list else "",
         services,
         warnings,
     )
 
-    mods = engine_obj.block_mods(recipe)
-    if mods and not engine_obj.supports_mods():
-        raise NativeRuntimeError(
-            f"recipe '{recipe_id}' needs mods ({', '.join(mods)}) but engine "
-            f"'{engine_name}' does not support them"
-        )
-
-    # Only the caller's own overrides are handed to the engine: it merges the
-    # recipe's defaults itself.
-    overrides = {k: v for k, v in (params or {}).items() if v is not None}
-    defaults = recipe.get("defaults") or {}
-    rendezvous_port = engine_obj.rendezvous_port()
-    # Only above one node: at one node there is no worker to run an
-    # rpc-server, so nothing binds it and it is not a port this deploy holds.
-    rpc_port = engine_obj.rpc_port() if topology.size > 1 else None
-    reserved_ports = [(rendezvous_port, "rendezvous"), (rpc_port, "RPC")]
-    if overrides.get("port") not in (None, "", 0):
-        # The caller named it: a pin. Kept exactly as asked, and a port that
-        # turns out to be taken is the pre-flight's to block, not ours to move
-        # — somebody chose that number for a client that will dial it.
-        port = int(overrides["port"])
-        for reserved, role in reserved_ports:
-            if reserved and port == int(reserved):
-                raise NativeRuntimeError(
-                    f"port {port} is the {role} port of engine "
-                    f"'{engine_name}/{resolved_variant}'; the launch binds it "
-                    "itself, so pick another API port"
-                )
+    if intent.port_pin is not None:
+        port = intent.port_pin
     else:
         # The recipe's port, or none at all: a preference, moved when the
         # nodes this run occupies already hold it.
-        preferred = defaults.get("port")
         port = _choose_port(
-            int(preferred) if preferred not in (None, "", 0) else None,
+            intent.port_preference,
             node_list,
-            reserved_ports,
-            deployment_id or "",
+            intent.reserved_ports,
+            intent.deployment_id,
             warnings,
         )
-    # Handed to the engine as an override, so what it renders is the port the
-    # plan chose rather than the recipe's preference it was moved off.
-    overrides["port"] = port
-    merged = {**defaults, **overrides, "port": port}
-    merged.setdefault("host", "0.0.0.0")
+    merged = intent.params_for(port)
+    # Rendered with the port the plan chose rather than the recipe's
+    # preference it was moved off.
+    ranks = intent.render(port, model_file)
 
-    try:
-        ranks = [
-            engine_obj.render(
-                recipe,
-                model=model,
-                params=overrides,
-                extra_args=extra_args or [],
-                topology=topology,
-                node_rank=rank,
-                model_file=model_file,
-            )
-            for rank in range(topology.size)
-        ]
-    except EngineError as exc:
-        raise NativeRuntimeError(str(exc)) from exc
-
-    if engine_obj.parallelism_in_command:
-        _check_capacity(recipe_id, ranks[0].command, topology.size)
-
-    dep_id = deployment_id or uuid.uuid4().hex[:12]
+    dep_id = intent.deployment_id
     generation = _next_generation(dep_id)
     profile = _container_profile(engine_obj)
     mounts, cache_mounts = _build_mounts(engine_obj)
@@ -1545,7 +1156,7 @@ def plan(
     readiness = engine_obj.readiness_path()
     served_model = ""
     if readiness and readiness == engine_obj.models_path():
-        served_model = _served_model_name(ranks[0].command) or resolved_model
+        served_model = _served_model_name(ranks[0].command) or intent.model
 
     fraction = _claimed_fraction(engine_obj, ranks[0].command, merged)
     budget = _memory_budget(node_list, fraction, dep_id, services)
@@ -1553,11 +1164,11 @@ def plan(
         deployment_id=dep_id,
         recipe_id=str(recipe.get("id") or recipe_id),
         recipe_name=str(recipe.get("name") or recipe_id),
-        name=name or str(recipe.get("name") or recipe_id),
-        engine=engine_name,
-        variant=resolved_variant,
+        name=intent.name,
+        engine=intent.engine_name,
+        variant=intent.variant,
         image_ref=image_ref,
-        model=resolved_model,
+        model=intent.model,
         solo=topology.is_solo,
         nodes=node_list,
         node_count=topology.size,
@@ -1568,9 +1179,9 @@ def plan(
         readiness_url=f"http://127.0.0.1:{port}{readiness}",
         metrics_path=engine_obj.metrics_path(),
         workdir=engine_obj.spec.runtime.workdir or "/workspace",
-        mods=mods,
+        mods=intent.mods,
         params=merged,
-        extra_args=list(extra_args or []),
+        extra_args=list(intent.extra_args),
         launch_command=ranks[0].command,
         ranks=[r.to_dict() for r in ranks],
         container=container,
@@ -1579,13 +1190,13 @@ def plan(
         generation=generation,
         image_present=image_present,
         image_size_bytes=image_size,
-        model_present=model_present,
+        model_present=intent.model_present,
         model_source=model_source,
         model_path=model_file,
         served_model=served_model,
         gpu_memory_utilization=fraction,
         memory_budget=budget,
-        serves=tools.recipe_schema.serves_of(recipe),
+        serves=intent.serves,
         warnings=warnings,
     )
 
