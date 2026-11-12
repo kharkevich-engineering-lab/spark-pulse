@@ -3532,3 +3532,80 @@ class TestRunIntent:
             plan.model_path,
             plan.model_source,
         )
+
+
+class TestARunRecordsItsBackendAndIntent:
+    """#162: what ran it, what it was, and a hash that says "same run"."""
+
+    def _intent(self, **kwargs):
+        from spark_pulse.tools.intent import resolve_intent
+
+        return resolve_intent("qwen3-8b", registry=nr.get_registry(), **kwargs)
+
+    def test_the_same_run_hashes_the_same_whatever_it_is_called(self, native, registry):
+        one = self._intent(deployment_id="a", name="first")
+        two = self._intent(deployment_id="b", name="second")
+        assert one.intent_hash() == two.intent_hash()
+        assert len(one.intent_hash()) == 64
+
+    def test_a_different_run_hashes_differently(self, native, registry):
+        base = self._intent().intent_hash()
+        assert self._intent(params={"port": 9123}).intent_hash() != base
+        assert self._intent(extra_args=["--enforce-eager"]).intent_hash() != base
+
+    def test_the_hash_is_over_canonical_json(self, native, registry):
+        import hashlib
+
+        intent = self._intent()
+        canonical = json.dumps(
+            intent.to_dict(), sort_keys=True, separators=(",", ":"), default=str
+        )
+        assert intent.intent_hash() == hashlib.sha256(canonical.encode()).hexdigest()
+
+    def test_a_credential_in_the_recipe_is_redacted_and_not_hashed(
+        self, native, registry
+    ):
+        intent = self._intent()
+        before = intent.intent_hash()
+        intent.recipe = {**intent.recipe, "env": {"HF_TOKEN": "hf_secret_one"}}
+        first = intent.intent_hash()
+        intent.recipe = {**intent.recipe, "env": {"HF_TOKEN": "hf_secret_two"}}
+        assert "hf_secret" not in json.dumps(intent.to_dict())
+        assert intent.to_dict()["recipe"]["env"]["HF_TOKEN"] == nr.REDACTED
+        # A rotated token is the same run; adding one at all is a change.
+        assert intent.intent_hash() == first != before
+
+    def test_a_listing_annotation_is_not_part_of_the_intent(self, native, registry):
+        intent = self._intent()
+        before = intent.intent_hash()
+        intent.recipe = {**intent.recipe, "engine_support": [{"engine": "x"}]}
+        assert "engine_support" not in intent.to_dict()["recipe"]
+        assert intent.intent_hash() == before
+
+    def test_a_new_run_carries_all_three(self, native, registry):
+        plan = native.plan("qwen3-8b")
+        record = nr._record_from_plan(plan, "starting")
+        assert record["backend"] == "docker"
+        assert record["intent"] == plan.intent
+        assert record["intent"]["recipe_id"] == "qwen3-8b"
+        assert record["intent_hash"] == plan.intent_hash
+        assert record["runtime"] == "native"  # the older note, unchanged
+
+    def test_an_old_record_reads_back_on_docker_with_no_hash(self):
+        deploy_dispatch = importlib.import_module("spark_pulse.tools.deploy_dispatch")
+
+        old = {"id": "old", "status": "stopped", "runtime": "native"}
+        served = deploy_dispatch._with_serves(old)
+        assert served["backend"] == "docker"
+        assert served["intent"] is None
+        assert served["intent_hash"] is None
+        assert "backend" not in old  # filled on the way out, not written back
+
+    def test_a_recorded_backend_is_kept(self):
+        deploy_dispatch = importlib.import_module("spark_pulse.tools.deploy_dispatch")
+
+        served = deploy_dispatch._with_serves(
+            {"id": "k", "backend": "kubernetes", "intent_hash": "abc"}
+        )
+        assert served["backend"] == "kubernetes"
+        assert served["intent_hash"] == "abc"

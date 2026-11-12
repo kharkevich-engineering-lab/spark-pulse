@@ -1,4 +1,5 @@
 {
+  "backend": "docker",
   "cache_mounts": [
     "~/.cache/huggingface",
     "~/.cache/vllm",
@@ -69,6 +70,53 @@
   "image_present": true,
   "image_ref": "ghcr.io/kharkevich-engineering-lab/spark-pulse-engine/vllm:0.1.0",
   "image_size_bytes": 26843545600,
+  "intent": {
+    "defaults": {
+      "port": 8000,
+      "tensor_parallel": 1
+    },
+    "engine": "vllm",
+    "extra_args": [],
+    "image_ref": "ghcr.io/kharkevich-engineering-lab/spark-pulse-engine/vllm:0.1.0",
+    "model": "Qwen/Qwen3-8B",
+    "model_requested": null,
+    "mods": [],
+    "nodes": [],
+    "overrides": {
+      "port": 9123
+    },
+    "port_pin": 9123,
+    "port_preference": 8000,
+    "recipe": {
+      "command": "vllm serve Qwen/Qwen3-8B --port {port} --tensor-parallel-size {tensor_parallel} --distributed-executor-backend ray",
+      "container": "vllm-node",
+      "defaults": {
+        "port": 8000,
+        "tensor_parallel": 1
+      },
+      "env": {},
+      "id": "qwen3-8b",
+      "model": "Qwen/Qwen3-8B",
+      "mods": [],
+      "name": "Qwen3 8B"
+    },
+    "recipe_id": "qwen3-8b",
+    "rendezvous_port": 29501,
+    "rpc_port": null,
+    "serves": "chat",
+    "topology": [
+      {
+        "eth_if": "",
+        "fabric_addresses": [],
+        "host": "golden-host",
+        "ib_if": "",
+        "ip": "127.0.0.1",
+        "mesh": false
+      }
+    ],
+    "variant": "default"
+  },
+  "intent_hash": "75e0094f1e28a0f79aafcc1da160af073cb34a1e2a00b39455793a9591497cab",
   "launch_command": "vllm serve Qwen/Qwen3-8B --port 9123 --tensor-parallel-size 1 --nnodes 1 --node-rank 0 --master-addr 127.0.0.1 --master-port 29501",
   "memory_budget": [
     {

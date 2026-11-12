@@ -1,4 +1,5 @@
 {
+  "backend": "docker",
   "cache_mounts": [
     "~/.cache/huggingface",
     "~/.cache/vllm",
@@ -69,6 +70,59 @@
   "image_present": true,
   "image_ref": "ghcr.io/kharkevich-engineering-lab/spark-pulse-engine/vllm:0.1.0",
   "image_size_bytes": 26843545600,
+  "intent": {
+    "defaults": {
+      "port": 30000
+    },
+    "engine": "vllm",
+    "extra_args": [],
+    "image_ref": "ghcr.io/kharkevich-engineering-lab/spark-pulse-engine/vllm:0.1.0",
+    "model": "Qwen/Qwen3-8B",
+    "model_requested": null,
+    "mods": [],
+    "nodes": [],
+    "overrides": {},
+    "port_pin": null,
+    "port_preference": 30000,
+    "recipe": {
+      "command": "",
+      "container": "",
+      "defaults": {
+        "port": 30000
+      },
+      "engine": "vllm",
+      "engines": [
+        "vllm",
+        "sglang"
+      ],
+      "env": {},
+      "id": "qwen3-embedding",
+      "model": "Qwen/Qwen3-8B",
+      "mods": [],
+      "name": "Qwen3 Embedding",
+      "params": {
+        "host": "0.0.0.0"
+      },
+      "recipe_version": "2",
+      "serves": "embedding"
+    },
+    "recipe_id": "qwen3-embedding",
+    "rendezvous_port": 29501,
+    "rpc_port": null,
+    "serves": "embedding",
+    "topology": [
+      {
+        "eth_if": "",
+        "fabric_addresses": [],
+        "host": "golden-host",
+        "ib_if": "",
+        "ip": "127.0.0.1",
+        "mesh": false
+      }
+    ],
+    "variant": "default"
+  },
+  "intent_hash": "5254dc691943d37514e9e6c14289b2220c73bff06298550ea687cc3cff661541",
   "launch_command": "vllm serve Qwen/Qwen3-8B --host 0.0.0.0 --port 30000 --runner pooling --nnodes 1 --node-rank 0 --master-addr 127.0.0.1 --master-port 29501",
   "memory_budget": [
     {

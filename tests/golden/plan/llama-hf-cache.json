@@ -1,4 +1,5 @@
 {
+  "backend": "docker",
   "cache_mounts": [
     "~/.cache/huggingface",
     "~/.cache/llama.cpp"
@@ -60,6 +61,52 @@
   "image_present": false,
   "image_ref": "ghcr.io/kharkevich-engineering-lab/spark-pulse-engine/llama-cpp:0.1.0",
   "image_size_bytes": null,
+  "intent": {
+    "defaults": {
+      "port": 8080
+    },
+    "engine": "llama-cpp",
+    "extra_args": [],
+    "image_ref": "ghcr.io/kharkevich-engineering-lab/spark-pulse-engine/llama-cpp:0.1.0",
+    "model": "PrismML/Bonsai-2-27B-GGUF",
+    "model_requested": null,
+    "mods": [],
+    "nodes": [],
+    "overrides": {},
+    "port_pin": null,
+    "port_preference": 8080,
+    "recipe": {
+      "args": "--hf-file bonsai-q8.gguf",
+      "command": "",
+      "container": "",
+      "defaults": {
+        "port": 8080
+      },
+      "engine": "llama-cpp",
+      "env": {},
+      "id": "bonsai-gguf-q8",
+      "model": "PrismML/Bonsai-2-27B-GGUF",
+      "mods": [],
+      "name": "Bonsai GGUF",
+      "recipe_version": "2"
+    },
+    "recipe_id": "bonsai-gguf-q8",
+    "rendezvous_port": null,
+    "rpc_port": null,
+    "serves": "chat",
+    "topology": [
+      {
+        "eth_if": "",
+        "fabric_addresses": [],
+        "host": "golden-host",
+        "ib_if": "",
+        "ip": "127.0.0.1",
+        "mesh": false
+      }
+    ],
+    "variant": "default"
+  },
+  "intent_hash": "6f09a9d600bcb481582c178ce629bead8006c4e0d36fc78c6033bf73176a3692",
   "launch_command": "llama-server --metrics -m /home/spark/.cache/huggingface/hub/models--PrismML--Bonsai-2-27B-GGUF/snapshots/abc123def456/bonsai-q8.gguf --host 0.0.0.0 --port 8080",
   "memory_budget": [
     {

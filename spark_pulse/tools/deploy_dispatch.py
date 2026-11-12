@@ -16,17 +16,28 @@ from typing import Any
 
 from spark_pulse import tools
 
+#: The backend every run was started on before records said which.
+LEGACY_BACKEND = "docker"
+
 
 def _with_serves(record: dict[str, Any]) -> dict[str, Any]:
-    """The record as served, with ``serves`` always said.
+    """The record as served, with ``serves`` and ``backend`` always said.
 
-    A record written before the field existed — or adopted from a container
-    nobody recorded — was started as chat, since nothing else could be. Filled
-    in on the way out rather than written back: the row stays what was stored.
+    A record written before ``serves`` existed — or adopted from a container
+    nobody recorded — was started as chat, since nothing else could be; one
+    written before ``backend`` existed ran on Docker, since nothing else
+    could, and has no intent to hash, so ``intent_hash`` reads ``None`` rather
+    than a hash it never had. Filled in on the way out rather than written
+    back: the row stays what was stored.
     """
-    if record.get("serves"):
-        return record
-    return {**record, "serves": tools.recipe_schema.serves_of(record)}
+    filled = dict(record)
+    if not filled.get("serves"):
+        filled["serves"] = tools.recipe_schema.serves_of(record)
+    if not filled.get("backend"):
+        filled["backend"] = LEGACY_BACKEND
+    filled.setdefault("intent", None)
+    filled.setdefault("intent_hash", None)
+    return filled
 
 
 def _backend(deployment_id: str) -> Any:
