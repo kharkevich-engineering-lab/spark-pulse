@@ -313,17 +313,32 @@ This script:
 
 The `v2` branch (the run-backend work, #175) is never released: it does not go to PyPI and is not merged into `main`. To run it on real hardware, `.github/workflows/v2-build.yml` builds a wheel on every push to `v2` with the same steps as a release (both agents, the UI) and keeps it as a workflow artifact named `spark-pulse-v2-wheel` for 30 days. Its version is `2.0.0.dev<run>+v2.<sha>`, so `/version` and every agent say which commit is running.
 
-Install it on the control node into the same Python the service runs (`spark-pulse install` wrote that interpreter into the unit's `ExecStart`):
+**Only the control node is installed by hand.** On a two-Spark cluster that is the Spark running the `spark-pulse` service; the other Spark runs only an agent (a systemd unit pointing at `~/…/current/bin/spark-pulse-agent`), and nothing is installed on it.
 
-```bash
-gh run download --repo kharkevich-engineering-lab/spark-pulse \
-  "$(gh run list --repo kharkevich-engineering-lab/spark-pulse --workflow v2-build.yml --branch v2 --status success --limit 1 --json databaseId -q '.[0].databaseId')" \
-  -n spark-pulse-v2-wheel -D /tmp/spark-pulse-v2
-python3 -m pip install /tmp/spark-pulse-v2/*.whl
-systemctl --user restart spark-pulse.service   # or without --user for a system install
-```
+1. Back up `~/.config/spark-pulse/` on the control node (settings, secrets, the database, the CA and node certificates). v2 has not changed the database so far, but it is the branch where that will happen.
+2. Get the wheel. Download it on any machine with `gh` signed in and copy it to the control node, or run this there:
 
-The peers follow on their own: the control plane compares each agent's binary digest with the agents in the wheel and, with `agent_auto_update` on (the default), pushes the v2 agent to every connected peer. To go back, install the release (`python3 -m pip install spark-pulse==<version>`) and restart; the peers are moved back the same way. Back up `~/.config/spark-pulse/` first: v2 has not changed the database so far, but it is the branch where that will happen.
+   ```bash
+   gh run download --repo kharkevich-engineering-lab/spark-pulse \
+     "$(gh run list --repo kharkevich-engineering-lab/spark-pulse --workflow v2-build.yml --branch v2 --status success --limit 1 --json databaseId -q '.[0].databaseId')" \
+     -n spark-pulse-v2-wheel -D /tmp/spark-pulse-v2
+   ```
+
+3. Install it into the Python the service runs, not whatever `python3` is first on the path. `spark-pulse install` wrote that interpreter into the unit's `ExecStart`:
+
+   ```bash
+   systemctl --user cat spark-pulse.service | grep ExecStart   # drop --user for a system install
+   /path/from/ExecStart/python -m pip install /tmp/spark-pulse-v2/*.whl
+   systemctl --user restart spark-pulse.service
+   ```
+
+   The restart moves the control node's own agent too: it runs as a child of the control-plane process, from the package. Running engine containers are Docker's, not the service's, and survive the restart; startup recovery adopts them again from their labels.
+4. The peer follows on its own. Every peer agent reports the SHA-256 of its binary on each heartbeat; every 5 minutes, with `agent_auto_update` on (the default), the control plane sends a connected peer whose digest is not one of the wheel's agents the new bundle over its stream, and the agent stages it, checks it runs, repoints `current` and restarts itself. The v2 agent is a different binary even where its Rust is unchanged (the version is compiled in), so the peer is moved. To skip the wait, use **Update agent** on the node in Fleet. A peer that is offline is moved at the first sweep after it reconnects.
+5. Check: `/version` on the control node and the agent version on each node in Fleet say `2.0.0.dev…+v2.<sha>`.
+
+To go back, install the release into the same Python (`… -m pip install spark-pulse==<version>`) and restart; the comparison is by digest, not by which version is newer, so the peer is moved back the same way.
+
+The updater sends the aarch64 agent to every peer, whatever its architecture (#170), which is right for Sparks; do not enrol an x86_64 peer on v2 until that is fixed.
 
 ---
 
