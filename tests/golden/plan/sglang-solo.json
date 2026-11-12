@@ -155,7 +155,7 @@
         },
         "user": "agent"
       },
-      "host": "ark-desktop",
+      "host": "golden-host",
       "is_head": true,
       "model_path": "",
       "model_source": "",
@@ -176,7 +176,7 @@
         "NCCL_TIMEOUT": "1200000",
         "TIKTOKEN_ENCODINGS_BASE": "[REDACTED]"
       },
-      "host": "ark-desktop",
+      "host": "golden-host",
       "node_rank": 0,
       "script": "#!/usr/bin/env bash\nset -euo pipefail\n\nexport HF_HOME=\"/home/spark/.cache/huggingface\"\nexport TIKTOKEN_ENCODINGS_BASE=\"[REDACTED]\"\nexport NCCL_IB_DISABLE=\"0\"\nexport NCCL_NET_GDR_LEVEL=\"5\"\nexport NCCL_TIMEOUT=\"1200000\"\nexport GLOO_SOCKET_IFNAME=\"lo\"\n\npython3 -m sglang.launch_server --model-path Qwen/Qwen3-8B --tp 1 --pp-size 1 --host 0.0.0.0 --port 30000 --mem-fraction-static 0.9 --nnodes 1 --node-rank 0 --dist-init-addr 127.0.0.1:50000\n"
     }

@@ -3344,22 +3344,30 @@ GOLDEN_CASES = [
 #: distinctive so the test can show it never reaches a serialised plan.
 GOLDEN_HF_TOKEN = "hf_golden_token_must_never_appear"
 
+#: The name a single-node plan gives this machine. ``NodeInfo.local()`` asks
+#: ``socket.gethostname()``, so without a fixed answer a snapshot would record
+#: whichever machine wrote it.
+GOLDEN_HOSTNAME = "golden-host"
+
 #: The plan's clock, which reaches the container labels as well as the plan.
 _CREATED_AT_LABEL = re.compile(r'("spark-pulse\.created_at": )"[^"]*"')
 
 
 @pytest.fixture
 def golden_config(monkeypatch):
-    """The bundled ``config.yaml`` alone, and a known token.
+    """The bundled ``config.yaml`` alone, a known token and a known hostname.
 
     ``config._data`` is loaded at import from the developer's own
     ``settings.json`` as well, so without this a snapshot would record one
     machine's memory limit or port range and fail everywhere else.
     """
+    import socket
+
     import yaml
 
     from spark_pulse import config as config_module
 
+    monkeypatch.setattr(socket, "gethostname", lambda: GOLDEN_HOSTNAME)
     with open(config_module._CONFIG_PATH) as handle:
         defaults = yaml.safe_load(handle) or {}
     defaults["auth_enabled"] = False

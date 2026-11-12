@@ -145,7 +145,7 @@
         },
         "user": "agent"
       },
-      "host": "ark-desktop",
+      "host": "golden-host",
       "is_head": true,
       "model_path": "/home/spark/.cache/huggingface/hub/models--PrismML--Bonsai-2-27B-GGUF/snapshots/abc123def456/bonsai-q8.gguf",
       "model_source": "hf-cache",
@@ -164,7 +164,7 @@
         "LLAMA_ARG_HOST": "0.0.0.0",
         "LLAMA_CACHE": "/home/spark/.cache/llama.cpp"
       },
-      "host": "ark-desktop",
+      "host": "golden-host",
       "node_rank": 0,
       "script": "#!/usr/bin/env bash\nset -euo pipefail\n\nexport GLOO_SOCKET_IFNAME=\"lo\"\nexport LLAMA_ARG_HOST=\"0.0.0.0\"\nexport LLAMA_CACHE=\"/home/spark/.cache/llama.cpp\"\nexport HF_HOME=\"/home/spark/.cache/huggingface\"\n\nllama-server --metrics -m /home/spark/.cache/huggingface/hub/models--PrismML--Bonsai-2-27B-GGUF/snapshots/abc123def456/bonsai-q8.gguf --host 0.0.0.0 --port 8080\n"
     }

@@ -161,7 +161,7 @@
         },
         "user": "agent"
       },
-      "host": "ark-desktop",
+      "host": "golden-host",
       "is_head": true,
       "model_path": "",
       "model_source": "",
@@ -181,7 +181,7 @@
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "VLLM_HOST_IP": "127.0.0.1"
       },
-      "host": "ark-desktop",
+      "host": "golden-host",
       "node_rank": 0,
       "script": "#!/usr/bin/env bash\nset -euo pipefail\n\nexport VLLM_HOST_IP=\"127.0.0.1\"\nexport NCCL_IB_DISABLE=\"0\"\nexport GLOO_SOCKET_IFNAME=\"lo\"\nexport PYTORCH_CUDA_ALLOC_CONF=\"expandable_segments:True\"\nexport NCCL_IGNORE_CPU_AFFINITY=\"1\"\n\nvllm serve Qwen/Qwen3-8B --port 8000 --tensor-parallel-size 1 --nnodes 1 --node-rank 0 --master-addr 127.0.0.1 --master-port 29501\n"
     }
