@@ -309,6 +309,22 @@ This script:
 2. Updates the version in `pyproject.toml`
 3. Runs `python3 -m build` to create `dist/` artifacts
 
+### Testing v2 on a cluster
+
+The `v2` branch (the run-backend work, #175) is never released: it does not go to PyPI and is not merged into `main`. To run it on real hardware, `.github/workflows/v2-build.yml` builds a wheel on every push to `v2` with the same steps as a release (both agents, the UI) and keeps it as a workflow artifact named `spark-pulse-v2-wheel` for 30 days. Its version is `2.0.0.dev<run>+v2.<sha>`, so `/version` and every agent say which commit is running.
+
+Install it on the control node into the same Python the service runs (`spark-pulse install` wrote that interpreter into the unit's `ExecStart`):
+
+```bash
+gh run download --repo kharkevich-engineering-lab/spark-pulse \
+  "$(gh run list --repo kharkevich-engineering-lab/spark-pulse --workflow v2-build.yml --branch v2 --status success --limit 1 --json databaseId -q '.[0].databaseId')" \
+  -n spark-pulse-v2-wheel -D /tmp/spark-pulse-v2
+python3 -m pip install /tmp/spark-pulse-v2/*.whl
+systemctl --user restart spark-pulse.service   # or without --user for a system install
+```
+
+The peers follow on their own: the control plane compares each agent's binary digest with the agents in the wheel and, with `agent_auto_update` on (the default), pushes the v2 agent to every connected peer. To go back, install the release (`python3 -m pip install spark-pulse==<version>`) and restart; the peers are moved back the same way. Back up `~/.config/spark-pulse/` first: v2 has not changed the database so far, but it is the branch where that will happen.
+
 ---
 
 ## Configuration Quick Reference

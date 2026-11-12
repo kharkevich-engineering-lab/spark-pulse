@@ -1,0 +1,113 @@
+name: v2 build
+# A wheel of the `v2` branch, for testing on real hardware (#175).
+#
+# `v2` must never reach PyPI or `main`, so this publishes nothing: no tag, no
+# GitHub release, no PyPI upload. It builds what release.yml builds (both
+# agents, the UI, the wheel) and leaves the wheel as a workflow artifact,
+# which an operator downloads onto a Spark (docs/development.md, "Testing v2
+# on a cluster").
+#
+# No workflow_dispatch: GitHub offers a manual run only for a workflow on the
+# default branch, and this one lives on `v2` alone. A PR into `v2` that changes
+# this file runs it, so the workflow is tested before it is merged.
+on:
+  push:
+    branches: [v2]
+  pull_request:
+    branches: [v2]
+    paths: [.github/workflows/v2-build.yml]
+
+concurrency:
+  group: v2-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # PEP 440: 2.0.0.dev<run>+v2.<sha>. Above every 1.x release, so `pip install
+  # -U spark-pulse` on a test node does not quietly swap it for PyPI's latest;
+  # a dev release, so nothing mistakes it for a real 2.0.0; and the local
+  # segment names the commit, which /version and every agent then report.
+  version:
+    name: Work out the v2 build version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - id: v
+        run: echo "version=2.0.0.dev${{ github.run_number }}+v2.${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+  agent:
+    name: Build the node agent (${{ matrix.target }})
+    needs: version
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-unknown-linux-musl
+            runs-on: ubuntu-24.04-arm
+          - target: x86_64-unknown-linux-musl
+            runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runs-on }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - name: Cache the agent build
+        uses: actions/cache@v4
+        with:
+          path: .agent-build-cache
+          key: agent-release-${{ matrix.target }}-${{ hashFiles('agent/Cargo.lock') }}
+          restore-keys: agent-release-${{ matrix.target }}-
+      - name: Build
+        env:
+          SPARK_PULSE_VERSION: ${{ needs.version.outputs.version }}
+        run: TARGET=${{ matrix.target }} ./scripts/build-agent.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-${{ matrix.target }}
+          path: spark_pulse/agent/bin/spark-pulse-agent-${{ matrix.target }}
+          if-no-files-found: error
+
+  wheel:
+    name: Build the v2 wheel
+    needs: [version, agent]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Collect the agent binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: agent-*
+          merge-multiple: true
+          path: spark_pulse/agent/bin
+      - name: Build
+        run: |
+          set -euo pipefail
+          chmod +x spark_pulse/agent/bin/spark-pulse-agent-*
+          # Both agents, not only the Spark's: the workstation track (#175)
+          # runs an x86_64 control plane, which needs its own agent to boot.
+          test -f spark_pulse/agent/bin/spark-pulse-agent-x86_64-unknown-linux-musl
+          bash scripts/release.sh "${{ needs.version.outputs.version }}"
+          ls -l dist/
+      - name: Check the wheel carries the UI and both agents
+        run: |
+          set -euo pipefail
+          wheel=$(ls dist/*.whl)
+          python -m zipfile -l "$wheel" > contents.txt
+          grep -q "spark_pulse/ui/index.html" contents.txt
+          grep -q "spark-pulse-agent-aarch64-unknown-linux-musl" contents.txt
+          grep -q "spark-pulse-agent-x86_64-unknown-linux-musl" contents.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spark-pulse-v2-wheel
+          path: dist/*.whl
+          if-no-files-found: error
+          retention-days: 30
