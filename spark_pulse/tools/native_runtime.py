@@ -50,7 +50,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import re
 import shlex
 import socket
 import tempfile
@@ -73,7 +72,6 @@ from spark_pulse.engines import (
     Topology,
     get_registry,
 )
-from spark_pulse.tools import memory_budget
 from spark_pulse.tools.discovery import FABRIC_MESH, MESH_RING_NODES
 from spark_pulse.tools.docker import (
     AGENT_USER,
@@ -97,6 +95,36 @@ from spark_pulse.tools.parallelism import (
     parse_parallelism,
     validate_cluster_capacity,
 )
+
+# What a plan is, apart from how Docker runs it: credentials kept out of what
+# a browser reads, the readiness question, and which nodes, ports and memory a
+# run occupies. Re-exported under their old names so every caller and every
+# test that reaches them here keeps working.
+from spark_pulse.tools.placement import (  # noqa: F401
+    _choose_port as _choose_port,
+    _claimed_fraction as _claimed_fraction,
+    _memory_budget as _memory_budget,
+    _node_key as _node_key,
+    _node_labels as _node_labels,
+    _node_listeners as _node_listeners,
+    _occupied_nodes as _occupied_nodes,
+    _ports_in_use as _ports_in_use,
+    allocate_port as allocate_port,
+)
+from spark_pulse.tools.readiness import (  # noqa: F401
+    _listed_models as _listed_models,
+    _models_answering as _models_answering,
+    _served_model_name as _served_model_name,
+    probe_ready as probe_ready,
+)
+from spark_pulse.tools.redaction import (  # noqa: F401
+    REDACTED as REDACTED,
+    _redact_rank as _redact_rank,
+    is_secret_env as is_secret_env,
+    redact_env as redact_env,
+    redact_script as redact_script,
+)
+from spark_pulse.tools.runtime_errors import NativeRuntimeError as NativeRuntimeError
 
 logger = logging.getLogger(__name__)
 
@@ -168,10 +196,6 @@ CONFIRM_GONE_INTERVAL = 0.5
 #: It is also :data:`~spark_pulse.engines.MAX_CLUSTER_NODES`, so the largest
 #: cluster this hardware has a published topology for is probed in one wave.
 RANK_STATUS_MAX_WORKERS = 4
-
-
-class NativeRuntimeError(RuntimeError):
-    """A native deployment could not be planned or started."""
 
 
 class MissingModelError(NativeRuntimeError):
@@ -259,53 +283,6 @@ def publish_event(
 
 
 # ── Plan model ───────────────────────────────────────────────────────────────
-
-#: An environment variable whose *name* says it holds a credential. The
-#: container is handed the real value; everything that serialises a plan —
-#: the preview, the create response, every MCP tool that calls them — shows
-#: this placeholder instead, because a plan is something a browser reads.
-REDACTED = "[REDACTED]"
-
-_SECRET_NAME_RE = re.compile(
-    r"TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|ACCESS_KEY|CREDENTIAL", re.IGNORECASE
-)
-
-# ``export NAME="value"``, the line Engine._script renders per variable.
-_EXPORT_RE = re.compile(r"^(export\s+(\w+)=)(.*)$", re.MULTILINE)
-
-
-def is_secret_env(name: str) -> bool:
-    """Whether a variable's name marks its value as a credential."""
-    return bool(_SECRET_NAME_RE.search(name))
-
-
-def redact_env(env: dict[str, str]) -> dict[str, str]:
-    """``env`` with every credential's value replaced by :data:`REDACTED`."""
-    return {k: (REDACTED if is_secret_env(k) else v) for k, v in env.items()}
-
-
-def redact_script(script: str) -> str:
-    """A launch script with each credential's ``export`` value replaced.
-
-    A recipe's own ``env:`` block is rendered into the script, so a recipe
-    that sets ``HF_TOKEN`` there would otherwise ship it in every preview.
-    """
-    return _EXPORT_RE.sub(
-        lambda m: (
-            f'{m.group(1)}"{REDACTED}"' if is_secret_env(m.group(2)) else m.group(0)
-        ),
-        script,
-    )
-
-
-def _redact_rank(rank: dict[str, Any]) -> dict[str, Any]:
-    """One rendered rank (``LaunchScript.to_dict``) with credentials redacted."""
-    out = dict(rank)
-    if isinstance(out.get("env"), dict):
-        out["env"] = redact_env(out["env"])
-    if isinstance(out.get("script"), str):
-        out["script"] = redact_script(out["script"])
-    return out
 
 
 @dataclass
@@ -630,292 +607,6 @@ def _container_path(host_path: str) -> str:
     if host_path.startswith(home + os.sep):
         return CONTAINER_HOME + host_path[len(home) :]
     return host_path
-
-
-def allocate_port(taken: set[int] | None = None) -> int:
-    """First port in the configured range that ``taken`` does not name.
-
-    ``taken`` is the whole answer. This used to bind each candidate on
-    127.0.0.1 as well, which is a statement about the control plane — and the
-    API port is bound on rank zero's node, which is a peer as often as not.
-    What a node is listening on is asked of that node (:func:`_node_listeners`)
-    and arrives here already folded into ``taken``.
-    """
-    taken = taken or set()
-    start, end = config.default_port_range_start, config.default_port_range_end
-    for port in range(start, end + 1):
-        if port not in taken:
-            return port
-    raise NativeRuntimeError(
-        f"no free port in the configured range {start}-{end}; "
-        "widen default_port_range_* or stop an existing deployment"
-    )
-
-
-def _node_key(address: Any) -> str:
-    """One name per machine: the empty string for this one, else its address.
-
-    A solo record names no node and a cluster record may name this machine by
-    its address; both are the same ports on the same host, so they have to
-    land under the same key or a run here would not see the other.
-    """
-    text = str(address or "").strip()
-    if not text:
-        return ""
-    try:
-        if tools.node_service.is_local_address(text):
-            return ""
-    except Exception:  # pragma: no cover — best effort; the address still names it
-        pass
-    return text
-
-
-def _occupied_nodes(record: dict[str, Any]) -> set[str] | None:
-    """The nodes a run still occupies, by :func:`_node_key`; ``None`` if none.
-
-    A live run occupies every node a rank of it is on. A finished run occupies
-    nothing — unless it left orphans, and then it occupies their nodes: its
-    ranks there were never confirmed gone, and a port or a gigabyte released
-    on "we asked it to stop" is how every orphan bug in this class began. The
-    one rule both the port choice and the memory budget read, so a node cannot
-    be busy for one and free for the other.
-    """
-    finished = record.get("status") in ("stopped", "error")
-    orphans = record.get("orphans") or []
-    if finished and not orphans:
-        return None
-    if finished:
-        nodes = {_node_key(o.get("node")) for o in orphans if isinstance(o, dict)}
-    elif isinstance(record.get("ranks"), list) and record["ranks"]:
-        nodes = {_node_key(entry.get("node")) for entry in rank_entries(record)}
-    else:
-        nodes = {_node_key(n) for n in (record.get("nodes") or [])}
-    return nodes or {""}
-
-
-def _ports_in_use(exclude: str = "") -> dict[str, dict[int, str]]:
-    """Ports live deployments hold, per node — API, rendezvous *and* RPC.
-
-    Keyed by :func:`_node_key`, valued ``{port: the run's name}`` so a plan
-    that moves off a port can say who holds it. Per node because a port is a
-    property of a machine: two runs on two different nodes may both serve on
-    8000, and pooling them made the second node's run move for nothing.
-
-    A launch binds its rendezvous and RPC ports exactly as surely as its API
-    port, so handing the same number out twice would break a deployment that
-    never mentioned it. Every port a run holds is counted on every node it
-    occupies — rank zero binds the API and rendezvous ports, the workers the
-    RPC one, and the pre-flight checks the API port on all of them anyway.
-
-    A stopped deployment with outstanding orphans still holds its ports on the
-    orphans' nodes. Its ranks on unreachable nodes were never confirmed gone,
-    and every orphan bug in this class comes from releasing a resource on
-    inference — "we asked it to stop" — rather than on evidence that it did.
-
-    ``exclude`` is the deployment being planned: a record written ahead of
-    its own plan (a scheduled deploy, a re-plan of the same id) is not
-    somebody else holding the port.
-    """
-    held: dict[str, dict[int, str]] = {}
-    for record in _load_records():
-        if exclude and record.get("id") == exclude:
-            continue
-        nodes = _occupied_nodes(record)
-        if nodes is None:
-            continue
-        holder = str(record.get("name") or record.get("id") or "")
-        for node in nodes:
-            ports = held.setdefault(node, {})
-            for key in ("port", "rendezvous_port", "rpc_port"):
-                value = record.get(key)
-                if isinstance(value, int) and value:
-                    ports.setdefault(value, holder)
-    return held
-
-
-def _claimed_fraction(
-    engine_obj: Engine, command: str, params: dict[str, Any]
-) -> float | None:
-    """The fraction of a node's memory a rendered run will take, if any.
-
-    Only an engine whose spec maps ``gpu_memory_utilization`` takes one, and
-    the rendered command is read before the params because it is what the
-    engine is actually handed — a v1 template may spell the flag out with a
-    literal of its own. A fraction engine handed none takes its default.
-    """
-    flag = engine_obj.spec.runtime.param_flags.get("gpu_memory_utilization")
-    if not flag:
-        return None
-    found = memory_budget.fraction_in_command(command, (str(flag),))
-    if found is not None:
-        return found
-    try:
-        value = float(params.get("gpu_memory_utilization"))
-    except (TypeError, ValueError):
-        return memory_budget.ENGINE_DEFAULT_FRACTION
-    return value if 0 < value <= 1 else memory_budget.ENGINE_DEFAULT_FRACTION
-
-
-def _node_labels() -> tuple[dict[str, str], str]:
-    """Registered names by address, and the control node's, for the budget."""
-    try:
-        records = list(tools.node_registry.list_nodes())
-    except Exception:  # noqa: BLE001 — a name is a courtesy, not a fact we need
-        return {}, "this machine"
-    control = next((r for r in records if r.is_control_plane), None)
-    return (
-        {r.address: r.label for r in records if r.address},
-        control.label if control is not None else "this machine",
-    )
-
-
-def _memory_budget(
-    node_list: list[str],
-    fraction: float | None,
-    exclude: str,
-    services: Callable[[str], Any],
-) -> list[dict[str, Any]]:
-    """Each node's memory budget, beside the runs already on it.
-
-    The runs are the ones :func:`_occupied_nodes` says occupy the node — the
-    same rule the port choice uses. A co-tenant whose record carries a
-    fraction claims that fraction of the node's total; one that does not is
-    measured, by asking the node what its containers hold (``GetNodeStats``
-    through the node's agent, attributed by :mod:`node_stats`). The node is
-    asked only when somebody else is on it: alone on a node, a run is judged
-    by the engine's own startup check exactly as before.
-    """
-    tenants: dict[str, list[tuple[str, str, float | None]]] = {}
-    for record in _load_records():
-        if exclude and record.get("id") == exclude:
-            continue
-        nodes = _occupied_nodes(record)
-        if nodes is None:
-            continue
-        holder = (
-            str(record.get("id") or ""),
-            str(record.get("name") or record.get("id") or ""),
-            memory_budget.record_fraction(record),
-        )
-        for node in nodes:
-            tenants.setdefault(node, []).append(holder)
-
-    labels, control_label = _node_labels()
-    budgets: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for address in node_list or [""]:
-        key = _node_key(address)
-        if key in seen:
-            continue
-        seen.add(key)
-        label = labels.get(address) or (control_label if not key else address)
-        holders = tenants.get(key, [])
-        if not holders:
-            budgets.append(
-                memory_budget.budget_for_node(
-                    address, key, label, [], None, {}, fraction
-                ).to_dict()
-            )
-            continue
-        total: int | None = None
-        measured: dict[str, int | None] | None = None
-        reason = ""
-        try:
-            total, measured = tools.node_stats.memory_by_deployment(services(address))
-        except Exception as exc:  # noqa: BLE001 — an unanswered node is unknown
-            reason = f"could not ask {label} for its memory: {str(exc)[:200]}"
-        budgets.append(
-            memory_budget.budget_for_node(
-                address, key, label, holders, total, measured, fraction, reason=reason
-            ).to_dict()
-        )
-    return budgets
-
-
-def _node_listeners(
-    node_list: list[str],
-) -> list[tuple[str, str, set[int] | None, str]]:
-    """What each node the run will occupy is listening on, asked of the node.
-
-    ``(node key, label, ports, why not)`` per node; ``ports`` is ``None`` when
-    the node could not be asked. The question is the pre-flight's own — the
-    same ``ss`` command through the same host probe (``RunHostProbe`` on the
-    node's agent, the control node over loopback; the simulated host under
-    ``SIMULATION_MODE``), parsed by the same function — so the planner and the
-    check that follows it cannot disagree about what is free.
-    """
-    try:
-        targets = tools.preflight.targets_for({"nodes": node_list})
-    except Exception as exc:  # noqa: BLE001 — an unreadable registry cannot be asked
-        return [
-            (_node_key(a), str(a or "this machine"), None, str(exc))
-            for a in (node_list or [""])
-        ]
-    answers: list[tuple[str, str, set[int] | None, str]] = []
-    for target in targets:
-        key = "" if target.is_control_plane else _node_key(target.address)
-        try:
-            result = tools.preflight.probe_for(target).run(
-                tools.preflight.PORTS_COMMAND
-            )
-        except Exception as exc:  # noqa: BLE001 — a probe that raised went unanswered
-            answers.append((key, target.label, None, str(exc)))
-            continue
-        if result.ok:
-            ports = tools.preflight.parse_listening_ports(result.stdout)
-            answers.append((key, target.label, ports, ""))
-        else:
-            why = result.error or result.message or f"exit {result.returncode}"
-            answers.append((key, target.label, None, why))
-    return answers
-
-
-def _choose_port(
-    preferred: int | None,
-    node_list: list[str],
-    reserved: list[tuple[int | None, str]],
-    exclude: str,
-    warnings: list[str],
-) -> int:
-    """The API port for a run whose port is a preference, not a pin.
-
-    Every recipe in the OCI collection says ``port: 8000``, so a second run on
-    a node asked for 8000 again and the pre-flight blocked it. A recipe's port
-    is what it would like: it is kept when it is free on every node the run
-    occupies and moved into the configured range when it is not, with the
-    holder named — a run on record, or whatever the node says is listening.
-
-    A node that cannot be asked is not assumed free. Its ports are judged from
-    the records alone and the plan says so; the pre-flight asks again before
-    anything is launched, and a pinned port never comes through here at all.
-    """
-    in_use = _ports_in_use(exclude=exclude)
-    taken: dict[int, str] = {}
-    for key in {_node_key(a) for a in node_list} or {""}:
-        for port, holder in in_use.get(key, {}).items():
-            taken.setdefault(port, f"run {holder}")
-    for _key, label, listening, why in _node_listeners(node_list):
-        if listening is None:
-            warnings.append(
-                f"could not list the ports in use on {label} ({why}); the API "
-                "port was chosen from the runs on record alone, and the "
-                "pre-flight checks it again before launch"
-            )
-            continue
-        for port in listening:
-            taken.setdefault(port, f"a process on {label}")
-    for port, role in reserved:
-        if port:
-            taken.setdefault(int(port), f"the engine's own {role} port")
-    if preferred and int(preferred) not in taken:
-        return int(preferred)
-    port = allocate_port(set(taken))
-    if preferred:
-        warnings.append(
-            f"port {preferred} is held by {taken[int(preferred)]}; "
-            f"this run gets {port}"
-        )
-    return port
 
 
 # ── Persistence (shared deployments.json) ────────────────────────────────────
@@ -2071,90 +1762,6 @@ def _deploy_script(docker: Any, rank_plan: RankPlan) -> None:
         ["bash", "-lc", f"bash {shlex.quote(SCRIPT_PATH)} >> /proc/1/fd/1 2>&1"],
         detach=True,
     )
-
-
-def _served_model_name(command: str) -> str:
-    """The name a rendered command serves its model under, if it says.
-
-    The first ``--served-model-name`` (either spelling; vLLM takes several and
-    lists them all). Without one, vLLM lists the model exactly as it was
-    handed — the argument after ``serve`` — and that is read too, because a
-    v1 template may hand it a local path the recipe's ``model:`` never names,
-    and waiting for the recipe's id there would wait out every deadline. A
-    command that says neither, or does not parse, names nothing, and the plan
-    falls back to the model id.
-    """
-    try:
-        tokens = shlex.split(command or "")
-    except ValueError:
-        return ""
-    for index, token in enumerate(tokens):
-        if token.startswith("--served-model-name="):
-            return token.split("=", 1)[1].strip()
-        if token == "--served-model-name" and index + 1 < len(tokens):
-            if not tokens[index + 1].startswith("-"):
-                return tokens[index + 1]
-    for index, token in enumerate(tokens[:-1]):
-        if token == "serve" and not tokens[index + 1].startswith("-"):
-            return tokens[index + 1]
-    return ""
-
-
-def _listed_models(response: Any) -> list[str] | None:
-    """The ids in an OpenAI ``/v1/models`` body, or ``None`` when it is not one."""
-    try:
-        body = response.json()
-    except Exception:  # noqa: BLE001 — not JSON is "not a listing", not an error
-        return None
-    data = body.get("data") if isinstance(body, dict) else None
-    if not isinstance(data, list):
-        return None
-    return [str(e.get("id")) for e in data if isinstance(e, dict) and e.get("id")]
-
-
-def probe_ready(url: str, timeout: float = 3.0, model: str = "") -> bool:
-    """Whether *this run's* engine answers its readiness endpoint.
-
-    Any 200 used to do, and a port is not a server: when the plan's port was
-    already held, the deploy watched somebody else's engine answer and wrote
-    ``running`` over its own, which had failed to bind. So where the readiness
-    path is the model listing, ``model`` is the name it has to carry — a 200
-    naming another model is not ready. A body that is not a listing at all
-    names nobody, and is read as before rather than refused on a technicality.
-
-    Simulation mode has no engine to answer, so the probe succeeds — the mock
-    container service is already pretending the rest of the lifecycle worked.
-    """
-    import httpx
-
-    if tools.is_simulation():
-        return True
-
-    try:
-        response = httpx.get(url, timeout=timeout)
-    except Exception:
-        return False
-    if response.status_code >= 400:
-        return False
-    if not model:
-        return True
-    served = _listed_models(response)
-    return served is None or model in served
-
-
-def _models_answering(url: str, timeout: float = 3.0) -> list[str] | None:
-    """Which models the server on ``url`` lists, for the error that names them."""
-    import httpx
-
-    if tools.is_simulation():
-        return None
-    try:
-        response = httpx.get(url, timeout=timeout)
-    except Exception:
-        return None
-    if response.status_code >= 400:
-        return None
-    return _listed_models(response)
 
 
 #: How many log lines an error message quotes back. Twenty is a llama.cpp or
