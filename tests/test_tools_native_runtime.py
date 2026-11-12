@@ -3435,3 +3435,100 @@ class TestGoldenPlans:
         cases = {case for case, _kwargs, _files in GOLDEN_CASES}
         on_disk = {path.stem for path in GOLDEN_DIR.glob("*.json")}
         assert on_disk <= cases, f"snapshots without a case: {on_disk - cases}"
+
+
+# ── The intent and its realisation (#161) ───────────────────────────────────
+
+#: Modules a run's intent must not import: everything that is about how a run
+#: is executed rather than what it is.
+NOT_IN_AN_INTENT = (
+    "docker",
+    "spark_pulse.tools.docker",
+    "spark_pulse.tools.labels",
+    "spark_pulse.tools.images",
+    "spark_pulse.tools.registry",
+    "spark_pulse.tools.native_runtime",
+    "spark_pulse.tools.placement",
+    "spark_pulse.tools.backends",
+)
+
+
+class TestRunIntent:
+    def test_the_intent_imports_nothing_about_how_a_run_is_executed(self):
+        import ast
+
+        source = (
+            Path(__file__).parent.parent / "spark_pulse" / "tools" / "intent.py"
+        ).read_text(encoding="utf-8")
+        imported = set()
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.add(node.module)
+                imported.update(f"{node.module}.{a.name}" for a in node.names)
+        leaked = sorted(
+            name
+            for name in imported
+            for banned in NOT_IN_AN_INTENT
+            if name == banned or name.startswith(banned + ".")
+        )
+        assert not leaked, f"tools/intent.py imports execution modules: {leaked}"
+
+    def test_a_plan_is_its_intent_realised(self, native, registry):
+        """plan() is resolve_intent() then realise(), nothing more."""
+        from spark_pulse.tools.intent import resolve_intent
+
+        intent = resolve_intent(
+            "qwen3-8b", registry=nr.get_registry(), deployment_id="same-id"
+        )
+        realised = nr.realise(intent)
+        planned = nr.plan("qwen3-8b", deployment_id="same-id")
+        # The golden normaliser masks only the creation time each plan stamps.
+        assert _golden_text(realised) == _golden_text(planned)
+
+    def test_the_intent_says_what_not_how(self, native, registry):
+        from spark_pulse.tools.intent import resolve_intent
+
+        intent = resolve_intent(
+            "qwen3-8b", registry=nr.get_registry(), params={"port": 9123}
+        )
+        assert intent.engine_name == "vllm"
+        assert intent.port_pin == 9123
+        assert intent.topology.size == 1
+        # No container name, mount or label: those are the backend's.
+        assert not any(
+            hasattr(intent, attr) for attr in ("container", "mounts", "labels")
+        )
+
+    def test_a_pinned_reserved_port_is_refused_before_any_backend(
+        self, native, registry
+    ):
+        from spark_pulse.tools.intent import resolve_intent
+
+        engine = nr.get_registry().engine("vllm", "default")
+        rendezvous = engine.rendezvous_port()
+        if not rendezvous:
+            pytest.skip("this engine binds no rendezvous port")
+        with pytest.raises(nr.NativeRuntimeError, match="rendezvous port"):
+            resolve_intent(
+                "qwen3-8b",
+                registry=nr.get_registry(),
+                params={"port": rendezvous},
+            )
+
+    def test_the_docker_backend_realises_and_locates_through_the_runtime(
+        self, native, registry
+    ):
+        from spark_pulse.tools.backends import DockerBackend
+        from spark_pulse.tools.intent import resolve_intent
+
+        intent = resolve_intent("qwen3-8b", registry=nr.get_registry())
+        backend = DockerBackend()
+        plan = backend.realise(intent)
+        assert plan.deployment_id == intent.deployment_id
+        warnings: list[str] = []
+        assert backend.model_location(intent, "", nr.rank_services(), warnings) == (
+            plan.model_path,
+            plan.model_source,
+        )

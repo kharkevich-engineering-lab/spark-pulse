@@ -28,6 +28,7 @@ PACKAGE = Path(__file__).resolve().parent.parent / "spark_pulse"
 LIFECYCLE = frozenset(
     {
         "plan",
+        "realise",
         "start",
         "create_deployment",
         "status",
@@ -52,7 +53,17 @@ class TestTheDockerBackend:
         assert isinstance(DockerBackend(), RunBackend)
 
     def test_it_implements_every_method_with_the_protocols_parameters(self):
-        for name in ("plan", "start", "status", "stop", "delete", "logs", "list_runs"):
+        for name in (
+            "plan",
+            "realise",
+            "model_location",
+            "start",
+            "status",
+            "stop",
+            "delete",
+            "logs",
+            "list_runs",
+        ):
             want = inspect.signature(getattr(RunBackend, name))
             got = inspect.signature(getattr(DockerBackend, name))
             assert list(got.parameters) == list(want.parameters), name
@@ -91,6 +102,12 @@ class _Recorder:
                 return {"recipe_id": recipe_id}
 
         return _Plan()
+
+    def realise(self, intent, services=None):
+        self._note("realise", intent)
+
+    def model_location(self, intent, node, services, warnings):
+        return "", ""
 
     def start(self, recipe_id, name, params, **kwargs):
         self._note("start", recipe_id, name, params, **kwargs)
