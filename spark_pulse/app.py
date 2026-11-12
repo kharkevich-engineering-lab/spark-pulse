@@ -218,14 +218,15 @@ async def lifespan(app: FastAPI):
         tools.agent_update.start_updater()
 
     # Recover deployment state from container labels: a restart loses nothing
-    # the containers still know. `native_runtime.list_deployments` asks every
+    # the containers still know. `deploy_dispatch.list_deployments` (over
+    # `native_runtime.list_deployments`, the Docker backend's) asks every
     # node through its own agent — the control node over loopback — adopts any
     # container it has no record for, marks a record whose container is gone
     # stopped, sweeps the orphans it can now confirm gone, and persists all of
     # it. That is the agent-routed recovery; the old local-only reconciler
     # only counted.
     try:
-        recovered = tools.native_runtime.list_deployments()
+        recovered = tools.deploy_dispatch.list_deployments()
         print(f"Reconciliation complete: {len(recovered)} deployments")
     except Exception as e:
         print(f"Warning: reconciliation failed: {e}")
