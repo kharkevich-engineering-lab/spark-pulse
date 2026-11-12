@@ -22,8 +22,8 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use spark_pulse_agent::facts::{
-    classify_interface, composite_fingerprint, fingerprint, identifying_names, port_is_active,
-    roce_links,
+    classify_interface, composite_fingerprint, fingerprint, identifying_names,
+    legacy_composite_fingerprint, port_is_active, roce_links,
 };
 use spark_pulse_agent::proto::NetworkInterface;
 
@@ -42,10 +42,10 @@ fn interface(name: &str) -> NetworkInterface {
 /// board serial first, and every cloud VM publishes one — so a property test
 /// routed through it passes on a laptop and asserts nothing on a CI runner,
 /// which is exactly what happened before this was split.
-fn print(names: &[&str], machine_id: &str, cpus: u32, memory: u64) -> String {
+fn print(names: &[&str], machine_id: &str, cpus: u32) -> String {
     let interfaces: Vec<NetworkInterface> = names.iter().map(|n| interface(n)).collect();
     let identifying = identifying_names(&interfaces);
-    composite_fingerprint(&identifying, machine_id, cpus, memory)
+    composite_fingerprint(&identifying, machine_id, cpus)
 }
 
 // ── Classification, against Python's own answers ────────────────────────────
@@ -76,9 +76,9 @@ fn every_interface_is_classified_the_way_python_classifies_it() {
 fn the_same_machine_prints_the_same_every_time() {
     // Compared against what enrolment recorded on *every* heartbeat. An
     // unstable print is a node that reports a reimage several times a minute.
-    let first = print(&["enp1s0", "ib0"], "machine-1", 20, 128 << 30);
+    let first = print(&["enp1s0", "ib0"], "machine-1", 20);
     for _ in 0..50 {
-        assert_eq!(print(&["enp1s0", "ib0"], "machine-1", 20, 128 << 30), first);
+        assert_eq!(print(&["enp1s0", "ib0"], "machine-1", 20), first);
     }
 }
 
@@ -87,8 +87,8 @@ fn the_order_the_kernel_enumerates_interfaces_in_does_not_matter() {
     // `/sys/class/net` has no guaranteed order, so a print that depended on it
     // would change when nothing about the machine had.
     assert_eq!(
-        print(&["enp1s0", "ib0", "ib1"], "m", 20, 1),
-        print(&["ib1", "enp1s0", "ib0"], "m", 20, 1)
+        print(&["enp1s0", "ib0", "ib1"], "m", 20),
+        print(&["ib1", "enp1s0", "ib0"], "m", 20)
     );
 }
 
@@ -97,56 +97,49 @@ fn starting_a_container_does_not_change_the_machine() {
     // The whole reason docker interfaces are excluded: `docker0` and every
     // `br-*` appear and vanish with workloads, and a fingerprint that moved
     // when a container started would be useless for detecting a reimage.
-    let bare = print(&["enp1s0"], "m", 20, 1);
-    assert_eq!(print(&["enp1s0", "docker0"], "m", 20, 1), bare);
-    assert_eq!(print(&["enp1s0", "docker0", "br-1a2b3c"], "m", 20, 1), bare);
+    let bare = print(&["enp1s0"], "m", 20);
+    assert_eq!(print(&["enp1s0", "docker0"], "m", 20), bare);
+    assert_eq!(print(&["enp1s0", "docker0", "br-1a2b3c"], "m", 20), bare);
     assert_eq!(
-        print(
-            &["enp1s0", "docker0", "br-1a2b3c", "veth1a2b3c"],
-            "m",
-            20,
-            1
-        ),
+        print(&["enp1s0", "docker0", "br-1a2b3c", "veth1a2b3c"], "m", 20),
         bare
     );
 }
 
 #[test]
 fn different_hardware_prints_differently() {
-    let base = print(&["enp1s0"], "m", 20, 1);
-    assert_ne!(print(&["enp1s0", "ib0"], "m", 20, 1), base, "an added NIC");
-    assert_ne!(print(&["enp2s0"], "m", 20, 1), base, "a renamed NIC");
-    assert_ne!(print(&["enp1s0"], "m", 40, 1), base, "twice the CPUs");
-    assert_ne!(print(&["enp1s0"], "m", 20, 2), base, "different memory");
-    assert_ne!(print(&["enp1s0"], "other", 20, 1), base, "a new machine-id");
+    let base = print(&["enp1s0"], "m", 20);
+    assert_ne!(print(&["enp1s0", "ib0"], "m", 20), base, "an added NIC");
+    assert_ne!(print(&["enp2s0"], "m", 20), base, "a renamed NIC");
+    assert_ne!(print(&["enp1s0"], "m", 40), base, "twice the CPUs");
+    assert_ne!(print(&["enp1s0"], "other", 20), base, "a new machine-id");
 }
 
 #[test]
 fn a_machine_with_nothing_identifying_prints_nothing() {
-    // A CPU count and a memory size are not an identity: every Spark has the
-    // same ones. A fingerprint built from those alone would be *identical on
+    // A CPU count is not an identity: every Spark has the same one. A fingerprint built from those alone would be *identical on
     // every node*, and the control plane would read two machines as one —
     // which is worse than admitting we do not know.
-    assert_eq!(print(&[], "", 0, 0), "");
+    assert_eq!(print(&[], "", 0), "");
     assert_eq!(
-        print(&[], "", 20, 128 << 30),
+        print(&[], "", 20),
         "",
-        "cpu and memory alone are not an identity"
+        "a cpu count alone is not an identity"
     );
     assert_eq!(
-        print(&["docker0"], "", 20, 1),
+        print(&["docker0"], "", 20),
         "",
         "and docker interfaces are not either"
     );
 
     // Either an interface name or a machine-id is enough to be worth printing.
-    assert_ne!(print(&[], "machine-1", 0, 0), "");
-    assert_ne!(print(&["enp1s0"], "", 0, 0), "");
+    assert_ne!(print(&[], "machine-1", 0), "");
+    assert_ne!(print(&["enp1s0"], "", 0), "");
 }
 
 #[test]
 fn a_print_is_a_sha256_in_hex() {
-    let value = print(&["enp1s0"], "m", 20, 1);
+    let value = print(&["enp1s0"], "m", 20);
     assert_eq!(value.len(), 64);
     assert!(value
         .chars()
@@ -161,10 +154,10 @@ fn a_containers_veth_is_docker_and_does_not_count() {
     // container that had been running since before enrolment changed the
     // fingerprint, the ledger denied the node as reimaged, and the control
     // plane could not start.
-    let bare = print(&["enp1s0"], "m", 20, 1);
-    assert_eq!(print(&["enp1s0", "veth1a2b3c"], "m", 20, 1), bare);
+    let bare = print(&["enp1s0"], "m", 20);
+    assert_eq!(print(&["enp1s0", "veth1a2b3c"], "m", 20), bare);
     assert_eq!(
-        print(&["enp1s0", "veth8bf252c", "br-1a2b3c"], "m", 20, 1),
+        print(&["enp1s0", "veth8bf252c", "br-1a2b3c"], "m", 20),
         bare
     );
 }
@@ -175,8 +168,59 @@ fn other_virtual_interfaces_still_count() {
     // counted. The exclusion mirrors the control plane's classification
     // exactly, and widening it here alone would be the two implementations
     // disagreeing again — the fixture test above is what keeps them together.
-    let bare = print(&["enp1s0"], "m", 20, 1);
-    assert_ne!(print(&["enp1s0", "tun0"], "m", 20, 1), bare);
+    let bare = print(&["enp1s0"], "m", 20);
+    assert_ne!(print(&["enp1s0", "tun0"], "m", 20), bare);
+}
+
+// ── The legacy print, and why it is not the one compared ────────────────────
+
+/// What `gx10-b90f` reported, as a DGX Spark with no readable board serial.
+const B90F: [&str; 7] = [
+    "enP2p1s0f0np0",
+    "enP2p1s0f1np1",
+    "enP7s7",
+    "enp1s0f0np0",
+    "enp1s0f1np1",
+    "lo",
+    "wlP9s9",
+];
+const B90F_MACHINE_ID: &str = "d103edc98a4b40419003c632707f59b6";
+
+#[test]
+fn a_reboot_that_moves_memory_by_a_page_does_not_move_the_stable_print() {
+    // Observed: `sysconf` said 130594021376 bytes at enrolment and
+    // 130594025472 after a reboot, one 4 KiB page more. The legacy print
+    // moved with it and the ledger denied the node as reimaged; the stable
+    // print takes no memory size at all, so there is nothing to move.
+    let before = legacy_composite_fingerprint(&B90F, B90F_MACHINE_ID, 20, 130_594_021_376);
+    let after = legacy_composite_fingerprint(&B90F, B90F_MACHINE_ID, 20, 130_594_025_472);
+    assert_ne!(before, after, "the legacy print is the one that broke");
+    assert_eq!(
+        composite_fingerprint(&B90F, B90F_MACHINE_ID, 20),
+        composite_fingerprint(&B90F, B90F_MACHINE_ID, 20)
+    );
+}
+
+#[test]
+fn the_legacy_print_is_still_exactly_the_old_algorithm() {
+    // The one golden value here, and deliberately: a control plane from
+    // before `stable_fingerprint` compares this field against what it
+    // recorded at enrolment, so it has to be the old bytes, not an
+    // improvement. This is the value that node's ledger entry held.
+    assert_eq!(
+        legacy_composite_fingerprint(&B90F, B90F_MACHINE_ID, 20, 130_594_021_376),
+        "bb5826adaac9fe690a388a37f111080e5c986218d33728eccf919d0787404fa9"
+    );
+}
+
+#[test]
+fn the_two_prints_never_coincide() {
+    // A control plane must not be able to mistake one for the other.
+    assert_ne!(
+        composite_fingerprint(&B90F, B90F_MACHINE_ID, 20),
+        legacy_composite_fingerprint(&B90F, B90F_MACHINE_ID, 20, 130_594_021_376)
+    );
+    assert_eq!(legacy_composite_fingerprint(&[], "", 20, 1), "");
 }
 
 // ── And the branch above it ─────────────────────────────────────────────────
@@ -188,9 +232,9 @@ fn the_whole_fingerprint_is_stable_whichever_branch_this_machine_takes() {
     // the machine, so what can be asserted everywhere is the property the
     // control plane actually depends on: ask twice, get the same answer.
     let interfaces = [interface("enp1s0"), interface("docker0")];
-    let first = fingerprint(&interfaces, "machine-1", 20, 128 << 30);
+    let first = fingerprint(&interfaces, "machine-1", 20);
     for _ in 0..20 {
-        assert_eq!(fingerprint(&interfaces, "machine-1", 20, 128 << 30), first);
+        assert_eq!(fingerprint(&interfaces, "machine-1", 20), first);
     }
     assert!(first.is_empty() || first.len() == 64);
 }

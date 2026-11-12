@@ -6,13 +6,14 @@
 //! * `machine_id` is **diagnostic only**. DGX Sparks ship duplicates, so it
 //!   may never be identity; it is collected so the control plane can warn that
 //!   two nodes claim one.
-//! * `hardware_fingerprint` is compared against what enrolment recorded on
-//!   every heartbeat, so a reimage is *detected* rather than inferred. It must
-//!   therefore be the same function `spark_pulse/agent/facts.py` computes, or
-//!   a node whose agent was replaced would report a reimage on every beat.
-//!   `memory_bytes` is read through `sysconf` for the same reason: `/proc/meminfo`
-//!   reports slightly less than the physical total, and "slightly different"
-//!   is indistinguishable from "different hardware" once it is inside a hash.
+//! * `stable_fingerprint` is compared against what enrolment recorded on
+//!   every connection, so a reimage is *detected* rather than inferred. It
+//!   must therefore hash only what a reboot cannot move. Memory is not one of
+//!   those: `sysconf(_SC_PHYS_PAGES)` is what the kernel has left after its own
+//!   reservations, and on a DGX Spark it moved by one 4 KiB page across a
+//!   reboot — inside a hash, indistinguishable from different hardware, so a
+//!   peer was denied as reimaged. `hardware_fingerprint`, which did hash it, is
+//!   still sent unchanged for control planes that know no other field.
 //!
 //! Nothing here may fail. An agent that cannot describe its GPUs must still
 //! connect and say so; a probe that needs `nvidia-smi` must never be able to
@@ -125,7 +126,7 @@ fn os_release() -> String {
     kernel()
 }
 
-/// Total physical memory, via `sysconf`, because that is what Python reads.
+/// Total physical memory, via `sysconf`. Reported; only the legacy print hashes it.
 fn memory_bytes() -> u64 {
     // SAFETY: sysconf takes an int and returns a long; both names are POSIX
     // and neither can trap. A negative return means "unlimited or unknown".
@@ -317,18 +318,43 @@ fn board_serial() -> String {
 /// cloud VM, which is where tests run — the serial wins and the arguments are
 /// never read. A test of the composite that went through here would pass on a
 /// laptop and assert nothing on a CI runner.
-pub fn fingerprint(
+pub fn fingerprint(interfaces: &[NetworkInterface], machine_id: &str, cpu_count: u32) -> String {
+    let serial = serial_fingerprint();
+    if !serial.is_empty() {
+        return serial;
+    }
+    composite_fingerprint(&identifying_names(interfaces), machine_id, cpu_count)
+}
+
+/// The fingerprint control planes before `stable_fingerprint` compare.
+///
+/// The same serial branch, and a composite that also hashes the memory size —
+/// which is exactly what made it unstable. Kept only so a rollback to such a
+/// control plane, which reads nothing else, finds what it recorded.
+pub fn legacy_fingerprint(
     interfaces: &[NetworkInterface],
     machine_id: &str,
     cpu_count: u32,
     memory_bytes: u64,
 ) -> String {
-    let serial = board_serial();
+    let serial = serial_fingerprint();
     if !serial.is_empty() {
-        return hex(Sha256::digest(format!("serial:{serial}").as_bytes()));
+        return serial;
     }
-    let names: Vec<&str> = identifying_names(interfaces);
-    composite_fingerprint(&names, machine_id, cpu_count, memory_bytes)
+    legacy_composite_fingerprint(
+        &identifying_names(interfaces),
+        machine_id,
+        cpu_count,
+        memory_bytes,
+    )
+}
+
+fn serial_fingerprint() -> String {
+    let serial = board_serial();
+    if serial.is_empty() {
+        return serial;
+    }
+    hex(Sha256::digest(format!("serial:{serial}").as_bytes()))
 }
 
 /// The interface names that describe the *hardware*, sorted.
@@ -352,18 +378,31 @@ pub fn identifying_names(interfaces: &[NetworkInterface]) -> Vec<&str> {
 /// Deliberately not built from the hostname or an IP address. Both change
 /// under DHCP and under a rename, and a fingerprint that moved when a node was
 /// renamed would deny a node for being renamed — the failure §3.1 says every
-/// name-keyed system in the survey documented.
-pub fn composite_fingerprint(
+/// name-keyed system in the survey documented. Nor from the memory size, which
+/// the kernel reports net of reservations that differ from one boot to the
+/// next.
+pub fn composite_fingerprint(names: &[&str], machine_id: &str, cpu_count: u32) -> String {
+    // Nothing that *identifies* this machine: no interface names and no
+    // machine-id. The CPU count is not identifying on its own — every Spark
+    // has the same one — so a fingerprint built from it alone would be
+    // identical on every node, and the control plane would read two different
+    // machines as one. Better to say we do not know.
+    if names.is_empty() && machine_id.is_empty() {
+        return String::new();
+    }
+    let mut parts: Vec<String> = names.iter().map(|n| n.to_string()).collect();
+    parts.push(cpu_count.to_string());
+    parts.push(machine_id.to_string());
+    hex(Sha256::digest(parts.join("|").as_bytes()))
+}
+
+/// The first composite, memory size included. Pure; see [`legacy_fingerprint`].
+pub fn legacy_composite_fingerprint(
     names: &[&str],
     machine_id: &str,
     cpu_count: u32,
     memory_bytes: u64,
 ) -> String {
-    // Nothing that *identifies* this machine: no interface names and no
-    // machine-id. The CPU count and the memory size are not identifying on
-    // their own — every Spark has the same ones — so a fingerprint built from
-    // them alone would be identical on every node, and the control plane would
-    // read two different machines as one. Better to say we do not know.
     if names.is_empty() && machine_id.is_empty() {
         return String::new();
     }
@@ -454,7 +493,8 @@ pub fn collect(docker_version: String) -> NodeFacts {
         cpu_count: cpus,
         memory_bytes: memory,
         gpu_count: gpu_count(),
-        hardware_fingerprint: fingerprint(&interfaces, &machine_id, cpus, memory),
+        hardware_fingerprint: legacy_fingerprint(&interfaces, &machine_id, cpus, memory),
+        stable_fingerprint: fingerprint(&interfaces, &machine_id, cpus),
         interfaces,
         infiniband_interfaces,
         roce_links: roce_links(),
