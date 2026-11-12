@@ -29,9 +29,11 @@ import os
 # node's own agent through it; ``redaction``, ``readiness``, ``placement`` and
 # ``runtime_errors``, split out of ``native_runtime`` (which the mock re-exports
 # from) and reaching every node through the switch, so the same code in both
-# modes.  Everything else must exist in both packages.
+# modes; and ``backends``, which simulation does not mock either — it swaps at
+# the agent transport underneath, so the backend that runs is the real one.  Everything else must exist in both packages.
 from spark_pulse.tools import agent_update as agent_update
 from spark_pulse.tools import atomic_json as atomic_json
+from spark_pulse.tools import backends as backends
 from spark_pulse.tools import custom_files as custom_files
 from spark_pulse.tools import custom_recipes as custom_recipes
 from spark_pulse.tools import deployment_records as deployment_records
