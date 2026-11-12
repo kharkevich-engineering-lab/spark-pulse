@@ -179,10 +179,17 @@ def _classify_interface(
     node's hardware fingerprint from the interfaces that are *not* docker, so
     a veth counted as hardware meant that stopping any container changed the
     fingerprint and the control plane denied the node as reimaged.
+
+    Podman's bridges are the same thing under its own names: ``podman*``
+    (netavark) and ``cni-podman*`` (CNI), each created by the runtime when a
+    network first gets a container. Reported as node interfaces, they were
+    offered to interface discovery and counted in the fingerprint (#169).
+    The class stays ``docker``: it means *a container runtime's*, and the
+    agent's fingerprint already keys on it.
     """
     if name == "lo":
         return "loopback"
-    if name.startswith(("docker", "br-", "veth")):
+    if name.startswith(("docker", "br-", "veth", "podman", "cni-podman")):
         return "docker"
     if name.startswith(("ib", "mlx5")):
         return "infiniband"

@@ -156,7 +156,14 @@ pub fn classify_interface(name: &str) -> &'static str {
     // has to be: the fingerprint excludes docker interfaces precisely so a
     // container starting or stopping does not change it, and a veth counted
     // as hardware made exactly that happen.
-    if name.starts_with("docker") || name.starts_with("br-") || name.starts_with("veth") {
+    // Podman's bridges are the same thing under its own names: `podman*`
+    // (netavark) and `cni-podman*` (CNI), each made when a network first gets
+    // a container. The class stays "docker": it means a container runtime's.
+    const CONTAINER_PREFIXES: &[&str] = &["docker", "br-", "veth", "podman", "cni-podman"];
+    if CONTAINER_PREFIXES
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
+    {
         return "docker";
     }
     if name.starts_with("ib") || name.starts_with("mlx5") {
