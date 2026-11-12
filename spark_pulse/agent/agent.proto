@@ -821,6 +821,24 @@ message NodeFacts {
   // kernel recomputes at boot. Compared on every connection against what
   // enrollment (or the first connection that carried it) recorded.
   string stable_fingerprint = 16;
+  // Which container runtime answers on the agent's socket: `docker` or
+  // `podman`, from `/version`'s components (Podman names itself `Podman
+  // Engine`); empty when nothing answers, and from an agent older than the
+  // field. Podman takes a different create body (its compat API drops a GPU
+  // request without saying so), so the agent decides from this, and the
+  // pre-flight and doctor speak to the runtime it names.
+  string container_runtime = 17;
+  // That runtime's own version: Docker's or Podman's, never mixed up with
+  // `docker_version`, which a Podman node fills with Podman's.
+  string runtime_version = 18;
+  // The runtime runs as the agent's user, not as root: `/info`'s
+  // SecurityOptions carry `name=rootless` on rootless Podman and rootless
+  // Docker alike.
+  bool rootless = 19;
+  // Every CDI device the node's spec directories name, as `kind=name`
+  // (`nvidia.com/gpu=all`). How a GPU reaches a Podman container; empty when
+  // there is no spec, which on Podman means no GPU at all.
+  repeated string cdi_devices = 20;
 }
 
 message RoceLink {

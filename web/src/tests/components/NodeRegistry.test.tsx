@@ -915,6 +915,58 @@ describe("InstallAgentDialog", () => {
     expect(screen.getByRole("button", { name: "Install agent on spark-02" })).toHaveAttribute("title", "Reinstall agent");
   });
 
+  it("says which container runtime the node's agent reports, and when it is rootless", async () => {
+    mockApi({
+      nodes: [
+        {
+          ...CONTROL,
+          agent: {
+            enrolled: true,
+            connected: true,
+            version: "1.23.0",
+            current: true,
+            runtime: { name: "docker", version: "29.2.1", rootless: false, cdi_devices: [] },
+          },
+        },
+        {
+          ...PEER,
+          agent: {
+            enrolled: true,
+            connected: true,
+            version: "1.23.0",
+            current: true,
+            runtime: { name: "podman", version: "4.9.3", rootless: true, cdi_devices: ["nvidia.com/gpu=all"] },
+          },
+        },
+      ],
+    });
+    render(<NodeRegistry />);
+    const row = await screen.findByRole("listitem", { name: /spark-02/ });
+    expect(within(row).getByTestId("node-runtime-peer")).toHaveTextContent("podman 4.9.3 · rootless");
+    expect(screen.getByTestId(`node-runtime-${CONTROL.id}`)).toHaveTextContent(/^docker 29\.2\.1$/);
+  });
+
+  it("says nothing about the runtime when the agent is too old to report one", async () => {
+    mockApi({
+      nodes: [
+        CONTROL,
+        {
+          ...PEER,
+          agent: {
+            enrolled: true,
+            connected: true,
+            version: "1.23.0",
+            current: true,
+            runtime: { name: "", version: "", rootless: false, cdi_devices: [] },
+          },
+        },
+      ],
+    });
+    render(<NodeRegistry />);
+    const row = await screen.findByRole("listitem", { name: /spark-02/ });
+    expect(within(row).queryByTestId("node-runtime-peer")).toBeNull();
+  });
+
   it("updates an enrolled node over its agent in one click, no SSH dialog", async () => {
     const user = userEvent.setup();
     mockApi({

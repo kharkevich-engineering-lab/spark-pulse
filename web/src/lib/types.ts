@@ -1126,6 +1126,17 @@ export interface NodeAgentState {
    * binary's digest when the agent reports one. `null` without a connection. */
   current?: boolean | null;
   control_plane_version?: string;
+  /** The container runtime the agent reports. `null` without a connection;
+   * an empty `name` is an agent too old to say, or no daemon answering. */
+  runtime?: NodeContainerRuntime | null;
+}
+
+export interface NodeContainerRuntime {
+  name: "" | "docker" | "podman" | string;
+  version: string;
+  rootless: boolean;
+  /** CDI devices the node's spec names (`nvidia.com/gpu=all`). */
+  cdi_devices: string[];
 }
 
 // ── Diagnosing a node ───────────────────────────────────────────────────────

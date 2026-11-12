@@ -512,6 +512,8 @@
       "updateHint": "This node runs agent {version}; this control plane ships {current}. Reinstalling keeps the node's identity and only replaces the binary. The control plane's key is already on the node, so no password is needed."
     },
     "agentVersion": "agent {version}",
+    "runtime": "{name} {version}",
+    "rootless": "rootless",
     "agentStale": "update available",
     "updateAction": "Update",
     "doctor": {
