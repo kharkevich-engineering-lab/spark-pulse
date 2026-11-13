@@ -302,7 +302,7 @@ export default function RunRow({
             >
               {run.name}
             </button>
-            <StatusBadge status={run.status} sync={run.sync} syncReason={run.sync_reason} />
+            <StatusBadge status={run.status} sync={run.sync} syncReason={run.sync_reason} syncIntent={run.sync_intent} />
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             {run.engine && (

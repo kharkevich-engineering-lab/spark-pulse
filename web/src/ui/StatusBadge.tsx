@@ -66,8 +66,16 @@ export interface StatusBadgeProps {
   sync?: string;
   /** Why it has not settled, shown on hover. */
   syncReason?: string;
+  /** What an in-progress change is: `stop` reads "Stopping…" rather than the
+   *  generic "In progress", which said nothing about what was happening. */
+  syncIntent?: string;
   className?: string;
 }
+
+/** The label for a change in flight, by what it is. */
+const INTENT_KEY: Record<string, string> = {
+  stop: "status.stopping",
+};
 
 function Dot({ pulse }: { pulse: boolean }) {
   return (
@@ -78,7 +86,7 @@ function Dot({ pulse }: { pulse: boolean }) {
   );
 }
 
-export function StatusBadge({ status, sync, syncReason, className }: StatusBadgeProps) {
+export function StatusBadge({ status, sync, syncReason, syncIntent, className }: StatusBadgeProps) {
   const t = useT();
   const key = status.toLowerCase();
   const tone = STATUS_TONE[key];
@@ -109,7 +117,7 @@ export function StatusBadge({ status, sync, syncReason, className }: StatusBadge
           )}
         >
           <Dot pulse={true} />
-          {t(converging.key)}
+          {t(sync === "in_progress" && syncIntent && INTENT_KEY[syncIntent] ? INTENT_KEY[syncIntent] : converging.key)}
         </span>
       )}
     </span>

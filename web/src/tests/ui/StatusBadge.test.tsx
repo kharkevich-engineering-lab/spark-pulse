@@ -34,6 +34,17 @@ describe("StatusBadge", () => {
     expect(screen.getByText(label)).toBeInTheDocument();
   });
 
+  /** A Stop on the lab read "In progress", which said nothing about what. */
+  it("names a stop in flight as stopping", () => {
+    render(<StatusBadge status="running" sync="in_progress" syncIntent="stop" />);
+    expect(screen.getByTestId("sync-in_progress")).toHaveTextContent("Stopping…");
+  });
+
+  it("keeps the generic label for a change it has no name for", () => {
+    render(<StatusBadge status="running" sync="in_progress" />);
+    expect(screen.getByTestId("sync-in_progress")).toHaveTextContent("In progress");
+  });
+
   /** Through `t()`, so the French page is in French — it used to capitalise
    *  whatever the API sent, which is English whichever language you chose. */
   it("says the status in the reader's own language", () => {
