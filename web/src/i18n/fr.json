@@ -287,10 +287,6 @@
     "downloadStarted": "Téléchargement démarré",
     "downloadStartedBody": "{model} est en cours de téléchargement. « {name} » se déploiera tout seul une fois terminé — suivez la progression sur la page Modèles, où vous pouvez aussi l'annuler.",
     "managedRecipe": "Recette gérée — suppression impossible",
-    "hideUnavailable": {
-      "one": "Masquer {count} recette indisponible (grappe uniquement)",
-      "other": "Masquer {count} recettes indisponibles (grappe uniquement)"
-    },
     "missingModelTitle": "Ce modèle n'est pas encore téléchargé",
     "newMod": "Nouveau mod",
     "newRecipe": "Nouvelle recette",
@@ -307,10 +303,6 @@
     "reset": "Réinitialiser",
     "resetBody": "Réinitialiser « {name} » à sa recette d'origine ? Vos personnalisations seront perdues.",
     "resetTitle": "Réinitialiser la personnalisation",
-    "showUnavailable": {
-      "one": "Afficher {count} recette indisponible (grappe uniquement)",
-      "other": "Afficher {count} recettes indisponibles (grappe uniquement)"
-    },
     "subtitleBundled": "Les recettes et mods que ce plan de contrôle peut exécuter.",
     "subtitleCustom": "Vos propres recettes et mods.",
     "tabMods": "Mods",
@@ -332,7 +324,16 @@
     "modExplainer": "Un mod est un run.sh qui s'exécute dans le conteneur avant le démarrage du moteur.",
     "patches": "correctifs",
     "missingModelBody": "{model} n'est pas dans le catalogue local, donc {name} ne peut pas démarrer.",
-    "missingModelWait": "Le téléchargement peut être long. Vous n'avez pas à attendre ici : l'exécution est enregistrée et démarre toute seule quand le modèle arrive, et vous pouvez l'annuler depuis la Bibliothèque à tout moment."
+    "missingModelWait": "Le téléchargement peut être long. Vous n'avez pas à attendre ici : l'exécution est enregistrée et démarre toute seule quand le modèle arrive, et vous pouvez l'annuler depuis la Bibliothèque à tout moment.",
+    "showNotHere": {
+      "one": "Afficher {count} recette qui ne tourne pas ici",
+      "other": "Afficher {count} recettes qui ne tournent pas ici"
+    },
+    "hideNotHere": {
+      "one": "Masquer {count} recette qui ne tourne pas ici",
+      "other": "Masquer {count} recettes qui ne tournent pas ici"
+    },
+    "nothingRunsHere": "Rien dans ce catalogue ne tourne encore sur cette flotte. Les recettes ci-dessous disent pourquoi ; un moteur publié pour cette plateforme, ou une recette pour un moteur qui l'est, y remédie."
   },
   "recipeCard": {
     "running": "En cours",
@@ -342,7 +343,9 @@
     "solo": "Seul",
     "cluster": "Grappe",
     "custom": "Personnalisée",
-    "editCustom": "Modifier la personnalisation"
+    "editCustom": "Modifier la personnalisation",
+    "notHere": "Ne tourne pas ici : {reason}",
+    "notHereBanner": "Cette recette ne tourne pas sur cette flotte : {reason}. Elle peut être lue, pas déployée."
   },
   "registry": {
     "testConnection": "Tester la connexion",
@@ -622,7 +625,8 @@
     "unprivileged": "non privilégié",
     "networkHost": "réseau hôte",
     "ipcHost": "IPC hôte",
-    "shm": "shm {gb} Go"
+    "shm": "shm {gb} Go",
+    "notForThisFleet": "aucune image pour la plateforme de cette flotte"
   },
   "newRecipe": {
     "validationFailed": "Échec de la validation",

@@ -1,6 +1,6 @@
 /** Recipe card — uses BaseCard with recipe-specific badges and actions. */
 
-import { Box, Cpu, Layers, Network, Package, RotateCcw, Zap } from "lucide-react";
+import { Ban, Box, Cpu, Layers, Network, Package, RotateCcw, Zap } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import BaseCard from "./BaseCard";
 import ServesChip from "./ServesChip";
@@ -14,10 +14,13 @@ function usableEngines(r: RecipeSummary): string[] {
   return r.engines ?? [];
 }
 
-export default function RecipeCard({ r, isRunning, clusterBlocked, onSelect, onReset, onUninstall }: {
+export default function RecipeCard({ r, isRunning, clusterBlocked, notHere, onSelect, onReset, onUninstall }: {
   r: RecipeSummary;
   isRunning: boolean;
   clusterBlocked: boolean;
+  /** Why it does not run on this fleet (`fit.reason`). The card is dimmed and
+   *  says so, and still opens: the recipe is worth reading. */
+  notHere?: string;
   onSelect: () => void;
   onReset?: () => void;
   /** Uninstalls an OCI-installed recipe. Only ever passed for `source ===
@@ -62,6 +65,14 @@ export default function RecipeCard({ r, isRunning, clusterBlocked, onSelect, onR
           <Zap size={11} />{t("recipeCard.custom")}
         </span>
       )}
+      {notHere && (
+        <span
+          data-testid={`not-here-${r.id}`}
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-tag-bg text-text-muted"
+        >
+          <Ban size={11} />{t("recipeCard.notHere", { reason: notHere })}
+        </span>
+      )}
     </>
   );
 
@@ -86,6 +97,7 @@ export default function RecipeCard({ r, isRunning, clusterBlocked, onSelect, onR
       badges={badges}
       onClick={onSelect}
       disabled={clusterBlocked}
+      dimmed={Boolean(notHere)}
       onDelete={isOci ? onUninstall : undefined}
       deleteLabel={isOci ? t("recipes.uninstallRecipe", { name: r.name }) : undefined}
       hint={isManaged ? t("recipes.managedRecipe") : undefined}

@@ -311,6 +311,16 @@ export function engineChoices(
         };
       }
       const reported = support.get(engine.engine);
+      if (reported && !reported.supported) {
+        return { engine, supported: false, reason: reported.reason };
+      }
+      // Whether this variant's image runs on this fleet's platforms (#172).
+      // Only a known answer narrows the list: `unknown` is a node that has not
+      // said what it is, and the plan decides then.
+      const fit = recipe.fit;
+      if (fit && fit.verdict !== "unknown" && !(fit.engines[engine.engine] ?? []).includes(engine.variant)) {
+        return { engine, supported: false, reason: i18n.t("deployOptions.notForThisFleet") };
+      }
       if (reported) {
         return { engine, supported: reported.supported, reason: reported.reason };
       }

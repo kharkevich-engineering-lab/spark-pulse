@@ -279,6 +279,31 @@ describe("eligibleEngines", () => {
     expect(shown?.reason).toContain("no image has been published");
   });
 
+  /** The x86 lab: vllm's image is arm64-only, llama-cpp's is multi-arch (#172). */
+  it("offers only the variants whose image runs on this fleet", () => {
+    const engines = [engine("vllm"), engine("llama-cpp")];
+    const recipe = {
+      ...V2_RECIPE,
+      fit: { verdict: "runs", reason: "", engines: { "llama-cpp": ["default"] } },
+    } as typeof V2_RECIPE;
+    const choices = engineChoices(engines, recipe, EN);
+
+    expect(choices.filter((c) => c.supported).map((c) => c.engine.engine)).toEqual(["llama-cpp"]);
+    expect(choices.find((c) => c.engine.engine === "vllm")?.reason).toBe(
+      "no image for this fleet's platform",
+    );
+  });
+
+  it("narrows nothing while a node's platform is unknown", () => {
+    const engines = [engine("vllm"), engine("sglang")];
+    const recipe = {
+      ...V2_RECIPE,
+      fit: { verdict: "unknown", reason: "", engines: { vllm: ["default"] } },
+    } as typeof V2_RECIPE;
+
+    expect(eligibleEngines(engines, recipe, EN).map((e) => e.engine)).toEqual(["vllm", "sglang"]);
+  });
+
   it("does not second-guess an older payload that reports no availability", () => {
     const engines = [engine("vllm"), engine("sglang")];
 
