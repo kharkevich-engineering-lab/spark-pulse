@@ -20,13 +20,14 @@
 
 import { useT, type Translator } from "@/lib/i18n";
 import { StatusBadge, Button, isSettling } from "@/ui";
-import { formatDuration, servesChat } from "@/lib/utils";
+import { formatDuration, formatSize, servesChat } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import ServesChip from "./ServesChip";
 import { isLiveRun } from "@/hooks/useDeployments";
 import { Check, ChevronDown, ChevronUp, Flame, Square, Terminal, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import type { BenchmarkResult, Deployment } from "@/lib/types";
+import type { PullProgress } from "@/lib/operations";
 
 /** Seconds between two timestamps, floored at zero. */
 function secondsBetween(from: string, to: number | string): number {
@@ -215,6 +216,8 @@ export interface RunRowProps {
   /** Stop, cancel or remove — the row decides which word, the page confirms. */
   onTeardown: () => void;
   onBenchmark: () => void;
+  /** The image pull's progress while the run is pulling, from its frames. */
+  pull?: PullProgress;
   /** The expanded panel: logs, ranks, the engine's metrics. */
   children?: React.ReactNode;
 }
@@ -253,6 +256,7 @@ export default function RunRow({
   onToggle,
   onTeardown,
   onBenchmark,
+  pull,
   children,
 }: RunRowProps) {
   const t = useT();
@@ -302,7 +306,7 @@ export default function RunRow({
             >
               {run.name}
             </button>
-            <StatusBadge status={run.status} sync={run.sync} syncReason={run.sync_reason} syncIntent={run.sync_intent} />
+            <StatusBadge status={run.status} sync={run.sync} syncReason={run.sync_reason} syncIntent={run.sync_intent} progress={pull?.percent} />
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             {run.engine && (
@@ -328,6 +332,26 @@ export default function RunRow({
               </div>
             ) : null;
           })()}
+          {pull && (
+            <div className="mt-2" data-testid={`pull-${run.id}`}>
+              <p className="text-[13px] text-muted">
+                {t("runs.pullingImage", {
+                  percent: Math.floor(pull.percent),
+                  done: formatSize(pull.bytesDone),
+                  total: pull.bytesTotal ? formatSize(pull.bytesTotal) : "?",
+                })}
+              </p>
+              <div className="mt-1 h-1.5 max-w-[420px] overflow-hidden rounded-full bg-bg2">
+                <div
+                  role="progressbar"
+                  aria-label={t("runs.pullProgressLabel", { name: run.name })}
+                  aria-valuenow={Math.floor(pull.percent)}
+                  className="h-full bg-blue-cta transition-all"
+                  style={{ width: `${pull.percent}%` }}
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="flex shrink-0 flex-col gap-3 min-[900px]:items-end">

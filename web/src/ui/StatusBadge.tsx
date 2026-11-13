@@ -66,6 +66,9 @@ export interface StatusBadgeProps {
   sync?: string;
   /** Why it has not settled, shown on hover. */
   syncReason?: string;
+  /** How far the state's work has got, 0–100, shown beside the label
+   *  ("Pulling… 45%"). Absent while unknown. */
+  progress?: number;
   /** What an in-progress change is: `stop` reads "Stopping…" rather than the
    *  generic "In progress", which said nothing about what was happening. */
   syncIntent?: string;
@@ -86,7 +89,7 @@ function Dot({ pulse }: { pulse: boolean }) {
   );
 }
 
-export function StatusBadge({ status, sync, syncReason, syncIntent, className }: StatusBadgeProps) {
+export function StatusBadge({ status, sync, syncReason, syncIntent, progress, className }: StatusBadgeProps) {
   const t = useT();
   const key = status.toLowerCase();
   const tone = STATUS_TONE[key];
@@ -104,8 +107,8 @@ export function StatusBadge({ status, sync, syncReason, syncIntent, className }:
           TONE_TEXT[tone ?? "muted"],
         )}
       >
-        <Dot pulse={key === "running"} />
-        {label}
+        <Dot pulse={key === "running" || progress != null} />
+        {progress != null ? `${label}… ${Math.floor(progress)}%` : label}
       </span>
       {converging && (
         <span

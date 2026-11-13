@@ -3639,3 +3639,25 @@ class TestARunRecordsItsBackendAndIntent:
         )
         assert served["backend"] == "kubernetes"
         assert served["intent_hash"] == "abc"
+
+
+class TestThePullProgressLine:
+    """The lab's timeline read "…: 49.12233720868858%"."""
+
+    def test_a_whole_percentage_and_how_much_has_moved(self):
+        line = nr.pull_progress_message(
+            "img@sha256:abc",
+            {
+                "percent": 49.12233720868858,
+                "bytes_done": 4_123_000_000,
+                "bytes_total": 8_400_000_000,
+            },
+        )
+        assert line == "pulling img@sha256:abc: 49% (4.1 of 8.4 GB)"
+
+    def test_an_unknown_total_says_what_has_moved(self):
+        assert (
+            nr.pull_progress_message("img", {"percent": 0, "bytes_done": 2_000_000_000})
+            == "pulling img: 0% (2.0 GB)"
+        )
+        assert nr.pull_progress_message("img", {}) == "pulling img: 0%"
