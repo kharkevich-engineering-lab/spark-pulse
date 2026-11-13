@@ -105,12 +105,22 @@ else
   end
 
   echo "🚀 Starting the simulation backend on port $port..."
-  # Auth is forced off so a developer's ~/.config/spark-pulse/settings.json
-  # cannot bounce the suite to the OIDC login page; CI has it off already.
+  # A home of its own (#193). Every path the product keeps hangs off $HOME —
+  # settings, the database, the engine index cache, installed recipes, the
+  # Hugging Face cache — and a developer who has also run the control plane
+  # for real has all of them filled in: their installed recipes matched names
+  # the specs look for, their engine index offered engines the fixtures do not
+  # know. Only the backend moves; Playwright keeps the real home, which is
+  # where its browsers are.
+  set -g e2e_home (mktemp -d -t spark-pulse-e2e-home.XXXXXX)
+  # Auth is forced off as well, so nothing can bounce the suite to the OIDC
+  # login page; CI has it off already.
   # Benchmarking is forced on because it is a tab of Runs now rather than a
   # page behind a nav entry: with the flag at its default the tab is absent,
   # and `benchmarks.spec.ts` would skip itself rather than check anything.
-  env SIMULATION_MODE=1 SPARK_PULSE_AUTH_ENABLED=false \
+  env -u XDG_CONFIG_HOME -u XDG_CACHE_HOME -u XDG_DATA_HOME -u XDG_STATE_HOME \
+    -u HF_HOME -u HF_HUB_CACHE -u HUGGINGFACE_HUB_CACHE -u HF_TOKEN \
+    HOME=$e2e_home SIMULATION_MODE=1 SPARK_PULSE_AUTH_ENABLED=false \
     SPARK_PULSE_BENCHMARKING_ENABLED=true \
     $python -m uvicorn spark_pulse.app:app --host 127.0.0.1 --port $port --workers 1 \
     >/tmp/spark-pulse-e2e-backend.log 2>&1 &
@@ -150,6 +160,7 @@ popd
 
 if test $started_backend = true
   __e2e_stop_backend $backend_pid
+  rm -rf $e2e_home
 end
 
 echo ""
