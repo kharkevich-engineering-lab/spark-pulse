@@ -1,6 +1,6 @@
 /** Recipe card — uses BaseCard with recipe-specific badges and actions. */
 
-import { Ban, Cpu, Layers, Network, Package, RotateCcw, Zap } from "lucide-react";
+import { Ban, Cpu, Gauge, Layers, Network, Package, RotateCcw, Zap } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import BaseCard from "./BaseCard";
 import ServesChip from "./ServesChip";
@@ -14,7 +14,7 @@ function usableEngines(r: RecipeSummary): string[] {
   return r.engines ?? [];
 }
 
-export default function RecipeCard({ r, isRunning, isQueued, clusterBlocked, notHere, onSelect, onReset }: {
+export default function RecipeCard({ r, isRunning, isQueued, clusterBlocked, notHere, tight, onSelect, onReset }: {
   r: RecipeSummary;
   isRunning: boolean;
   /** A deploy of it is waiting on its model download (Runs shows it). */
@@ -23,6 +23,9 @@ export default function RecipeCard({ r, isRunning, isQueued, clusterBlocked, not
   /** Why it does not run on this fleet (`fit.reason`). The card is dimmed and
    *  says so, and still opens: the recipe is worth reading. */
   notHere?: string;
+  /** Why it runs only just (`fit.reason` of a `tight` verdict): within 10% of
+   *  a node's memory. Said on the card, not dimmed — it does run. */
+  tight?: string;
   onSelect: () => void;
   onReset?: () => void;
 }) {
@@ -65,6 +68,15 @@ export default function RecipeCard({ r, isRunning, isQueued, clusterBlocked, not
         {r.is_customized && (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-amber/20 text-amber">
             <Zap size={11} />{t("recipeCard.custom")}
+          </span>
+        )}
+        {tight && (
+          <span
+            data-testid={`tight-${r.id}`}
+            title={tight}
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-warn/15 text-warn"
+          >
+            <Gauge size={11} />{t("recipeCard.tight")}
           </span>
         )}
         {notHere && (

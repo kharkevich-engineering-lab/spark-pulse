@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from spark_pulse import tools
@@ -204,6 +205,56 @@ def _owners(service: Any) -> dict[str, dict[str, str]]:
     return owners
 
 
+#: A GB10's memory: one pool shared with the host, which ``nvidia-smi``
+#: reports as ``[N/A]``. The figure a fraction is taken of is ``MemTotal``.
+MEMORY_UNIFIED = "unified"
+#: A card with its own memory (an RTX 3060's 12 GB), which ``nvidia-smi``
+#: reports. Host RAM is not what an engine on it budgets against (#171).
+MEMORY_DISCRETE = "discrete"
+
+
+@dataclass
+class NodeMemory:
+    """What a node's memory is, as its own stats say.
+
+    ``model`` is :data:`MEMORY_UNIFIED` or :data:`MEMORY_DISCRETE` (empty for
+    a node that reports neither a GPU nor host memory). ``free_bytes`` is what
+    is free *now* in that pool — on a discrete card it is the number vLLM's
+    startup check compares against, and it counts every holder, ours or not:
+    a training job in somebody else's container holds VRAM no record of ours
+    knows about.
+    """
+
+    model: str = ""
+    total_bytes: int | None = None
+    free_bytes: int | None = None
+    held: dict[str, int | None] = field(default_factory=dict)
+
+
+def node_memory(service: Any) -> NodeMemory:
+    """The node's memory model, its pool and who of ours holds what in it.
+
+    Raises when the node cannot be asked; the caller decides what an
+    unanswered node means.
+    """
+    stats = service.get_node_stats()
+    memory = NodeMemory()
+    for gpu in stats.gpus:
+        if gpu.HasField("memory_total_bytes") and gpu.memory_total_bytes > 0:
+            # One GPU per node is what a rank occupies; the first is the one.
+            memory.model = MEMORY_DISCRETE
+            memory.total_bytes = int(gpu.memory_total_bytes)
+            if gpu.HasField("memory_free_bytes"):
+                memory.free_bytes = int(gpu.memory_free_bytes)
+            break
+    if not memory.model and stats.HasField("memory") and stats.memory.total_bytes > 0:
+        memory.model = MEMORY_UNIFIED
+        memory.total_bytes = int(stats.memory.total_bytes)
+        memory.free_bytes = int(stats.memory.available_bytes) or None
+    memory.held = _held(stats, service)
+    return memory
+
+
 def memory_by_deployment(service: Any) -> tuple[int | None, dict[str, int | None]]:
     """A node's total memory, and what each deployment's containers hold on it.
 
@@ -220,16 +271,12 @@ def memory_by_deployment(service: Any) -> tuple[int | None, dict[str, int | None
     absent. Raises when the node cannot be asked; the caller decides what an
     unanswered node means.
     """
-    stats = service.get_node_stats()
-    total: int | None = None
-    for gpu in stats.gpus:
-        if gpu.HasField("memory_total_bytes") and gpu.memory_total_bytes > 0:
-            # One GPU per node is what a rank occupies; the first is the one.
-            total = int(gpu.memory_total_bytes)
-            break
-    if total is None and stats.HasField("memory") and stats.memory.total_bytes > 0:
-        total = int(stats.memory.total_bytes)
+    memory = node_memory(service)
+    return memory.total_bytes, memory.held
 
+
+def _held(stats: Any, service: Any) -> dict[str, int | None]:
+    """What each deployment's containers hold, from the node's process table."""
     owners = _owners(service)
     held: dict[str, int | None] = {}
     for process in stats.processes:
@@ -243,7 +290,7 @@ def memory_by_deployment(service: Any) -> tuple[int | None, dict[str, int | None
             held[deployment] = (held.get(deployment) or 0) + int(
                 process.used_memory_bytes
             )
-    return total, held
+    return held
 
 
 def _empty_block(**fields: Any) -> dict[str, Any]:

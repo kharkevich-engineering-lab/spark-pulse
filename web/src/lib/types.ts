@@ -31,10 +31,11 @@ export interface RecipeSummary {
 }
 
 /** The backend's verdict on whether a recipe runs on the nodes this control
- *  plane has: an image for their platform, enough of them. `unknown` is a
- *  node that has not said what it is — never treated as a mismatch. */
+ *  plane has: an image for their platform, enough of them, and room in their
+ *  memory. `unknown` is a node that has not said what it is — never treated
+ *  as a mismatch. `tight` runs, within 10% of a node's memory. */
 export interface RecipeFit {
-  verdict: "runs" | "unknown" | "wont_run";
+  verdict: "runs" | "unknown" | "wont_run" | "tight";
   /** Why it does not run, when it does not; the first thing to fix. */
   reason: string;
   /** Engine → the variants that run here. */
@@ -44,6 +45,11 @@ export interface RecipeFit {
 /** Whether the backend said this recipe will not run here. */
 export function wontRunHere(r: Pick<RecipeSummary, "fit">): boolean {
   return r.fit?.verdict === "wont_run";
+}
+
+/** Why a recipe that runs here is a tight fit, when it is one. */
+export function tightHere(r: Pick<RecipeSummary, "fit">): string | undefined {
+  return r.fit?.verdict === "tight" ? r.fit.reason : undefined;
 }
 
 /** One engine's verdict on a recipe, as the backend's engine plugin reports it. */

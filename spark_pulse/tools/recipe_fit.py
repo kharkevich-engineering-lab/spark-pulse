@@ -19,8 +19,15 @@ The verdict is one of three:
   too few nodes, no engine that supports it, no image for the fleet's
   platforms.
 
-Memory fit (#171, #173) is the next input; it is not here yet, so a recipe
-that would not fit in a node's memory still reads ``runs``.
+* ``tight`` — it runs, but its weights and the engine's overhead come within
+  10% of a node's memory (#173).
+
+Memory is the last input (#173): a recipe that runs by platform is held
+against each node's memory — VRAM on a discrete card, the unified pool less
+the host reserve on a Spark (#171) — and needing more than the node has is a
+``wont_run`` that says by how much. Both halves are gathered in the
+background and cached, so a listing never waits on a node or on the hub; a
+figure not gathered yet leaves the verdict as the platforms made it.
 
 Pure apart from :func:`fleet`, which reads the registry and the agents' last
 heartbeat; :func:`fit` takes both as arguments so it is tested with neither.
@@ -29,14 +36,29 @@ heartbeat; :func:`fit` takes both as arguments so it is tested with neither.
 from __future__ import annotations
 
 import logging
+import math
+import threading
+import time
 from dataclasses import dataclass, field
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 logger = logging.getLogger(__name__)
 
 RUNS = "runs"
 UNKNOWN = "unknown"
 WONT_RUN = "wont_run"
+TIGHT = "tight"
+
+#: A need within this share of a node's memory is ``tight``.
+TIGHT_MARGIN = 0.9
+
+#: What an engine holds beyond the weights before it serves a token — the
+#: CUDA context, the allocator, activations. The same figure ``vram`` uses.
+RUNTIME_OVERHEAD_BYTES = 2 * 1024**3
+
+#: How long a node's memory or a model's weight size is trusted before it is
+#: gathered again. Neither changes between two page loads.
+CACHE_SECONDS = 300.0
 
 
 @dataclass(frozen=True)
@@ -46,6 +68,9 @@ class FleetNode:
     id: str
     name: str
     platform: str = ""
+    #: What a run can have of the node's memory (#171): a discrete card's
+    #: VRAM, or a unified pool less the host reserve. None is unknown.
+    memory_bytes: int | None = None
 
 
 @dataclass(frozen=True)
@@ -82,10 +107,47 @@ def _platforms_phrase(nodes: Iterable[FleetNode]) -> str:
     return " or ".join(names)
 
 
+def _gb(value: float) -> str:
+    return f"{value / 1e9:.0f} GB" if value >= 10e9 else f"{value / 1e9:.1f} GB"
+
+
+def memory_fit(
+    need_bytes: int | None, fleet_nodes: list[FleetNode], needed: int = 1
+) -> Fit | None:
+    """``wont_run`` or ``tight`` by memory, or None when it fits or is unknown.
+
+    ``need_bytes`` is the recipe's weights plus the engine's overhead, split
+    evenly over the ``needed`` nodes a cluster recipe spans. The nodes it
+    would take are the ones with the most memory, and the smallest of those
+    is the one that decides. A node whose memory is not known yet, or a need
+    nobody could size, is not a verdict. Pure.
+    """
+    if not need_bytes:
+        return None
+    sized = sorted(
+        (n for n in fleet_nodes if n.memory_bytes),
+        key=lambda n: n.memory_bytes or 0,
+        reverse=True,
+    )
+    if len(sized) < needed:
+        return None
+    weakest = sized[needed - 1]
+    have = int(weakest.memory_bytes or 0)
+    per_node = math.ceil(need_bytes / needed)
+    where = f"{_gb(have)} on {weakest.name}"
+    span = " per node" if needed > 1 else ""
+    if per_node > have:
+        return Fit(WONT_RUN, f"needs ~{_gb(per_node)}{span}, {where}")
+    if per_node > have * TIGHT_MARGIN:
+        return Fit(TIGHT, f"needs ~{_gb(per_node)}{span} of {where}")
+    return None
+
+
 def fit(
     recipe: dict[str, Any],
     fleet_nodes: list[FleetNode],
     variants: list[Variant],
+    need_bytes: int | None = None,
 ) -> Fit:
     """The verdict for one recipe on ``fleet_nodes``. Pure.
 
@@ -128,6 +190,9 @@ def fit(
                 by_unknown.setdefault(engine, []).append(spec.variant)
 
     if runnable:
+        memory = memory_fit(need_bytes, fleet_nodes, needed)
+        if memory is not None:
+            return Fit(memory.verdict, memory.reason, engines=runnable)
         return Fit(RUNS, engines=runnable)
     if by_unknown:
         return Fit(UNKNOWN, engines=by_unknown)
@@ -151,7 +216,7 @@ def fit(
 # ── The fleet and the engines, as they are now ──────────────────────────────
 
 
-def fleet() -> list[FleetNode]:
+def fleet(with_memory: bool = False) -> list[FleetNode]:
     """The nodes a run could use, with each one's reported platform.
 
     Every registered node not marked ``dead`` — the rule the Settings cluster
@@ -179,7 +244,18 @@ def fleet() -> list[FleetNode]:
         platform = (
             str(getattr(connection.facts, "platform", "") or "") if connection else ""
         )
-        out.append(FleetNode(node.id, node.name or node.id, platform))
+        out.append(
+            FleetNode(
+                node.id,
+                node.name or node.id,
+                platform,
+                (
+                    node_capacity(node.id, node.address, node.is_control_plane)
+                    if with_memory
+                    else None
+                ),
+            )
+        )
     if not any(n for n in nodes if n.is_control_plane):
         # The machine this runs on is always one node, whether or not the
         # registry has caught up with saying so (settings counts it the same).
@@ -256,6 +332,109 @@ def variants() -> list[Variant]:
 
 def annotate(recipes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Each recipe with its ``fit``, the fleet and the engines read once."""
-    nodes = fleet()
+    # Memory only here: the listing is what judges memory, and every other
+    # caller (the plan's platform check, the pre-flight's image sizing) asks
+    # about the nodes a run targets — a solo run must not reach a peer.
+    nodes = fleet(with_memory=True)
     specs = variants()
-    return [{**r, "fit": fit(r, nodes, specs).to_dict()} for r in recipes]
+    return [
+        {**r, "fit": fit(r, nodes, specs, recipe_need(r)).to_dict()} for r in recipes
+    ]
+
+
+# ── Memory, gathered in the background ──────────────────────────────────────
+
+_cache: dict[tuple[str, ...], tuple[float, int | None]] = {}
+_pending: set[tuple[str, ...]] = set()
+_cache_lock = threading.Lock()
+
+
+def _cached(key: tuple[str, ...], gather: Callable[[], int | None]) -> int | None:
+    """The cached figure for ``key``, refreshed in the background when stale.
+
+    A listing must not wait on a node or the hub: the first one reads
+    nothing (and the verdict stays what the platforms made it), the next
+    reads what the background gathered.
+    """
+    now = time.monotonic()
+    with _cache_lock:
+        hit = _cache.get(key)
+        fresh = hit is not None and now - hit[0] < CACHE_SECONDS
+        if fresh or key in _pending:
+            return hit[1] if hit else None
+        _pending.add(key)
+
+    def work() -> None:
+        try:
+            value = gather()
+        except Exception as exc:  # noqa: BLE001 — unknown, never an error
+            logger.debug("could not gather %s: %s", key, exc)
+            value = None
+        with _cache_lock:
+            _cache[key] = (time.monotonic(), value)
+            _pending.discard(key)
+
+    threading.Thread(target=work, name=f"recipe-fit-{key[0]}", daemon=True).start()
+    return hit[1] if hit else None
+
+
+def node_capacity(node_id: str, address: str, is_control: bool) -> int | None:
+    """What a run can have of this node's memory, from its own stats (#171)."""
+    from spark_pulse import tools
+
+    def gather() -> int | None:
+        node = tools.node_service.Node(
+            id=node_id, address="" if is_control else address, is_self=is_control
+        )
+        memory = tools.node_stats.node_memory(tools.node_service.NodeServices()(node))
+        if not memory.total_bytes:
+            return None
+        if memory.model == tools.node_stats.MEMORY_DISCRETE:
+            return memory.total_bytes
+        from spark_pulse.tools.memory_budget import OS_RESERVE_BYTES
+
+        return max(0, memory.total_bytes - OS_RESERVE_BYTES)
+
+    return _cached(("node", node_id), gather)
+
+
+#: Weight files, in the order a repository is read for them: one format is
+#: counted, never two, because a repository may carry the same weights twice.
+_WEIGHT_PATTERNS = (["*.safetensors"], ["*.bin"], ["*.gguf"])
+
+
+def recipe_need(recipe: dict[str, Any]) -> int | None:
+    """The recipe's weights plus the engine's overhead; None until known.
+
+    A GGUF recipe counts only the file its ``--hf-file`` names (the engine's
+    own :meth:`model_patterns`, as a download does since #208); any other
+    counts one format of weight files in the repository. The hub's file list
+    is the source, so a model that is not downloaded yet is sized too.
+    """
+    model = str(recipe.get("model") or "")
+    if not model:
+        return None
+    patterns = _engine_patterns(recipe)
+
+    def gather() -> int | None:
+        from spark_pulse import tools
+
+        source = tools.models.get_source(None)
+        for candidate in [patterns] if patterns else _WEIGHT_PATTERNS:
+            size = tools.models.estimate_size(model, source, None, candidate)
+            if size:
+                return int(size)
+        return None
+
+    weights = _cached(("weights", model, *patterns), gather)
+    return weights + RUNTIME_OVERHEAD_BYTES if weights else None
+
+
+def _engine_patterns(recipe: dict[str, Any]) -> list[str]:
+    from spark_pulse.engines import get_registry
+
+    try:
+        engine = get_registry().engine(str(recipe.get("engine") or ""), "default")
+        return list(engine.model_patterns(recipe))
+    except Exception:  # noqa: BLE001 — no patterns is "the whole repository"
+        return []

@@ -68,6 +68,23 @@ describe("RecipeCard", () => {
     expect(screen.getByTestId("recipe-line2-oci-gguf")).toHaveTextContent("Single node");
   });
 
+  /** A recipe within 10% of a node's memory runs, and says so with the
+   *  numbers on hover; it is not dimmed (#173). */
+  it("says a tight fit, with why on hover", () => {
+    render(
+      <RecipeCard
+        r={recipe()}
+        isRunning={false}
+        clusterBlocked={false}
+        tight="needs ~11 GB of 13 GB on ark-desktop"
+        onSelect={vi.fn()}
+      />,
+    );
+    const chip = screen.getByTestId(`tight-${recipe().id}`);
+    expect(chip).toHaveTextContent("Tight fit");
+    expect(chip).toHaveAttribute("title", "needs ~11 GB of 13 GB on ark-desktop");
+  });
+
   it("falls back to the model when a recipe carries no description", () => {
     render(
       <RecipeCard
