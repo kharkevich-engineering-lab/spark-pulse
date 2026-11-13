@@ -11,6 +11,7 @@ import type { AlertTone } from "@/ui";
 import PreflightPanel from "@/components/PreflightPanel";
 import { Loader2, AlertCircle, ChevronDown, X, Copy, Check, Wrench, FileCode2, FileText, FileCode, Plus, Download } from "lucide-react";
 import RecipeCard from "@/components/RecipeCard";
+import { useWaitingDeploys } from "@/hooks/useWaitingDeploys";
 import RecipeDrawer from "@/components/RecipeDrawer";
 import SlideDrawer from "@/components/SlideDrawer";
 import BaseCard from "@/components/BaseCard";
@@ -251,6 +252,11 @@ export default function RecipesPage() {
   const clusterAvailable = settings?.cluster?.available ?? settings?.cluster_enabled ?? false;
   const clusterNodeCount = settings?.cluster?.node_count ?? 1;
 
+  // Deploys waiting on their model download: the card says "queued" from the
+  // moment "Download and deploy" is accepted, rather than looking untouched.
+  const { waiting, refetch: refetchWaiting } = useWaitingDeploys();
+  const queuedIds = useMemo(() => new Set(waiting.map((w) => w.entry.recipe_id)), [waiting]);
+
   const runningIds = useMemo(() => {
     if (!deployments) return new Set<string>();
     return new Set(deployments.filter(d => d.status === "running" || d.status === "pending").map(d => d.recipe_id));
@@ -432,6 +438,7 @@ export default function RecipesPage() {
       });
       setMissingModelDeploy(null);
       setSelected(null);
+      void refetchWaiting();
       setAlertModal({
         title: t("recipes.downloadStarted"),
         message: t("recipes.downloadStartedBody", { model, name }),
@@ -621,6 +628,7 @@ export default function RecipesPage() {
                         key={r.id}
                         r={r}
                         isRunning={runningIds.has(r.id)}
+                        isQueued={queuedIds.has(r.id)}
                         clusterBlocked={false}
                         onSelect={() => handleSelect(r)}
                         onReset={() => openResetConfirm(r)}

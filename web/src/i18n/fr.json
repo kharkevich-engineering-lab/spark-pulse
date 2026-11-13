@@ -285,7 +285,7 @@
     "downloadAndDeploy": "Télécharger et déployer",
     "downloadFailed": "Impossible de démarrer le téléchargement",
     "downloadStarted": "Téléchargement démarré",
-    "downloadStartedBody": "{model} est en cours de téléchargement. « {name} » se déploiera tout seul une fois terminé — suivez la progression sur la page Modèles, où vous pouvez aussi l'annuler.",
+    "downloadStartedBody": "{model} est en cours de téléchargement. {name} se déploiera de lui-même à la fin — il apparaît déjà dans Exécutions, avec la progression du téléchargement.",
     "managedRecipe": "Recette gérée — suppression impossible",
     "missingModelTitle": "Ce modèle n'est pas encore téléchargé",
     "newMod": "Nouveau mod",
@@ -345,7 +345,8 @@
     "custom": "Personnalisée",
     "editCustom": "Modifier la personnalisation",
     "notHere": "Ne tourne pas ici : {reason}",
-    "notHereBanner": "Cette recette ne tourne pas sur cette flotte : {reason}. Elle peut être lue, pas déployée."
+    "notHereBanner": "Cette recette ne tourne pas sur cette flotte : {reason}. Elle peut être lue, pas déployée.",
+    "queued": "En file"
   },
   "registry": {
     "testConnection": "Tester la connexion",
@@ -994,7 +995,16 @@
     "head": "tête",
     "rank": "rang {rank}",
     "orphanRank": "Le rang {rank} n'a pas pu être confirmé arrêté",
-    "orphanPorts": "Son conteneur tourne peut-être encore et retient les ports de {node} tant que ce n'est pas réglé."
+    "orphanPorts": "Son conteneur tourne peut-être encore et retient les ports de {node} tant que ce n'est pas réglé.",
+    "waitingStatus": "En attente du modèle",
+    "deployingStatus": "Déploiement",
+    "waitingForModel": "Téléchargement du modèle : {percent} % ({done} sur {total})",
+    "waitingForModelUnknown": "Téléchargement du modèle",
+    "waitingQueued": "Le téléchargement du modèle est en file d'attente",
+    "waitingDeploying": "Le modèle est là ; l'exécution est en cours de création",
+    "waitingWatchDownload": "suivre le téléchargement",
+    "waitingProgressLabel": "Téléchargement du modèle de {name}",
+    "cancelWaiting": "Annuler le déploiement de {name}"
   },
   "library": {
     "cacheUnreachable": "Injoignable",

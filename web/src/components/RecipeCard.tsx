@@ -14,9 +14,11 @@ function usableEngines(r: RecipeSummary): string[] {
   return r.engines ?? [];
 }
 
-export default function RecipeCard({ r, isRunning, clusterBlocked, notHere, onSelect, onReset, onUninstall }: {
+export default function RecipeCard({ r, isRunning, isQueued, clusterBlocked, notHere, onSelect, onReset, onUninstall }: {
   r: RecipeSummary;
   isRunning: boolean;
+  /** A deploy of it is waiting on its model download (Runs shows it). */
+  isQueued?: boolean;
   clusterBlocked: boolean;
   /** Why it does not run on this fleet (`fit.reason`). The card is dimmed and
    *  says so, and still opens: the recipe is worth reading. */
@@ -80,6 +82,11 @@ export default function RecipeCard({ r, isRunning, clusterBlocked, notHere, onSe
     <div className="flex items-center gap-2 shrink-0">
       <Zap size={16} className={isRunning ? "text-success" : "text-blue2"} />
       {isRunning && <span className="flex items-center gap-1 text-xs text-success font-medium"><span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />{t("recipeCard.running")}</span>}
+      {!isRunning && isQueued && (
+        <span data-testid={`queued-${r.id}`} className="flex items-center gap-1 text-xs text-blue2 font-medium">
+          <span className="w-1.5 h-1.5 rounded-full bg-blue2 animate-pulse" />{t("recipeCard.queued")}
+        </span>
+      )}
       {clusterBlocked && <span className="text-xs text-text-muted">{t("recipeCard.clusterOnly")}</span>}
       {r.is_customized && onReset && (
         <button onClick={(e) => { e.stopPropagation(); onReset(); }} className="p-1 rounded hover:bg-warning/15 text-warning transition-colors" title={t("recipeCard.resetToOriginal")}>
