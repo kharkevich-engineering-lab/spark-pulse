@@ -107,6 +107,27 @@ fn hostname() -> String {
     }
 }
 
+/// The OCI platform name for a `uname` machine: `x86_64` is `linux/amd64`
+/// and `aarch64` is `linux/arm64`, the names an image index uses. Anything
+/// else is returned as `linux/<machine>`, so a new architecture is reported as
+/// itself rather than as nothing. Empty in, empty out. Pure.
+pub fn oci_platform(machine: &str) -> String {
+    let arch = match machine {
+        "" => return String::new(),
+        "x86_64" | "amd64" => "amd64",
+        "aarch64" | "arm64" => "arm64",
+        other => other,
+    };
+    format!("linux/{arch}")
+}
+
+fn platform() -> String {
+    match uname() {
+        Some(info) => oci_platform(&from_c(&info.machine)),
+        None => String::new(),
+    }
+}
+
 /// `"<system> <release>"`, matching Python's `platform.uname()` pair.
 fn kernel() -> String {
     match uname() {
@@ -683,6 +704,7 @@ pub fn collect(docker_version: String, runtime: ContainerRuntime) -> NodeFacts {
         runtime_version: runtime.version,
         rootless: runtime.rootless,
         cdi_devices: cdi_devices(),
+        platform: platform(),
     }
 }
 

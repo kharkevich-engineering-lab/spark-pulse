@@ -65,6 +65,7 @@ SUMMARY_FIELDS = (
     "description",
     "solo_only",
     "cluster_only",
+    "min_nodes",
     "mods",
     "defaults",
     "params",

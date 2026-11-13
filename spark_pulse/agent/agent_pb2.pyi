@@ -930,7 +930,7 @@ class SnapshotRemoval(_message.Message):
     def __init__(self, removed: _Optional[bool] = ..., freed_bytes: _Optional[int] = ..., paths: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class NodeFacts(_message.Message):
-    __slots__ = ("hostname", "boot_id", "machine_id", "os_release", "kernel", "agent_version", "docker_version", "cpu_count", "memory_bytes", "gpu_count", "interfaces", "infiniband_interfaces", "hardware_fingerprint", "roce_links", "binary_sha256", "stable_fingerprint", "container_runtime", "runtime_version", "rootless", "cdi_devices")
+    __slots__ = ("hostname", "boot_id", "machine_id", "os_release", "kernel", "agent_version", "docker_version", "cpu_count", "memory_bytes", "gpu_count", "interfaces", "infiniband_interfaces", "hardware_fingerprint", "roce_links", "binary_sha256", "stable_fingerprint", "container_runtime", "runtime_version", "rootless", "cdi_devices", "platform")
     HOSTNAME_FIELD_NUMBER: _ClassVar[int]
     BOOT_ID_FIELD_NUMBER: _ClassVar[int]
     MACHINE_ID_FIELD_NUMBER: _ClassVar[int]
@@ -951,6 +951,7 @@ class NodeFacts(_message.Message):
     RUNTIME_VERSION_FIELD_NUMBER: _ClassVar[int]
     ROOTLESS_FIELD_NUMBER: _ClassVar[int]
     CDI_DEVICES_FIELD_NUMBER: _ClassVar[int]
+    PLATFORM_FIELD_NUMBER: _ClassVar[int]
     hostname: str
     boot_id: str
     machine_id: str
@@ -971,7 +972,8 @@ class NodeFacts(_message.Message):
     runtime_version: str
     rootless: bool
     cdi_devices: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, hostname: _Optional[str] = ..., boot_id: _Optional[str] = ..., machine_id: _Optional[str] = ..., os_release: _Optional[str] = ..., kernel: _Optional[str] = ..., agent_version: _Optional[str] = ..., docker_version: _Optional[str] = ..., cpu_count: _Optional[int] = ..., memory_bytes: _Optional[int] = ..., gpu_count: _Optional[int] = ..., interfaces: _Optional[_Iterable[_Union[NetworkInterface, _Mapping]]] = ..., infiniband_interfaces: _Optional[_Iterable[str]] = ..., hardware_fingerprint: _Optional[str] = ..., roce_links: _Optional[_Iterable[_Union[RoceLink, _Mapping]]] = ..., binary_sha256: _Optional[str] = ..., stable_fingerprint: _Optional[str] = ..., container_runtime: _Optional[str] = ..., runtime_version: _Optional[str] = ..., rootless: _Optional[bool] = ..., cdi_devices: _Optional[_Iterable[str]] = ...) -> None: ...
+    platform: str
+    def __init__(self, hostname: _Optional[str] = ..., boot_id: _Optional[str] = ..., machine_id: _Optional[str] = ..., os_release: _Optional[str] = ..., kernel: _Optional[str] = ..., agent_version: _Optional[str] = ..., docker_version: _Optional[str] = ..., cpu_count: _Optional[int] = ..., memory_bytes: _Optional[int] = ..., gpu_count: _Optional[int] = ..., interfaces: _Optional[_Iterable[_Union[NetworkInterface, _Mapping]]] = ..., infiniband_interfaces: _Optional[_Iterable[str]] = ..., hardware_fingerprint: _Optional[str] = ..., roce_links: _Optional[_Iterable[_Union[RoceLink, _Mapping]]] = ..., binary_sha256: _Optional[str] = ..., stable_fingerprint: _Optional[str] = ..., container_runtime: _Optional[str] = ..., runtime_version: _Optional[str] = ..., rootless: _Optional[bool] = ..., cdi_devices: _Optional[_Iterable[str]] = ..., platform: _Optional[str] = ...) -> None: ...
 
 class RoceLink(_message.Message):
     __slots__ = ("hca", "netdev", "is_up")

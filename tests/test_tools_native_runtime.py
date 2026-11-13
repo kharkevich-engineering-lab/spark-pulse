@@ -1375,6 +1375,36 @@ class TestImagePull:
         assert len(attempts) == 1
         assert record["status"] == "stopped"
 
+    @pytest.mark.parametrize(
+        "said",
+        [
+            # Podman, on the x86_64 lab node (#172).
+            "Docker responded with status code 500: no image found in image "
+            'index for architecture amd64, variant "", OS linux',
+            # Docker's wording for the same thing.
+            "no matching manifest for linux/amd64 in the manifest list entries",
+        ],
+    )
+    def test_an_image_with_no_build_for_the_node_is_not_retried(
+        self, native, docker, said
+    ):
+        """No attempt changes what platforms an image was built for."""
+        plan = native.plan("qwen3-8b")
+        _forget_image(docker, plan.container.image)
+        attempts: list[int] = []
+
+        def _no_platform(ref, progress=None, **_kwargs):
+            attempts.append(1)
+            raise RuntimeError(said)
+
+        with _no_pull_backoff():
+            with patch.object(docker, "pull_image", side_effect=_no_platform):
+                record = native.start(plan, docker=docker, wait=True)
+
+        assert len(attempts) == 1
+        assert record["status"] == "error"
+        assert "1 attempt" in record["error_message"]
+
     def test_an_unreachable_node_does_not_strand_the_record_in_pulling(
         self, native, docker
     ):

@@ -839,6 +839,12 @@ message NodeFacts {
   // (`nvidia.com/gpu=all`). How a GPU reaches a Podman container; empty when
   // there is no spec, which on Podman means no GPU at all.
   repeated string cdi_devices = 20;
+  // The OCI platform this node runs, `linux/arm64` (a DGX Spark) or
+  // `linux/amd64`, from `uname`'s machine. What an engine image's `arch` is
+  // matched against, so a recipe whose images were not built for this node is
+  // said to not run here before anything is pulled. Empty from an agent older
+  // than the field, which is unknown, never a mismatch.
+  string platform = 21;
 }
 
 message RoceLink {

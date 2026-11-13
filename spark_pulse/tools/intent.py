@@ -40,13 +40,14 @@ from spark_pulse.tools.parallelism import (
     parse_parallelism,
     validate_cluster_capacity,
 )
+from spark_pulse.tools import recipe_fit
 from spark_pulse.tools.redaction import REDACTED, is_secret_env
 from spark_pulse.tools.runtime_errors import MissingModelError, NativeRuntimeError
 
 #: Recipe keys that are computed against this control plane when a recipe is
 #: listed — which engines are enabled, which support it — rather than written
 #: in the recipe. They would change a run's hash without changing the run.
-RECIPE_ANNOTATIONS = frozenset({"engine_support"})
+RECIPE_ANNOTATIONS = frozenset({"engine_support", "fit"})
 
 
 def _redacted(value: Any) -> Any:
@@ -239,6 +240,19 @@ def resolve_intent(
         explicit_engine=bool(engine),
         warnings=warnings,
     )
+
+    # The image has to exist for every node it will run on: an x86_64 node
+    # handed an arm64-only image downloaded its model and then failed at the
+    # pull (#172). Only a platform a node reported refuses; unknown is not a
+    # mismatch.
+    refusal = recipe_fit.platform_refusal(
+        engine_name,
+        resolved_variant,
+        registry.get(engine_name, resolved_variant).arch,
+        recipe_fit.platforms_of(node_list),
+    )
+    if refusal:
+        raise NativeRuntimeError(f"recipe '{recipe_id}' cannot run here: {refusal}")
 
     # Checked after the image is resolved, because a legacy container tag can
     # map to an older image than the engine's default variant would use — and
