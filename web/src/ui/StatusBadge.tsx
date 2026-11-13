@@ -98,6 +98,24 @@ export function StatusBadge({ status, sync, syncReason, syncIntent, progress, cl
   // "Quiescing".
   const label = tone ? t(`status.${key}`) : status.charAt(0).toUpperCase() + status.slice(1);
   const converging = sync ? SYNC_TONE[sync] : undefined;
+  const intentKey = sync === "in_progress" && syncIntent ? INTENT_KEY[syncIntent] : undefined;
+
+  // A change that names itself says the lifecycle too: "Stopping…" is a run
+  // that is still up, so "Running" beside it is the same fact twice.
+  if (intentKey) {
+    return (
+      <span className={cn("inline-flex items-center gap-2 flex-wrap", className)}>
+        <span
+          title={syncReason || undefined}
+          data-testid={`sync-${sync}`}
+          className={cn("inline-flex items-center gap-1.5 text-[13px] font-medium", TONE_TEXT.warn)}
+        >
+          <Dot pulse={true} />
+          {t(intentKey)}
+        </span>
+      </span>
+    );
+  }
 
   return (
     <span className={cn("inline-flex items-center gap-2 flex-wrap", className)}>
@@ -120,7 +138,7 @@ export function StatusBadge({ status, sync, syncReason, syncIntent, progress, cl
           )}
         >
           <Dot pulse={true} />
-          {t(sync === "in_progress" && syncIntent && INTENT_KEY[syncIntent] ? INTENT_KEY[syncIntent] : converging.key)}
+          {t(converging.key)}
         </span>
       )}
     </span>
