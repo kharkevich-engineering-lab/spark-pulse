@@ -544,6 +544,73 @@ def test_an_absent_image_makes_the_deployment_slow_not_blocked():
     assert "25.0 GB" in report["summary"]
 
 
+# ── What a pull moves (#210) ─────────────────────────────────────────────────
+
+
+def _fleet(monkeypatch, platforms: dict[str, str]) -> None:
+    from spark_pulse import tools
+    from spark_pulse.tools.recipe_fit import FleetNode
+
+    monkeypatch.setattr(
+        tools.recipe_fit,
+        "fleet",
+        lambda: [FleetNode(i, i, p) for i, p in platforms.items()],
+    )
+
+
+def test_a_pull_is_sized_by_the_registry_for_the_nodes_platform(monkeypatch):
+    """The registry's figure for this node's platform, not a size on disk and
+    not an assumed 25 GB: the lab's llama.cpp image moves 1.9 GB."""
+    from spark_pulse import tools
+
+    _fleet(monkeypatch, {CONTROL.id: "linux/amd64"})
+    asked: list[tuple[str, str]] = []
+
+    def transfer_bytes(ref: str, platform: str) -> int:
+        asked.append((ref, platform))
+        return 1_858_335_427
+
+    monkeypatch.setattr(tools.image_size, "transfer_bytes", transfer_bytes)
+    report = run(services={CONTROL.id: FakeService(None)})
+
+    check = check_of(report, preflight.CHECK_IMAGE)
+    assert asked == [(IMAGE, "linux/amd64")]
+    assert check["delay_bytes"] == 1_858_335_427
+    assert "about 1.7 GB will transfer" in check["observed"]
+    assert report["estimated_transfer_bytes"] == 1_858_335_427
+
+
+def test_a_node_that_holds_the_image_asks_the_registry_nothing(monkeypatch):
+    from spark_pulse import tools
+
+    _fleet(monkeypatch, {CONTROL.id: "linux/arm64"})
+    monkeypatch.setattr(
+        tools.image_size,
+        "transfer_bytes",
+        lambda *_a: pytest.fail("a node with the image needs no size"),
+    )
+    assert check_of(run(), preflight.CHECK_IMAGE)["status"] == STATUS_PASS
+
+
+def test_a_size_nothing_can_report_is_said_to_be_unknown(monkeypatch):
+    """No registry answer, no copy anywhere: a pull is still a wait, but its
+    size is not invented."""
+    from spark_pulse import tools
+
+    _fleet(monkeypatch, {CONTROL.id: "linux/amd64"})
+    monkeypatch.setattr(tools.image_size, "transfer_bytes", lambda *_a: None)
+    report = run(
+        plan=make_plan(image_size_bytes=None), services={CONTROL.id: FakeService(None)}
+    )
+
+    check = check_of(report, preflight.CHECK_IMAGE)
+    assert check["delay_bytes"] == 0
+    assert "pull of unknown size" in check["observed"]
+    assert "25.0 GB" not in check["observed"]
+    assert report["verdict"] == VERDICT_SLOW
+    assert "data of unreported size" in report["summary"]
+
+
 # ── Model ────────────────────────────────────────────────────────────────────
 
 

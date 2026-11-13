@@ -129,10 +129,6 @@ DISK_HEADROOM = 1.25
 #: What a probe command is given before it is considered hung.
 PROBE_TIMEOUT = 20
 
-#: Fallback size for an image whose size nothing can report, used only to say
-#: roughly how long a pull will take. A Spark engine image is about this.
-ASSUMED_IMAGE_BYTES = 26_843_545_600
-
 _GIB = 1024**3
 
 
@@ -598,9 +594,15 @@ class _Context:
     image_rows: dict[str, dict[str, Any]]
     model_rows: dict[str, dict[str, Any]]
     hub_dir: str
+    #: The image's size where any node holds it (the plan's, or the control
+    #: node's copy) — 0 when nothing here knows it.
     image_bytes: int
     model_bytes: int
     wanted_digest: str = ""
+    #: What a pull moves to each node that needs one, from the registry for
+    #: that node's platform (#210). Preferred over :attr:`image_bytes`, which
+    #: is a size on disk rather than a transfer.
+    image_bytes_by_node: dict[str, int] = field(default_factory=dict)
     #: The planned model's ``config.json`` summary, or None when the catalogue
     #: does not have one. Read once rather than per node: it is the same
     #: document everywhere, and the read is a disk hit.
@@ -821,7 +823,8 @@ def _check_image(target: NodeTarget, ctx: _Context) -> Check:
             f"could not ask {target.label} whether it holds {ref}: " f"{row['error']}",
             "Assume a pull. Fix the Docker check and re-run the pre-flight to "
             "find out for certain.",
-            delay_bytes=ctx.image_bytes,
+            delay_bytes=_image_bytes(target, ctx),
+            costs_time=True,
             ref=ref,
             pull_required=True,
         )
@@ -846,12 +849,13 @@ def _check_image(target: NodeTarget, ctx: _Context) -> Check:
             f"{target.label} holds {ref} at "
             f"{row.get('digest') or row.get('image_id') or 'an unknown digest'}"
             f", but the plan pins {ctx.wanted_digest or 'a different digest'}; "
-            f"about {_bytes(ctx.image_bytes)} will transfer",
+            f"{_transfer(target, ctx)}",
             f"Digest drift, not a broken node. Refresh it: seed the control "
             f"node's registry and have {target.label} pull from it with "
             "POST /api/images/sync, which keeps the registry credential on "
             "this machine.",
-            delay_bytes=ctx.image_bytes,
+            delay_bytes=_image_bytes(target, ctx),
+            costs_time=True,
             ref=ref,
             pull_required=True,
             digest=row.get("digest", ""),
@@ -861,13 +865,14 @@ def _check_image(target: NodeTarget, ctx: _Context) -> Check:
         title,
         target,
         STATUS_WARN,
-        f"{ref} is not on {target.label}; about {_bytes(ctx.image_bytes)} "
-        "will transfer before the container starts",
+        f"{ref} is not on {target.label}; {_transfer(target, ctx)} "
+        "before the container starts",
         f"Not a failure — a wait. Pre-seed it so the deploy does not pay for "
         f"it: POST /api/images/sync copies the image into this machine's "
         f"registry once and has {target.label} pull from there over the fast "
         "link, with no registry credential leaving the control node.",
-        delay_bytes=ctx.image_bytes,
+        delay_bytes=_image_bytes(target, ctx),
+        costs_time=True,
         ref=ref,
         pull_required=True,
     )
@@ -1554,7 +1559,24 @@ def _check_disk(target: NodeTarget, ctx: _Context) -> list[Check]:
 
 def _needed_image_bytes(target: NodeTarget, ctx: _Context) -> int:
     row = ctx.image_rows.get(target.id) or {}
-    return 0 if row.get("matches") else ctx.image_bytes
+    return 0 if row.get("matches") else _image_bytes(target, ctx)
+
+
+def _image_bytes(target: NodeTarget, ctx: _Context) -> int:
+    """What pulling the image moves to ``target``; 0 when nothing knows."""
+    return ctx.image_bytes_by_node.get(target.id) or ctx.image_bytes
+
+
+def _transfer(target: NodeTarget, ctx: _Context) -> str:
+    """The transfer phrase: about how much will move, or that nobody knows.
+
+    The pre-flight once printed an assumed 25 GB here for every image it
+    could not size, which read as an estimate and was off by an order of
+    magnitude for the lab's llama.cpp image (#210)."""
+    size = _image_bytes(target, ctx)
+    if size:
+        return f"about {_bytes(size)} will transfer"
+    return "a pull of unknown size is needed"
 
 
 def _needed_model_bytes(target: NodeTarget, ctx: _Context) -> int:
@@ -2145,7 +2167,35 @@ def _image_rows(
             not digests and control_id and row.get("image_id") == control_id
         )
 
-    return rows, wanted_digest, size or ASSUMED_IMAGE_BYTES
+    return rows, wanted_digest, size
+
+
+def _registry_sizes(
+    targets: list[NodeTarget], ref: str, rows: dict[str, dict[str, Any]]
+) -> dict[str, int]:
+    """What a pull moves to each node that needs one, asked of the registry.
+
+    Per node because it is per platform: an amd64 desktop and an arm64 Spark
+    pull different manifests. Only for a node whose copy does not match — a
+    node that holds the image moves nothing, and asking would cost a request
+    for an answer nobody reads. A node whose platform is unknown, or a
+    registry that does not answer, is left out: unknown, not a guess.
+    """
+    needing = [t for t in targets if not (rows.get(t.id) or {}).get("matches")]
+    if not ref or not needing:
+        return {}
+    platforms = {n.id: n.platform for n in tools.recipe_fit.fleet() if n.platform}
+    sizes: dict[str, int] = {}
+    asked: dict[str, int | None] = {}
+    for target in needing:
+        platform = platforms.get(target.id, "")
+        if not platform:
+            continue
+        if platform not in asked:
+            asked[platform] = tools.image_size.transfer_bytes(ref, platform)
+        if asked[platform]:
+            sizes[target.id] = int(asked[platform] or 0)
+    return sizes
 
 
 def _model_rows(
@@ -2272,6 +2322,9 @@ def run(
 
     reachable = [t for t in node_targets if facts[t.id].reachable]
     image_rows, wanted_digest, image_bytes = _image_rows(reachable, plan, services)
+    image_bytes_by_node = _registry_sizes(
+        reachable, str(plan.get("image_ref") or ""), image_rows
+    )
     model_rows, model_bytes = _model_rows(reachable, plan, model_presence)
     read_config = model_config or _model_config
 
@@ -2283,6 +2336,7 @@ def run(
         model_rows=model_rows,
         hub_dir=hub_dir,
         image_bytes=image_bytes,
+        image_bytes_by_node=image_bytes_by_node,
         model_bytes=model_bytes,
         wanted_digest=wanted_digest,
         model_config=read_config(str(plan.get("model") or "")),
@@ -2335,7 +2389,6 @@ def _hub_dir() -> str:
 
 
 __all__ = [
-    "ASSUMED_IMAGE_BYTES",
     "CHECK_DISK",
     "CHECK_DOCKER",
     "CHECK_FABRIC",

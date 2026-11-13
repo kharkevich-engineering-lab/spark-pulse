@@ -17,6 +17,7 @@ from spark_pulse.mock import (
     events as events,
     models as models,
     images as images,
+    image_size as image_size,
     native_runtime as native_runtime,
     deploy_dispatch as deploy_dispatch,
     preflight as preflight,
