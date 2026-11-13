@@ -1,6 +1,6 @@
 /** RecipeCard: what an operator can tell about a recipe without opening it.
  *
- * The badges are a routing decision, not decoration. "Solo"/"Cluster" says
+ * The badges are a routing decision, not decoration. "Single node"/"Cluster" says
  * whether this install can run it at all, the engine list says what it will
  * run on, and "Custom" says the recipe on disk is no longer the one that
  * shipped. Getting the engine list from `engine_support` rather than from
@@ -64,8 +64,8 @@ describe("RecipeCard", () => {
     const one = screen.getByTestId("recipe-line1-oci-gguf");
     expect(one).toHaveTextContent("oci");
     expect(one).toHaveTextContent("llama-cpp");
-    expect(one).not.toHaveTextContent("Solo");
-    expect(screen.getByTestId("recipe-line2-oci-gguf")).toHaveTextContent("Solo");
+    expect(one).not.toHaveTextContent("Single node");
+    expect(screen.getByTestId("recipe-line2-oci-gguf")).toHaveTextContent("Single node");
   });
 
   it("falls back to the model when a recipe carries no description", () => {
@@ -117,7 +117,7 @@ describe("RecipeCard", () => {
     render(
       <RecipeCard r={recipe()} isRunning={false} clusterBlocked={false} onSelect={vi.fn()} />,
     );
-    expect(screen.getByText("Solo")).toBeInTheDocument();
+    expect(screen.getByText("Single node")).toBeInTheDocument();
     expect(screen.getByText("Cluster")).toBeInTheDocument();
   });
 
@@ -130,7 +130,7 @@ describe("RecipeCard", () => {
         onSelect={vi.fn()}
       />,
     );
-    expect(screen.getByText("Solo")).toBeInTheDocument();
+    expect(screen.getByText("Single node")).toBeInTheDocument();
     expect(screen.queryByText("Cluster")).not.toBeInTheDocument();
   });
 

@@ -341,7 +341,7 @@
     "clusterOnly": "Grappe uniquement",
     "resetToOriginal": "Rétablir l'original",
     "clusterRequired": "Cette recette nécessite le mode grappe.",
-    "solo": "Seul",
+    "solo": "Nœud unique",
     "cluster": "Grappe",
     "custom": "Personnalisée",
     "editCustom": "Modifier la personnalisation",

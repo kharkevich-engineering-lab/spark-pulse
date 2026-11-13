@@ -341,7 +341,7 @@
     "clusterOnly": "Cluster only",
     "resetToOriginal": "Reset to original",
     "clusterRequired": "This recipe requires cluster mode.",
-    "solo": "Solo",
+    "solo": "Single node",
     "cluster": "Cluster",
     "custom": "Custom",
     "editCustom": "Edit custom",
