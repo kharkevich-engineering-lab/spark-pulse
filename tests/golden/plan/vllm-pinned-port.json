@@ -140,6 +140,7 @@
   "metrics_path": "/metrics",
   "model": "Qwen/Qwen3-8B",
   "model_path": "",
+  "model_patterns": [],
   "model_present": true,
   "model_source": "",
   "mods": [],

@@ -159,6 +159,7 @@
   "metrics_path": "/metrics",
   "model": "PrismML/Bonsai-2-27B-GGUF",
   "model_path": "/home/spark/.cache/huggingface/hub/models--PrismML--Bonsai-2-27B-GGUF/snapshots/abc123def456/bonsai-q4.gguf",
+  "model_patterns": [],
   "model_present": true,
   "model_source": "hf-cache",
   "mods": [],

@@ -460,6 +460,32 @@ def test_the_selector_is_read_from_either_spelling():
     assert split_hf_file("--foo 1 --hf-file") == ("", "--foo 1")
 
 
+def test_a_download_for_it_fetches_only_the_selected_file():
+    """A GGUF repository carries every packing; the recipe loads one (#208).
+
+    A bare name may sit in a directory of the repository, which is how
+    ``choose_model_file`` matches it, so both are asked for."""
+    patterns = engine().model_patterns(with_args("--hf-file Bonsai-2-27B-Q8_0.gguf"))
+    assert patterns == ["Bonsai-2-27B-Q8_0.gguf", "*/Bonsai-2-27B-Q8_0.gguf"]
+    assert engine().model_patterns(with_args("--hf-file Q8_0/Bonsai.gguf")) == [
+        "Q8_0/Bonsai.gguf"
+    ]
+
+
+def test_a_split_gguf_brings_every_shard_of_its_set():
+    """llama-server opens the first shard and finds the rest beside it."""
+    patterns = engine().model_patterns(
+        with_args("--hf-file Q4_K_M/model-00001-of-00003.gguf")
+    )
+    assert patterns == ["Q4_K_M/model-*-of-00003.gguf"]
+
+
+def test_no_selector_or_a_model_id_engine_takes_the_whole_repository():
+    assert engine().model_patterns(RECIPE) == []
+    positional = engine(**{"runtime.model_arg": "positional"})
+    assert positional.model_patterns(with_args("--hf-file a.gguf")) == []
+
+
 def test_a_snapshot_with_one_gguf_needs_no_selector():
     chosen, reason = engine().choose_model_file(RECIPE, ONE_GGUF)
 

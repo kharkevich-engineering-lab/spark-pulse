@@ -399,6 +399,10 @@ class DeployPlan:
     #: bytes come from without walking the ranks.
     model_source: str = ""
     model_path: str = ""
+    #: Which files of the model's repository this run needs
+    #: (:meth:`Engine.model_patterns`) — what a download made on its behalf
+    #: is narrowed to. Empty is the whole repository.
+    model_patterns: list[str] = field(default_factory=list)
     #: The model the readiness answer has to name, where the readiness path
     #: *is* the engine's model listing (vLLM's ``/v1/models``). A 200 there
     #: says only that *a* server holds the port; this is what makes it ours.
@@ -1203,6 +1207,7 @@ def realise(
         model_present=intent.model_present,
         model_source=model_source,
         model_path=model_file,
+        model_patterns=engine_obj.model_patterns(recipe),
         served_model=served_model,
         gpu_memory_utilization=fraction,
         memory_budget=budget,

@@ -2877,6 +2877,16 @@ class TestLlamaCppModelSource:
         assert "--hf-file" not in plan.launch_command
         assert plan.model_source == "hf-cache"
 
+    def test_the_plan_says_which_files_a_download_needs(self, native):
+        """What a scheduled download is narrowed to (#208): the selected
+        packing, not the whole repository."""
+        selected = native.plan("bonsai-gguf-q8", services=self.node(MANY_GGUF))
+        assert selected.model_patterns == ["bonsai-q8.gguf", "*/bonsai-q8.gguf"]
+        assert selected.to_dict()["model_patterns"] == selected.model_patterns
+        # Without a selector there is nothing to narrow to.
+        unselected = native.plan("bonsai-gguf", services=self.node(MANY_GGUF))
+        assert unselected.model_patterns == []
+
     def test_a_node_without_the_file_keeps_hf_and_the_plan_says_why(self, native):
         plan = native.plan("bonsai-gguf-q8", services=self.node(None))
 
