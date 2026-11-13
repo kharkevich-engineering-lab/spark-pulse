@@ -46,6 +46,7 @@ import {
   Spinner,
   type NodeCondition,
 } from "@/ui";
+import type { AlertTone } from "@/ui";
 import type {
   CacheResponse,
   ModelDownloadJob,
@@ -164,7 +165,7 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
   const [starting, setStarting] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [replicateTarget, setReplicateTarget] = useState<string | null>(null);
-  const [alert, setAlert] = useState<{ title: string; message: string } | null>(null);
+  const [alert, setAlert] = useState<{ title: string; message: string; tone?: AlertTone } | null>(null);
   const [scheduled, setScheduled] = useState<ScheduledDeploy[]>([]);
   const [presence, setPresence] = useState<Record<string, ModelPresence>>({});
 
@@ -299,6 +300,7 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
         setAlert({
           title: t("models.deleteTitle"),
           message: t("models.removedFrom", { count: removed, size: formatSize(result.freed_bytes) }),
+          tone: "info",
         });
       }
       asked.current.delete(id);
@@ -624,6 +626,7 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
           onClose={() => setAlert(null)}
           title={alert.title}
           message={alert.message}
+          tone={alert.tone}
         />
       )}
     </div>

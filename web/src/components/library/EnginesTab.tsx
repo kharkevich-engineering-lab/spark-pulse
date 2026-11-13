@@ -49,6 +49,7 @@ import {
   Spinner,
   Toggle,
 } from "@/ui";
+import type { AlertTone } from "@/ui";
 import EngineBadge from "@/components/EngineBadge";
 import type { EngineSummary, ImageEntry, ImagePresence, ImagePullJob } from "@/lib/types";
 
@@ -145,7 +146,7 @@ export default function EnginesTab({ images: imagesQuery }: EnginesTabProps) {
   const [presence, setPresence] = useState<Record<string, ImagePresence | "loading">>({});
   const [deleteTarget, setDeleteTarget] = useState<EngineRow | null>(null);
   const [syncTarget, setSyncTarget] = useState<EngineRow | null>(null);
-  const [alert, setAlert] = useState<{ title: string; message: string } | null>(null);
+  const [alert, setAlert] = useState<{ title: string; message: string; tone?: AlertTone } | null>(null);
   // Optimistic per-engine enabled state: set on click, cleared on success (the
   // refetch below is then the source of truth) or on failure (which restores
   // whatever the server last said by simply removing the override).
@@ -220,7 +221,7 @@ export default function EnginesTab({ images: imagesQuery }: EnginesTabProps) {
    * everything. */
   const toggleEngineEnabled = async (engineName: string, next: boolean) => {
     if (!next && enabledEngineCount <= 1 && effectiveEnabled(engineName)) {
-      setAlert({ title: t("engines.lastEngineTitle"), message: t("engines.lastEngineMessage") });
+      setAlert({ title: t("engines.lastEngineTitle"), message: t("engines.lastEngineMessage"), tone: "warning" });
       return;
     }
     setTogglingEngine(engineName);
@@ -304,6 +305,7 @@ export default function EnginesTab({ images: imagesQuery }: EnginesTabProps) {
         setAlert({
           title: t("engines.partialDelete"),
           message: failed.map((n) => `${n.node}: ${n.error}`).join("\n"),
+          tone: "warning",
         });
       }
       forget(target);
@@ -675,7 +677,7 @@ export default function EnginesTab({ images: imagesQuery }: EnginesTabProps) {
       )}
 
       {alert && (
-        <AlertModal open onClose={() => setAlert(null)} title={alert.title} message={alert.message} />
+        <AlertModal open onClose={() => setAlert(null)} title={alert.title} message={alert.message} tone={alert.tone} />
       )}
     </div>
   );

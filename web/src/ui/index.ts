@@ -23,7 +23,7 @@ export { Field, Input, Select, Textarea } from "./Field";
 export type { FieldProps, InputProps, SelectProps, TextareaProps } from "./Field";
 
 export { Modal, ConfirmModal, AlertModal } from "./Modal";
-export type { ModalProps, ModalSize, ConfirmModalProps, AlertModalProps } from "./Modal";
+export type { ModalProps, ModalSize, ConfirmModalProps, AlertModalProps, AlertTone } from "./Modal";
 
 export { NodeScopedDialog } from "./NodeScopedDialog";
 export type { NodeScopedDialogProps, NodePresenceLike, NodeScopeVerb } from "./NodeScopedDialog";

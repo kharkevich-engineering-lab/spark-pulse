@@ -697,6 +697,8 @@ describe("RecipesPage", () => {
       await userEvent.click(screen.getByRole("button", { name: /Download and deploy/ }));
 
       expect(await screen.findByText(/will deploy on its own/)).toBeInTheDocument();
+      // News, not a failure: it must not wear the error mark.
+      expect(document.querySelector("[data-tone]")).toHaveAttribute("data-tone", "info");
     });
 
     it("lets the operator decline the download", async () => {
