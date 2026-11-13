@@ -18,7 +18,7 @@
  * 44px target at 390.
  */
 
-import { useT } from "@/lib/i18n";
+import { useT, type Translator } from "@/lib/i18n";
 import { StatusBadge, Button, isSettling } from "@/ui";
 import { formatDuration, servesChat } from "@/lib/utils";
 import { cn } from "@/lib/utils";
@@ -76,42 +76,52 @@ export function endpointUrl(run: Deployment, pageHost: string): string | null {
   return `http://${bracketed}:${run.port}/v1`;
 }
 
-/** What the curl example asks for: one fun fact about a topic drawn at random,
- *  so a copied command is a small surprise rather than "hello" again. Not
- *  operator-facing text — it is the request body — so it is not translated. */
+/** What the curl example asks about: one topic drawn at random, so a copied
+ *  command is a small surprise rather than "hello" again. Ids only — the
+ *  topic and the question around it are in the dictionaries
+ *  (`runs.funFact.*`), so a French page copies a French question. */
 export const FUN_FACT_TOPICS = [
   "octopuses",
-  "the Moon",
+  "moon",
   "honey",
   "volcanoes",
   "tardigrades",
-  "the deep sea",
+  "deepSea",
   "bananas",
   "lightning",
   "crows",
-  "Saturn's rings",
-  "the human brain",
+  "saturnRings",
+  "brain",
   "coffee",
   "glaciers",
   "sharks",
-  "the speed of light",
-  "ancient Rome",
+  "lightSpeed",
+  "ancientRome",
 ] as const;
 
-/** A copy-and-run chat completion against the endpoint. Pure but for the
- *  topic, which `pick` chooses (random by default). */
+/** A copy-and-run chat completion against the endpoint, asked in the page's
+ *  language. Pure but for the topic, which `pick` chooses (random by default). */
 export function curlExample(
   url: string,
   model: string,
+  t: Translator["t"],
   pick: (n: number) => number = (n) => Math.floor(Math.random() * n),
 ): string {
-  const topic = FUN_FACT_TOPICS[pick(FUN_FACT_TOPICS.length)];
+  const id = FUN_FACT_TOPICS[pick(FUN_FACT_TOPICS.length)];
+  const question = t("runs.funFact.prompt", { topic: t(`runs.funFact.topics.${id}`) });
   const body = JSON.stringify({
     model,
-    messages: [{ role: "user", content: `Tell me one surprising fun fact about ${topic}, in two sentences.` }],
+    messages: [{ role: "user", content: question }],
     max_tokens: 200,
   });
-  return `curl -s ${url}/chat/completions -H 'Content-Type: application/json' -d '${body}'`;
+  return `curl -s ${url}/chat/completions -H 'Content-Type: application/json' -d ${shellQuote(body)}`;
+}
+
+/** `text` as one single-quoted shell word. A `'` inside closes the quote, so
+ *  it is written as `'\''` — close, an escaped quote, reopen — the one form
+ *  every POSIX shell reads back as the same text. */
+export function shellQuote(text: string): string {
+  return `'${text.replace(/'/g, "'\\''")}'`;
 }
 
 /** Copy `text`, and say on the control what happened for a moment. */
@@ -136,7 +146,7 @@ function CurlExample({ url, model }: { url: string; model: string }) {
   return (
     <button
       type="button"
-      onClick={() => void copy(curlExample(url, model))}
+      onClick={() => void copy(curlExample(url, model, t))}
       aria-label={t("runs.copyCurl")}
       title={t("runs.copyCurlTitle")}
       data-testid="run-curl"

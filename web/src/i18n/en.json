@@ -1001,7 +1001,28 @@
     "endpointCopyFailed": "Could not copy — select it instead",
     "copyCurl": "Copy a curl that asks this run for a fun fact",
     "copyCurlTitle": "Copy a ready-to-run curl: one chat completion asking for a fun fact",
-    "curlCopied": "curl copied"
+    "curlCopied": "curl copied",
+    "funFact": {
+      "prompt": "Tell me one surprising fun fact about {topic}, in two sentences.",
+      "topics": {
+        "octopuses": "octopuses",
+        "moon": "the Moon",
+        "honey": "honey",
+        "volcanoes": "volcanoes",
+        "tardigrades": "tardigrades",
+        "deepSea": "the deep sea",
+        "bananas": "bananas",
+        "lightning": "lightning",
+        "crows": "crows",
+        "saturnRings": "the rings of Saturn",
+        "brain": "the human brain",
+        "coffee": "coffee",
+        "glaciers": "glaciers",
+        "sharks": "sharks",
+        "lightSpeed": "the speed of light",
+        "ancientRome": "ancient Rome"
+      }
+    }
   },
   "library": {
     "cacheUnreachable": "Could not ask",

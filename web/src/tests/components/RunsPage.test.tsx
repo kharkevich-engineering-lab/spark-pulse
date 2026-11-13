@@ -12,6 +12,8 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import RunsPage from "@/pages/RunsPage";
+import { FUN_FACT_TOPICS, curlExample, shellQuote } from "@/components/RunRow";
+import { translatorFor } from "@/lib/i18n";
 import type { BenchmarkResult, Deployment, EngineMetricsWindow } from "@/lib/types";
 
 vi.mock("@/lib/api", () => ({
@@ -286,6 +288,35 @@ describe("RunsPage row", () => {
     expect(body.model).toBe("Qwen/Qwen2.5-0.5B-Instruct");
     expect(body.messages[0].content).toMatch(/^Tell me one surprising fun fact about .+, in two sentences\.$/);
     await waitFor(() => expect(within(row).getByTestId("run-curl")).toHaveTextContent("curl copied"));
+  });
+
+  /** "Saturn's rings" closed the shell's quote and broke the command. */
+  it("builds a command a shell reads back whole, for every topic", () => {
+    // What a POSIX shell makes of one single-quoted word written by shellQuote.
+    const unquote = (word: string) => {
+      expect(word.startsWith("'") && word.endsWith("'")).toBe(true);
+      return word.slice(1, -1).split("'\\''").join("'");
+    };
+    expect(shellQuote("it's")).toBe("'it'\\''s'");
+    expect(unquote(shellQuote("it's 'quoted'"))).toBe("it's 'quoted'");
+
+    // Every topic, in both languages: French is full of apostrophes.
+    for (const language of ["en", "fr"] as const) {
+      const { t } = translatorFor(language);
+      FUN_FACT_TOPICS.forEach((id, index) => {
+        const command = curlExample("http://localhost:8000/v1", "m", t, () => index);
+        const word = command.slice(command.indexOf(" -d ") + 4);
+        const body = JSON.parse(unquote(word));
+        expect(body.messages[0].content).toContain(t(`runs.funFact.topics.${id}`));
+      });
+    }
+  });
+
+  it("asks in the page's language", () => {
+    const fr = curlExample("http://h/v1", "m", translatorFor("fr").t, () => 0);
+    expect(fr).toContain("Donne-moi une anecdote surprenante sur les pieuvres");
+    const en = curlExample("http://h/v1", "m", translatorFor("en").t, () => 0);
+    expect(en).toContain("Tell me one surprising fun fact about octopuses");
   });
 
   it("says so on the chip when the clipboard refuses", async () => {
