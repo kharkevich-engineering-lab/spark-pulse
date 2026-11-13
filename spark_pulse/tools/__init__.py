@@ -76,6 +76,7 @@ if _sim_mode:
         deploy_dispatch as deploy_dispatch,
         models as models,
         images as images,
+        image_size as image_size,
         preflight as preflight,
     )
 else:
@@ -99,6 +100,7 @@ else:
         deploy_dispatch as deploy_dispatch,
         models as models,
         images as images,
+        image_size as image_size,
         preflight as preflight,
     )
 

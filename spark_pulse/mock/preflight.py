@@ -32,7 +32,6 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from spark_pulse.tools.preflight import (  # noqa: F401 — re-exported shapes
-    ASSUMED_IMAGE_BYTES as ASSUMED_IMAGE_BYTES,
     CHECK_DISK as CHECK_DISK,
     CHECK_DOCKER as CHECK_DOCKER,
     CHECK_FABRIC as CHECK_FABRIC,
@@ -239,7 +238,6 @@ def run(
 
 
 __all__ = [
-    "ASSUMED_IMAGE_BYTES",
     "CHECK_DISK",
     "CHECK_DOCKER",
     "CHECK_FABRIC",
