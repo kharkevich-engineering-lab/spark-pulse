@@ -932,7 +932,17 @@ export interface ModelEntry {
   size_bytes: number;
   last_modified: string | null;
   config: ModelConfigSummary | null;
+  /** The GGUF files in the snapshot and the quantisation each one's name
+   *  declares. A GGUF repo has no config.json; this is its precision. */
+  gguf?: GgufFile[];
   referenced_by: string[];
+}
+
+export interface GgufFile {
+  file: string;
+  /** `q8_0`, `q4_k_m`, `f16`… or empty when the name says none. */
+  quant: string;
+  size_bytes: number;
 }
 
 export type DownloadStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
