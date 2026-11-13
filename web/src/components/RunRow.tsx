@@ -89,14 +89,14 @@ function Chip({ children, title }: { children: React.ReactNode; title?: string }
   );
 }
 
-function Figure({ label, value, tone, title }: { label: string; value: string; tone?: "bad" | "busy"; title?: string }) {
+function Figure({ label, value, tone }: { label: string; value: string; tone?: "busy" }) {
   return (
-    <div className="min-[900px]:text-right" title={title}>
+    <div className="min-[900px]:text-right">
       <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">{label}</p>
       <p
         className={cn(
           "font-mono text-[14px] tabular-nums",
-          tone === "bad" ? "text-bad" : tone === "busy" ? "text-blue2 animate-pulse" : "text-text",
+          tone === "busy" ? "text-blue2 animate-pulse" : "text-text",
         )}
       >
         {value}
@@ -105,12 +105,6 @@ function Figure({ label, value, tone, title }: { label: string; value: string; t
   );
 }
 
-/** Why the latest benchmark failed, from its record, or null. */
-export function benchmarkError(result: BenchmarkResult | undefined): string | null {
-  if (result?.status !== "error") return null;
-  const said = (result.results as Record<string, unknown> | null | undefined)?.error;
-  return typeof said === "string" && said ? said : "";
-}
 
 export default function RunRow({
   run,
@@ -125,11 +119,9 @@ export default function RunRow({
   const live = isLiveRun(run);
   const settling = isSettling(run.sync);
 
-  // The latest benchmark's own state. Started from the row, a benchmark used to
-  // run (or fail at once) out of sight: the figures stayed "—" and the click
-  // read as nothing.
+  // While the latest benchmark runs, the row says so. Why one failed is the
+  // launcher's to say, when the operator clicks Benchmark — not the row's.
   const measuring = benchmark?.status === "running";
-  const failure = benchmarkError(benchmark);
   const throughput = metric(benchmark, "throughput");
   // No engine publishes a time-to-first-token of its own, so the first-token
   // figure is the benchmark's own latency — named for what it measures rather
@@ -192,11 +184,6 @@ export default function RunRow({
               <span className="font-mono text-[13px] text-muted">:{run.port}</span>
             )}
           </div>
-          {failure != null && (
-            <p role="alert" data-testid={`benchmark-error-${run.id}`} className="mt-2 text-[13px] leading-snug text-bad">
-              {t("runs.benchmarkFailed", { error: failure || t("common.unknownError") })}
-            </p>
-          )}
         </div>
 
         <div className="flex shrink-0 flex-col gap-3 min-[900px]:items-end">
@@ -205,16 +192,13 @@ export default function RunRow({
           <div className="flex flex-wrap items-start gap-x-5 gap-y-2 min-[900px]:flex-nowrap min-[900px]:gap-x-6">
             <Figure
               label={t("runs.throughput")}
-              tone={measuring ? "busy" : failure != null ? "bad" : undefined}
-              title={failure || undefined}
+              tone={measuring ? "busy" : undefined}
               value={
                 measuring
                   ? t("runs.benchmarkMeasuring")
-                  : failure != null
-                    ? t("runs.benchmarkFailedShort")
-                    : throughput != null
-                      ? `${throughput.toFixed(1)} tok/s`
-                      : "—"
+                  : throughput != null
+                    ? `${throughput.toFixed(1)} tok/s`
+                    : "—"
               }
             />
             <Figure

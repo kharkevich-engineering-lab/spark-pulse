@@ -316,21 +316,19 @@ describe("RunsPage tabs", () => {
 
   /** On the lab the click read as nothing: the benchmark failed at once and
    *  only the server log said why. */
-  it("says on the row that the latest benchmark failed, and why", async () => {
+  /** A stored failure from before is not news: neither the row nor the
+   *  dialog brings it up. The dialog says what is in the way now. */
+  it("brings up no past failure, on the row or in the dialog", async () => {
     vi.mocked(fetchBenchmarks).mockResolvedValue([
-      benchmark({
-        deployment_id: "r1",
-        status: "error",
-        results: { error: "llama-benchy is not installed. Install it with: pip install spark-pulse[benchmarking]" },
-      }),
+      benchmark({ deployment_id: "r1", status: "error", results: { error: "connection refused on :9000" } }),
     ]);
     show();
 
     const row = await screen.findByTestId("deployment-r1");
-    expect(await within(row).findByTestId("benchmark-error-r1")).toHaveTextContent(
-      "Benchmark failed: llama-benchy is not installed",
-    );
-    expect(row).toHaveTextContent("failed");
+    await userEvent.setup().click(await within(row).findByRole("button", { name: "Benchmark" }));
+    await screen.findByRole("dialog");
+    expect(document.body).not.toHaveTextContent("connection refused");
+    expect(row).not.toHaveTextContent("failed");
   });
 
   it("says the benchmark is measuring while it runs", async () => {

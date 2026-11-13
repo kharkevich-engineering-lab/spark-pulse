@@ -1011,9 +1011,7 @@
     "waitingWatchDownload": "suivre le téléchargement",
     "waitingProgressLabel": "Téléchargement du modèle de {name}",
     "cancelWaiting": "Annuler le déploiement de {name}",
-    "benchmarkMeasuring": "mesure…",
-    "benchmarkFailedShort": "échec",
-    "benchmarkFailed": "Le benchmark a échoué : {error}"
+    "benchmarkMeasuring": "mesure…"
   },
   "library": {
     "cacheUnreachable": "Injoignable",

@@ -4,7 +4,7 @@ Fetches /api/config on startup so the frontend can conditionally render
 UI elements (login button, features, etc.) without needing separate builds.
 */
 
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useState } from "react";
 
 export interface AppConfig {
   auth_enabled: boolean;
@@ -45,6 +45,11 @@ export async function loadConfig(): Promise<AppConfig> {
   }
 }
 
+/** Forget the cached config, so the next `loadConfig` asks again. */
+export function invalidateConfig(): void {
+  cachedConfig = null;
+}
+
 export function getConfig(): AppConfig {
   if (!cachedConfig) {
     return { ...DEFAULT_CONFIG };
@@ -57,11 +62,16 @@ export function getConfig(): AppConfig {
 interface ConfigContextValue {
   config: AppConfig | null;
   configLoaded: boolean;
+  /** Read /api/config again and hand every consumer the new value. Called
+   *  after Settings saves: the config was read once per page load, so turning
+   *  benchmarking on still read as off on Runs until a reload. */
+  reload: () => Promise<void>;
 }
 
 const ConfigContext = createContext<ConfigContextValue>({
   config: null,
   configLoaded: false,
+  reload: async () => {},
 });
 
 /** Provider that fetches /api/config on mount and exposes it via context. */
@@ -77,8 +87,13 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
     return () => { cancelled = true; };
   }, []);
 
+  const reload = useCallback(async () => {
+    invalidateConfig();
+    setCfg(await loadConfig());
+  }, []);
+
   return (
-    <ConfigContext.Provider value={{ config: cfg, configLoaded: loaded }}>
+    <ConfigContext.Provider value={{ config: cfg, configLoaded: loaded, reload }}>
       {children}
     </ConfigContext.Provider>
   );

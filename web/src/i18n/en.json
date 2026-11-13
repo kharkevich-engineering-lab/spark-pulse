@@ -1011,9 +1011,7 @@
     "waitingWatchDownload": "watch the download",
     "waitingProgressLabel": "{name} model download",
     "cancelWaiting": "Cancel the deploy of {name}",
-    "benchmarkMeasuring": "measuring…",
-    "benchmarkFailedShort": "failed",
-    "benchmarkFailed": "Benchmark failed: {error}"
+    "benchmarkMeasuring": "measuring…"
   },
   "library": {
     "cacheUnreachable": "Could not ask",
