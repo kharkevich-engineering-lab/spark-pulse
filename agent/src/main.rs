@@ -222,7 +222,7 @@ async fn run(args: Args) -> Result<()> {
         return Ok(());
     }
 
-    let executor = Arc::new(executor::Executor::connect());
+    let executor = Arc::new(executor::Executor::connect().await);
     let agent = session::Agent::new(identity, args.control.clone(), executor);
     tracing::info!(node = %agent.node_id(), control = %args.control, "agent starting");
 

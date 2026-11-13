@@ -23,10 +23,12 @@ pub mod copy;
 pub mod fabric;
 pub mod images;
 pub mod labels;
+pub mod libpod;
 pub mod probe;
 pub mod processes;
 pub mod selfupdate;
 pub mod snapshots;
+pub mod socket;
 pub mod stats;
 
 use std::collections::BTreeMap;
@@ -153,28 +155,44 @@ pub fn decode_cmd(cmd: &crate::proto::Cmd) -> Option<Vec<String>> {
 /// Executes commands against this machine's Docker daemon.
 pub struct Executor {
     docker: Option<bollard::Docker>,
+    /// The unix socket the daemon answered on, when it is one: where
+    /// Podman's own API is reached for a create (#167).
+    socket: Option<std::path::PathBuf>,
     epoch: AtomicU64,
 }
 
 impl Executor {
-    /// Connect to the local Docker daemon, or record that we could not.
+    /// Connect to the node's daemon, or record that we could not.
     ///
     /// A node whose daemon is down still starts, connects and *reports* that
     /// its daemon is down. Failing to construct here would mean the node never
     /// appears at all, and "unreachable" is a much worse description of a
-    /// machine that is running fine with a stopped Docker.
-    pub fn connect() -> Self {
-        let docker = match bollard::Docker::connect_with_defaults() {
-            Ok(docker) => Some(docker),
-            Err(error) => {
-                tracing::warn!(%error, "no Docker daemon; the agent will report it");
-                None
-            }
-        };
+    /// machine that is running fine with a stopped Docker. Which socket is
+    /// `socket::connect`'s decision.
+    pub async fn connect() -> Self {
+        let daemon = socket::connect().await;
         Self {
-            docker,
+            docker: daemon.docker,
+            socket: daemon.socket,
             epoch: AtomicU64::new(0),
         }
+    }
+
+    /// How a container is created on this node: through Podman's own API
+    /// when the daemon is Podman, else Docker's (#165, #167).
+    async fn create_via(&self) -> DockerResult<containers::CreateVia<'_>> {
+        if self.container_runtime().await.name != "podman" {
+            return Ok(containers::CreateVia::Docker);
+        }
+        let Some(socket) = self.socket.as_deref() else {
+            return Err(OpError::new(
+                "RuntimeError",
+                "this node runs Podman over a socket that is not a unix socket, \
+                 and Podman's own API is needed to attach a GPU",
+            ));
+        };
+        let gpu = libpod::gpu_device(&facts::cdi_devices()).ok_or_else(libpod::no_gpu_device)?;
+        Ok(containers::CreateVia::Libpod { socket, gpu })
     }
 
     /// The highest controller epoch seen.
@@ -440,7 +458,8 @@ impl Executor {
             }
 
             Op::RunContainer(req) => {
-                let info = attempt!(containers::run_container(docker, req).await);
+                let via = attempt!(self.create_via().await);
+                let info = attempt!(containers::run_container(docker, req, via).await);
                 ok!(Outcome::Container(ContainerRef {
                     found: true,
                     container: Some(info),

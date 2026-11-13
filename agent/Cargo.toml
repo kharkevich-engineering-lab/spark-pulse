@@ -29,6 +29,11 @@ tokio = { version = "1", features = [
 ] }
 tokio-stream = "0.1"
 bollard = "0.21"
+# Podman's own API, on the same unix socket, for the one call its compat API
+# cannot make (#167). Already in the tree through bollard.
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
 rcgen = { version = "0.14", features = ["pem"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 rustls-pemfile = "2"
