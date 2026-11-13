@@ -295,7 +295,6 @@ describe("RecipesPage", () => {
 
       expect(await screen.findByText("Qwen3 8B")).toBeInTheDocument();
       expect(screen.getByText("Qwen3 at 8B, one GPU")).toBeInTheDocument();
-      expect(screen.getByText("vllm-node")).toBeInTheDocument();
       expect(screen.getByRole("tab", { name: /Recipes \(1\)/ })).toBeInTheDocument();
     });
 

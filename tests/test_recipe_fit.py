@@ -25,6 +25,10 @@ from spark_pulse.tools.recipe_fit import (
 )
 
 DESKTOP = FleetNode("n-desk", "ark-desktop", "linux/amd64")
+#: A platform no engine image is published for, so the end-to-end tests do not
+#: depend on what the engine index carries today: amd64 stopped being one the
+#: day vLLM, SGLang and llama.cpp were published multi-arch.
+UNSERVED = FleetNode("n-rv", "rv-board", "linux/riscv64")
 SPARK_A = FleetNode("n-a", "spark-a", "linux/arm64")
 SPARK_B = FleetNode("n-b", "spark-b", "linux/arm64")
 OLD_AGENT = FleetNode("n-old", "spark-old", "")
@@ -115,12 +119,12 @@ class TestThePlanRefusal:
             for r in client.get("/api/recipes").json()
             if r.get("engine") == "vllm" and not r.get("cluster_only")
         )
-        with patch.object(recipe_fit, "platforms_of", lambda _nodes: [DESKTOP]):
+        with patch.object(recipe_fit, "platforms_of", lambda _nodes: [UNSERVED]):
             response = client.post(
                 "/api/deployments/plan", json={"recipe_id": recipe_id}
             )
         assert response.status_code == 400, response.text
-        assert "no build for linux/amd64 (ark-desktop)" in response.text
+        assert "no build for linux/riscv64 (rv-board)" in response.text
 
 
 class TestTheApi:
@@ -129,12 +133,12 @@ class TestTheApi:
         assert listed
         assert all(r["fit"]["verdict"] in (RUNS, UNKNOWN, WONT_RUN) for r in listed)
 
-    def test_an_x86_fleet_is_told_which_recipes_do_not_run(self):
-        with patch.object(recipe_fit, "fleet", lambda: [DESKTOP]):
+    def test_a_fleet_no_image_serves_is_told_which_recipes_do_not_run(self):
+        with patch.object(recipe_fit, "fleet", lambda: [UNSERVED]):
             listed = TestClient(create_app()).get("/api/recipes").json()
         wont = [r for r in listed if r["fit"]["verdict"] == WONT_RUN]
-        assert wont, "the bundled engines are arm64-only"
-        assert any("amd64" in r["fit"]["reason"] for r in wont)
+        assert wont, "no engine is published for riscv64"
+        assert any("riscv64" in r["fit"]["reason"] for r in wont)
 
     def test_one_recipe_carries_its_fit_too(self):
         client = TestClient(create_app())
