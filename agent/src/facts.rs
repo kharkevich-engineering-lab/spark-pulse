@@ -560,19 +560,22 @@ pub fn rootless_from_security_options(options: &[&str]) -> bool {
         .any(|option| option.split(',').any(|part| part.trim() == "name=rootless"))
 }
 
-/// Whether a Podman socket is a rootless one, by where it is. Pure.
+/// Whether a Podman socket is a rootless one, by who owns it (#211).
 ///
-/// Rootless Podman listens under the user's runtime directory
-/// (`$XDG_RUNTIME_DIR`, which systemd makes `/run/user/<uid>`); rootful
-/// Podman under `/run/podman`. Read from the path because the daemon's own
-/// answer is `/info`, which Podman takes seconds to give (#211).
-pub fn podman_rootless_from_socket(socket: &std::path::Path, runtime_dir: Option<&str>) -> bool {
-    if socket.starts_with("/run/user") {
-        return true;
-    }
-    runtime_dir
-        .filter(|dir| !dir.is_empty())
-        .is_some_and(|dir| socket.starts_with(dir))
+/// Rootless Podman's socket belongs to the user who runs it; rootful
+/// Podman's belongs to root. The owner is read *through* any symlink — an
+/// operator who points `/var/run/docker.sock` at their own rootless socket
+/// is talking to a rootless daemon, whatever the path says. Not the
+/// daemon's own answer, which is `/info` and takes Podman seconds to give.
+/// A socket that cannot be read is not called rootless.
+pub fn podman_rootless(socket: &std::path::Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    fs::metadata(socket).is_ok_and(|meta| rootless_owner(meta.uid()))
+}
+
+/// Whether a daemon socket owned by `uid` is a rootless daemon's. Pure.
+pub fn rootless_owner(uid: u32) -> bool {
+    uid != 0
 }
 
 /// Where CDI specs live: the static and the generated directory, as the CDI
