@@ -6,6 +6,7 @@ import type { RecipeDetail, RecipeCustomization, RecipeSummary, ModSummary, ModD
 import { useQuery } from "@/hooks/useQuery";
 import { useDeployments } from "@/hooks/useDeployments";
 import { AlertModal, Button, ConfirmModal, ErrorLine, Modal, PageHeader, Spinner, Tabs, Toggle } from "@/ui";
+import type { AlertTone } from "@/ui";
 import PreflightPanel from "@/components/PreflightPanel";
 import { Loader2, AlertCircle, ChevronDown, X, Copy, Check, Wrench, FileCode2, FileText, FileCode, Plus, Download } from "lucide-react";
 import RecipeCard from "@/components/RecipeCard";
@@ -216,7 +217,7 @@ export default function RecipesPage() {
   const [customMods, setCustomMods] = useState<CustomModInfo[]>([]);
   const [customLoading, setCustomLoading] = useState(false);
   const [selected, setSelected] = useState<{ recipe: RecipeDetail; customization: RecipeCustomization } | null>(null);
-  const [alertModal, setAlertModal] = useState<{ title: string; message: string } | null>(null);
+  const [alertModal, setAlertModal] = useState<{ title: string; message: string; tone?: AlertTone } | null>(null);
   const [blockedDeploy, setBlockedDeploy] = useState<BlockedDeploy | null>(null);
   const [missingModelDeploy, setMissingModelDeploy] = useState<MissingModelDeploy | null>(null);
   const [scheduling, setScheduling] = useState(false);
@@ -429,6 +430,7 @@ export default function RecipesPage() {
       setAlertModal({
         title: t("recipes.downloadStarted"),
         message: t("recipes.downloadStartedBody", { model, name }),
+        tone: "info",
       });
     } catch (e) {
       setMissingModelDeploy(null);
@@ -818,7 +820,7 @@ export default function RecipesPage() {
       )}
 
       {alertModal && (
-        <AlertModal open={!!alertModal} onClose={() => setAlertModal(null)} title={alertModal.title} message={alertModal.message} />
+        <AlertModal open={!!alertModal} onClose={() => setAlertModal(null)} title={alertModal.title} message={alertModal.message} tone={alertModal.tone} />
       )}
 
       {blockedDeploy && (

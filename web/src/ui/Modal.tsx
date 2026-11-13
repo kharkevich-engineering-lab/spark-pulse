@@ -15,7 +15,7 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useT } from "@/lib/i18n";
-import { AlertCircle, AlertTriangle, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, Info, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button, IconButton } from "./Button";
 
@@ -241,21 +241,34 @@ export function ConfirmModal({
 
 // ── Alert ────────────────────────────────────────────────────────────────────
 
+/** What an alert is telling the operator: something failed, something needs
+ * their attention, or simply what happened. */
+export type AlertTone = "error" | "warning" | "info";
+
 export interface AlertModalProps {
   open: boolean;
   onClose: () => void;
   title: string;
   message: string;
+  /** Error by default, because most alerts are; a confirmation that something
+   * went fine ("Download started") is `info`, and must not wear the red mark. */
+  tone?: AlertTone;
 }
 
-export function AlertModal({ open, onClose, title, message }: AlertModalProps) {
+const ALERT_ICON: Record<AlertTone, React.ReactNode> = {
+  error: <AlertCircle size={20} className="text-bad" data-tone="error" />,
+  warning: <AlertTriangle size={20} className="text-warn" data-tone="warning" />,
+  info: <Info size={20} className="text-brand-accent" data-tone="info" />,
+};
+
+export function AlertModal({ open, onClose, title, message, tone = "error" }: AlertModalProps) {
   const t = useT();
   return (
     <Modal
       open={open}
       onClose={onClose}
       title={title}
-      icon={<AlertCircle size={20} className="text-bad" />}
+      icon={ALERT_ICON[tone]}
       actions={
         <Button size="sm" variant="primary" onClick={onClose}>
           {t("common.ok")}

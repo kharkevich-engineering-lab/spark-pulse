@@ -26,7 +26,7 @@ import { applyOciCollection, fetchOciCollectionState } from "@/lib/api";
 import type { OciCollection, OciCollectionApplyResult, OciRecipeState, OciRecipeStateName } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
 import { useI18n, type Translator } from "@/lib/i18n";
-import { AlertModal, Button, ConfirmModal, ErrorLine, Spinner, Tabs, TONE_TEXT, type StatusTone } from "@/ui";
+import { AlertModal, Button, ConfirmModal, ErrorLine, Spinner, Tabs, TONE_TEXT, type StatusTone, type AlertTone } from "@/ui";
 import ServesChip from "@/components/ServesChip";
 import { cn } from "@/lib/utils";
 
@@ -95,7 +95,7 @@ export default function CollectionView({ collection, onChanged }: CollectionView
   const [bulk, setBulk] = useState<"install" | "update" | null>(null);
   const [overwriteTarget, setOverwriteTarget] = useState<OciRecipeState | null>(null);
   const [confirmInstallAll, setConfirmInstallAll] = useState(false);
-  const [alert, setAlert] = useState<{ title: string; message: string } | null>(null);
+  const [alert, setAlert] = useState<{ title: string; message: string; tone?: AlertTone } | null>(null);
 
   const recipes = useMemo(() => state?.recipes ?? [], [state]);
   const updates = recipes.filter((r) => r.state === "update");
@@ -150,6 +150,9 @@ export default function CollectionView({ collection, onChanged }: CollectionView
       setAlert({
         title: kind === "install" ? t("collection.installAllDone") : t("collection.updateAllDone"),
         message: describeOutcome(result, t),
+        // Finished is not succeeded: a recipe that failed in the batch is
+        // listed in the message, and the mark says so.
+        tone: result.results.some((r) => !r.success) ? "warning" : "info",
       });
     } catch (e) {
       setAlert({
@@ -298,7 +301,7 @@ export default function CollectionView({ collection, onChanged }: CollectionView
       )}
 
       {alert && (
-        <AlertModal open title={alert.title} message={alert.message} onClose={() => setAlert(null)} />
+        <AlertModal open title={alert.title} message={alert.message} tone={alert.tone} onClose={() => setAlert(null)} />
       )}
     </div>
   );
