@@ -429,6 +429,7 @@ export default function RunsPage({ initialTab }: RunsPageProps = {}) {
             key={run.id}
             run={run}
             benchmark={latestBenchmark.get(run.id)}
+            benchmarking={benchmarkingEnabled}
             expanded={expandedId === run.id}
             onToggle={() => toggle(run.id)}
             onTeardown={() => setTeardownTarget(run)}

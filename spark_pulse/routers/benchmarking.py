@@ -4,6 +4,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, field_validator
 
 from spark_pulse import tools
+from spark_pulse.config import config
 
 router = APIRouter(prefix="/api/benchmarks", tags=["benchmarking"])
 
@@ -154,6 +155,13 @@ def run_benchmark(req: RunBenchmarkRequest, background_tasks: BackgroundTasks):
     record, which kept it from the recipe when the run started. An id with no
     record is left to the benchmark itself, as it always was.
     """
+    if not config.benchmarking_enabled:
+        # The Runs page reads no benchmarks while this is off, so one started
+        # anyway ran — and on the lab failed — out of sight.
+        raise HTTPException(
+            status_code=409,
+            detail="benchmarking is disabled; turn it on in Settings → Features",
+        )
     deployment = tools.deployment_records.get(req.deployment_id)
     if deployment is not None:
         serves = tools.recipe_schema.serves_of(deployment)

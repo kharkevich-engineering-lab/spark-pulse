@@ -265,6 +265,38 @@ describe("RunsPage tabs", () => {
     await screen.findByTestId("deployment-r1");
     expect(screen.queryByRole("tab", { name: /^Benchmarks/ })).toBeNull();
     expect(fetchBenchmarks).not.toHaveBeenCalled();
+    // Nor the row's button: a benchmark started there would run unread.
+    expect(within(screen.getByTestId("deployment-r1")).queryByRole("button", { name: "Benchmark" })).toBeNull();
+  });
+
+  /** On the lab the click read as nothing: the benchmark failed at once and
+   *  only the server log said why. */
+  it("says on the row that the latest benchmark failed, and why", async () => {
+    vi.mocked(fetchBenchmarks).mockResolvedValue([
+      benchmark({
+        deployment_id: "r1",
+        status: "error",
+        results: { error: "llama-benchy is not installed. Install it with: pip install spark-pulse[benchmarking]" },
+      }),
+    ]);
+    show();
+
+    const row = await screen.findByTestId("deployment-r1");
+    expect(await within(row).findByTestId("benchmark-error-r1")).toHaveTextContent(
+      "Benchmark failed: llama-benchy is not installed",
+    );
+    expect(row).toHaveTextContent("failed");
+  });
+
+  it("says the benchmark is measuring while it runs", async () => {
+    vi.mocked(fetchBenchmarks).mockResolvedValue([
+      benchmark({ deployment_id: "r1", status: "running", results: null, completed_at: null }),
+    ]);
+    show();
+
+    const row = await screen.findByTestId("deployment-r1");
+    expect(await within(row).findByText("measuring…")).toBeInTheDocument();
+    expect(within(row).getByRole("button", { name: /Benchmark/ })).toBeDisabled();
   });
 
   it("says there are no runs at all rather than showing an empty pill", async () => {

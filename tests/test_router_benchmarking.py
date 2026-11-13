@@ -15,6 +15,23 @@ import pytest
 from spark_pulse.app import create_app
 
 
+@pytest.fixture(autouse=True)
+def _benchmarking_on():
+    """These tests exercise the feature, so it is on; it is off by default,
+    and the API refuses a benchmark then (TestBenchmarkingOff)."""
+    from unittest.mock import PropertyMock
+
+    from spark_pulse.config import config
+
+    with patch.object(
+        type(config),
+        "benchmarking_enabled",
+        new_callable=PropertyMock,
+        return_value=True,
+    ):
+        yield
+
+
 @pytest.fixture
 def app_client():
     """Create a test FastAPI app and return a TestClient."""
@@ -607,3 +624,34 @@ class TestSettingsBenchmarkingField:
         data = resp.json()
         assert "benchmarking_enabled" in data
         assert isinstance(data["benchmarking_enabled"], bool)
+
+
+class TestBenchmarkingOff:
+    """Off in settings, a benchmark is refused rather than run out of sight.
+
+    The lab: the Runs page reads no benchmarks while the feature is off, yet a
+    benchmark started from the row ran, failed at once, and said so only in
+    the server log.
+    """
+
+    def test_a_benchmark_is_refused_with_where_to_turn_it_on(self, app_client):
+        from unittest.mock import PropertyMock
+
+        from spark_pulse.config import config
+
+        with (
+            patch.object(
+                type(config),
+                "benchmarking_enabled",
+                new_callable=PropertyMock,
+                return_value=False,
+            ),
+            patch(
+                "spark_pulse.routers.benchmarking.tools.benchmarking.create_benchmark"
+            ) as create,
+        ):
+            resp = app_client.post("/api/benchmarks", json={"deployment_id": "dep-1"})
+
+        assert resp.status_code == 409
+        assert "Settings → Features" in resp.json()["detail"]
+        create.assert_not_called()
