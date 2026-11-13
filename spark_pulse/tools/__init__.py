@@ -77,6 +77,7 @@ if _sim_mode:
         models as models,
         images as images,
         image_size as image_size,
+        node_facts as node_facts,
         preflight as preflight,
     )
 else:
@@ -101,6 +102,7 @@ else:
         models as models,
         images as images,
         image_size as image_size,
+        node_facts as node_facts,
         preflight as preflight,
     )
 

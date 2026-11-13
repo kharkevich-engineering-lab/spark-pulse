@@ -144,10 +144,9 @@ class DockerBackend:
 
 def _reported_facts(node_id: str) -> runtime_checks.RuntimeFacts:
     """What the node's agent last reported, or that nothing is connected."""
-    from spark_pulse.agent import runtime as agent_runtime
+    from spark_pulse import tools
 
-    current = agent_runtime.current()
-    connection = current.hub.get(node_id) if current is not None and node_id else None
-    if connection is None:
+    facts = tools.node_facts.facts_for(node_id)
+    if facts is None:
         return runtime_checks.RuntimeFacts()
-    return runtime_checks.RuntimeFacts.from_node_facts(connection.facts)
+    return runtime_checks.RuntimeFacts.from_node_facts(facts)

@@ -3376,7 +3376,14 @@ GOLDEN_CASES = [
         None,
     ),
     ("llama-hf-cache", {"recipe_id": "bonsai-gguf-q8"}, MANY_GGUF),
+    # The same runs on a workstation (#174): x86_64, a 12 GiB card of its own,
+    # rootless Podman. The memory budget is the card's alone.
+    ("vllm-solo-workstation", {"recipe_id": "qwen3-8b"}, None),
+    ("llama-hf-cache-workstation", {"recipe_id": "bonsai-gguf-q8"}, MANY_GGUF),
 ]
+
+#: Suffix of a case planned with every simulated node a workstation.
+WORKSTATION_SUFFIX = "-workstation"
 
 
 #: A token the golden plans are made with. It is fixed so the snapshots do
@@ -3449,8 +3456,14 @@ class TestGoldenPlans:
         ids=[case for case, _kwargs, _files in GOLDEN_CASES],
     )
     def test_the_plan_matches_its_snapshot(
-        self, native, golden_config, case, kwargs, files
+        self, native, registry, golden_config, monkeypatch, case, kwargs, files
     ):
+        if case.endswith(WORKSTATION_SUFFIX):
+            monkeypatch.setenv("SPARK_PULSE_SIM_PROFILE", "workstation")
+            # The bundled specs name arm64 only; the published index carries
+            # these images multi-arch, which is what a workstation pulls.
+            for spec in registry.list():
+                monkeypatch.setattr(spec, "arch", ["linux/arm64", "linux/amd64"])
         services = _golden_node(files) if files is not None else None
         plan = native.plan(**kwargs, deployment_id=f"golden-{case}", services=services)
         actual = _golden_text(plan)
@@ -3468,6 +3481,14 @@ class TestGoldenPlans:
             f"the {case} plan changed; if that is intended, regenerate with "
             f"{GOLDEN_UPDATE_ENV}=1 and review the diff"
         )
+
+    def test_a_workstation_is_refused_an_arm64_only_image_before_the_pull(
+        self, native, golden_config, monkeypatch
+    ):
+        """#174/#176: the x86_64 node is known, so the plan says no up front."""
+        monkeypatch.setenv("SPARK_PULSE_SIM_PROFILE", "workstation")
+        with pytest.raises(nr.NativeRuntimeError, match="no build for linux/amd64"):
+            native.plan("qwen3-8b", deployment_id="golden-refused")
 
     def test_every_snapshot_has_a_case(self):
         """A case that is removed takes its snapshot with it, or a stale file
