@@ -39,6 +39,12 @@ from spark_pulse.tools.ssh import SSHError, SSHErrorType
 # native_runtime`` hands back the mock re-export. Patching module globals only
 # reaches the implementation if we hold the real module, so resolve it here.
 nr = importlib.import_module("spark_pulse.tools.native_runtime")
+docker_images = importlib.import_module("spark_pulse.tools.backends.docker.images")
+docker_lifecycle = importlib.import_module(
+    "spark_pulse.tools.backends.docker.lifecycle"
+)
+docker_planning = importlib.import_module("spark_pulse.tools.backends.docker.planning")
+docker_state = importlib.import_module("spark_pulse.tools.backends.docker.state")
 
 # ── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -202,7 +208,8 @@ def registry(tmp_path):
     with patch.object(type(config), "engine_indexes", property(lambda self: [])):
         instance = EngineRegistry(cache_dir=tmp_path / "engine-cache")
         with patch(
-            "spark_pulse.tools.native_runtime.get_registry", return_value=instance
+            "spark_pulse.tools.backends.docker.planning.get_registry",
+            return_value=instance,
         ):
             yield instance
     reset_registry()
@@ -622,7 +629,7 @@ class TestStart:
 
     def test_readiness_timeout_fails(self, native, docker):
         plan = native.plan("qwen3-8b")
-        with patch.object(native, "probe_ready", return_value=False):
+        with patch.object(docker_lifecycle, "probe_ready", return_value=False):
             record = native.start(plan, docker=docker, wait=True, ready_timeout=1)
 
         assert record["status"] == "error"
@@ -667,7 +674,7 @@ class TestStart:
                 plan.deployment_id, status="stopped", stopped_at=native._now()
             )
 
-        monkeypatch.setattr(native, "_wait_ready", settle_stopped)
+        monkeypatch.setattr(docker_lifecycle, "_wait_ready", settle_stopped)
         record = native.start(plan, docker=docker, wait=True)
         assert record["status"] == "stopped"
         assert tools.deployment_records.load()[0]["status"] == "stopped"
@@ -685,7 +692,7 @@ class TestStart:
             )
             raise native.NativeRuntimeError("readiness timed out")
 
-        monkeypatch.setattr(native, "_wait_ready", settle_then_fail)
+        monkeypatch.setattr(docker_lifecycle, "_wait_ready", settle_then_fail)
         record = native.start(plan, docker=docker, wait=True)
         assert record["status"] == "stopped"
         assert tools.deployment_records.load()[0]["status"] == "stopped"
@@ -797,7 +804,7 @@ class TestServeProcessLiveness:
 
         started = time.monotonic()
         with patch.object(docker, "get_container_status", side_effect=_engine_dies):
-            with patch.object(native, "probe_ready", return_value=False):
+            with patch.object(docker_lifecycle, "probe_ready", return_value=False):
                 record = native.start(plan, docker=docker, wait=True, ready_timeout=60)
         elapsed = time.monotonic() - started
 
@@ -828,7 +835,7 @@ class TestServeProcessLiveness:
         with patch.object(
             docker, "get_container_status", side_effect=self._engine_dies_in(docker)
         ):
-            with patch.object(native, "probe_ready", return_value=False):
+            with patch.object(docker_lifecycle, "probe_ready", return_value=False):
                 record = native.start(plan, docker=docker, wait=True, ready_timeout=60)
 
         assert record["status"] == "error"
@@ -848,7 +855,7 @@ class TestServeProcessLiveness:
                 "get_container_status",
                 side_effect=self._engine_dies_in(docker),
             ),
-            patch.object(native, "probe_ready", return_value=False),
+            patch.object(docker_lifecycle, "probe_ready", return_value=False),
         ):
             record = native.create_deployment("qwen3-8b")
             dep_id = record["id"]
@@ -873,7 +880,7 @@ class TestServeProcessLiveness:
         plan = native.plan("qwen3-8b")
         native.start(plan, docker=docker, wait=False)
 
-        with patch.object(native, "probe_ready", return_value=False):
+        with patch.object(docker_lifecycle, "probe_ready", return_value=False):
             listed = native.list_deployments(docker=docker)
             detail = native.status(plan.deployment_id, docker=docker)
 
@@ -887,7 +894,7 @@ class TestServeProcessLiveness:
         record = native.start(plan, docker=docker, wait=True)
 
         assert record["ready_at"]
-        with patch.object(native, "probe_ready", return_value=False):
+        with patch.object(docker_lifecycle, "probe_ready", return_value=False):
             listed = native.list_deployments(docker=docker)
             detail = native.status(plan.deployment_id, docker=docker)
 
@@ -923,7 +930,7 @@ class TestAnErroredRecordSaysWhy:
         with patch.object(
             docker, "get_container_status", side_effect=_running_and_silent
         ):
-            with patch.object(native, "probe_ready", return_value=False):
+            with patch.object(docker_lifecycle, "probe_ready", return_value=False):
                 record = native.start(plan, docker=docker, wait=True, ready_timeout=1)
 
         assert record["status"] == "error"
@@ -958,8 +965,8 @@ class TestAnErroredRecordSaysWhy:
             captured.append((event_type.value, message))
 
         plan = native.plan("qwen3-8b")
-        with patch.object(nr, "publish_event", side_effect=_capture):
-            with patch.object(native, "probe_ready", return_value=False):
+        with patch.object(docker_state, "publish_event", side_effect=_capture):
+            with patch.object(docker_lifecycle, "probe_ready", return_value=False):
                 record = native.start(plan, docker=docker, wait=True, ready_timeout=1)
 
         errors = [text for name, text in captured if name == "deployment_error"]
@@ -984,9 +991,13 @@ class TestAnErroredRecordSaysWhy:
         """
         import ast
 
-        tree = ast.parse(Path(nr.__file__).read_text())
+        package = Path(nr.__file__).parent / "backends" / "docker"
         writers = set()
-        for node in ast.walk(tree):
+        for node in (
+            n
+            for path in sorted(package.glob("*.py"))
+            for n in ast.walk(ast.parse(path.read_text()))
+        ):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             for call in ast.walk(node):
@@ -1030,7 +1041,7 @@ def _no_pull_backoff():
     outlast a network hiccup — and a test that slept through three of them
     would add a minute to the suite to prove nothing about the waiting.
     """
-    with patch.object(nr, "PULL_RETRY_BACKOFF_SECONDS", (0.0, 0.0)):
+    with patch.object(docker_images, "PULL_RETRY_BACKOFF_SECONDS", (0.0, 0.0)):
         yield
 
 
@@ -1071,7 +1082,7 @@ class TestRegistryCopy:
             captured.append((event_type.value, metadata or {}))
             captured.messages.append((event_type.value, message))
 
-        with patch.object(nr, "publish_event", side_effect=_capture):
+        with patch.object(docker_state, "publish_event", side_effect=_capture):
             yield captured
 
     def test_a_node_holding_the_synced_copy_runs_from_it(self, native, docker, events):
@@ -1095,7 +1106,7 @@ class TestRegistryCopy:
                 tools.registry, "node_reference", return_value="10.0.0.1:5000/x"
             ),
             patch.object(tools.registry, "relay_target", return_value="10.0.0.1:5000"),
-            patch.object(nr, "_rank_is_here", return_value=False),
+            patch.object(docker_state, "_rank_is_here", return_value=False),
         ):
             record = native.start(plan, docker=docker, wait=True)
 
@@ -1142,7 +1153,7 @@ class TestRegistryCopy:
                 tools.registry, "node_reference", return_value="10.0.0.1:5000/x"
             ),
             patch.object(tools.registry, "relay_target", return_value="10.0.0.1:5000"),
-            patch.object(nr, "_rank_is_here", return_value=False),
+            patch.object(docker_state, "_rank_is_here", return_value=False),
             patch.object(docker, "pull_image", side_effect=_pull),
         ):
             record = native.start(plan, docker=docker, wait=True)
@@ -1203,7 +1214,7 @@ class TestImagePull:
 
         plan = native.plan("qwen3-8b")
         _forget_image(docker, plan.container.image)
-        with patch.object(nr, "publish_event", side_effect=_capture):
+        with patch.object(docker_state, "publish_event", side_effect=_capture):
             record = native.start(plan, docker=docker, wait=True)
 
         assert record["status"] == "running"
@@ -1228,7 +1239,7 @@ class TestImagePull:
         events: list[str] = []
 
         with patch.object(
-            nr,
+            docker_state,
             "publish_event",
             side_effect=lambda t, *a, **kw: events.append(t.value),
         ):
@@ -1275,7 +1286,7 @@ class TestImagePull:
         events: list[str] = []
         with _no_pull_backoff():
             with patch.object(
-                nr,
+                docker_state,
                 "publish_event",
                 side_effect=lambda t, *a, **kw: events.append(t.value),
             ):
@@ -1796,8 +1807,10 @@ def _one_service(docker):
     service pins the resolver too.
     """
     with (
-        patch.object(nr, "_docker_service", return_value=docker),
-        patch.object(nr, "rank_services", return_value=lambda _address: docker),
+        patch.object(docker_state, "_docker_service", return_value=docker),
+        patch.object(
+            docker_state, "rank_services", return_value=lambda _address: docker
+        ),
     ):
         yield
 
@@ -2036,7 +2049,9 @@ class TestTeardownDoesNotStrandAContainer:
             raise native.NativeRuntimeError("engine did not become ready")
 
         with _one_service(docker):
-            with patch.object(nr, "_wait_ready", side_effect=_blocking_wait):
+            with patch.object(
+                docker_lifecycle, "_wait_ready", side_effect=_blocking_wait
+            ):
                 record = native.create_deployment("qwen3-8b")
                 dep_id = record["id"]
                 assert record["status"] == "starting"
@@ -2618,7 +2633,7 @@ class TestGenerations:
             "qwen3-8b-tp3", nodes=NODES, solo=False, deployment_id="dep1"
         )
 
-        with patch.object(nr, "_confirm_gone", return_value=False):
+        with patch.object(docker_lifecycle, "_confirm_gone", return_value=False):
             record = native.start(again, services=fleet.services, wait=True)
 
         assert record["status"] == "error"
@@ -2685,11 +2700,11 @@ class TestOrphans:
         fleet.nodes["10.0.0.3"].unreachable = True
         native.stop_deployment("dep1", services=fleet.services)
 
-        with patch.object(nr, "sweep_orphans") as swept:
+        with patch.object(docker_lifecycle, "sweep_orphans") as swept:
             native.list_deployments(docker=fleet.nodes[NODES[0]])
         swept.assert_not_called()
 
-        with patch.object(nr, "sweep_orphans") as swept:
+        with patch.object(docker_lifecycle, "sweep_orphans") as swept:
             native.list_deployments()
         swept.assert_called_once_with()
 
@@ -2703,7 +2718,7 @@ class TestOrphans:
     def test_a_container_still_present_after_a_stop_is_an_orphan(self, native, fleet):
         self._running(native, fleet)
 
-        with patch.object(nr, "_confirm_gone", return_value=False):
+        with patch.object(docker_lifecycle, "_confirm_gone", return_value=False):
             record = native.stop_deployment("dep1", services=fleet.services)
 
         assert [o["rank"] for o in record["orphans"]] == [0, 1, 2]
@@ -2807,7 +2822,7 @@ class TestADeletedDeploymentStaysDeleted:
             real_save(records_to_save)
 
         with patch.object(
-            nr, "_save_records", side_effect=save_pausing_only_the_writer
+            docker_state, "_save_records", side_effect=save_pausing_only_the_writer
         ):
             thread = threading.Thread(
                 target=lambda: nr._update_record(dep_id, status="pulling"),
@@ -3317,7 +3332,7 @@ class TestProbeReadyNamesTheModel:
 
         with (
             _real_probe(_Response(200, _models("other/model"))) as get,
-            patch.object(nr, "serve_process_alive", return_value=True),
+            patch.object(docker_lifecycle, "serve_process_alive", return_value=True),
         ):
             with pytest.raises(nr.NativeRuntimeError) as exc:
                 nr._wait_ready(lambda _a: docker, plan, timeout=0.3, interval=0.05)
@@ -3541,7 +3556,7 @@ class TestRunIntent:
         from spark_pulse.tools.intent import resolve_intent
 
         intent = resolve_intent(
-            "qwen3-8b", registry=nr.get_registry(), deployment_id="same-id"
+            "qwen3-8b", registry=docker_planning.get_registry(), deployment_id="same-id"
         )
         realised = nr.realise(intent)
         planned = nr.plan("qwen3-8b", deployment_id="same-id")
@@ -3552,7 +3567,7 @@ class TestRunIntent:
         from spark_pulse.tools.intent import resolve_intent
 
         intent = resolve_intent(
-            "qwen3-8b", registry=nr.get_registry(), params={"port": 9123}
+            "qwen3-8b", registry=docker_planning.get_registry(), params={"port": 9123}
         )
         assert intent.engine_name == "vllm"
         assert intent.port_pin == 9123
@@ -3567,14 +3582,14 @@ class TestRunIntent:
     ):
         from spark_pulse.tools.intent import resolve_intent
 
-        engine = nr.get_registry().engine("vllm", "default")
+        engine = docker_planning.get_registry().engine("vllm", "default")
         rendezvous = engine.rendezvous_port()
         if not rendezvous:
             pytest.skip("this engine binds no rendezvous port")
         with pytest.raises(nr.NativeRuntimeError, match="rendezvous port"):
             resolve_intent(
                 "qwen3-8b",
-                registry=nr.get_registry(),
+                registry=docker_planning.get_registry(),
                 params={"port": rendezvous},
             )
 
@@ -3584,7 +3599,7 @@ class TestRunIntent:
         from spark_pulse.tools.backends import DockerBackend
         from spark_pulse.tools.intent import resolve_intent
 
-        intent = resolve_intent("qwen3-8b", registry=nr.get_registry())
+        intent = resolve_intent("qwen3-8b", registry=docker_planning.get_registry())
         backend = DockerBackend()
         plan = backend.realise(intent)
         assert plan.deployment_id == intent.deployment_id
@@ -3601,7 +3616,9 @@ class TestARunRecordsItsBackendAndIntent:
     def _intent(self, **kwargs):
         from spark_pulse.tools.intent import resolve_intent
 
-        return resolve_intent("qwen3-8b", registry=nr.get_registry(), **kwargs)
+        return resolve_intent(
+            "qwen3-8b", registry=docker_planning.get_registry(), **kwargs
+        )
 
     def test_the_same_run_hashes_the_same_whatever_it_is_called(self, native, registry):
         one = self._intent(deployment_id="a", name="first")
