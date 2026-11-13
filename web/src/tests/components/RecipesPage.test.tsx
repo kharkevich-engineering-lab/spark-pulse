@@ -1029,6 +1029,20 @@ describe("RecipesPage", () => {
       await waitFor(() => expect(deleteCustomRecipe).toHaveBeenCalledWith("custom/mine"));
     });
 
+    /** The lab: a custom recipe deleted in Custom mode was still on the grid
+     *  after switching back, because only Custom mode's own list was re-read. */
+    it("re-reads the recipe grid after a custom recipe is deleted", async () => {
+      renderPage();
+      await screen.findByText("Qwen3 8B");
+      await enterCustomMode();
+      const before = vi.mocked(fetchRecipes).mock.calls.length;
+
+      await userEvent.click(await screen.findByRole("button", { name: "Delete Mine" }));
+      await userEvent.click(screen.getAllByRole("button", { name: "Delete" }).at(-1)!);
+
+      await waitFor(() => expect(vi.mocked(fetchRecipes).mock.calls.length).toBeGreaterThan(before));
+    });
+
     it("says why a delete from the card failed", async () => {
       vi.mocked(deleteCustomRecipe).mockRejectedValueOnce(new Error("permission denied"));
       renderPage();
