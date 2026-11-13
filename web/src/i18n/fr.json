@@ -46,7 +46,8 @@
     "in_progress": "Modification en cours",
     "deleting": "Suppression",
     "unverified": "Non vérifié",
-    "stopping": "Arrêt…"
+    "stopping": "Arrêt…",
+    "queued": "En file d’attente"
   },
   "nodeState": {
     "ok": "Opérationnel",

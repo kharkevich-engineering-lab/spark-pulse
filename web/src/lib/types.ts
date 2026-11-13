@@ -117,6 +117,18 @@ export interface ContainerStatus {
   error?: string | null;
 }
 
+/** A run's one state (#205); `tools/run_state.py` is where it is decided. */
+export type RunPhase =
+  | "queued"
+  | "pulling"
+  | "starting"
+  | "running"
+  | "stopping"
+  | "stopped"
+  | "deleting"
+  | "error"
+  | "unknown";
+
 export interface Deployment {
   id: string;
   recipe_id: string;
@@ -145,6 +157,14 @@ export interface Deployment {
   sync_reason?: string;
   /** What an in-progress change is (`stop`), so the badge can name it. */
   sync_intent?: string;
+  /** The one state a page renders (#205), derived on the server from
+   *  `status`, `sync` and `sync_intent`. Absent only from a server older than
+   *  the field, and then the pair is read as before. */
+  phase?: RunPhase;
+  /** False when a node could not be asked: the phase is the last reading. */
+  phase_verified?: boolean;
+  /** Why it is unverified, why it is changing, or why it failed. */
+  phase_reason?: string;
   /** How the run was made: "native" — a container we drive ourselves — which
    *  is the only runtime there is. Absent on a record written before the
    *  field existed. */

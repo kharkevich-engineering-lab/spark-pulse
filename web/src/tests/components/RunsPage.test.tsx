@@ -1636,6 +1636,29 @@ describe("RunsPage convergence", () => {
     expect(row.getByTitle("Waiting for the nodes to catch up")).toBeDisabled();
   });
 
+  /** #205: the server's one phase is what the row shows, and what shuts the
+   *  actions — not the pair, which a page used to combine itself. */
+  it("shows a run's phase as its one state and shuts the stop while it settles", async () => {
+    vi.mocked(fetchDeployments).mockResolvedValue([
+      deployment({
+        id: "ph1",
+        name: "phased job",
+        status: "running",
+        sync: "in_progress",
+        sync_intent: "stop",
+        phase: "stopping",
+        phase_verified: true,
+        phase_reason: "stop requested",
+      }),
+    ]);
+    show();
+
+    const row = within(await screen.findByTestId("deployment-ph1"));
+    expect(row.getByTestId("phase-stopping")).toHaveTextContent("Stopping…");
+    expect(row.queryByText("Running")).toBeNull();
+    expect(row.getByTitle("Waiting for the nodes to catch up")).toBeDisabled();
+  });
+
   it("leaves a settled run's actions alone", async () => {
     show();
 

@@ -49,9 +49,28 @@ const SYNC_TONE: Record<string, { tone: StatusTone; key: string }> = {
   unknown: { tone: "warn", key: "status.unverified" },
 };
 
+/** A run's one state (#205) and how it reads. The server derives it from
+ *  `status` and `sync`, so a run never shows two chips for one fact. */
+const PHASE_TONE: Record<string, StatusTone> = {
+  queued: "warn",
+  pulling: "warn",
+  starting: "warn",
+  running: "good",
+  stopping: "warn",
+  stopped: "muted",
+  deleting: "bad",
+  error: "bad",
+  unknown: "muted",
+};
+
+/** Phases with something happening, which the dot says by pulsing. */
+const PHASE_MOVING = new Set(["pulling", "starting", "running", "stopping", "deleting"]);
+
 /** Whether this resource is mid-change, so callers can disable actions that
- *  would only ask again. */
-export function isSettling(sync?: string): boolean {
+ *  would only ask again. A run's `phase`, when given, is the answer; `sync`
+ *  is the reading for everything else, and for a server older than phase. */
+export function isSettling(sync?: string, phase?: string): boolean {
+  if (phase) return phase === "stopping" || phase === "deleting";
   return sync === "in_progress" || sync === "deleting";
 }
 
@@ -72,6 +91,13 @@ export interface StatusBadgeProps {
   /** What an in-progress change is: `stop` reads "Stopping…" rather than the
    *  generic "In progress", which said nothing about what was happening. */
   syncIntent?: string;
+  /** A run's one state (#205). When present it is all that renders: one chip,
+   *  whatever `status` and `sync` say, since the server has reconciled them. */
+  phase?: string;
+  /** False when a node could not be asked; the chip then says so. */
+  phaseVerified?: boolean;
+  /** Why it is unverified, changing or failed, shown on hover. */
+  phaseReason?: string;
   className?: string;
 }
 
@@ -89,8 +115,42 @@ function Dot({ pulse }: { pulse: boolean }) {
   );
 }
 
-export function StatusBadge({ status, sync, syncReason, syncIntent, progress, className }: StatusBadgeProps) {
+export function StatusBadge({
+  status,
+  sync,
+  syncReason,
+  syncIntent,
+  progress,
+  phase,
+  phaseVerified,
+  phaseReason,
+  className,
+}: StatusBadgeProps) {
   const t = useT();
+  if (phase) {
+    const known = PHASE_TONE[phase];
+    const label = known ? t(`status.${phase}`) : phase.charAt(0).toUpperCase() + phase.slice(1);
+    const shown = phase === "pulling" && progress != null ? `${label}… ${Math.floor(progress)}%` : label;
+    return (
+      <span
+        title={phaseReason || undefined}
+        data-testid={`phase-${phase}`}
+        className={cn(
+          "inline-flex items-center gap-1.5 text-[13px] font-medium",
+          TONE_TEXT[known ?? "muted"],
+          className,
+        )}
+      >
+        <Dot pulse={PHASE_MOVING.has(phase)} />
+        {shown}
+        {phaseVerified === false && (
+          <span data-testid="phase-unverified" className={TONE_TEXT.warn}>
+            {`· ${t("status.unverified")}`}
+          </span>
+        )}
+      </span>
+    );
+  }
   const key = status.toLowerCase();
   const tone = STATUS_TONE[key];
   // Untranslated on purpose: a state this build has never heard of has no key

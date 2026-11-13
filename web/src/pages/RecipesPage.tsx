@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { useI18n } from "@/lib/i18n";
 import { fetchRecipes, fetchRecipe, createDeployment, scheduleDeploy, fetchSettings, fetchRecipeCustomization, saveRecipeCustomization, deleteRecipeCustomization, fetchMods, fetchMod, listCustomRecipes, saveCustomRecipe, deleteCustomRecipe, listCustomMods, getCustomModFiles, saveCustomModFiles, deleteCustomMod, uninstallOciRecipe, ApiError } from "@/lib/api";
 import { tightHere, wontRunHere } from "@/lib/types";
-import type { RecipeDetail, RecipeCustomization, RecipeSummary, ModSummary, ModDetail, CustomRecipeInfo, CustomModInfo, ModFileMap, PreflightReport } from "@/lib/types";
+import type { Deployment, RecipeDetail, RecipeCustomization, RecipeSummary, ModSummary, ModDetail, CustomRecipeInfo, CustomModInfo, ModFileMap, PreflightReport } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
 import { useDeployments } from "@/hooks/useDeployments";
 import { AlertModal, Button, ConfirmModal, ErrorLine, Modal, PageHeader, Spinner, Tabs, Toggle } from "@/ui";
@@ -259,7 +259,10 @@ export default function RecipesPage() {
 
   const runningIds = useMemo(() => {
     if (!deployments) return new Set<string>();
-    return new Set(deployments.filter(d => d.status === "running" || d.status === "pending").map(d => d.recipe_id));
+    // The run's one phase (#205); `status` for a server older than it.
+    const live = (d: Deployment) =>
+      d.phase ? d.phase === "running" || d.phase === "queued" : d.status === "running" || d.status === "pending";
+    return new Set(deployments.filter(live).map(d => d.recipe_id));
   }, [deployments]);
 
   // What does not run here goes last and folded away: the cluster-only ones

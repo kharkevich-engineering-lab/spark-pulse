@@ -269,7 +269,7 @@ export default function RunRow({
 }: RunRowProps) {
   const t = useT();
   const live = isLiveRun(run);
-  const settling = isSettling(run.sync);
+  const settling = isSettling(run.sync, run.phase);
 
   // While the latest benchmark runs, the row says so. Why one failed is the
   // launcher's to say, when the operator clicks Benchmark — not the row's.
@@ -319,7 +319,7 @@ export default function RunRow({
             >
               {run.name}
             </button>
-            <StatusBadge status={run.status} sync={run.sync} syncReason={run.sync_reason} syncIntent={run.sync_intent} progress={pull?.percent} />
+            <StatusBadge status={run.status} sync={run.sync} syncReason={run.sync_reason} syncIntent={run.sync_intent} phase={run.phase} phaseVerified={run.phase_verified} phaseReason={run.phase_reason} progress={pull?.percent} />
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             {run.engine && (
