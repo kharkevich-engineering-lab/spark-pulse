@@ -16,6 +16,8 @@ import importlib
 from typing import TYPE_CHECKING, Any, Callable
 
 from spark_pulse import tools
+from spark_pulse.tools.backends import runtime_checks
+from spark_pulse.tools.backends.runtime_checks import RuntimeReport
 
 if TYPE_CHECKING:
     from spark_pulse.tools.intent import RunIntent
@@ -117,3 +119,35 @@ class DockerBackend:
 
     def list_runs(self) -> list[dict[str, Any]]:
         return tools.native_runtime.list_deployments()
+
+    def diagnose(
+        self,
+        node_id: str,
+        label: str = "",
+        run: Callable[[str], Any] | None = None,
+        facts: Any = None,
+    ) -> RuntimeReport:
+        """The node's runtime, checked by the runtime its agent reports.
+
+        Docker and Podman are one backend — the same lifecycle, with Podman
+        differing only at create, which the agent decides (#165, #167) — so
+        the choice of checks is per node, from ``container_runtime``.
+        """
+        reported = (
+            runtime_checks.RuntimeFacts.from_node_facts(facts)
+            if facts is not None
+            else _reported_facts(node_id)
+        )
+        checks = runtime_checks.checks_for(reported)
+        return runtime_checks.run_checks(checks, label or node_id, reported, run)
+
+
+def _reported_facts(node_id: str) -> runtime_checks.RuntimeFacts:
+    """What the node's agent last reported, or that nothing is connected."""
+    from spark_pulse.agent import runtime as agent_runtime
+
+    current = agent_runtime.current()
+    connection = current.hub.get(node_id) if current is not None and node_id else None
+    if connection is None:
+        return runtime_checks.RuntimeFacts()
+    return runtime_checks.RuntimeFacts.from_node_facts(connection.facts)

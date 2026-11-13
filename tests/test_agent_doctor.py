@@ -809,7 +809,22 @@ async def test_the_control_node_is_diagnosed_by_the_same_function(
         assert found.channels == ["agent"]
         assert found.get("agent-connection").status == "ok"
         assert found.get("membership").status == "ok"
-        assert found.healthy
+        # The runtime is whatever this machine runs — Docker on CI, rootless
+        # Podman on a desktop — and the run backend checked it through the
+        # agent. Its health is the host's, not this test's (#168).
+        daemon = {
+            "docker": "docker-daemon",
+            "podman": "podman-daemon",
+            "unknown": "container-runtime",
+        }[found.runtime]
+        assert found.get(daemon).channel == "agent"
+        assert found.get("gpu-access").channel == "agent"
+        others = [
+            f
+            for f in found.problems
+            if f.check not in (daemon, "gpu-access", "podman-socket", "subuid")
+        ]
+        assert not others, others
     finally:
         await local.stop()
 

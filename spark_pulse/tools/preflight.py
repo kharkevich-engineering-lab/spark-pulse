@@ -54,7 +54,6 @@ report. The coordinator wires it in once the parallel start-path work lands.
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 import shlex
@@ -64,7 +63,18 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, Protocol
 
 from spark_pulse import tools
-from spark_pulse.tools import discovery
+from spark_pulse.tools import backends, discovery
+from spark_pulse.tools.backends import runtime_checks
+
+# The runtime's commands and parsers live with its checks (#168); these names
+# stay importable from here for the callers and tests that already use them.
+from spark_pulse.tools.backends.runtime_checks import (  # noqa: F401
+    DOCKER_COMMAND,
+    DOCKER_ROOT,
+    TOOLKIT_COMMAND,
+    parse_runtimes,
+    parse_toolkit,
+)
 from spark_pulse.tools import vram
 
 logger = logging.getLogger(__name__)
@@ -430,66 +440,11 @@ def parse_df(text: str) -> dict[str, dict[str, Any]]:
     return found
 
 
-def parse_toolkit(text: str) -> dict[str, Any]:
-    """Evidence from :data:`TOOLKIT_COMMAND` — which GPU paths exist."""
-    hook = ctk = False
-    cdi: list[str] = []
-    for line in (text or "").splitlines():
-        line = line.strip()
-        if line == "hook":
-            hook = True
-        elif line == "ctk":
-            ctk = True
-        elif line.startswith("cdi "):
-            cdi.append(line[4:].strip())
-    return {"hook": hook, "ctk": ctk, "cdi": cdi}
-
-
-def parse_runtimes(text: str) -> list[str]:
-    """Runtime names out of :data:`DOCKER_COMMAND`'s third field.
-
-    The probe asks for names only, because ``{{json .Runtimes}}`` returns
-    several kilobytes of runtime-spec feature data per runtime, and a regex
-    over that picks up the nested ``"status": {`` key and reports a runtime
-    called ``status``. JSON is still accepted so an older probe's output, or a
-    stored report, still parses.
-    """
-    text = (text or "").strip()
-    if text.startswith("{"):
-        try:
-            parsed = json.loads(text)
-        except ValueError:
-            pass
-        else:
-            if isinstance(parsed, dict):
-                return sorted(parsed)
-    return sorted({name for name in text.split() if name})
-
-
 # ── Probe commands ───────────────────────────────────────────────────────────
-
-#: One round trip answers reachability *and* everything about docker: the
-#: daemon version, its registered runtimes and where it keeps its data.
-DOCKER_COMMAND = (
-    "docker info --format "
-    "'{{.ServerVersion}}|{{.DockerRootDir}}|"
-    "{{range $name, $_ := .Runtimes}}{{$name}} {{end}}' 2>&1"
-)
 
 GPU_COMMAND = (
     "nvidia-smi --query-gpu=index,name,memory.total,memory.free "
     "--format=csv,noheader,nounits 2>&1"
-)
-
-#: What lets a container reach the GPU. Three separate mechanisms can each
-#: provide it, so the probe reports evidence rather than a verdict; see
-#: :func:`parse_toolkit`. Ends in ``true`` because the final ``ls`` fails on a
-#: machine with no CDI directory, which is the ordinary case.
-TOOLKIT_COMMAND = (
-    "command -v nvidia-container-runtime-hook >/dev/null 2>&1 && echo hook; "
-    "command -v nvidia-ctk >/dev/null 2>&1 && echo ctk; "
-    "ls -1 /etc/cdi/*.yaml /etc/cdi/*.json /var/run/cdi/*.yaml /var/run/cdi/*.json "
-    "2>/dev/null | sed 's/^/cdi /'; true"
 )
 
 MEMINFO_COMMAND = "cat /proc/meminfo 2>/dev/null"
@@ -527,13 +482,11 @@ class _NodeFacts:
 
     reachable: bool = True
     unreachable_reason: str = ""
-    docker: ProbeResult | None = None
-    docker_version: str = ""
-    docker_root: str = "/var/lib/docker"
-    runtimes: list[str] = field(default_factory=list)
-    toolkit_hook: bool = False
-    toolkit_ctk: bool = False
-    cdi_specs: list[str] = field(default_factory=list)
+    #: What the run backend found about the node's container runtime: the
+    #: daemon, how a container reaches the GPU, and what rootless Podman
+    #: needs (#168). ``None`` until it has been asked.
+    runtime: Any = None  # backends.runtime_checks.RuntimeReport | None
+    docker_root: str = DOCKER_ROOT
     gpu: ProbeResult | None = None
     gpus: list[dict[str, Any]] = field(default_factory=list)
     meminfo: dict[str, int] = field(default_factory=dict)
@@ -562,23 +515,14 @@ def _gather(
     if not reach.ok:
         facts.reachable = True
         facts.unreachable_reason = reach.message or f"exit {reach.returncode}"
-        facts.docker = reach
         return facts
 
-    facts.docker = probe.run(DOCKER_COMMAND)
-    if facts.docker.ok:
-        version, _, rest = facts.docker.stdout.strip().partition("|")
-        root, _, runtimes = rest.partition("|")
-        facts.docker_version = version.strip()
-        facts.docker_root = root.strip() or facts.docker_root
-        facts.runtimes = parse_runtimes(runtimes)
-
-    toolkit = probe.run(TOOLKIT_COMMAND)
-    if toolkit.ok:
-        evidence = parse_toolkit(toolkit.stdout)
-        facts.toolkit_hook = bool(evidence["hook"])
-        facts.toolkit_ctk = bool(evidence["ctk"])
-        facts.cdi_specs = list(evidence["cdi"])
+    # The run backend says what its runtime needs on this node and which
+    # commands answer it; the probe is only the transport (#168).
+    facts.runtime = backends.backend_for().diagnose(
+        _agent_node_id(target), target.label, run=probe.run
+    )
+    facts.docker_root = facts.runtime.storage_root or DOCKER_ROOT
 
     facts.gpu = probe.run(GPU_COMMAND)
     if facts.gpu.ok:
@@ -611,6 +555,16 @@ def _gather(
         facts.disk = parse_df(facts.disk_probe.stdout)
 
     return facts
+
+
+def _agent_node_id(target: NodeTarget) -> str:
+    """The id the node's agent connects under: the control node's is its own."""
+    from spark_pulse.agent import runtime as agent_runtime
+
+    if not target.is_control_plane:
+        return target.id
+    runtime = agent_runtime.current()
+    return (runtime.control_node_id if runtime is not None else "") or target.id
 
 
 def _fabric_from_agent(target: NodeTarget, node_count: int = 1) -> Any | None:
@@ -712,137 +666,55 @@ def _check_reachability(target: NodeTarget, ctx: _Context) -> Check:
     )
 
 
-def _check_docker(target: NodeTarget, ctx: _Context) -> Check:
-    """Docker installed, and the daemon answering."""
-    facts = ctx.facts[target.id]
-    title = "Docker"
-    result = facts.docker
-    if result is None or not result.reachable:
-        return _check(
-            CHECK_DOCKER,
-            title,
-            target,
-            STATUS_FAIL,
-            f"could not ask {target.label} about Docker: node unreachable",
-            "Fix reachability first; this check has nothing to say until then.",
-        )
-    if result.ok and facts.docker_version:
-        return _check(
-            CHECK_DOCKER,
-            title,
-            target,
-            STATUS_PASS,
-            f"Docker {facts.docker_version} responding",
-            version=facts.docker_version,
-            root=facts.docker_root,
-        )
-    text = (result.stdout or result.stderr or "").lower()
-    if result.returncode == 127 or "not found" in text or "command not found" in text:
-        return _check(
-            CHECK_DOCKER,
-            title,
-            target,
-            STATUS_FAIL,
-            f"docker is not installed on {target.label}",
-            "Install Docker Engine on the node "
-            "(https://docs.docker.com/engine/install/ubuntu/) and add the "
-            f"login on {target.label} to the docker group, or every command "
-            "here needs sudo.",
-        )
-    return _check(
-        CHECK_DOCKER,
-        title,
-        target,
-        STATUS_FAIL,
-        f"docker on {target.label} did not answer: {result.message or 'no output'}",
-        "The client is installed but the daemon did not reply. On the node: "
-        "sudo systemctl start docker, then confirm the login is in the docker "
-        "group with id -nG.",
-    )
+#: The doctor's statuses, as this report's.
+_RUNTIME_STATUS = {
+    "ok": STATUS_PASS,
+    "warn": STATUS_WARN,
+    "broken": STATUS_FAIL,
+    "unknown": STATUS_WARN,
+}
+
+#: Where each kind of runtime finding sits in this report. The daemon and the
+#: GPU keep the ids they have always had, whatever the runtime.
+_RUNTIME_CHECK_ID = {
+    runtime_checks.KIND_DAEMON: CHECK_DOCKER,
+    runtime_checks.KIND_GPU: CHECK_TOOLKIT,
+}
 
 
-def _check_toolkit(target: NodeTarget, ctx: _Context) -> Check:
-    """Can a container reach the GPU?
+def _check_runtime(target: NodeTarget, ctx: _Context) -> list[Check]:
+    """The container runtime, as the run backend found it (#168).
 
-    Every container this stack starts asks for ``--gpus all``, and three
-    different mechanisms can satisfy that. Only one of them puts a runtime
-    named ``nvidia`` in ``docker info``:
-
-    * ``--runtime=nvidia`` needs the registered runtime. We never pass it.
-    * ``--gpus all`` — what we actually pass — makes the daemon resolve a
-      *device request*, which it hands to ``nvidia-container-runtime-hook``
-      found on ``PATH``. No runtime registration is involved.
-    * CDI device specs under ``/etc/cdi`` or ``/var/run/cdi``.
-
-    A stock DGX Spark has the toolkit installed and no ``nvidia`` runtime
-    registered, and ``--gpus all`` works there — so demanding the runtime name
-    blocked every deploy on a correctly configured machine.
+    Docker, Podman, or a connected agent that reached no daemon: which checks
+    apply is the backend's decision, from the runtime the node's agent
+    reports. This only renders them.
     """
-    facts = ctx.facts[target.id]
-    title = "NVIDIA container toolkit"
-    if facts.docker is None or not facts.docker.ok:
-        return _check(
-            CHECK_TOOLKIT,
-            title,
+    report = ctx.facts[target.id].runtime
+    if report is None:
+        return [
+            _check(
+                CHECK_DOCKER,
+                "Container runtime",
+                target,
+                STATUS_FAIL,
+                f"could not ask {target.label} about its container runtime: "
+                "node unreachable",
+                "Fix reachability first; this check has nothing to say until then.",
+            )
+        ]
+    return [
+        _check(
+            _RUNTIME_CHECK_ID.get(f.kind, f.check.replace("-", "_")),
+            f.title,
             target,
-            STATUS_FAIL,
-            f"could not read Docker's runtimes on {target.label}",
-            "Fix the Docker check first; the toolkit is registered with the "
-            "daemon, so an unreachable daemon cannot be asked.",
+            _RUNTIME_STATUS.get(f.status, STATUS_WARN),
+            f.detail,
+            f.remedy,
+            runtime=report.runtime,
+            **f.data,
         )
-
-    detail = {
-        "runtimes": facts.runtimes,
-        "hook": facts.toolkit_hook,
-        "cdi_specs": facts.cdi_specs,
-    }
-    runtime = next((n for n in facts.runtimes if "nvidia" in n), "")
-    if facts.toolkit_hook:
-        # The path --gpus all actually takes, so report it as the reason even
-        # when a runtime is registered too.
-        return _check(
-            CHECK_TOOLKIT,
-            title,
-            target,
-            STATUS_PASS,
-            "nvidia-container-runtime-hook is installed, which is what "
-            "--gpus all uses"
-            + (f"; runtime {runtime} is registered as well" if runtime else ""),
-            **detail,
-        )
-    if runtime:
-        return _check(
-            CHECK_TOOLKIT,
-            title,
-            target,
-            STATUS_PASS,
-            f"registered as a Docker runtime ({', '.join(facts.runtimes)})",
-            **detail,
-        )
-    if facts.cdi_specs:
-        return _check(
-            CHECK_TOOLKIT,
-            title,
-            target,
-            STATUS_PASS,
-            f"{len(facts.cdi_specs)} CDI device spec(s) present "
-            f"({', '.join(facts.cdi_specs[:3])})",
-            **detail,
-        )
-    return _check(
-        CHECK_TOOLKIT,
-        title,
-        target,
-        STATUS_FAIL,
-        f"no way for a container to reach the GPU on {target.label}: no "
-        "nvidia-container-runtime-hook on PATH, no CDI specs, and no nvidia "
-        f"runtime registered (runtimes: {', '.join(facts.runtimes) or 'none'})",
-        "Every container this stack starts asks for --gpus all, which fails "
-        "without it. On the node: install nvidia-container-toolkit, then "
-        "sudo nvidia-ctk runtime configure --runtime=docker && "
-        "sudo systemctl restart docker.",
-        **detail,
-    )
+        for f in report.findings
+    ]
 
 
 def _check_gpu(target: NodeTarget, ctx: _Context) -> Check:
@@ -2032,8 +1904,7 @@ def _available_bytes(facts: _NodeFacts) -> int | None:
 
 _CHECKS: tuple[tuple[str, Callable[[NodeTarget, _Context], Any]], ...] = (
     (CHECK_REACHABILITY, _check_reachability),
-    (CHECK_DOCKER, _check_docker),
-    (CHECK_TOOLKIT, _check_toolkit),
+    (CHECK_DOCKER, _check_runtime),
     (CHECK_GPU, _check_gpu),
     (CHECK_IMAGE, _check_image),
     (CHECK_MODEL, _check_model),

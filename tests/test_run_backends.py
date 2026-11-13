@@ -63,6 +63,7 @@ class TestTheDockerBackend:
             "delete",
             "logs",
             "list_runs",
+            "diagnose",
         ):
             want = inspect.signature(getattr(RunBackend, name))
             got = inspect.signature(getattr(DockerBackend, name))
@@ -132,6 +133,9 @@ class _Recorder:
     def list_runs(self):
         self._note("list_runs")
         return [{"id": "b", "created_at": "2"}, {"id": "a", "created_at": "1"}]
+
+    def diagnose(self, node_id, label="", run=None, facts=None):
+        self._note("diagnose", node_id, label)
 
 
 @pytest.fixture
@@ -223,3 +227,53 @@ def test_the_ratchet_sees_a_call_when_there_is_one(tmp_path):
         "from spark_pulse.tools.native_runtime import stop_deployment\n"
     )
     assert len(_lifecycle_calls(probe)) == 2
+
+
+#: The runtime check sets and how they are chosen and run (#168). Only the
+#: backend picks them; the doctor and the pre-flight go through ``diagnose``.
+RUNTIME_CHECK_SETS = frozenset(
+    {"DockerChecks", "PodmanChecks", "UnknownRuntimeChecks", "checks_for", "run_checks"}
+)
+
+
+def _runtime_check_uses(path: Path) -> list[str]:
+    """Names of a check set used or imported in one file."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    found = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr in RUNTIME_CHECK_SETS:
+            found.append(f"{node.lineno}: .{node.attr}")
+        if isinstance(node, ast.ImportFrom) and (node.module or "").endswith(
+            "runtime_checks"
+        ):
+            found.extend(
+                f"{node.lineno}: imports {a.name}"
+                for a in node.names
+                if a.name in RUNTIME_CHECK_SETS
+            )
+    return found
+
+
+def test_only_the_backends_choose_the_runtime_checks():
+    offenders = {}
+    for path in sorted(PACKAGE.rglob("*.py")):
+        rel = path.relative_to(PACKAGE).as_posix()
+        if rel.startswith("tools/backends/"):
+            continue
+        uses = _runtime_check_uses(path)
+        if uses:
+            offenders[rel] = uses
+    assert not offenders, (
+        "These pick or run a runtime check set directly. Ask the run backend "
+        f"instead: backends.backend_for().diagnose(node_id, ...): {offenders}"
+    )
+
+
+def test_the_runtime_ratchet_sees_a_use_when_there_is_one(tmp_path):
+    probe = tmp_path / "probe.py"
+    probe.write_text(
+        "from spark_pulse.tools.backends.runtime_checks import checks_for\n"
+        "from spark_pulse.tools.backends import runtime_checks\n"
+        "runtime_checks.PodmanChecks()\n"
+    )
+    assert len(_runtime_check_uses(probe)) == 2
