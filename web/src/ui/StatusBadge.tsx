@@ -69,8 +69,16 @@ export interface StatusBadgeProps {
   /** How far the state's work has got, 0–100, shown beside the label
    *  ("Pulling… 45%"). Absent while unknown. */
   progress?: number;
+  /** What an in-progress change is: `stop` reads "Stopping…" rather than the
+   *  generic "In progress", which said nothing about what was happening. */
+  syncIntent?: string;
   className?: string;
 }
+
+/** The label for a change in flight, by what it is. */
+const INTENT_KEY: Record<string, string> = {
+  stop: "status.stopping",
+};
 
 function Dot({ pulse }: { pulse: boolean }) {
   return (
@@ -81,7 +89,7 @@ function Dot({ pulse }: { pulse: boolean }) {
   );
 }
 
-export function StatusBadge({ status, sync, syncReason, progress, className }: StatusBadgeProps) {
+export function StatusBadge({ status, sync, syncReason, syncIntent, progress, className }: StatusBadgeProps) {
   const t = useT();
   const key = status.toLowerCase();
   const tone = STATUS_TONE[key];
@@ -112,7 +120,7 @@ export function StatusBadge({ status, sync, syncReason, progress, className }: S
           )}
         >
           <Dot pulse={true} />
-          {t(converging.key)}
+          {t(sync === "in_progress" && syncIntent && INTENT_KEY[syncIntent] ? INTENT_KEY[syncIntent] : converging.key)}
         </span>
       )}
     </span>
