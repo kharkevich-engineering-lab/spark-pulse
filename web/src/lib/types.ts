@@ -1295,6 +1295,10 @@ export interface ScheduledDeploy {
   finished_at: string;
   /** The download job, on the response that created this. */
   download?: ModelDownloadJob;
+  /** What the run it started is doing now. `done` means the deployment was
+   * created, not that it came up: the pull or the engine can still fail. `null`
+   * before a deployment exists and once its record is gone. */
+  run?: { id: string; status: string; error: string } | null;
 }
 
 // ── The ConnectX fabric ─────────────────────────────────────────────────────

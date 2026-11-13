@@ -475,3 +475,53 @@ def _complete(job_id: str, model: str) -> None:
     tools.models._record_downloaded(model, 1_000)
     job = tools.models._set_job(job_id, status="completed", bytes_done=1_000)
     tools.models._publish_job(tools.models.EVENT_COMPLETED, job)
+
+
+# ── What the run it started is doing ────────────────────────────────────────
+
+
+class TestTheRunItStarted:
+    """``done`` means the deployment was created, not that it came up (lab:
+    the run failed on a pull with no amd64 image, and Models said "Deployed")."""
+
+    def _listed(self, client, monkeypatch, record):
+        from spark_pulse import tools
+
+        entry = {
+            "id": "s-1",
+            "model": ABSENT,
+            "download_job_id": "j-1",
+            "status": "done",
+            "deployment_id": "d-1",
+        }
+        monkeypatch.setattr(
+            tools.scheduled_deploys, "listing", lambda active_only=False: [entry]
+        )
+        monkeypatch.setattr(
+            tools.deployment_records,
+            "get",
+            lambda deployment_id: record if deployment_id == "d-1" else None,
+        )
+        return client.get("/api/scheduled-deploys").json()[0]
+
+    def test_a_run_that_failed_after_it_was_created_says_so(self, client, monkeypatch):
+        listed = self._listed(
+            client,
+            monkeypatch,
+            {"status": "error", "error_message": "no image found for amd64"},
+        )
+        assert listed["run"] == {
+            "id": "d-1",
+            "status": "error",
+            "error": "no image found for amd64",
+        }
+
+    def test_a_run_whose_record_is_gone_is_none(self, client, monkeypatch):
+        assert self._listed(client, monkeypatch, None)["run"] is None
+
+    def test_one_not_yet_deployed_has_no_run(self, client):
+        client.post(
+            "/api/scheduled-deploys", json={"recipe_id": RECIPE, "model": ABSENT}
+        )
+        listed = client.get("/api/scheduled-deploys?active_only=true").json()
+        assert listed[0]["run"] is None

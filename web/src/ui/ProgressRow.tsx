@@ -93,15 +93,20 @@ export function ProgressRow({
           )}
         </div>
       </div>
-      <div className="mt-2 h-1.5 rounded-full bg-bg2 overflow-hidden">
-        <div
-          role="progressbar"
-          aria-label={progressLabel}
-          aria-valuenow={percent}
-          className="h-full bg-blue-cta transition-all"
-          style={{ width: `${percent}%` }}
-        />
-      </div>
+      {/* A bar only while there is progress to show. A finished job — done,
+          failed or cancelled — says so in its status line; a full or frozen
+          bar under it read as a transfer still going. */}
+      {isActive(job) && (
+        <div className="mt-2 h-1.5 rounded-full bg-bg2 overflow-hidden">
+          <div
+            role="progressbar"
+            aria-label={progressLabel}
+            aria-valuenow={percent}
+            className="h-full bg-blue-cta transition-all"
+            style={{ width: `${percent}%` }}
+          />
+        </div>
+      )}
       {children}
     </div>
   );

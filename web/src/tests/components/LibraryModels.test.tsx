@@ -425,6 +425,39 @@ describe("Library — deployments waiting on a download", () => {
     );
   });
 
+  /** What the lab showed: the download finished, the deploy created its run,
+   *  and the run failed on the image pull. The row said "Deployed". */
+  it("says a run that failed after its deploy was created failed, not that it deployed", async () => {
+    vi.mocked(fetchModelDownloads).mockResolvedValue([{ ...runningJob, status: "completed", bytes_done: 100 }] as never);
+    vi.mocked(fetchScheduledDeploys).mockResolvedValue([
+      schedule({
+        status: "done",
+        deployment_id: "d-1",
+        run: { id: "d-1", status: "error", error: "no image found in image index for architecture amd64" },
+      }),
+    ] as never);
+    renderPage();
+
+    const row = await screen.findByTestId("scheduled-s-1");
+    expect(row).toHaveTextContent(/big-serve could not be deployed: no image found .* amd64/);
+    expect(row).not.toHaveTextContent(/Deployed/);
+    // Finished: no bar pretending the transfer is still going.
+    expect(within(screen.getByTestId("job-job9")).queryByRole("progressbar")).toBeNull();
+  });
+
+  it("does not list a finished download whose deploy is running", async () => {
+    vi.mocked(fetchModelDownloads).mockResolvedValue([{ ...runningJob, status: "completed", bytes_done: 100 }] as never);
+    vi.mocked(fetchScheduledDeploys).mockResolvedValue([
+      schedule({ status: "done", deployment_id: "d-1", run: { id: "d-1", status: "running", error: "" } }),
+    ] as never);
+    renderPage();
+
+    await waitFor(() => expect(fetchScheduledDeploys).toHaveBeenCalled());
+    await waitFor(() => expect(fetchModelDownloads).toHaveBeenCalled());
+    expect(screen.queryByTestId("job-job9")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Downloads" })).not.toBeInTheDocument();
+  });
+
   it("hides one the operator called off themselves", async () => {
     vi.mocked(fetchScheduledDeploys).mockResolvedValue([schedule({ status: "cancelled" })] as never);
     renderPage();
