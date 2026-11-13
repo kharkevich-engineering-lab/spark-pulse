@@ -49,6 +49,9 @@ describe("the dictionaries", () => {
    *  French borrowed unchanged. */
   const IDENTICAL_ON_PURPOSE = new Set([
     "common.ok",
+    // Kubernetes and its object kinds are names, the same in every language.
+    "kubernetesPreview.heading",
+    "kubernetesPreview.cachePvc",
     "engines.none",
     // "Image" and "RAM" are the same word in French; "PID" and "MCP" are
     // initialisms.

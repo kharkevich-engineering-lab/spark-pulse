@@ -64,6 +64,13 @@ const CASES: Case[] = [
     body: { recipe_id: "r" },
   },
   {
+    name: "planKubernetes",
+    call: () => api.planKubernetes({ recipe_id: "r", hf_cache: "pvc" }),
+    path: "/api/deployments/plan/kubernetes",
+    method: "POST",
+    body: { recipe_id: "r", hf_cache: "pvc" },
+  },
+  {
     name: "fetchDeployment",
     call: () => api.fetchDeployment("abc123"),
     path: "/api/deployments/abc123",

@@ -723,6 +723,37 @@ export interface DeployPlanRequest {
   allow_missing_model?: boolean;
 }
 
+/** How the HF cache reaches a pod in the Kubernetes preview (#164). */
+export type KubernetesHfCache = "pvc" | "hostPath";
+
+export interface KubernetesPlanRequest extends DeployPlanRequest {
+  hf_cache?: KubernetesHfCache;
+}
+
+/** What the run's intent could not tell the manifests (#164). */
+export interface KubernetesFinding {
+  code: string;
+  detail: string;
+}
+
+/** A run rendered as Kubernetes manifests. Never applied. */
+export interface KubernetesPlan {
+  backend: "kubernetes";
+  deployment_id: string;
+  recipe_id: string;
+  engine: string;
+  variant: string;
+  image: string;
+  namespace: string;
+  port: number;
+  intent_hash: string;
+  manifests: Record<string, unknown>[];
+  yaml: string;
+  findings: KubernetesFinding[];
+  warnings: string[];
+  applied: false;
+}
+
 export interface DeployContainerSpec {
   image: string;
   name: string;

@@ -1,7 +1,8 @@
 """Run backends: where a run actually runs, behind one protocol.
 
-:func:`backend_for` is the one choice. It always answers Docker today; the
-Kubernetes backend (#175) is the first thing that will make it choose.
+:func:`backend_for` is the one choice. It always answers Docker today. The
+Kubernetes backend (#164) renders a run's manifests as a preview and is never
+chosen here: it applies nothing, so it owns no run.
 
 Simulation does not mock a backend. It keeps swapping at the agent transport
 (``MockDockerService`` under ``tools.native_runtime``), as ``mock/cache.py``
@@ -15,6 +16,9 @@ from typing import Any
 
 from spark_pulse.tools.backends.base import RunBackend as RunBackend
 from spark_pulse.tools.backends.docker import DockerBackend as DockerBackend
+from spark_pulse.tools.backends.kubernetes import (
+    KubernetesBackend as KubernetesBackend,
+)
 
 _DOCKER = DockerBackend()
 

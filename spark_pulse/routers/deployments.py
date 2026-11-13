@@ -104,6 +104,42 @@ def plan_deployment(req: PlanRequest):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+class KubernetesPlanRequest(PlanRequest):
+    """The preview's body, and how the HF cache reaches a pod."""
+
+    hf_cache: str | None = None
+
+
+@router.post("/plan/kubernetes")
+def plan_kubernetes(req: KubernetesPlanRequest):
+    """The same run rendered as Kubernetes manifests (#164). Never applied.
+
+    A dry run of the second backend: the manifests, their YAML, and the
+    findings — what the manifests needed that the run's intent does not say.
+    """
+    from spark_pulse.tools.backends.kubernetes import KubernetesBackend
+
+    try:
+        return (
+            KubernetesBackend()
+            .plan(
+                req.recipe_id,
+                engine=req.engine,
+                variant=req.variant,
+                model=req.model,
+                params=req.params,
+                extra_args=req.extra_args,
+                nodes=req.nodes or None,
+                solo=not req.nodes,
+                allow_missing_model=req.allow_missing_model,
+                hf_cache=req.hf_cache,
+            )
+            .to_dict()
+        )
+    except NativeRuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("")
 def create_deployment(req: dict):
     recipe_id = req.get("recipe_id", "")

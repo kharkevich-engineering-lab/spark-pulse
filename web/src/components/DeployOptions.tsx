@@ -11,9 +11,11 @@ recipe carries a vLLM `command` template and therefore pins itself to vLLM.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useI18n, type Translator } from "@/lib/i18n";
 import { fetchEngines, fetchModels, fetchNodes, planDeployment, runPreflight } from "@/lib/api";
+import { KubernetesPreview } from "@/components/KubernetesPreview";
 import type {
   ClusterNode,
   DeployPlan,
+  DeployPlanRequest,
   EngineSummary,
   MemoryBudget,
   PreflightReport,
@@ -471,6 +473,7 @@ export default function DeployOptions({
   // replace it.
   const [tpTouched, setTpTouched] = useState(false);
   const [plan, setPlan] = useState<DeployPlan | null>(null);
+  const [planBody, setPlanBody] = useState<DeployPlanRequest | null>(null);
   const [preflight, setPreflight] = useState<PreflightReport | null>(null);
   const [planning, setPlanning] = useState(false);
   const [planError, setPlanError] = useState<string | null>(null);
@@ -624,6 +627,7 @@ export default function DeployOptions({
       // The same body the deploy sends — see `deployParams`.
       params: deployParams(recipe, value),
     };
+    setPlanBody(body);
     try {
       const result = await planDeployment(body);
       setPlan(result);
@@ -985,6 +989,8 @@ export default function DeployOptions({
                   {` · ${t("deployOptions.shm", { gb: plan.container.shm_size_gb })}`}
                 </p>
               </div>
+
+              {planBody && <KubernetesPreview body={planBody} />}
             </div>
           )}
         </div>

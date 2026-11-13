@@ -36,6 +36,7 @@ vi.mock("@/lib/api", () => ({
   fetchModels: vi.fn(),
   fetchNodes: vi.fn(),
   planDeployment: vi.fn(),
+  planKubernetes: vi.fn(),
   runPreflight: vi.fn(),
 }));
 
