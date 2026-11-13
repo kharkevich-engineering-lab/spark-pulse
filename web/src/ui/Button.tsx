@@ -37,7 +37,8 @@ const VARIANTS: Record<ButtonVariant, string> = {
 };
 
 const PADDING: Record<ButtonSize, string> = {
-  md: "px-[18px] py-[11px] text-[14px] gap-2",
+  // h-11 is an Input's height (Field.tsx), so a button beside a field lines up.
+  md: "h-11 px-[18px] text-[14px] gap-2",
   sm: "px-3 py-[7px] text-[13px] gap-1.5",
 };
 

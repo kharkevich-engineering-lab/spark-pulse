@@ -443,7 +443,7 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
           icon={Download}
           loading={starting}
           disabled={!modelId.trim()}
-          className="max-[519px]:w-full min-[520px]:mb-[26px]"
+          className="max-[519px]:w-full"
         >
           {t("library.download")}
         </Button>
