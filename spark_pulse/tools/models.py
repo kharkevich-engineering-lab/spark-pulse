@@ -12,6 +12,7 @@ import errno
 import json
 import logging
 import os
+import re
 import shlex
 import shutil
 import socket
@@ -227,6 +228,54 @@ def _dir_stats(path: Path) -> tuple[int, float]:
     return total, latest
 
 
+#: A GGUF file's quantisation as the file name carries it, by the convention
+#: llama.cpp's own converter and every GGUF publisher follow: the last
+#: ``-`` or ``.`` separated token before ``.gguf`` that names a type
+#: (``q8_0``, ``Q4_K_M``, ``IQ2_XXS``, ``f16``, ``bf16``, PrismML's ``PQ2_0``).
+_GGUF_QUANT = re.compile(
+    r"(?:^|[-_.])((?:i?q\d+(?:_[a-z0-9]+)*)|(?:p?t?q\d+_\d+)|bf16|fp16|f16|fp32|f32)$",
+    re.IGNORECASE,
+)
+
+
+def gguf_quant(filename: str) -> str:
+    """The quantisation a GGUF file's name declares, lowercased, or ``""``. Pure."""
+    stem = filename[:-5] if filename.lower().endswith(".gguf") else filename
+    # A split file (`…-q8_0-00001-of-00003.gguf`) names its type before the part.
+    stem = re.sub(r"-\d{5}-of-\d{5}$", "", stem)
+    match = _GGUF_QUANT.search(stem)
+    return match.group(1).lower() if match else ""
+
+
+def _gguf_summary(snapshot: Path) -> list[dict[str, Any]]:
+    """Every GGUF in a snapshot, with the quantisation its name declares.
+
+    A GGUF repository has no ``config.json`` — the precision lives in each
+    file — so without this the catalogue showed "—" for a repo holding nine
+    quantisations. Sizes follow the snapshot's links into ``blobs/``; a
+    split file's parts are one entry.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    try:
+        files = sorted(snapshot.rglob("*.gguf"))
+    except OSError:
+        return []
+    for path in files:
+        name = path.name
+        if "mmproj" in name.lower():
+            continue  # a vision projector, not a model quantisation
+        key = re.sub(r"-\d{5}-of-\d{5}(?=\.gguf$)", "", name)
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = 0
+        entry = out.setdefault(
+            key, {"file": key, "quant": gguf_quant(name), "size_bytes": 0}
+        )
+        entry["size_bytes"] += size
+    return list(out.values())
+
+
 def _config_summary(snapshot: Path) -> dict[str, Any] | None:
     """Extract the interesting bits of a model's ``config.json``."""
     cfg_file = snapshot / "config.json"
@@ -315,6 +364,7 @@ def _revisions(repo_path: Path) -> list[dict[str, Any]]:
                 ),
                 "refs": sorted(refs.get(snap.name, [])),
                 "config": _config_summary(snap),
+                "gguf": _gguf_summary(snap),
             }
         )
     out.sort(key=lambda r: r.get("last_modified") or "", reverse=True)
@@ -391,6 +441,7 @@ def list_models() -> list[dict[str, Any]]:
                         else None
                     ),
                     "config": primary["config"] if primary else None,
+                    "gguf": primary["gguf"] if primary else [],
                     "referenced_by": index.get(model_id.lower(), []),
                 }
             )

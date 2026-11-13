@@ -70,11 +70,24 @@ export function shortRevision(revision: string | null): string {
 }
 
 export function describePrecision(model: ModelEntry): string {
+  // A GGUF repository: the quantisation is in each file's name, and a repo
+  // often ships several. One is named; several are counted, with the list on
+  // hover (ggufDetail).
+  const gguf = model.gguf ?? [];
+  if (gguf.length === 1) return `GGUF · ${gguf[0].quant || "?"}`;
+  if (gguf.length > 1) return `GGUF ×${gguf.length}`;
   const cfg = model.config;
   if (!cfg) return "—";
   if (cfg.quantization_method) return cfg.quantization_method;
   if (cfg.quantization.length) return "quantized";
   return cfg.torch_dtype || "—";
+}
+
+/** Every GGUF in the repo with its size, for the precision cell's hover. */
+export function ggufDetail(model: ModelEntry): string | undefined {
+  const gguf = model.gguf ?? [];
+  if (gguf.length < 2) return gguf[0]?.file;
+  return gguf.map((g) => `${g.quant || g.file} · ${formatSize(g.size_bytes)}`).join("\n");
 }
 
 /** One node's verdict, as the presence endpoint reports it. */
@@ -587,7 +600,7 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
                     <td className="p-3 font-mono">{m.id}</td>
                     <td className="p-3 font-mono">{formatSize(m.size_bytes)}</td>
                     <td className="p-3 font-mono text-muted">{shortRevision(m.revision)}</td>
-                    <td className="p-3">{describePrecision(m)}</td>
+                    <td className="p-3" title={ggufDetail(m)}>{describePrecision(m)}</td>
                     <td className="p-3">
                       <NodeState state={where.state} label={where.label} title={where.title} />
                     </td>
@@ -612,7 +625,7 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
               >
                 <p className="font-mono text-[14px] break-all">{m.id}</p>
                 <p className="text-[13px] text-muted font-mono">
-                  {formatSize(m.size_bytes)} · {describePrecision(m)}
+                  {formatSize(m.size_bytes)} · <span title={ggufDetail(m)}>{describePrecision(m)}</span>
                 </p>
                 <NodeState state={where.state} label={where.label} title={where.title} />
                 {actionsFor(m, where)}
