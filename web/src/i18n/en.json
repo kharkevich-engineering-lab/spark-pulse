@@ -1079,7 +1079,9 @@
     "whereOnly": "{node} only",
     "wherePartial": "partial on {node}",
     "wherePartialTitle": "A node holds part of the snapshot. Replicate it again.",
-    "whereUnknown": "not checked"
+    "whereUnknown": "not checked",
+    "whereDownloading": "downloading {percent}%",
+    "whereDownloadingUnknown": "downloading"
   },
   "fleet": {
     "nodes": {

@@ -217,11 +217,13 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
   }, [reloadJobs, reloadScheduled]);
 
   /** Ask every node about every model, once the catalogue and the registry are
-   *  both in. Only worth a request when there is more than one machine: on a
-   *  solo install the catalogue *is* the answer. */
+   *  both in — this machine included, and on a solo install too. The
+   *  catalogue lists a model from the first file a download writes, so it is
+   *  not the answer: on the lab a 1 GB download read "1 of 1 nodes" while it
+   *  was still arriving. */
   const asked = useRef(new Set<string>());
   useEffect(() => {
-    if (peers.length === 0 || !models) return;
+    if (!models) return;
     for (const model of models) {
       if (asked.current.has(model.id)) continue;
       asked.current.add(model.id);
@@ -235,8 +237,20 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
 
   const whereFor = useCallback(
     (model: ModelEntry): WhereVerdict => {
-      if (peers.length === 0) {
-        return { state: "ok", label: t("library.whereNodes", { count: 1, total: 1 }) };
+      // A download still running is not a copy anywhere yet, whatever the
+      // cache directory already holds.
+      const downloading = jobs.find((j) => j.model === model.id && ACTIVE_STATES.includes(j.status));
+      if (downloading) {
+        const percent = downloading.bytes_total
+          ? Math.floor(((downloading.bytes_done ?? 0) / downloading.bytes_total) * 100)
+          : null;
+        return {
+          state: "warn",
+          label:
+            percent != null
+              ? t("library.whereDownloading", { percent })
+              : t("library.whereDownloadingUnknown"),
+        };
       }
       const answer = presence[model.id];
       if (!answer) return { state: "unknown", label: t("library.whereUnknown") };
@@ -247,7 +261,7 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
       };
       return describeWhere([here, ...answer.nodes], t);
     },
-    [peers, presence, controlName, t],
+    [jobs, presence, controlName, t],
   );
 
   const onEvent = useCallback(
@@ -261,7 +275,16 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
           ? current.map((j) => (j.id === job.id ? { ...j, ...job } : j))
           : [job, ...current],
       );
-      if (frame.type === "model.download.completed") refetch();
+      if (frame.type === "model.download.completed") {
+        // Ask again: the answer from before the bytes landed is stale.
+        asked.current.delete(job.model);
+        setPresence((current) => {
+          const next = { ...current };
+          delete next[job.model];
+          return next;
+        });
+        refetch();
+      }
       // Any terminal state settles the deploys queued behind this download —
       // into "deploying", or into a failure that has to be shown.
       if (frame.type?.startsWith("model.download.") && !["queued", "running"].includes(job.status)) {
