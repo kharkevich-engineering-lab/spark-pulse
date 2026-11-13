@@ -533,3 +533,15 @@ def test_a_model_module_that_cannot_import_is_not_swallowed(monkeypatch):
 
     with pytest.raises(ImportError):
         db._load_models()
+
+
+def test_loading_the_tables_keeps_the_simulation_switch(monkeypatch):
+    """Registering a table imports its module by name, which binds the real
+    module onto ``spark_pulse.tools`` — over the mock the switch chose. That
+    made every simulated control plane run the real benchmark tool."""
+    import spark_pulse.mock.benchmarking as simulated
+    from spark_pulse import db, tools
+
+    monkeypatch.setattr(tools, "benchmarking", simulated)
+    db._load_models()
+    assert tools.benchmarking is simulated

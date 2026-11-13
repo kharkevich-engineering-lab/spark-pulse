@@ -265,6 +265,17 @@ def _load_models() -> None:
     import importlib
 
     for name in _MODEL_MODULES:
+        # Importing ``spark_pulse.tools.benchmarking`` by name binds the *real*
+        # module onto the ``spark_pulse.tools`` package, and in simulation that
+        # attribute is the mock the switch chose. Loading a table must not undo
+        # the switch: it once made every simulated control plane run the real
+        # benchmark tool, which reported itself missing on CI and disabled the
+        # launcher there while it worked on a machine that had it installed.
+        # The package first, so its own ``__init__`` has made its choice
+        # before the submodule import can overwrite it.
+        package_name, _, attribute = name.rpartition(".")
+        package = importlib.import_module(package_name)
+        bound = getattr(package, attribute, None)
         try:
             importlib.import_module(name)
         except ModuleNotFoundError as exc:
@@ -280,6 +291,8 @@ def _load_models() -> None:
         except Exception:
             logger.exception("model module %s failed to import", name)
             raise
+        if bound is not None:
+            setattr(package, attribute, bound)
 
 
 def _create_schema(engine: Engine) -> None:
