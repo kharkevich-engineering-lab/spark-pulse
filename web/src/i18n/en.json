@@ -312,7 +312,6 @@
     "toggleCustom": "Toggle custom mode",
     "uninstallBody": "{name} is removed from disk. Reinstall it from the OCI Registry page if you need it again.",
     "uninstallFailed": "Could not uninstall {name}",
-    "uninstallRecipe": "Uninstall {name}",
     "uninstallRecipeTitle": "Uninstall this recipe",
     "heading": "Recipes and mods.",
     "deploy": "Deploy",
@@ -334,14 +333,15 @@
       "one": "Hide {count} recipe that doesn't run here",
       "other": "Hide {count} recipes that don't run here"
     },
-    "nothingRunsHere": "Nothing in this catalogue runs on this fleet yet. The recipes below say why; an engine published for this platform, or a recipe for one that is, changes that."
+    "nothingRunsHere": "Nothing in this catalogue runs on this fleet yet. The recipes below say why; an engine published for this platform, or a recipe for one that is, changes that.",
+    "uninstall": "Uninstall"
   },
   "recipeCard": {
     "running": "Running",
     "clusterOnly": "Cluster only",
     "resetToOriginal": "Reset to original",
     "clusterRequired": "This recipe requires cluster mode.",
-    "solo": "Solo",
+    "solo": "Single node",
     "cluster": "Cluster",
     "custom": "Custom",
     "editCustom": "Edit custom",
@@ -575,7 +575,6 @@
     "parseFailed": "Failed to parse YAML"
   },
   "deployOptions": {
-    "recipeDefault": "Recipe default",
     "extraArgsPlaceholder": "--enable-prefix-caching --max-num-seqs 16",
     "extraArgsNote": "Appended to the engine command, quoted.",
     "parallelism": "Parallelism",
@@ -628,7 +627,9 @@
     "networkHost": "network host",
     "ipcHost": "ipc host",
     "shm": "shm {gb}g",
-    "notForThisFleet": "no image for this fleet's platform"
+    "notForThisFleet": "no image for this fleet's platform",
+    "recipeDefaultEngine": "{engine} (recipe default)",
+    "recipeDefault": "Recipe default"
   },
   "newRecipe": {
     "validationFailed": "Validation failed",

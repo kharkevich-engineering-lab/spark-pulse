@@ -8,13 +8,22 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import RecipeDrawer from "@/components/RecipeDrawer";
 import type { RecipeDetail } from "@/lib/types";
 
 vi.mock("@/lib/api", () => ({
-  fetchEngines: vi.fn().mockResolvedValue({ engines: [] }),
+  fetchEngines: vi.fn().mockResolvedValue({
+    engines: ["vllm", "sglang"].map((engine) => ({
+      key: `${engine}/default`,
+      engine,
+      variant: "default",
+      version: "0.1.0",
+      enabled: true,
+      available: true,
+    })),
+  }),
   fetchModels: vi.fn().mockResolvedValue([]),
   fetchNodes: vi.fn().mockResolvedValue([]),
   planDeployment: vi.fn(),
@@ -195,6 +204,8 @@ describe("RecipeDrawer", () => {
     expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Deploy" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Deploy options" })).not.toBeInTheDocument();
+    // The engine is a per-deploy choice, not part of a customization.
+    expect(screen.queryByLabelText("Engine")).not.toBeInTheDocument();
   });
 
   it("leaves edit mode once a save succeeds", async () => {
@@ -230,7 +241,8 @@ describe("RecipeDrawer", () => {
     expect(screen.getByText(/Reset "Qwen3 8B" to its original recipe\?/)).toBeInTheDocument();
     expect(onReset).not.toHaveBeenCalled();
 
-    await userEvent.click(screen.getAllByRole("button", { name: "Reset" }).at(-1)!);
+    // The confirmation's own button, not the footer's Reset beside it.
+    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Reset" }));
     await waitFor(() => expect(onReset).toHaveBeenCalled());
   });
 
@@ -261,8 +273,31 @@ describe("RecipeDrawer", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  /** The engine is the choice that most changes a deploy, so it sits with
+   *  the recipe's own fields rather than inside the folded options panel. */
+  it("picks the engine among the recipe's fields and deploys on it", async () => {
+    const recipe = {
+      ...RECIPE,
+      engines: ["vllm", "sglang"],
+      engine_support: ["vllm", "sglang"].map((engine) => ({ engine, supported: true, reason: "", enabled: true })),
+    } as unknown as RecipeDetail;
+    const { onDeploy } = renderDrawer({ recipe });
+    const footer = screen.getByTestId("drawer-footer");
+    expect(within(footer).queryByLabelText("Engine")).not.toBeInTheDocument();
+    const select = screen.getByLabelText("Engine");
+    await waitFor(() => expect(within(select).getByRole("option", { name: /sglang/ })).toBeInTheDocument());
+    expect(within(select).getAllByRole("option")[0]).toHaveTextContent("vllm (recipe default)");
+
+    await userEvent.selectOptions(select, "sglang/default");
+    await userEvent.click(within(footer).getByRole("button", { name: "Deploy" }));
+
+    await waitFor(() => expect(onDeploy).toHaveBeenCalled());
+    expect(onDeploy.mock.calls[0][2]).toMatchObject({ engine: "sglang/default" });
+  });
+
   it("shows no deploy affordance at all when the page offers no deploy", () => {
     renderDrawer({ onDeploy: undefined });
+    expect(screen.queryByLabelText("Engine")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Deploy" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Deploy options" })).not.toBeInTheDocument();
   });
