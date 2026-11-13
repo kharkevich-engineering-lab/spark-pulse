@@ -156,6 +156,16 @@ class SimulatedHostProbe:
         return self._answer(command)
 
     def _answer(self, command: str) -> ProbeResult:
+        from spark_pulse.mock import profiles
+        from spark_pulse.tools.backends import runtime_checks
+
+        profile = profiles.profile_for(self.address)
+        if command == runtime_checks.PODMAN_STORE_COMMAND:
+            return _ok(profile.store_root + "\n")
+        if command == runtime_checks.PODMAN_SOCKET_COMMAND:
+            return _ok("enabled\n")
+        if command == runtime_checks.SUBUID_COMMAND:
+            return _ok("/etc/subuid yes\n/etc/subgid yes\n")
         if command.startswith("echo spark-pulse-preflight"):
             return _ok("spark-pulse-preflight")
         if command.startswith("docker info"):
@@ -163,12 +173,18 @@ class SimulatedHostProbe:
         if command.startswith("command -v nvidia-container-runtime-hook"):
             return _ok(SIM_TOOLKIT)
         if command.startswith("nvidia-smi"):
-            return _ok(SIM_GPU_ROW)
+            if profile is profiles.SPARK:
+                return _ok(SIM_GPU_ROW)
+            return _ok(profile.nvidia_smi_row())
         if command.startswith("cat /proc/meminfo"):
+            total_kb, available_kb = SIM_MEM_TOTAL_KB, SIM_MEM_AVAILABLE_KB
+            if profile is not profiles.SPARK:
+                total_kb = profile.memory_total_bytes // 1024
+                available_kb = profile.memory_available_bytes // 1024
             return _ok(
-                f"MemTotal:       {SIM_MEM_TOTAL_KB} kB\n"
-                f"MemFree:        {SIM_MEM_AVAILABLE_KB // 2} kB\n"
-                f"MemAvailable:   {SIM_MEM_AVAILABLE_KB} kB\n"
+                f"MemTotal:       {total_kb} kB\n"
+                f"MemFree:        {available_kb // 2} kB\n"
+                f"MemAvailable:   {available_kb} kB\n"
             )
         if command.startswith("ss -H"):
             body = "\n".join(

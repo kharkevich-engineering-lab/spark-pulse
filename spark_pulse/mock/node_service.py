@@ -67,6 +67,14 @@ def _key(node: Node) -> str:
     return node.id or node.address
 
 
+def _self_address() -> str:
+    """The control node's registered address, which names its profile."""
+    from spark_pulse.mock import node_registry
+
+    record = node_registry.self_node()
+    return record.address if record is not None else ""
+
+
 def docker_for(node: Node) -> Any:
     """The simulated Docker belonging to ``node``, created on first ask.
 
@@ -79,7 +87,9 @@ def docker_for(node: Node) -> Any:
     if node.is_self:
         from spark_pulse.mock.docker import _get_service
 
-        return _get_service()
+        service = _get_service()
+        service.address = node.address or _self_address()
+        return service
     key = _key(node)
     service = _peers.get(key)
     if service is None:
@@ -96,6 +106,7 @@ def docker_for(node: Node) -> Any:
             for path, (size, files) in service.caches.items()
         }
         _peers[key] = service
+    service.address = node.address
     return service
 
 
@@ -116,6 +127,9 @@ calls: list[dict[str, Any]] = []
 
 def reset() -> None:
     """Forget every simulated peer, and with it every container on one."""
+    from spark_pulse.mock import profiles
+
+    profiles.reset()
     _peers.clear()
     unreachable.clear()
     daemon_down.clear()

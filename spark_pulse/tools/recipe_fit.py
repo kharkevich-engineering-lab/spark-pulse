@@ -225,25 +225,16 @@ def fleet(with_memory: bool = False) -> list[FleetNode]:
     node with no connection, or an agent older than the field, is unknown.
     """
     from spark_pulse import tools
-    from spark_pulse.agent import runtime as agent_runtime
 
     try:
         nodes = [n for n in tools.node_registry.list_nodes() if n.state != "dead"]
     except Exception:  # noqa: BLE001 — a listing must not fail on the registry
         logger.debug("node registry unreadable; fitting against no nodes")
         return []
-    runtime = agent_runtime.current()
     out: list[FleetNode] = []
     for node in nodes:
-        agent_id = (
-            runtime.control_node_id
-            if runtime is not None and node.is_control_plane
-            else node.id
-        )
-        connection = runtime.hub.get(agent_id) if runtime is not None else None
-        platform = (
-            str(getattr(connection.facts, "platform", "") or "") if connection else ""
-        )
+        facts = tools.node_facts.facts_for(node.id)
+        platform = str(getattr(facts, "platform", "") or "") if facts else ""
         out.append(
             FleetNode(
                 node.id,

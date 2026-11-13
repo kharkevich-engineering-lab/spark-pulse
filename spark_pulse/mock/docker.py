@@ -518,6 +518,10 @@ class MockDockerService(DockerService):
     second class would only exist to be assembled with this one.
     """
 
+    #: The simulated node's address, which picks its profile (#174). Empty for
+    #: a service no node was named for — the environment's default machine.
+    address: str = ""
+
     def __init__(self, client: Any | None = None):
         super().__init__(client or _get_mock_client())
         #: Bind-mount sources a real run would have created here.
@@ -551,24 +555,33 @@ class MockDockerService(DockerService):
         turn into a zero.
         """
         from spark_pulse.agent import agent_pb2 as pb
+        from spark_pulse.mock import profiles
 
+        # Which machine this is (#174): a Spark unless the node's profile says
+        # otherwise. A discrete card reports memory of its own.
+        profile = profiles.profile_for(self.address)
         stats = pb.NodeStats(
-            cpu_count=20,
+            cpu_count=profile.cpu_count,
             load_average_1m=1.5,
             memory=pb.MemoryStat(
-                total_bytes=130_000_000_000,
-                used_bytes=26_000_000_000,
-                available_bytes=104_000_000_000,
+                total_bytes=profile.memory_total_bytes,
+                used_bytes=profile.memory_total_bytes - profile.memory_available_bytes,
+                available_bytes=profile.memory_available_bytes,
             ),
         )
         gpu = stats.gpus.add()
         gpu.index = 0
-        gpu.name = "NVIDIA GB10"
-        gpu.uuid = "GPU-00000000-0000-0000-0000-000000000000"
+        gpu.name = profile.gpu_name
+        gpu.uuid = profile.gpu_uuid
         gpu.utilization_percent = 12.0
         gpu.temperature_celsius = 41.0
         gpu.power_watts = 46.5
-        gpu.power_limit_watts = 140.0
+        gpu.power_limit_watts = profile.gpu_power_limit_watts
+        if profile.gpu_memory_total_bytes is not None:
+            used = profile.gpu_memory_used_bytes or 0
+            gpu.memory_total_bytes = profile.gpu_memory_total_bytes
+            gpu.memory_used_bytes = used
+            gpu.memory_free_bytes = profile.gpu_memory_total_bytes - used
         disk = stats.disks.add()
         disk.mount = "/"
         disk.total_bytes = 3_800_000_000_000

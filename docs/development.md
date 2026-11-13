@@ -93,6 +93,8 @@ node web/scripts/capture-screenshots.mjs --base http://127.0.0.1:8123
 
 The script creates the Python venv if missing.
 
+Every simulated node is a DGX Spark unless told otherwise. `SPARK_PULSE_SIM_PROFILE=workstation ./scripts/run-backend.sh` makes every node the lab workstation instead (#174): x86_64, an RTX 3060 with 12 GiB of its own memory, rootless Podman 4.9.3 with a CDI GPU, reporting agent facts the way a connected agent does. Recipe fit, the memory budget, the pre-flight's runtime checks and the platform refusal then run the workstation's paths. A test picks a machine per node with `spark_pulse.mock.profiles.use(address, profiles.WORKSTATION)`.
+
 ---
 
 ### `./scripts/run-dev-oidc.sh`
