@@ -45,6 +45,33 @@ def default_identity_dir() -> Path:
     return Path.home() / ".config" / "spark-pulse" / "agent"
 
 
+#: The four files, in the order a commit renames them into place.
+FILES = ("ca.pem", "node.crt", "node.key", "identity.json")
+#: What a file is staged as before a commit renames it into place.
+STAGED = ".next"
+#: Present from the moment every staged file is durable until every one has
+#: been renamed into place: what tells a finished staging from a torn one.
+COMMIT_MARKER = "identity.commit"
+
+
+def _write_durable(path: Path, data: bytes, mode: int) -> None:
+    """Write ``data`` with ``mode`` from creation, and make it durable."""
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(data)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _sync_dir(directory: Path) -> None:
+    """A rename is not on disk until the directory holding it is."""
+    fd = os.open(str(directory), os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 @dataclass
 class AgentIdentity:
     """What a node needs to prove who it is."""
@@ -74,6 +101,29 @@ class AgentIdentity:
         }
 
     @classmethod
+    def recover(cls, directory: Path | str) -> None:
+        """Finish or discard a commit a crash interrupted. Idempotent.
+
+        The same protocol as the Rust agent's ``identity::recover``: with
+        :data:`COMMIT_MARKER` present every staged file was durable, so the
+        commit is rolled forward; without it the staging never became the
+        identity and is discarded.
+        """
+        directory = Path(directory)
+        marker = directory / COMMIT_MARKER
+        if marker.exists():
+            for name in FILES:
+                staged = directory / f"{name}{STAGED}"
+                if staged.exists():
+                    os.replace(staged, directory / name)
+            _sync_dir(directory)
+            marker.unlink()
+            _sync_dir(directory)
+            return
+        for name in FILES:
+            (directory / f"{name}{STAGED}").unlink(missing_ok=True)
+
+    @classmethod
     def load(cls, directory: Path | str) -> AgentIdentity | None:
         """The identity in ``directory``, or None if the node has none.
 
@@ -83,6 +133,8 @@ class AgentIdentity:
         a second time and orphan the first uuid.
         """
         directory = Path(directory)
+        if directory.is_dir():
+            cls.recover(directory)
         paths = cls.paths(directory)
         present = {name: p for name, p in paths.items() if p.exists()}
         if not present:
@@ -109,34 +161,51 @@ class AgentIdentity:
         )
 
     def save(self) -> None:
-        """Write the identity out, with the key 0600 from the moment it exists."""
-        self.directory.mkdir(parents=True, exist_ok=True)
-        os.chmod(self.directory, 0o700)
-        paths = self.paths(self.directory)
-        fd = os.open(str(paths["key"]), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(self.key_pem)
-        paths["cert"].write_bytes(self.certificate_pem)
-        paths["bundle"].write_bytes(self.trust_bundle_pem)
-        paths["meta"].write_text(
-            json.dumps(
-                {
-                    "node_id": self.node_id,
-                    "trust_bundle_pin": self.trust_bundle_pin,
-                    "cluster_id": self.cluster_id,
-                    "spiffe_id": self.spiffe_id,
-                    "epoch": self.epoch,
-                    "not_before": self.not_before,
-                    "not_after": self.not_after,
-                },
-                indent=2,
-            )
+        """Write the identity out as one commit, the key 0600 from creation.
+
+        Every file is staged and made durable, :data:`COMMIT_MARKER` says the
+        staging is complete, then each is renamed into place — so a reader
+        sees the old file or the new one, and a crash leaves a staging
+        :meth:`recover` can finish or discard rather than a key that does not
+        match its certificate. The Rust agent writes the same way.
+        """
+        directory = self.directory
+        directory.mkdir(parents=True, exist_ok=True)
+        os.chmod(directory, 0o700)
+        self.recover(directory)
+        meta = json.dumps(
+            {
+                "node_id": self.node_id,
+                "trust_bundle_pin": self.trust_bundle_pin,
+                "cluster_id": self.cluster_id,
+                "spiffe_id": self.spiffe_id,
+                "epoch": self.epoch,
+                "not_before": self.not_before,
+                "not_after": self.not_after,
+            },
+            indent=2,
         )
+        contents = {
+            "ca.pem": self.trust_bundle_pem,
+            "node.crt": self.certificate_pem,
+            "node.key": self.key_pem,
+            "identity.json": meta.encode(),
+        }
+        for name, data in contents.items():
+            mode = 0o600 if name == "node.key" else 0o644
+            _write_durable(directory / f"{name}{STAGED}", data, mode)
+        _sync_dir(directory)
+        _write_durable(directory / COMMIT_MARKER, b"", 0o600)
+        _sync_dir(directory)
+        self.recover(directory)
 
     def destroy(self) -> None:
         """The *Remove* action: wipe the identity. Re-enrollment is required."""
         for path in self.paths(self.directory).values():
             path.unlink(missing_ok=True)
+        for name in FILES:
+            (self.directory / f"{name}{STAGED}").unlink(missing_ok=True)
+        (self.directory / COMMIT_MARKER).unlink(missing_ok=True)
 
     # ── Checks ───────────────────────────────────────────────────────────
 
