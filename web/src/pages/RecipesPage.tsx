@@ -306,14 +306,21 @@ export default function RecipesPage() {
     setShowRecipeModal(true);
   };
 
+  /** A custom recipe is also a recipe: the main list carries it as
+   *  `custom-<file>`. Refreshing only Custom mode's own list left a deleted
+   *  one on the recipe grid until a reload. */
+  const customRecipesChanged = async () => {
+    await Promise.all([loadCustomData(), refetch()]);
+  };
+
   const handleSaveCustomRecipe = async (id: string, content: string) => {
     await saveCustomRecipe(id, content);
-    await loadCustomData();
+    await customRecipesChanged();
   };
 
   const handleDeleteCustomRecipe = async (_id: string) => {
     await deleteCustomRecipe(_id);
-    await loadCustomData();
+    await customRecipesChanged();
   };
 
   /** Deleting from the list, rather than from inside the editor.
@@ -826,7 +833,7 @@ export default function RecipesPage() {
           open={showNewRecipe}
           onClose={() => setShowNewRecipe(false)}
           onSave={async (_id, _name, _content) => {
-            await loadCustomData();
+            await customRecipesChanged();
             setShowNewRecipe(false);
           }}
           onError={(msg) => setAlertModal({ title: t("common.error"), message: msg })}

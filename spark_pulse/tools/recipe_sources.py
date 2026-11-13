@@ -283,7 +283,11 @@ def to_payload(
             "id": recipe_id,
             "name": recipe.name or fallback_name,
             "model": recipe.model or "unknown",
-            "container": (spec.image if spec and spec.image else DEFAULT_CONTAINER),
+            # Only what the recipe names. A v2 recipe picks an engine, and the
+            # engine its image; filling the v1 default here made every v2
+            # recipe — a llama.cpp one included — read "vllm-node", and the
+            # plan then warned that the tag belongs to another engine.
+            "container": spec.image if spec and spec.image else "",
             "command": recipe.command or (spec.command if spec else None) or "",
             "description": recipe.description,
             "mods": list(spec.mods) if spec else [],

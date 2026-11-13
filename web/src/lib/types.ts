@@ -137,6 +137,8 @@ export interface Deployment {
   sync?: string;
   /** Why it is not settled, in the operator's words. */
   sync_reason?: string;
+  /** What an in-progress change is (`stop`), so the badge can name it. */
+  sync_intent?: string;
   /** How the run was made: "native" — a container we drive ourselves — which
    *  is the only runtime there is. Absent on a record written before the
    *  field existed. */
