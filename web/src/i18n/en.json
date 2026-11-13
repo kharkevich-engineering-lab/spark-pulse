@@ -998,7 +998,10 @@
     "copyEndpoint": "Copy the endpoint {url}",
     "endpointCopied": "Copied to clipboard",
     "endpointTitle": "The run's OpenAI-compatible endpoint",
-    "endpointCopyFailed": "Could not copy — select it instead"
+    "endpointCopyFailed": "Could not copy — select it instead",
+    "copyCurl": "Copy a curl that asks this run for a fun fact",
+    "copyCurlTitle": "Copy a ready-to-run curl: one chat completion asking for a fun fact",
+    "curlCopied": "curl copied"
   },
   "library": {
     "cacheUnreachable": "Could not ask",

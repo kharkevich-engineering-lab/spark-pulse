@@ -24,7 +24,7 @@ import { formatDuration, servesChat } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import ServesChip from "./ServesChip";
 import { isLiveRun } from "@/hooks/useDeployments";
-import { Check, ChevronDown, ChevronUp, Flame, Square, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Flame, Square, Terminal, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import type { BenchmarkResult, Deployment } from "@/lib/types";
 
@@ -76,6 +76,90 @@ export function endpointUrl(run: Deployment, pageHost: string): string | null {
   return `http://${bracketed}:${run.port}/v1`;
 }
 
+/** What the curl example asks for: one fun fact about a topic drawn at random,
+ *  so a copied command is a small surprise rather than "hello" again. Not
+ *  operator-facing text — it is the request body — so it is not translated. */
+export const FUN_FACT_TOPICS = [
+  "octopuses",
+  "the Moon",
+  "honey",
+  "volcanoes",
+  "tardigrades",
+  "the deep sea",
+  "bananas",
+  "lightning",
+  "crows",
+  "Saturn's rings",
+  "the human brain",
+  "coffee",
+  "glaciers",
+  "sharks",
+  "the speed of light",
+  "ancient Rome",
+] as const;
+
+/** A copy-and-run chat completion against the endpoint. Pure but for the
+ *  topic, which `pick` chooses (random by default). */
+export function curlExample(
+  url: string,
+  model: string,
+  pick: (n: number) => number = (n) => Math.floor(Math.random() * n),
+): string {
+  const topic = FUN_FACT_TOPICS[pick(FUN_FACT_TOPICS.length)];
+  const body = JSON.stringify({
+    model,
+    messages: [{ role: "user", content: `Tell me one surprising fun fact about ${topic}, in two sentences.` }],
+    max_tokens: 200,
+  });
+  return `curl -s ${url}/chat/completions -H 'Content-Type: application/json' -d '${body}'`;
+}
+
+/** Copy `text`, and say on the control what happened for a moment. */
+function useCopy() {
+  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
+  const copy = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setState("copied");
+    } catch {
+      setState("failed");
+    }
+    setTimeout(() => setState("idle"), 1800);
+  };
+  return { state, copy };
+}
+
+/** A curl that asks the run for a fun fact, copied in one click. */
+function CurlExample({ url, model }: { url: string; model: string }) {
+  const t = useT();
+  const { state, copy } = useCopy();
+  return (
+    <button
+      type="button"
+      onClick={() => void copy(curlExample(url, model))}
+      aria-label={t("runs.copyCurl")}
+      title={t("runs.copyCurlTitle")}
+      data-testid="run-curl"
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[13px] transition-colors",
+        state === "copied"
+          ? "border-success/60 bg-success/10 text-success"
+          : state === "failed"
+            ? "border-bad/60 bg-bad/10 text-bad"
+            : "border-line text-muted hover:border-blue2 hover:text-blue2",
+      )}
+    >
+      {state === "copied" ? <Check size={13} aria-hidden="true" /> : <Terminal size={13} aria-hidden="true" />}
+      <span className="font-mono">
+        {state === "copied" ? t("runs.curlCopied") : state === "failed" ? t("runs.endpointCopyFailed") : "curl"}
+      </span>
+      <span role="status" aria-live="polite" className="sr-only">
+        {state === "copied" ? t("runs.curlCopied") : state === "failed" ? t("runs.endpointCopyFailed") : ""}
+      </span>
+    </button>
+  );
+}
+
 /** The endpoint, as one chip that copies itself when clicked.
  *
  *  The whole chip is the button — a separate copy icon beside it was a second
@@ -85,20 +169,11 @@ export function endpointUrl(run: Deployment, pageHost: string): string | null {
  *  the same way, and the address stays selectable. */
 function Endpoint({ url }: { url: string }) {
   const t = useT();
-  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(url);
-      setState("copied");
-    } catch {
-      setState("failed");
-    }
-    setTimeout(() => setState("idle"), 1800);
-  };
+  const { state, copy } = useCopy();
   return (
     <button
       type="button"
-      onClick={() => void copy()}
+      onClick={() => void copy(url)}
       aria-label={t("runs.copyEndpoint", { url })}
       title={t("runs.endpointTitle")}
       className={cn(
@@ -237,8 +312,9 @@ export default function RunRow({
           {(() => {
             const url = endpointUrl(run, window.location.hostname);
             return url && live ? (
-              <div className="mt-1.5">
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                 <Endpoint url={url} />
+                <CurlExample url={url} model={run.served_model || run.model || ""} />
               </div>
             ) : null;
           })()}

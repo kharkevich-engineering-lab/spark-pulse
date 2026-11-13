@@ -258,7 +258,34 @@ describe("RunsPage row", () => {
     expect(writeText).toHaveBeenCalledWith(url);
     // The answer is on the chip, where the operator is looking.
     await waitFor(() => expect(within(row).getByTestId("run-endpoint")).toHaveTextContent("Copied to clipboard"));
-    expect(within(row).getByRole("status")).toHaveTextContent("Copied to clipboard");
+    // Announced too: the endpoint's live region says it (the curl has its own).
+    expect(within(row).getAllByRole("status").map((e) => e.textContent)).toContain("Copied to clipboard");
+  });
+
+  it("copies a curl that asks the run for a fun fact, next to the endpoint", async () => {
+    const onDesktop = deployment({
+      id: "desk3",
+      name: "desk job 3",
+      port: 8000,
+      served_model: "Qwen/Qwen2.5-0.5B-Instruct",
+      ranks: [{ rank: 0, node: "", host: "ark-desktop", container_name: "c", is_head: true }],
+    });
+    vi.mocked(fetchDeployments).mockResolvedValue([onDesktop]);
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    show();
+
+    const row = await screen.findByTestId("deployment-desk3");
+    fireEvent.click(within(row).getByRole("button", { name: "Copy a curl that asks this run for a fun fact" }));
+
+    const command = (writeText.mock.calls[0] as unknown as [string])[0];
+    expect(command).toMatch(
+      new RegExp(`^curl -s http://${window.location.hostname}:8000/v1/chat/completions `),
+    );
+    const body = JSON.parse(command.slice(command.indexOf("-d '") + 4, -1));
+    expect(body.model).toBe("Qwen/Qwen2.5-0.5B-Instruct");
+    expect(body.messages[0].content).toMatch(/^Tell me one surprising fun fact about .+, in two sentences\.$/);
+    await waitFor(() => expect(within(row).getByTestId("run-curl")).toHaveTextContent("curl copied"));
   });
 
   it("says so on the chip when the clipboard refuses", async () => {

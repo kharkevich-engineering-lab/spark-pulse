@@ -998,7 +998,10 @@
     "copyEndpoint": "Copier le point d'accès {url}",
     "endpointCopied": "Copié dans le presse-papiers",
     "endpointTitle": "Le point d'accès compatible OpenAI de l'exécution",
-    "endpointCopyFailed": "Copie impossible — sélectionnez-le"
+    "endpointCopyFailed": "Copie impossible — sélectionnez-le",
+    "copyCurl": "Copier un curl qui demande une anecdote à cette exécution",
+    "copyCurlTitle": "Copier un curl prêt à lancer : une complétion qui demande une anecdote",
+    "curlCopied": "curl copié"
   },
   "library": {
     "cacheUnreachable": "Injoignable",
