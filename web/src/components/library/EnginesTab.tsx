@@ -528,7 +528,7 @@ export default function EnginesTab({ images: imagesQuery }: EnginesTabProps) {
           icon={ArrowDownToLine}
           loading={!!pulling}
           disabled={!ref.trim()}
-          className="max-[519px]:w-full min-[520px]:mb-[26px]"
+          className="max-[519px]:w-full"
         >
           {t("engines.pull")}
         </Button>
