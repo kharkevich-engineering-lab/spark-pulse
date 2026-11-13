@@ -61,6 +61,17 @@ def _bundle_for(target: str):
     return build_bundle(target=target, cache_dir=cache)
 
 
+def _platform(node: Any) -> str:
+    """The OCI platform ``node``'s agent reports, or empty when unknown."""
+    from spark_pulse.agent import runtime as agent_runtime
+
+    current = agent_runtime.current()
+    connection = current.hub.get(node.id) if current is not None else None
+    if connection is None:
+        return ""
+    return str(getattr(connection.facts, "platform", "") or "")
+
+
 def update_node(node: Any) -> dict[str, Any]:
     """Push this control plane's agent bundle to ``node`` over its stream.
 
@@ -68,7 +79,12 @@ def update_node(node: Any) -> dict[str, Any]:
     unreachable node or a refusing agent is recorded in the report — so a
     caller iterating nodes is never stopped by one.
     """
-    from spark_pulse.agent.bundle import DEFAULT_TARGET, MissingAgentBinary
+    from spark_pulse.agent.bundle import (
+        DEFAULT_TARGET,
+        TARGETS,
+        MissingAgentBinary,
+        target_for_platform,
+    )
     from spark_pulse.agent.errors import NodeOperationError
     from spark_pulse.tools import node_service
 
@@ -79,8 +95,20 @@ def update_node(node: Any) -> dict[str, Any]:
             "updates when the package does, not over the stream"
         )
         return base
+    platform = _platform(node)
+    target = target_for_platform(platform)
+    if not target:
+        # An agent that does not report its platform is older than #172, and
+        # every agent that old runs on a Spark: the only target there was.
+        target = DEFAULT_TARGET if not platform else ""
+    if not target:
+        base["detail"] = (
+            f"this node is {platform}, and spark-pulse ships an agent only for "
+            f"{', '.join(sorted(TARGETS))}"
+        )
+        return base
     try:
-        bundle = _bundle_for(DEFAULT_TARGET)
+        bundle = _bundle_for(target)
     except MissingAgentBinary as exc:
         base["detail"] = str(exc)
         return base
@@ -125,18 +153,18 @@ def update_node(node: Any) -> dict[str, Any]:
 def stale_peers() -> list[Any]:
     """Connected peer nodes whose running binary is not the one we ship.
 
-    Decided by the reported ``binary_sha256`` against the packaged digests.
+    Decided by the reported ``binary_sha256`` against the packaged digest for
+    the node's own architecture (#170).
     A node that reports no digest (an agent too old to send one) counts as
     stale, because that is exactly the version this exists to move past.
     """
-    from spark_pulse.agent.bundle import packaged_digests
+    from spark_pulse.agent.bundle import is_current
     from spark_pulse.agent import runtime as agent_runtime
     from spark_pulse.tools import node_registry
 
     current = agent_runtime.current()
     if current is None:
         return []
-    ours = set(packaged_digests().values())
     stale: list[Any] = []
     for node in node_registry.list_nodes():
         if node.is_control_plane:
@@ -145,7 +173,8 @@ def stale_peers() -> list[Any]:
         if connection is None:
             continue
         digest = str(getattr(connection.facts, "binary_sha256", "") or "")
-        if not digest or digest not in ours:
+        platform = str(getattr(connection.facts, "platform", "") or "")
+        if not is_current(digest, platform):
             stale.append(node)
     return stale
 

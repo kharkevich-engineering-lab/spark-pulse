@@ -53,8 +53,12 @@ __all__ = [
     "AgentBundle",
     "DEFAULT_TARGET",
     "MissingAgentBinary",
+    "TARGETS",
     "VERIFY_COMMAND",
     "agent_binary",
+    "is_current",
+    "target_for_machine",
+    "target_for_platform",
     "binary_dir",
     "host_binary",
     "host_target",
@@ -64,6 +68,40 @@ __all__ = [
 #: The platform every DGX Spark is. musl rather than gnu so the binary carries
 #: its own libc and cannot be broken by the node's.
 DEFAULT_TARGET = "aarch64-unknown-linux-musl"
+
+#: Every target a release ships, by the architecture ``uname -m`` names (#170).
+#: aarch64 is the Spark; x86_64 is a workstation with a discrete GPU, as a
+#: node or as the control plane itself.
+TARGETS = {
+    "aarch64": "aarch64-unknown-linux-musl",
+    "x86_64": "x86_64-unknown-linux-musl",
+}
+
+#: Other spellings of the same two architectures: ``arm64`` is what macOS and
+#: Debian call aarch64, and ``amd64`` is OCI's and Debian's x86_64.
+_MACHINE_ALIASES = {"arm64": "aarch64", "amd64": "x86_64"}
+
+
+def target_for_machine(machine: str) -> str:
+    """The bundle target for a node whose ``uname -m`` is ``machine``.
+
+    Empty for an architecture no release ships, which the caller reports
+    rather than replacing with the Spark's target: a binary for the wrong
+    architecture installs and then cannot execute. Pure.
+    """
+    return TARGETS.get(_MACHINE_ALIASES.get(machine, machine), "")
+
+
+def target_for_platform(platform: str) -> str:
+    """The bundle target for an OCI platform the agent reports (``linux/arm64``).
+
+    Empty when the platform is unknown (an older agent says nothing) or not
+    one a release ships. Pure.
+    """
+    os_name, _, arch = platform.partition("/")
+    if os_name != "linux":
+        return ""
+    return target_for_machine(arch.partition("/")[0])
 
 
 #: Where a built binary is looked for. Package data, so a wheel can carry one;
@@ -112,6 +150,25 @@ def packaged_digests() -> dict[str, str]:
 
 
 _DIGESTS: dict[str, str] | None = None
+
+
+def is_current(digest: str, platform: str = "") -> bool:
+    """Whether a node reporting ``digest`` runs what this control plane ships.
+
+    With the node's platform known, only the binary for *its* architecture
+    counts (plus the host binary, which is what the control node runs): an
+    x86_64 node reporting the aarch64 digest is not current, it is impossible,
+    and a node whose digest matches some other architecture's binary must not
+    read as up to date. With the platform unknown — an agent too old to say —
+    any shipped digest counts, as before.
+    """
+    if not digest:
+        return False
+    digests = packaged_digests()
+    target = target_for_platform(platform)
+    if target and target in digests:
+        return digest in (digests[target], digests.get("host"))
+    return digest in digests.values()
 
 
 def agent_binary(target: str = DEFAULT_TARGET) -> Path:

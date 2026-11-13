@@ -53,6 +53,7 @@ READ_ONLY = {
     "id",
     "printf",
     "hostname",
+    "uname",
     "docker",
     "journalctl",
     "sudo",

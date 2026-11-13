@@ -55,20 +55,26 @@ path.write_text(updated_text, encoding='utf-8')
 # deliberately does not try to build them itself: on an x86_64 release runner
 # it could only produce the wrong thing or nothing.
 AGENT_BIN="spark_pulse/agent/bin"
-REQUIRED_AGENT="${REQUIRED_AGENT:-spark-pulse-agent-aarch64-unknown-linux-musl}"
-if [[ ! -f "${AGENT_BIN}/${REQUIRED_AGENT}" ]]; then
-  {
-    echo "release: ${AGENT_BIN}/${REQUIRED_AGENT} is missing."
-    echo
-    echo "  The wheel would install and then fail on first use: every node"
-    echo "  install raises MissingAgentBinary, and a production control plane"
-    echo "  refuses to boot because it cannot start an agent for itself."
-    echo
-    echo "  Build it on an aarch64 machine with ./scripts/build-agent.sh, or"
-    echo "  let the release workflow's agent job produce it."
-  } >&2
-  exit 1
-fi
+# Both architectures (#170): aarch64 is every Spark, x86_64 a workstation node
+# or a control plane that is one. A wheel missing either installs, and then
+# cannot enrol a node of that architecture.
+REQUIRED_AGENTS="${REQUIRED_AGENTS:-spark-pulse-agent-aarch64-unknown-linux-musl spark-pulse-agent-x86_64-unknown-linux-musl}"
+for required in ${REQUIRED_AGENTS}; do
+  if [[ ! -f "${AGENT_BIN}/${required}" ]]; then
+    {
+      echo "release: ${AGENT_BIN}/${required} is missing."
+      echo
+      echo "  The wheel would install and then fail on first use: every node"
+      echo "  install for that architecture raises MissingAgentBinary, and a"
+      echo "  control plane of that architecture refuses to boot because it"
+      echo "  cannot start an agent for itself."
+      echo
+      echo "  Build it natively with TARGET=<triple> ./scripts/build-agent.sh,"
+      echo "  or let the release workflow's agent job produce it."
+    } >&2
+    exit 1
+  fi
+done
 echo "Agent binaries in the wheel:"
 for binary in "${AGENT_BIN}"/spark-pulse-agent-*; do
   echo "  $(basename "$binary")  $(du -h "$binary" | cut -f1)"

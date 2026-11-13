@@ -77,10 +77,12 @@ from spark_pulse.agent.bootstrap_transport import (
     keypair_from_private_pem,
 )
 from spark_pulse.agent.bundle import (
-    DEFAULT_TARGET,
+    TARGETS,
     VERIFY_COMMAND,
     AgentBundle,
+    MissingAgentBinary,
     build_bundle,
+    target_for_machine,
 )
 from spark_pulse.agent.server import ControlPlaneServer
 
@@ -529,7 +531,7 @@ async def install_agent(
     sudo_password_prompt: Prompt | None = None,
     scope: str = "auto",
     bundle: AgentBundle | None = None,
-    target: str = DEFAULT_TARGET,
+    target: str = "",
     offer_sudoers: bool = False,
     connect_timeout: float = CONNECT_TIMEOUT,
 ) -> InstallReport:
@@ -967,9 +969,15 @@ async def _place_agent(
     if existing is not None:
         converge_on = _converge_or_refuse(server, existing, paths, report)
 
-    bundle = bundle or build_bundle(
-        target=target, cache_dir=server.directory / "bundles"
-    )
+    if bundle is None:
+        target = target or target_for_machine(caps.machine)
+        if not target:
+            raise MissingAgentBinary(
+                f"{caps.hostname or 'this node'} is {caps.machine or 'of an unknown architecture'}"
+                f", and spark-pulse ships an agent only for "
+                f"{', '.join(sorted(TARGETS))}; nothing was installed"
+            )
+        bundle = build_bundle(target=target, cache_dir=server.directory / "bundles")
     report.bundle = {
         "version": bundle.version,
         "name": bundle.name,

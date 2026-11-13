@@ -141,6 +141,9 @@ class SimulatedNode:
         *,
         users: dict[str, SimulatedUser] | None = None,
         hostname: str = "",
+        #: What ``uname -m`` answers: the architecture the installer picks the
+        #: agent binary for (#170).
+        machine: str = "aarch64",
         host_key_blob: bytes | None = None,
         reachable: bool = True,
         permit_root_login: str = "prohibit-password",
@@ -179,6 +182,7 @@ class SimulatedNode:
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
         self.hostname = hostname or host.replace(".", "-")
+        self.machine = machine
         self.users = users or {}
         self.host_key_blob = host_key_blob or f"ssh-ed25519-blob-{host}".encode()
         self.reachable = reachable
@@ -625,6 +629,11 @@ class SimulatedSession:
         if flag == "-nG":
             return RunResult(0, " ".join(user.groups) + "\n", "")
         return RunResult(0, f"uid={user.uid}({user.name})\n", "")
+
+    async def _cmd_uname(self, parts, stdin, as_root) -> RunResult:
+        if parts[1:] == ["-m"]:
+            return RunResult(0, self.node.machine + "\n", "")
+        return RunResult(0, "Linux\n", "")
 
     async def _cmd_hostname(self, parts, stdin, as_root) -> RunResult:
         return RunResult(0, self.node.hostname + "\n", "")
