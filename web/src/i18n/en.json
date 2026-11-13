@@ -1004,7 +1004,10 @@
     "waitingDeploying": "The model is here; the run is being created",
     "waitingWatchDownload": "watch the download",
     "waitingProgressLabel": "{name} model download",
-    "cancelWaiting": "Cancel the deploy of {name}"
+    "cancelWaiting": "Cancel the deploy of {name}",
+    "benchmarkMeasuring": "measuring…",
+    "benchmarkFailedShort": "failed",
+    "benchmarkFailed": "Benchmark failed: {error}"
   },
   "library": {
     "cacheUnreachable": "Could not ask",

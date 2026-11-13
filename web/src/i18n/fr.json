@@ -1004,7 +1004,10 @@
     "waitingDeploying": "Le modèle est là ; l'exécution est en cours de création",
     "waitingWatchDownload": "suivre le téléchargement",
     "waitingProgressLabel": "Téléchargement du modèle de {name}",
-    "cancelWaiting": "Annuler le déploiement de {name}"
+    "cancelWaiting": "Annuler le déploiement de {name}",
+    "benchmarkMeasuring": "mesure…",
+    "benchmarkFailedShort": "échec",
+    "benchmarkFailed": "Le benchmark a échoué : {error}"
   },
   "library": {
     "cacheUnreachable": "Injoignable",

@@ -95,6 +95,15 @@ export default function RunsPage({ initialTab }: RunsPageProps = {}) {
     refetch: refetchBenchmarks,
   } = useQuery(readBenchmarks);
 
+  // While a benchmark runs, read again until it settles: the row says
+  // "measuring…" and then the result, or why it failed, without a reload.
+  const anyMeasuring = (benchmarks ?? []).some((b) => b.status === "running");
+  useEffect(() => {
+    if (!anyMeasuring) return;
+    const timer = setInterval(() => refetchBenchmarks(), 3000);
+    return () => clearInterval(timer);
+  }, [anyMeasuring, refetchBenchmarks]);
+
   /** The most recent measurement per run, which is what a row shows. */
   const latestBenchmark = useMemo(() => {
     const latest = new Map<string, BenchmarkResult>();
