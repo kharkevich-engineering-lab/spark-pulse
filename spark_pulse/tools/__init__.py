@@ -46,6 +46,7 @@ from spark_pulse.tools import node_stats as node_stats
 from spark_pulse.tools import placement as placement
 from spark_pulse.tools import readiness as readiness
 from spark_pulse.tools import reconciler as reconciler
+from spark_pulse.tools import recipe_fit as recipe_fit
 from spark_pulse.tools import recipe_schema as recipe_schema
 from spark_pulse.tools import recipe_sources as recipe_sources
 from spark_pulse.tools import redaction as redaction

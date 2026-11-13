@@ -124,3 +124,12 @@ fn reading_the_spec_directories_never_fails() {
         assert!(device.contains('='), "{device}");
     }
 }
+
+#[test]
+fn the_platform_is_named_the_way_an_image_index_names_it() {
+    use spark_pulse_agent::facts::oci_platform;
+    assert_eq!(oci_platform("x86_64"), "linux/amd64");
+    assert_eq!(oci_platform("aarch64"), "linux/arm64");
+    assert_eq!(oci_platform("riscv64"), "linux/riscv64");
+    assert_eq!(oci_platform(""), "");
+}

@@ -35,6 +35,7 @@ from spark_pulse.tools.native_runtime import (
     persist_planned_record as persist_planned_record,
     plan as plan,
     realise as realise,
+    pull_is_final as pull_is_final,
     probe_ready as probe_ready,
     pull_is_active as pull_is_active,
     publish_event as publish_event,

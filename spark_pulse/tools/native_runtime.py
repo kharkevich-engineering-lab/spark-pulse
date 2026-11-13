@@ -2164,6 +2164,22 @@ PULL_ATTEMPTS = 3
 PULL_RETRY_BACKOFF_SECONDS = (10.0, 30.0)
 
 
+#: How a registry or daemon says an image has no build for this node's
+#: platform: Podman's "no image found in image index for architecture amd64",
+#: Docker's "no matching manifest for linux/amd64". No retry changes that,
+#: and three attempts with backoff only delayed the answer (#172).
+_NO_PLATFORM_MARKERS = (
+    "no image found in image index for architecture",
+    "no matching manifest for",
+)
+
+
+def pull_is_final(exc: Exception) -> bool:
+    """Whether a pull failure is one another attempt cannot fix."""
+    text = str(exc).lower()
+    return any(marker in text for marker in _NO_PLATFORM_MARKERS)
+
+
 def _bytes_transferred(snapshot: dict[str, Any]) -> str:
     """How far the pull got, from the last progress snapshot we saw.
 
@@ -2234,7 +2250,7 @@ def _pull_with_retries(
             # image for a deployment nobody wants.
             if _teardown_requested(dep_id):
                 raise PullCancelled(f"pull of {ref} cancelled") from exc
-            if attempt < PULL_ATTEMPTS:
+            if attempt < PULL_ATTEMPTS and not pull_is_final(exc):
                 delay = PULL_RETRY_BACKOFF_SECONDS[
                     min(attempt - 1, len(PULL_RETRY_BACKOFF_SECONDS) - 1)
                 ]

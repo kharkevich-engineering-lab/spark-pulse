@@ -75,6 +75,8 @@ def facts(**overrides: Any) -> pb.NodeFacts:
         "container_runtime": "docker",
         "runtime_version": MockDockerClient().version()["Version"],
         "rootless": False,
+        # A DGX Spark.
+        "platform": "linux/arm64",
     }
     values.update(overrides)
     return pb.NodeFacts(**values)
