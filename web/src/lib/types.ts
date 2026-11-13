@@ -115,6 +115,9 @@ export interface Deployment {
   id: string;
   recipe_id: string;
   name: string;
+  /** The model name the API answers to, where the engine checks it (vLLM's
+   *  `--served-model-name`); empty for one that ignores it (llama.cpp). */
+  served_model?: string;
   params: Record<string, unknown>;
   nodes: string[] | null;
   status: string;
