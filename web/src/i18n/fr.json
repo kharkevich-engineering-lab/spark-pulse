@@ -1080,7 +1080,9 @@
     "whereOnly": "{node} seulement",
     "wherePartial": "partiel sur {node}",
     "wherePartialTitle": "Un nœud n'a qu'une partie de l'instantané. Répliquez-le à nouveau.",
-    "whereUnknown": "non vérifié"
+    "whereUnknown": "non vérifié",
+    "whereDownloading": "téléchargement {percent} %",
+    "whereDownloadingUnknown": "téléchargement"
   },
   "fleet": {
     "nodes": {
