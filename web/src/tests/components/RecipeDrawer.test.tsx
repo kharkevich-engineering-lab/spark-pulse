@@ -204,6 +204,8 @@ describe("RecipeDrawer", () => {
     expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Deploy" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Deploy options" })).not.toBeInTheDocument();
+    // The engine is a per-deploy choice, not part of a customization.
+    expect(screen.queryByLabelText("Engine")).not.toBeInTheDocument();
   });
 
   it("leaves edit mode once a save succeeds", async () => {
@@ -271,9 +273,9 @@ describe("RecipeDrawer", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  /** The engine is the choice that most changes a deploy, so it sits beside
-   *  Deploy rather than inside the folded options panel. */
-  it("picks the engine beside Deploy and deploys on it", async () => {
+  /** The engine is the choice that most changes a deploy, so it sits with
+   *  the recipe's own fields rather than inside the folded options panel. */
+  it("picks the engine among the recipe's fields and deploys on it", async () => {
     const recipe = {
       ...RECIPE,
       engines: ["vllm", "sglang"],
@@ -281,7 +283,8 @@ describe("RecipeDrawer", () => {
     } as unknown as RecipeDetail;
     const { onDeploy } = renderDrawer({ recipe });
     const footer = screen.getByTestId("drawer-footer");
-    const select = within(footer).getByLabelText("Engine");
+    expect(within(footer).queryByLabelText("Engine")).not.toBeInTheDocument();
+    const select = screen.getByLabelText("Engine");
     await waitFor(() => expect(within(select).getByRole("option", { name: /sglang/ })).toBeInTheDocument());
     expect(within(select).getAllByRole("option")[0]).toHaveTextContent("vllm (recipe default)");
 

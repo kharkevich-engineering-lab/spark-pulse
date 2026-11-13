@@ -112,13 +112,6 @@ export default function RecipeDrawer({ recipe, customization, isRunning, cluster
                   </Button>
                 )}
                 {onDeploy && (
-                  <EngineSelect
-                    recipe={recipe}
-                    value={deployOptions.engine}
-                    onChange={(engine) => setDeployOptions({ ...deployOptions, engine })}
-                  />
-                )}
-                {onDeploy && (
                   <Button
                     size="sm"
                     variant="primary"
@@ -174,6 +167,15 @@ export default function RecipeDrawer({ recipe, customization, isRunning, cluster
         isRunning={isRunning}
         clusterBlocked={clusterBlocked}
         isEditing={isEditing}
+        engineField={
+          onDeploy && !isEditing ? (
+            <EngineSelect
+              recipe={recipe}
+              value={deployOptions.engine}
+              onChange={(engine) => setDeployOptions({ ...deployOptions, engine })}
+            />
+          ) : undefined
+        }
       />
 
       {/* Reset confirmation modal — rendered inside drawer, below content */}

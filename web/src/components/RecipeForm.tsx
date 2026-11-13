@@ -22,10 +22,14 @@ const RecipeForm = forwardRef<RecipeFormRef, {
   isRunning: boolean;
   clusterBlocked: boolean;
   isEditing: boolean;
+  /** The engine to deploy on, shown with the recipe's own fields. Not a
+   *  customization: it is a choice per deploy, so the drawer owns it. */
+  engineField?: React.ReactNode;
 }>(function RecipeForm({
   recipe,
   onSaveCustomization,
   isEditing,
+  engineField,
 }, ref) {
   const { t } = useI18n();
   const [editAsYaml, setEditAsYaml] = useState(false);
@@ -33,7 +37,7 @@ const RecipeForm = forwardRef<RecipeFormRef, {
   const [yamlError, setYamlError] = useState<string | null>(null);
   const [name, setName] = useState(recipe.name);
   const [model, setModel] = useState(recipe.model || "");
-  const [container, setContainer] = useState(recipe.container || "vllm-node");
+  const [container, setContainer] = useState(recipe.container || "");
   const [command, setCommand] = useState(recipe.command || "");
   const [editDefaults, setEditDefaults] = useState<Record<string, unknown>>({ ...recipe.defaults });
   const [envEntries, setEnvEntries] = useState<[string, string][]>(
@@ -152,7 +156,7 @@ const RecipeForm = forwardRef<RecipeFormRef, {
       }
     },
     cancel: () => {
-      setName(recipe.name); setModel(recipe.model || ""); setContainer(recipe.container || "vllm-node");
+      setName(recipe.name); setModel(recipe.model || ""); setContainer(recipe.container || "");
       setCommand(recipe.command || ""); setEditDefaults({ ...recipe.defaults });
       setEnvEntries(Object.entries(recipe.env || {}) as [string, string][]);
       setBuildArgs(recipe.build_args || []); setModsList(recipe.mods || []);
@@ -191,6 +195,12 @@ const RecipeForm = forwardRef<RecipeFormRef, {
           disabled={!isEditing}
           className="w-full px-3 py-2 rounded-sm bg-bg border border-border focus:border-primary focus:outline-none font-mono text-sm disabled:opacity-60" />
       </div>
+      {engineField && (
+        <div>
+          <span className="block text-sm font-medium mb-1">{t("deployOptions.engine")}</span>
+          {engineField}
+        </div>
+      )}
       {command && (
         <div>
           <label className="block text-sm font-medium mb-1">Command Template

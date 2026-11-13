@@ -393,13 +393,13 @@ export function eligibleEngines(
     .map((c) => c.engine);
 }
 
-/** The engine a deploy uses, as one compact dropdown.
+/** The engine a deploy uses, as one dropdown.
  *
- *  Beside Deploy, in the recipe's footer: the choice that most changes what a
- *  deploy does sat inside a folded "Deploy options" panel, so a recipe that
- *  runs on SGLang and vLLM looked as though it had no choice at all. Offers
- *  only what can run it (the same `engineChoices` the plan agrees with), and
- *  the recipe's own default first. */
+ *  Among the recipe's own fields — name, model, container, engine — rather
+ *  than inside the folded "Deploy options" panel, where a recipe that runs on
+ *  SGLang and vLLM looked as though it had no choice at all. Offers only what
+ *  can run it (the same `engineChoices` the plan agrees with), and the
+ *  recipe's own default first. */
 export function EngineSelect({
   recipe,
   value,
@@ -423,7 +423,7 @@ export function EngineSelect({
       data-testid="deploy-engine"
       value={value ?? ""}
       onChange={(e) => onChange(e.target.value || undefined)}
-      className="h-8 w-auto py-0 font-mono text-[13px]"
+      className="font-mono text-sm"
     >
       <option value="">
         {recipe.engine
