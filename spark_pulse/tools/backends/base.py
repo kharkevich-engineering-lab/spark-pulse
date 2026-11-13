@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from spark_pulse.tools.backends.runtime_checks import RuntimeReport
     from spark_pulse.tools.intent import RunIntent
 
 
@@ -108,4 +109,23 @@ class RunBackend(Protocol):
 
     def list_runs(self) -> list[dict[str, Any]]:
         """Every run this backend owns, reconciled against the nodes."""
+        ...
+
+    def diagnose(
+        self,
+        node_id: str,
+        label: str = "",
+        run: Callable[[str], Any] | None = None,
+        facts: Any = None,
+    ) -> RuntimeReport:
+        """What this backend needs on ``node_id`` to run there, and what it found.
+
+        ``node_id`` is the agent's id (the ledger's). ``facts`` is what that
+        agent last reported (``NodeFacts``), when the caller holds it; else
+        the backend asks the running control plane's hub. ``run`` executes one
+        shell command on that node and returns its outcome, or ``None`` when
+        it could not be asked; the backend declares the commands, the caller
+        owns the transport. The doctor and the pre-flight both read a node's
+        runtime through here (#168).
+        """
         ...

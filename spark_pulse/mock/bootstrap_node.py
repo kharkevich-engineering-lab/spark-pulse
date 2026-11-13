@@ -1269,11 +1269,29 @@ def host_probe_handler(node: "SimulatedNode", user: str) -> Any:
 
 
 def _probe_answer(node: "SimulatedNode", user: str, command: str) -> tuple[int, str]:
-    """The two shapes the cache check sends, and what the node would say."""
+    """What the node would say to the probes the doctor sends its agent.
+
+    The cache check's ``id -un`` and bounded ``find``, and the run backend's
+    runtime commands (#168), which a simulated node answers as a Docker node
+    with the NVIDIA toolkit — a Spark. Anything else is "command not found",
+    never an exception: a handler that raises leaves the stub silent, and a
+    silent agent stalls every later command on the same stream.
+    """
+    from spark_pulse.tools.backends import runtime_checks
+
     if command.strip() == "id -un":
         return 0, user + "\n"
+    if command == runtime_checks.DOCKER_COMMAND:
+        if not node.docker_running:
+            return 1, "Cannot connect to the Docker daemon\n"
+        return 0, f"{node.docker_version}|/var/lib/docker|io.containerd.runc.v2 runc\n"
+    if command == runtime_checks.TOOLKIT_COMMAND:
+        return 0, "hook\nctk\n"
     head = command.split("|", 1)[0]
-    parts = shlex.split(head)
+    try:
+        parts = shlex.split(head)
+    except ValueError:
+        return 127, ""
     if parts[:1] != ["find"] or "-user" not in parts:
         return 127, ""
     directory = parts[1]

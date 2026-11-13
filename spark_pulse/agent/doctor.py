@@ -194,6 +194,9 @@ class DoctorReport:
     findings: list[Finding] = field(default_factory=list)
     repairs: list[Repair] = field(default_factory=list)
     capabilities: dict[str, Any] = field(default_factory=dict)
+    #: The container runtime the run backend found: ``docker``, ``podman``,
+    #: ``unknown``, or empty when the agent could not be asked.
+    runtime: str = ""
 
     def add(self, finding: Finding) -> Finding:
         self.findings.append(finding)
@@ -264,19 +267,12 @@ async def diagnose(
     if connected:
         report.channels.append("agent")
         _check_agent_facts(server, node_id, report)
+        await _check_runtime(server, node_id, entry, report)
     _check_certificate(entry, report)
 
     if access is None:
         await _check_engine_caches_over_agent(server, node_id, connected, report)
-        for check in (
-            "unit",
-            "linger",
-            "docker-socket",
-            "identity",
-            "reachability",
-            "disk",
-            "clock",
-        ):
+        for check in _ssh_checks(report):
             report.add(
                 Finding(
                     check,
@@ -296,15 +292,7 @@ async def diagnose(
         reason = f"could not reach {access.host} over SSH: {str(exc)[:160]}"
         logger.info("doctor: %s", reason)
         await _check_engine_caches_over_agent(server, node_id, connected, report)
-        for check in (
-            "unit",
-            "linger",
-            "docker-socket",
-            "identity",
-            "reachability",
-            "disk",
-            "clock",
-        ):
+        for check in _ssh_checks(report):
             report.add(Finding(check, "unknown", reason, channel="ssh"))
         return report
 
@@ -317,6 +305,22 @@ async def diagnose(
     finally:
         await session.close()
     return report
+
+
+def _ssh_checks(report: DoctorReport) -> tuple[str, ...]:
+    """The checks only SSH can answer. The docker socket is Docker's own."""
+    checks = (
+        "unit",
+        "linger",
+        "docker-socket",
+        "identity",
+        "reachability",
+        "disk",
+        "clock",
+    )
+    if report.runtime == "podman":
+        return tuple(c for c in checks if c != "docker-socket")
+    return checks
 
 
 def _check_connection(
@@ -392,22 +396,92 @@ def _check_agent_facts(
             )
         )
 
-    docker_version = snapshot.facts.docker_version
-    if docker_version:
-        report.add(Finding("docker-daemon", "ok", f"docker {docker_version}", "agent"))
-    else:
+
+#: How long one runtime command may take on the node. They are each a single
+#: ``podman info`` / ``docker info`` / ``systemctl --user`` call.
+RUNTIME_PROBE_TIMEOUT = 15
+
+
+@dataclass(frozen=True)
+class _ProbeOutcome:
+    """A command's result in the shape the runtime checks read."""
+
+    reachable: bool
+    returncode: int = 1
+    stdout: str = ""
+    stderr: str = ""
+    error: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.reachable and self.returncode == 0
+
+    @property
+    def message(self) -> str:
+        text = (self.stderr or self.stdout or self.error or "").strip()
+        return text.splitlines()[0][:200] if text else ""
+
+
+async def _check_runtime(
+    server: ControlPlaneServer, node_id: str, entry: Any, report: DoctorReport
+) -> None:
+    """The node's container runtime, as the run backend checks it (#168).
+
+    Which checks apply — Docker's daemon and toolkit, Podman's CDI GPU,
+    socket and subordinate ids, or "no daemon answered" with the socket that
+    does exist — is the backend's decision, from the runtime the agent
+    reports. The commands run through the agent, unprivileged, the same
+    ``RunHostProbe`` the pre-flight uses, so the control node is covered with
+    no SSH at all.
+    """
+    from spark_pulse.agent.operations import NodeOperations
+    from spark_pulse.tools import backends
+
+    # Bounded at the hub as well as on the node: an agent that stops
+    # answering must cost one timeout, not one per command.
+    ops = NodeOperations(server.hub, node_id, timeout=RUNTIME_PROBE_TIMEOUT)
+    loop = asyncio.get_running_loop()
+    unreachable: list[str] = []
+
+    def run(command: str) -> _ProbeOutcome:
+        if unreachable:
+            return _ProbeOutcome(reachable=False, error=unreachable[0])
+        future = asyncio.run_coroutine_threadsafe(
+            ops.run_host_probe(command, timeout_seconds=RUNTIME_PROBE_TIMEOUT), loop
+        )
+        try:
+            result = future.result(timeout=RUNTIME_PROBE_TIMEOUT + 5)
+        except Exception as exc:  # noqa: BLE001 — every transport failure alike
+            future.cancel()
+            unreachable.append(str(exc)[:200] or type(exc).__name__)
+            return _ProbeOutcome(reachable=False, error=unreachable[0])
+        return _ProbeOutcome(
+            reachable=True,
+            returncode=int(getattr(result, "exit_code", 1)),
+            stdout=str(getattr(result, "stdout", "") or ""),
+            stderr=str(getattr(result, "stderr", "") or ""),
+        )
+
+    label = (getattr(entry, "name", "") or node_id) if entry is not None else node_id
+    connection = server.hub.get(node_id)
+    facts = connection.facts if connection is not None else None
+    found = await asyncio.to_thread(
+        backends.backend_for().diagnose, node_id, label, run, facts
+    )
+    report.runtime = found.runtime
+    for finding in found.findings:
         report.add(
             Finding(
-                "docker-daemon",
-                "broken",
-                "the agent is connected and its Docker daemon answered nothing — "
-                "the daemon is down or unreachable to it. This is not 'no such "
-                "container': every container query on this node is unknown, not "
-                "empty",
+                finding.check,
+                finding.status,
+                finding.detail,
                 channel="agent",
-                verdict=NEEDS_HUMAN,
-                remedy="a daemon that will not start is a job on that machine; "
-                "restarting it from here would kill whatever it is still running",
+                verdict=(
+                    NEEDS_HUMAN
+                    if finding.status in ("broken", "warn")
+                    else NOTHING_TO_DO
+                ),
+                remedy=finding.remedy,
             )
         )
 
@@ -513,7 +587,12 @@ async def _check_host(
             Finding("linger", "ok", "a system unit does not depend on lingering", "ssh")
         )
 
-    if caps.docker_socket:
+    if report.runtime == "podman":
+        # The docker group and docker.service say nothing about a Podman
+        # node; its socket, CDI spec and subordinate ids were checked through
+        # the agent (see _check_runtime).
+        pass
+    elif caps.docker_socket:
         report.add(
             Finding(
                 "docker-socket",
