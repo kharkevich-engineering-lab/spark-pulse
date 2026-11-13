@@ -209,6 +209,10 @@ impl Executor {
     /// runtime it is (Docker, or Podman through its compat API) and whether
     /// it runs rootless. Empty when there is no daemon.
     ///
+    /// Podman is recognised by its `/_ping` headers and never asked
+    /// `/version` or `/info`, which on Podman 4.9 cost seconds of CPU each
+    /// (#211).
+    ///
     /// Asked on every heartbeat, so it must never be the thing that first
     /// connects: a daemon that is down would then stop the heartbeat and the
     /// node would report as unreachable rather than as having no daemon.
@@ -218,7 +222,20 @@ impl Executor {
         let Some(docker) = &self.docker else {
             return facts::ContainerRuntime::default();
         };
-        let version = match docker.version().await {
+        // Podman first, by its ping: its `/version` and `/info` take seconds.
+        if let Some(socket) = self.socket.as_deref() {
+            if let Some(version) = libpod::ping_version(socket).await {
+                let runtime_dir = std::env::var("XDG_RUNTIME_DIR").ok();
+                return facts::ContainerRuntime {
+                    name: "podman".to_string(),
+                    version,
+                    rootless: facts::podman_rootless_from_socket(socket, runtime_dir.as_deref()),
+                };
+            }
+        }
+        // Docker answers both at once and quickly.
+        let (version, info) = tokio::join!(docker.version(), docker.info());
+        let version = match version {
             Ok(version) => version,
             Err(error) => {
                 tracing::debug!(%error, "the daemon did not answer version()");
@@ -232,7 +249,7 @@ impl Executor {
             .map(|component| component.name)
             .collect();
         let names: Vec<&str> = components.iter().map(String::as_str).collect();
-        let rootless = match docker.info().await {
+        let rootless = match info {
             Ok(info) => {
                 let options = info.security_options.unwrap_or_default();
                 let options: Vec<&str> = options.iter().map(String::as_str).collect();

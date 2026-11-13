@@ -6,8 +6,8 @@
 //! said, tested here against the shapes the real ones produce.
 
 use spark_pulse_agent::facts::{
-    cdi_devices, cdi_devices_from_json, cdi_devices_from_yaml, rootless_from_security_options,
-    runtime_from_components,
+    cdi_devices, cdi_devices_from_json, cdi_devices_from_yaml, podman_rootless_from_socket,
+    rootless_from_security_options, runtime_from_components,
 };
 
 #[test]
@@ -132,4 +132,28 @@ fn the_platform_is_named_the_way_an_image_index_names_it() {
     assert_eq!(oci_platform("aarch64"), "linux/arm64");
     assert_eq!(oci_platform("riscv64"), "linux/riscv64");
     assert_eq!(oci_platform(""), "");
+}
+
+/// #211: rootless is read from where the Podman socket is, never from `/info`.
+#[test]
+fn a_podman_socket_under_the_users_runtime_dir_is_rootless() {
+    use std::path::Path;
+    let rootless = Path::new("/run/user/1000/podman/podman.sock");
+    assert!(podman_rootless_from_socket(rootless, None));
+    assert!(podman_rootless_from_socket(
+        rootless,
+        Some("/run/user/1000")
+    ));
+    let custom = Path::new("/tmp/xdg/podman/podman.sock");
+    assert!(podman_rootless_from_socket(custom, Some("/tmp/xdg")));
+    assert!(!podman_rootless_from_socket(custom, Some("")));
+    let rootful = Path::new("/run/podman/podman.sock");
+    assert!(!podman_rootless_from_socket(
+        rootful,
+        Some("/run/user/1000")
+    ));
+    assert!(!podman_rootless_from_socket(
+        Path::new("/var/run/docker.sock"),
+        None
+    ));
 }

@@ -235,6 +235,39 @@ pub async fn create(socket: &Path, spec: &Value) -> Result<String, OpError> {
     ))
 }
 
+/// What Podman says about itself without being asked for `info` (#211).
+///
+/// `Some(version)` when the daemon on `socket` is Podman, read from the
+/// `Libpod-Api-Version` header its `/_ping` carries; `None` when it is not
+/// Podman or did not answer. `/_ping` is the one cheap question: Podman 4.9's
+/// `/version` and `/info` both build its full host report, which on Debian
+/// and Ubuntu runs `dpkg -S` once per helper binary — four seconds of CPU on
+/// a desktop — and the agent used to ask both on every heartbeat.
+pub async fn ping_version(socket: &Path) -> Option<String> {
+    let headers = ping(socket).await.ok()?;
+    let version = headers
+        .get("libpod-api-version")
+        .and_then(|value| value.to_str().ok())?;
+    Some(version.trim().to_string())
+}
+
+async fn ping(socket: &Path) -> anyhow::Result<hyper::HeaderMap> {
+    let stream = UnixStream::connect(socket).await?;
+    let (mut sender, connection) =
+        hyper::client::conn::http1::handshake(TokioIo::new(stream)).await?;
+    let driver = tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    let request = Request::get("/_ping")
+        .header("host", "d")
+        .body(Full::new(Bytes::new()))?;
+    let response = sender.send_request(request).await?;
+    let headers = response.headers().clone();
+    let _ = response.into_body().collect().await;
+    driver.abort();
+    Ok(headers)
+}
+
 /// One HTTP/1.1 POST over the unix socket, the body read whole.
 async fn post(socket: &Path, path: &str, body: &Value) -> anyhow::Result<(u16, Bytes)> {
     let stream = UnixStream::connect(socket).await?;

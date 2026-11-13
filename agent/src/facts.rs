@@ -560,6 +560,21 @@ pub fn rootless_from_security_options(options: &[&str]) -> bool {
         .any(|option| option.split(',').any(|part| part.trim() == "name=rootless"))
 }
 
+/// Whether a Podman socket is a rootless one, by where it is. Pure.
+///
+/// Rootless Podman listens under the user's runtime directory
+/// (`$XDG_RUNTIME_DIR`, which systemd makes `/run/user/<uid>`); rootful
+/// Podman under `/run/podman`. Read from the path because the daemon's own
+/// answer is `/info`, which Podman takes seconds to give (#211).
+pub fn podman_rootless_from_socket(socket: &std::path::Path, runtime_dir: Option<&str>) -> bool {
+    if socket.starts_with("/run/user") {
+        return true;
+    }
+    runtime_dir
+        .filter(|dir| !dir.is_empty())
+        .is_some_and(|dir| socket.starts_with(dir))
+}
+
 /// Where CDI specs live: the static and the generated directory, as the CDI
 /// spec defines them. `/var/run` is normally a link to `/run`, so a device
 /// may be found twice; [`cdi_devices`] keeps each name once.
