@@ -287,10 +287,6 @@
     "downloadStarted": "Download started",
     "downloadStartedBody": "{model} is downloading. \"{name}\" will deploy on its own when it finishes — follow the progress on the Models page, where you can also call it off.",
     "managedRecipe": "Managed recipe — cannot be deleted",
-    "hideUnavailable": {
-      "one": "Hide {count} unavailable recipe (cluster only)",
-      "other": "Hide {count} unavailable recipes (cluster only)"
-    },
     "missingModelTitle": "This model is not downloaded yet",
     "newMod": "New mod",
     "newRecipe": "New recipe",
@@ -307,10 +303,6 @@
     "reset": "Reset",
     "resetBody": "Reset \"{name}\" to its original recipe? Any customizations you made will be lost.",
     "resetTitle": "Reset customization",
-    "showUnavailable": {
-      "one": "Show {count} unavailable recipe (cluster only)",
-      "other": "Show {count} unavailable recipes (cluster only)"
-    },
     "subtitleBundled": "The recipes and mods this control plane can run.",
     "subtitleCustom": "Your own recipes and mods.",
     "tabMods": "Mods",
@@ -332,7 +324,16 @@
     "modExplainer": "A mod is a run.sh that runs inside the container before the engine starts.",
     "patches": "patches",
     "missingModelBody": "{model} is not in the local catalogue, so {name} cannot start.",
-    "missingModelWait": "Downloading it can take a while. You do not have to wait here — the run is recorded and starts on its own when the model lands, and you can call it off from the Library at any point."
+    "missingModelWait": "Downloading it can take a while. You do not have to wait here — the run is recorded and starts on its own when the model lands, and you can call it off from the Library at any point.",
+    "showNotHere": {
+      "one": "Show {count} recipe that doesn't run here",
+      "other": "Show {count} recipes that don't run here"
+    },
+    "hideNotHere": {
+      "one": "Hide {count} recipe that doesn't run here",
+      "other": "Hide {count} recipes that don't run here"
+    },
+    "nothingRunsHere": "Nothing in this catalogue runs on this fleet yet. The recipes below say why; an engine published for this platform, or a recipe for one that is, changes that."
   },
   "recipeCard": {
     "running": "Running",
@@ -342,7 +343,9 @@
     "solo": "Solo",
     "cluster": "Cluster",
     "custom": "Custom",
-    "editCustom": "Edit custom"
+    "editCustom": "Edit custom",
+    "notHere": "Won't run here: {reason}",
+    "notHereBanner": "This recipe won't run on this fleet: {reason}. It can be read, not deployed."
   },
   "registry": {
     "testConnection": "Test connection",
@@ -622,7 +625,8 @@
     "unprivileged": "unprivileged",
     "networkHost": "network host",
     "ipcHost": "ipc host",
-    "shm": "shm {gb}g"
+    "shm": "shm {gb}g",
+    "notForThisFleet": "no image for this fleet's platform"
   },
   "newRecipe": {
     "validationFailed": "Validation failed",

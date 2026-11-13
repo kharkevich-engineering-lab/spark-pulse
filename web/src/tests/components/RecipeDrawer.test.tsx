@@ -114,6 +114,19 @@ describe("RecipeDrawer", () => {
     expect(onDeploy.mock.calls[0][1]).toEqual({ tensor_parallel: 2, pipeline_parallel: 1 });
   });
 
+  it("reads, and does not deploy, a recipe that will not run on this fleet", () => {
+    const recipe = {
+      ...RECIPE,
+      fit: { verdict: "wont_run", reason: "no amd64 image for vllm", engines: {} },
+    } as unknown as RecipeDetail;
+    renderDrawer({ recipe });
+
+    expect(screen.getByTestId("recipe-not-here")).toHaveTextContent(
+      "This recipe won't run on this fleet: no amd64 image for vllm.",
+    );
+    expect(screen.getByRole("button", { name: "Deploy" })).toBeDisabled();
+  });
+
   it("carries a parallelism the operator raised by hand", async () => {
     const { onDeploy } = renderDrawer();
 

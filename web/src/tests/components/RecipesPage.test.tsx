@@ -315,13 +315,59 @@ describe("RecipesPage", () => {
       expect(screen.queryByText("Big Mesh")).not.toBeInTheDocument();
 
       await userEvent.click(
-        screen.getByRole("button", { name: /Show 1 unavailable recipe \(cluster only\)/ }),
+        screen.getByRole("button", { name: /Show 1 recipe that doesn't run here/ }),
       );
       expect(screen.getByText("Big Mesh")).toBeInTheDocument();
       expect(screen.getByText("Cluster only")).toBeInTheDocument();
 
-      await userEvent.click(screen.getByRole("button", { name: /Hide 1 unavailable/ }));
+      await userEvent.click(screen.getByRole("button", { name: /Hide 1 recipe that doesn't run here/ }));
       expect(screen.queryByText("Big Mesh")).not.toBeInTheDocument();
+    });
+
+    /** The x86 lab: every bundled engine image is arm64-only (#172). */
+    describe("on a fleet the recipe has no image for", () => {
+      const NO_AMD64 = {
+        ...SOLO,
+        id: "vllm-only",
+        name: "Arm Only",
+        fit: { verdict: "wont_run" as const, reason: "no amd64 image for vllm", engines: {} },
+      };
+      const RUNS = { ...SOLO, fit: { verdict: "runs" as const, reason: "", engines: { vllm: ["default"] } } };
+
+      it("shows only what runs here, and says how many it folded away", async () => {
+        vi.mocked(fetchRecipes).mockResolvedValue([NO_AMD64, RUNS]);
+        renderPage();
+
+        await screen.findByText("Qwen3 8B");
+        expect(screen.queryByText("Arm Only")).not.toBeInTheDocument();
+        expect(screen.getByRole("button", { name: /Show 1 recipe that doesn't run here/ })).toBeInTheDocument();
+        // A cluster hint for a recipe that is not about the cluster would
+        // send the operator to the wrong page.
+        expect(screen.queryByText(/Add a node/)).not.toBeInTheDocument();
+      });
+
+      it("says so when nothing in the catalogue runs here", async () => {
+        vi.mocked(fetchRecipes).mockResolvedValue([NO_AMD64]);
+        renderPage();
+
+        expect(await screen.findByTestId("nothing-runs-here")).toHaveTextContent(
+          /Nothing in this catalogue runs on this fleet yet/,
+        );
+      });
+
+      it("draws it last, dimmed, with the reason, and still lets it be opened", async () => {
+        vi.mocked(fetchRecipes).mockResolvedValue([NO_AMD64, RUNS]);
+        renderPage();
+        await screen.findByText("Qwen3 8B");
+        await userEvent.click(screen.getByRole("button", { name: /Show 1 recipe that doesn't run here/ }));
+
+        const names = screen.getAllByText(/Qwen3 8B|Arm Only/).map((e) => e.textContent);
+        expect(names.indexOf("Arm Only")).toBeGreaterThan(names.indexOf("Qwen3 8B"));
+        expect(screen.getByTestId("not-here-vllm-only")).toHaveTextContent("Won't run here: no amd64 image for vllm");
+        const card = screen.getByText("Arm Only").closest("[role='button']");
+        expect(card).not.toBeNull();
+        expect(card).toHaveClass("opacity-60");
+      });
     });
 
     /** "Enable cluster mode" named a setting and not a condition, which is

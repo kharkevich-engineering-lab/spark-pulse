@@ -9,6 +9,7 @@ import { X } from "lucide-react";
 import SlideDrawer from "./SlideDrawer";
 import ServesChip from "./ServesChip";
 import type { RecipeDetail, RecipeCustomization, RecipeFormRef } from "@/lib/types";
+import { wontRunHere } from "@/lib/types";
 
 export default function RecipeDrawer({ recipe, customization, isRunning, clusterAvailable, onClose, onError, onDeploy, onSaveCustomization, onReset }: {
   recipe: RecipeDetail;
@@ -26,6 +27,10 @@ export default function RecipeDrawer({ recipe, customization, isRunning, cluster
   const formRef = useRef<RecipeFormRef>(null);
   const [deployOptions, setDeployOptions] = useState<DeployOptionsValue>({});
   const clusterBlocked = recipe.cluster_only && !clusterAvailable;
+  // The backend's answer, from the nodes' platforms and the engine images
+  // (#172). Readable, not deployable: the plan would refuse it anyway, after
+  // the operator had filled the form in.
+  const notHere = wontRunHere(recipe) ? recipe.fit?.reason || "" : "";
   const hasCustomization = customization && Object.keys(customization).length > 0;
   const [isEditing, setIsEditing] = useState(false);
   const [deploying, setDeploying] = useState(false);
@@ -86,7 +91,8 @@ export default function RecipeDrawer({ recipe, customization, isRunning, cluster
                   size="sm"
                   variant="primary"
                   onClick={handleDeploy}
-                  disabled={deploying || isRunning || clusterBlocked}
+                  disabled={deploying || isRunning || clusterBlocked || Boolean(notHere)}
+                  title={notHere ? t("recipeCard.notHere", { reason: notHere }) : undefined}
                 >
                   {deploying ? "…" : t("recipes.deploy")}
                 </Button>
@@ -125,6 +131,13 @@ export default function RecipeDrawer({ recipe, customization, isRunning, cluster
         </>
       }
     >
+      {notHere && (
+        <div className="px-6 py-3 border-b border-border" data-testid="recipe-not-here">
+          <div className="flex items-start gap-3 p-3 rounded-sm bg-warning/10 border border-warning/30">
+            <p className="text-sm text-warning">{t("recipeCard.notHereBanner", { reason: notHere })}</p>
+          </div>
+        </div>
+      )}
       {clusterBlocked && (
         <div className="px-6 py-3 border-b border-border">
           <div className="flex items-start gap-3 p-3 rounded-sm bg-warning/10 border border-warning/30">

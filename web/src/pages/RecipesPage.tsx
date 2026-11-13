@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { useI18n } from "@/lib/i18n";
 import { fetchRecipes, fetchRecipe, createDeployment, scheduleDeploy, fetchSettings, fetchRecipeCustomization, saveRecipeCustomization, deleteRecipeCustomization, fetchMods, fetchMod, listCustomRecipes, saveCustomRecipe, deleteCustomRecipe, listCustomMods, getCustomModFiles, saveCustomModFiles, deleteCustomMod, uninstallOciRecipe, ApiError } from "@/lib/api";
+import { wontRunHere } from "@/lib/types";
 import type { RecipeDetail, RecipeCustomization, RecipeSummary, ModSummary, ModDetail, CustomRecipeInfo, CustomModInfo, ModFileMap, PreflightReport } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
 import { useDeployments } from "@/hooks/useDeployments";
@@ -255,12 +256,16 @@ export default function RecipesPage() {
     return new Set(deployments.filter(d => d.status === "running" || d.status === "pending").map(d => d.recipe_id));
   }, [deployments]);
 
+  // What does not run here goes last and folded away: the cluster-only ones
+  // with no cluster, and the ones the backend says have no image for this
+  // fleet's platform or too few nodes (#172). "Only what runs here" is the
+  // folded default; unfolded, each is dimmed and says why.
   const { available, unavailable } = useMemo(() => {
     if (!recipes) return { available: [], unavailable: [] };
-    const avail = recipes.filter(r => !(r.cluster_only && !clusterAvailable));
-    const unavail = recipes.filter(r => r.cluster_only && !clusterAvailable);
-    return { available: avail, unavailable: unavail };
+    const blocked = (r: RecipeSummary) => (r.cluster_only && !clusterAvailable) || wontRunHere(r);
+    return { available: recipes.filter(r => !blocked(r)), unavailable: recipes.filter(blocked) };
   }, [recipes, clusterAvailable]);
+  const anyClusterBlocked = unavailable.some(r => r.cluster_only && !clusterAvailable);
 
 
   const loadCustomData = async () => {
@@ -605,6 +610,11 @@ export default function RecipesPage() {
             <>
               {recipes && recipes.length > 0 && (
                 <>
+                  {available.length === 0 && unavailable.length > 0 && (
+                    <p className="text-sm text-text-muted" data-testid="nothing-runs-here">
+                      {t("recipes.nothingRunsHere")}
+                    </p>
+                  )}
                   <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                     {available.map((r) => (
                       <RecipeCard
@@ -626,18 +636,20 @@ export default function RecipesPage() {
                         className="flex items-center gap-2 text-sm text-text-muted hover:text-text transition-colors mb-3"
                       >
                         <ChevronDown size={16} className={`transition-transform ${showUnavailable ? "rotate-180" : ""}`} />
-                        {plural(showUnavailable ? "recipes.hideUnavailable" : "recipes.showUnavailable", unavailable.length)}
+                        {plural(showUnavailable ? "recipes.hideNotHere" : "recipes.showNotHere", unavailable.length)}
                       </button>
                       {/* Why they are unavailable, with the two things that
                           would change it. A count the operator can check
                           against the Cluster page beats "enable cluster
                           mode", which names a setting and not a condition. */}
-                      <p className="text-sm text-text-muted mb-3">
-                        {t("recipes.clusterHint", { count: clusterNodeCount })}{" "}
-                        <Link to="/cluster" className="text-blue2 hover:underline">{t("recipes.clusterHintAddNode")}</Link>
-                        {" · "}
-                        <Link to="/settings" className="text-blue2 hover:underline">{t("recipes.clusterHintForce")}</Link>
-                      </p>
+                      {anyClusterBlocked && (
+                        <p className="text-sm text-text-muted mb-3">
+                          {t("recipes.clusterHint", { count: clusterNodeCount })}{" "}
+                          <Link to="/cluster" className="text-blue2 hover:underline">{t("recipes.clusterHintAddNode")}</Link>
+                          {" · "}
+                          <Link to="/settings" className="text-blue2 hover:underline">{t("recipes.clusterHintForce")}</Link>
+                        </p>
+                      )}
                       {showUnavailable && (
                         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                           {unavailable.map((r) => (
@@ -645,8 +657,9 @@ export default function RecipesPage() {
                               key={r.id}
                               r={r}
                               isRunning={false}
-                              clusterBlocked={true}
-                              onSelect={() => {}}
+                              clusterBlocked={r.cluster_only && !clusterAvailable}
+                              notHere={wontRunHere(r) ? r.fit?.reason : undefined}
+                              onSelect={() => handleSelect(r)}
                               onReset={() => openResetConfirm(r)}
                               onUninstall={() => confirmDelete("oci", r.id, r.name)}
                             />

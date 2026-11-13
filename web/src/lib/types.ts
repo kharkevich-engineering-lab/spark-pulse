@@ -25,6 +25,25 @@ export interface RecipeSummary {
   /** What the recipe serves: chat, embedding, image, video or speech. Absent
    *  from an older backend, which means chat. */
   serves?: string;
+  /** Whether it runs on this fleet (#172). Absent from an older backend,
+   *  which the page reads as runs. */
+  fit?: RecipeFit;
+}
+
+/** The backend's verdict on whether a recipe runs on the nodes this control
+ *  plane has: an image for their platform, enough of them. `unknown` is a
+ *  node that has not said what it is — never treated as a mismatch. */
+export interface RecipeFit {
+  verdict: "runs" | "unknown" | "wont_run";
+  /** Why it does not run, when it does not; the first thing to fix. */
+  reason: string;
+  /** Engine → the variants that run here. */
+  engines: Record<string, string[]>;
+}
+
+/** Whether the backend said this recipe will not run here. */
+export function wontRunHere(r: Pick<RecipeSummary, "fit">): boolean {
+  return r.fit?.verdict === "wont_run";
 }
 
 /** One engine's verdict on a recipe, as the backend's engine plugin reports it. */
