@@ -40,7 +40,13 @@ vi.mock("@/lib/api", () => ({
 }));
 
 /** The feature flag, readable by the tests that turn it off. */
-const appConfig = vi.hoisted(() => ({ benchmarking_enabled: true }));
+const appConfig = vi.hoisted(
+  () =>
+    ({ benchmarking_enabled: true }) as {
+      benchmarking_enabled: boolean;
+      benchmarking_tool?: { available: boolean; reason: string; install: string };
+    },
+);
 vi.mock("@/lib/config", () => ({
   useConfig: () => ({ config: appConfig, configLoaded: true }),
 }));
@@ -126,6 +132,7 @@ async function openTab(label: string) {
 
 beforeEach(() => {
   appConfig.benchmarking_enabled = true;
+  appConfig.benchmarking_tool = undefined;
 });
 
 /** "Download and deploy" from the lab: the deploy waits on a 5 GB download,
@@ -265,8 +272,46 @@ describe("RunsPage tabs", () => {
     await screen.findByTestId("deployment-r1");
     expect(screen.queryByRole("tab", { name: /^Benchmarks/ })).toBeNull();
     expect(fetchBenchmarks).not.toHaveBeenCalled();
-    // Nor the row's button: a benchmark started there would run unread.
-    expect(within(screen.getByTestId("deployment-r1")).queryByRole("button", { name: "Benchmark" })).toBeNull();
+  });
+
+  /** Off, the button stays and the dialog says why nothing can start, and
+   *  where to turn it on — a button that vanished explained nothing. */
+  it("keeps the button when the feature is off, and the dialog says where to turn it on", async () => {
+    appConfig.benchmarking_enabled = false;
+    show();
+
+    const row = await screen.findByTestId("deployment-r1");
+    await userEvent.setup().click(within(row).getByRole("button", { name: "Benchmark" }));
+
+    const notice = await screen.findByTestId("benchmarking-off");
+    expect(notice).toHaveTextContent("Benchmarking is off");
+    expect(within(notice).getByRole("link", { name: "Turn it on in Settings → Features" })).toHaveAttribute(
+      "href",
+      "/settings#features",
+    );
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByRole("button", { name: /Start|Run/ })).toBeDisabled();
+  });
+
+  /** The lab: llama-benchy was not installed. The click is told what to
+   *  install, and nothing starts that would fail out of sight. */
+  it("says what to install when the benchmark tool is missing", async () => {
+    appConfig.benchmarking_tool = {
+      available: false,
+      reason: "llama-benchy is not installed on the control plane",
+      install: "pip install 'spark-pulse[benchmarking]'",
+    };
+    show();
+
+    const row = await screen.findByTestId("deployment-r1");
+    await userEvent.setup().click(within(row).getByRole("button", { name: "Benchmark" }));
+
+    const notice = await screen.findByTestId("benchmarking-missing");
+    expect(notice).toHaveTextContent("llama-benchy");
+    expect(
+      within(notice).getByRole("button", { name: "Copy the install command pip install 'spark-pulse[benchmarking]'" }),
+    ).toHaveTextContent("pip install 'spark-pulse[benchmarking]'");
+    expect(within(screen.getByRole("dialog")).getByRole("button", { name: /Start|Run/ })).toBeDisabled();
   });
 
   /** On the lab the click read as nothing: the benchmark failed at once and

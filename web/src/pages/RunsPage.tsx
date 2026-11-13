@@ -429,7 +429,6 @@ export default function RunsPage({ initialTab }: RunsPageProps = {}) {
             key={run.id}
             run={run}
             benchmark={latestBenchmark.get(run.id)}
-            benchmarking={benchmarkingEnabled}
             expanded={expandedId === run.id}
             onToggle={() => toggle(run.id)}
             onTeardown={() => setTeardownTarget(run)}
@@ -554,6 +553,8 @@ export default function RunsPage({ initialTab }: RunsPageProps = {}) {
       {benchmarkTarget && (
         <BenchmarkLauncher
           run={benchmarkTarget}
+          enabled={benchmarkingEnabled}
+          tool={config?.benchmarking_tool}
           onClose={() => setBenchmarkTarget(null)}
           onStarted={() => {
             setBenchmarkTarget(null);

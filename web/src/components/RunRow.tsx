@@ -69,9 +69,6 @@ export interface RunRowProps {
   onBenchmark: () => void;
   /** The expanded panel: logs, ranks, the engine's metrics. */
   children?: React.ReactNode;
-  /** Whether benchmarking is enabled (Settings → Features). Off by default
-   *  in config; absent is treated as on for callers that predate it. */
-  benchmarking?: boolean;
 }
 
 /** Grid columns for the phone layout, one per action. Static classes, because
@@ -123,7 +120,6 @@ export default function RunRow({
   onTeardown,
   onBenchmark,
   children,
-  benchmarking = true,
 }: RunRowProps) {
   const t = useT();
   const live = isLiveRun(run);
@@ -158,9 +154,9 @@ export default function RunRow({
 
   // Benchmarks drive chat completions; against an embeddings endpoint the
   // button would only start a run the backend refuses.
-  // Off in settings means no button: a benchmark started here then ran out of
-  // sight, because the page reads no benchmarks while the feature is off.
-  const benchmarkable = benchmarking && live && servesChat(run.serves);
+  // Shown whether or not the feature is on: off, the launcher says so and
+  // where to turn it on, rather than the button vanishing without a word.
+  const benchmarkable = live && servesChat(run.serves);
   const actionCount = benchmarkable ? 3 : 2;
 
   return (

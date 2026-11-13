@@ -23,11 +23,17 @@ def _benchmarking_on():
 
     from spark_pulse.config import config
 
-    with patch.object(
-        type(config),
-        "benchmarking_enabled",
-        new_callable=PropertyMock,
-        return_value=True,
+    with (
+        patch.object(
+            type(config),
+            "benchmarking_enabled",
+            new_callable=PropertyMock,
+            return_value=True,
+        ),
+        patch(
+            "spark_pulse.routers.benchmarking.tools.benchmarking.tool_status",
+            return_value={"available": True, "reason": "", "install": "pip install x"},
+        ),
     ):
         yield
 
@@ -655,3 +661,38 @@ class TestBenchmarkingOff:
         assert resp.status_code == 409
         assert "Settings → Features" in resp.json()["detail"]
         create.assert_not_called()
+
+
+class TestTheToolMissing:
+    """The lab: llama-benchy was not installed, the benchmark failed in the
+    background, and only the server log said so. Now the click is told."""
+
+    MISSING = {
+        "available": False,
+        "reason": "llama-benchy is not installed on the control plane",
+        "install": "pip install 'spark-pulse[benchmarking]'",
+    }
+
+    def test_a_benchmark_is_refused_with_what_to_install(self, app_client):
+        with (
+            patch(
+                "spark_pulse.routers.benchmarking.tools.benchmarking.tool_status",
+                return_value=self.MISSING,
+            ),
+            patch(
+                "spark_pulse.routers.benchmarking.tools.benchmarking.create_benchmark"
+            ) as create,
+        ):
+            resp = app_client.post("/api/benchmarks", json={"deployment_id": "dep-1"})
+
+        assert resp.status_code == 503
+        assert "pip install 'spark-pulse[benchmarking]'" in resp.json()["detail"]
+        create.assert_not_called()
+
+    def test_the_config_tells_the_page_before_the_click(self, app_client):
+        with patch(
+            "spark_pulse.routers.config.tools.benchmarking.tool_status",
+            return_value=self.MISSING,
+        ):
+            tool = app_client.get("/api/config").json()["benchmarking_tool"]
+        assert tool == self.MISSING

@@ -11,6 +11,8 @@ export interface AppConfig {
   mcp_enabled: boolean;
   cluster_enabled: boolean;
   benchmarking_enabled: boolean;
+  /** Whether llama-benchy is installed, and the command when it is not. */
+  benchmarking_tool?: { available: boolean; reason: string; install: string };
   simulation_mode: boolean;
   /** The deployment runtime. "native" — containers we drive ourselves — is the only one. */
   runtime: string;

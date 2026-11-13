@@ -862,7 +862,13 @@
     "delete": "Delete this run",
     "deleteTitle": "Delete benchmark run?",
     "deleteMessage": "\"{name}\" and its measurements are removed for good. Nothing else changes.",
-    "deleteFailed": "Failed to delete the benchmark"
+    "deleteFailed": "Failed to delete the benchmark",
+    "offNotice": "Benchmarking is off, so nothing would be measured.",
+    "turnOn": "Turn it on in Settings → Features",
+    "toolMissing": "llama-benchy, the tool that measures a run, is not installed on the control plane. Install it, then restart the control plane:",
+    "toolMissingHint": "Click the command to copy it. Run it in the control plane's own Python environment.",
+    "copyInstall": "Copy the install command {command}",
+    "installCopied": "Copied to clipboard"
   },
   "oci": {
     "noCollections": "No collections found",

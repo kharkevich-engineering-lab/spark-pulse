@@ -14,6 +14,7 @@
  * diff against.
  */
 
+import { Link } from "react-router-dom";
 import { useState } from "react";
 import { useI18n } from "@/lib/i18n";
 import { runBenchmark } from "@/lib/api";
@@ -39,9 +40,17 @@ export interface BenchmarkLauncherProps {
   onClose: () => void;
   /** Fired once the backend has accepted the run. */
   onStarted: () => void;
+  /** Whether benchmarking is on (Settings → Features). Off, the dialog says
+   *  so and where to turn it on, and does not start what the API refuses. */
+  enabled?: boolean;
+  /** Whether the benchmark tool is installed; missing, the dialog says what
+   *  to install, at the click. Absent is treated as installed. */
+  tool?: { available: boolean; reason: string; install: string };
 }
 
-export default function BenchmarkLauncher({ run, onClose, onStarted }: BenchmarkLauncherProps) {
+export default function BenchmarkLauncher({ run, onClose, onStarted, enabled = true, tool }: BenchmarkLauncherProps) {
+  const missing = tool && !tool.available ? tool : null;
+  const [copied, setCopied] = useState(false);
   const { t } = useI18n();
   const [types, setTypes] = useState<string[]>(DEFAULT_TYPES);
   const [contextLength, setContextLength] = useState(DEFAULT_CONTEXT);
@@ -89,7 +98,7 @@ export default function BenchmarkLauncher({ run, onClose, onStarted }: Benchmark
             size="sm"
             variant="primary"
             loading={running}
-            disabled={types.length === 0 || !chat}
+            disabled={types.length === 0 || !chat || !enabled || Boolean(missing)}
             onClick={start}
           >
             {running ? t("common.working") : t("runs.benchmarkRun")}
@@ -99,6 +108,39 @@ export default function BenchmarkLauncher({ run, onClose, onStarted }: Benchmark
     >
       <div className="space-y-4">
         <p className="text-[14px] text-muted">{t("runs.benchmarkOn", { name: run.name })}</p>
+        {missing && (
+          <div
+            data-testid="benchmarking-missing"
+            className="space-y-2 rounded-sm border border-warning/30 bg-warning/10 p-3 text-[14px] text-warning"
+          >
+            <p>{t("benchmarking.toolMissing")}</p>
+            <button
+              type="button"
+              onClick={() => {
+                void navigator.clipboard?.writeText(missing.install).then(() => {
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 1800);
+                });
+              }}
+              aria-label={t("benchmarking.copyInstall", { command: missing.install })}
+              className="block w-full rounded-sm border border-line bg-bg px-3 py-2 text-left font-mono text-[13px] text-text hover:border-blue2"
+            >
+              {copied ? t("benchmarking.installCopied") : missing.install}
+            </button>
+            <p className="text-[13px] text-muted">{t("benchmarking.toolMissingHint")}</p>
+          </div>
+        )}
+        {!enabled && (
+          <p
+            data-testid="benchmarking-off"
+            className="rounded-sm border border-warning/30 bg-warning/10 p-3 text-[14px] text-warning"
+          >
+            {t("benchmarking.offNotice")}{" "}
+            <Link to="/settings#features" className="font-medium underline" onClick={onClose}>
+              {t("benchmarking.turnOn")}
+            </Link>
+          </p>
+        )}
         {!chat && <ErrorLine>{t("serves.benchmarkChatOnly")}</ErrorLine>}
 
         <div>

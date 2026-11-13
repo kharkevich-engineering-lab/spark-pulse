@@ -862,7 +862,13 @@
     "delete": "Supprimer cette analyse",
     "deleteTitle": "Supprimer cette analyse ?",
     "deleteMessage": "« {name} » et ses mesures seront supprimés définitivement. Rien d'autre ne change.",
-    "deleteFailed": "Échec de la suppression de l'analyse"
+    "deleteFailed": "Échec de la suppression de l'analyse",
+    "offNotice": "Le benchmarking est désactivé : rien ne serait mesuré.",
+    "turnOn": "L'activer dans Réglages → Fonctionnalités",
+    "toolMissing": "llama-benchy, l'outil qui mesure une exécution, n'est pas installé sur le plan de contrôle. Installez-le, puis redémarrez le plan de contrôle :",
+    "toolMissingHint": "Cliquez sur la commande pour la copier. Lancez-la dans l'environnement Python du plan de contrôle.",
+    "copyInstall": "Copier la commande d'installation {command}",
+    "installCopied": "Copié dans le presse-papiers"
   },
   "oci": {
     "noCollections": "Aucune collection trouvée",

@@ -162,6 +162,12 @@ def run_benchmark(req: RunBenchmarkRequest, background_tasks: BackgroundTasks):
             status_code=409,
             detail="benchmarking is disabled; turn it on in Settings → Features",
         )
+    tool = tools.benchmarking.tool_status()
+    if not tool["available"]:
+        raise HTTPException(
+            status_code=503,
+            detail=f"{tool['reason']}. Install it: {tool['install']}",
+        )
     deployment = tools.deployment_records.get(req.deployment_id)
     if deployment is not None:
         serves = tools.recipe_schema.serves_of(deployment)
