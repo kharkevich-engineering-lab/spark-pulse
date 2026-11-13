@@ -6,8 +6,8 @@
 //! said, tested here against the shapes the real ones produce.
 
 use spark_pulse_agent::facts::{
-    cdi_devices, cdi_devices_from_json, cdi_devices_from_yaml, podman_rootless_from_socket,
-    rootless_from_security_options, runtime_from_components,
+    cdi_devices, cdi_devices_from_json, cdi_devices_from_yaml, podman_rootless,
+    rootless_from_security_options, rootless_owner, runtime_from_components,
 };
 
 #[test]
@@ -134,26 +134,25 @@ fn the_platform_is_named_the_way_an_image_index_names_it() {
     assert_eq!(oci_platform(""), "");
 }
 
-/// #211: rootless is read from where the Podman socket is, never from `/info`.
+/// #211: rootless is read from who owns the socket, never from `/info`.
 #[test]
-fn a_podman_socket_under_the_users_runtime_dir_is_rootless() {
-    use std::path::Path;
-    let rootless = Path::new("/run/user/1000/podman/podman.sock");
-    assert!(podman_rootless_from_socket(rootless, None));
-    assert!(podman_rootless_from_socket(
-        rootless,
-        Some("/run/user/1000")
-    ));
-    let custom = Path::new("/tmp/xdg/podman/podman.sock");
-    assert!(podman_rootless_from_socket(custom, Some("/tmp/xdg")));
-    assert!(!podman_rootless_from_socket(custom, Some("")));
-    let rootful = Path::new("/run/podman/podman.sock");
-    assert!(!podman_rootless_from_socket(
-        rootful,
-        Some("/run/user/1000")
-    ));
-    assert!(!podman_rootless_from_socket(
-        Path::new("/var/run/docker.sock"),
-        None
-    ));
+fn a_socket_owned_by_root_is_rootful_and_any_other_is_rootless() {
+    assert!(!rootless_owner(0));
+    assert!(rootless_owner(1000));
+}
+
+#[test]
+fn the_owner_is_read_through_a_symlink() {
+    use std::os::unix::fs::MetadataExt;
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("podman.sock");
+    let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    let link = dir.path().join("docker.sock");
+    std::os::unix::fs::symlink(&socket, &link).unwrap();
+
+    // Whoever runs the test owns both; root (a container CI) is the rootful case.
+    let ours = std::fs::metadata(&socket).unwrap().uid() != 0;
+    assert_eq!(podman_rootless(&socket), ours);
+    assert_eq!(podman_rootless(&link), ours);
+    assert!(!podman_rootless(&dir.path().join("absent.sock")));
 }

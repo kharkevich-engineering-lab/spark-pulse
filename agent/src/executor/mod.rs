@@ -225,11 +225,10 @@ impl Executor {
         // Podman first, by its ping: its `/version` and `/info` take seconds.
         if let Some(socket) = self.socket.as_deref() {
             if let Some(version) = libpod::ping_version(socket).await {
-                let runtime_dir = std::env::var("XDG_RUNTIME_DIR").ok();
                 return facts::ContainerRuntime {
                     name: "podman".to_string(),
                     version,
-                    rootless: facts::podman_rootless_from_socket(socket, runtime_dir.as_deref()),
+                    rootless: facts::podman_rootless(socket),
                 };
             }
         }
