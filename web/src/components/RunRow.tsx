@@ -24,7 +24,8 @@ import { formatDuration, servesChat } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import ServesChip from "./ServesChip";
 import { isLiveRun } from "@/hooks/useDeployments";
-import { ChevronDown, ChevronUp, Flame, Square, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Copy, Flame, Square, Trash2, X } from "lucide-react";
+import { useState } from "react";
 import type { BenchmarkResult, Deployment } from "@/lib/types";
 
 /** Seconds between two timestamps, floored at zero. */
@@ -53,9 +54,56 @@ function metric(result: BenchmarkResult | undefined, ...keys: string[]): number 
  * the control plane runs on, which is still a node — it just has not told us
  * which one. */
 export function placement(run: Deployment, thisNode: string): string {
-  const nodes = run.nodes?.length ? run.nodes.join(" + ") : thisNode;
+  // The machines by name where the record knows them (each rank's host), so a
+  // solo run says "ark-desktop" rather than "this node", which reads as
+  // whichever machine the browser happens to be on.
+  const hosts = (run.ranks ?? []).map((r) => r.host || r.node).filter(Boolean);
+  const nodes = hosts.length ? hosts.join(" + ") : run.nodes?.length ? run.nodes.join(" + ") : thisNode;
   const tp = Number(run.params?.tensor_parallel);
   return Number.isFinite(tp) && tp > 1 ? `tp ${tp} · ${nodes}` : nodes;
+}
+
+/** The run's OpenAI-compatible endpoint, as something a client can be pointed at.
+ *
+ *  The head rank serves the API on the host network, so the address is its
+ *  node's — empty for the control node, which is the machine the browser
+ *  reached this page on, so that hostname is the one that works from here. */
+export function endpointUrl(run: Deployment, pageHost: string): string | null {
+  if (!run.port) return null;
+  const head = (run.ranks ?? []).find((r) => r.is_head) ?? run.ranks?.[0];
+  const host = head?.node || run.nodes?.[0] || pageHost;
+  const bracketed = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+  return `http://${bracketed}:${run.port}/v1`;
+}
+
+/** The endpoint, copyable. A port alone said where nothing was. */
+function Endpoint({ url }: { url: string }) {
+  const t = useT();
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // No clipboard (a non-secure origin): the text is selectable anyway.
+    }
+  };
+  return (
+    <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-line pl-2 pr-1 py-0.5 text-[13px]">
+      <span className="text-muted">{t("runs.endpoint")}</span>
+      <code className="truncate font-mono text-text select-all" data-testid="run-endpoint">{url}</code>
+      <button
+        type="button"
+        onClick={() => void copy()}
+        aria-label={copied ? t("runs.endpointCopied") : t("runs.copyEndpoint", { url })}
+        title={copied ? t("runs.endpointCopied") : t("runs.copyEndpointShort")}
+        className="shrink-0 rounded-full p-1 text-muted transition-colors hover:text-text"
+      >
+        {copied ? <Check size={13} className="text-success" /> : <Copy size={13} />}
+      </button>
+    </span>
+  );
 }
 
 export interface RunRowProps {
@@ -167,9 +215,10 @@ export default function RunRow({
             <ServesChip serves={run.serves} />
 
             <Chip>{placement(run, t("runs.thisNode"))}</Chip>
-            {run.port && (
-              <span className="font-mono text-[13px] text-muted">:{run.port}</span>
-            )}
+            {(() => {
+              const url = endpointUrl(run, window.location.hostname);
+              return url && live ? <Endpoint url={url} /> : null;
+            })()}
           </div>
         </div>
 

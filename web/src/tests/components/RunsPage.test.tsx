@@ -232,6 +232,46 @@ describe("RunsPage row", () => {
     expect(row).toHaveTextContent("this node");
   });
 
+  /** "this node :8000" from the lab: which node, and a port is not an address. */
+  it("names the node a solo run is on, and gives an endpoint to copy", async () => {
+    const onDesktop = deployment({
+      id: "desk",
+      name: "desk job",
+      port: 8000,
+      ranks: [{ rank: 0, node: "", host: "ark-desktop", container_name: "c", is_head: true }],
+    });
+    vi.mocked(fetchDeployments).mockResolvedValue([onDesktop]);
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    show();
+
+    const row = await screen.findByTestId("deployment-desk");
+    expect(row).toHaveTextContent("ark-desktop");
+    expect(row).not.toHaveTextContent("this node");
+    // The control node: the machine this page was reached on.
+    const url = `http://${window.location.hostname}:8000/v1`;
+    expect(within(row).getByTestId("run-endpoint")).toHaveTextContent(url);
+
+    // fireEvent, not userEvent: user-event installs a clipboard of its own.
+    fireEvent.click(within(row).getByRole("button", { name: `Copy the endpoint ${url}` }));
+    expect(writeText).toHaveBeenCalledWith(url);
+    expect(await within(row).findByRole("button", { name: "Copied" })).toBeInTheDocument();
+  });
+
+  it("points a peer's run at that peer's address", async () => {
+    const onPeer = deployment({
+      id: "peer",
+      name: "peer job",
+      port: 9001,
+      ranks: [{ rank: 0, node: "10.0.0.11", host: "spark-b", container_name: "c", is_head: true }],
+    });
+    vi.mocked(fetchDeployments).mockResolvedValue([onPeer]);
+    show();
+
+    const row = await screen.findByTestId("deployment-peer");
+    expect(within(row).getByTestId("run-endpoint")).toHaveTextContent("http://10.0.0.11:9001/v1");
+  });
+
   it("leaves a record with no node_count alone rather than failing on it", async () => {
     show();
 
