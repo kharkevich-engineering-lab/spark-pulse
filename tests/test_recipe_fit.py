@@ -144,3 +144,93 @@ class TestTheApi:
         client = TestClient(create_app())
         recipe_id = client.get("/api/recipes").json()[0]["id"]
         assert "fit" in client.get(f"/api/recipes/{recipe_id}").json()
+
+
+# ── Memory (#173) ────────────────────────────────────────────────────────────
+
+GB = 10**9
+DESKTOP_12 = FleetNode("n-desk", "ark-desktop", "linux/amd64", 12 * 1024**3)
+SPARK_120 = FleetNode("n-a", "spark-a", "linux/arm64", 120 * GB)
+SPARK_B_120 = FleetNode("n-b", "spark-b", "linux/arm64", 120 * GB)
+
+
+class TestTheMemoryFit:
+    def test_a_model_bigger_than_the_card_will_not_run_and_says_by_how_much(self):
+        found = fit(recipe("llama-cpp"), [DESKTOP_12], [MULTI], need_bytes=39 * GB)
+        assert found.verdict == WONT_RUN
+        assert found.reason == "needs ~39 GB, 13 GB on ark-desktop"
+        # The platforms still said which engines run it.
+        assert found.engines == {"llama-cpp": ["default"]}
+
+    def test_within_ten_percent_is_tight(self):
+        found = fit(recipe("llama-cpp"), [DESKTOP_12], [MULTI], need_bytes=12 * GB)
+        assert found.verdict == recipe_fit.TIGHT
+        assert "of 13 GB on ark-desktop" in found.reason
+
+    def test_room_to_spare_runs(self):
+        assert fit(recipe("llama-cpp"), [DESKTOP_12], [MULTI], 2 * GB).verdict == RUNS
+
+    def test_a_need_nobody_could_size_leaves_the_platform_verdict(self):
+        assert fit(recipe("llama-cpp"), [DESKTOP_12], [MULTI], None).verdict == RUNS
+
+    def test_a_node_whose_memory_is_unknown_is_not_a_verdict(self):
+        assert fit(recipe("llama-cpp"), [DESKTOP], [MULTI], 900 * GB).verdict == RUNS
+
+    def test_a_cluster_recipe_splits_its_need_over_the_nodes_it_takes(self):
+        two = recipe("vllm", min_nodes=2, cluster_only=True)
+        nodes = [SPARK_120, SPARK_B_120]
+        assert fit(two, nodes, [ARM_ONLY], need_bytes=200 * GB).verdict == RUNS
+        over = fit(two, nodes, [ARM_ONLY], need_bytes=300 * GB)
+        assert over.verdict == WONT_RUN
+        assert over.reason == "needs ~150 GB per node, 120 GB on spark-b"
+
+    def test_the_largest_node_decides_a_solo_recipe(self):
+        found = recipe_fit.memory_fit(39 * GB, [DESKTOP_12, SPARK_120])
+        assert found is None
+
+
+class TestTheMemoryIsGatheredInTheBackground:
+    def test_the_first_listing_waits_on_nothing_and_the_next_reads_it(self):
+        import threading
+
+        recipe_fit._cache.clear()
+        release = threading.Event()
+
+        def slow() -> int:
+            release.wait(5)
+            return 7
+
+        assert recipe_fit._cached(("test", "slow"), slow) is None
+        release.set()
+        for _ in range(100):
+            if recipe_fit._cached(("test", "slow"), slow) == 7:
+                break
+            threading.Event().wait(0.01)
+        assert recipe_fit._cached(("test", "slow"), slow) == 7
+        recipe_fit._cache.clear()
+
+    def test_a_failure_is_unknown_not_an_error(self):
+        import threading
+
+        recipe_fit._cache.clear()
+
+        def boom() -> int:
+            raise OSError("no hub")
+
+        recipe_fit._cached(("test", "boom"), boom)
+        for thread in threading.enumerate():
+            if thread.name.startswith("recipe-fit-test"):
+                thread.join(2)
+        assert recipe_fit._cached(("test", "boom"), boom) is None
+        recipe_fit._cache.clear()
+
+    def test_a_listing_carries_the_memory_verdict(self, monkeypatch):
+        # An arm64 node, so the bundled (arm64) engines pass on platform and
+        # memory is what decides.
+        small = FleetNode("n-s", "spark-small", "linux/arm64", 12 * 1024**3)
+        monkeypatch.setattr(recipe_fit, "fleet", lambda: [small])
+        monkeypatch.setattr(recipe_fit, "recipe_need", lambda _r: 900 * GB)
+        listed = TestClient(create_app()).get("/api/recipes").json()
+        assert any(
+            r["fit"]["reason"] == "needs ~900 GB, 13 GB on spark-small" for r in listed
+        )

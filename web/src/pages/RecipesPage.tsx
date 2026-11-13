@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { useI18n } from "@/lib/i18n";
 import { fetchRecipes, fetchRecipe, createDeployment, scheduleDeploy, fetchSettings, fetchRecipeCustomization, saveRecipeCustomization, deleteRecipeCustomization, fetchMods, fetchMod, listCustomRecipes, saveCustomRecipe, deleteCustomRecipe, listCustomMods, getCustomModFiles, saveCustomModFiles, deleteCustomMod, uninstallOciRecipe, ApiError } from "@/lib/api";
-import { wontRunHere } from "@/lib/types";
+import { tightHere, wontRunHere } from "@/lib/types";
 import type { RecipeDetail, RecipeCustomization, RecipeSummary, ModSummary, ModDetail, CustomRecipeInfo, CustomModInfo, ModFileMap, PreflightReport } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
 import { useDeployments } from "@/hooks/useDeployments";
@@ -637,6 +637,7 @@ export default function RecipesPage() {
                         isRunning={runningIds.has(r.id)}
                         isQueued={queuedIds.has(r.id)}
                         clusterBlocked={false}
+                        tight={tightHere(r)}
                         onSelect={() => handleSelect(r)}
                         onReset={() => openResetConfirm(r)}
                       />

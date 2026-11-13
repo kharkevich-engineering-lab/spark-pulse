@@ -347,7 +347,8 @@
     "editCustom": "Modifier la personnalisation",
     "notHere": "Ne tourne pas ici : {reason}",
     "notHereBanner": "Cette recette ne tourne pas sur cette flotte : {reason}. Elle peut être lue, pas déployée.",
-    "queued": "En file"
+    "queued": "En file",
+    "tight": "Juste"
   },
   "registry": {
     "testConnection": "Tester la connexion",

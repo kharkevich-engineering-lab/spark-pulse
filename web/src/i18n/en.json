@@ -347,7 +347,8 @@
     "editCustom": "Edit custom",
     "notHere": "Won't run here: {reason}",
     "notHereBanner": "This recipe won't run on this fleet: {reason}. It can be read, not deployed.",
-    "queued": "Queued"
+    "queued": "Queued",
+    "tight": "Tight fit"
   },
   "registry": {
     "testConnection": "Test connection",
