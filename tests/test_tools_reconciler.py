@@ -173,8 +173,14 @@ class TestSweep:
         _record(status="running")
         rc.mark("d1", rc.SYNC_IN_PROGRESS, "stop requested", rc.INTENT_STOP)
 
+        def _stopped(deployment_id):
+            # What the real stop does before it answers: the run is stopped. A
+            # stop that left it running would be a stopping → running
+            # transition, which the state machine refuses (#205).
+            return tools.deployment_records.update(deployment_id, status="stopped")
+
         with patch.object(
-            tools.deploy_dispatch, "stop_deployment", return_value={"id": "d1"}
+            tools.deploy_dispatch, "stop_deployment", side_effect=_stopped
         ) as stop:
             rc.Reconciler().sweep()
 
