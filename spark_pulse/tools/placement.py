@@ -201,23 +201,40 @@ def _memory_budget(
         seen.add(key)
         label = labels.get(address) or (control_label if not key else address)
         holders = tenants.get(key, [])
-        if not holders:
+        memory: Any = None
+        reason = ""
+        try:
+            memory = tools.node_stats.node_memory(services(address))
+        except Exception as exc:  # noqa: BLE001 — an unanswered node is unknown
+            reason = f"could not ask {label} for its memory: {str(exc)[:200]}"
+        discrete = (
+            memory is not None and memory.model == tools.node_stats.MEMORY_DISCRETE
+        )
+        if not holders and not discrete:
+            # Alone on a unified pool, the engine's own startup check judges,
+            # as before. A discrete card is asked even alone: what holds its
+            # memory is often something no record of ours started.
             budgets.append(
                 memory_budget.budget_for_node(
                     address, key, label, [], None, {}, fraction
                 ).to_dict()
             )
             continue
-        total: int | None = None
-        measured: dict[str, int | None] | None = None
-        reason = ""
-        try:
-            total, measured = tools.node_stats.memory_by_deployment(services(address))
-        except Exception as exc:  # noqa: BLE001 — an unanswered node is unknown
-            reason = f"could not ask {label} for its memory: {str(exc)[:200]}"
         budgets.append(
             memory_budget.budget_for_node(
-                address, key, label, holders, total, measured, fraction, reason=reason
+                address,
+                key,
+                label,
+                holders,
+                memory.total_bytes if memory is not None else None,
+                memory.held if memory is not None else None,
+                fraction,
+                reason=reason,
+                # The host reserve is a unified pool's: a card's VRAM is not
+                # where the kernel and the services live.
+                reserve_bytes=0 if discrete else memory_budget.OS_RESERVE_BYTES,
+                memory_model=memory.model if memory is not None else "",
+                free_bytes=memory.free_bytes if discrete else None,
             ).to_dict()
         )
     return budgets

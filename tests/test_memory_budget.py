@@ -262,8 +262,16 @@ def _record(rid: str, name: str, nodes=None, **extra):
 class FakeNode:
     """A node service answering stats, and counting that it was asked."""
 
-    def __init__(self, total=TOTAL, held=None, fail: Exception | None = None):
+    def __init__(
+        self,
+        total=TOTAL,
+        held=None,
+        fail: Exception | None = None,
+        vram: tuple[int, int] | None = None,
+    ):
         self.total, self.held, self.fail = total, held or {}, fail
+        #: ``(total, free)`` of a discrete card; None is a unified pool.
+        self.vram = vram
         self.asked = 0
 
     def __call__(self, _address):
@@ -274,6 +282,14 @@ class FakeNode:
         if self.fail:
             raise self.fail
         stats = pb.NodeStats(memory=pb.MemoryStat(total_bytes=self.total))
+        if self.vram is not None:
+            stats.gpus.append(
+                pb.GpuStat(
+                    index=0,
+                    memory_total_bytes=self.vram[0],
+                    memory_free_bytes=self.vram[1],
+                )
+            )
         for index, (deployment, used) in enumerate(self.held.items()):
             stats.processes.append(
                 pb.GpuProcess(
@@ -323,13 +339,38 @@ class TestPlannerLedger:
         )
         assert nr._claimed_fraction(engine, "--gpu-memory-utilization 0.5", {}) is None
 
-    def test_an_empty_node_is_not_asked(self):
+    def test_an_empty_unified_node_is_left_to_the_engine(self):
+        """Alone on a Spark's pool, the engine's own startup check judges, as
+        before: the node is asked only to learn what kind of memory it has."""
         node = FakeNode()
 
         budget = nr._memory_budget([], 0.5, "", node)
 
-        assert node.asked == 0
         assert budget[0]["holders"] == [] and budget[0]["total_bytes"] is None
+        assert budget[0]["fits"] is None
+
+    def test_a_discrete_card_is_budgeted_even_alone(self):
+        """A 12 GB card with 3 GB free — somebody else's training job holds the
+        rest, and no record of ours knows it. vLLM at 0.9 would ask for 10.8
+        GB and refuse at startup; the plan says so first (#171)."""
+        node = FakeNode(vram=(12 * GIB, 3 * GIB))
+
+        (entry,) = nr._memory_budget([], 0.9, "", node)
+
+        assert entry["memory_model"] == "discrete"
+        assert entry["total_bytes"] == 12 * GIB
+        assert entry["reserve_bytes"] == 0
+        assert entry["left_bytes"] == 3 * GIB
+        assert entry["max_fraction"] == 0.25
+        assert entry["fits"] is False
+
+    def test_a_discrete_card_takes_no_host_reserve(self):
+        """The 4 GiB host reserve is a unified pool's: the kernel does not
+        live in a card's VRAM."""
+        (entry,) = nr._memory_budget([], 0.9, "", FakeNode(vram=(12 * GIB, 12 * GIB)))
+
+        assert entry["left_bytes"] == 12 * GIB
+        assert entry["fits"] is True
 
     def test_a_fraction_co_tenant_is_budgeted_from_its_record(self):
         nr._save_records([_record("q", "qwen", gpu_memory_utilization=0.8)])

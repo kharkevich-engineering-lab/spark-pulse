@@ -163,6 +163,12 @@ class NodeBudget:
     complete: bool = True
     #: Why the total is unknown, when it is.
     reason: str = ""
+    #: ``unified`` or ``discrete`` (#171), empty when the node was not asked.
+    memory_model: str = ""
+    #: What the node says is free in the pool right now, when it was asked —
+    #: on a discrete card this bounds what is left, because it counts holders
+    #: no record of ours knows about.
+    free_bytes: int | None = None
 
     @property
     def unknown(self) -> list[Holder]:
@@ -185,6 +191,8 @@ def budget_for_node(
     claim_bytes: int | None = None,
     reason: str = "",
     reserve_bytes: int = OS_RESERVE_BYTES,
+    memory_model: str = "",
+    free_bytes: int | None = None,
 ) -> NodeBudget:
     """The budget on one node.
 
@@ -203,6 +211,8 @@ def budget_for_node(
         reserve_bytes=reserve_bytes,
         claim_fraction=claim_fraction,
         reason=reason,
+        memory_model=memory_model,
+        free_bytes=free_bytes,
     )
     total = budget.total_bytes
     for run_id, name, fraction in holders:
@@ -232,6 +242,10 @@ def budget_for_node(
         return budget
 
     left = max(0, total - budget.held_bytes - reserve_bytes)
+    if free_bytes is not None:
+        # What the node measures free bounds what the records leave: a holder
+        # we never started (a training job, a desktop's compositor) is in it.
+        left = min(left, max(0, free_bytes))
     budget.left_bytes = left
     # The epsilon keeps 0.17 from flooring to 0.16 when float division lands
     # on 0.16999…; it is far below anything a fraction can express.
