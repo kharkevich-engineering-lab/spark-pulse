@@ -12,6 +12,7 @@ import DeployOptions, {
   eligibleEngines,
   engineChoices,
   engineLabel,
+  EngineSelect,
   occupancy,
   parseExtraArgs,
   parseFraction,
@@ -342,15 +343,25 @@ describe("DeployOptions", () => {
     return user;
   };
 
+  /** The engine is chosen beside Deploy, not in the folded panel. */
+  const engineOptions = () =>
+    Array.from(screen.getByLabelText("Engine").querySelectorAll("option")).map((o) => o.textContent);
+
   it("offers only the engines the recipe can run", async () => {
+    render(<EngineSelect recipe={V1_RECIPE} value={undefined} onChange={vi.fn()} />);
+    await waitFor(() => expect(engineOptions()).toEqual(["Recipe default", "vllm · 0.1.0"]));
+  });
+
+  it("names the recipe's own engine as the default", async () => {
+    render(<EngineSelect recipe={{ ...V1_RECIPE, engine: "vllm" }} value={undefined} onChange={vi.fn()} />);
+    await waitFor(() => expect(engineOptions()[0]).toBe("vllm (recipe default)"));
+  });
+
+  it("keeps the engine out of the options panel", async () => {
     render(<DeployOptions recipe={V1_RECIPE} value={{}} onChange={vi.fn()} />);
     await open();
-
-    await waitFor(() => expect(screen.getByLabelText("Engine")).toBeInTheDocument());
-    const options = Array.from(
-      screen.getByLabelText("Engine").querySelectorAll("option"),
-    ).map((o) => o.textContent);
-    expect(options).toEqual(["Recipe default", "vllm · 0.1.0"]);
+    await waitFor(() => expect(screen.getByLabelText("Model override")).toBeInTheDocument());
+    expect(screen.queryByLabelText("Engine")).not.toBeInTheDocument();
   });
 
   it("says why an engine is unavailable", async () => {
@@ -363,29 +374,28 @@ describe("DeployOptions", () => {
   });
 
   it("offers both engines for a recipe that declares both", async () => {
-    render(<DeployOptions recipe={DUAL_ENGINE_RECIPE} value={{}} onChange={vi.fn()} />);
-    await open();
-
-    await waitFor(() => expect(screen.getByLabelText("Engine")).toBeInTheDocument());
-    const options = Array.from(screen.getByLabelText("Engine").querySelectorAll("option")).map(
-      (o) => o.textContent,
-    );
-    expect(options).toEqual(["Recipe default", "vllm · 0.1.0", "sglang · 0.1.0"]);
-    expect(screen.queryByTestId("engines-unavailable")).not.toBeInTheDocument();
+    render(<EngineSelect recipe={DUAL_ENGINE_RECIPE} value={undefined} onChange={vi.fn()} />);
+    await waitFor(() => expect(engineOptions()).toHaveLength(3));
+    expect(engineOptions().slice(1)).toEqual(["vllm · 0.1.0", "sglang · 0.1.0"]);
   });
 
-  it("reports the chosen engine and model override", async () => {
+  it("reports the chosen engine", async () => {
     const onChange = vi.fn();
-    render(<DeployOptions recipe={V2_RECIPE} value={{}} onChange={onChange} />);
-    const user = await open();
-
-    await waitFor(() => expect(screen.getByLabelText("Engine")).toBeInTheDocument());
+    render(<EngineSelect recipe={V2_RECIPE} value={undefined} onChange={onChange} />);
+    const user = userEvent.setup();
+    await waitFor(() => expect(engineOptions()).toContain("sglang · 0.1.0"));
     // engine/variant, not the bare engine name: the backend splits on "/",
     // and two variants of one engine are two different images.
     await user.selectOptions(screen.getByLabelText("Engine"), "sglang/default");
-    expect(onChange).toHaveBeenCalledWith({ engine: "sglang/default" });
+    expect(onChange).toHaveBeenCalledWith("sglang/default");
+    await user.selectOptions(screen.getByLabelText("Engine"), "");
+    expect(onChange).toHaveBeenLastCalledWith(undefined);
+  });
 
-    onChange.mockClear();
+  it("reports a model override", async () => {
+    const onChange = vi.fn();
+    render(<DeployOptions recipe={V2_RECIPE} value={{}} onChange={onChange} />);
+    const user = await open();
     await user.type(screen.getByLabelText("Model override"), "o");
     expect(onChange).toHaveBeenLastCalledWith({ model: "o" });
   });
@@ -1132,9 +1142,6 @@ describe("DeployOptions when the form's own lookups fail", () => {
     await user.click(screen.getByRole("button", { name: /deploy options/i }));
 
     await waitFor(() => expect(screen.getByLabelText("Model override")).toBeInTheDocument());
-    // The engine picker keeps its one always-valid option rather than emptying.
-    expect(screen.getByLabelText("Engine")).toHaveValue("");
-    expect(screen.getByRole("option", { name: "Recipe default" })).toBeInTheDocument();
     // No registry means no topology to choose, which is what solo already is.
     expect(screen.queryByTestId("deploy-nodes")).not.toBeInTheDocument();
 
@@ -1145,6 +1152,14 @@ describe("DeployOptions when the form's own lookups fail", () => {
   /** Unticking the last peer has to clear `nodes` entirely, not leave `[]`
    *  or a one-element list behind: a solo deploy is the one that sends no
    *  nodes at all, and anything else is planned as a cluster of one. */
+  it("keeps the engine picker's one always-valid option when engines cannot be read", async () => {
+    vi.mocked(fetchEngines).mockRejectedValue(new Error("engines are down"));
+    render(<EngineSelect recipe={V1_RECIPE} value={undefined} onChange={vi.fn()} />);
+    await waitFor(() => expect(fetchEngines).toHaveBeenCalled());
+    expect(screen.getByLabelText("Engine")).toHaveValue("");
+    expect(screen.getByRole("option", { name: "Recipe default" })).toBeInTheDocument();
+  });
+
   it("returns to a solo deployment when the last peer is unticked", async () => {
     vi.mocked(fetchEngines).mockResolvedValue({ engines: [engine("vllm")] } as never);
     vi.mocked(fetchModels).mockResolvedValue([] as never);

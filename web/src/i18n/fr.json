@@ -45,7 +45,8 @@
     "in_sync": "Synchronisé",
     "in_progress": "Modification en cours",
     "deleting": "Suppression",
-    "unverified": "Non vérifié"
+    "unverified": "Non vérifié",
+    "stopping": "Arrêt…"
   },
   "nodeState": {
     "ok": "Opérationnel",
@@ -285,7 +286,7 @@
     "downloadAndDeploy": "Télécharger et déployer",
     "downloadFailed": "Impossible de démarrer le téléchargement",
     "downloadStarted": "Téléchargement démarré",
-    "downloadStartedBody": "{model} est en cours de téléchargement. {name} se déploiera de lui-même à la fin — il apparaît déjà dans Exécutions, avec la progression du téléchargement.",
+    "downloadStartedBody": "{model} est en cours de téléchargement. « {name} » se déploiera tout seul une fois terminé — suivez la progression sur la page Modèles, où vous pouvez aussi l'annuler.",
     "managedRecipe": "Recette gérée — suppression impossible",
     "missingModelTitle": "Ce modèle n'est pas encore téléchargé",
     "newMod": "Nouveau mod",
@@ -311,7 +312,6 @@
     "toggleCustom": "Basculer le mode personnalisé",
     "uninstallBody": "{name} est retiré du disque. Réinstallez-le depuis la page Registre OCI si besoin.",
     "uninstallFailed": "Désinstallation de {name} impossible",
-    "uninstallRecipe": "Désinstaller {name}",
     "uninstallRecipeTitle": "Désinstaller cette recette",
     "heading": "Recettes et mods.",
     "deploy": "Déployer",
@@ -333,14 +333,15 @@
       "one": "Masquer {count} recette qui ne tourne pas ici",
       "other": "Masquer {count} recettes qui ne tournent pas ici"
     },
-    "nothingRunsHere": "Rien dans ce catalogue ne tourne encore sur cette flotte. Les recettes ci-dessous disent pourquoi ; un moteur publié pour cette plateforme, ou une recette pour un moteur qui l'est, y remédie."
+    "nothingRunsHere": "Rien dans ce catalogue ne tourne encore sur cette flotte. Les recettes ci-dessous disent pourquoi ; un moteur publié pour cette plateforme, ou une recette pour un moteur qui l'est, y remédie.",
+    "uninstall": "Désinstaller"
   },
   "recipeCard": {
     "running": "En cours",
     "clusterOnly": "Grappe uniquement",
     "resetToOriginal": "Rétablir l'original",
     "clusterRequired": "Cette recette nécessite le mode grappe.",
-    "solo": "Seul",
+    "solo": "Nœud unique",
     "cluster": "Grappe",
     "custom": "Personnalisée",
     "editCustom": "Modifier la personnalisation",
@@ -574,7 +575,6 @@
     "parseFailed": "Échec de l'analyse du YAML"
   },
   "deployOptions": {
-    "recipeDefault": "Valeur par défaut de la recette",
     "extraArgsPlaceholder": "--enable-prefix-caching --max-num-seqs 16",
     "extraArgsNote": "Ajouté à la commande du moteur, entre guillemets.",
     "parallelism": "Parallélisme",
@@ -627,7 +627,9 @@
     "networkHost": "réseau hôte",
     "ipcHost": "IPC hôte",
     "shm": "shm {gb} Go",
-    "notForThisFleet": "aucune image pour la plateforme de cette flotte"
+    "notForThisFleet": "aucune image pour la plateforme de cette flotte",
+    "recipeDefaultEngine": "{engine} (par défaut de la recette)",
+    "recipeDefault": "Valeur par défaut de la recette"
   },
   "newRecipe": {
     "validationFailed": "Échec de la validation",
@@ -1039,6 +1041,8 @@
         "ancientRome": "la Rome antique"
       }
     },
+    "pullingImage": "Téléchargement de l'image du moteur : {percent} % ({done} sur {total})",
+    "pullProgressLabel": "Téléchargement de l'image de {name}",
     "benchmarkMeasuring": "mesure…"
   },
   "library": {
@@ -1086,7 +1090,9 @@
     "whereOnly": "{node} seulement",
     "wherePartial": "partiel sur {node}",
     "wherePartialTitle": "Un nœud n'a qu'une partie de l'instantané. Répliquez-le à nouveau.",
-    "whereUnknown": "non vérifié"
+    "whereUnknown": "non vérifié",
+    "whereDownloading": "téléchargement {percent} %",
+    "whereDownloadingUnknown": "téléchargement"
   },
   "fleet": {
     "nodes": {

@@ -1,6 +1,6 @@
 /** RecipeCard: what an operator can tell about a recipe without opening it.
  *
- * The badges are a routing decision, not decoration. "Solo"/"Cluster" says
+ * The badges are a routing decision, not decoration. "Single node"/"Cluster" says
  * whether this install can run it at all, the engine list says what it will
  * run on, and "Custom" says the recipe on disk is no longer the one that
  * shipped. Getting the engine list from `engine_support` rather than from
@@ -34,14 +34,38 @@ const recipe = (over: Partial<RecipeSummary> = {}): RecipeSummary => ({
 });
 
 describe("RecipeCard", () => {
-  it("names the recipe, its description and its container", () => {
+  it("names the recipe and its description, and no image tag", () => {
     render(
       <RecipeCard r={recipe()} isRunning={false} clusterBlocked={false} onSelect={vi.fn()} />,
     );
 
     expect(screen.getByText("Qwen3-8B")).toBeInTheDocument();
     expect(screen.getByText("A small instruct model.")).toBeInTheDocument();
-    expect(screen.getByText("vllm-node")).toBeInTheDocument();
+    // The image is the drawer's detail; the card says the engine.
+    expect(screen.queryByText("vllm-node")).toBeNull();
+  });
+
+  /** The lab: Solo and Cluster landed wherever the wrap put them, and a
+   *  llama.cpp recipe read "vllm-node" with no engine at all. */
+  it("puts the source and the engines on line one, how it runs on line two", () => {
+    render(
+      <RecipeCard
+        r={recipe({
+          id: "oci-gguf",
+          source: "oci",
+          engine_support: [{ engine: "llama-cpp", supported: true, reason: "", enabled: true }],
+        })}
+        isRunning={false}
+        clusterBlocked={false}
+        onSelect={vi.fn()}
+      />,
+    );
+
+    const one = screen.getByTestId("recipe-line1-oci-gguf");
+    expect(one).toHaveTextContent("oci");
+    expect(one).toHaveTextContent("llama-cpp");
+    expect(one).not.toHaveTextContent("Single node");
+    expect(screen.getByTestId("recipe-line2-oci-gguf")).toHaveTextContent("Single node");
   });
 
   it("falls back to the model when a recipe carries no description", () => {
@@ -93,7 +117,7 @@ describe("RecipeCard", () => {
     render(
       <RecipeCard r={recipe()} isRunning={false} clusterBlocked={false} onSelect={vi.fn()} />,
     );
-    expect(screen.getByText("Solo")).toBeInTheDocument();
+    expect(screen.getByText("Single node")).toBeInTheDocument();
     expect(screen.getByText("Cluster")).toBeInTheDocument();
   });
 
@@ -106,7 +130,7 @@ describe("RecipeCard", () => {
         onSelect={vi.fn()}
       />,
     );
-    expect(screen.getByText("Solo")).toBeInTheDocument();
+    expect(screen.getByText("Single node")).toBeInTheDocument();
     expect(screen.queryByText("Cluster")).not.toBeInTheDocument();
   });
 
@@ -220,20 +244,13 @@ describe("RecipeCard", () => {
   /** An OCI-installed recipe is the one source an operator can actually
    *  remove from here — everywhere else, removal used to mean a trip to the
    *  separate OCI Registry page. */
-  it("offers to uninstall an OCI-installed recipe", () => {
-    const onUninstall = vi.fn();
+  /** Uninstall moved into the recipe's details, at the bottom: the card is
+   *  only a way in. */
+  it("offers no uninstall on the card, even for an OCI-installed recipe", () => {
     render(
-      <RecipeCard
-        r={recipe({ source: "oci", name: "Qwen3-32B" })}
-        isRunning={false}
-        clusterBlocked={false}
-        onSelect={vi.fn()}
-        onUninstall={onUninstall}
-      />,
+      <RecipeCard r={recipe({ source: "oci", name: "Qwen3-32B" })} isRunning={false} clusterBlocked={false} onSelect={vi.fn()} />,
     );
-
-    fireEvent.click(screen.getByRole("button", { name: "Uninstall Qwen3-32B" }));
-    expect(onUninstall).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: /Uninstall/ })).toBeNull();
   });
 
   /** A bundled recipe has nothing here to remove; the tooltip says so is

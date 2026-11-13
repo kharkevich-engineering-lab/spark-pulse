@@ -66,8 +66,19 @@ export interface StatusBadgeProps {
   sync?: string;
   /** Why it has not settled, shown on hover. */
   syncReason?: string;
+  /** How far the state's work has got, 0–100, shown beside the label
+   *  ("Pulling… 45%"). Absent while unknown. */
+  progress?: number;
+  /** What an in-progress change is: `stop` reads "Stopping…" rather than the
+   *  generic "In progress", which said nothing about what was happening. */
+  syncIntent?: string;
   className?: string;
 }
+
+/** The label for a change in flight, by what it is. */
+const INTENT_KEY: Record<string, string> = {
+  stop: "status.stopping",
+};
 
 function Dot({ pulse }: { pulse: boolean }) {
   return (
@@ -78,7 +89,7 @@ function Dot({ pulse }: { pulse: boolean }) {
   );
 }
 
-export function StatusBadge({ status, sync, syncReason, className }: StatusBadgeProps) {
+export function StatusBadge({ status, sync, syncReason, syncIntent, progress, className }: StatusBadgeProps) {
   const t = useT();
   const key = status.toLowerCase();
   const tone = STATUS_TONE[key];
@@ -87,6 +98,24 @@ export function StatusBadge({ status, sync, syncReason, className }: StatusBadge
   // "Quiescing".
   const label = tone ? t(`status.${key}`) : status.charAt(0).toUpperCase() + status.slice(1);
   const converging = sync ? SYNC_TONE[sync] : undefined;
+  const intentKey = sync === "in_progress" && syncIntent ? INTENT_KEY[syncIntent] : undefined;
+
+  // A change that names itself says the lifecycle too: "Stopping…" is a run
+  // that is still up, so "Running" beside it is the same fact twice.
+  if (intentKey) {
+    return (
+      <span className={cn("inline-flex items-center gap-2 flex-wrap", className)}>
+        <span
+          title={syncReason || undefined}
+          data-testid={`sync-${sync}`}
+          className={cn("inline-flex items-center gap-1.5 text-[13px] font-medium", TONE_TEXT.warn)}
+        >
+          <Dot pulse={true} />
+          {t(intentKey)}
+        </span>
+      </span>
+    );
+  }
 
   return (
     <span className={cn("inline-flex items-center gap-2 flex-wrap", className)}>
@@ -96,8 +125,8 @@ export function StatusBadge({ status, sync, syncReason, className }: StatusBadge
           TONE_TEXT[tone ?? "muted"],
         )}
       >
-        <Dot pulse={key === "running"} />
-        {label}
+        <Dot pulse={key === "running" || progress != null} />
+        {progress != null ? `${label}… ${Math.floor(progress)}%` : label}
       </span>
       {converging && (
         <span

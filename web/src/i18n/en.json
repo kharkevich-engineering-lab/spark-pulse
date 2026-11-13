@@ -45,7 +45,8 @@
     "in_sync": "In sync",
     "in_progress": "In progress",
     "deleting": "Deleting",
-    "unverified": "Unverified"
+    "unverified": "Unverified",
+    "stopping": "Stopping…"
   },
   "nodeState": {
     "ok": "Healthy",
@@ -285,7 +286,7 @@
     "downloadAndDeploy": "Download and deploy",
     "downloadFailed": "Could not start the download",
     "downloadStarted": "Download started",
-    "downloadStartedBody": "{model} is downloading. {name} will deploy on its own when it finishes — it is on Runs now, with the download's progress.",
+    "downloadStartedBody": "{model} is downloading. \"{name}\" will deploy on its own when it finishes — follow the progress on the Models page, where you can also call it off.",
     "managedRecipe": "Managed recipe — cannot be deleted",
     "missingModelTitle": "This model is not downloaded yet",
     "newMod": "New mod",
@@ -311,7 +312,6 @@
     "toggleCustom": "Toggle custom mode",
     "uninstallBody": "{name} is removed from disk. Reinstall it from the OCI Registry page if you need it again.",
     "uninstallFailed": "Could not uninstall {name}",
-    "uninstallRecipe": "Uninstall {name}",
     "uninstallRecipeTitle": "Uninstall this recipe",
     "heading": "Recipes and mods.",
     "deploy": "Deploy",
@@ -333,14 +333,15 @@
       "one": "Hide {count} recipe that doesn't run here",
       "other": "Hide {count} recipes that don't run here"
     },
-    "nothingRunsHere": "Nothing in this catalogue runs on this fleet yet. The recipes below say why; an engine published for this platform, or a recipe for one that is, changes that."
+    "nothingRunsHere": "Nothing in this catalogue runs on this fleet yet. The recipes below say why; an engine published for this platform, or a recipe for one that is, changes that.",
+    "uninstall": "Uninstall"
   },
   "recipeCard": {
     "running": "Running",
     "clusterOnly": "Cluster only",
     "resetToOriginal": "Reset to original",
     "clusterRequired": "This recipe requires cluster mode.",
-    "solo": "Solo",
+    "solo": "Single node",
     "cluster": "Cluster",
     "custom": "Custom",
     "editCustom": "Edit custom",
@@ -574,7 +575,6 @@
     "parseFailed": "Failed to parse YAML"
   },
   "deployOptions": {
-    "recipeDefault": "Recipe default",
     "extraArgsPlaceholder": "--enable-prefix-caching --max-num-seqs 16",
     "extraArgsNote": "Appended to the engine command, quoted.",
     "parallelism": "Parallelism",
@@ -627,7 +627,9 @@
     "networkHost": "network host",
     "ipcHost": "ipc host",
     "shm": "shm {gb}g",
-    "notForThisFleet": "no image for this fleet's platform"
+    "notForThisFleet": "no image for this fleet's platform",
+    "recipeDefaultEngine": "{engine} (recipe default)",
+    "recipeDefault": "Recipe default"
   },
   "newRecipe": {
     "validationFailed": "Validation failed",
@@ -1039,6 +1041,8 @@
         "ancientRome": "ancient Rome"
       }
     },
+    "pullingImage": "Pulling the engine image: {percent}% ({done} of {total})",
+    "pullProgressLabel": "{name} image pull",
     "benchmarkMeasuring": "measuring…"
   },
   "library": {
@@ -1086,7 +1090,9 @@
     "whereOnly": "{node} only",
     "wherePartial": "partial on {node}",
     "wherePartialTitle": "A node holds part of the snapshot. Replicate it again.",
-    "whereUnknown": "not checked"
+    "whereUnknown": "not checked",
+    "whereDownloading": "downloading {percent}%",
+    "whereDownloadingUnknown": "downloading"
   },
   "fleet": {
     "nodes": {

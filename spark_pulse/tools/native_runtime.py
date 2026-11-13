@@ -2180,6 +2180,24 @@ def pull_is_final(exc: Exception) -> bool:
     return any(marker in text for marker in _NO_PLATFORM_MARKERS)
 
 
+def pull_progress_message(ref: str, snapshot: dict[str, Any]) -> str:
+    """One progress line for the run's timeline: a whole percentage and how
+    much has moved, not the raw float the pull reports (``49.12233720868858%``).
+    """
+    try:
+        percent = float(snapshot.get("percent") or 0)
+    except (TypeError, ValueError):
+        percent = 0.0
+    done = int(snapshot.get("bytes_done") or 0)
+    total = int(snapshot.get("bytes_total") or 0)
+    moved = (
+        f" ({done / 1e9:.1f} of {total / 1e9:.1f} GB)"
+        if total
+        else (f" ({done / 1e9:.1f} GB)" if done else "")
+    )
+    return f"pulling {ref}: {int(percent)}%{moved}"
+
+
 def _bytes_transferred(snapshot: dict[str, Any]) -> str:
     """How far the pull got, from the last progress snapshot we saw.
 
@@ -2373,7 +2391,7 @@ def _pull_image_if_missing(docker: Any, plan_obj: DeployPlan, node: str = "") ->
         publish_event(
             EventType.IMAGE_PULL_PROGRESS,
             dep_id,
-            f"pulling {ref}: {snapshot.get('percent', 0)}%",
+            pull_progress_message(ref, snapshot),
             {"image_ref": ref, "node": where, **snapshot},
         )
 

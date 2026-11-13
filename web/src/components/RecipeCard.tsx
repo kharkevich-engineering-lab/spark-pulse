@@ -1,6 +1,6 @@
 /** Recipe card — uses BaseCard with recipe-specific badges and actions. */
 
-import { Ban, Box, Cpu, Layers, Network, Package, RotateCcw, Zap } from "lucide-react";
+import { Ban, Cpu, Layers, Network, Package, RotateCcw, Zap } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import BaseCard from "./BaseCard";
 import ServesChip from "./ServesChip";
@@ -14,7 +14,7 @@ function usableEngines(r: RecipeSummary): string[] {
   return r.engines ?? [];
 }
 
-export default function RecipeCard({ r, isRunning, isQueued, clusterBlocked, notHere, onSelect, onReset, onUninstall }: {
+export default function RecipeCard({ r, isRunning, isQueued, clusterBlocked, notHere, onSelect, onReset }: {
   r: RecipeSummary;
   isRunning: boolean;
   /** A deploy of it is waiting on its model download (Runs shows it). */
@@ -25,56 +25,57 @@ export default function RecipeCard({ r, isRunning, isQueued, clusterBlocked, not
   notHere?: string;
   onSelect: () => void;
   onReset?: () => void;
-  /** Uninstalls an OCI-installed recipe. Only ever passed for `source ===
-   *  "oci"` — a bundled recipe has nothing this can remove. */
-  onUninstall?: () => void;
 }) {
   const { t } = useI18n();
   const engines = usableEngines(r);
-  const isOci = r.source === "oci";
   /** Shipped with the package, so the operator cannot edit the file behind it.
    *  `unknown` — an id no source claims — is not managed: nothing here knows
    *  where it came from, and claiming otherwise would be a guess. */
   const isManaged = r.source === "bundled";
+  // Two lines, always: what it is and what runs it, then how it runs. The
+  // wrapping row put Solo and Cluster wherever they happened to fit.
   const badges = (
     <>
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-tag-bg text-text-muted">
-        <Box size={12} />{r.container}
-      </span>
-      {r.source && r.source !== "unknown" && (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-tag-bg text-text-muted">
-          <Package size={11} />{r.source}
-        </span>
-      )}
-      <ServesChip serves={r.serves} />
-      {engines.length > 1 && (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-success/15 text-success">
-          <Layers size={11} />{engines.join(" · ")}
-        </span>
-      )}
-      {(r.solo_only || (!r.solo_only && !r.cluster_only)) && (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-primary/20 text-blue2">
-          <Cpu size={11} />{t("recipeCard.solo")}
-        </span>
-      )}
-      {(r.cluster_only || (!r.solo_only && !r.cluster_only)) && (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-warning/20 text-warning">
-          <Network size={11} />{t("recipeCard.cluster")}
-        </span>
-      )}
-      {r.is_customized && (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-amber/20 text-amber">
-          <Zap size={11} />{t("recipeCard.custom")}
-        </span>
-      )}
-      {notHere && (
-        <span
-          data-testid={`not-here-${r.id}`}
-          className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-tag-bg text-text-muted"
-        >
-          <Ban size={11} />{t("recipeCard.notHere", { reason: notHere })}
-        </span>
-      )}
+      <div className="flex w-full flex-wrap gap-1.5" data-testid={`recipe-line1-${r.id}`}>
+        {r.source && r.source !== "unknown" && (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-tag-bg text-text-muted">
+            <Package size={11} />{r.source}
+          </span>
+        )}
+        {/* Which engines can run it, one or several: a single-engine recipe
+            (the llama.cpp one) used to say nothing at all. */}
+        {engines.length > 0 && (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-success/15 text-success">
+            <Layers size={11} />{engines.join(" · ")}
+          </span>
+        )}
+      </div>
+      <div className="flex w-full flex-wrap gap-1.5" data-testid={`recipe-line2-${r.id}`}>
+        {(r.solo_only || (!r.solo_only && !r.cluster_only)) && (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-primary/20 text-blue2">
+            <Cpu size={11} />{t("recipeCard.solo")}
+          </span>
+        )}
+        {(r.cluster_only || (!r.solo_only && !r.cluster_only)) && (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-warning/20 text-warning">
+            <Network size={11} />{t("recipeCard.cluster")}
+          </span>
+        )}
+        <ServesChip serves={r.serves} />
+        {r.is_customized && (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-amber/20 text-amber">
+            <Zap size={11} />{t("recipeCard.custom")}
+          </span>
+        )}
+        {notHere && (
+          <span
+            data-testid={`not-here-${r.id}`}
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-tag-bg text-text-muted"
+          >
+            <Ban size={11} />{t("recipeCard.notHere", { reason: notHere })}
+          </span>
+        )}
+      </div>
     </>
   );
 
@@ -105,8 +106,6 @@ export default function RecipeCard({ r, isRunning, isQueued, clusterBlocked, not
       onClick={onSelect}
       disabled={clusterBlocked}
       dimmed={Boolean(notHere)}
-      onDelete={isOci ? onUninstall : undefined}
-      deleteLabel={isOci ? t("recipes.uninstallRecipe", { name: r.name }) : undefined}
       hint={isManaged ? t("recipes.managedRecipe") : undefined}
     />
   );

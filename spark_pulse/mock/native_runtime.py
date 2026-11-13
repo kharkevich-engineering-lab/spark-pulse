@@ -38,6 +38,7 @@ from spark_pulse.tools.native_runtime import (
     pull_is_final as pull_is_final,
     probe_ready as probe_ready,
     pull_is_active as pull_is_active,
+    pull_progress_message as pull_progress_message,
     publish_event as publish_event,
     rank_container_name as rank_container_name,
     rank_entries as rank_entries,

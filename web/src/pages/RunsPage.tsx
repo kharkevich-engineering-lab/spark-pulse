@@ -29,7 +29,7 @@ import {
   stopDeployment,
   connectLogStream,
 } from "@/lib/api";
-import { eventFromFrame, mergeEvents } from "@/lib/operations";
+import { eventFromFrame, mergeEvents, latestPullProgress } from "@/lib/operations";
 import type { DeploymentEvent } from "@/lib/operations";
 import { useQuery } from "@/hooks/useQuery";
 import { useDeployments, isLiveRun } from "@/hooks/useDeployments";
@@ -117,6 +117,7 @@ export default function RunsPage({ initialTab }: RunsPageProps = {}) {
   }, [benchmarks]);
 
   const live = useMemo(() => (deployments ?? []).filter(isLiveRun), [deployments]);
+  const pulls = useMemo(() => latestPullProgress(events), [events]);
   // Deploys waiting on their model: not runs yet, but the thing the operator
   // just started, so they are counted and shown with what is live.
   const { waiting, refetch: refetchWaiting } = useWaitingDeploys();
@@ -429,6 +430,7 @@ export default function RunsPage({ initialTab }: RunsPageProps = {}) {
             key={run.id}
             run={run}
             benchmark={latestBenchmark.get(run.id)}
+            pull={run.status === "pulling" ? pulls.get(run.id) : undefined}
             expanded={expandedId === run.id}
             onToggle={() => toggle(run.id)}
             onTeardown={() => setTeardownTarget(run)}

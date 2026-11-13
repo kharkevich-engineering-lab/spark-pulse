@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useI18n } from "@/lib/i18n";
 import RecipeForm from "./RecipeForm";
-import DeployOptions, { deployParams, type DeployOptionsValue } from "./DeployOptions";
+import DeployOptions, { EngineSelect, deployParams, type DeployOptionsValue } from "./DeployOptions";
 import { Button, ConfirmModal } from "@/ui";
 import { X } from "lucide-react";
 import SlideDrawer from "./SlideDrawer";
@@ -11,7 +11,7 @@ import ServesChip from "./ServesChip";
 import type { RecipeDetail, RecipeCustomization, RecipeFormRef } from "@/lib/types";
 import { wontRunHere } from "@/lib/types";
 
-export default function RecipeDrawer({ recipe, customization, isRunning, clusterAvailable, onClose, onError, onDeploy, onSaveCustomization, onReset }: {
+export default function RecipeDrawer({ recipe, customization, isRunning, clusterAvailable, onClose, onError, onDeploy, onSaveCustomization, onReset, onUninstall }: {
   recipe: RecipeDetail;
   customization: RecipeCustomization;
   isRunning: boolean;
@@ -22,6 +22,8 @@ export default function RecipeDrawer({ recipe, customization, isRunning, cluster
   onDeploy?: (name: string, params: Record<string, unknown>, options?: DeployOptionsValue) => Promise<void>;
   onSaveCustomization?: (fields: Partial<RecipeCustomization>) => void;
   onReset?: () => void | Promise<void>;
+  /** Uninstalls a recipe installed from a collection; only passed for one. */
+  onUninstall?: () => void;
 }) {
   const { t } = useI18n();
   const formRef = useRef<RecipeFormRef>(null);
@@ -82,52 +84,60 @@ export default function RecipeDrawer({ recipe, customization, isRunning, cluster
         </div>
       }
       actions={
+        <button type="button" onClick={onClose} className="p-1.5 rounded-md hover:bg-surface-hover transition-colors" aria-label={t("common.close")}>
+          <X size={18} />
+        </button>
+      }
+      footer={
         <>
-          {/* Not editing: Deploy + Customize */}
-          {!isEditing && (
-            <>
-              {onDeploy && (
-                <Button
-                  size="sm"
-                  variant="primary"
-                  onClick={handleDeploy}
-                  disabled={deploying || isRunning || clusterBlocked || Boolean(notHere)}
-                  title={notHere ? t("recipeCard.notHere", { reason: notHere }) : undefined}
-                >
-                  {deploying ? "…" : t("recipes.deploy")}
-                </Button>
-              )}
-              {onSaveCustomization && !hasCustomization && (
-                <Button size="sm" onClick={() => setIsEditing(true)} disabled={isRunning || clusterBlocked}>
-                  {t("common.customize")}
-                </Button>
-              )}
-              {onSaveCustomization && hasCustomization && (
-                <Button size="sm" onClick={() => setIsEditing(true)} disabled={isRunning || clusterBlocked}>
-                  {t("recipeCard.editCustom")}
-                </Button>
-              )}
-            </>
+          {/* Removing it is the one action that is not about using it: on
+              its own at the left, away from Deploy. */}
+          {!isEditing && onUninstall && (
+            <Button size="sm" variant="danger" onClick={onUninstall}>
+              {t("recipes.uninstall")}
+            </Button>
           )}
-          {/* Editing: Save + Reset */}
-          {isEditing && (
-            <>
-              <Button size="sm" variant="primary" onClick={() => formRef.current?.save()}>
-                {t("common.save")}
-              </Button>
-              {/* Ghost, not a colour of its own: `cn` is clsx, so a `text-warn`
-                  here would sit beside `Button`'s own `text-text` and the
-                  stylesheet's order would decide which won. */}
-              {hasCustomization && onSaveCustomization && (
-                <Button size="sm" onClick={() => setResetConfirm(true)}>
-                  {t("common.reset")}
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            {/* Not editing: Customize + Deploy, the primary action last */}
+            {!isEditing && (
+              <>
+                {onSaveCustomization && !hasCustomization && (
+                  <Button size="sm" onClick={() => setIsEditing(true)} disabled={isRunning || clusterBlocked}>
+                    {t("common.customize")}
+                  </Button>
+                )}
+                {onSaveCustomization && hasCustomization && (
+                  <Button size="sm" onClick={() => setIsEditing(true)} disabled={isRunning || clusterBlocked}>
+                    {t("recipeCard.editCustom")}
+                  </Button>
+                )}
+                {onDeploy && (
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    onClick={handleDeploy}
+                    disabled={deploying || isRunning || clusterBlocked || Boolean(notHere)}
+                    title={notHere ? t("recipeCard.notHere", { reason: notHere }) : undefined}
+                  >
+                    {deploying ? "…" : t("recipes.deploy")}
+                  </Button>
+                )}
+              </>
+            )}
+            {/* Editing: Reset + Save */}
+            {isEditing && (
+              <>
+                {hasCustomization && onSaveCustomization && (
+                  <Button size="sm" onClick={() => setResetConfirm(true)}>
+                    {t("common.reset")}
+                  </Button>
+                )}
+                <Button size="sm" variant="primary" onClick={() => formRef.current?.save()}>
+                  {t("common.save")}
                 </Button>
-              )}
-            </>
-          )}
-          <button type="button" onClick={onClose} className="p-1.5 rounded-md hover:bg-surface-hover transition-colors">
-            <X size={18} />
-          </button>
+              </>
+            )}
+          </div>
         </>
       }
     >
@@ -157,6 +167,15 @@ export default function RecipeDrawer({ recipe, customization, isRunning, cluster
         isRunning={isRunning}
         clusterBlocked={clusterBlocked}
         isEditing={isEditing}
+        engineField={
+          onDeploy && !isEditing ? (
+            <EngineSelect
+              recipe={recipe}
+              value={deployOptions.engine}
+              onChange={(engine) => setDeployOptions({ ...deployOptions, engine })}
+            />
+          ) : undefined
+        }
       />
 
       {/* Reset confirmation modal — rendered inside drawer, below content */}
