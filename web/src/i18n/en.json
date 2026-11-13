@@ -45,7 +45,8 @@
     "in_sync": "In sync",
     "in_progress": "In progress",
     "deleting": "Deleting",
-    "unverified": "Unverified"
+    "unverified": "Unverified",
+    "stopping": "Stopping…"
   },
   "nodeState": {
     "ok": "Healthy",
