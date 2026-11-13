@@ -216,7 +216,7 @@ def fit(
 # ── The fleet and the engines, as they are now ──────────────────────────────
 
 
-def fleet() -> list[FleetNode]:
+def fleet(with_memory: bool = False) -> list[FleetNode]:
     """The nodes a run could use, with each one's reported platform.
 
     Every registered node not marked ``dead`` — the rule the Settings cluster
@@ -249,7 +249,11 @@ def fleet() -> list[FleetNode]:
                 node.id,
                 node.name or node.id,
                 platform,
-                node_capacity(node.id, node.address, node.is_control_plane),
+                (
+                    node_capacity(node.id, node.address, node.is_control_plane)
+                    if with_memory
+                    else None
+                ),
             )
         )
     if not any(n for n in nodes if n.is_control_plane):
@@ -328,7 +332,10 @@ def variants() -> list[Variant]:
 
 def annotate(recipes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Each recipe with its ``fit``, the fleet and the engines read once."""
-    nodes = fleet()
+    # Memory only here: the listing is what judges memory, and every other
+    # caller (the plan's platform check, the pre-flight's image sizing) asks
+    # about the nodes a run targets — a solo run must not reach a peer.
+    nodes = fleet(with_memory=True)
     specs = variants()
     return [
         {**r, "fit": fit(r, nodes, specs, recipe_need(r)).to_dict()} for r in recipes

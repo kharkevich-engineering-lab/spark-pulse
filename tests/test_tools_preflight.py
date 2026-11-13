@@ -554,7 +554,7 @@ def _fleet(monkeypatch, platforms: dict[str, str]) -> None:
     monkeypatch.setattr(
         tools.recipe_fit,
         "fleet",
-        lambda: [FleetNode(i, i, p) for i, p in platforms.items()],
+        lambda **_kw: [FleetNode(i, i, p) for i, p in platforms.items()],
     )
 
 

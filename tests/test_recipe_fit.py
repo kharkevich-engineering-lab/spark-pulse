@@ -134,7 +134,7 @@ class TestTheApi:
         assert all(r["fit"]["verdict"] in (RUNS, UNKNOWN, WONT_RUN) for r in listed)
 
     def test_a_fleet_no_image_serves_is_told_which_recipes_do_not_run(self):
-        with patch.object(recipe_fit, "fleet", lambda: [UNSERVED]):
+        with patch.object(recipe_fit, "fleet", lambda **_kw: [UNSERVED]):
             listed = TestClient(create_app()).get("/api/recipes").json()
         wont = [r for r in listed if r["fit"]["verdict"] == WONT_RUN]
         assert wont, "no engine is published for riscv64"
@@ -228,7 +228,7 @@ class TestTheMemoryIsGatheredInTheBackground:
         # An arm64 node, so the bundled (arm64) engines pass on platform and
         # memory is what decides.
         small = FleetNode("n-s", "spark-small", "linux/arm64", 12 * 1024**3)
-        monkeypatch.setattr(recipe_fit, "fleet", lambda: [small])
+        monkeypatch.setattr(recipe_fit, "fleet", lambda **_kw: [small])
         monkeypatch.setattr(recipe_fit, "recipe_need", lambda _r: 900 * GB)
         listed = TestClient(create_app()).get("/api/recipes").json()
         assert any(
