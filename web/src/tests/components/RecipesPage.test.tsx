@@ -42,6 +42,8 @@ vi.mock("@/lib/api", async () => {
     fetchDeployments: vi.fn(),
     createDeployment: vi.fn(),
     scheduleDeploy: vi.fn(),
+    fetchScheduledDeploys: vi.fn(() => Promise.resolve([])),
+    fetchModelDownloads: vi.fn(() => Promise.resolve([])),
     fetchSettings: vi.fn(),
     fetchRecipeCustomization: vi.fn(),
     saveRecipeCustomization: vi.fn(),
@@ -79,6 +81,7 @@ vi.mock("@/components/LazyCodeEditor", () => ({
 import {
   ApiError,
   createDeployment,
+  fetchScheduledDeploys,
   scheduleDeploy,
   deleteCustomMod,
   deleteCustomRecipe,
@@ -322,6 +325,22 @@ describe("RecipesPage", () => {
 
       await userEvent.click(screen.getByRole("button", { name: /Hide 1 recipe that doesn't run here/ }));
       expect(screen.queryByText("Big Mesh")).not.toBeInTheDocument();
+    });
+
+    /** "Download and deploy" used to leave the card looking untouched while
+     *  the model downloaded and the deploy waited behind it. */
+    it("marks a recipe whose deploy is waiting on its model as queued", async () => {
+      vi.mocked(fetchRecipes).mockResolvedValue([SOLO]);
+      vi.mocked(fetchScheduledDeploys).mockResolvedValue([
+        {
+          id: "s-1", model: "m", download_job_id: "j", status: "waiting", name: "n",
+          recipe_id: SOLO.id, request: {}, deployment_id: "", error: "", created_at: "", finished_at: "",
+        },
+      ] as never);
+      renderPage();
+
+      expect(await screen.findByTestId(`queued-${SOLO.id}`)).toHaveTextContent("Queued");
+      vi.mocked(fetchScheduledDeploys).mockResolvedValue([]);
     });
 
     /** The x86 lab: every bundled engine image is arm64-only (#172). */

@@ -46,6 +46,9 @@ import EventStreamViewer from "@/components/EventStreamViewer";
 import RankList from "@/components/RankList";
 import EngineMetricsPanel from "@/components/EngineMetrics";
 import RunRow from "@/components/RunRow";
+import WaitingRunRow from "@/components/WaitingRunRow";
+import { useWaitingDeploys } from "@/hooks/useWaitingDeploys";
+import { cancelScheduledDeploy } from "@/lib/api";
 import BenchmarkLauncher from "@/components/BenchmarkLauncher";
 import BenchmarksPanel from "@/components/BenchmarksPanel";
 import { Terminal } from "lucide-react";
@@ -105,6 +108,10 @@ export default function RunsPage({ initialTab }: RunsPageProps = {}) {
   }, [benchmarks]);
 
   const live = useMemo(() => (deployments ?? []).filter(isLiveRun), [deployments]);
+  // Deploys waiting on their model: not runs yet, but the thing the operator
+  // just started, so they are counted and shown with what is live.
+  const { waiting, refetch: refetchWaiting } = useWaitingDeploys();
+  const waitingCount = waiting.length;
   const finished = useMemo(
     () => (deployments ?? []).filter((d) => !isLiveRun(d)),
     [deployments],
@@ -114,7 +121,8 @@ export default function RunsPage({ initialTab }: RunsPageProps = {}) {
    *  whichever pill has something in it — landing on an empty Live tab while
    *  a history sits behind Finished is a page that looks broken. */
   const [chosenTab, setChosenTab] = useState<RunTab | null>(initialTab ?? null);
-  let tab: RunTab = chosenTab ?? (live.length === 0 && finished.length > 0 ? "finished" : "live");
+  let tab: RunTab =
+    chosenTab ?? (live.length === 0 && waitingCount === 0 && finished.length > 0 ? "finished" : "live");
   if (tab === "benchmarks" && !benchmarkingEnabled) tab = "live";
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -425,14 +433,32 @@ export default function RunsPage({ initialTab }: RunsPageProps = {}) {
   };
 
   const tabs = [
-    { id: "live", label: t("runs.tabLive"), count: live.length },
+    { id: "live", label: t("runs.tabLive"), count: live.length + waitingCount },
     { id: "finished", label: t("runs.tabFinished"), count: finished.length },
     ...(benchmarkingEnabled
       ? [{ id: "benchmarks", label: t("runs.tabBenchmarks"), count: benchmarks?.length }]
       : []),
   ];
 
-  const nothingAtAll = !loading && !error && live.length === 0 && finished.length === 0;
+  const nothingAtAll =
+    !loading && !error && live.length === 0 && waitingCount === 0 && finished.length === 0;
+
+  const cancelWaiting = async (id: string) => {
+    try {
+      await cancelScheduledDeploy(id);
+    } catch (e) {
+      setAlertModal({ title: t("common.error"), message: e instanceof Error ? e.message : t("common.unknownError") });
+    }
+    void refetchWaiting();
+  };
+
+  const waitingRows = waiting.length > 0 && (
+    <div className="space-y-2" data-testid="waiting-runs">
+      {waiting.map((w) => (
+        <WaitingRunRow key={w.entry.id} waiting={w} onCancel={() => void cancelWaiting(w.entry.id)} />
+      ))}
+    </div>
+  );
 
   return (
     <div className="space-y-6">
@@ -468,12 +494,17 @@ export default function RunsPage({ initialTab }: RunsPageProps = {}) {
           {t("runs.empty")}
         </EmptyState>
       ) : tab === "live" ? (
-        renderList(
-          live,
-          <EmptyState icon={Terminal} hint={t("runs.noneLiveHint")}>
-            {t("runs.noneLive")}
-          </EmptyState>,
-        )
+        <div className="space-y-2">
+          {waitingRows}
+          {renderList(
+            live,
+            waitingCount > 0 ? null : (
+              <EmptyState icon={Terminal} hint={t("runs.noneLiveHint")}>
+                {t("runs.noneLive")}
+              </EmptyState>
+            ),
+          )}
+        </div>
       ) : (
         renderList(
           finished,

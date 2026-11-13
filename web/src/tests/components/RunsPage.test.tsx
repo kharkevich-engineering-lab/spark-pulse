@@ -35,6 +35,10 @@ vi.mock("@/lib/api", () => ({
   fetchLatestByRecipe: vi.fn(() => Promise.resolve({})),
   compareRuns: vi.fn(),
   deleteBenchmark: vi.fn(),
+  // Nothing waiting on a download unless a test says so.
+  fetchScheduledDeploys: vi.fn(() => Promise.resolve([])),
+  fetchModelDownloads: vi.fn(() => Promise.resolve([])),
+  cancelScheduledDeploy: vi.fn(() => Promise.resolve({})),
 }));
 
 /** The feature flag, readable by the tests that turn it off. */
@@ -44,8 +48,11 @@ vi.mock("@/lib/config", () => ({
 }));
 
 import {
+  cancelScheduledDeploy,
   connectLogStream,
   fetchBenchmarks,
+  fetchModelDownloads,
+  fetchScheduledDeploys,
   fetchDeployment,
   fetchDeploymentEvents,
   fetchDeployments,
@@ -121,6 +128,87 @@ async function openTab(label: string) {
 
 beforeEach(() => {
   appConfig.benchmarking_enabled = true;
+});
+
+/** "Download and deploy" from the lab: the deploy waits on a 5 GB download,
+ *  and until it lands there is no run. Runs said nothing, so it looked like
+ *  nothing had happened. */
+describe("RunsPage — a deploy waiting on its model", () => {
+  const ENTRY = {
+    id: "s-1",
+    model: "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
+    download_job_id: "job-1",
+    status: "waiting",
+    name: "qwen gguf",
+    recipe_id: "custom-qwen",
+    request: {},
+    deployment_id: "",
+    error: "",
+    created_at: "",
+    finished_at: "",
+  };
+  const JOB = {
+    id: "job-1",
+    model: ENTRY.model,
+    source: "hf",
+    revision: null,
+    allow_patterns: null,
+    status: "running",
+    bytes_done: 2 * 1024 ** 3,
+    bytes_total: 5 * 1024 ** 3,
+    current_file: null,
+    path: null,
+    error: null,
+    created_at: "",
+    started_at: null,
+    finished_at: null,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(fetchDeployments).mockResolvedValue([]);
+    vi.mocked(fetchScheduledDeploys).mockResolvedValue([ENTRY] as never);
+    vi.mocked(fetchModelDownloads).mockResolvedValue([JOB] as never);
+  });
+
+  // `clearAllMocks` keeps implementations, so put back "nothing waiting" for
+  // every describe after this one.
+  afterEach(() => {
+    vi.mocked(fetchScheduledDeploys).mockResolvedValue([]);
+    vi.mocked(fetchModelDownloads).mockResolvedValue([]);
+  });
+
+  it("is on Live at once, with the download's progress and where to watch it", async () => {
+    show();
+
+    const row = await screen.findByTestId("waiting-s-1");
+    expect(row).toHaveTextContent("qwen gguf");
+    expect(row).toHaveTextContent("Waiting for model");
+    expect(screen.getByTestId("waiting-progress-s-1")).toHaveTextContent(/Downloading the model: 40%/);
+    expect(within(row).getByRole("link", { name: "watch the download" })).toHaveAttribute("href", "/models");
+    expect(within(row).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "40");
+    expect(screen.getByRole("tab", { name: /^Live \(1\)/ })).toHaveAttribute("aria-selected", "true");
+    // Not "no runs yet": something is happening.
+    expect(screen.queryByText(/Nothing is running/)).toBeNull();
+  });
+
+  it("can be called off from the row", async () => {
+    show();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Cancel the deploy of qwen gguf" }));
+
+    expect(cancelScheduledDeploy).toHaveBeenCalledWith("s-1");
+  });
+
+  it("says the run is being created once the model has landed", async () => {
+    vi.mocked(fetchScheduledDeploys).mockResolvedValue([{ ...ENTRY, status: "deploying" }] as never);
+    show();
+
+    expect(await screen.findByTestId("waiting-progress-s-1")).toHaveTextContent(
+      "The model is here; the run is being created",
+    );
+    expect(screen.queryByRole("button", { name: /Cancel the deploy/ })).toBeNull();
+  });
 });
 
 describe("RunsPage tabs", () => {

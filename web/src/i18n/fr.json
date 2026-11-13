@@ -345,7 +345,8 @@
     "custom": "Personnalisée",
     "editCustom": "Modifier la personnalisation",
     "notHere": "Ne tourne pas ici : {reason}",
-    "notHereBanner": "Cette recette ne tourne pas sur cette flotte : {reason}. Elle peut être lue, pas déployée."
+    "notHereBanner": "Cette recette ne tourne pas sur cette flotte : {reason}. Elle peut être lue, pas déployée.",
+    "queued": "En file"
   },
   "registry": {
     "testConnection": "Tester la connexion",
@@ -995,6 +996,15 @@
     "rank": "rang {rank}",
     "orphanRank": "Le rang {rank} n'a pas pu être confirmé arrêté",
     "orphanPorts": "Son conteneur tourne peut-être encore et retient les ports de {node} tant que ce n'est pas réglé.",
+    "waitingStatus": "En attente du modèle",
+    "deployingStatus": "Déploiement",
+    "waitingForModel": "Téléchargement du modèle : {percent} % ({done} sur {total})",
+    "waitingForModelUnknown": "Téléchargement du modèle",
+    "waitingQueued": "Le téléchargement du modèle est en file d'attente",
+    "waitingDeploying": "Le modèle est là ; l'exécution est en cours de création",
+    "waitingWatchDownload": "suivre le téléchargement",
+    "waitingProgressLabel": "Téléchargement du modèle de {name}",
+    "cancelWaiting": "Annuler le déploiement de {name}",
     "copyEndpoint": "Copier le point d'accès {url}",
     "endpointCopied": "Copié dans le presse-papiers",
     "endpointTitle": "Le point d'accès compatible OpenAI de l'exécution",

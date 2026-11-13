@@ -3,7 +3,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import LibraryPage from "@/pages/LibraryPage";
-import { describePrecision, describeWhere, shortRevision } from "@/components/library/ModelsTab";
+import { describePrecision, describeWhere, ggufDetail, shortRevision } from "@/components/library/ModelsTab";
 import { translate } from "@/lib/i18n";
 import type { ModelEntry } from "@/lib/types";
 
@@ -119,6 +119,24 @@ describe("the models tab's helpers", () => {
     expect(describePrecision(models[1])).toBe("awq");
     expect(describePrecision(models[0])).toBe("bfloat16");
     expect(describePrecision({ ...models[0], config: null })).toBe("—");
+  });
+
+  /** A GGUF repo has no config.json; the lab's catalogue showed "—" for one
+   *  holding nine quantisations. */
+  it("names a GGUF's quantisation from its files, and counts several", () => {
+    const one = { ...models[0], config: null, gguf: [{ file: "m-q8_0.gguf", quant: "q8_0", size_bytes: 676e6 }] };
+    expect(describePrecision(one)).toBe("GGUF · q8_0");
+    expect(ggufDetail(one)).toBe("m-q8_0.gguf");
+
+    const many = {
+      ...one,
+      gguf: [
+        { file: "m-q4_k_m.gguf", quant: "q4_k_m", size_bytes: 491e6 },
+        { file: "m-q8_0.gguf", quant: "q8_0", size_bytes: 676e6 },
+      ],
+    };
+    expect(describePrecision(many)).toBe("GGUF ×2");
+    expect(ggufDetail(many)).toMatch(/q4_k_m · .*\nq8_0 · /);
   });
 });
 

@@ -345,7 +345,8 @@
     "custom": "Custom",
     "editCustom": "Edit custom",
     "notHere": "Won't run here: {reason}",
-    "notHereBanner": "This recipe won't run on this fleet: {reason}. It can be read, not deployed."
+    "notHereBanner": "This recipe won't run on this fleet: {reason}. It can be read, not deployed.",
+    "queued": "Queued"
   },
   "registry": {
     "testConnection": "Test connection",
@@ -995,6 +996,15 @@
     "rank": "rank {rank}",
     "orphanRank": "Rank {rank} could not be confirmed stopped",
     "orphanPorts": "Its container may still be running and holding {node}'s ports until this clears.",
+    "waitingStatus": "Waiting for model",
+    "deployingStatus": "Deploying",
+    "waitingForModel": "Downloading the model: {percent}% ({done} of {total})",
+    "waitingForModelUnknown": "Downloading the model",
+    "waitingQueued": "The model download is queued",
+    "waitingDeploying": "The model is here; the run is being created",
+    "waitingWatchDownload": "watch the download",
+    "waitingProgressLabel": "{name} model download",
+    "cancelWaiting": "Cancel the deploy of {name}",
     "copyEndpoint": "Copy the endpoint {url}",
     "endpointCopied": "Copied to clipboard",
     "endpointTitle": "The run's OpenAI-compatible endpoint",
