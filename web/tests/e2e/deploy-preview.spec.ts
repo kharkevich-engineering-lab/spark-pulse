@@ -145,3 +145,27 @@ test("a typed port is the port the preview plans", async ({ page }) => {
   await expect(page.getByTestId("deploy-plan-port")).toHaveText("8123");
   await expect(page.getByTestId("deploy-plan").locator("pre")).toContainText("--port 8123");
 });
+
+/** The same run, rendered by the second backend (#164): the manifests and
+ *  what the intent could not tell them, on demand and never applied. The YAML
+ *  is the widest thing on the page, so it must scroll inside its own box. */
+test("renders the previewed run as Kubernetes manifests without applying them", async ({
+  page,
+}) => {
+  await openDeployOptions(page);
+  await page.getByRole("button", { name: "Preview" }).click();
+  await expect(page.getByTestId("deploy-plan")).toBeVisible();
+
+  await page.getByTestId("kubernetes-render").click();
+
+  const manifests = page.getByTestId("kubernetes-yaml");
+  await expect(manifests).toContainText("kind: Deployment");
+  await expect(manifests).toContainText("kind: Service");
+  await expect(page.getByTestId("kubernetes-findings")).toContainText("gpus-per-rank");
+  await expect(page.getByText("Nothing is applied to a cluster.")).toBeVisible();
+
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+  expect(overflow, "the page body must not scroll horizontally").toBeLessThanOrEqual(1);
+});

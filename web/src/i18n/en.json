@@ -1214,5 +1214,15 @@
     "updateAllDone": "Update finished",
     "outcome": "{done} done · {skipped} skipped for local edits · {failed} failed",
     "failed": "Could not apply"
+  },
+  "kubernetesPreview": {
+    "heading": "Kubernetes",
+    "cache": "Model cache",
+    "cachePvc": "PersistentVolumeClaim",
+    "cacheHostPath": "Host path",
+    "render": "Render manifests",
+    "failed": "Could not render the manifests",
+    "notApplied": "A dry run. Nothing is applied to a cluster.",
+    "findings": "What the run does not say"
   }
 }

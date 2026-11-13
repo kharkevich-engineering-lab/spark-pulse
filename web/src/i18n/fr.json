@@ -1214,5 +1214,15 @@
     "updateAllDone": "Mise à jour terminée",
     "outcome": "Faites : {done} · ignorées (modifications locales) : {skipped} · en échec : {failed}",
     "failed": "Échec de l'opération"
+  },
+  "kubernetesPreview": {
+    "heading": "Kubernetes",
+    "cache": "Cache des modèles",
+    "cachePvc": "PersistentVolumeClaim",
+    "cacheHostPath": "Chemin sur l’hôte",
+    "render": "Générer les manifestes",
+    "failed": "Impossible de générer les manifestes",
+    "notApplied": "Un essai à blanc. Rien n’est appliqué au cluster.",
+    "findings": "Ce que l’exécution ne précise pas"
   }
 }
