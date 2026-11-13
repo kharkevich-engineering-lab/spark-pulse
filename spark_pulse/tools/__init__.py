@@ -29,7 +29,8 @@ import os
 # node's own agent through it; ``redaction``, ``readiness``, ``placement`` and
 # ``runtime_errors``, split out of ``native_runtime`` (which the mock re-exports
 # from) and reaching every node through the switch, so the same code in both
-# modes; ``intent``, a run's backend-neutral description, likewise; and
+# modes; ``intent``, a run's backend-neutral description, likewise;
+# ``run_state``, the pure derivation of a run's one phase; and
 # ``backends``, which simulation does not mock either — it swaps at
 # the agent transport underneath, so the backend that runs is the real one.  Everything else must exist in both packages.
 from spark_pulse.tools import agent_update as agent_update
@@ -50,6 +51,7 @@ from spark_pulse.tools import recipe_fit as recipe_fit
 from spark_pulse.tools import recipe_schema as recipe_schema
 from spark_pulse.tools import recipe_sources as recipe_sources
 from spark_pulse.tools import redaction as redaction
+from spark_pulse.tools import run_state as run_state
 from spark_pulse.tools import runtime_errors as runtime_errors
 from spark_pulse.tools import scheduled_deploys as scheduled_deploys
 

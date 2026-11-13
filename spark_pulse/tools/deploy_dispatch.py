@@ -21,7 +21,7 @@ LEGACY_BACKEND = "docker"
 
 
 def _with_serves(record: dict[str, Any]) -> dict[str, Any]:
-    """The record as served, with ``serves`` and ``backend`` always said.
+    """The record as served, with ``serves``, ``backend`` and ``phase`` always said.
 
     A record written before ``serves`` existed — or adopted from a container
     nobody recorded — was started as chat, since nothing else could be; one
@@ -37,6 +37,10 @@ def _with_serves(record: dict[str, Any]) -> dict[str, Any]:
         filled["backend"] = LEGACY_BACKEND
     filled.setdefault("intent", None)
     filled.setdefault("intent_hash", None)
+    # The one state a page renders (#205), derived from the fields the record
+    # keeps apart. Always recomputed: a stored `phase` would be a second copy
+    # of `status`/`sync` that could disagree with them.
+    filled.update(tools.run_state.phase_fields(filled))
     return filled
 
 

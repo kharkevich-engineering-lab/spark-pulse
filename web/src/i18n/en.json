@@ -46,7 +46,8 @@
     "in_progress": "In progress",
     "deleting": "Deleting",
     "unverified": "Unverified",
-    "stopping": "Stopping…"
+    "stopping": "Stopping…",
+    "queued": "Queued"
   },
   "nodeState": {
     "ok": "Healthy",

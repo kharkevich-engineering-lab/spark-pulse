@@ -234,7 +234,12 @@ class TestDispatch:
 
 class TestBenchmarkRefusal:
     @pytest.fixture
-    def client(self):
+    def client(self, monkeypatch):
+        from spark_pulse.config import config
+
+        # Benchmarking is off by default. These passed only after
+        # test_e2e_benchmarking had switched it on for the whole process.
+        monkeypatch.setitem(config._data, "benchmarking_enabled", True)
         return TestClient(create_app(), raise_server_exceptions=False)
 
     def _post(self, client, record):
