@@ -61,8 +61,34 @@ TOOLKIT_COMMAND = (
     "2>/dev/null | sed 's/^/cdi /'; true"
 )
 
-#: Where rootless Podman keeps images, which is what the disk check measures.
-PODMAN_STORE_COMMAND = "podman info --format '{{.Store.GraphRoot}}' 2>&1"
+#: Where Podman keeps images, which is what the disk check measures — read
+#: from the files containers-storage reads, not asked of ``podman info``.
+#: Podman 4.9's ``info`` runs ``dpkg -S`` for every helper binary it reports
+#: and takes seconds of CPU on Debian and Ubuntu (#211), once per node per
+#: pre-flight. The order is containers-storage's own: as root, ``graphroot``
+#: from the system config, else ``/var/lib/containers/storage``; rootless, the
+#: user's ``graphroot``, else the system's ``rootless_storage_path`` (with
+#: ``$HOME``/``$UID``/``$USER`` expanded, as Podman does), else
+#: ``$XDG_DATA_HOME/containers/storage``. A ``CONTAINERS_STORAGE_CONF``
+#: override is not followed: it would be set in an operator's shell, not in
+#: the agent's unit, which is where this runs.
+PODMAN_STORE_COMMAND = (
+    'key() { sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*[\\"\']\\([^\\"\']*\\)[\\"\'].*/\\1/p" '
+    '"$2" 2>/dev/null | head -n 1; }; '
+    "system=/etc/containers/storage.conf; "
+    "vendor=/usr/share/containers/storage.conf; "
+    'if [ "$(id -u)" = 0 ]; then '
+    'r=$(key graphroot "$system"); '
+    '[ -n "$r" ] || r=$(key graphroot "$vendor"); '
+    'echo "${r:-/var/lib/containers/storage}"; '
+    "else "
+    'r=$(key graphroot "${XDG_CONFIG_HOME:-$HOME/.config}/containers/storage.conf"); '
+    '[ -n "$r" ] || r=$(key rootless_storage_path "$system"); '
+    '[ -n "$r" ] || r=$(key rootless_storage_path "$vendor"); '
+    '[ -n "$r" ] || r="${XDG_DATA_HOME:-$HOME/.local/share}/containers/storage"; '
+    'printf \'%s\\n\' "$r" | sed "s|\\$HOME|$HOME|g; s|\\$UID|$(id -u)|g; s|\\$USER|$(id -un)|g"; '
+    "fi"
+)
 
 #: Whether the user's socket survives a reboot: the agent found it live, but a
 #: socket that was only *started* is gone after the next boot.

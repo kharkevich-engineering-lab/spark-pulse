@@ -270,3 +270,85 @@ def test_the_preflight_warns_about_a_socket_that_will_not_survive_a_reboot(
     report = run(probes={CONTROL.id: Probe(CONTROL.address, overrides=overrides)})
     assert check_of(report, "podman_socket")["status"] == STATUS_WARN
     assert check_of(report, "subuid")["status"] == STATUS_FAIL
+
+
+# ── Where Podman keeps images, without `podman info` (#211) ─────────────────
+
+
+class TestPodmanStoreCommand:
+    """The store command reads containers-storage's own config files.
+
+    Run for real under ``sh``, against config files in a temporary home, with
+    the system config pointed at a file this test owns so the machine running
+    it cannot change the answer.
+    """
+
+    @staticmethod
+    def store(home, *, system=None, xdg_config=None, xdg_data=None) -> str:
+        import os
+        import subprocess
+
+        env = {"PATH": os.environ["PATH"], "HOME": str(home)}
+        if xdg_config:
+            env["XDG_CONFIG_HOME"] = str(xdg_config)
+        if xdg_data:
+            env["XDG_DATA_HOME"] = str(xdg_data)
+        command = rc.PODMAN_STORE_COMMAND.replace(
+            "/usr/share/containers/storage.conf", str(home / "no-vendor.conf")
+        ).replace(
+            "/etc/containers/storage.conf", str(system or home / "no-system.conf")
+        )
+        done = subprocess.run(
+            ["sh", "-c", command], env=env, capture_output=True, text=True, timeout=10
+        )
+        assert done.returncode == 0, done.stderr
+        return done.stdout.strip()
+
+    @pytest.fixture(autouse=True)
+    def not_root(self):
+        import os
+
+        if os.geteuid() == 0:
+            pytest.skip("the rootless rules are measured as a user")
+
+    def test_it_never_asks_podman(self):
+        assert "podman" not in rc.PODMAN_STORE_COMMAND.split("containers")[0]
+        assert "podman info" not in rc.PODMAN_STORE_COMMAND
+
+    def test_with_no_config_it_is_the_rootless_default(self, tmp_path):
+        assert self.store(tmp_path) == f"{tmp_path}/.local/share/containers/storage"
+
+    def test_xdg_data_home_moves_the_default(self, tmp_path):
+        data = tmp_path / "data"
+        assert self.store(tmp_path, xdg_data=data) == f"{data}/containers/storage"
+
+    def test_the_system_rootless_path_is_expanded_as_podman_does(self, tmp_path):
+        import getpass
+        import os
+
+        system = tmp_path / "storage.conf"
+        system.write_text(
+            '[storage]\ndriver = "overlay"\n'
+            'graphroot = "/var/lib/containers/storage"\n'
+            'rootless_storage_path = "$HOME/pods/$USER/$UID"\n'
+        )
+        assert self.store(tmp_path, system=system) == (
+            f"{tmp_path}/pods/{getpass.getuser()}/{os.geteuid()}"
+        )
+
+    def test_the_users_graphroot_wins(self, tmp_path):
+        config = tmp_path / "cfg"
+        (config / "containers").mkdir(parents=True)
+        (config / "containers" / "storage.conf").write_text(
+            "[storage]\n  graphroot = '/data/pods'\n"
+        )
+        system = tmp_path / "storage.conf"
+        system.write_text('rootless_storage_path = "/elsewhere"\n')
+        assert self.store(tmp_path, system=system, xdg_config=config) == "/data/pods"
+
+    def test_a_commented_key_is_not_read(self, tmp_path):
+        system = tmp_path / "storage.conf"
+        system.write_text('# rootless_storage_path = "/nope"\n')
+        assert self.store(tmp_path, system=system) == (
+            f"{tmp_path}/.local/share/containers/storage"
+        )
