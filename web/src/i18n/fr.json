@@ -512,6 +512,8 @@
       "updateHint": "Ce nœud exécute l'agent {version} ; ce plan de contrôle livre {current}. Réinstaller garde l'identité du nœud et ne remplace que le binaire. La clé du plan de contrôle est déjà sur le nœud, aucun mot de passe n'est nécessaire."
     },
     "agentVersion": "agent {version}",
+    "runtime": "{name} {version}",
+    "rootless": "sans root",
     "agentStale": "mise à jour disponible",
     "updateAction": "Mettre à jour",
     "doctor": {

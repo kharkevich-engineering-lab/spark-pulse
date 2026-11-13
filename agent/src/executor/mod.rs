@@ -187,27 +187,55 @@ impl Executor {
         self.epoch.fetch_max(epoch, Ordering::SeqCst);
     }
 
-    /// The daemon's version string, or empty when there is no daemon.
+    /// What the daemon on the agent's socket is: its version, and which
+    /// runtime it is (Docker, or Podman through its compat API) and whether
+    /// it runs rootless. Empty when there is no daemon.
     ///
     /// Asked on every heartbeat, so it must never be the thing that first
     /// connects: a daemon that is down would then stop the heartbeat and the
     /// node would report as unreachable rather than as having no daemon.
-    pub async fn docker_version(&self) -> String {
+    /// `/info` failing on its own leaves the runtime named and `rootless`
+    /// false rather than losing the version too.
+    pub async fn container_runtime(&self) -> facts::ContainerRuntime {
         let Some(docker) = &self.docker else {
-            return String::new();
+            return facts::ContainerRuntime::default();
         };
-        match docker.version().await {
-            Ok(version) => version.version.unwrap_or_default(),
+        let version = match docker.version().await {
+            Ok(version) => version,
             Err(error) => {
-                tracing::debug!(%error, "the Docker daemon did not answer version()");
-                String::new()
+                tracing::debug!(%error, "the daemon did not answer version()");
+                return facts::ContainerRuntime::default();
             }
+        };
+        let components: Vec<String> = version
+            .components
+            .unwrap_or_default()
+            .into_iter()
+            .map(|component| component.name)
+            .collect();
+        let names: Vec<&str> = components.iter().map(String::as_str).collect();
+        let rootless = match docker.info().await {
+            Ok(info) => {
+                let options = info.security_options.unwrap_or_default();
+                let options: Vec<&str> = options.iter().map(String::as_str).collect();
+                facts::rootless_from_security_options(&options)
+            }
+            Err(error) => {
+                tracing::debug!(%error, "the daemon did not answer info()");
+                false
+            }
+        };
+        facts::ContainerRuntime {
+            name: facts::runtime_from_components(true, &names).to_string(),
+            version: version.version.unwrap_or_default(),
+            rootless,
         }
     }
 
-    /// Describe this machine, including whatever Docker says about itself.
+    /// Describe this machine, including whatever its daemon says about itself.
     pub async fn collect_facts(&self) -> NodeFacts {
-        facts::collect(self.docker_version().await)
+        let runtime = self.container_runtime().await;
+        facts::collect(runtime.version.clone(), runtime)
     }
 
     /// Run one command and return its outcome as payload. Never fails.

@@ -476,8 +476,167 @@ pub fn binary_sha256() -> String {
         .clone()
 }
 
+/// What the container runtime on the agent's socket says about itself.
+///
+/// Asked of the daemon by the executor, which owns the connection; empty
+/// (the default) when nothing answers, which is also what enrolment sends —
+/// it runs before the agent has connected to anything.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ContainerRuntime {
+    /// `docker`, `podman`, or empty when no daemon answered.
+    pub name: String,
+    pub version: String,
+    pub rootless: bool,
+}
+
+/// Which runtime a `/version` answer came from, by its components' names.
+///
+/// Podman's Docker-compatible API answers `/version` with Docker's shape, and
+/// the one place it says what it is is a component named `Podman Engine`.
+/// Docker names its own `Engine`. A daemon that answered with no components
+/// at all is still a daemon, and Docker is the one that predates the field.
+/// Pure.
+pub fn runtime_from_components(answered: bool, components: &[&str]) -> &'static str {
+    if !answered {
+        return "";
+    }
+    if components
+        .iter()
+        .any(|name| name.to_ascii_lowercase().contains("podman"))
+    {
+        return "podman";
+    }
+    "docker"
+}
+
+/// Whether `/info`'s SecurityOptions say the daemon runs rootless. Pure.
+///
+/// Rootless Docker and rootless Podman both say `name=rootless`.
+pub fn rootless_from_security_options(options: &[&str]) -> bool {
+    options
+        .iter()
+        .any(|option| option.split(',').any(|part| part.trim() == "name=rootless"))
+}
+
+/// Where CDI specs live: the static and the generated directory, as the CDI
+/// spec defines them. `/var/run` is normally a link to `/run`, so a device
+/// may be found twice; [`cdi_devices`] keeps each name once.
+const CDI_SPEC_DIRS: &[&str] = &["/etc/cdi", "/var/run/cdi", "/run/cdi"];
+
+/// Every CDI device this machine's spec directories name, sorted, once each.
+///
+/// Read on every heartbeat, so it reads files and never runs `nvidia-ctk`. A
+/// directory or spec that cannot be read contributes nothing.
+pub fn cdi_devices() -> Vec<String> {
+    let mut found: BTreeSet<String> = BTreeSet::new();
+    for dir in CDI_SPEC_DIRS {
+        let Ok(entries) = fs::read_dir(dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let extension = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            let parsed = match extension.as_str() {
+                "json" => fs::read_to_string(&path)
+                    .map(|text| cdi_devices_from_json(&text))
+                    .unwrap_or_default(),
+                "yaml" | "yml" => fs::read_to_string(&path)
+                    .map(|text| cdi_devices_from_yaml(&text))
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            };
+            found.extend(parsed);
+        }
+    }
+    found.into_iter().collect()
+}
+
+/// The `kind=name` of every device in a CDI spec written as JSON. Pure.
+pub fn cdi_devices_from_json(text: &str) -> Vec<String> {
+    let Ok(spec) = serde_json::from_str::<serde_json::Value>(text) else {
+        return Vec::new();
+    };
+    let Some(kind) = spec.get("kind").and_then(|k| k.as_str()) else {
+        return Vec::new();
+    };
+    spec.get("devices")
+        .and_then(|d| d.as_array())
+        .map(|devices| {
+            devices
+                .iter()
+                .filter_map(|d| d.get("name").and_then(|n| n.as_str()))
+                .filter(|name| !name.is_empty())
+                .map(|name| format!("{kind}={name}"))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The `kind=name` of every device in a CDI spec written as YAML. Pure.
+///
+/// Not a YAML parser, and it does not need to be one: a spec has a top-level
+/// `kind:` and a top-level `devices:` list whose items each start with
+/// `- name:`, which is the shape `nvidia-ctk cdi generate` writes. Only the
+/// items at the list's own indentation count, so a `name:` nested deeper
+/// (a mount, a hook) is never read as a device. Pulling in a YAML crate for
+/// two keys would add more to a static binary than this whole module.
+pub fn cdi_devices_from_yaml(text: &str) -> Vec<String> {
+    let mut kind = String::new();
+    let mut names: Vec<String> = Vec::new();
+    let mut in_devices = false;
+    let mut item_indent: Option<usize> = None;
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let indent = line.len() - trimmed.len();
+        if indent == 0 {
+            in_devices = trimmed.starts_with("devices:");
+            if let Some(value) = trimmed.strip_prefix("kind:") {
+                kind = unquote(value);
+            }
+            continue;
+        }
+        if !in_devices {
+            continue;
+        }
+        let Some(item) = trimmed.strip_prefix("- ") else {
+            continue;
+        };
+        let item_indent = *item_indent.get_or_insert(indent);
+        if indent != item_indent {
+            continue;
+        }
+        if let Some(value) = item.trim_start().strip_prefix("name:") {
+            let name = unquote(value);
+            if !name.is_empty() {
+                names.push(name);
+            }
+        }
+    }
+    if kind.is_empty() {
+        return Vec::new();
+    }
+    names
+        .into_iter()
+        .map(|name| format!("{kind}={name}"))
+        .collect()
+}
+
+fn unquote(value: &str) -> String {
+    value
+        .trim()
+        .trim_matches(|c| c == '"' || c == '\'')
+        .to_string()
+}
+
 /// Describe this machine. Never fails.
-pub fn collect(docker_version: String) -> NodeFacts {
+pub fn collect(docker_version: String, runtime: ContainerRuntime) -> NodeFacts {
     let machine_id = read_machine_id();
     let (interfaces, infiniband_interfaces) = interfaces();
     let cpus = cpu_count();
@@ -499,6 +658,10 @@ pub fn collect(docker_version: String) -> NodeFacts {
         infiniband_interfaces,
         roce_links: roce_links(),
         binary_sha256: binary_sha256(),
+        container_runtime: runtime.name,
+        runtime_version: runtime.version,
+        rootless: runtime.rootless,
+        cdi_devices: cdi_devices(),
     }
 }
 

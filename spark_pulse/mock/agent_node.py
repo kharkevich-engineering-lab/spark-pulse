@@ -70,6 +70,11 @@ def facts(**overrides: Any) -> pb.NodeFacts:
         # broken daemon — a fact about the fixture, not about the node. A test
         # that wants a dead daemon says so by overriding it.
         "docker_version": MockDockerClient().version()["Version"],
+        # And says which runtime answered: Docker, rootful, as on a Spark.
+        # A Podman node is an override (#174 simulates one).
+        "container_runtime": "docker",
+        "runtime_version": MockDockerClient().version()["Version"],
+        "rootless": False,
     }
     values.update(overrides)
     return pb.NodeFacts(**values)

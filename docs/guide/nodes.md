@@ -50,6 +50,10 @@ The memory size is excluded for the same reason. The first fingerprint hashed it
 
 The control node is the one machine that cannot be surfaced to anybody — a denied control node is a control plane that exits at startup — so if its own ledger denies it, it says so in the log and re-enrols under the same identity.
 
+### The container runtime
+
+Each node's card names the container runtime its agent reports — `docker 29.2.1`, or `podman 4.9.3 · rootless` — read from the daemon on the agent's socket: Podman names itself `Podman Engine` in its Docker-compatible `/version`, and a rootless daemon, Docker or Podman, says `name=rootless` in `/info`. The agent also reports every CDI device its node's spec directories (`/etc/cdi`, `/var/run/cdi`) name, such as `nvidia.com/gpu=all`, which is how a GPU reaches a Podman container. An agent too old to report a runtime shows none, which means unknown rather than Docker.
+
 ## The doctor
 
 Opening a node's row runs the doctor and shows what it found under that row, beside what the machine's ConnectX ports are doing. A diagnosis changes nothing, so it needs no second button, and it no longer covers the list of machines it is about.

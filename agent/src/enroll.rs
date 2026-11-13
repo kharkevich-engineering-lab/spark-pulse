@@ -83,7 +83,10 @@ pub async fn enroll(request: Enrolment<'_>) -> Result<AgentIdentity> {
             token: request.token.to_string(),
             csr_pem: pair.csr_pem.clone().into_bytes(),
             requested_name: request.requested_name.to_string(),
-            facts: Some(facts::collect(request.docker_version)),
+            facts: Some(facts::collect(
+                request.docker_version,
+                facts::ContainerRuntime::default(),
+            )),
         })
         .await
         .map_err(|status| {

@@ -885,6 +885,15 @@ function NodeRow({
             {stale ? t("nodes.agentStale") : t("fleet.agentCurrent")}
           </span>
         )}
+        {node.agent?.runtime?.name && (
+          <span data-testid={`node-runtime-${node.id}`}>
+            {t("nodes.runtime", {
+              name: node.agent.runtime.name,
+              version: node.agent.runtime.version,
+            })}
+            {node.agent.runtime.rootless && ` · ${t("nodes.rootless")}`}
+          </span>
+        )}
         {node.agent && !node.agent.enrolled && <span>{t("nodes.noAgent")}</span>}
       </div>
 
