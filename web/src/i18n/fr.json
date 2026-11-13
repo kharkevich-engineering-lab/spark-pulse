@@ -1011,6 +1011,34 @@
     "waitingWatchDownload": "suivre le téléchargement",
     "waitingProgressLabel": "Téléchargement du modèle de {name}",
     "cancelWaiting": "Annuler le déploiement de {name}",
+    "copyEndpoint": "Copier le point d'accès {url}",
+    "endpointCopied": "Copié dans le presse-papiers",
+    "endpointTitle": "Le point d'accès compatible OpenAI de l'exécution",
+    "endpointCopyFailed": "Copie impossible — sélectionnez-le",
+    "copyCurl": "Copier un curl qui demande une anecdote à cette exécution",
+    "copyCurlTitle": "Copier un curl prêt à lancer : une complétion qui demande une anecdote",
+    "curlCopied": "curl copié",
+    "funFact": {
+      "prompt": "Donne-moi une anecdote surprenante sur {topic}, en deux phrases. Réponds en français.",
+      "topics": {
+        "octopuses": "les pieuvres",
+        "moon": "la Lune",
+        "honey": "le miel",
+        "volcanoes": "les volcans",
+        "tardigrades": "les tardigrades",
+        "deepSea": "les grands fonds marins",
+        "bananas": "les bananes",
+        "lightning": "la foudre",
+        "crows": "les corbeaux",
+        "saturnRings": "les anneaux de Saturne",
+        "brain": "le cerveau humain",
+        "coffee": "le café",
+        "glaciers": "les glaciers",
+        "sharks": "les requins",
+        "lightSpeed": "la vitesse de la lumière",
+        "ancientRome": "la Rome antique"
+      }
+    },
     "benchmarkMeasuring": "mesure…"
   },
   "library": {

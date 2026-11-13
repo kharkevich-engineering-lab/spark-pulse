@@ -12,6 +12,8 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import RunsPage from "@/pages/RunsPage";
+import { FUN_FACT_TOPICS, curlExample, shellQuote } from "@/components/RunRow";
+import { translatorFor } from "@/lib/i18n";
 import type { BenchmarkResult, Deployment, EngineMetricsWindow } from "@/lib/types";
 
 vi.mock("@/lib/api", () => ({
@@ -393,6 +395,124 @@ describe("RunsPage row", () => {
 
     const row = await screen.findByTestId("deployment-solo");
     expect(row).toHaveTextContent("this node");
+  });
+
+  /** "this node :8000" from the lab: which node, and a port is not an address. */
+  it("names the node a solo run is on, and gives an endpoint to copy", async () => {
+    const onDesktop = deployment({
+      id: "desk",
+      name: "desk job",
+      port: 8000,
+      ranks: [{ rank: 0, node: "", host: "ark-desktop", container_name: "c", is_head: true }],
+    });
+    vi.mocked(fetchDeployments).mockResolvedValue([onDesktop]);
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    show();
+
+    const row = await screen.findByTestId("deployment-desk");
+    expect(row).toHaveTextContent("ark-desktop");
+    expect(row).not.toHaveTextContent("this node");
+    // The control node: the machine this page was reached on.
+    const url = `http://${window.location.hostname}:8000/v1`;
+    expect(within(row).getByTestId("run-endpoint")).toHaveTextContent(url);
+
+    // The whole chip is the button. fireEvent, not userEvent: user-event
+    // installs a clipboard of its own.
+    fireEvent.click(within(row).getByRole("button", { name: `Copy the endpoint ${url}` }));
+    expect(writeText).toHaveBeenCalledWith(url);
+    // The answer is on the chip, where the operator is looking.
+    await waitFor(() => expect(within(row).getByTestId("run-endpoint")).toHaveTextContent("Copied to clipboard"));
+    // Announced too: the endpoint's live region says it (the curl has its own).
+    expect(within(row).getAllByRole("status").map((e) => e.textContent)).toContain("Copied to clipboard");
+  });
+
+  it("copies a curl that asks the run for a fun fact, next to the endpoint", async () => {
+    const onDesktop = deployment({
+      id: "desk3",
+      name: "desk job 3",
+      port: 8000,
+      served_model: "Qwen/Qwen2.5-0.5B-Instruct",
+      ranks: [{ rank: 0, node: "", host: "ark-desktop", container_name: "c", is_head: true }],
+    });
+    vi.mocked(fetchDeployments).mockResolvedValue([onDesktop]);
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    show();
+
+    const row = await screen.findByTestId("deployment-desk3");
+    fireEvent.click(within(row).getByRole("button", { name: "Copy a curl that asks this run for a fun fact" }));
+
+    const command = (writeText.mock.calls[0] as unknown as [string])[0];
+    expect(command).toMatch(
+      new RegExp(`^curl -s http://${window.location.hostname}:8000/v1/chat/completions `),
+    );
+    const body = JSON.parse(command.slice(command.indexOf("-d '") + 4, -1));
+    expect(body.model).toBe("Qwen/Qwen2.5-0.5B-Instruct");
+    expect(body.messages[0].content).toMatch(/^Tell me one surprising fun fact about .+, in two sentences\.$/);
+    await waitFor(() => expect(within(row).getByTestId("run-curl")).toHaveTextContent("curl copied"));
+  });
+
+  /** "Saturn's rings" closed the shell's quote and broke the command. */
+  it("builds a command a shell reads back whole, for every topic", () => {
+    // What a POSIX shell makes of one single-quoted word written by shellQuote.
+    const unquote = (word: string) => {
+      expect(word.startsWith("'") && word.endsWith("'")).toBe(true);
+      return word.slice(1, -1).split("'\\''").join("'");
+    };
+    expect(shellQuote("it's")).toBe("'it'\\''s'");
+    expect(unquote(shellQuote("it's 'quoted'"))).toBe("it's 'quoted'");
+
+    // Every topic, in both languages: French is full of apostrophes.
+    for (const language of ["en", "fr"] as const) {
+      const { t } = translatorFor(language);
+      FUN_FACT_TOPICS.forEach((id, index) => {
+        const command = curlExample("http://localhost:8000/v1", "m", t, () => index);
+        const word = command.slice(command.indexOf(" -d ") + 4);
+        const body = JSON.parse(unquote(word));
+        expect(body.messages[0].content).toContain(t(`runs.funFact.topics.${id}`));
+      });
+    }
+  });
+
+  it("asks in the page's language", () => {
+    const fr = curlExample("http://h/v1", "m", translatorFor("fr").t, () => 0);
+    expect(fr).toContain("Donne-moi une anecdote surprenante sur les pieuvres");
+    const en = curlExample("http://h/v1", "m", translatorFor("en").t, () => 0);
+    expect(en).toContain("Tell me one surprising fun fact about octopuses");
+  });
+
+  it("says so on the chip when the clipboard refuses", async () => {
+    const onDesktop = deployment({
+      id: "desk2",
+      name: "desk job 2",
+      port: 8000,
+      ranks: [{ rank: 0, node: "", host: "ark-desktop", container_name: "c", is_head: true }],
+    });
+    vi.mocked(fetchDeployments).mockResolvedValue([onDesktop]);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn(() => Promise.reject(new Error("denied"))) },
+      configurable: true,
+    });
+    show();
+
+    const row = await screen.findByTestId("deployment-desk2");
+    fireEvent.click(within(row).getByRole("button", { name: /Copy the endpoint/ }));
+    await waitFor(() => expect(within(row).getByTestId("run-endpoint")).toHaveTextContent("Could not copy"));
+  });
+
+  it("points a peer's run at that peer's address", async () => {
+    const onPeer = deployment({
+      id: "peer",
+      name: "peer job",
+      port: 9001,
+      ranks: [{ rank: 0, node: "10.0.0.11", host: "spark-b", container_name: "c", is_head: true }],
+    });
+    vi.mocked(fetchDeployments).mockResolvedValue([onPeer]);
+    show();
+
+    const row = await screen.findByTestId("deployment-peer");
+    expect(within(row).getByTestId("run-endpoint")).toHaveTextContent("http://10.0.0.11:9001/v1");
   });
 
   it("leaves a record with no node_count alone rather than failing on it", async () => {
