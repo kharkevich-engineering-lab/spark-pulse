@@ -38,6 +38,10 @@ from typing import Any
 __all__ = [
     "DELETING",
     "ERROR",
+    "IllegalTransition",
+    "TRANSITIONS",
+    "check_transition",
+    "transition_allowed",
     "PHASES",
     "PULLING",
     "QUEUED",
@@ -129,3 +133,81 @@ def phase_fields(record: dict[str, Any]) -> dict[str, Any]:
     else:
         reason = ""
     return {"phase": phase, "phase_verified": verified, "phase_reason": reason}
+
+
+# ── Transitions ──────────────────────────────────────────────────────────────
+#
+# Every write of a deployment record goes through `deployment_records._apply`
+# (an existing row) or `_row_of` (a new one), and both ask `check_transition`
+# whether the phase the write produces may follow the one stored. Staying in a
+# phase is always allowed: most writes change a field that is not the phase.
+#
+# `unknown` goes both ways: a lifecycle this build cannot read may become
+# anything, and anything may become one (a record adopted from a container
+# nobody recorded, an older control plane's state).
+
+#: Where a run may go from each phase. ``None`` is a record being created.
+TRANSITIONS: dict[str | None, frozenset[str]] = {
+    # Created as whatever it already is: queued or pulling for a new deploy,
+    # starting or running for one adopted from its containers at startup,
+    # stopped or error for a run whose containers were found gone or failed.
+    None: frozenset({QUEUED, PULLING, STARTING, RUNNING, STOPPED, ERROR}),
+    QUEUED: frozenset({PULLING, STARTING, RUNNING, STOPPING, STOPPED, ERROR}),
+    PULLING: frozenset({STARTING, RUNNING, STOPPING, STOPPED, ERROR}),
+    # Or back to pulling: the record is written as starting, and the image
+    # then turns out not to be on the node.
+    STARTING: frozenset({PULLING, RUNNING, STOPPING, STOPPED, ERROR}),
+    # A run that is up goes down — asked to, or found gone — or fails; or it is
+    # seen starting again, which is a new generation of the same run.
+    RUNNING: frozenset({STARTING, STOPPING, STOPPED, ERROR}),
+    # A stop the nodes finished, or failed; or one that turned out to have
+    # nothing to stop (the run had already ended or failed on its own).
+    STOPPING: frozenset({STOPPED, ERROR}),
+    # A finished run is history: it is cleared, or a removal is asked of it.
+    STOPPED: frozenset({DELETING, ERROR}),
+    ERROR: frozenset({DELETING, STOPPED, STOPPING}),
+    # A removal that could not finish leaves the record as it was.
+    DELETING: frozenset({STOPPED, ERROR}),
+}
+
+
+class IllegalTransition(ValueError):
+    """A write that would move a run between two phases the table does not join."""
+
+    def __init__(self, deployment_id: str, before: str | None, after: str):
+        self.deployment_id = deployment_id
+        self.before = before
+        self.after = after
+        super().__init__(
+            f"run {deployment_id or '?'} cannot go from "
+            f"{before or 'nothing'} to {after}"
+        )
+
+
+def transition_allowed(before: str | None, after: str) -> bool:
+    """Whether a run may go from phase ``before`` to ``after``. Pure.
+
+    A removal may be asked of a run in any phase — *running · deleting* is a
+    real situation, the containers going with the record — so ``deleting`` is
+    reachable from every existing record rather than listed under each.
+    """
+    if before == after or UNKNOWN in (before, after):
+        return True
+    if after == DELETING and before is not None:
+        return True
+    return after in TRANSITIONS.get(before, frozenset())
+
+
+def check_transition(
+    before: dict[str, Any] | None, after: dict[str, Any]
+) -> IllegalTransition | None:
+    """The refusal for writing ``after`` over ``before``, or ``None``.
+
+    Answers rather than raises, because what to do about one is the store's
+    decision: refuse it under test, record it on a running control plane.
+    """
+    old = phase_of(before) if before is not None else None
+    new = phase_of(after)
+    if transition_allowed(old, new):
+        return None
+    return IllegalTransition(str(after.get("id") or ""), old, new)

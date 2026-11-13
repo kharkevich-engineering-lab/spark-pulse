@@ -97,7 +97,7 @@ spark-pulse = "spark_pulse.cli:main"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "--tb=short -v"
-env = ["SIMULATION_MODE=1"]
+env = ["SIMULATION_MODE=1", "SPARK_PULSE_STRICT_TRANSITIONS=1"]
 asyncio_mode = "auto"
 
 # ── Packaging ───────────────────────────────────────────────────────────────
