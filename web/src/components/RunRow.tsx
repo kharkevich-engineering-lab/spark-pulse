@@ -24,7 +24,7 @@ import { formatDuration, servesChat } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import ServesChip from "./ServesChip";
 import { isLiveRun } from "@/hooks/useDeployments";
-import { Check, ChevronDown, ChevronUp, Copy, Flame, Square, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Flame, Square, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import type { BenchmarkResult, Deployment } from "@/lib/types";
 
@@ -76,32 +76,48 @@ export function endpointUrl(run: Deployment, pageHost: string): string | null {
   return `http://${bracketed}:${run.port}/v1`;
 }
 
-/** The endpoint, copyable. A port alone said where nothing was. */
+/** The endpoint, as one chip that copies itself when clicked.
+ *
+ *  The whole chip is the button — a separate copy icon beside it was a second
+ *  target for one action — and the answer is on the chip itself for a moment:
+ *  it turns green and says "Copied to clipboard", where the operator is
+ *  already looking. A clipboard that refuses (a non-secure origin) says so
+ *  the same way, and the address stays selectable. */
 function Endpoint({ url }: { url: string }) {
   const t = useT();
-  const [copied, setCopied] = useState(false);
+  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      setState("copied");
     } catch {
-      // No clipboard (a non-secure origin): the text is selectable anyway.
+      setState("failed");
     }
+    setTimeout(() => setState("idle"), 1800);
   };
   return (
-    <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-line pl-2 pr-1 py-0.5 text-[13px]" title={t("runs.endpointTitle")}>
-      <code className="truncate font-mono text-text select-all" data-testid="run-endpoint">{url}</code>
-      <button
-        type="button"
-        onClick={() => void copy()}
-        aria-label={copied ? t("runs.endpointCopied") : t("runs.copyEndpoint", { url })}
-        title={copied ? t("runs.endpointCopied") : t("runs.copyEndpointShort")}
-        className="shrink-0 rounded-full p-1 text-muted transition-colors hover:text-text"
-      >
-        {copied ? <Check size={13} className="text-success" /> : <Copy size={13} />}
-      </button>
-    </span>
+    <button
+      type="button"
+      onClick={() => void copy()}
+      aria-label={t("runs.copyEndpoint", { url })}
+      title={t("runs.endpointTitle")}
+      className={cn(
+        "inline-flex max-w-full items-center gap-1.5 rounded-full border px-2 py-0.5 text-[13px] transition-colors",
+        state === "copied"
+          ? "border-success/60 bg-success/10 text-success"
+          : state === "failed"
+            ? "border-bad/60 bg-bad/10 text-bad"
+            : "border-line text-text hover:border-blue2 hover:text-blue2",
+      )}
+    >
+      {state === "copied" && <Check size={13} className="shrink-0" aria-hidden="true" />}
+      <span role="status" aria-live="polite" className="sr-only">
+        {state === "copied" ? t("runs.endpointCopied") : state === "failed" ? t("runs.endpointCopyFailed") : ""}
+      </span>
+      <code className="truncate font-mono select-all" data-testid="run-endpoint">
+        {state === "copied" ? t("runs.endpointCopied") : state === "failed" ? t("runs.endpointCopyFailed") : url}
+      </code>
+    </button>
   );
 }
 

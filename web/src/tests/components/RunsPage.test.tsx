@@ -252,10 +252,32 @@ describe("RunsPage row", () => {
     const url = `http://${window.location.hostname}:8000/v1`;
     expect(within(row).getByTestId("run-endpoint")).toHaveTextContent(url);
 
-    // fireEvent, not userEvent: user-event installs a clipboard of its own.
+    // The whole chip is the button. fireEvent, not userEvent: user-event
+    // installs a clipboard of its own.
     fireEvent.click(within(row).getByRole("button", { name: `Copy the endpoint ${url}` }));
     expect(writeText).toHaveBeenCalledWith(url);
-    expect(await within(row).findByRole("button", { name: "Copied" })).toBeInTheDocument();
+    // The answer is on the chip, where the operator is looking.
+    await waitFor(() => expect(within(row).getByTestId("run-endpoint")).toHaveTextContent("Copied to clipboard"));
+    expect(within(row).getByRole("status")).toHaveTextContent("Copied to clipboard");
+  });
+
+  it("says so on the chip when the clipboard refuses", async () => {
+    const onDesktop = deployment({
+      id: "desk2",
+      name: "desk job 2",
+      port: 8000,
+      ranks: [{ rank: 0, node: "", host: "ark-desktop", container_name: "c", is_head: true }],
+    });
+    vi.mocked(fetchDeployments).mockResolvedValue([onDesktop]);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn(() => Promise.reject(new Error("denied"))) },
+      configurable: true,
+    });
+    show();
+
+    const row = await screen.findByTestId("deployment-desk2");
+    fireEvent.click(within(row).getByRole("button", { name: /Copy the endpoint/ }));
+    await waitFor(() => expect(within(row).getByTestId("run-endpoint")).toHaveTextContent("Could not copy"));
   });
 
   it("points a peer's run at that peer's address", async () => {

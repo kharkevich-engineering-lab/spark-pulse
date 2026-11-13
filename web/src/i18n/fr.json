@@ -996,9 +996,9 @@
     "orphanRank": "Le rang {rank} n'a pas pu être confirmé arrêté",
     "orphanPorts": "Son conteneur tourne peut-être encore et retient les ports de {node} tant que ce n'est pas réglé.",
     "copyEndpoint": "Copier le point d'accès {url}",
-    "copyEndpointShort": "Copier",
-    "endpointCopied": "Copié",
-    "endpointTitle": "Le point d'accès compatible OpenAI de l'exécution"
+    "endpointCopied": "Copié dans le presse-papiers",
+    "endpointTitle": "Le point d'accès compatible OpenAI de l'exécution",
+    "endpointCopyFailed": "Copie impossible — sélectionnez-le"
   },
   "library": {
     "cacheUnreachable": "Injoignable",
