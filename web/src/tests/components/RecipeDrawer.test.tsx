@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import RecipeDrawer from "@/components/RecipeDrawer";
 import type { RecipeDetail } from "@/lib/types";
@@ -230,7 +230,8 @@ describe("RecipeDrawer", () => {
     expect(screen.getByText(/Reset "Qwen3 8B" to its original recipe\?/)).toBeInTheDocument();
     expect(onReset).not.toHaveBeenCalled();
 
-    await userEvent.click(screen.getAllByRole("button", { name: "Reset" }).at(-1)!);
+    // The confirmation's own button, not the footer's Reset beside it.
+    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Reset" }));
     await waitFor(() => expect(onReset).toHaveBeenCalled());
   });
 

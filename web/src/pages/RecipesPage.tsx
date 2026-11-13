@@ -632,7 +632,6 @@ export default function RecipesPage() {
                         clusterBlocked={false}
                         onSelect={() => handleSelect(r)}
                         onReset={() => openResetConfirm(r)}
-                        onUninstall={() => confirmDelete("oci", r.id, r.name)}
                       />
                     ))}
                   </div>
@@ -669,8 +668,7 @@ export default function RecipesPage() {
                               notHere={wontRunHere(r) ? r.fit?.reason : undefined}
                               onSelect={() => handleSelect(r)}
                               onReset={() => openResetConfirm(r)}
-                              onUninstall={() => confirmDelete("oci", r.id, r.name)}
-                            />
+                                  />
                           ))}
                         </div>
                       )}
@@ -782,6 +780,14 @@ export default function RecipesPage() {
               return handleReset(selected.recipe.id);
             }
           }}
+          onUninstall={
+            selected.recipe.source === "oci"
+              ? () => {
+                  confirmDelete("oci", selected.recipe.id, selected.recipe.name);
+                  setSelected(null);
+                }
+              : undefined
+          }
         />
       )}
 

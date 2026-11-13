@@ -14,7 +14,7 @@ function usableEngines(r: RecipeSummary): string[] {
   return r.engines ?? [];
 }
 
-export default function RecipeCard({ r, isRunning, isQueued, clusterBlocked, notHere, onSelect, onReset, onUninstall }: {
+export default function RecipeCard({ r, isRunning, isQueued, clusterBlocked, notHere, onSelect, onReset }: {
   r: RecipeSummary;
   isRunning: boolean;
   /** A deploy of it is waiting on its model download (Runs shows it). */
@@ -25,13 +25,9 @@ export default function RecipeCard({ r, isRunning, isQueued, clusterBlocked, not
   notHere?: string;
   onSelect: () => void;
   onReset?: () => void;
-  /** Uninstalls an OCI-installed recipe. Only ever passed for `source ===
-   *  "oci"` — a bundled recipe has nothing this can remove. */
-  onUninstall?: () => void;
 }) {
   const { t } = useI18n();
   const engines = usableEngines(r);
-  const isOci = r.source === "oci";
   /** Shipped with the package, so the operator cannot edit the file behind it.
    *  `unknown` — an id no source claims — is not managed: nothing here knows
    *  where it came from, and claiming otherwise would be a guess. */
@@ -105,8 +101,6 @@ export default function RecipeCard({ r, isRunning, isQueued, clusterBlocked, not
       onClick={onSelect}
       disabled={clusterBlocked}
       dimmed={Boolean(notHere)}
-      onDelete={isOci ? onUninstall : undefined}
-      deleteLabel={isOci ? t("recipes.uninstallRecipe", { name: r.name }) : undefined}
       hint={isManaged ? t("recipes.managedRecipe") : undefined}
     />
   );

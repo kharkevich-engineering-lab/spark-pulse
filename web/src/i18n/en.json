@@ -311,7 +311,6 @@
     "toggleCustom": "Toggle custom mode",
     "uninstallBody": "{name} is removed from disk. Reinstall it from the OCI Registry page if you need it again.",
     "uninstallFailed": "Could not uninstall {name}",
-    "uninstallRecipe": "Uninstall {name}",
     "uninstallRecipeTitle": "Uninstall this recipe",
     "heading": "Recipes and mods.",
     "deploy": "Deploy",
@@ -333,7 +332,8 @@
       "one": "Hide {count} recipe that doesn't run here",
       "other": "Hide {count} recipes that don't run here"
     },
-    "nothingRunsHere": "Nothing in this catalogue runs on this fleet yet. The recipes below say why; an engine published for this platform, or a recipe for one that is, changes that."
+    "nothingRunsHere": "Nothing in this catalogue runs on this fleet yet. The recipes below say why; an engine published for this platform, or a recipe for one that is, changes that.",
+    "uninstall": "Uninstall"
   },
   "recipeCard": {
     "running": "Running",

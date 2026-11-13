@@ -220,20 +220,13 @@ describe("RecipeCard", () => {
   /** An OCI-installed recipe is the one source an operator can actually
    *  remove from here — everywhere else, removal used to mean a trip to the
    *  separate OCI Registry page. */
-  it("offers to uninstall an OCI-installed recipe", () => {
-    const onUninstall = vi.fn();
+  /** Uninstall moved into the recipe's details, at the bottom: the card is
+   *  only a way in. */
+  it("offers no uninstall on the card, even for an OCI-installed recipe", () => {
     render(
-      <RecipeCard
-        r={recipe({ source: "oci", name: "Qwen3-32B" })}
-        isRunning={false}
-        clusterBlocked={false}
-        onSelect={vi.fn()}
-        onUninstall={onUninstall}
-      />,
+      <RecipeCard r={recipe({ source: "oci", name: "Qwen3-32B" })} isRunning={false} clusterBlocked={false} onSelect={vi.fn()} />,
     );
-
-    fireEvent.click(screen.getByRole("button", { name: "Uninstall Qwen3-32B" }));
-    expect(onUninstall).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: /Uninstall/ })).toBeNull();
   });
 
   /** A bundled recipe has nothing here to remove; the tooltip says so is

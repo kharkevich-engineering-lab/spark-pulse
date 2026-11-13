@@ -457,8 +457,12 @@ describe("RecipesPage", () => {
       render(<RecipesPage />);
       await screen.findByText("Qwen3 8B");
 
-      await userEvent.click(screen.getByRole("button", { name: "Uninstall Qwen3 32B" }));
-      await userEvent.click(screen.getByRole("button", { name: "Uninstall" }));
+      // From the recipe's details, at the bottom — the card has no trash icon.
+      expect(screen.queryByRole("button", { name: "Uninstall Qwen3 32B" })).toBeNull();
+      vi.mocked(fetchRecipe).mockResolvedValue(detail({ id: OCI_RECIPE.id, name: "Qwen3 32B", source: "oci" }));
+      await openDeployDrawer("Qwen3 32B");
+      await userEvent.click(within(screen.getByTestId("drawer-footer")).getByRole("button", { name: "Uninstall" }));
+      await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Uninstall" }));
 
       await waitFor(() => expect(uninstallOciRecipe).toHaveBeenCalledWith("Qwen3-32B"));
       // The recipe is gone from the list the moment the backend confirms it,
@@ -471,7 +475,9 @@ describe("RecipesPage", () => {
       render(<RecipesPage />);
       await screen.findByText("Qwen3 8B");
 
-      await userEvent.click(screen.getByRole("button", { name: "Uninstall Qwen3 32B" }));
+      vi.mocked(fetchRecipe).mockResolvedValue(detail({ id: OCI_RECIPE.id, name: "Qwen3 32B", source: "oci" }));
+      await openDeployDrawer("Qwen3 32B");
+      await userEvent.click(within(screen.getByTestId("drawer-footer")).getByRole("button", { name: "Uninstall" }));
       expect(screen.getByText(/Qwen3 32B is removed from disk/)).toBeInTheDocument();
       await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
@@ -484,8 +490,10 @@ describe("RecipesPage", () => {
       render(<RecipesPage />);
       await screen.findByText("Qwen3 8B");
 
-      await userEvent.click(screen.getByRole("button", { name: "Uninstall Qwen3 32B" }));
-      await userEvent.click(screen.getByRole("button", { name: "Uninstall" }));
+      vi.mocked(fetchRecipe).mockResolvedValue(detail({ id: OCI_RECIPE.id, name: "Qwen3 32B", source: "oci" }));
+      await openDeployDrawer("Qwen3 32B");
+      await userEvent.click(within(screen.getByTestId("drawer-footer")).getByRole("button", { name: "Uninstall" }));
+      await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Uninstall" }));
 
       expect(await screen.findByText("recipe is in use")).toBeInTheDocument();
       expect(screen.getByText("Qwen3 32B")).toBeInTheDocument();
@@ -861,7 +869,8 @@ describe("RecipesPage", () => {
 
       await userEvent.click(screen.getByRole("button", { name: "Edit custom" }));
       await userEvent.click(screen.getByRole("button", { name: "Reset" }));
-      await userEvent.click(screen.getAllByRole("button", { name: "Reset" }).at(-1)!);
+      // The confirmation's own button, not the footer's Reset beside it.
+    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Reset" }));
 
       await waitFor(() =>
         expect(deleteRecipeCustomization).toHaveBeenCalledWith("bundled/qwen3-8b"),

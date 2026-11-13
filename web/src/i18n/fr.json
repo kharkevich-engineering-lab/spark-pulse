@@ -311,7 +311,6 @@
     "toggleCustom": "Basculer le mode personnalisé",
     "uninstallBody": "{name} est retiré du disque. Réinstallez-le depuis la page Registre OCI si besoin.",
     "uninstallFailed": "Désinstallation de {name} impossible",
-    "uninstallRecipe": "Désinstaller {name}",
     "uninstallRecipeTitle": "Désinstaller cette recette",
     "heading": "Recettes et mods.",
     "deploy": "Déployer",
@@ -333,7 +332,8 @@
       "one": "Masquer {count} recette qui ne tourne pas ici",
       "other": "Masquer {count} recettes qui ne tournent pas ici"
     },
-    "nothingRunsHere": "Rien dans ce catalogue ne tourne encore sur cette flotte. Les recettes ci-dessous disent pourquoi ; un moteur publié pour cette plateforme, ou une recette pour un moteur qui l'est, y remédie."
+    "nothingRunsHere": "Rien dans ce catalogue ne tourne encore sur cette flotte. Les recettes ci-dessous disent pourquoi ; un moteur publié pour cette plateforme, ou une recette pour un moteur qui l'est, y remédie.",
+    "uninstall": "Désinstaller"
   },
   "recipeCard": {
     "running": "En cours",
