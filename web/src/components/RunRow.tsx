@@ -240,14 +240,22 @@ function Chip({ children, title }: { children: React.ReactNode; title?: string }
   );
 }
 
-function Figure({ label, value }: { label: string; value: string }) {
+function Figure({ label, value, tone }: { label: string; value: string; tone?: "busy" }) {
   return (
     <div className="min-[900px]:text-right">
       <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">{label}</p>
-      <p className="font-mono text-[14px] tabular-nums text-text">{value}</p>
+      <p
+        className={cn(
+          "font-mono text-[14px] tabular-nums",
+          tone === "busy" ? "text-blue2 animate-pulse" : "text-text",
+        )}
+      >
+        {value}
+      </p>
     </div>
   );
 }
+
 
 export default function RunRow({
   run,
@@ -263,6 +271,9 @@ export default function RunRow({
   const live = isLiveRun(run);
   const settling = isSettling(run.sync);
 
+  // While the latest benchmark runs, the row says so. Why one failed is the
+  // launcher's to say, when the operator clicks Benchmark — not the row's.
+  const measuring = benchmark?.status === "running";
   const throughput = metric(benchmark, "throughput");
   // No engine publishes a time-to-first-token of its own, so the first-token
   // figure is the benchmark's own latency — named for what it measures rather
@@ -287,6 +298,8 @@ export default function RunRow({
 
   // Benchmarks drive chat completions; against an embeddings endpoint the
   // button would only start a run the backend refuses.
+  // Shown whether or not the feature is on: off, the launcher says so and
+  // where to turn it on, rather than the button vanishing without a word.
   const benchmarkable = live && servesChat(run.serves);
   const actionCount = benchmarkable ? 3 : 2;
 
@@ -360,7 +373,14 @@ export default function RunRow({
           <div className="flex flex-wrap items-start gap-x-5 gap-y-2 min-[900px]:flex-nowrap min-[900px]:gap-x-6">
             <Figure
               label={t("runs.throughput")}
-              value={throughput != null ? `${throughput.toFixed(1)} tok/s` : "—"}
+              tone={measuring ? "busy" : undefined}
+              value={
+                measuring
+                  ? t("runs.benchmarkMeasuring")
+                  : throughput != null
+                    ? `${throughput.toFixed(1)} tok/s`
+                    : "—"
+              }
             />
             <Figure
               label={t("runs.firstToken")}
@@ -378,7 +398,7 @@ export default function RunRow({
               {t("runs.logs")}
             </Button>
             {benchmarkable && (
-              <Button size="sm" icon={Flame} onClick={onBenchmark} disabled={run.status !== "running"}>
+              <Button size="sm" icon={Flame} onClick={onBenchmark} disabled={run.status !== "running" || measuring} loading={measuring}>
                 {t("runs.benchmark")}
               </Button>
             )}

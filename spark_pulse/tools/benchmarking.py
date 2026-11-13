@@ -523,6 +523,28 @@ def _summarize_benchy(raw: dict) -> dict:
     return summary
 
 
+#: What an operator runs to get the tool, said everywhere it is missing.
+INSTALL_COMMAND = "pip install 'spark-pulse[benchmarking]'"
+
+
+def tool_status() -> dict[str, Any]:
+    """Whether llama-benchy can run here, and how to get it when it cannot.
+
+    Asked before a benchmark starts, so the launcher can say "install this"
+    at the click rather than the run failing in the background a moment
+    later where only the server log said why.
+    """
+    try:
+        import llama_benchy  # noqa: F401,PLC0415
+    except ImportError:
+        return {
+            "available": False,
+            "reason": "llama-benchy is not installed on the control plane",
+            "install": INSTALL_COMMAND,
+        }
+    return {"available": True, "reason": "", "install": INSTALL_COMMAND}
+
+
 def _run_llama_benchy(record: dict, params: dict) -> dict:
     """Run llama-benchy against the deployment the record names, and summarise.
 

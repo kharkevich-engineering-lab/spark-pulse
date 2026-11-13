@@ -296,7 +296,7 @@ export default function SettingsPage() {
   // MCP is mounted by `app.py` only when `config.mcp_enabled`, which is what
   // `/api/config` publishes. Outside a ConfigProvider the context is null;
   // `getConfig()` is the same cached answer the rest of the SPA falls back to.
-  const { config } = useConfig();
+  const { config, reload: reloadConfig } = useConfig();
   const mcpEnabled = config?.mcp_enabled ?? getConfig().mcp_enabled;
 
   // HF token state
@@ -328,6 +328,9 @@ export default function SettingsPage() {
     try {
       if (settingsDirty) await updateSettings(form as Parameters<typeof updateSettings>[0]);
       if (sourcesDirty && sources) await saveModelSources(sources);
+      // Every page reads the app config from one cache; without this a
+      // feature switched on here stayed off elsewhere until a reload.
+      if (settingsDirty) await reloadConfig();
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
       refetch();
