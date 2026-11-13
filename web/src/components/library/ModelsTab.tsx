@@ -151,6 +151,12 @@ export interface ModelsTabProps {
   scrollToCaches?: boolean;
 }
 
+/** A scheduled deploy whose run was created and then failed — the image did
+ *  not pull, the engine died. "Deployed" over that is the wrong answer. */
+function runFailed(entry: ScheduledDeploy): boolean {
+  return entry.run?.status === "error";
+}
+
 export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }: ModelsTabProps) {
   const { t } = useI18n();
   const { data: models, loading, error, refetch } = modelsQuery;
@@ -256,9 +262,24 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
   const connected = sseStatus.state === SSEConnectionState.CONNECTED;
 
   const active = useMemo(() => jobs.filter((j) => ACTIVE_STATES.includes(j.status)), [jobs]);
+  /** Finished downloads are not shown: the section is for what is in flight,
+   *  and a finished one is in the catalogue below. The one exception is a
+   *  download whose scheduled deploy then failed — the deploy never created
+   *  its run, or its run died — because that is the case an operator would
+   *  otherwise wait on for ever, and the only place it is said is here. */
+  const needsAttention = useCallback(
+    (jobId: string) =>
+      scheduled.some(
+        (e) => e.download_job_id === jobId && (e.status === "failed" || runFailed(e)),
+      ),
+    [scheduled],
+  );
   const recent = useMemo(
-    () => jobs.filter((j) => !ACTIVE_STATES.includes(j.status)).slice(0, 5),
-    [jobs],
+    () =>
+      jobs
+        .filter((j) => !ACTIVE_STATES.includes(j.status) && needsAttention(j.id))
+        .slice(0, 5),
+    [jobs, needsAttention],
   );
 
   const submit = async (e: React.FormEvent) => {
@@ -482,7 +503,9 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
                   <p className="text-[13px] text-muted flex items-center gap-2 min-w-0">
                     <Rocket
                       size={13}
-                      className={entry.status === "failed" ? "text-bad shrink-0" : "text-blue2 shrink-0"}
+                      className={
+                        entry.status === "failed" || runFailed(entry) ? "text-bad shrink-0" : "text-blue2 shrink-0"
+                      }
                     />
                     <span className="truncate">
                       {entry.status === "waiting" && (
@@ -499,7 +522,13 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
                           {t("models.now")}
                         </>
                       )}
-                      {entry.status === "done" && (
+                      {entry.status === "done" && runFailed(entry) && (
+                        <>
+                          <span className="font-medium text-text">{entry.name}</span>{" "}
+                          {t("models.couldNotDeploy")} {entry.run?.error || t("common.unknownError")}
+                        </>
+                      )}
+                      {entry.status === "done" && !runFailed(entry) && (
                         <>
                           {t("models.deployed")}{" "}
                           <span className="font-medium text-text">{entry.name}</span>

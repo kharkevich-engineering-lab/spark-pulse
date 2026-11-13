@@ -23,9 +23,37 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/scheduled-deploys", tags=["deployments"])
 
 
+def _with_run(entry: dict[str, Any]) -> dict[str, Any]:
+    """The entry, plus what the run it started is doing now.
+
+    ``done`` means the deployment was *created*. Creating one returns before
+    the image is pulled and the engine is up, so a run that then failed —
+    an image with no build for the node's platform, an engine that died —
+    left the Models page saying "Deployed" over a run in ``error``. The
+    record is read as stored (``deployment_records``, no probe of the nodes),
+    because this list is polled and the Runs page is where a run is watched.
+    ``run`` is ``None`` before a deployment exists and when its record has
+    since been removed.
+    """
+    run = None
+    deployment_id = str(entry.get("deployment_id") or "")
+    if deployment_id:
+        record = tools.deployment_records.get(deployment_id)
+        if record is not None:
+            run = {
+                "id": deployment_id,
+                "status": str(record.get("status") or ""),
+                "error": str(record.get("error_message") or ""),
+            }
+    return {**entry, "run": run}
+
+
 @router.get("")
 def list_scheduled(active_only: bool = False) -> list[dict[str, Any]]:
-    return tools.scheduled_deploys.listing(active_only=active_only)
+    return [
+        _with_run(entry)
+        for entry in tools.scheduled_deploys.listing(active_only=active_only)
+    ]
 
 
 @router.get("/{entry_id}")
@@ -40,7 +68,7 @@ def get_scheduled(entry_id: str) -> dict[str, Any]:
         raise HTTPException(
             status_code=404, detail=f"Scheduled deploy '{entry_id}' not found"
         )
-    return entry
+    return _with_run(entry)
 
 
 @router.post("")
