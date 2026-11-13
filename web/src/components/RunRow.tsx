@@ -230,11 +230,18 @@ export default function RunRow({
             <ServesChip serves={run.serves} />
 
             <Chip>{placement(run, t("runs.thisNode"))}</Chip>
-            {(() => {
-              const url = endpointUrl(run, window.location.hostname);
-              return url && live ? <Endpoint url={url} /> : null;
-            })()}
           </div>
+          {/* Its own line, not one more chip: "Copied to clipboard" is shorter
+              than the address, so in the wrapping chip row the chip jumped up
+              a line on click and back down after. */}
+          {(() => {
+            const url = endpointUrl(run, window.location.hostname);
+            return url && live ? (
+              <div className="mt-1.5">
+                <Endpoint url={url} />
+              </div>
+            ) : null;
+          })()}
         </div>
 
         <div className="flex shrink-0 flex-col gap-3 min-[900px]:items-end">
