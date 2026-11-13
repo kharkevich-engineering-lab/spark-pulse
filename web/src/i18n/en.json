@@ -995,10 +995,10 @@
     "rank": "rank {rank}",
     "orphanRank": "Rank {rank} could not be confirmed stopped",
     "orphanPorts": "Its container may still be running and holding {node}'s ports until this clears.",
-    "endpoint": "API",
     "copyEndpoint": "Copy the endpoint {url}",
     "copyEndpointShort": "Copy",
-    "endpointCopied": "Copied"
+    "endpointCopied": "Copied",
+    "endpointTitle": "The run's OpenAI-compatible endpoint"
   },
   "library": {
     "cacheUnreachable": "Could not ask",

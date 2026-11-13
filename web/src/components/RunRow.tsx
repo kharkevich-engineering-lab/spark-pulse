@@ -90,8 +90,7 @@ function Endpoint({ url }: { url: string }) {
     }
   };
   return (
-    <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-line pl-2 pr-1 py-0.5 text-[13px]">
-      <span className="text-muted">{t("runs.endpoint")}</span>
+    <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-line pl-2 pr-1 py-0.5 text-[13px]" title={t("runs.endpointTitle")}>
       <code className="truncate font-mono text-text select-all" data-testid="run-endpoint">{url}</code>
       <button
         type="button"
