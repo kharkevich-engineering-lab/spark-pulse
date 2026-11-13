@@ -393,6 +393,52 @@ export function eligibleEngines(
     .map((c) => c.engine);
 }
 
+/** The engine a deploy uses, as one compact dropdown.
+ *
+ *  Beside Deploy, in the recipe's footer: the choice that most changes what a
+ *  deploy does sat inside a folded "Deploy options" panel, so a recipe that
+ *  runs on SGLang and vLLM looked as though it had no choice at all. Offers
+ *  only what can run it (the same `engineChoices` the plan agrees with), and
+ *  the recipe's own default first. */
+export function EngineSelect({
+  recipe,
+  value,
+  onChange,
+}: {
+  recipe: RecipeDetail;
+  value: string | undefined;
+  onChange: (engine: string | undefined) => void;
+}) {
+  const i18n = useI18n();
+  const [engines, setEngines] = useState<EngineSummary[]>([]);
+  useEffect(() => {
+    fetchEngines()
+      .then((r) => setEngines(r.engines))
+      .catch(() => setEngines([]));
+  }, []);
+  const available = useMemo(() => eligibleEngines(engines, recipe, i18n), [engines, recipe, i18n]);
+  return (
+    <Select
+      aria-label={i18n.t("deployOptions.engine")}
+      data-testid="deploy-engine"
+      value={value ?? ""}
+      onChange={(e) => onChange(e.target.value || undefined)}
+      className="h-8 w-auto py-0 font-mono text-[13px]"
+    >
+      <option value="">
+        {recipe.engine
+          ? i18n.t("deployOptions.recipeDefaultEngine", { engine: recipe.engine })
+          : i18n.t("deployOptions.recipeDefault")}
+      </option>
+      {available.map((engine) => (
+        <option key={engine.key} value={engine.key}>
+          {engineLabel(engine)}
+        </option>
+      ))}
+    </Select>
+  );
+}
+
 export default function DeployOptions({
   recipe,
   value,
@@ -499,7 +545,6 @@ export default function DeployOptions({
   };
 
   const choices = useMemo(() => engineChoices(engines, recipe, i18n), [engines, recipe, i18n]);
-  const available = useMemo(() => choices.filter((c) => c.supported), [choices]);
   const unavailable = useMemo(() => choices.filter((c) => !c.supported), [choices]);
 
   const selectedAddresses = useMemo(() => new Set(value.nodes ?? []), [value.nodes]);
@@ -616,25 +661,6 @@ export default function DeployOptions({
               single control, so a wide window fits two side by side and a
               390px one fits exactly one. */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Field label={t("deployOptions.engine")}>
-              {(control) => (
-                <Select
-                  {...control}
-                  data-testid="deploy-engine"
-                  value={value.engine ?? ""}
-                  onChange={(e) => onChange({ ...value, engine: e.target.value || undefined })}
-                  className="font-mono text-[13px]"
-                >
-                  <option value="">{t("deployOptions.recipeDefault")}</option>
-                  {available.map(({ engine }) => (
-                    <option key={engine.key} value={engine.key}>
-                      {engineLabel(engine)}
-                    </option>
-                  ))}
-                </Select>
-              )}
-            </Field>
-
             <Field label={t("deployOptions.modelOverride")}>
               {(control) => (
                 <>

@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useI18n } from "@/lib/i18n";
 import RecipeForm from "./RecipeForm";
-import DeployOptions, { deployParams, type DeployOptionsValue } from "./DeployOptions";
+import DeployOptions, { EngineSelect, deployParams, type DeployOptionsValue } from "./DeployOptions";
 import { Button, ConfirmModal } from "@/ui";
 import { X } from "lucide-react";
 import SlideDrawer from "./SlideDrawer";
@@ -110,6 +110,13 @@ export default function RecipeDrawer({ recipe, customization, isRunning, cluster
                   <Button size="sm" onClick={() => setIsEditing(true)} disabled={isRunning || clusterBlocked}>
                     {t("recipeCard.editCustom")}
                   </Button>
+                )}
+                {onDeploy && (
+                  <EngineSelect
+                    recipe={recipe}
+                    value={deployOptions.engine}
+                    onChange={(engine) => setDeployOptions({ ...deployOptions, engine })}
+                  />
                 )}
                 {onDeploy && (
                   <Button

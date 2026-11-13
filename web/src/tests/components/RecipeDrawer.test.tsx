@@ -14,7 +14,16 @@ import RecipeDrawer from "@/components/RecipeDrawer";
 import type { RecipeDetail } from "@/lib/types";
 
 vi.mock("@/lib/api", () => ({
-  fetchEngines: vi.fn().mockResolvedValue({ engines: [] }),
+  fetchEngines: vi.fn().mockResolvedValue({
+    engines: ["vllm", "sglang"].map((engine) => ({
+      key: `${engine}/default`,
+      engine,
+      variant: "default",
+      version: "0.1.0",
+      enabled: true,
+      available: true,
+    })),
+  }),
   fetchModels: vi.fn().mockResolvedValue([]),
   fetchNodes: vi.fn().mockResolvedValue([]),
   planDeployment: vi.fn(),
@@ -262,8 +271,30 @@ describe("RecipeDrawer", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  /** The engine is the choice that most changes a deploy, so it sits beside
+   *  Deploy rather than inside the folded options panel. */
+  it("picks the engine beside Deploy and deploys on it", async () => {
+    const recipe = {
+      ...RECIPE,
+      engines: ["vllm", "sglang"],
+      engine_support: ["vllm", "sglang"].map((engine) => ({ engine, supported: true, reason: "", enabled: true })),
+    } as unknown as RecipeDetail;
+    const { onDeploy } = renderDrawer({ recipe });
+    const footer = screen.getByTestId("drawer-footer");
+    const select = within(footer).getByLabelText("Engine");
+    await waitFor(() => expect(within(select).getByRole("option", { name: /sglang/ })).toBeInTheDocument());
+    expect(within(select).getAllByRole("option")[0]).toHaveTextContent("vllm (recipe default)");
+
+    await userEvent.selectOptions(select, "sglang/default");
+    await userEvent.click(within(footer).getByRole("button", { name: "Deploy" }));
+
+    await waitFor(() => expect(onDeploy).toHaveBeenCalled());
+    expect(onDeploy.mock.calls[0][2]).toMatchObject({ engine: "sglang/default" });
+  });
+
   it("shows no deploy affordance at all when the page offers no deploy", () => {
     renderDrawer({ onDeploy: undefined });
+    expect(screen.queryByLabelText("Engine")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Deploy" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Deploy options" })).not.toBeInTheDocument();
   });

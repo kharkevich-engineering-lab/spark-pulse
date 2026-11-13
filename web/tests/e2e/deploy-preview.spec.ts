@@ -58,7 +58,8 @@ test("offers every engine that can run the recipe, and says why about the rest",
   const picker = page.getByLabel("Engine", { exact: true });
   await expect(picker).toBeVisible();
   const options = await picker.locator("option").allInnerTexts();
-  expect(options[0]).toBe("Recipe default");
+  // Beside Deploy now, naming the recipe's own engine when it has one.
+  expect(options[0]).toMatch(/recipe default/i);
   for (const engine of offered) {
     expect(options).toContain(`${engine.engine} · ${engine.version}`);
   }

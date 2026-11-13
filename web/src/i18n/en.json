@@ -574,7 +574,6 @@
     "parseFailed": "Failed to parse YAML"
   },
   "deployOptions": {
-    "recipeDefault": "Recipe default",
     "extraArgsPlaceholder": "--enable-prefix-caching --max-num-seqs 16",
     "extraArgsNote": "Appended to the engine command, quoted.",
     "parallelism": "Parallelism",
@@ -627,7 +626,9 @@
     "networkHost": "network host",
     "ipcHost": "ipc host",
     "shm": "shm {gb}g",
-    "notForThisFleet": "no image for this fleet's platform"
+    "notForThisFleet": "no image for this fleet's platform",
+    "recipeDefaultEngine": "{engine} (recipe default)",
+    "recipeDefault": "Recipe default"
   },
   "newRecipe": {
     "validationFailed": "Validation failed",

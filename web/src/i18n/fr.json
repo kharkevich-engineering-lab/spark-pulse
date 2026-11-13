@@ -574,7 +574,6 @@
     "parseFailed": "Échec de l'analyse du YAML"
   },
   "deployOptions": {
-    "recipeDefault": "Valeur par défaut de la recette",
     "extraArgsPlaceholder": "--enable-prefix-caching --max-num-seqs 16",
     "extraArgsNote": "Ajouté à la commande du moteur, entre guillemets.",
     "parallelism": "Parallélisme",
@@ -627,7 +626,9 @@
     "networkHost": "réseau hôte",
     "ipcHost": "IPC hôte",
     "shm": "shm {gb} Go",
-    "notForThisFleet": "aucune image pour la plateforme de cette flotte"
+    "notForThisFleet": "aucune image pour la plateforme de cette flotte",
+    "recipeDefaultEngine": "{engine} (par défaut de la recette)",
+    "recipeDefault": "Valeur par défaut de la recette"
   },
   "newRecipe": {
     "validationFailed": "Échec de la validation",
