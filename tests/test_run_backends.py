@@ -39,12 +39,17 @@ LIFECYCLE = frozenset(
     }
 )
 
-#: Where those may be named: the runtime itself, its simulation twin (which
-#: re-exports it), and the backend that delegates to it.
+#: Where those may be named: the runtime's re-export, its simulation twin
+#: (which re-exports it), and the Docker backend, which owns the lifecycle
+#: since #163 and delegates to it through that re-export.
 MAY_CALL_LIFECYCLE = {
     "tools/native_runtime.py",
     "mock/native_runtime.py",
-    "tools/backends/docker.py",
+    "tools/backends/docker/__init__.py",
+    "tools/backends/docker/planning.py",
+    "tools/backends/docker/images.py",
+    "tools/backends/docker/lifecycle.py",
+    "tools/backends/docker/state.py",
 }
 
 
