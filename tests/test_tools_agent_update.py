@@ -180,3 +180,73 @@ class TestStalePeers:
         mock_registry.update_node(CONTROL_ID, machine_id="x")  # ensure present
         au = real_agent_update()
         assert CONTROL_ID not in [n.id for n in au.stale_peers()]
+
+
+class TestArchitecture:
+    """#170: the bundle and the verdict both follow the node's own platform."""
+
+    def targets(self, monkeypatch):
+        au = real_agent_update()
+        built: list[str] = []
+        patch(monkeypatch)
+
+        def bundle_for(target):
+            built.append(target)
+            return type(
+                "B", (), {"data": b"B", "name": "9.9.9-x", "version": "9.9.9"}
+            )()
+
+        monkeypatch.setattr(au, "_bundle_for", bundle_for)
+        return built
+
+    @pytest.mark.parametrize(
+        ("platform", "target"),
+        [
+            ("linux/amd64", "x86_64-unknown-linux-musl"),
+            ("linux/arm64", "aarch64-unknown-linux-musl"),
+            # An agent too old to report a platform ran on a Spark.
+            ("", "aarch64-unknown-linux-musl"),
+        ],
+    )
+    async def test_the_update_ships_the_nodes_own_binary(
+        self, client, running, monkeypatch, platform, target
+    ):
+        built = self.targets(monkeypatch)
+        running.hub.attach(
+            AgentConnection(PEER_ID, facts=pb.NodeFacts(platform=platform))
+        )
+        body = (await client.post(f"/api/nodes/{PEER_ID}/update")).json()
+        assert body["updated"] is True, body
+        assert built == [target]
+
+    async def test_a_platform_nothing_is_built_for_is_refused(
+        self, client, running, monkeypatch
+    ):
+        built = self.targets(monkeypatch)
+        running.hub.attach(
+            AgentConnection(PEER_ID, facts=pb.NodeFacts(platform="linux/s390x"))
+        )
+        body = (await client.post(f"/api/nodes/{PEER_ID}/update")).json()
+        assert body["updated"] is False
+        assert "linux/s390x" in body["detail"]
+        assert built == []
+
+    async def test_a_peer_on_another_architectures_digest_is_stale(
+        self, running, monkeypatch
+    ):
+        from spark_pulse.agent import bundle
+
+        monkeypatch.setattr(
+            bundle,
+            "packaged_digests",
+            lambda: {
+                "aarch64-unknown-linux-musl": "arm",
+                "x86_64-unknown-linux-musl": "x86",
+            },
+        )
+        running.hub.attach(
+            AgentConnection(
+                PEER_ID, facts=pb.NodeFacts(binary_sha256="arm", platform="linux/amd64")
+            )
+        )
+        assert [n.id for n in real_agent_update().stale_peers()] == [PEER_ID]

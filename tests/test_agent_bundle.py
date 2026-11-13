@@ -203,3 +203,83 @@ def test_unpacking_an_ordinary_bundle_still_works(tmp_path):
         destination / "bin" / "spark-pulse-agent"
     ).read_bytes() == binary.read_bytes()
     assert json.loads((destination / "BUNDLE.json").read_text())["binary_size"] == 15
+
+
+# ── Which binary a node gets (#170) ─────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("machine", "target"),
+    [
+        ("aarch64", "aarch64-unknown-linux-musl"),
+        ("arm64", "aarch64-unknown-linux-musl"),
+        ("x86_64", "x86_64-unknown-linux-musl"),
+        ("amd64", "x86_64-unknown-linux-musl"),
+        ("riscv64", ""),
+        ("", ""),
+    ],
+)
+def test_a_machine_names_its_target_or_nothing(machine, target):
+    from spark_pulse.agent.bundle import target_for_machine
+
+    assert target_for_machine(machine) == target
+
+
+@pytest.mark.parametrize(
+    ("platform", "target"),
+    [
+        ("linux/arm64", "aarch64-unknown-linux-musl"),
+        ("linux/arm64/v8", "aarch64-unknown-linux-musl"),
+        ("linux/amd64", "x86_64-unknown-linux-musl"),
+        ("darwin/arm64", ""),
+        ("linux/s390x", ""),
+        ("", ""),
+    ],
+)
+def test_a_reported_platform_names_its_target_or_nothing(platform, target):
+    from spark_pulse.agent.bundle import target_for_platform
+
+    assert target_for_platform(platform) == target
+
+
+class TestIsCurrent:
+    DIGESTS = {
+        "aarch64-unknown-linux-musl": "arm",
+        "x86_64-unknown-linux-musl": "x86",
+        "host": "dev",
+    }
+
+    @pytest.fixture(autouse=True)
+    def shipped(self, monkeypatch):
+        from spark_pulse.agent import bundle
+
+        monkeypatch.setattr(bundle, "packaged_digests", lambda: dict(self.DIGESTS))
+
+    def test_a_node_on_its_own_architectures_binary_is_current(self):
+        from spark_pulse.agent.bundle import is_current
+
+        assert is_current("arm", "linux/arm64")
+        assert is_current("x86", "linux/amd64")
+
+    def test_another_architectures_digest_is_not_current(self):
+        from spark_pulse.agent.bundle import is_current
+
+        assert not is_current("arm", "linux/amd64")
+        assert not is_current("x86", "linux/arm64")
+
+    def test_the_host_binary_counts_as_shipped(self):
+        from spark_pulse.agent.bundle import is_current
+
+        assert is_current("dev", "linux/amd64")
+
+    def test_without_a_platform_any_shipped_digest_counts(self):
+        from spark_pulse.agent.bundle import is_current
+
+        assert is_current("arm", "")
+        assert is_current("x86", "")
+        assert not is_current("other", "")
+
+    def test_no_digest_is_never_current(self):
+        from spark_pulse.agent.bundle import is_current
+
+        assert not is_current("", "linux/arm64")

@@ -927,3 +927,55 @@ async def test_an_install_that_fails_records_nothing_either(
             password_prompt=password_prompt("not-the-password"),
         )
     assert not known_hosts_path().exists()
+
+
+# ── The node's architecture picks its agent (#170) ──────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("machine", "target"),
+    [
+        ("aarch64", "aarch64-unknown-linux-musl"),
+        ("x86_64", "x86_64-unknown-linux-musl"),
+    ],
+)
+async def test_the_installer_ships_the_binary_for_the_nodes_own_architecture(
+    agent_server, agent_fleet, agent_bundle, tmp_path, monkeypatch, machine, target
+):
+    """``uname -m`` on the node decides the target, not the control plane."""
+    built: list[str] = []
+
+    def spy(*, target, cache_dir=None, binary=None):
+        built.append(target)
+        return agent_bundle
+
+    monkeypatch.setattr(bootstrap, "build_bundle", spy)
+    node = make_node(tmp_path, machine=machine)
+    report = await do_install(agent_server, agent_fleet, node, None)
+
+    assert built == [target]
+    assert report.capabilities["machine"] == machine
+    assert report.connected is True
+
+
+async def test_an_architecture_nothing_is_built_for_is_refused_before_shipping(
+    agent_server, agent_fleet, tmp_path, monkeypatch
+):
+    from spark_pulse.agent.bundle import MissingAgentBinary
+
+    monkeypatch.setattr(
+        bootstrap, "build_bundle", lambda **_: pytest.fail("nothing to build")
+    )
+    node = make_node(tmp_path, machine="riscv64")
+    with pytest.raises(MissingAgentBinary, match="riscv64"):
+        await do_install(agent_server, agent_fleet, node, None)
+    assert not any("tar -xzf" in c["command"] for c in node.commands)
+
+
+async def test_the_probe_records_the_nodes_architecture(agent_fleet, tmp_path):
+    node = make_node(tmp_path, machine="x86_64")
+    agent_fleet.add(node)
+    session = await agent_fleet.connect(node.host, USER, password=PASSWORD)
+    caps = await probe_node(session, username=USER)
+    assert caps.machine == "x86_64"
+    assert caps.to_dict()["machine"] == "x86_64"

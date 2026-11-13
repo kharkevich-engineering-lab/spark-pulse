@@ -81,7 +81,7 @@ def _agent_currency(connection: Any | None) -> dict[str, Any]:
     version string only for an agent too old to report a digest. ``None``
     when there is no connection to ask.
     """
-    from spark_pulse.agent.bundle import packaged_digests
+    from spark_pulse.agent.bundle import is_current
     from spark_pulse.version import __version__
 
     if connection is None:
@@ -89,7 +89,8 @@ def _agent_currency(connection: Any | None) -> dict[str, Any]:
     version = str(connection.agent_version or connection.facts.agent_version or "")
     digest = str(getattr(connection.facts, "binary_sha256", "") or "")
     if digest:
-        current = digest in packaged_digests().values()
+        platform = str(getattr(connection.facts, "platform", "") or "")
+        current = is_current(digest, platform)
     else:
         current = bool(version) and version == __version__
     return {

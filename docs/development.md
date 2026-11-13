@@ -333,12 +333,12 @@ The `v2` branch (the run-backend work, #175) is never released: it does not go t
    ```
 
    The restart moves the control node's own agent too: it runs as a child of the control-plane process, from the package. Running engine containers are Docker's, not the service's, and survive the restart; startup recovery adopts them again from their labels.
-4. The peer follows on its own. Every peer agent reports the SHA-256 of its binary on each heartbeat; every 5 minutes, with `agent_auto_update` on (the default), the control plane sends a connected peer whose digest is not one of the wheel's agents the new bundle over its stream, and the agent stages it, checks it runs, repoints `current` and restarts itself. The v2 agent is a different binary even where its Rust is unchanged (the version is compiled in), so the peer is moved. To skip the wait, use **Update agent** on the node in Fleet. A peer that is offline is moved at the first sweep after it reconnects.
+4. The peer follows on its own. Every peer agent reports the SHA-256 of its binary on each heartbeat; every 5 minutes, with `agent_auto_update` on (the default), the control plane sends a connected peer whose digest is not the wheel's agent for that peer's architecture the new bundle over its stream, and the agent stages it, checks it runs, repoints `current` and restarts itself. The v2 agent is a different binary even where its Rust is unchanged (the version is compiled in), so the peer is moved. To skip the wait, use **Update agent** on the node in Fleet. A peer that is offline is moved at the first sweep after it reconnects.
 5. Check: `/version` on the control node and the agent version on each node in Fleet say `2.0.0.dev…+v2.<sha>`.
 
 To go back, install the release into the same Python (`… -m pip install spark-pulse==<version>`) and restart; the comparison is by digest, not by which version is newer, so the peer is moved back the same way.
 
-The updater sends the aarch64 agent to every peer, whatever its architecture (#170), which is right for Sparks; do not enrol an x86_64 peer on v2 until that is fixed.
+Each node gets the agent for its own architecture (#170): the installer reads `uname -m` over SSH, and an update reads the platform the agent reports (`linux/arm64` · `linux/amd64`). The wheel carries both `aarch64-unknown-linux-musl` and `x86_64-unknown-linux-musl`, and an agent too old to report a platform is taken to be a Spark, as every one of them was. Any other architecture is refused before anything is shipped.
 
 ---
 
