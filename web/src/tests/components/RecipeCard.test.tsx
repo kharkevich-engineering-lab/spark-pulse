@@ -34,14 +34,38 @@ const recipe = (over: Partial<RecipeSummary> = {}): RecipeSummary => ({
 });
 
 describe("RecipeCard", () => {
-  it("names the recipe, its description and its container", () => {
+  it("names the recipe and its description, and no image tag", () => {
     render(
       <RecipeCard r={recipe()} isRunning={false} clusterBlocked={false} onSelect={vi.fn()} />,
     );
 
     expect(screen.getByText("Qwen3-8B")).toBeInTheDocument();
     expect(screen.getByText("A small instruct model.")).toBeInTheDocument();
-    expect(screen.getByText("vllm-node")).toBeInTheDocument();
+    // The image is the drawer's detail; the card says the engine.
+    expect(screen.queryByText("vllm-node")).toBeNull();
+  });
+
+  /** The lab: Solo and Cluster landed wherever the wrap put them, and a
+   *  llama.cpp recipe read "vllm-node" with no engine at all. */
+  it("puts the source and the engines on line one, how it runs on line two", () => {
+    render(
+      <RecipeCard
+        r={recipe({
+          id: "oci-gguf",
+          source: "oci",
+          engine_support: [{ engine: "llama-cpp", supported: true, reason: "", enabled: true }],
+        })}
+        isRunning={false}
+        clusterBlocked={false}
+        onSelect={vi.fn()}
+      />,
+    );
+
+    const one = screen.getByTestId("recipe-line1-oci-gguf");
+    expect(one).toHaveTextContent("oci");
+    expect(one).toHaveTextContent("llama-cpp");
+    expect(one).not.toHaveTextContent("Solo");
+    expect(screen.getByTestId("recipe-line2-oci-gguf")).toHaveTextContent("Solo");
   });
 
   it("falls back to the model when a recipe carries no description", () => {
