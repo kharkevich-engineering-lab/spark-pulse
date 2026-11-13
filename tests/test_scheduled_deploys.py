@@ -149,6 +149,53 @@ class TestSchedulingTheDeploy:
         assert entry["download_job_id"]
         assert entry["download"]["model"] == ABSENT
 
+    def test_the_download_fetches_only_what_the_run_needs(self, client, monkeypatch):
+        """A GGUF repository holds every packing; the lab's came down at 5 GB
+        for a recipe that loads one 400 MB file (#208). The plan says which
+        files the run reads, and the download is narrowed to them."""
+        planned = {
+            "model": ABSENT,
+            "model_present": False,
+            "model_patterns": ["q4.gguf", "*/q4.gguf"],
+        }
+        monkeypatch.setattr(
+            tools.deploy_dispatch, "plan_deployment", lambda **_kw: planned
+        )
+        asked: dict = {}
+
+        def start_download(model, **kwargs):
+            asked.update(kwargs, model=model)
+            return {"id": "job-1", "model": model}
+
+        monkeypatch.setattr(tools.models, "start_download", start_download)
+
+        response = client.post(
+            "/api/scheduled-deploys", json={"recipe_id": RECIPE, "model": ABSENT}
+        )
+
+        assert response.status_code == 200, response.text
+        assert asked["allow_patterns"] == ["q4.gguf", "*/q4.gguf"]
+
+    def test_a_plan_with_no_patterns_downloads_the_whole_repository(
+        self, client, monkeypatch
+    ):
+        planned = {"model": ABSENT, "model_present": False, "model_patterns": []}
+        monkeypatch.setattr(
+            tools.deploy_dispatch, "plan_deployment", lambda **_kw: planned
+        )
+        asked: dict = {}
+        monkeypatch.setattr(
+            tools.models,
+            "start_download",
+            lambda model, **kw: asked.update(kw) or {"id": "j", "model": model},
+        )
+
+        client.post(
+            "/api/scheduled-deploys", json={"recipe_id": RECIPE, "model": ABSENT}
+        )
+
+        assert asked["allow_patterns"] is None
+
     def test_the_recipe_supplies_the_model_when_the_request_does_not(self, client):
         """The planner resolves the model; the client should not have to."""
         response = client.post("/api/scheduled-deploys", json={"recipe_id": RECIPE})

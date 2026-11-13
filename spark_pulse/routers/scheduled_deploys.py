@@ -117,9 +117,15 @@ def schedule_deploy(req: dict) -> dict[str, Any]:
             },
         )
 
+    # Only the files this run reads: a GGUF repository holds every packing,
+    # and the recipe names one. Empty patterns are the whole repository.
+    patterns = list(plan.get("model_patterns") or []) or None
     try:
         job = tools.models.start_download(
-            model, source=req.get("source"), revision=req.get("revision")
+            model,
+            source=req.get("source"),
+            revision=req.get("revision"),
+            allow_patterns=patterns,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -459,6 +459,17 @@ class Engine:
         """
         return "", ""
 
+    def model_patterns(self, recipe: dict[str, Any]) -> list[str]:
+        """Which files of the model's repository this run needs.
+
+        ``allow_patterns`` for a download made on this run's behalf; empty
+        means the whole repository, which is what every engine handed a model
+        id reads. Pure, like :meth:`choose_model_file`, and the same rule: an
+        engine that picks one file out of a repository says which here, so the
+        download fetches that file and not every packing beside it.
+        """
+        return []
+
     def supports_mods(self) -> bool:
         return bool(self.spec.capabilities.mods)
 
