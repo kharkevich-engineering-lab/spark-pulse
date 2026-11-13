@@ -146,6 +146,6 @@ Tests get a database per test via an autouse fixture in `tests/conftest.py`, whi
 
 ## Conventions
 
-- PR titles must be conventional commits with a lowercase subject (`feat`, `fix`, `docs`, `ci`, `chore`, `build`, `test`); semantic-release on `main` derives the version, runs `scripts/release.sh` (builds UI, rewrites `pyproject.toml` version, `python -m build`), and publishes to PyPI. Don't hand-edit the version.
+- PR titles must be conventional commits with a lowercase subject, and the type must be **exactly one of `feat`, `fix`, `docs`, `ci`, `chore`, `build`, `test`**. The title check (`amannn/action-semantic-pull-request`) rejects every other type — `refactor`, `perf`, `style` and `revert` included — so a refactor is `chore:`. Fix a wrong title with `gh api -X PATCH repos/<owner>/<repo>/pulls/<n> -f title=…`, since `gh pr edit` fails on the Projects (classic) deprecation. Merges into `v2` squash the PR title into the commit; semantic-release on `main` derives the version, runs `scripts/release.sh` (builds UI, rewrites `pyproject.toml` version, `python -m build`), and publishes to PyPI. Don't hand-edit the version.
 - CI (`unit-tests.yml`) runs pytest, vitest, Playwright against a `SIMULATION_MODE=1` backend, black/ruff, eslint, and `tsc -b` as separate jobs. All must pass.
 - Python is formatted by black and ruff-format (both in pre-commit); TS/TSX by eslint with `_`-prefixed unused vars allowed.
