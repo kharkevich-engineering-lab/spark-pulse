@@ -97,3 +97,24 @@ describe("mergeEvents", () => {
     expect(mergeEvents([], [])).toEqual([]);
   });
 });
+
+
+describe("latestPullProgress", () => {
+  it("keeps the newest progress frame per run, from its metadata", async () => {
+    const { latestPullProgress } = await import("@/lib/operations");
+    const frame = (resource: string, percent: number, id: string) =>
+      ({
+        event_id: id,
+        timestamp: "",
+        event_type: "image.pull.progress",
+        message: "",
+        resource,
+        resource_type: "deployment",
+        metadata: { percent, bytes_done: percent * 10, bytes_total: 1000 },
+      }) as never;
+    // Newest first, as the stream keeps them.
+    const pulls = latestPullProgress([frame("a", 60, "3"), frame("b", 10, "2"), frame("a", 40, "1")]);
+    expect(pulls.get("a")).toEqual({ percent: 60, bytesDone: 600, bytesTotal: 1000 });
+    expect(pulls.get("b")?.percent).toBe(10);
+  });
+});

@@ -948,6 +948,34 @@ describe("RunsPage event stream", () => {
   const stream = () =>
     CapturingEventSource.instances.find((s) => s.url === "/sse/events/deployments")!;
 
+  /** The lab: a multi-GB engine image read "Pulling" for ten minutes, with
+   *  nothing about how far it had got. */
+  it("shows a pulling run's progress beside its status and under its chips", async () => {
+    vi.mocked(fetchDeployments).mockResolvedValue([
+      deployment({ id: "p1", name: "pulling job", status: "pulling" }),
+    ]);
+    show();
+    await screen.findByTestId("deployment-p1");
+    await waitFor(() => expect(stream()).toBeDefined());
+
+    act(() =>
+      stream().emit({
+        type: "image.pull.progress",
+        event_id: "pp1",
+        timestamp: "2026-01-01T00:00:00Z",
+        message: "pulling img: 45%",
+        resource: "p1",
+        resource_type: "deployment",
+        metadata: { percent: 45.67, bytes_done: 3_800_000_000, bytes_total: 8_400_000_000 },
+      }),
+    );
+
+    const row = screen.getByTestId("deployment-p1");
+    expect(await within(row).findByText("Pulling… 45%")).toBeInTheDocument();
+    expect(within(row).getByTestId("pull-p1")).toHaveTextContent(/Pulling the engine image: 45% \(.+ of .+\)/);
+    expect(within(row).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "45");
+  });
+
   it("shows an event under the run it belongs to, and not under another", async () => {
     show();
     await expand("first job");

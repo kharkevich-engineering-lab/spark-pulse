@@ -1032,7 +1032,9 @@
         "lightSpeed": "la vitesse de la lumière",
         "ancientRome": "la Rome antique"
       }
-    }
+    },
+    "pullingImage": "Téléchargement de l'image du moteur : {percent} % ({done} sur {total})",
+    "pullProgressLabel": "Téléchargement de l'image de {name}"
   },
   "library": {
     "cacheUnreachable": "Injoignable",
