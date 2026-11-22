@@ -49,7 +49,8 @@ Install the published package from PyPI:
 python3 -m pip install spark-pulse
 ```
 
-This installs the `spark-pulse` command-line interface.
+This installs the `spark-pulse` command-line interface. The latest stable
+release is the v2 line.
 
 ## Usage
 
