@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   deleteSecret,
@@ -312,12 +312,19 @@ export default function SettingsPage() {
     sources != null && modelSources != null && JSON.stringify(sources) !== JSON.stringify(modelSources);
   const isDirty = settingsDirty || sourcesDirty;
 
-  useEffect(() => {
-    if (settings) setForm({ ...settings });
-  }, [settings]);
-  useEffect(() => {
-    if (modelSources) setSources(modelSources);
-  }, [modelSources]);
+  // Seeded while rendering, not in an effect: an effect runs after the
+  // fields are on screen, so an edit made in that gap was overwritten by the
+  // seed — the field showed it and the form had forgotten it.
+  const [seededSettings, setSeededSettings] = useState<typeof settings>(null);
+  if (settings && settings !== seededSettings) {
+    setSeededSettings(settings);
+    setForm({ ...settings });
+  }
+  const [seededSources, setSeededSources] = useState<typeof modelSources>(null);
+  if (modelSources && modelSources !== seededSources) {
+    setSeededSources(modelSources);
+    setSources(modelSources);
+  }
 
   const handleSave = async () => {
     setSaving(true);
