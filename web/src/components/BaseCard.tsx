@@ -13,6 +13,9 @@ interface BaseCardProps {
   badges?: React.ReactNode;
   onClick: () => void;
   disabled?: boolean;
+  /** Drawn faded but still openable: something the operator can read about
+   *  and not run here. `disabled` is the one that cannot be opened at all. */
+  dimmed?: boolean;
   className?: string;
   /** Shown as a trash control in the corner. Absent means this card names
    *  something the operator did not create and cannot remove — a bundled
@@ -28,7 +31,7 @@ interface BaseCardProps {
   hint?: string;
 }
 
-export default function BaseCard({ icon, title, subtitle, description, badges, onClick, disabled, className, onDelete, deleteLabel, hint }: BaseCardProps) {
+export default function BaseCard({ icon, title, subtitle, description, badges, onClick, disabled, dimmed, className, onDelete, deleteLabel, hint }: BaseCardProps) {
   const interactive = !disabled;
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -51,7 +54,7 @@ export default function BaseCard({ icon, title, subtitle, description, badges, o
         disabled
           ? "opacity-50 cursor-not-allowed border-border"
           : "border-border hover:border-primary/50 hover:bg-surface-hover cursor-pointer group"
-      } ${className ?? ""}`}
+      } ${dimmed && !disabled ? "opacity-60 hover:opacity-100" : ""} ${className ?? ""}`}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">

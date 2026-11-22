@@ -99,7 +99,27 @@ def _fields_of(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def _row_of(record: dict[str, Any]) -> DeploymentRow:
+    _guard_transition(None, record)
     return DeploymentRow(**_fields_of(record))
+
+
+#: Set (the test suite sets it) to refuse a write whose phase change the
+#: transition table does not allow. Unset, the write goes through and the
+#: refusal is logged: on a running control plane a record that cannot be
+#: written is a record that lies about its containers, which is worse.
+STRICT_TRANSITIONS_ENV = "SPARK_PULSE_STRICT_TRANSITIONS"
+
+
+def _guard_transition(before: dict[str, Any] | None, after: dict[str, Any]) -> None:
+    """Hold every write to the run state machine (#205)."""
+    from spark_pulse.tools import run_state
+
+    refusal = run_state.check_transition(before, after)
+    if refusal is None:
+        return
+    if os.environ.get(STRICT_TRANSITIONS_ENV):
+        raise refusal
+    logger.error("deployment record written outside the state machine: %s", refusal)
 
 
 def _apply(row: DeploymentRow, record: dict[str, Any]) -> bool:
@@ -112,6 +132,7 @@ def _apply(row: DeploymentRow, record: dict[str, Any]) -> bool:
     amplification that grows with the size of the cluster rather than with the
     size of the change.
     """
+    _guard_transition(row.record, record)
     changed = False
     for column, value in _fields_of(record).items():
         if getattr(row, column) != value:

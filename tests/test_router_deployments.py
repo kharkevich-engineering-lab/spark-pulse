@@ -26,6 +26,8 @@ from spark_pulse.tools.atomic_json import StateFileError
 # See the note in test_tools_native_runtime.py — the real modules are what run.
 dispatch = importlib.import_module("spark_pulse.tools.deploy_dispatch")
 nr = importlib.import_module("spark_pulse.tools.native_runtime")
+docker_state = importlib.import_module("spark_pulse.tools.backends.docker.state")
+
 records = tools.deployment_records
 
 RECIPE = {
@@ -71,14 +73,16 @@ def env(tmp_path):
             ),
         ),
         patch(
-            "spark_pulse.tools.native_runtime.get_registry",
+            "spark_pulse.tools.backends.docker.planning.get_registry",
             return_value=EngineRegistry(cache_dir=tmp_path / "engine-cache"),
         ),
-        patch.object(nr, "_docker_service", return_value=docker),
+        patch.object(docker_state, "_docker_service", return_value=docker),
         # Container work goes through the node resolver now, for rank zero of a
         # solo deployment exactly as for a rank on a peer, so the fixture pins
         # the resolver rather than only the process's own service.
-        patch.object(nr, "rank_services", return_value=lambda _address: docker),
+        patch.object(
+            docker_state, "rank_services", return_value=lambda _address: docker
+        ),
     ):
         yield {"records": records, "docker": docker}
         # A deploy that had to pull runs on a background thread. Left running,

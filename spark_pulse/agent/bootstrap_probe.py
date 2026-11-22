@@ -185,6 +185,9 @@ class NodeCapabilities:
     uid: int = -1
     home: str = ""
     hostname: str = ""
+    #: ``uname -m``: which agent binary this node can execute (#170). Empty
+    #: when the node did not say.
+    machine: str = ""
     groups: tuple[str, ...] = ()
     #: ``docker version`` answered. The only trustworthy statement about access.
     docker_socket: bool = False
@@ -217,6 +220,7 @@ class NodeCapabilities:
             "uid": self.uid,
             "home": self.home,
             "hostname": self.hostname,
+            "machine": self.machine,
             "groups": list(self.groups),
             "docker_socket": self.docker_socket,
             "docker_version": self.docker_version,
@@ -256,6 +260,10 @@ async def probe_node(session: NodeSession, *, username: str = "") -> NodeCapabil
         home=line(3),
         hostname=line(4),
     )
+
+    machine = await session.run("uname -m", timeout=20)
+    if machine.ok:
+        caps = replace(caps, machine=machine.stdout.strip())
 
     docker = await session.run(
         "docker version --format '{{.Server.Version}}'", timeout=30

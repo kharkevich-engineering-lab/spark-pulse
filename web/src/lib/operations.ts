@@ -93,6 +93,8 @@ export interface DeploymentEvent {
   actor?: string;
   correlation_id?: string;
   severity?: "info" | "warning" | "error";
+  /** What the backend attached: a pull's `bytes_done`/`bytes_total`/`percent`. */
+  metadata?: Record<string, unknown>;
 }
 
 /** One event as the wire carries it.
@@ -111,6 +113,7 @@ export interface DeploymentEventFrame {
   resource_type?: string;
   node?: string;
   severity?: string;
+  metadata?: Record<string, unknown>;
 }
 
 /** One run's stored timeline: a page of it, and how much there is in all. */
@@ -140,7 +143,36 @@ export function eventFromFrame(frame: DeploymentEventFrame): DeploymentEvent {
     resource_type: (frame.resource_type as OperationResourceType) || "deployment",
     node: frame.node || undefined,
     severity: (frame.severity as DeploymentEvent["severity"]) || undefined,
+    metadata: frame.metadata,
   };
+}
+
+/** How far an image pull has got, from its progress frames. */
+export interface PullProgress {
+  percent: number;
+  bytesDone: number;
+  bytesTotal: number;
+}
+
+/** The latest pull progress per run, from the live frames (newest first).
+ *
+ *  A run's row said "Pulling" for the ten minutes a multi-GB engine image
+ *  took, with nothing about how far it had got; the backend sends a progress
+ *  frame a second, and this is the newest one for each run. */
+export function latestPullProgress(events: DeploymentEvent[]): Map<string, PullProgress> {
+  const out = new Map<string, PullProgress>();
+  for (const event of events) {
+    if (event.event_type !== ("image.pull.progress" as EventType) || out.has(event.resource)) continue;
+    const m = event.metadata ?? {};
+    const percent = Number(m.percent);
+    if (!Number.isFinite(percent)) continue;
+    out.set(event.resource, {
+      percent: Math.max(0, Math.min(100, percent)),
+      bytesDone: Number(m.bytes_done) || 0,
+      bytesTotal: Number(m.bytes_total) || 0,
+    });
+  }
+  return out;
 }
 
 /** Every event once, newest first.

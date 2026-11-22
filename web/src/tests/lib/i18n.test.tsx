@@ -49,6 +49,9 @@ describe("the dictionaries", () => {
    *  French borrowed unchanged. */
   const IDENTICAL_ON_PURPOSE = new Set([
     "common.ok",
+    // Kubernetes and its object kinds are names, the same in every language.
+    "kubernetesPreview.heading",
+    "kubernetesPreview.cachePvc",
     "engines.none",
     // "Image" and "RAM" are the same word in French; "PID" and "MCP" are
     // initialisms.
@@ -67,6 +70,7 @@ describe("the dictionaries", () => {
     "nodes.doctor.applied",
     "fabric.showPlan",
     "nodes.agentVersion",
+    "nodes.runtime",
     "nodes.updating",
     // Placeholders that are literal examples — an address, a key path, an
     // image reference — not prose. Translating them would make them wrong.

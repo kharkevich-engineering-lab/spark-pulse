@@ -20,6 +20,7 @@ from spark_pulse.tools.hub_cache import (
 from spark_pulse.tools.models import (  # noqa: F401 — shared constants/helpers
     DEFAULT_SOURCES,
     DownloadInProgress,
+    gguf_quant,
     EVENT_CANCELLED,
     EVENT_COMPLETED,
     EVENT_DELETED,

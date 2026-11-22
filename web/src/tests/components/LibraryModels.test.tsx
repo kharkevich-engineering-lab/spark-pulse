@@ -3,7 +3,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import LibraryPage from "@/pages/LibraryPage";
-import { describePrecision, describeWhere, shortRevision } from "@/components/library/ModelsTab";
+import { describePrecision, describeWhere, ggufDetail, shortRevision } from "@/components/library/ModelsTab";
 import { translate } from "@/lib/i18n";
 import type { ModelEntry } from "@/lib/types";
 
@@ -55,7 +55,11 @@ vi.mock("@/lib/api", () => ({
   // the delete tests care, and a page that asks for nodes must not depend on
   // there being any.
   fetchNodes: vi.fn(() => Promise.resolve([])),
-  fetchModelPresence: vi.fn(),
+  // A whole local copy unless a test says otherwise: presence is asked on a
+  // one-machine install too, since the catalogue lists partial downloads.
+  fetchModelPresence: vi.fn(() =>
+    Promise.resolve({ local: true, local_state: "verified", local_filtered: false, nodes: [] }),
+  ),
   syncModelToNodes: vi.fn(),
 }));
 
@@ -120,6 +124,24 @@ describe("the models tab's helpers", () => {
     expect(describePrecision(models[0])).toBe("bfloat16");
     expect(describePrecision({ ...models[0], config: null })).toBe("—");
   });
+
+  /** A GGUF repo has no config.json; the lab's catalogue showed "—" for one
+   *  holding nine quantisations. */
+  it("names a GGUF's quantisation from its files, and counts several", () => {
+    const one = { ...models[0], config: null, gguf: [{ file: "m-q8_0.gguf", quant: "q8_0", size_bytes: 676e6 }] };
+    expect(describePrecision(one)).toBe("GGUF · q8_0");
+    expect(ggufDetail(one)).toBe("m-q8_0.gguf");
+
+    const many = {
+      ...one,
+      gguf: [
+        { file: "m-q4_k_m.gguf", quant: "q4_k_m", size_bytes: 491e6 },
+        { file: "m-q8_0.gguf", quant: "q8_0", size_bytes: 676e6 },
+      ],
+    };
+    expect(describePrecision(many)).toBe("GGUF ×2");
+    expect(ggufDetail(many)).toMatch(/q4_k_m · .*\nq8_0 · /);
+  });
 });
 
 describe("Library — models", () => {
@@ -152,11 +174,39 @@ describe("Library — models", () => {
 
   /** One machine holds every model it has, by definition — so the column says
    *  so rather than leaving the operator to wonder whether it was asked. */
-  it("says the model is on the only node there is", async () => {
+  it("says the model is on the only node there is, once it has asked", async () => {
     renderPage();
     await screen.findByText("acme/plain-7b");
 
-    expect(screen.getAllByText("1 of 1 nodes")).toHaveLength(2);
+    expect(await screen.findAllByText("1 of 1 nodes")).toHaveLength(2);
+    expect(fetchModelPresence).toHaveBeenCalledWith("acme/plain-7b", []);
+  });
+
+  /** The lab: a download that had only just started read "1 of 1 nodes",
+   *  because one machine was taken as proof of a whole copy. */
+  it("says a download still arriving is downloading, not on the node", async () => {
+    vi.mocked(fetchModelDownloads).mockResolvedValue([
+      {
+        id: "j1", model: "acme/plain-7b", source: "hf", revision: null, allow_patterns: null,
+        status: "running", bytes_done: 40, bytes_total: 100, current_file: null, path: null,
+        error: null, created_at: "", started_at: null, finished_at: null,
+      },
+    ] as never);
+    renderPage();
+    const row = await screen.findByTestId("model-acme/plain-7b");
+
+    expect(await within(row).findByText("downloading 40%")).toBeInTheDocument();
+    expect(row).not.toHaveTextContent("1 of 1 nodes");
+  });
+
+  it("says a partial copy on one machine is partial", async () => {
+    vi.mocked(fetchModelPresence).mockResolvedValueOnce({
+      local: true, local_state: "partial", local_filtered: false, nodes: [],
+    } as never);
+    renderPage();
+    await screen.findByText("acme/plain-7b");
+
+    expect(await screen.findByText(/^partial on /)).toBeInTheDocument();
   });
 
   it("lists hub sources in the download form", async () => {
@@ -425,6 +475,39 @@ describe("Library — deployments waiting on a download", () => {
     );
   });
 
+  /** What the lab showed: the download finished, the deploy created its run,
+   *  and the run failed on the image pull. The row said "Deployed". */
+  it("says a run that failed after its deploy was created failed, not that it deployed", async () => {
+    vi.mocked(fetchModelDownloads).mockResolvedValue([{ ...runningJob, status: "completed", bytes_done: 100 }] as never);
+    vi.mocked(fetchScheduledDeploys).mockResolvedValue([
+      schedule({
+        status: "done",
+        deployment_id: "d-1",
+        run: { id: "d-1", status: "error", error: "no image found in image index for architecture amd64" },
+      }),
+    ] as never);
+    renderPage();
+
+    const row = await screen.findByTestId("scheduled-s-1");
+    expect(row).toHaveTextContent(/big-serve could not be deployed: no image found .* amd64/);
+    expect(row).not.toHaveTextContent(/Deployed/);
+    // Finished: no bar pretending the transfer is still going.
+    expect(within(screen.getByTestId("job-job9")).queryByRole("progressbar")).toBeNull();
+  });
+
+  it("does not list a finished download whose deploy is running", async () => {
+    vi.mocked(fetchModelDownloads).mockResolvedValue([{ ...runningJob, status: "completed", bytes_done: 100 }] as never);
+    vi.mocked(fetchScheduledDeploys).mockResolvedValue([
+      schedule({ status: "done", deployment_id: "d-1", run: { id: "d-1", status: "running", error: "" } }),
+    ] as never);
+    renderPage();
+
+    await waitFor(() => expect(fetchScheduledDeploys).toHaveBeenCalled());
+    await waitFor(() => expect(fetchModelDownloads).toHaveBeenCalled());
+    expect(screen.queryByTestId("job-job9")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Downloads" })).not.toBeInTheDocument();
+  });
+
   it("hides one the operator called off themselves", async () => {
     vi.mocked(fetchScheduledDeploys).mockResolvedValue([schedule({ status: "cancelled" })] as never);
     renderPage();
@@ -575,7 +658,7 @@ describe("Library — deleting a model across nodes", () => {
     expect(screen.getByText(/10\.0\.0\.11: no enrolled agent/)).toBeInTheDocument();
   });
 
-  it("asks nothing of a single-machine install", async () => {
+  it("on a single-machine install, deletes here only, without asking which nodes", async () => {
     vi.mocked(fetchNodes).mockResolvedValue([
       { is_control_plane: true, address: "192.168.1.100" },
     ] as never);
@@ -584,7 +667,6 @@ describe("Library — deleting a model across nodes", () => {
 
     await user.click(await screen.findByLabelText("Remove acme/plain-7b"));
 
-    expect(fetchModelPresence).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Delete" }));
     await waitFor(() => expect(deleteModel).toHaveBeenCalledWith("acme/plain-7b", []));
   });

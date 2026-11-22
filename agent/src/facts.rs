@@ -6,13 +6,14 @@
 //! * `machine_id` is **diagnostic only**. DGX Sparks ship duplicates, so it
 //!   may never be identity; it is collected so the control plane can warn that
 //!   two nodes claim one.
-//! * `hardware_fingerprint` is compared against what enrolment recorded on
-//!   every heartbeat, so a reimage is *detected* rather than inferred. It must
-//!   therefore be the same function `spark_pulse/agent/facts.py` computes, or
-//!   a node whose agent was replaced would report a reimage on every beat.
-//!   `memory_bytes` is read through `sysconf` for the same reason: `/proc/meminfo`
-//!   reports slightly less than the physical total, and "slightly different"
-//!   is indistinguishable from "different hardware" once it is inside a hash.
+//! * `stable_fingerprint` is compared against what enrolment recorded on
+//!   every connection, so a reimage is *detected* rather than inferred. It
+//!   must therefore hash only what a reboot cannot move. Memory is not one of
+//!   those: `sysconf(_SC_PHYS_PAGES)` is what the kernel has left after its own
+//!   reservations, and on a DGX Spark it moved by one 4 KiB page across a
+//!   reboot — inside a hash, indistinguishable from different hardware, so a
+//!   peer was denied as reimaged. `hardware_fingerprint`, which did hash it, is
+//!   still sent unchanged for control planes that know no other field.
 //!
 //! Nothing here may fail. An agent that cannot describe its GPUs must still
 //! connect and say so; a probe that needs `nvidia-smi` must never be able to
@@ -106,6 +107,27 @@ fn hostname() -> String {
     }
 }
 
+/// The OCI platform name for a `uname` machine: `x86_64` is `linux/amd64`
+/// and `aarch64` is `linux/arm64`, the names an image index uses. Anything
+/// else is returned as `linux/<machine>`, so a new architecture is reported as
+/// itself rather than as nothing. Empty in, empty out. Pure.
+pub fn oci_platform(machine: &str) -> String {
+    let arch = match machine {
+        "" => return String::new(),
+        "x86_64" | "amd64" => "amd64",
+        "aarch64" | "arm64" => "arm64",
+        other => other,
+    };
+    format!("linux/{arch}")
+}
+
+fn platform() -> String {
+    match uname() {
+        Some(info) => oci_platform(&from_c(&info.machine)),
+        None => String::new(),
+    }
+}
+
 /// `"<system> <release>"`, matching Python's `platform.uname()` pair.
 fn kernel() -> String {
     match uname() {
@@ -125,7 +147,7 @@ fn os_release() -> String {
     kernel()
 }
 
-/// Total physical memory, via `sysconf`, because that is what Python reads.
+/// Total physical memory, via `sysconf`. Reported; only the legacy print hashes it.
 fn memory_bytes() -> u64 {
     // SAFETY: sysconf takes an int and returns a long; both names are POSIX
     // and neither can trap. A negative return means "unlimited or unknown".
@@ -155,7 +177,14 @@ pub fn classify_interface(name: &str) -> &'static str {
     // has to be: the fingerprint excludes docker interfaces precisely so a
     // container starting or stopping does not change it, and a veth counted
     // as hardware made exactly that happen.
-    if name.starts_with("docker") || name.starts_with("br-") || name.starts_with("veth") {
+    // Podman's bridges are the same thing under its own names: `podman*`
+    // (netavark) and `cni-podman*` (CNI), each made when a network first gets
+    // a container. The class stays "docker": it means a container runtime's.
+    const CONTAINER_PREFIXES: &[&str] = &["docker", "br-", "veth", "podman", "cni-podman"];
+    if CONTAINER_PREFIXES
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
+    {
         return "docker";
     }
     if name.starts_with("ib") || name.starts_with("mlx5") {
@@ -317,34 +346,73 @@ fn board_serial() -> String {
 /// cloud VM, which is where tests run — the serial wins and the arguments are
 /// never read. A test of the composite that went through here would pass on a
 /// laptop and assert nothing on a CI runner.
-pub fn fingerprint(
+pub fn fingerprint(interfaces: &[NetworkInterface], machine_id: &str, cpu_count: u32) -> String {
+    let serial = serial_fingerprint();
+    if !serial.is_empty() {
+        return serial;
+    }
+    composite_fingerprint(&identifying_names(interfaces), machine_id, cpu_count)
+}
+
+/// The fingerprint control planes before `stable_fingerprint` compare.
+///
+/// The same serial branch, and a composite that also hashes the memory size —
+/// which is exactly what made it unstable. Kept only so a rollback to such a
+/// control plane, which reads nothing else, finds what it recorded.
+pub fn legacy_fingerprint(
     interfaces: &[NetworkInterface],
     machine_id: &str,
     cpu_count: u32,
     memory_bytes: u64,
 ) -> String {
-    let serial = board_serial();
+    let serial = serial_fingerprint();
     if !serial.is_empty() {
-        return hex(Sha256::digest(format!("serial:{serial}").as_bytes()));
+        return serial;
     }
-    let names: Vec<&str> = identifying_names(interfaces);
-    composite_fingerprint(&names, machine_id, cpu_count, memory_bytes)
+    legacy_composite_fingerprint(
+        &identifying_names(interfaces),
+        machine_id,
+        cpu_count,
+        memory_bytes,
+    )
+}
+
+fn serial_fingerprint() -> String {
+    let serial = board_serial();
+    if serial.is_empty() {
+        return serial;
+    }
+    hex(Sha256::digest(format!("serial:{serial}").as_bytes()))
 }
 
 /// The interface names that describe the *hardware*, sorted.
 ///
 /// Docker's interfaces are excluded because they appear and vanish with
 /// workloads: a fingerprint that changed when a container started would be
-/// useless for detecting a reimage. Which names those are is decided by
-/// [`classify_interface`], which mirrors the control plane's own rule.
+/// useless for detecting a reimage.
+///
+/// **Which names those are is frozen here, not read from
+/// [`classify_interface`].** The ledger compares this print exactly, so a
+/// rule that changed under it would deny every enrolled node it newly
+/// excludes as reimaged on upgrade. Podman's bridges (#169) are container
+/// interfaces to the classifier and still count here; dropping them from the
+/// print waits for a versioned print the ledger can migrate (item 3 of the
+/// v2 rollout), the way `stable_fingerprint` replaced the memory-hashing one.
 pub fn identifying_names(interfaces: &[NetworkInterface]) -> Vec<&str> {
     let mut names: Vec<&str> = interfaces
         .iter()
-        .filter(|i| !i.name.is_empty() && i.r#type != "docker")
+        .filter(|i| !i.name.is_empty() && !excluded_from_print(&i.name))
         .map(|i| i.name.as_str())
         .collect();
     names.sort_unstable();
     names
+}
+
+/// The container interfaces the stable print has always excluded. Frozen.
+fn excluded_from_print(name: &str) -> bool {
+    ["docker", "br-", "veth"]
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
 }
 
 /// The fingerprint of a machine with no board serial. Pure.
@@ -352,18 +420,31 @@ pub fn identifying_names(interfaces: &[NetworkInterface]) -> Vec<&str> {
 /// Deliberately not built from the hostname or an IP address. Both change
 /// under DHCP and under a rename, and a fingerprint that moved when a node was
 /// renamed would deny a node for being renamed — the failure §3.1 says every
-/// name-keyed system in the survey documented.
-pub fn composite_fingerprint(
+/// name-keyed system in the survey documented. Nor from the memory size, which
+/// the kernel reports net of reservations that differ from one boot to the
+/// next.
+pub fn composite_fingerprint(names: &[&str], machine_id: &str, cpu_count: u32) -> String {
+    // Nothing that *identifies* this machine: no interface names and no
+    // machine-id. The CPU count is not identifying on its own — every Spark
+    // has the same one — so a fingerprint built from it alone would be
+    // identical on every node, and the control plane would read two different
+    // machines as one. Better to say we do not know.
+    if names.is_empty() && machine_id.is_empty() {
+        return String::new();
+    }
+    let mut parts: Vec<String> = names.iter().map(|n| n.to_string()).collect();
+    parts.push(cpu_count.to_string());
+    parts.push(machine_id.to_string());
+    hex(Sha256::digest(parts.join("|").as_bytes()))
+}
+
+/// The first composite, memory size included. Pure; see [`legacy_fingerprint`].
+pub fn legacy_composite_fingerprint(
     names: &[&str],
     machine_id: &str,
     cpu_count: u32,
     memory_bytes: u64,
 ) -> String {
-    // Nothing that *identifies* this machine: no interface names and no
-    // machine-id. The CPU count and the memory size are not identifying on
-    // their own — every Spark has the same ones — so a fingerprint built from
-    // them alone would be identical on every node, and the control plane would
-    // read two different machines as one. Better to say we do not know.
     if names.is_empty() && machine_id.is_empty() {
         return String::new();
     }
@@ -437,8 +518,185 @@ pub fn binary_sha256() -> String {
         .clone()
 }
 
+/// What the container runtime on the agent's socket says about itself.
+///
+/// Asked of the daemon by the executor, which owns the connection; empty
+/// (the default) when nothing answers, which is also what enrolment sends —
+/// it runs before the agent has connected to anything.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ContainerRuntime {
+    /// `docker`, `podman`, or empty when no daemon answered.
+    pub name: String,
+    pub version: String,
+    pub rootless: bool,
+}
+
+/// Which runtime a `/version` answer came from, by its components' names.
+///
+/// Podman's Docker-compatible API answers `/version` with Docker's shape, and
+/// the one place it says what it is is a component named `Podman Engine`.
+/// Docker names its own `Engine`. A daemon that answered with no components
+/// at all is still a daemon, and Docker is the one that predates the field.
+/// Pure.
+pub fn runtime_from_components(answered: bool, components: &[&str]) -> &'static str {
+    if !answered {
+        return "";
+    }
+    if components
+        .iter()
+        .any(|name| name.to_ascii_lowercase().contains("podman"))
+    {
+        return "podman";
+    }
+    "docker"
+}
+
+/// Whether `/info`'s SecurityOptions say the daemon runs rootless. Pure.
+///
+/// Rootless Docker and rootless Podman both say `name=rootless`.
+pub fn rootless_from_security_options(options: &[&str]) -> bool {
+    options
+        .iter()
+        .any(|option| option.split(',').any(|part| part.trim() == "name=rootless"))
+}
+
+/// Whether a Podman socket is a rootless one, by who owns it (#211).
+///
+/// Rootless Podman's socket belongs to the user who runs it; rootful
+/// Podman's belongs to root. The owner is read *through* any symlink — an
+/// operator who points `/var/run/docker.sock` at their own rootless socket
+/// is talking to a rootless daemon, whatever the path says. Not the
+/// daemon's own answer, which is `/info` and takes Podman seconds to give.
+/// A socket that cannot be read is not called rootless.
+pub fn podman_rootless(socket: &std::path::Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    fs::metadata(socket).is_ok_and(|meta| rootless_owner(meta.uid()))
+}
+
+/// Whether a daemon socket owned by `uid` is a rootless daemon's. Pure.
+pub fn rootless_owner(uid: u32) -> bool {
+    uid != 0
+}
+
+/// Where CDI specs live: the static and the generated directory, as the CDI
+/// spec defines them. `/var/run` is normally a link to `/run`, so a device
+/// may be found twice; [`cdi_devices`] keeps each name once.
+const CDI_SPEC_DIRS: &[&str] = &["/etc/cdi", "/var/run/cdi", "/run/cdi"];
+
+/// Every CDI device this machine's spec directories name, sorted, once each.
+///
+/// Read on every heartbeat, so it reads files and never runs `nvidia-ctk`. A
+/// directory or spec that cannot be read contributes nothing.
+pub fn cdi_devices() -> Vec<String> {
+    let mut found: BTreeSet<String> = BTreeSet::new();
+    for dir in CDI_SPEC_DIRS {
+        let Ok(entries) = fs::read_dir(dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let extension = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            let parsed = match extension.as_str() {
+                "json" => fs::read_to_string(&path)
+                    .map(|text| cdi_devices_from_json(&text))
+                    .unwrap_or_default(),
+                "yaml" | "yml" => fs::read_to_string(&path)
+                    .map(|text| cdi_devices_from_yaml(&text))
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            };
+            found.extend(parsed);
+        }
+    }
+    found.into_iter().collect()
+}
+
+/// The `kind=name` of every device in a CDI spec written as JSON. Pure.
+pub fn cdi_devices_from_json(text: &str) -> Vec<String> {
+    let Ok(spec) = serde_json::from_str::<serde_json::Value>(text) else {
+        return Vec::new();
+    };
+    let Some(kind) = spec.get("kind").and_then(|k| k.as_str()) else {
+        return Vec::new();
+    };
+    spec.get("devices")
+        .and_then(|d| d.as_array())
+        .map(|devices| {
+            devices
+                .iter()
+                .filter_map(|d| d.get("name").and_then(|n| n.as_str()))
+                .filter(|name| !name.is_empty())
+                .map(|name| format!("{kind}={name}"))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The `kind=name` of every device in a CDI spec written as YAML. Pure.
+///
+/// Not a YAML parser, and it does not need to be one: a spec has a top-level
+/// `kind:` and a top-level `devices:` list whose items each start with
+/// `- name:`, which is the shape `nvidia-ctk cdi generate` writes. Only the
+/// items at the list's own indentation count, so a `name:` nested deeper
+/// (a mount, a hook) is never read as a device. Pulling in a YAML crate for
+/// two keys would add more to a static binary than this whole module.
+pub fn cdi_devices_from_yaml(text: &str) -> Vec<String> {
+    let mut kind = String::new();
+    let mut names: Vec<String> = Vec::new();
+    let mut in_devices = false;
+    let mut item_indent: Option<usize> = None;
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let indent = line.len() - trimmed.len();
+        if indent == 0 {
+            in_devices = trimmed.starts_with("devices:");
+            if let Some(value) = trimmed.strip_prefix("kind:") {
+                kind = unquote(value);
+            }
+            continue;
+        }
+        if !in_devices {
+            continue;
+        }
+        let Some(item) = trimmed.strip_prefix("- ") else {
+            continue;
+        };
+        let item_indent = *item_indent.get_or_insert(indent);
+        if indent != item_indent {
+            continue;
+        }
+        if let Some(value) = item.trim_start().strip_prefix("name:") {
+            let name = unquote(value);
+            if !name.is_empty() {
+                names.push(name);
+            }
+        }
+    }
+    if kind.is_empty() {
+        return Vec::new();
+    }
+    names
+        .into_iter()
+        .map(|name| format!("{kind}={name}"))
+        .collect()
+}
+
+fn unquote(value: &str) -> String {
+    value
+        .trim()
+        .trim_matches(|c| c == '"' || c == '\'')
+        .to_string()
+}
+
 /// Describe this machine. Never fails.
-pub fn collect(docker_version: String) -> NodeFacts {
+pub fn collect(docker_version: String, runtime: ContainerRuntime) -> NodeFacts {
     let machine_id = read_machine_id();
     let (interfaces, infiniband_interfaces) = interfaces();
     let cpus = cpu_count();
@@ -454,11 +712,17 @@ pub fn collect(docker_version: String) -> NodeFacts {
         cpu_count: cpus,
         memory_bytes: memory,
         gpu_count: gpu_count(),
-        hardware_fingerprint: fingerprint(&interfaces, &machine_id, cpus, memory),
+        hardware_fingerprint: legacy_fingerprint(&interfaces, &machine_id, cpus, memory),
+        stable_fingerprint: fingerprint(&interfaces, &machine_id, cpus),
         interfaces,
         infiniband_interfaces,
         roce_links: roce_links(),
         binary_sha256: binary_sha256(),
+        container_runtime: runtime.name,
+        runtime_version: runtime.version,
+        rootless: runtime.rootless,
+        cdi_devices: cdi_devices(),
+        platform: platform(),
     }
 }
 

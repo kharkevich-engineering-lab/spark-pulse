@@ -5,7 +5,10 @@ Make sure the checkout the tests live in is what gets imported, even when a
 different working tree.
 """
 
+import atexit
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 import os
@@ -13,6 +16,44 @@ import os
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+#: The developer's own home, kept only to find their toolchains.
+_REAL_HOME = os.path.expanduser("~")
+
+#: A home of the suite's own, set before anything imports ``spark_pulse``.
+#:
+#: Two dozen paths in the product hang off ``Path.home()`` — the config
+#: directory, the database, the agent's certificates, the engine index cache,
+#: the Hugging Face cache — several of them at import. A developer who has also
+#: run the control plane for real has all of those filled in, and a simulated
+#: test that reads them fails on their machine and nowhere else (#193): the
+#: real settings turned features on, the real engine index offered engines the
+#: fixtures do not know, the real recipes matched names the tests look for.
+#: Moving ``HOME`` catches every one of those paths at once, including any
+#: added later, which routing each through config would not.
+_TEST_HOME = tempfile.mkdtemp(prefix="spark-pulse-test-home-")
+atexit.register(shutil.rmtree, _TEST_HOME, ignore_errors=True)
+
+# Toolchains live under the real home and are found through it unless told
+# otherwise; the Rust interop tests build the agent with cargo.
+for _var, _default in (("CARGO_HOME", ".cargo"), ("RUSTUP_HOME", ".rustup")):
+    os.environ.setdefault(_var, os.path.join(_REAL_HOME, _default))
+os.environ["HOME"] = _TEST_HOME
+# Anything that would point back outside it. A real hub token in particular
+# must never reach a simulated download, and CI has none.
+for _var in (
+    "XDG_CONFIG_HOME",
+    "XDG_CACHE_HOME",
+    "XDG_DATA_HOME",
+    "XDG_STATE_HOME",
+    "HF_HOME",
+    "HF_HUB_CACHE",
+    "HUGGINGFACE_HUB_CACHE",
+    "HF_TOKEN",
+    "HUGGING_FACE_HUB_TOKEN",
+):
+    os.environ.pop(_var, None)
 
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))

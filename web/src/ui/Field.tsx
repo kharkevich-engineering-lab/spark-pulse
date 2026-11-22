@@ -30,15 +30,21 @@ export type InputProps = React.InputHTMLAttributes<HTMLInputElement> & {
   mono?: boolean;
 };
 
+/** One height for a single-line control, and the same as a `md` Button, so a
+ * form row of fields and a button lines up whatever the controls are. Left to
+ * their content, a native `<select>` came out 3px shorter than an input beside
+ * it, and a button 2px taller — the row's labels and bottoms visibly stepped. */
+const SINGLE_LINE = "h-11";
+
 export function Input({ className, mono, ...rest }: InputProps) {
-  return <input className={cn(CONTROL, mono && "font-mono text-[13px]", className)} {...rest} />;
+  return <input className={cn(CONTROL, SINGLE_LINE, mono && "font-mono text-[13px]", className)} {...rest} />;
 }
 
 export type SelectProps = React.SelectHTMLAttributes<HTMLSelectElement>;
 
 export function Select({ className, children, ...rest }: SelectProps) {
   return (
-    <select className={cn(CONTROL, className)} {...rest}>
+    <select className={cn(CONTROL, SINGLE_LINE, className)} {...rest}>
       {children}
     </select>
   );

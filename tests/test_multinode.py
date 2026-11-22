@@ -55,6 +55,10 @@ from spark_pulse.agent.errors import NodeUnreachable
 # See test_tools_native_runtime.py: under SIMULATION_MODE the package attribute
 # is the mock re-export, so hold the real module to patch its globals.
 nr = importlib.import_module("spark_pulse.tools.native_runtime")
+docker_lifecycle = importlib.import_module(
+    "spark_pulse.tools.backends.docker.lifecycle"
+)
+docker_state = importlib.import_module("spark_pulse.tools.backends.docker.state")
 
 #: The control node, as the simulated registry seeds it. Simulation resolves
 #: this address to this machine, so rank zero runs on the control node's own
@@ -147,7 +151,8 @@ def registry(tmp_path):
     with patch.object(type(config), "engine_indexes", property(lambda self: [])):
         instance = EngineRegistry(cache_dir=tmp_path / "engine-cache")
         with patch(
-            "spark_pulse.tools.native_runtime.get_registry", return_value=instance
+            "spark_pulse.tools.backends.docker.planning.get_registry",
+            return_value=instance,
         ):
             yield instance
     reset_registry()
@@ -1058,7 +1063,7 @@ class TestRankStateIsThreeStates:
         # The confirmation window is shortened only so the test does not sit
         # through it: the point is that it expires without evidence, not how
         # long it waits for some.
-        with patch.object(nr, "CONFIRM_GONE_TIMEOUT", 0.05):
+        with patch.object(docker_state, "CONFIRM_GONE_TIMEOUT", 0.05):
             nr.stop_deployment("dep3")
 
         orphans = nr.get_deployment("dep3")["orphans"]
@@ -1189,7 +1194,7 @@ class TestConcurrencyStaysUnderTheSessionCeiling:
         nr.start(nr.plan("multinode", deployment_id="solo"), wait=True)
 
         with patch.object(
-            nr, "ThreadPoolExecutor", side_effect=AssertionError("pooled")
+            docker_lifecycle, "ThreadPoolExecutor", side_effect=AssertionError("pooled")
         ):
             live = nr.status("solo")
 
@@ -1381,10 +1386,10 @@ class TestLlamaCppSpansNodesOverRpc:
             return len(asked) >= 3
 
         with (
-            patch.object(nr, "rpc_listening", probe),
-            patch.object(nr, "RPC_READY_INTERVAL", 0),
+            patch.object(docker_lifecycle, "rpc_listening", probe),
+            patch.object(docker_lifecycle, "RPC_READY_INTERVAL", 0),
             patch.object(
-                nr,
+                docker_lifecycle,
                 "_launch_rank",
                 lambda d, p, r: launched.append(r.rank),
             ),
@@ -1409,9 +1414,9 @@ class TestLlamaCppSpansNodesOverRpc:
             real_launch(docker, plan_obj, rank_plan)
 
         with (
-            patch.object(nr, "rpc_listening", lambda *_a: False),
-            patch.object(nr, "RPC_READY_TIMEOUT", 0),
-            patch.object(nr, "_launch_rank", launch),
+            patch.object(docker_lifecycle, "rpc_listening", lambda *_a: False),
+            patch.object(docker_lifecycle, "RPC_READY_TIMEOUT", 0),
+            patch.object(docker_lifecycle, "_launch_rank", launch),
         ):
             record = nr.start(plan, wait=True)
 
@@ -1434,7 +1439,7 @@ class TestLlamaCppSpansNodesOverRpc:
                 docker.stop_container(container.name)
             return False
 
-        with patch.object(nr, "rpc_listening", probe):
+        with patch.object(docker_lifecycle, "rpc_listening", probe):
             record = nr.start(plan, wait=True)
 
         assert record["status"] == "error"
@@ -1448,7 +1453,9 @@ class TestLlamaCppSpansNodesOverRpc:
         plan = plan_for(2, deployment_id="rpc-none")
         asked: list[Any] = []
 
-        with patch.object(nr, "rpc_listening", lambda *a: asked.append(a) or True):
+        with patch.object(
+            docker_lifecycle, "rpc_listening", lambda *a: asked.append(a) or True
+        ):
             nr.start(plan, wait=True)
 
         assert plan.rpc_port is None

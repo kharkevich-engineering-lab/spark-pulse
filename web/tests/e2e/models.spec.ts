@@ -87,10 +87,10 @@ test("starts a download and reports its progress to completion", async ({ page }
   const job = page.locator("[data-testid^='job-']").filter({ hasText: modelId }).first();
   await expect(job).toBeVisible();
   // Progress arrives over /sse/models; the mock walks the job to completion.
-  await expect(job).toContainText("completed", { timeout: 20_000 });
-  await expect(bar).toHaveAttribute("aria-valuenow", "100");
-  // The byte counter ends at the full estimated size, not "0 B / ?".
-  await expect(job).not.toContainText("/ ?");
+  // Downloads lists what is in flight, so a finished download leaves it — the
+  // bar and the row go — and the model is in the catalogue instead.
+  await expect(job).toHaveCount(0, { timeout: 20_000 });
+  await expect(page.getByTestId(`model-${modelId}`).first()).toBeVisible({ timeout: 10_000 });
   await expectNoCrash(page);
 });
 

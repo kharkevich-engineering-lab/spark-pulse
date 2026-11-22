@@ -32,7 +32,7 @@ vi.mock("@/lib/api", () => ({
   fetchModelDownloads: vi.fn(() => Promise.resolve([])),
   fetchScheduledDeploys: vi.fn(() => Promise.resolve([])),
   fetchNodes: vi.fn(() => Promise.resolve([])),
-  fetchModelPresence: vi.fn(),
+  fetchModelPresence: vi.fn(() => Promise.resolve({ local: true, local_state: "verified", nodes: [] })),
   startModelDownload: vi.fn(),
   cancelModelDownload: vi.fn(),
   cancelScheduledDeploy: vi.fn(),

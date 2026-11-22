@@ -12,6 +12,8 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import RunsPage from "@/pages/RunsPage";
+import { FUN_FACT_TOPICS, curlExample, shellQuote } from "@/components/RunRow";
+import { translatorFor } from "@/lib/i18n";
 import type { BenchmarkResult, Deployment, EngineMetricsWindow } from "@/lib/types";
 
 vi.mock("@/lib/api", () => ({
@@ -33,17 +35,30 @@ vi.mock("@/lib/api", () => ({
   fetchLatestByRecipe: vi.fn(() => Promise.resolve({})),
   compareRuns: vi.fn(),
   deleteBenchmark: vi.fn(),
+  // Nothing waiting on a download unless a test says so.
+  fetchScheduledDeploys: vi.fn(() => Promise.resolve([])),
+  fetchModelDownloads: vi.fn(() => Promise.resolve([])),
+  cancelScheduledDeploy: vi.fn(() => Promise.resolve({})),
 }));
 
 /** The feature flag, readable by the tests that turn it off. */
-const appConfig = vi.hoisted(() => ({ benchmarking_enabled: true }));
+const appConfig = vi.hoisted(
+  () =>
+    ({ benchmarking_enabled: true }) as {
+      benchmarking_enabled: boolean;
+      benchmarking_tool?: { available: boolean; reason: string; install: string };
+    },
+);
 vi.mock("@/lib/config", () => ({
   useConfig: () => ({ config: appConfig, configLoaded: true }),
 }));
 
 import {
+  cancelScheduledDeploy,
   connectLogStream,
   fetchBenchmarks,
+  fetchModelDownloads,
+  fetchScheduledDeploys,
   fetchDeployment,
   fetchDeploymentEvents,
   fetchDeployments,
@@ -119,6 +134,88 @@ async function openTab(label: string) {
 
 beforeEach(() => {
   appConfig.benchmarking_enabled = true;
+  appConfig.benchmarking_tool = undefined;
+});
+
+/** "Download and deploy" from the lab: the deploy waits on a 5 GB download,
+ *  and until it lands there is no run. Runs said nothing, so it looked like
+ *  nothing had happened. */
+describe("RunsPage — a deploy waiting on its model", () => {
+  const ENTRY = {
+    id: "s-1",
+    model: "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
+    download_job_id: "job-1",
+    status: "waiting",
+    name: "qwen gguf",
+    recipe_id: "custom-qwen",
+    request: {},
+    deployment_id: "",
+    error: "",
+    created_at: "",
+    finished_at: "",
+  };
+  const JOB = {
+    id: "job-1",
+    model: ENTRY.model,
+    source: "hf",
+    revision: null,
+    allow_patterns: null,
+    status: "running",
+    bytes_done: 2 * 1024 ** 3,
+    bytes_total: 5 * 1024 ** 3,
+    current_file: null,
+    path: null,
+    error: null,
+    created_at: "",
+    started_at: null,
+    finished_at: null,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(fetchDeployments).mockResolvedValue([]);
+    vi.mocked(fetchScheduledDeploys).mockResolvedValue([ENTRY] as never);
+    vi.mocked(fetchModelDownloads).mockResolvedValue([JOB] as never);
+  });
+
+  // `clearAllMocks` keeps implementations, so put back "nothing waiting" for
+  // every describe after this one.
+  afterEach(() => {
+    vi.mocked(fetchScheduledDeploys).mockResolvedValue([]);
+    vi.mocked(fetchModelDownloads).mockResolvedValue([]);
+  });
+
+  it("is on Live at once, with the download's progress and where to watch it", async () => {
+    show();
+
+    const row = await screen.findByTestId("waiting-s-1");
+    expect(row).toHaveTextContent("qwen gguf");
+    expect(row).toHaveTextContent("Waiting for model");
+    expect(screen.getByTestId("waiting-progress-s-1")).toHaveTextContent(/Downloading the model: 40%/);
+    expect(within(row).getByRole("link", { name: "watch the download" })).toHaveAttribute("href", "/models");
+    expect(within(row).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "40");
+    expect(screen.getByRole("tab", { name: /^Live \(1\)/ })).toHaveAttribute("aria-selected", "true");
+    // Not "no runs yet": something is happening.
+    expect(screen.queryByText(/Nothing is running/)).toBeNull();
+  });
+
+  it("can be called off from the row", async () => {
+    show();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Cancel the deploy of qwen gguf" }));
+
+    expect(cancelScheduledDeploy).toHaveBeenCalledWith("s-1");
+  });
+
+  it("says the run is being created once the model has landed", async () => {
+    vi.mocked(fetchScheduledDeploys).mockResolvedValue([{ ...ENTRY, status: "deploying" }] as never);
+    show();
+
+    expect(await screen.findByTestId("waiting-progress-s-1")).toHaveTextContent(
+      "The model is here; the run is being created",
+    );
+    expect(screen.queryByRole("button", { name: /Cancel the deploy/ })).toBeNull();
+  });
 });
 
 describe("RunsPage tabs", () => {
@@ -179,6 +276,74 @@ describe("RunsPage tabs", () => {
     expect(fetchBenchmarks).not.toHaveBeenCalled();
   });
 
+  /** Off, the button stays and the dialog says why nothing can start, and
+   *  where to turn it on — a button that vanished explained nothing. */
+  it("keeps the button when the feature is off, and the dialog says where to turn it on", async () => {
+    appConfig.benchmarking_enabled = false;
+    show();
+
+    const row = await screen.findByTestId("deployment-r1");
+    await userEvent.setup().click(within(row).getByRole("button", { name: "Benchmark" }));
+
+    const notice = await screen.findByTestId("benchmarking-off");
+    expect(notice).toHaveTextContent("Benchmarking is off");
+    expect(within(notice).getByRole("link", { name: "Turn it on in Settings → Features" })).toHaveAttribute(
+      "href",
+      "/settings#features",
+    );
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByRole("button", { name: /Start|Run/ })).toBeDisabled();
+  });
+
+  /** The lab: llama-benchy was not installed. The click is told what to
+   *  install, and nothing starts that would fail out of sight. */
+  it("says what to install when the benchmark tool is missing", async () => {
+    appConfig.benchmarking_tool = {
+      available: false,
+      reason: "llama-benchy is not installed on the control plane",
+      install: "pip install 'spark-pulse[benchmarking]'",
+    };
+    show();
+
+    const row = await screen.findByTestId("deployment-r1");
+    await userEvent.setup().click(within(row).getByRole("button", { name: "Benchmark" }));
+
+    const notice = await screen.findByTestId("benchmarking-missing");
+    expect(notice).toHaveTextContent("llama-benchy");
+    expect(
+      within(notice).getByRole("button", { name: "Copy the install command pip install 'spark-pulse[benchmarking]'" }),
+    ).toHaveTextContent("pip install 'spark-pulse[benchmarking]'");
+    expect(within(screen.getByRole("dialog")).getByRole("button", { name: /Start|Run/ })).toBeDisabled();
+  });
+
+  /** On the lab the click read as nothing: the benchmark failed at once and
+   *  only the server log said why. */
+  /** A stored failure from before is not news: neither the row nor the
+   *  dialog brings it up. The dialog says what is in the way now. */
+  it("brings up no past failure, on the row or in the dialog", async () => {
+    vi.mocked(fetchBenchmarks).mockResolvedValue([
+      benchmark({ deployment_id: "r1", status: "error", results: { error: "connection refused on :9000" } }),
+    ]);
+    show();
+
+    const row = await screen.findByTestId("deployment-r1");
+    await userEvent.setup().click(await within(row).findByRole("button", { name: "Benchmark" }));
+    await screen.findByRole("dialog");
+    expect(document.body).not.toHaveTextContent("connection refused");
+    expect(row).not.toHaveTextContent("failed");
+  });
+
+  it("says the benchmark is measuring while it runs", async () => {
+    vi.mocked(fetchBenchmarks).mockResolvedValue([
+      benchmark({ deployment_id: "r1", status: "running", results: null, completed_at: null }),
+    ]);
+    show();
+
+    const row = await screen.findByTestId("deployment-r1");
+    expect(await within(row).findByText("measuring…")).toBeInTheDocument();
+    expect(within(row).getByRole("button", { name: /Benchmark/ })).toBeDisabled();
+  });
+
   it("says there are no runs at all rather than showing an empty pill", async () => {
     vi.mocked(fetchDeployments).mockResolvedValue([]);
     show();
@@ -230,6 +395,124 @@ describe("RunsPage row", () => {
 
     const row = await screen.findByTestId("deployment-solo");
     expect(row).toHaveTextContent("this node");
+  });
+
+  /** "this node :8000" from the lab: which node, and a port is not an address. */
+  it("names the node a solo run is on, and gives an endpoint to copy", async () => {
+    const onDesktop = deployment({
+      id: "desk",
+      name: "desk job",
+      port: 8000,
+      ranks: [{ rank: 0, node: "", host: "ark-desktop", container_name: "c", is_head: true }],
+    });
+    vi.mocked(fetchDeployments).mockResolvedValue([onDesktop]);
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    show();
+
+    const row = await screen.findByTestId("deployment-desk");
+    expect(row).toHaveTextContent("ark-desktop");
+    expect(row).not.toHaveTextContent("this node");
+    // The control node: the machine this page was reached on.
+    const url = `http://${window.location.hostname}:8000/v1`;
+    expect(within(row).getByTestId("run-endpoint")).toHaveTextContent(url);
+
+    // The whole chip is the button. fireEvent, not userEvent: user-event
+    // installs a clipboard of its own.
+    fireEvent.click(within(row).getByRole("button", { name: `Copy the endpoint ${url}` }));
+    expect(writeText).toHaveBeenCalledWith(url);
+    // The answer is on the chip, where the operator is looking.
+    await waitFor(() => expect(within(row).getByTestId("run-endpoint")).toHaveTextContent("Copied to clipboard"));
+    // Announced too: the endpoint's live region says it (the curl has its own).
+    expect(within(row).getAllByRole("status").map((e) => e.textContent)).toContain("Copied to clipboard");
+  });
+
+  it("copies a curl that asks the run for a fun fact, next to the endpoint", async () => {
+    const onDesktop = deployment({
+      id: "desk3",
+      name: "desk job 3",
+      port: 8000,
+      served_model: "Qwen/Qwen2.5-0.5B-Instruct",
+      ranks: [{ rank: 0, node: "", host: "ark-desktop", container_name: "c", is_head: true }],
+    });
+    vi.mocked(fetchDeployments).mockResolvedValue([onDesktop]);
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    show();
+
+    const row = await screen.findByTestId("deployment-desk3");
+    fireEvent.click(within(row).getByRole("button", { name: "Copy a curl that asks this run for a fun fact" }));
+
+    const command = (writeText.mock.calls[0] as unknown as [string])[0];
+    expect(command).toMatch(
+      new RegExp(`^curl -s http://${window.location.hostname}:8000/v1/chat/completions `),
+    );
+    const body = JSON.parse(command.slice(command.indexOf("-d '") + 4, -1));
+    expect(body.model).toBe("Qwen/Qwen2.5-0.5B-Instruct");
+    expect(body.messages[0].content).toMatch(/^Tell me one surprising fun fact about .+, in two sentences\.$/);
+    await waitFor(() => expect(within(row).getByTestId("run-curl")).toHaveTextContent("curl copied"));
+  });
+
+  /** "Saturn's rings" closed the shell's quote and broke the command. */
+  it("builds a command a shell reads back whole, for every topic", () => {
+    // What a POSIX shell makes of one single-quoted word written by shellQuote.
+    const unquote = (word: string) => {
+      expect(word.startsWith("'") && word.endsWith("'")).toBe(true);
+      return word.slice(1, -1).split("'\\''").join("'");
+    };
+    expect(shellQuote("it's")).toBe("'it'\\''s'");
+    expect(unquote(shellQuote("it's 'quoted'"))).toBe("it's 'quoted'");
+
+    // Every topic, in both languages: French is full of apostrophes.
+    for (const language of ["en", "fr"] as const) {
+      const { t } = translatorFor(language);
+      FUN_FACT_TOPICS.forEach((id, index) => {
+        const command = curlExample("http://localhost:8000/v1", "m", t, () => index);
+        const word = command.slice(command.indexOf(" -d ") + 4);
+        const body = JSON.parse(unquote(word));
+        expect(body.messages[0].content).toContain(t(`runs.funFact.topics.${id}`));
+      });
+    }
+  });
+
+  it("asks in the page's language", () => {
+    const fr = curlExample("http://h/v1", "m", translatorFor("fr").t, () => 0);
+    expect(fr).toContain("Donne-moi une anecdote surprenante sur les pieuvres");
+    const en = curlExample("http://h/v1", "m", translatorFor("en").t, () => 0);
+    expect(en).toContain("Tell me one surprising fun fact about octopuses");
+  });
+
+  it("says so on the chip when the clipboard refuses", async () => {
+    const onDesktop = deployment({
+      id: "desk2",
+      name: "desk job 2",
+      port: 8000,
+      ranks: [{ rank: 0, node: "", host: "ark-desktop", container_name: "c", is_head: true }],
+    });
+    vi.mocked(fetchDeployments).mockResolvedValue([onDesktop]);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn(() => Promise.reject(new Error("denied"))) },
+      configurable: true,
+    });
+    show();
+
+    const row = await screen.findByTestId("deployment-desk2");
+    fireEvent.click(within(row).getByRole("button", { name: /Copy the endpoint/ }));
+    await waitFor(() => expect(within(row).getByTestId("run-endpoint")).toHaveTextContent("Could not copy"));
+  });
+
+  it("points a peer's run at that peer's address", async () => {
+    const onPeer = deployment({
+      id: "peer",
+      name: "peer job",
+      port: 9001,
+      ranks: [{ rank: 0, node: "10.0.0.11", host: "spark-b", container_name: "c", is_head: true }],
+    });
+    vi.mocked(fetchDeployments).mockResolvedValue([onPeer]);
+    show();
+
+    const row = await screen.findByTestId("deployment-peer");
+    expect(within(row).getByTestId("run-endpoint")).toHaveTextContent("http://10.0.0.11:9001/v1");
   });
 
   it("leaves a record with no node_count alone rather than failing on it", async () => {
@@ -739,6 +1022,34 @@ describe("RunsPage event stream", () => {
 
   const stream = () =>
     CapturingEventSource.instances.find((s) => s.url === "/sse/events/deployments")!;
+
+  /** The lab: a multi-GB engine image read "Pulling" for ten minutes, with
+   *  nothing about how far it had got. */
+  it("shows a pulling run's progress beside its status and under its chips", async () => {
+    vi.mocked(fetchDeployments).mockResolvedValue([
+      deployment({ id: "p1", name: "pulling job", status: "pulling" }),
+    ]);
+    show();
+    await screen.findByTestId("deployment-p1");
+    await waitFor(() => expect(stream()).toBeDefined());
+
+    act(() =>
+      stream().emit({
+        type: "image.pull.progress",
+        event_id: "pp1",
+        timestamp: "2026-01-01T00:00:00Z",
+        message: "pulling img: 45%",
+        resource: "p1",
+        resource_type: "deployment",
+        metadata: { percent: 45.67, bytes_done: 3_800_000_000, bytes_total: 8_400_000_000 },
+      }),
+    );
+
+    const row = screen.getByTestId("deployment-p1");
+    expect(await within(row).findByText("Pulling… 45%")).toBeInTheDocument();
+    expect(within(row).getByTestId("pull-p1")).toHaveTextContent(/Pulling the engine image: 45% \(.+ of .+\)/);
+    expect(within(row).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "45");
+  });
 
   it("shows an event under the run it belongs to, and not under another", async () => {
     show();
@@ -1322,6 +1633,29 @@ describe("RunsPage convergence", () => {
     const row = within(await screen.findByTestId("deployment-hist1"));
 
     expect(row.getByRole("button", { name: "Remove" })).toBeDisabled();
+    expect(row.getByTitle("Waiting for the nodes to catch up")).toBeDisabled();
+  });
+
+  /** #205: the server's one phase is what the row shows, and what shuts the
+   *  actions — not the pair, which a page used to combine itself. */
+  it("shows a run's phase as its one state and shuts the stop while it settles", async () => {
+    vi.mocked(fetchDeployments).mockResolvedValue([
+      deployment({
+        id: "ph1",
+        name: "phased job",
+        status: "running",
+        sync: "in_progress",
+        sync_intent: "stop",
+        phase: "stopping",
+        phase_verified: true,
+        phase_reason: "stop requested",
+      }),
+    ]);
+    show();
+
+    const row = within(await screen.findByTestId("deployment-ph1"));
+    expect(row.getByTestId("phase-stopping")).toHaveTextContent("Stopping…");
+    expect(row.queryByText("Running")).toBeNull();
     expect(row.getByTitle("Waiting for the nodes to catch up")).toBeDisabled();
   });
 

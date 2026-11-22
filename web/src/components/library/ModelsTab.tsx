@@ -46,6 +46,7 @@ import {
   Spinner,
   type NodeCondition,
 } from "@/ui";
+import type { AlertTone } from "@/ui";
 import type {
   CacheResponse,
   ModelDownloadJob,
@@ -69,11 +70,24 @@ export function shortRevision(revision: string | null): string {
 }
 
 export function describePrecision(model: ModelEntry): string {
+  // A GGUF repository: the quantisation is in each file's name, and a repo
+  // often ships several. One is named; several are counted, with the list on
+  // hover (ggufDetail).
+  const gguf = model.gguf ?? [];
+  if (gguf.length === 1) return `GGUF · ${gguf[0].quant || "?"}`;
+  if (gguf.length > 1) return `GGUF ×${gguf.length}`;
   const cfg = model.config;
   if (!cfg) return "—";
   if (cfg.quantization_method) return cfg.quantization_method;
   if (cfg.quantization.length) return "quantized";
   return cfg.torch_dtype || "—";
+}
+
+/** Every GGUF in the repo with its size, for the precision cell's hover. */
+export function ggufDetail(model: ModelEntry): string | undefined {
+  const gguf = model.gguf ?? [];
+  if (gguf.length < 2) return gguf[0]?.file;
+  return gguf.map((g) => `${g.quant || g.file} · ${formatSize(g.size_bytes)}`).join("\n");
 }
 
 /** One node's verdict, as the presence endpoint reports it. */
@@ -150,6 +164,12 @@ export interface ModelsTabProps {
   scrollToCaches?: boolean;
 }
 
+/** A scheduled deploy whose run was created and then failed — the image did
+ *  not pull, the engine died. "Deployed" over that is the wrong answer. */
+function runFailed(entry: ScheduledDeploy): boolean {
+  return entry.run?.status === "error";
+}
+
 export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }: ModelsTabProps) {
   const { t } = useI18n();
   const { data: models, loading, error, refetch } = modelsQuery;
@@ -164,7 +184,7 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
   const [starting, setStarting] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [replicateTarget, setReplicateTarget] = useState<string | null>(null);
-  const [alert, setAlert] = useState<{ title: string; message: string } | null>(null);
+  const [alert, setAlert] = useState<{ title: string; message: string; tone?: AlertTone } | null>(null);
   const [scheduled, setScheduled] = useState<ScheduledDeploy[]>([]);
   const [presence, setPresence] = useState<Record<string, ModelPresence>>({});
 
@@ -197,11 +217,13 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
   }, [reloadJobs, reloadScheduled]);
 
   /** Ask every node about every model, once the catalogue and the registry are
-   *  both in. Only worth a request when there is more than one machine: on a
-   *  solo install the catalogue *is* the answer. */
+   *  both in — this machine included, and on a solo install too. The
+   *  catalogue lists a model from the first file a download writes, so it is
+   *  not the answer: on the lab a 1 GB download read "1 of 1 nodes" while it
+   *  was still arriving. */
   const asked = useRef(new Set<string>());
   useEffect(() => {
-    if (peers.length === 0 || !models) return;
+    if (!models) return;
     for (const model of models) {
       if (asked.current.has(model.id)) continue;
       asked.current.add(model.id);
@@ -215,8 +237,20 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
 
   const whereFor = useCallback(
     (model: ModelEntry): WhereVerdict => {
-      if (peers.length === 0) {
-        return { state: "ok", label: t("library.whereNodes", { count: 1, total: 1 }) };
+      // A download still running is not a copy anywhere yet, whatever the
+      // cache directory already holds.
+      const downloading = jobs.find((j) => j.model === model.id && ACTIVE_STATES.includes(j.status));
+      if (downloading) {
+        const percent = downloading.bytes_total
+          ? Math.floor(((downloading.bytes_done ?? 0) / downloading.bytes_total) * 100)
+          : null;
+        return {
+          state: "warn",
+          label:
+            percent != null
+              ? t("library.whereDownloading", { percent })
+              : t("library.whereDownloadingUnknown"),
+        };
       }
       const answer = presence[model.id];
       if (!answer) return { state: "unknown", label: t("library.whereUnknown") };
@@ -227,7 +261,7 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
       };
       return describeWhere([here, ...answer.nodes], t);
     },
-    [peers, presence, controlName, t],
+    [jobs, presence, controlName, t],
   );
 
   const onEvent = useCallback(
@@ -241,7 +275,16 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
           ? current.map((j) => (j.id === job.id ? { ...j, ...job } : j))
           : [job, ...current],
       );
-      if (frame.type === "model.download.completed") refetch();
+      if (frame.type === "model.download.completed") {
+        // Ask again: the answer from before the bytes landed is stale.
+        asked.current.delete(job.model);
+        setPresence((current) => {
+          const next = { ...current };
+          delete next[job.model];
+          return next;
+        });
+        refetch();
+      }
       // Any terminal state settles the deploys queued behind this download —
       // into "deploying", or into a failure that has to be shown.
       if (frame.type?.startsWith("model.download.") && !["queued", "running"].includes(job.status)) {
@@ -255,9 +298,24 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
   const connected = sseStatus.state === SSEConnectionState.CONNECTED;
 
   const active = useMemo(() => jobs.filter((j) => ACTIVE_STATES.includes(j.status)), [jobs]);
+  /** Finished downloads are not shown: the section is for what is in flight,
+   *  and a finished one is in the catalogue below. The one exception is a
+   *  download whose scheduled deploy then failed — the deploy never created
+   *  its run, or its run died — because that is the case an operator would
+   *  otherwise wait on for ever, and the only place it is said is here. */
+  const needsAttention = useCallback(
+    (jobId: string) =>
+      scheduled.some(
+        (e) => e.download_job_id === jobId && (e.status === "failed" || runFailed(e)),
+      ),
+    [scheduled],
+  );
   const recent = useMemo(
-    () => jobs.filter((j) => !ACTIVE_STATES.includes(j.status)).slice(0, 5),
-    [jobs],
+    () =>
+      jobs
+        .filter((j) => !ACTIVE_STATES.includes(j.status) && needsAttention(j.id))
+        .slice(0, 5),
+    [jobs, needsAttention],
   );
 
   const submit = async (e: React.FormEvent) => {
@@ -299,6 +357,7 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
         setAlert({
           title: t("models.deleteTitle"),
           message: t("models.removedFrom", { count: removed, size: formatSize(result.freed_bytes) }),
+          tone: "info",
         });
       }
       asked.current.delete(id);
@@ -443,7 +502,7 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
           icon={Download}
           loading={starting}
           disabled={!modelId.trim()}
-          className="max-[519px]:w-full min-[520px]:mb-[26px]"
+          className="max-[519px]:w-full"
         >
           {t("library.download")}
         </Button>
@@ -480,7 +539,9 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
                   <p className="text-[13px] text-muted flex items-center gap-2 min-w-0">
                     <Rocket
                       size={13}
-                      className={entry.status === "failed" ? "text-bad shrink-0" : "text-blue2 shrink-0"}
+                      className={
+                        entry.status === "failed" || runFailed(entry) ? "text-bad shrink-0" : "text-blue2 shrink-0"
+                      }
                     />
                     <span className="truncate">
                       {entry.status === "waiting" && (
@@ -497,7 +558,13 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
                           {t("models.now")}
                         </>
                       )}
-                      {entry.status === "done" && (
+                      {entry.status === "done" && runFailed(entry) && (
+                        <>
+                          <span className="font-medium text-text">{entry.name}</span>{" "}
+                          {t("models.couldNotDeploy")} {entry.run?.error || t("common.unknownError")}
+                        </>
+                      )}
+                      {entry.status === "done" && !runFailed(entry) && (
                         <>
                           {t("models.deployed")}{" "}
                           <span className="font-medium text-text">{entry.name}</span>
@@ -556,7 +623,7 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
                     <td className="p-3 font-mono">{m.id}</td>
                     <td className="p-3 font-mono">{formatSize(m.size_bytes)}</td>
                     <td className="p-3 font-mono text-muted">{shortRevision(m.revision)}</td>
-                    <td className="p-3">{describePrecision(m)}</td>
+                    <td className="p-3" title={ggufDetail(m)}>{describePrecision(m)}</td>
                     <td className="p-3">
                       <NodeState state={where.state} label={where.label} title={where.title} />
                     </td>
@@ -581,7 +648,7 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
               >
                 <p className="font-mono text-[14px] break-all">{m.id}</p>
                 <p className="text-[13px] text-muted font-mono">
-                  {formatSize(m.size_bytes)} · {describePrecision(m)}
+                  {formatSize(m.size_bytes)} · <span title={ggufDetail(m)}>{describePrecision(m)}</span>
                 </p>
                 <NodeState state={where.state} label={where.label} title={where.title} />
                 {actionsFor(m, where)}
@@ -624,6 +691,7 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
           onClose={() => setAlert(null)}
           title={alert.title}
           message={alert.message}
+          tone={alert.tone}
         />
       )}
     </div>

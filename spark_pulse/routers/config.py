@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from spark_pulse import tools
 from spark_pulse.config import config
 from spark_pulse.tools import is_simulation
 
@@ -25,5 +26,8 @@ def get_config():
         "mcp_enabled": config.mcp_enabled,
         "runtime": config.runtime,
         "benchmarking_enabled": config.benchmarking_enabled,
+        # Whether the benchmark tool is installed, and the command when it is
+        # not: the launcher says "install this" at the click.
+        "benchmarking_tool": tools.benchmarking.tool_status(),
         "simulation_mode": is_simulation(),
     }

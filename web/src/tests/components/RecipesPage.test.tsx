@@ -42,6 +42,8 @@ vi.mock("@/lib/api", async () => {
     fetchDeployments: vi.fn(),
     createDeployment: vi.fn(),
     scheduleDeploy: vi.fn(),
+    fetchScheduledDeploys: vi.fn(() => Promise.resolve([])),
+    fetchModelDownloads: vi.fn(() => Promise.resolve([])),
     fetchSettings: vi.fn(),
     fetchRecipeCustomization: vi.fn(),
     saveRecipeCustomization: vi.fn(),
@@ -79,6 +81,7 @@ vi.mock("@/components/LazyCodeEditor", () => ({
 import {
   ApiError,
   createDeployment,
+  fetchScheduledDeploys,
   scheduleDeploy,
   deleteCustomMod,
   deleteCustomRecipe,
@@ -292,7 +295,6 @@ describe("RecipesPage", () => {
 
       expect(await screen.findByText("Qwen3 8B")).toBeInTheDocument();
       expect(screen.getByText("Qwen3 at 8B, one GPU")).toBeInTheDocument();
-      expect(screen.getByText("vllm-node")).toBeInTheDocument();
       expect(screen.getByRole("tab", { name: /Recipes \(1\)/ })).toBeInTheDocument();
     });
 
@@ -315,13 +317,75 @@ describe("RecipesPage", () => {
       expect(screen.queryByText("Big Mesh")).not.toBeInTheDocument();
 
       await userEvent.click(
-        screen.getByRole("button", { name: /Show 1 unavailable recipe \(cluster only\)/ }),
+        screen.getByRole("button", { name: /Show 1 recipe that doesn't run here/ }),
       );
       expect(screen.getByText("Big Mesh")).toBeInTheDocument();
       expect(screen.getByText("Cluster only")).toBeInTheDocument();
 
-      await userEvent.click(screen.getByRole("button", { name: /Hide 1 unavailable/ }));
+      await userEvent.click(screen.getByRole("button", { name: /Hide 1 recipe that doesn't run here/ }));
       expect(screen.queryByText("Big Mesh")).not.toBeInTheDocument();
+    });
+
+    /** "Download and deploy" used to leave the card looking untouched while
+     *  the model downloaded and the deploy waited behind it. */
+    it("marks a recipe whose deploy is waiting on its model as queued", async () => {
+      vi.mocked(fetchRecipes).mockResolvedValue([SOLO]);
+      vi.mocked(fetchScheduledDeploys).mockResolvedValue([
+        {
+          id: "s-1", model: "m", download_job_id: "j", status: "waiting", name: "n",
+          recipe_id: SOLO.id, request: {}, deployment_id: "", error: "", created_at: "", finished_at: "",
+        },
+      ] as never);
+      renderPage();
+
+      expect(await screen.findByTestId(`queued-${SOLO.id}`)).toHaveTextContent("Queued");
+      vi.mocked(fetchScheduledDeploys).mockResolvedValue([]);
+    });
+
+    /** The x86 lab: every bundled engine image is arm64-only (#172). */
+    describe("on a fleet the recipe has no image for", () => {
+      const NO_AMD64 = {
+        ...SOLO,
+        id: "vllm-only",
+        name: "Arm Only",
+        fit: { verdict: "wont_run" as const, reason: "no amd64 image for vllm", engines: {} },
+      };
+      const RUNS = { ...SOLO, fit: { verdict: "runs" as const, reason: "", engines: { vllm: ["default"] } } };
+
+      it("shows only what runs here, and says how many it folded away", async () => {
+        vi.mocked(fetchRecipes).mockResolvedValue([NO_AMD64, RUNS]);
+        renderPage();
+
+        await screen.findByText("Qwen3 8B");
+        expect(screen.queryByText("Arm Only")).not.toBeInTheDocument();
+        expect(screen.getByRole("button", { name: /Show 1 recipe that doesn't run here/ })).toBeInTheDocument();
+        // A cluster hint for a recipe that is not about the cluster would
+        // send the operator to the wrong page.
+        expect(screen.queryByText(/Add a node/)).not.toBeInTheDocument();
+      });
+
+      it("says so when nothing in the catalogue runs here", async () => {
+        vi.mocked(fetchRecipes).mockResolvedValue([NO_AMD64]);
+        renderPage();
+
+        expect(await screen.findByTestId("nothing-runs-here")).toHaveTextContent(
+          /Nothing in this catalogue runs on this fleet yet/,
+        );
+      });
+
+      it("draws it last, dimmed, with the reason, and still lets it be opened", async () => {
+        vi.mocked(fetchRecipes).mockResolvedValue([NO_AMD64, RUNS]);
+        renderPage();
+        await screen.findByText("Qwen3 8B");
+        await userEvent.click(screen.getByRole("button", { name: /Show 1 recipe that doesn't run here/ }));
+
+        const names = screen.getAllByText(/Qwen3 8B|Arm Only/).map((e) => e.textContent);
+        expect(names.indexOf("Arm Only")).toBeGreaterThan(names.indexOf("Qwen3 8B"));
+        expect(screen.getByTestId("not-here-vllm-only")).toHaveTextContent("Won't run here: no amd64 image for vllm");
+        const card = screen.getByText("Arm Only").closest("[role='button']");
+        expect(card).not.toBeNull();
+        expect(card).toHaveClass("opacity-60");
+      });
     });
 
     /** "Enable cluster mode" named a setting and not a condition, which is
@@ -392,8 +456,12 @@ describe("RecipesPage", () => {
       render(<RecipesPage />);
       await screen.findByText("Qwen3 8B");
 
-      await userEvent.click(screen.getByRole("button", { name: "Uninstall Qwen3 32B" }));
-      await userEvent.click(screen.getByRole("button", { name: "Uninstall" }));
+      // From the recipe's details, at the bottom — the card has no trash icon.
+      expect(screen.queryByRole("button", { name: "Uninstall Qwen3 32B" })).toBeNull();
+      vi.mocked(fetchRecipe).mockResolvedValue(detail({ id: OCI_RECIPE.id, name: "Qwen3 32B", source: "oci" }));
+      await openDeployDrawer("Qwen3 32B");
+      await userEvent.click(within(screen.getByTestId("drawer-footer")).getByRole("button", { name: "Uninstall" }));
+      await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Uninstall" }));
 
       await waitFor(() => expect(uninstallOciRecipe).toHaveBeenCalledWith("Qwen3-32B"));
       // The recipe is gone from the list the moment the backend confirms it,
@@ -406,7 +474,9 @@ describe("RecipesPage", () => {
       render(<RecipesPage />);
       await screen.findByText("Qwen3 8B");
 
-      await userEvent.click(screen.getByRole("button", { name: "Uninstall Qwen3 32B" }));
+      vi.mocked(fetchRecipe).mockResolvedValue(detail({ id: OCI_RECIPE.id, name: "Qwen3 32B", source: "oci" }));
+      await openDeployDrawer("Qwen3 32B");
+      await userEvent.click(within(screen.getByTestId("drawer-footer")).getByRole("button", { name: "Uninstall" }));
       expect(screen.getByText(/Qwen3 32B is removed from disk/)).toBeInTheDocument();
       await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
@@ -419,8 +489,10 @@ describe("RecipesPage", () => {
       render(<RecipesPage />);
       await screen.findByText("Qwen3 8B");
 
-      await userEvent.click(screen.getByRole("button", { name: "Uninstall Qwen3 32B" }));
-      await userEvent.click(screen.getByRole("button", { name: "Uninstall" }));
+      vi.mocked(fetchRecipe).mockResolvedValue(detail({ id: OCI_RECIPE.id, name: "Qwen3 32B", source: "oci" }));
+      await openDeployDrawer("Qwen3 32B");
+      await userEvent.click(within(screen.getByTestId("drawer-footer")).getByRole("button", { name: "Uninstall" }));
+      await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Uninstall" }));
 
       expect(await screen.findByText("recipe is in use")).toBeInTheDocument();
       expect(screen.getByText("Qwen3 32B")).toBeInTheDocument();
@@ -697,6 +769,8 @@ describe("RecipesPage", () => {
       await userEvent.click(screen.getByRole("button", { name: /Download and deploy/ }));
 
       expect(await screen.findByText(/will deploy on its own/)).toBeInTheDocument();
+      // News, not a failure: it must not wear the error mark.
+      expect(document.querySelector("[data-tone]")).toHaveAttribute("data-tone", "info");
     });
 
     it("lets the operator decline the download", async () => {
@@ -794,7 +868,8 @@ describe("RecipesPage", () => {
 
       await userEvent.click(screen.getByRole("button", { name: "Edit custom" }));
       await userEvent.click(screen.getByRole("button", { name: "Reset" }));
-      await userEvent.click(screen.getAllByRole("button", { name: "Reset" }).at(-1)!);
+      // The confirmation's own button, not the footer's Reset beside it.
+    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Reset" }));
 
       await waitFor(() =>
         expect(deleteRecipeCustomization).toHaveBeenCalledWith("bundled/qwen3-8b"),
@@ -960,6 +1035,20 @@ describe("RecipesPage", () => {
       await userEvent.click(screen.getAllByRole("button", { name: "Delete" }).at(-1)!);
 
       await waitFor(() => expect(deleteCustomRecipe).toHaveBeenCalledWith("custom/mine"));
+    });
+
+    /** The lab: a custom recipe deleted in Custom mode was still on the grid
+     *  after switching back, because only Custom mode's own list was re-read. */
+    it("re-reads the recipe grid after a custom recipe is deleted", async () => {
+      renderPage();
+      await screen.findByText("Qwen3 8B");
+      await enterCustomMode();
+      const before = vi.mocked(fetchRecipes).mock.calls.length;
+
+      await userEvent.click(await screen.findByRole("button", { name: "Delete Mine" }));
+      await userEvent.click(screen.getAllByRole("button", { name: "Delete" }).at(-1)!);
+
+      await waitFor(() => expect(vi.mocked(fetchRecipes).mock.calls.length).toBeGreaterThan(before));
     });
 
     it("says why a delete from the card failed", async () => {

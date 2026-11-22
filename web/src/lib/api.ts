@@ -1,4 +1,4 @@
-import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheResponse, CacheCleanResponse, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, CustomRecipeInfo, CustomModInfo, ModFileMap, BenchmarkResult, OciRegistry, OciRegistryUpdate, OciCollection, OciCollectionState, OciCollectionApplyResult, OciRecipeMeta, OciAutoUpdateSettings, EngineListResponse, EngineDetail, EngineIndexRefreshResult, RenderRequest, RenderResult, ModelEntry, ModelSource, ModelDownloadJob, ModelSyncResult, ModelPresence, ModelDeleteResult, ImageEntry, ImagePullJob, ImageSyncResult, ImagePresence, ImageDeleteResult, DeployPlan, DeployPlanRequest, PreflightReport, EngineMetricsWindow, ScheduledDeploy } from "@/lib/types";
+import type { RecipeSummary, RecipeDetail, Deployment, MemoryResponse, CacheResponse, CacheCleanResponse, Settings, SecretsResponse, ModSummary, ModDetail, RecipeCustomization, CustomRecipeInfo, CustomModInfo, ModFileMap, BenchmarkResult, OciRegistry, OciRegistryUpdate, OciCollection, OciCollectionState, OciCollectionApplyResult, OciRecipeMeta, OciAutoUpdateSettings, EngineListResponse, EngineDetail, EngineIndexRefreshResult, RenderRequest, RenderResult, ModelEntry, ModelSource, ModelDownloadJob, ModelSyncResult, ModelPresence, ModelDeleteResult, ImageEntry, ImagePullJob, ImageSyncResult, ImagePresence, ImageDeleteResult, DeployPlan, DeployPlanRequest, KubernetesPlan, KubernetesPlanRequest, PreflightReport, EngineMetricsWindow, ScheduledDeploy } from "@/lib/types";
 
 import type { DeploymentEventPage } from "@/lib/operations";
 
@@ -87,6 +87,8 @@ export async function fetchDeployments(signal?: AbortSignal): Promise<Deployment
 export async function createDeployment(body: { recipe_id: string; name: string; params: Record<string, unknown>; nodes?: string[]; engine?: string; variant?: string; model?: string; extra_args?: string[]; allow_missing_model?: boolean; skip_preflight?: boolean }): Promise<Deployment> { return json<Deployment>("/deployments", { method: "POST", body: JSON.stringify(body) }); }
 /** Dry run: resolve engine, image, model and the rendered command without deploying. */
 export async function planDeployment(body: DeployPlanRequest): Promise<DeployPlan> { return json<DeployPlan>("/deployments/plan", { method: "POST", body: JSON.stringify(body) }); }
+/** The same run as Kubernetes manifests (#164): a dry run, nothing applied. */
+export async function planKubernetes(body: KubernetesPlanRequest): Promise<KubernetesPlan> { return json<KubernetesPlan>("/deployments/plan/kubernetes", { method: "POST", body: JSON.stringify(body) }); }
 export async function fetchDeployment(id: string): Promise<Deployment> { return json<Deployment>(`/deployments/${id}`); }
 
 // ── Pre-flight ──────────────────────────────────────────────────────────────

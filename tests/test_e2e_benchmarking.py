@@ -22,15 +22,29 @@ import httpx
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
+_ABSENT = object()
+
 
 @pytest.fixture(scope="module")
 def e2e_benchmarking_config():
     """Configure benchmarking as enabled for e2e tests."""
     from spark_pulse.config import config
 
+    # Restored afterwards: left set, it leaked into every module that ran
+    # later, and tests that need it on passed only in suite order.
+    previous_auth = os.environ.get("SPARK_PULSE_AUTH_ENABLED")
+    previous = config._data.get("benchmarking_enabled", _ABSENT)
     os.environ["SPARK_PULSE_AUTH_ENABLED"] = "false"
     config._data["benchmarking_enabled"] = True
-    return config
+    yield config
+    if previous is _ABSENT:
+        config._data.pop("benchmarking_enabled", None)
+    else:
+        config._data["benchmarking_enabled"] = previous
+    if previous_auth is None:
+        os.environ.pop("SPARK_PULSE_AUTH_ENABLED", None)
+    else:
+        os.environ["SPARK_PULSE_AUTH_ENABLED"] = previous_auth
 
 
 @pytest.fixture(scope="module")

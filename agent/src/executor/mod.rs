@@ -23,10 +23,12 @@ pub mod copy;
 pub mod fabric;
 pub mod images;
 pub mod labels;
+pub mod libpod;
 pub mod probe;
 pub mod processes;
 pub mod selfupdate;
 pub mod snapshots;
+pub mod socket;
 pub mod stats;
 
 use std::collections::BTreeMap;
@@ -153,28 +155,44 @@ pub fn decode_cmd(cmd: &crate::proto::Cmd) -> Option<Vec<String>> {
 /// Executes commands against this machine's Docker daemon.
 pub struct Executor {
     docker: Option<bollard::Docker>,
+    /// The unix socket the daemon answered on, when it is one: where
+    /// Podman's own API is reached for a create (#167).
+    socket: Option<std::path::PathBuf>,
     epoch: AtomicU64,
 }
 
 impl Executor {
-    /// Connect to the local Docker daemon, or record that we could not.
+    /// Connect to the node's daemon, or record that we could not.
     ///
     /// A node whose daemon is down still starts, connects and *reports* that
     /// its daemon is down. Failing to construct here would mean the node never
     /// appears at all, and "unreachable" is a much worse description of a
-    /// machine that is running fine with a stopped Docker.
-    pub fn connect() -> Self {
-        let docker = match bollard::Docker::connect_with_defaults() {
-            Ok(docker) => Some(docker),
-            Err(error) => {
-                tracing::warn!(%error, "no Docker daemon; the agent will report it");
-                None
-            }
-        };
+    /// machine that is running fine with a stopped Docker. Which socket is
+    /// `socket::connect`'s decision.
+    pub async fn connect() -> Self {
+        let daemon = socket::connect().await;
         Self {
-            docker,
+            docker: daemon.docker,
+            socket: daemon.socket,
             epoch: AtomicU64::new(0),
         }
+    }
+
+    /// How a container is created on this node: through Podman's own API
+    /// when the daemon is Podman, else Docker's (#165, #167).
+    async fn create_via(&self) -> DockerResult<containers::CreateVia<'_>> {
+        if self.container_runtime().await.name != "podman" {
+            return Ok(containers::CreateVia::Docker);
+        }
+        let Some(socket) = self.socket.as_deref() else {
+            return Err(OpError::new(
+                "RuntimeError",
+                "this node runs Podman over a socket that is not a unix socket, \
+                 and Podman's own API is needed to attach a GPU",
+            ));
+        };
+        let gpu = libpod::gpu_device(&facts::cdi_devices()).ok_or_else(libpod::no_gpu_device)?;
+        Ok(containers::CreateVia::Libpod { socket, gpu })
     }
 
     /// The highest controller epoch seen.
@@ -187,27 +205,71 @@ impl Executor {
         self.epoch.fetch_max(epoch, Ordering::SeqCst);
     }
 
-    /// The daemon's version string, or empty when there is no daemon.
+    /// What the daemon on the agent's socket is: its version, and which
+    /// runtime it is (Docker, or Podman through its compat API) and whether
+    /// it runs rootless. Empty when there is no daemon.
+    ///
+    /// Podman is recognised by its `/_ping` headers and never asked
+    /// `/version` or `/info`, which on Podman 4.9 cost seconds of CPU each
+    /// (#211).
     ///
     /// Asked on every heartbeat, so it must never be the thing that first
     /// connects: a daemon that is down would then stop the heartbeat and the
     /// node would report as unreachable rather than as having no daemon.
-    pub async fn docker_version(&self) -> String {
+    /// `/info` failing on its own leaves the runtime named and `rootless`
+    /// false rather than losing the version too.
+    pub async fn container_runtime(&self) -> facts::ContainerRuntime {
         let Some(docker) = &self.docker else {
-            return String::new();
+            return facts::ContainerRuntime::default();
         };
-        match docker.version().await {
-            Ok(version) => version.version.unwrap_or_default(),
-            Err(error) => {
-                tracing::debug!(%error, "the Docker daemon did not answer version()");
-                String::new()
+        // Podman first, by its ping: its `/version` and `/info` take seconds.
+        if let Some(socket) = self.socket.as_deref() {
+            if let Some(version) = libpod::ping_version(socket).await {
+                return facts::ContainerRuntime {
+                    name: "podman".to_string(),
+                    version,
+                    rootless: facts::podman_rootless(socket),
+                };
             }
+        }
+        // Docker answers both at once and quickly.
+        let (version, info) = tokio::join!(docker.version(), docker.info());
+        let version = match version {
+            Ok(version) => version,
+            Err(error) => {
+                tracing::debug!(%error, "the daemon did not answer version()");
+                return facts::ContainerRuntime::default();
+            }
+        };
+        let components: Vec<String> = version
+            .components
+            .unwrap_or_default()
+            .into_iter()
+            .map(|component| component.name)
+            .collect();
+        let names: Vec<&str> = components.iter().map(String::as_str).collect();
+        let rootless = match info {
+            Ok(info) => {
+                let options = info.security_options.unwrap_or_default();
+                let options: Vec<&str> = options.iter().map(String::as_str).collect();
+                facts::rootless_from_security_options(&options)
+            }
+            Err(error) => {
+                tracing::debug!(%error, "the daemon did not answer info()");
+                false
+            }
+        };
+        facts::ContainerRuntime {
+            name: facts::runtime_from_components(true, &names).to_string(),
+            version: version.version.unwrap_or_default(),
+            rootless,
         }
     }
 
-    /// Describe this machine, including whatever Docker says about itself.
+    /// Describe this machine, including whatever its daemon says about itself.
     pub async fn collect_facts(&self) -> NodeFacts {
-        facts::collect(self.docker_version().await)
+        let runtime = self.container_runtime().await;
+        facts::collect(runtime.version.clone(), runtime)
     }
 
     /// Run one command and return its outcome as payload. Never fails.
@@ -412,7 +474,8 @@ impl Executor {
             }
 
             Op::RunContainer(req) => {
-                let info = attempt!(containers::run_container(docker, req).await);
+                let via = attempt!(self.create_via().await);
+                let info = attempt!(containers::run_container(docker, req, via).await);
                 ok!(Outcome::Container(ContainerRef {
                     found: true,
                     container: Some(info),

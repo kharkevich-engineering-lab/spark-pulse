@@ -66,6 +66,7 @@ def _node_payload(node: Any) -> dict[str, Any]:
         "enrolled": enrolled,
         "connected": connection is not None,
         **_agent_currency(connection),
+        "runtime": _container_runtime(connection),
     }
     if enrolled:
         data["state"] = runtime.hub.liveness(node_id).value
@@ -80,7 +81,7 @@ def _agent_currency(connection: Any | None) -> dict[str, Any]:
     version string only for an agent too old to report a digest. ``None``
     when there is no connection to ask.
     """
-    from spark_pulse.agent.bundle import packaged_digests
+    from spark_pulse.agent.bundle import is_current
     from spark_pulse.version import __version__
 
     if connection is None:
@@ -88,13 +89,32 @@ def _agent_currency(connection: Any | None) -> dict[str, Any]:
     version = str(connection.agent_version or connection.facts.agent_version or "")
     digest = str(getattr(connection.facts, "binary_sha256", "") or "")
     if digest:
-        current = digest in packaged_digests().values()
+        platform = str(getattr(connection.facts, "platform", "") or "")
+        current = is_current(digest, platform)
     else:
         current = bool(version) and version == __version__
     return {
         "version": version,
         "current": current,
         "control_plane_version": __version__,
+    }
+
+
+def _container_runtime(connection: Any | None) -> dict[str, Any] | None:
+    """The container runtime the node's agent reports (#166).
+
+    ``None`` without a connection to ask. ``name`` is empty when the agent
+    is too old to say, or when no daemon answered it — unknown, which is not
+    the same as Docker.
+    """
+    if connection is None:
+        return None
+    facts = connection.facts
+    return {
+        "name": str(getattr(facts, "container_runtime", "") or ""),
+        "version": str(getattr(facts, "runtime_version", "") or ""),
+        "rootless": bool(getattr(facts, "rootless", False)),
+        "cdi_devices": list(getattr(facts, "cdi_devices", ()) or ()),
     }
 
 

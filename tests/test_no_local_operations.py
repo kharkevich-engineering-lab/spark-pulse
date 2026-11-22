@@ -70,7 +70,9 @@ MAY_TOUCH_THE_FILESYSTEM = {
     "custom_files.py": "the operator's own recipe and mod directories",
     "hub_cache.py": "a standalone layout/verification module with no node in it",
     "oci_registry.py": "the control plane's own registry cache and recipe files",
-    "native_runtime.py": "the temp launch script it hands to copy_to_container",
+    "backends/docker/lifecycle.py": (
+        "the temp launch script it hands to copy_to_container"
+    ),
     "registry.py": "the local registry container's data directory",
 }
 
@@ -102,7 +104,19 @@ MAY_USE_SUBPROCESS = {
 
 
 def _tool_modules() -> list[Path]:
-    return sorted(p for p in TOOLS.glob("*.py") if p.name != "__init__.py")
+    """Every module under ``tools/``, the backends' included (#163).
+
+    Recursive since the Docker lifecycle moved into ``tools/backends/docker/``:
+    a flat glob would have let the code that most needs this ratchet leave it
+    by changing directory. Only the switch itself, ``tools/__init__.py``, is
+    not a tool.
+    """
+    return sorted(p for p in TOOLS.rglob("*.py") if p != TOOLS / "__init__.py")
+
+
+def _key(module: Path) -> str:
+    """How an allowlist names a module: its path under ``tools/``."""
+    return module.relative_to(TOOLS).as_posix()
 
 
 def _calls(tree: ast.AST) -> list[ast.Call]:
@@ -121,7 +135,7 @@ def _dotted(node: ast.AST) -> str:
     return ""
 
 
-@pytest.mark.parametrize("module", _tool_modules(), ids=lambda p: p.name)
+@pytest.mark.parametrize("module", _tool_modules(), ids=_key)
 def test_no_tool_reaches_the_container_service_without_a_node(module: Path):
     """A container operation names the node it happens on.
 
@@ -129,8 +143,8 @@ def test_no_tool_reaches_the_container_service_without_a_node(module: Path):
     it is a local operation by construction: there is no node in the call, so
     there is nothing to send to an agent.
     """
-    if module.name in MAY_TOUCH_DOCKER_DIRECTLY:
-        pytest.skip(f"{module.name} is the seam itself")
+    if _key(module) in MAY_TOUCH_DOCKER_DIRECTLY:
+        pytest.skip(f"{_key(module)} is the seam itself")
 
     tree = ast.parse(module.read_text(encoding="utf-8"))
     offenders = [
@@ -140,7 +154,7 @@ def test_no_tool_reaches_the_container_service_without_a_node(module: Path):
     ]
 
     assert offenders == [], (
-        f"{module.name} reaches this process's Docker client directly "
+        f"{_key(module)} reaches this process's Docker client directly "
         f"({', '.join(offenders)}). Container work goes through "
         "`node_service`, which routes even this machine through its own "
         "agent — that is what makes a solo deployment and a rank of a "
@@ -148,7 +162,7 @@ def test_no_tool_reaches_the_container_service_without_a_node(module: Path):
     )
 
 
-@pytest.mark.parametrize("module", _tool_modules(), ids=lambda p: p.name)
+@pytest.mark.parametrize("module", _tool_modules(), ids=_key)
 def test_no_tool_constructs_the_container_service_directly(module: Path):
     """Naming the node is not enough if the service is built without one.
 
@@ -163,8 +177,8 @@ def test_no_tool_constructs_the_container_service_directly(module: Path):
     `node_service`) and reached through `node_service`, which routes even this
     machine through its own agent.
     """
-    if module.name in MAY_TOUCH_DOCKER_DIRECTLY:
-        pytest.skip(f"{module.name} is the seam itself")
+    if _key(module) in MAY_TOUCH_DOCKER_DIRECTLY:
+        pytest.skip(f"{_key(module)} is the seam itself")
 
     tree = ast.parse(module.read_text(encoding="utf-8"))
     offenders = sorted(
@@ -174,7 +188,7 @@ def test_no_tool_constructs_the_container_service_directly(module: Path):
     )
 
     assert offenders == [], (
-        f"{module.name} constructs the container service directly "
+        f"{_key(module)} constructs the container service directly "
         f"({', '.join(offenders)}). A DockerService built here talks to this "
         "machine's Docker with no node in the call, so an operation meant for "
         "a peer runs locally instead. Go through `node_service.service_for`, "
@@ -182,7 +196,7 @@ def test_no_tool_constructs_the_container_service_directly(module: Path):
     )
 
 
-@pytest.mark.parametrize("module", _tool_modules(), ids=lambda p: p.name)
+@pytest.mark.parametrize("module", _tool_modules(), ids=_key)
 def test_only_the_named_modules_shell_out(module: Path):
     """Shelling out is how a local operation gets written by accident.
 
@@ -197,17 +211,17 @@ def test_only_the_named_modules_shell_out(module: Path):
         if _dotted(call.func).startswith(("subprocess.", "os.system", "os.popen"))
     }
 
-    if module.name in MAY_USE_SUBPROCESS:
+    if _key(module) in MAY_USE_SUBPROCESS:
         return
     assert uses == set(), (
-        f"{module.name} shells out ({', '.join(sorted(uses))}) and is not in "
+        f"{_key(module)} shells out ({', '.join(sorted(uses))}) and is not in "
         "MAY_USE_SUBPROCESS. If it operates on a node, send it to that node's "
         "agent; if it reads this machine's own hardware, add it to the list "
         "with the reason."
     )
 
 
-@pytest.mark.parametrize("module", _tool_modules(), ids=lambda p: p.name)
+@pytest.mark.parametrize("module", _tool_modules(), ids=_key)
 def test_only_the_named_modules_write_to_this_machine(module: Path):
     """Deleting something without naming a node deletes it here only.
 
@@ -215,7 +229,7 @@ def test_only_the_named_modules_write_to_this_machine(module: Path):
     from the control node and reported as removed leaves 26 GB on every other
     Spark, and nothing on the page ever says so again.
     """
-    if module.name in MAY_TOUCH_THE_FILESYSTEM:
+    if _key(module) in MAY_TOUCH_THE_FILESYSTEM:
         return
 
     tree = ast.parse(module.read_text(encoding="utf-8"))
@@ -245,7 +259,7 @@ def test_only_the_named_modules_write_to_this_machine(module: Path):
             writes.add(call.func.attr)
 
     assert writes == set(), (
-        f"{module.name} writes to this machine's filesystem "
+        f"{_key(module)} writes to this machine's filesystem "
         f"({', '.join(sorted(writes))}) and is not in "
         "MAY_TOUCH_THE_FILESYSTEM. If the path is on a node, send the "
         "operation to that node's agent — `RemoveSnapshot` and `RemoveImage` "
@@ -254,7 +268,7 @@ def test_only_the_named_modules_write_to_this_machine(module: Path):
     )
 
 
-@pytest.mark.parametrize("module", _tool_modules(), ids=lambda p: p.name)
+@pytest.mark.parametrize("module", _tool_modules(), ids=_key)
 def test_only_the_named_modules_signal_a_process(module: Path):
     """A pid is meaningless without the machine it is on.
 
@@ -262,7 +276,7 @@ def test_only_the_named_modules_signal_a_process(module: Path):
     worked on exactly one machine out of however many the operator has, and
     the button on every other node's rows was a lie.
     """
-    if module.name in MAY_SIGNAL_A_PROCESS:
+    if _key(module) in MAY_SIGNAL_A_PROCESS:
         return
 
     tree = ast.parse(module.read_text(encoding="utf-8"))
@@ -273,7 +287,7 @@ def test_only_the_named_modules_signal_a_process(module: Path):
     }
 
     assert signals == set(), (
-        f"{module.name} signals a process on this machine "
+        f"{_key(module)} signals a process on this machine "
         f"({', '.join(sorted(signals))}). Processes live on nodes: send it "
         "through the node's agent with `terminate_process`."
     )
@@ -318,12 +332,12 @@ def test_nothing_asks_this_machine_about_its_own_gpu():
     offenders = []
     for module in _tool_modules():
         source = module.read_text(encoding="utf-8")
-        if module.name in MAY_USE_SUBPROCESS or module.name in ships_to_the_agent:
+        if _key(module) in MAY_USE_SUBPROCESS or _key(module) in ships_to_the_agent:
             continue
         for tool in ("nvidia-smi", "free -m", "df -B1"):
             # In a string that is *run*, not in prose about what used to be.
             if f'"{tool}' in source or f"'{tool}" in source:
-                offenders.append(f"{module.name}: {tool}")
+                offenders.append(f"{_key(module)}: {tool}")
 
     assert offenders == [], (
         "these modules read this machine's hardware directly: "
@@ -341,7 +355,7 @@ def test_every_exception_is_one_something_actually_needs():
     what it says — which is how `system.py` sat in MAY_USE_SUBPROCESS for a
     release after the parsing it needed moved into the agent.
     """
-    present = {module.name for module in _tool_modules()}
+    present = {_key(module) for module in _tool_modules()}
     stale = {
         name
         for group in (
@@ -388,7 +402,7 @@ def test_rank_services_sends_every_rank_through_the_resolver():
     ``LOOPBACK_ADDRESSES`` — so the resolver already answers for it. The branch
     that used to intercept it never reached an agent at all.
     """
-    source = (TOOLS / "native_runtime.py").read_text(encoding="utf-8")
+    source = (TOOLS / "backends" / "docker" / "state.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
     function = next(
         node
@@ -424,7 +438,7 @@ def test_the_model_file_is_resolved_by_asking_the_node_that_will_load_it():
     the node's own service (`ListSnapshot`), and the layout it composes the
     container path from comes from `tools.models`, the allowlisted seam.
     """
-    source = (TOOLS / "native_runtime.py").read_text(encoding="utf-8")
+    source = (TOOLS / "backends" / "docker" / "planning.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
     function = next(
         node

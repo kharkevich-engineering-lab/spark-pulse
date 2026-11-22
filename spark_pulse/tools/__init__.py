@@ -26,19 +26,33 @@ import os
 # acts on *through* the switch, so it is the same code in both modes; and
 # ``reconciler``, which is a thread over the records and reaches every node
 # through the switch, for the same reason; and ``node_stats``, which asks each
-# node's own agent through it.  Everything else must exist in both packages.
+# node's own agent through it; ``redaction``, ``readiness``, ``placement`` and
+# ``runtime_errors``, split out of ``native_runtime`` (which the mock re-exports
+# from) and reaching every node through the switch, so the same code in both
+# modes; ``intent``, a run's backend-neutral description, likewise;
+# ``run_state``, the pure derivation of a run's one phase; and
+# ``backends``, which simulation does not mock either — it swaps at
+# the agent transport underneath, so the backend that runs is the real one.  Everything else must exist in both packages.
 from spark_pulse.tools import agent_update as agent_update
 from spark_pulse.tools import atomic_json as atomic_json
+from spark_pulse.tools import backends as backends
 from spark_pulse.tools import custom_files as custom_files
 from spark_pulse.tools import custom_recipes as custom_recipes
 from spark_pulse.tools import deployment_records as deployment_records
 from spark_pulse.tools import event_log as event_log
 from spark_pulse.tools import hub_cache as hub_cache
+from spark_pulse.tools import intent as intent
 from spark_pulse.tools import labels as labels
 from spark_pulse.tools import node_stats as node_stats
+from spark_pulse.tools import placement as placement
+from spark_pulse.tools import readiness as readiness
 from spark_pulse.tools import reconciler as reconciler
+from spark_pulse.tools import recipe_fit as recipe_fit
 from spark_pulse.tools import recipe_schema as recipe_schema
 from spark_pulse.tools import recipe_sources as recipe_sources
+from spark_pulse.tools import redaction as redaction
+from spark_pulse.tools import run_state as run_state
+from spark_pulse.tools import runtime_errors as runtime_errors
 from spark_pulse.tools import scheduled_deploys as scheduled_deploys
 
 _sim_mode = os.environ.get("SIMULATION_MODE", "0") == "1"
@@ -64,6 +78,8 @@ if _sim_mode:
         deploy_dispatch as deploy_dispatch,
         models as models,
         images as images,
+        image_size as image_size,
+        node_facts as node_facts,
         preflight as preflight,
     )
 else:
@@ -87,6 +103,8 @@ else:
         deploy_dispatch as deploy_dispatch,
         models as models,
         images as images,
+        image_size as image_size,
+        node_facts as node_facts,
         preflight as preflight,
     )
 

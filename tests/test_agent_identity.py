@@ -471,6 +471,82 @@ def test_a_changed_hardware_fingerprint_denies_the_node(ledger):
     assert "reimaged" in verdict.reason
 
 
+def _enrolled(ledger, **facts):
+    node_id = ledger.redeem_token(ledger.mint_token("spark-a"))
+    ledger.record_issue(
+        node_id, public_key_fingerprint="key-one", not_after=1.0, facts=facts
+    )
+    return node_id
+
+
+def _connects(ledger, node_id, **facts):
+    return ledger.authorize(node_id, public_key_fingerprint="key-one", facts=facts)
+
+
+def test_a_reboot_that_moves_the_legacy_print_does_not_deny_the_node(ledger):
+    """Seen on a DGX Spark: one more 4 KiB page after a reboot, denied as reimaged.
+
+    The legacy print hashes the memory size; the stable one does not. When
+    both are sent only the stable one is compared, so the legacy value moving
+    is not a verdict.
+    """
+    node_id = _enrolled(
+        ledger, hardware_fingerprint="legacy-before", stable_fingerprint="stable"
+    )
+    assert _connects(
+        ledger,
+        node_id,
+        hardware_fingerprint="legacy-after",
+        stable_fingerprint="stable",
+    )
+    assert ledger.get(node_id).state == NodeState.ACCEPTED.value
+
+
+def test_a_changed_stable_print_still_denies_the_node(ledger):
+    node_id = _enrolled(ledger, hardware_fingerprint="l", stable_fingerprint="one")
+    verdict = _connects(
+        ledger, node_id, hardware_fingerprint="l", stable_fingerprint="two"
+    )
+    assert not verdict
+    assert "reimaged" in verdict.reason
+
+
+def test_a_node_enrolled_before_the_stable_print_records_it_on_connecting(ledger):
+    """Every node in the field enrolled with only the legacy print.
+
+    Its agent update must not deny it — the control node among them, which
+    would stop the control plane starting — so the first stable print it sends
+    is recorded, and from then on is what it is held to.
+    """
+    node_id = _enrolled(ledger, hardware_fingerprint="legacy-at-enrolment")
+    assert _connects(
+        ledger,
+        node_id,
+        hardware_fingerprint="legacy-after-a-reboot",
+        stable_fingerprint="stable",
+    )
+    assert ledger.get(node_id).stable_fingerprint == "stable"
+    assert not _connects(
+        ledger,
+        node_id,
+        hardware_fingerprint="legacy-after-a-reboot",
+        stable_fingerprint="something-else",
+    )
+
+
+def test_an_agent_without_the_stable_print_is_held_to_the_legacy_one(ledger):
+    """An old agent behind a current control plane: the check it always had."""
+    node_id = _enrolled(ledger, hardware_fingerprint="board-one")
+    assert _connects(ledger, node_id, hardware_fingerprint="board-one")
+    assert not _connects(ledger, node_id, hardware_fingerprint="board-two")
+
+
+def test_enrolment_records_both_prints(ledger):
+    node_id = _enrolled(ledger, hardware_fingerprint="l", stable_fingerprint="s")
+    entry = ledger.get(node_id)
+    assert (entry.hardware_fingerprint, entry.stable_fingerprint) == ("l", "s")
+
+
 def test_a_reboot_does_not_deny_the_node(ledger):
     """boot_id changes every reboot, so it must not be an identity check."""
     node_id = ledger.redeem_token(ledger.mint_token("spark-a"))

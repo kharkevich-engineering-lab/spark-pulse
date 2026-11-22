@@ -25,6 +25,31 @@ export interface RecipeSummary {
   /** What the recipe serves: chat, embedding, image, video or speech. Absent
    *  from an older backend, which means chat. */
   serves?: string;
+  /** Whether it runs on this fleet (#172). Absent from an older backend,
+   *  which the page reads as runs. */
+  fit?: RecipeFit;
+}
+
+/** The backend's verdict on whether a recipe runs on the nodes this control
+ *  plane has: an image for their platform, enough of them, and room in their
+ *  memory. `unknown` is a node that has not said what it is — never treated
+ *  as a mismatch. `tight` runs, within 10% of a node's memory. */
+export interface RecipeFit {
+  verdict: "runs" | "unknown" | "wont_run" | "tight";
+  /** Why it does not run, when it does not; the first thing to fix. */
+  reason: string;
+  /** Engine → the variants that run here. */
+  engines: Record<string, string[]>;
+}
+
+/** Whether the backend said this recipe will not run here. */
+export function wontRunHere(r: Pick<RecipeSummary, "fit">): boolean {
+  return r.fit?.verdict === "wont_run";
+}
+
+/** Why a recipe that runs here is a tight fit, when it is one. */
+export function tightHere(r: Pick<RecipeSummary, "fit">): string | undefined {
+  return r.fit?.verdict === "tight" ? r.fit.reason : undefined;
 }
 
 /** One engine's verdict on a recipe, as the backend's engine plugin reports it. */
@@ -92,10 +117,25 @@ export interface ContainerStatus {
   error?: string | null;
 }
 
+/** A run's one state (#205); `tools/run_state.py` is where it is decided. */
+export type RunPhase =
+  | "queued"
+  | "pulling"
+  | "starting"
+  | "running"
+  | "stopping"
+  | "stopped"
+  | "deleting"
+  | "error"
+  | "unknown";
+
 export interface Deployment {
   id: string;
   recipe_id: string;
   name: string;
+  /** The model name the API answers to, where the engine checks it (vLLM's
+   *  `--served-model-name`); empty for one that ignores it (llama.cpp). */
+  served_model?: string;
   params: Record<string, unknown>;
   nodes: string[] | null;
   status: string;
@@ -115,6 +155,16 @@ export interface Deployment {
   sync?: string;
   /** Why it is not settled, in the operator's words. */
   sync_reason?: string;
+  /** What an in-progress change is (`stop`), so the badge can name it. */
+  sync_intent?: string;
+  /** The one state a page renders (#205), derived on the server from
+   *  `status`, `sync` and `sync_intent`. Absent only from a server older than
+   *  the field, and then the pair is read as before. */
+  phase?: RunPhase;
+  /** False when a node could not be asked: the phase is the last reading. */
+  phase_verified?: boolean;
+  /** Why it is unverified, why it is changing, or why it failed. */
+  phase_reason?: string;
   /** How the run was made: "native" — a container we drive ourselves — which
    *  is the only runtime there is. Absent on a record written before the
    *  field existed. */
@@ -693,6 +743,37 @@ export interface DeployPlanRequest {
   allow_missing_model?: boolean;
 }
 
+/** How the HF cache reaches a pod in the Kubernetes preview (#164). */
+export type KubernetesHfCache = "pvc" | "hostPath";
+
+export interface KubernetesPlanRequest extends DeployPlanRequest {
+  hf_cache?: KubernetesHfCache;
+}
+
+/** What the run's intent could not tell the manifests (#164). */
+export interface KubernetesFinding {
+  code: string;
+  detail: string;
+}
+
+/** A run rendered as Kubernetes manifests. Never applied. */
+export interface KubernetesPlan {
+  backend: "kubernetes";
+  deployment_id: string;
+  recipe_id: string;
+  engine: string;
+  variant: string;
+  image: string;
+  namespace: string;
+  port: number;
+  intent_hash: string;
+  manifests: Record<string, unknown>[];
+  yaml: string;
+  findings: KubernetesFinding[];
+  warnings: string[];
+  applied: false;
+}
+
 export interface DeployContainerSpec {
   image: string;
   name: string;
@@ -913,7 +994,17 @@ export interface ModelEntry {
   size_bytes: number;
   last_modified: string | null;
   config: ModelConfigSummary | null;
+  /** The GGUF files in the snapshot and the quantisation each one's name
+   *  declares. A GGUF repo has no config.json; this is its precision. */
+  gguf?: GgufFile[];
   referenced_by: string[];
+}
+
+export interface GgufFile {
+  file: string;
+  /** `q8_0`, `q4_k_m`, `f16`… or empty when the name says none. */
+  quant: string;
+  size_bytes: number;
 }
 
 export type DownloadStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
@@ -1126,6 +1217,17 @@ export interface NodeAgentState {
    * binary's digest when the agent reports one. `null` without a connection. */
   current?: boolean | null;
   control_plane_version?: string;
+  /** The container runtime the agent reports. `null` without a connection;
+   * an empty `name` is an agent too old to say, or no daemon answering. */
+  runtime?: NodeContainerRuntime | null;
+}
+
+export interface NodeContainerRuntime {
+  name: "" | "docker" | "podman" | string;
+  version: string;
+  rootless: boolean;
+  /** CDI devices the node's spec names (`nvidia.com/gpu=all`). */
+  cdi_devices: string[];
 }
 
 // ── Diagnosing a node ───────────────────────────────────────────────────────
@@ -1284,6 +1386,10 @@ export interface ScheduledDeploy {
   finished_at: string;
   /** The download job, on the response that created this. */
   download?: ModelDownloadJob;
+  /** What the run it started is doing now. `done` means the deployment was
+   * created, not that it came up: the pull or the engine can still fail. `null`
+   * before a deployment exists and once its record is gone. */
+  run?: { id: string; status: string; error: string } | null;
 }
 
 // ── The ConnectX fabric ─────────────────────────────────────────────────────

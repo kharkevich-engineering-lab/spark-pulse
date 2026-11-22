@@ -63,12 +63,20 @@ def facts(**overrides: Any) -> pb.NodeFacts:
         "cpu_count": 20,
         "memory_bytes": 128 * 1024**3,
         "hardware_fingerprint": "fingerprint-1",
+        "stable_fingerprint": "stable-fingerprint-1",
         # A simulated node has a Docker daemon that answers. An *empty*
         # docker_version is how the doctor is told a node's daemon is not
         # running, so leaving it blank would make every simulated node report a
         # broken daemon — a fact about the fixture, not about the node. A test
         # that wants a dead daemon says so by overriding it.
         "docker_version": MockDockerClient().version()["Version"],
+        # And says which runtime answered: Docker, rootful, as on a Spark.
+        # A Podman node is an override (#174 simulates one).
+        "container_runtime": "docker",
+        "runtime_version": MockDockerClient().version()["Version"],
+        "rootless": False,
+        # A DGX Spark.
+        "platform": "linux/arm64",
     }
     values.update(overrides)
     return pb.NodeFacts(**values)

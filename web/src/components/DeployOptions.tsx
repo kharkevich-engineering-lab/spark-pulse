@@ -11,9 +11,11 @@ recipe carries a vLLM `command` template and therefore pins itself to vLLM.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useI18n, type Translator } from "@/lib/i18n";
 import { fetchEngines, fetchModels, fetchNodes, planDeployment, runPreflight } from "@/lib/api";
+import { KubernetesPreview } from "@/components/KubernetesPreview";
 import type {
   ClusterNode,
   DeployPlan,
+  DeployPlanRequest,
   EngineSummary,
   MemoryBudget,
   PreflightReport,
@@ -311,6 +313,16 @@ export function engineChoices(
         };
       }
       const reported = support.get(engine.engine);
+      if (reported && !reported.supported) {
+        return { engine, supported: false, reason: reported.reason };
+      }
+      // Whether this variant's image runs on this fleet's platforms (#172).
+      // Only a known answer narrows the list: `unknown` is a node that has not
+      // said what it is, and the plan decides then.
+      const fit = recipe.fit;
+      if (fit && fit.verdict !== "unknown" && !(fit.engines[engine.engine] ?? []).includes(engine.variant)) {
+        return { engine, supported: false, reason: i18n.t("deployOptions.notForThisFleet") };
+      }
       if (reported) {
         return { engine, supported: reported.supported, reason: reported.reason };
       }
@@ -383,6 +395,52 @@ export function eligibleEngines(
     .map((c) => c.engine);
 }
 
+/** The engine a deploy uses, as one dropdown.
+ *
+ *  Among the recipe's own fields — name, model, container, engine — rather
+ *  than inside the folded "Deploy options" panel, where a recipe that runs on
+ *  SGLang and vLLM looked as though it had no choice at all. Offers only what
+ *  can run it (the same `engineChoices` the plan agrees with), and the
+ *  recipe's own default first. */
+export function EngineSelect({
+  recipe,
+  value,
+  onChange,
+}: {
+  recipe: RecipeDetail;
+  value: string | undefined;
+  onChange: (engine: string | undefined) => void;
+}) {
+  const i18n = useI18n();
+  const [engines, setEngines] = useState<EngineSummary[]>([]);
+  useEffect(() => {
+    fetchEngines()
+      .then((r) => setEngines(r.engines))
+      .catch(() => setEngines([]));
+  }, []);
+  const available = useMemo(() => eligibleEngines(engines, recipe, i18n), [engines, recipe, i18n]);
+  return (
+    <Select
+      aria-label={i18n.t("deployOptions.engine")}
+      data-testid="deploy-engine"
+      value={value ?? ""}
+      onChange={(e) => onChange(e.target.value || undefined)}
+      className="font-mono text-sm"
+    >
+      <option value="">
+        {recipe.engine
+          ? i18n.t("deployOptions.recipeDefaultEngine", { engine: recipe.engine })
+          : i18n.t("deployOptions.recipeDefault")}
+      </option>
+      {available.map((engine) => (
+        <option key={engine.key} value={engine.key}>
+          {engineLabel(engine)}
+        </option>
+      ))}
+    </Select>
+  );
+}
+
 export default function DeployOptions({
   recipe,
   value,
@@ -415,6 +473,7 @@ export default function DeployOptions({
   // replace it.
   const [tpTouched, setTpTouched] = useState(false);
   const [plan, setPlan] = useState<DeployPlan | null>(null);
+  const [planBody, setPlanBody] = useState<DeployPlanRequest | null>(null);
   const [preflight, setPreflight] = useState<PreflightReport | null>(null);
   const [planning, setPlanning] = useState(false);
   const [planError, setPlanError] = useState<string | null>(null);
@@ -489,7 +548,6 @@ export default function DeployOptions({
   };
 
   const choices = useMemo(() => engineChoices(engines, recipe, i18n), [engines, recipe, i18n]);
-  const available = useMemo(() => choices.filter((c) => c.supported), [choices]);
   const unavailable = useMemo(() => choices.filter((c) => !c.supported), [choices]);
 
   const selectedAddresses = useMemo(() => new Set(value.nodes ?? []), [value.nodes]);
@@ -569,6 +627,7 @@ export default function DeployOptions({
       // The same body the deploy sends — see `deployParams`.
       params: deployParams(recipe, value),
     };
+    setPlanBody(body);
     try {
       const result = await planDeployment(body);
       setPlan(result);
@@ -606,25 +665,6 @@ export default function DeployOptions({
               single control, so a wide window fits two side by side and a
               390px one fits exactly one. */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Field label={t("deployOptions.engine")}>
-              {(control) => (
-                <Select
-                  {...control}
-                  data-testid="deploy-engine"
-                  value={value.engine ?? ""}
-                  onChange={(e) => onChange({ ...value, engine: e.target.value || undefined })}
-                  className="font-mono text-[13px]"
-                >
-                  <option value="">{t("deployOptions.recipeDefault")}</option>
-                  {available.map(({ engine }) => (
-                    <option key={engine.key} value={engine.key}>
-                      {engineLabel(engine)}
-                    </option>
-                  ))}
-                </Select>
-              )}
-            </Field>
-
             <Field label={t("deployOptions.modelOverride")}>
               {(control) => (
                 <>
@@ -949,6 +989,8 @@ export default function DeployOptions({
                   {` · ${t("deployOptions.shm", { gb: plan.container.shm_size_gb })}`}
                 </p>
               </div>
+
+              {planBody && <KubernetesPreview body={planBody} />}
             </div>
           )}
         </div>

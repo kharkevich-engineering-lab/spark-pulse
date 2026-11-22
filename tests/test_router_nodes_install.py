@@ -517,6 +517,12 @@ class TestAgentCurrency:
             "version": "1.2.3",
             "current": True,
             "control_plane_version": agent["control_plane_version"],
+            "runtime": {
+                "name": "",
+                "version": "",
+                "rootless": False,
+                "cdi_devices": [],
+            },
         }
 
     async def test_a_digest_we_do_not_ship_is_stale(self, client, running, monkeypatch):
@@ -571,6 +577,63 @@ class TestAgentCurrency:
             "agent"
         ]
         assert agent["current"] is True
+
+
+class TestContainerRuntime:
+    """Which container runtime a node's agent reports (#166)."""
+
+    async def test_without_a_connection_there_is_nothing_to_report(
+        self, client, running
+    ):
+        listed = {n["id"]: n for n in (await client.get("/api/nodes")).json()}
+        assert listed[PEER_ID]["agent"]["runtime"] is None
+
+    async def test_a_rootless_podman_node_says_so(self, client, running):
+        from spark_pulse.agent import agent_pb2 as pb
+        from spark_pulse.agent.hub import AgentConnection
+
+        _enrol(running, PEER_ID)
+        running.hub.attach(
+            AgentConnection(
+                PEER_ID,
+                facts=pb.NodeFacts(
+                    docker_version="4.9.3",
+                    container_runtime="podman",
+                    runtime_version="4.9.3",
+                    rootless=True,
+                    cdi_devices=["nvidia.com/gpu=0", "nvidia.com/gpu=all"],
+                ),
+            )
+        )
+        agent = {n["id"]: n for n in (await client.get("/api/nodes")).json()}[PEER_ID][
+            "agent"
+        ]
+        assert agent["runtime"] == {
+            "name": "podman",
+            "version": "4.9.3",
+            "rootless": True,
+            "cdi_devices": ["nvidia.com/gpu=0", "nvidia.com/gpu=all"],
+        }
+
+    async def test_an_older_agents_facts_parse_with_the_runtime_unknown(
+        self, client, running
+    ):
+        """Bytes from before the fields existed: unknown, never Docker."""
+        from spark_pulse.agent import agent_pb2 as pb
+        from spark_pulse.agent.hub import AgentConnection
+
+        old = pb.NodeFacts(agent_version="1.35.2", docker_version="29.2.1")
+        _enrol(running, PEER_ID)
+        running.hub.attach(
+            AgentConnection(
+                PEER_ID, facts=pb.NodeFacts.FromString(old.SerializeToString())
+            )
+        )
+        agent = {n["id"]: n for n in (await client.get("/api/nodes")).json()}[PEER_ID][
+            "agent"
+        ]
+        assert agent["runtime"]["name"] == ""
+        assert agent["runtime"]["rootless"] is False
 
 
 def _enrol(runtime, node_id: str) -> None:

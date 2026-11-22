@@ -58,7 +58,7 @@ pub const AGENT_USER: &str = "agent";
 ///
 /// Anything that is not the sentinel is passed through: an operator who wrote
 /// `1000:1000`, or a user name the image defines, meant it.
-fn resolve_user(spec: &str) -> String {
+pub(super) fn resolve_user(spec: &str) -> String {
     if spec != AGENT_USER {
         return spec.to_string();
     }
@@ -67,12 +67,59 @@ fn resolve_user(spec: &str) -> String {
     format!("{uid}:{gid}")
 }
 
+/// Where a create request goes: Docker's API, or Podman's own (#167).
+pub enum CreateVia<'a> {
+    Docker,
+    /// Podman's `/libpod` API on this unix socket, with the GPU as this CDI
+    /// device.
+    Libpod {
+        socket: &'a std::path::Path,
+        gpu: String,
+    },
+}
+
 /// Create and start a container carrying spark-pulse labels.
-pub async fn run_container(docker: &Docker, req: RunContainer) -> DockerResult<ContainerInfo> {
+///
+/// Only the create differs by runtime (see `libpod`); the start, and every
+/// operation on the container afterwards, goes through bollard either way.
+pub async fn run_container(
+    docker: &Docker,
+    req: RunContainer,
+    via: CreateVia<'_>,
+) -> DockerResult<ContainerInfo> {
     let mut metadata = req.metadata.clone().unwrap_or_default();
     let label_map = labels::prepare(&mut metadata, &req.name, &req.image);
-    let config = create_config(&req, &label_map);
 
+    let id = match via {
+        CreateVia::Docker => create_with_docker(docker, &req, &label_map).await?,
+        CreateVia::Libpod { socket, gpu } => {
+            let user = req.user.as_deref().map(resolve_user);
+            let spec = super::libpod::create_spec(&req, &label_map, user, &gpu);
+            super::libpod::create(socket, &spec).await?
+        }
+    };
+
+    docker
+        .start_container(&req.name, None::<StartContainerOptions>)
+        .await
+        .map_err(|error| OpError::new("RuntimeError", format!("Docker API error: {error}")))?;
+
+    Ok(ContainerInfo {
+        id,
+        name: req.name.clone(),
+        status: "running".into(),
+        image: req.image.clone(),
+        metadata: Some(metadata),
+        labels: label_map.into_iter().collect(),
+    })
+}
+
+async fn create_with_docker(
+    docker: &Docker,
+    req: &RunContainer,
+    label_map: &BTreeMap<String, String>,
+) -> DockerResult<String> {
+    let config = create_config(req, label_map);
     let created = docker
         .create_container(
             Some(
@@ -89,20 +136,7 @@ pub async fn run_container(docker: &Docker, req: RunContainer) -> DockerResult<C
             } => OpError::new("RuntimeError", format!("Image not found: {}", req.image)),
             other => OpError::new("RuntimeError", format!("Docker API error: {other}")),
         })?;
-
-    docker
-        .start_container(&req.name, None::<StartContainerOptions>)
-        .await
-        .map_err(|error| OpError::new("RuntimeError", format!("Docker API error: {error}")))?;
-
-    Ok(ContainerInfo {
-        id: created.id,
-        name: req.name.clone(),
-        status: "running".into(),
-        image: req.image.clone(),
-        metadata: Some(metadata),
-        labels: label_map.into_iter().collect(),
-    })
+    Ok(created.id)
 }
 
 /// The create request, as a pure function of what was asked for.
@@ -181,7 +215,10 @@ pub fn create_config(
         binds: (!binds.is_empty()).then_some(binds),
         privileged: Some(privileged),
         pids_limit: req.pids_limit.map(|v| v as i64).or(Some(4096)),
-        shm_size: Some(gb_to_bytes(shm_size_gb)),
+        // Never with host IPC: there the container uses the host's /dev/shm
+        // and the size means nothing. Docker ignores it; Podman refuses the
+        // whole create (#165), so it is not sent to either.
+        shm_size: (!req.ipc_host.unwrap_or(false)).then(|| gb_to_bytes(shm_size_gb)),
         ulimits: Some(ulimits),
         auto_remove: Some(auto_remove),
         // Never restart. A rank is one member of a sharded gang: a rebooting

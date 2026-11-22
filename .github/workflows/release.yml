@@ -166,6 +166,7 @@ jobs:
           chmod +x spark_pulse/agent/bin/spark-pulse-agent-*
           ls -l spark_pulse/agent/bin/
           test -f spark_pulse/agent/bin/spark-pulse-agent-aarch64-unknown-linux-musl
+          test -f spark_pulse/agent/bin/spark-pulse-agent-x86_64-unknown-linux-musl
       - name: Run semantic-release
         id: release
         uses: cycjimmy/semantic-release-action@v6

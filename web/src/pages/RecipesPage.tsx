@@ -2,13 +2,16 @@ import { useState, useEffect, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { useI18n } from "@/lib/i18n";
 import { fetchRecipes, fetchRecipe, createDeployment, scheduleDeploy, fetchSettings, fetchRecipeCustomization, saveRecipeCustomization, deleteRecipeCustomization, fetchMods, fetchMod, listCustomRecipes, saveCustomRecipe, deleteCustomRecipe, listCustomMods, getCustomModFiles, saveCustomModFiles, deleteCustomMod, uninstallOciRecipe, ApiError } from "@/lib/api";
-import type { RecipeDetail, RecipeCustomization, RecipeSummary, ModSummary, ModDetail, CustomRecipeInfo, CustomModInfo, ModFileMap, PreflightReport } from "@/lib/types";
+import { tightHere, wontRunHere } from "@/lib/types";
+import type { Deployment, RecipeDetail, RecipeCustomization, RecipeSummary, ModSummary, ModDetail, CustomRecipeInfo, CustomModInfo, ModFileMap, PreflightReport } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
 import { useDeployments } from "@/hooks/useDeployments";
 import { AlertModal, Button, ConfirmModal, ErrorLine, Modal, PageHeader, Spinner, Tabs, Toggle } from "@/ui";
+import type { AlertTone } from "@/ui";
 import PreflightPanel from "@/components/PreflightPanel";
 import { Loader2, AlertCircle, ChevronDown, X, Copy, Check, Wrench, FileCode2, FileText, FileCode, Plus, Download } from "lucide-react";
 import RecipeCard from "@/components/RecipeCard";
+import { useWaitingDeploys } from "@/hooks/useWaitingDeploys";
 import RecipeDrawer from "@/components/RecipeDrawer";
 import SlideDrawer from "@/components/SlideDrawer";
 import BaseCard from "@/components/BaseCard";
@@ -216,7 +219,7 @@ export default function RecipesPage() {
   const [customMods, setCustomMods] = useState<CustomModInfo[]>([]);
   const [customLoading, setCustomLoading] = useState(false);
   const [selected, setSelected] = useState<{ recipe: RecipeDetail; customization: RecipeCustomization } | null>(null);
-  const [alertModal, setAlertModal] = useState<{ title: string; message: string } | null>(null);
+  const [alertModal, setAlertModal] = useState<{ title: string; message: string; tone?: AlertTone } | null>(null);
   const [blockedDeploy, setBlockedDeploy] = useState<BlockedDeploy | null>(null);
   const [missingModelDeploy, setMissingModelDeploy] = useState<MissingModelDeploy | null>(null);
   const [scheduling, setScheduling] = useState(false);
@@ -249,17 +252,29 @@ export default function RecipesPage() {
   const clusterAvailable = settings?.cluster?.available ?? settings?.cluster_enabled ?? false;
   const clusterNodeCount = settings?.cluster?.node_count ?? 1;
 
+  // Deploys waiting on their model download: the card says "queued" from the
+  // moment "Download and deploy" is accepted, rather than looking untouched.
+  const { waiting, refetch: refetchWaiting } = useWaitingDeploys();
+  const queuedIds = useMemo(() => new Set(waiting.map((w) => w.entry.recipe_id)), [waiting]);
+
   const runningIds = useMemo(() => {
     if (!deployments) return new Set<string>();
-    return new Set(deployments.filter(d => d.status === "running" || d.status === "pending").map(d => d.recipe_id));
+    // The run's one phase (#205); `status` for a server older than it.
+    const live = (d: Deployment) =>
+      d.phase ? d.phase === "running" || d.phase === "queued" : d.status === "running" || d.status === "pending";
+    return new Set(deployments.filter(live).map(d => d.recipe_id));
   }, [deployments]);
 
+  // What does not run here goes last and folded away: the cluster-only ones
+  // with no cluster, and the ones the backend says have no image for this
+  // fleet's platform or too few nodes (#172). "Only what runs here" is the
+  // folded default; unfolded, each is dimmed and says why.
   const { available, unavailable } = useMemo(() => {
     if (!recipes) return { available: [], unavailable: [] };
-    const avail = recipes.filter(r => !(r.cluster_only && !clusterAvailable));
-    const unavail = recipes.filter(r => r.cluster_only && !clusterAvailable);
-    return { available: avail, unavailable: unavail };
+    const blocked = (r: RecipeSummary) => (r.cluster_only && !clusterAvailable) || wontRunHere(r);
+    return { available: recipes.filter(r => !blocked(r)), unavailable: recipes.filter(blocked) };
   }, [recipes, clusterAvailable]);
+  const anyClusterBlocked = unavailable.some(r => r.cluster_only && !clusterAvailable);
 
 
   const loadCustomData = async () => {
@@ -294,14 +309,21 @@ export default function RecipesPage() {
     setShowRecipeModal(true);
   };
 
+  /** A custom recipe is also a recipe: the main list carries it as
+   *  `custom-<file>`. Refreshing only Custom mode's own list left a deleted
+   *  one on the recipe grid until a reload. */
+  const customRecipesChanged = async () => {
+    await Promise.all([loadCustomData(), refetch()]);
+  };
+
   const handleSaveCustomRecipe = async (id: string, content: string) => {
     await saveCustomRecipe(id, content);
-    await loadCustomData();
+    await customRecipesChanged();
   };
 
   const handleDeleteCustomRecipe = async (_id: string) => {
     await deleteCustomRecipe(_id);
-    await loadCustomData();
+    await customRecipesChanged();
   };
 
   /** Deleting from the list, rather than from inside the editor.
@@ -426,9 +448,11 @@ export default function RecipesPage() {
       });
       setMissingModelDeploy(null);
       setSelected(null);
+      void refetchWaiting();
       setAlertModal({
         title: t("recipes.downloadStarted"),
         message: t("recipes.downloadStartedBody", { model, name }),
+        tone: "info",
       });
     } catch (e) {
       setMissingModelDeploy(null);
@@ -603,16 +627,22 @@ export default function RecipesPage() {
             <>
               {recipes && recipes.length > 0 && (
                 <>
+                  {available.length === 0 && unavailable.length > 0 && (
+                    <p className="text-sm text-text-muted" data-testid="nothing-runs-here">
+                      {t("recipes.nothingRunsHere")}
+                    </p>
+                  )}
                   <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                     {available.map((r) => (
                       <RecipeCard
                         key={r.id}
                         r={r}
                         isRunning={runningIds.has(r.id)}
+                        isQueued={queuedIds.has(r.id)}
                         clusterBlocked={false}
+                        tight={tightHere(r)}
                         onSelect={() => handleSelect(r)}
                         onReset={() => openResetConfirm(r)}
-                        onUninstall={() => confirmDelete("oci", r.id, r.name)}
                       />
                     ))}
                   </div>
@@ -624,18 +654,20 @@ export default function RecipesPage() {
                         className="flex items-center gap-2 text-sm text-text-muted hover:text-text transition-colors mb-3"
                       >
                         <ChevronDown size={16} className={`transition-transform ${showUnavailable ? "rotate-180" : ""}`} />
-                        {plural(showUnavailable ? "recipes.hideUnavailable" : "recipes.showUnavailable", unavailable.length)}
+                        {plural(showUnavailable ? "recipes.hideNotHere" : "recipes.showNotHere", unavailable.length)}
                       </button>
                       {/* Why they are unavailable, with the two things that
                           would change it. A count the operator can check
                           against the Cluster page beats "enable cluster
                           mode", which names a setting and not a condition. */}
-                      <p className="text-sm text-text-muted mb-3">
-                        {t("recipes.clusterHint", { count: clusterNodeCount })}{" "}
-                        <Link to="/cluster" className="text-blue2 hover:underline">{t("recipes.clusterHintAddNode")}</Link>
-                        {" · "}
-                        <Link to="/settings" className="text-blue2 hover:underline">{t("recipes.clusterHintForce")}</Link>
-                      </p>
+                      {anyClusterBlocked && (
+                        <p className="text-sm text-text-muted mb-3">
+                          {t("recipes.clusterHint", { count: clusterNodeCount })}{" "}
+                          <Link to="/cluster" className="text-blue2 hover:underline">{t("recipes.clusterHintAddNode")}</Link>
+                          {" · "}
+                          <Link to="/settings" className="text-blue2 hover:underline">{t("recipes.clusterHintForce")}</Link>
+                        </p>
+                      )}
                       {showUnavailable && (
                         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                           {unavailable.map((r) => (
@@ -643,11 +675,11 @@ export default function RecipesPage() {
                               key={r.id}
                               r={r}
                               isRunning={false}
-                              clusterBlocked={true}
-                              onSelect={() => {}}
+                              clusterBlocked={r.cluster_only && !clusterAvailable}
+                              notHere={wontRunHere(r) ? r.fit?.reason : undefined}
+                              onSelect={() => handleSelect(r)}
                               onReset={() => openResetConfirm(r)}
-                              onUninstall={() => confirmDelete("oci", r.id, r.name)}
-                            />
+                                  />
                           ))}
                         </div>
                       )}
@@ -759,6 +791,14 @@ export default function RecipesPage() {
               return handleReset(selected.recipe.id);
             }
           }}
+          onUninstall={
+            selected.recipe.source === "oci"
+              ? () => {
+                  confirmDelete("oci", selected.recipe.id, selected.recipe.name);
+                  setSelected(null);
+                }
+              : undefined
+          }
         />
       )}
 
@@ -797,7 +837,7 @@ export default function RecipesPage() {
           open={showNewRecipe}
           onClose={() => setShowNewRecipe(false)}
           onSave={async (_id, _name, _content) => {
-            await loadCustomData();
+            await customRecipesChanged();
             setShowNewRecipe(false);
           }}
           onError={(msg) => setAlertModal({ title: t("common.error"), message: msg })}
@@ -818,7 +858,7 @@ export default function RecipesPage() {
       )}
 
       {alertModal && (
-        <AlertModal open={!!alertModal} onClose={() => setAlertModal(null)} title={alertModal.title} message={alertModal.message} />
+        <AlertModal open={!!alertModal} onClose={() => setAlertModal(null)} title={alertModal.title} message={alertModal.message} tone={alertModal.tone} />
       )}
 
       {blockedDeploy && (

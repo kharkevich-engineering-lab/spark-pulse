@@ -195,6 +195,64 @@ fn paths(directory: &Path) -> Paths {
     }
 }
 
+/// The four files' names, in the order a commit renames them into place.
+const FILES: [&str; 4] = ["ca.pem", "node.crt", "node.key", "identity.json"];
+
+/// What a file is staged as before a commit renames it into place.
+const STAGED: &str = ".next";
+
+/// Present from the moment every staged file is durable until every one has
+/// been renamed into place. It is what tells a finished staging from a torn
+/// one after a crash: with it, the commit is rolled forward; without it, the
+/// staged files never became the identity and are discarded.
+pub const COMMIT_MARKER: &str = "identity.commit";
+
+fn staged(directory: &Path, name: &str) -> PathBuf {
+    directory.join(format!("{name}{STAGED}"))
+}
+
+/// Make the directory's entries durable: a rename is not on disk until the
+/// directory that holds it is.
+fn sync_dir(directory: &Path) -> Result<()> {
+    fs::File::open(directory)
+        .and_then(|d| d.sync_all())
+        .with_context(|| format!("syncing {}", directory.display()))
+}
+
+/// Finish or discard a commit a crash interrupted. Idempotent.
+///
+/// The identity is four files that must agree — a certificate for this key,
+/// signed by this bundle, described by this metadata — and a renewal replaces
+/// all four. Written in place, a crash between two of them left a node with a
+/// new certificate and the old key, or a truncated `identity.json`, which reads
+/// as "half an identity" and costs a re-enrolment. So [`AgentIdentity::save`]
+/// stages all four, marks the staging complete, and only then renames; this is
+/// the other half, run before every load and every save.
+pub fn recover(directory: &Path) -> Result<()> {
+    let marker = directory.join(COMMIT_MARKER);
+    if marker.exists() {
+        for name in FILES {
+            let from = staged(directory, name);
+            if from.exists() {
+                fs::rename(&from, directory.join(name))
+                    .with_context(|| format!("finishing the commit of {name}"))?;
+            }
+        }
+        sync_dir(directory)?;
+        fs::remove_file(&marker).with_context(|| format!("removing {}", marker.display()))?;
+        sync_dir(directory)?;
+        return Ok(());
+    }
+    for name in FILES {
+        match fs::remove_file(staged(directory, name)) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e).with_context(|| format!("discarding a staged {name}")),
+        }
+    }
+    Ok(())
+}
+
 impl AgentIdentity {
     /// The identity in `directory`, or `None` if the node has never enrolled.
     ///
@@ -204,6 +262,9 @@ impl AgentIdentity {
     /// first uuid — after which the cluster holds two records for one machine
     /// and nobody can tell which is live.
     pub fn load(directory: &Path) -> Result<Option<Self>> {
+        if directory.is_dir() {
+            recover(directory)?;
+        }
         let p = paths(directory);
         let all = [
             ("node.key", &p.key),
@@ -243,25 +304,52 @@ impl AgentIdentity {
         }))
     }
 
-    /// Write the identity out, with the key 0600 from the moment it exists.
+    /// Write the identity out as one commit, the key 0600 from the moment it
+    /// exists.
+    ///
+    /// Every file is staged and made durable, then [`COMMIT_MARKER`] says the
+    /// staging is complete, then each is renamed into place. A reader sees
+    /// the old file or the new one, never a truncated one; a crash leaves a
+    /// staging [`recover`] can finish or discard, never a key that does not
+    /// match its certificate.
     pub fn save(&self) -> Result<()> {
-        fs::create_dir_all(&self.directory)?;
-        set_mode(&self.directory, 0o700)?;
-        let p = paths(&self.directory);
-        write_private(&p.key, &self.key_pem)?;
-        fs::write(&p.cert, &self.certificate_pem)?;
-        fs::write(&p.bundle, &self.trust_bundle_pem)?;
-        fs::write(
-            &p.meta,
-            format!("{}\n", serde_json::to_string_pretty(&self.meta)?),
-        )?;
-        Ok(())
+        let dir = &self.directory;
+        fs::create_dir_all(dir)?;
+        set_mode(dir, 0o700)?;
+        recover(dir)?;
+        let meta = format!("{}\n", serde_json::to_string_pretty(&self.meta)?);
+        let contents: [(&str, &[u8]); 4] = [
+            ("ca.pem", &self.trust_bundle_pem),
+            ("node.crt", &self.certificate_pem),
+            ("node.key", &self.key_pem),
+            ("identity.json", meta.as_bytes()),
+        ];
+        for (name, bytes) in contents {
+            let path = staged(dir, name);
+            if name == "node.key" {
+                write_private(&path, bytes)?;
+            } else {
+                write_durable(&path, bytes)?;
+            }
+        }
+        sync_dir(dir)?;
+        write_durable(&dir.join(COMMIT_MARKER), b"")?;
+        sync_dir(dir)?;
+        recover(dir)
     }
 
     /// The *Remove* action: wipe the identity. Re-enrolment is then required.
     pub fn destroy(directory: &Path) -> Result<()> {
         let p = paths(directory);
-        for path in [&p.key, &p.cert, &p.bundle, &p.meta] {
+        let staging: Vec<PathBuf> = FILES
+            .iter()
+            .map(|name| staged(directory, name))
+            .chain([directory.join(COMMIT_MARKER)])
+            .collect();
+        for path in [&p.key, &p.cert, &p.bundle, &p.meta]
+            .into_iter()
+            .chain(staging.iter())
+        {
             match fs::remove_file(path) {
                 Ok(()) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -296,8 +384,17 @@ fn set_mode(_path: &Path, _mode: u32) -> Result<()> {
     Ok(())
 }
 
+/// Write a file and make its bytes durable before it is renamed anywhere.
+fn write_durable(path: &Path, bytes: &[u8]) -> Result<()> {
+    let mut handle =
+        fs::File::create(path).with_context(|| format!("writing {}", path.display()))?;
+    handle.write_all(bytes)?;
+    handle.sync_all()?;
+    Ok(())
+}
+
 /// Create a file 0600 *before* anything is written to it, so the private key
-/// is never briefly world-readable.
+/// is never briefly world-readable, and make it durable.
 fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
     let mut options = fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
@@ -310,5 +407,6 @@ fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
         .open(path)
         .with_context(|| format!("writing {}", path.display()))?;
     handle.write_all(bytes)?;
+    handle.sync_all()?;
     Ok(())
 }

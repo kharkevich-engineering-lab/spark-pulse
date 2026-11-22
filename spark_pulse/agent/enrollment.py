@@ -119,7 +119,12 @@ class LedgerEntry:
     machine_id: str = ""
     #: Changes on every reboot, so it is compared for change, not for match.
     boot_id: str = ""
+    #: The first print, memory size included. Compared only for an agent that
+    #: sends no ``stable_fingerprint``; see ``spark_pulse/agent/facts.py``.
     hardware_fingerprint: str = ""
+    #: What a reimage is detected by. Recorded at enrolment, or by the first
+    #: connection that carries it when the node enrolled before it existed.
+    stable_fingerprint: str = ""
     cert_not_after: float = 0.0
     denied_reason: str = ""
     #: Certificates issued so far. A renewal bumps it; a jump means something
@@ -536,7 +541,12 @@ class EnrollmentLedger:
             entry.denied_reason = ""
             if not entry.enrolled_at:
                 entry.enrolled_at = time.time()
-            for key in ("machine_id", "boot_id", "hardware_fingerprint"):
+            for key in (
+                "machine_id",
+                "boot_id",
+                "hardware_fingerprint",
+                "stable_fingerprint",
+            ):
                 if facts.get(key):
                     setattr(entry, key, facts[key])
             self._state.nodes[node_id] = entry
@@ -622,12 +632,25 @@ class EnrollmentLedger:
                 entry.denied_reason = reason
                 self._write(nodes=(entry,))
                 return IdentityVerdict(False, reason)
-            fingerprint = facts.get("hardware_fingerprint") or ""
-            if (
-                fingerprint
-                and entry.hardware_fingerprint
-                and fingerprint != entry.hardware_fingerprint
-            ):
+            # The stable print when the agent sends one, and then only that:
+            # the legacy one moves when the kernel reports a page more memory
+            # after a reboot, and comparing it as well would keep the bug.
+            stable = facts.get("stable_fingerprint") or ""
+            if stable:
+                recorded, presented = entry.stable_fingerprint, stable
+            else:
+                recorded = entry.hardware_fingerprint
+                presented = facts.get("hardware_fingerprint") or ""
+            if stable and not recorded:
+                # Enrolled before the stable print existed (or the ledger was
+                # last written by a control plane that does not know it). The
+                # session has already presented the key this uuid was issued,
+                # which a reimage would have lost, so this is an upgrade.
+                logger.info("node %s: recording its stable fingerprint", node_id)
+                entry.stable_fingerprint = stable
+                self._write(nodes=(entry,))
+                return IdentityVerdict(True)
+            if presented and recorded and presented != recorded:
                 reason = "hardware fingerprint changed; the node may be reimaged"
                 entry.state = NodeState.DENIED.value
                 entry.denied_reason = reason

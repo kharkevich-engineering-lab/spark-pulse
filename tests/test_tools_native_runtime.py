@@ -12,6 +12,7 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import re
 import threading
 import time
 from pathlib import Path
@@ -38,6 +39,12 @@ from spark_pulse.tools.ssh import SSHError, SSHErrorType
 # native_runtime`` hands back the mock re-export. Patching module globals only
 # reaches the implementation if we hold the real module, so resolve it here.
 nr = importlib.import_module("spark_pulse.tools.native_runtime")
+docker_images = importlib.import_module("spark_pulse.tools.backends.docker.images")
+docker_lifecycle = importlib.import_module(
+    "spark_pulse.tools.backends.docker.lifecycle"
+)
+docker_planning = importlib.import_module("spark_pulse.tools.backends.docker.planning")
+docker_state = importlib.import_module("spark_pulse.tools.backends.docker.state")
 
 # ── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -201,7 +208,8 @@ def registry(tmp_path):
     with patch.object(type(config), "engine_indexes", property(lambda self: [])):
         instance = EngineRegistry(cache_dir=tmp_path / "engine-cache")
         with patch(
-            "spark_pulse.tools.native_runtime.get_registry", return_value=instance
+            "spark_pulse.tools.backends.docker.planning.get_registry",
+            return_value=instance,
         ):
             yield instance
     reset_registry()
@@ -621,7 +629,7 @@ class TestStart:
 
     def test_readiness_timeout_fails(self, native, docker):
         plan = native.plan("qwen3-8b")
-        with patch.object(native, "probe_ready", return_value=False):
+        with patch.object(docker_lifecycle, "probe_ready", return_value=False):
             record = native.start(plan, docker=docker, wait=True, ready_timeout=1)
 
         assert record["status"] == "error"
@@ -666,7 +674,7 @@ class TestStart:
                 plan.deployment_id, status="stopped", stopped_at=native._now()
             )
 
-        monkeypatch.setattr(native, "_wait_ready", settle_stopped)
+        monkeypatch.setattr(docker_lifecycle, "_wait_ready", settle_stopped)
         record = native.start(plan, docker=docker, wait=True)
         assert record["status"] == "stopped"
         assert tools.deployment_records.load()[0]["status"] == "stopped"
@@ -684,7 +692,7 @@ class TestStart:
             )
             raise native.NativeRuntimeError("readiness timed out")
 
-        monkeypatch.setattr(native, "_wait_ready", settle_then_fail)
+        monkeypatch.setattr(docker_lifecycle, "_wait_ready", settle_then_fail)
         record = native.start(plan, docker=docker, wait=True)
         assert record["status"] == "stopped"
         assert tools.deployment_records.load()[0]["status"] == "stopped"
@@ -796,7 +804,7 @@ class TestServeProcessLiveness:
 
         started = time.monotonic()
         with patch.object(docker, "get_container_status", side_effect=_engine_dies):
-            with patch.object(native, "probe_ready", return_value=False):
+            with patch.object(docker_lifecycle, "probe_ready", return_value=False):
                 record = native.start(plan, docker=docker, wait=True, ready_timeout=60)
         elapsed = time.monotonic() - started
 
@@ -827,7 +835,7 @@ class TestServeProcessLiveness:
         with patch.object(
             docker, "get_container_status", side_effect=self._engine_dies_in(docker)
         ):
-            with patch.object(native, "probe_ready", return_value=False):
+            with patch.object(docker_lifecycle, "probe_ready", return_value=False):
                 record = native.start(plan, docker=docker, wait=True, ready_timeout=60)
 
         assert record["status"] == "error"
@@ -847,7 +855,7 @@ class TestServeProcessLiveness:
                 "get_container_status",
                 side_effect=self._engine_dies_in(docker),
             ),
-            patch.object(native, "probe_ready", return_value=False),
+            patch.object(docker_lifecycle, "probe_ready", return_value=False),
         ):
             record = native.create_deployment("qwen3-8b")
             dep_id = record["id"]
@@ -872,7 +880,7 @@ class TestServeProcessLiveness:
         plan = native.plan("qwen3-8b")
         native.start(plan, docker=docker, wait=False)
 
-        with patch.object(native, "probe_ready", return_value=False):
+        with patch.object(docker_lifecycle, "probe_ready", return_value=False):
             listed = native.list_deployments(docker=docker)
             detail = native.status(plan.deployment_id, docker=docker)
 
@@ -886,7 +894,7 @@ class TestServeProcessLiveness:
         record = native.start(plan, docker=docker, wait=True)
 
         assert record["ready_at"]
-        with patch.object(native, "probe_ready", return_value=False):
+        with patch.object(docker_lifecycle, "probe_ready", return_value=False):
             listed = native.list_deployments(docker=docker)
             detail = native.status(plan.deployment_id, docker=docker)
 
@@ -922,7 +930,7 @@ class TestAnErroredRecordSaysWhy:
         with patch.object(
             docker, "get_container_status", side_effect=_running_and_silent
         ):
-            with patch.object(native, "probe_ready", return_value=False):
+            with patch.object(docker_lifecycle, "probe_ready", return_value=False):
                 record = native.start(plan, docker=docker, wait=True, ready_timeout=1)
 
         assert record["status"] == "error"
@@ -957,8 +965,8 @@ class TestAnErroredRecordSaysWhy:
             captured.append((event_type.value, message))
 
         plan = native.plan("qwen3-8b")
-        with patch.object(nr, "publish_event", side_effect=_capture):
-            with patch.object(native, "probe_ready", return_value=False):
+        with patch.object(docker_state, "publish_event", side_effect=_capture):
+            with patch.object(docker_lifecycle, "probe_ready", return_value=False):
                 record = native.start(plan, docker=docker, wait=True, ready_timeout=1)
 
         errors = [text for name, text in captured if name == "deployment_error"]
@@ -983,9 +991,13 @@ class TestAnErroredRecordSaysWhy:
         """
         import ast
 
-        tree = ast.parse(Path(nr.__file__).read_text())
+        package = Path(nr.__file__).parent / "backends" / "docker"
         writers = set()
-        for node in ast.walk(tree):
+        for node in (
+            n
+            for path in sorted(package.glob("*.py"))
+            for n in ast.walk(ast.parse(path.read_text()))
+        ):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             for call in ast.walk(node):
@@ -1029,7 +1041,7 @@ def _no_pull_backoff():
     outlast a network hiccup — and a test that slept through three of them
     would add a minute to the suite to prove nothing about the waiting.
     """
-    with patch.object(nr, "PULL_RETRY_BACKOFF_SECONDS", (0.0, 0.0)):
+    with patch.object(docker_images, "PULL_RETRY_BACKOFF_SECONDS", (0.0, 0.0)):
         yield
 
 
@@ -1070,7 +1082,7 @@ class TestRegistryCopy:
             captured.append((event_type.value, metadata or {}))
             captured.messages.append((event_type.value, message))
 
-        with patch.object(nr, "publish_event", side_effect=_capture):
+        with patch.object(docker_state, "publish_event", side_effect=_capture):
             yield captured
 
     def test_a_node_holding_the_synced_copy_runs_from_it(self, native, docker, events):
@@ -1094,7 +1106,7 @@ class TestRegistryCopy:
                 tools.registry, "node_reference", return_value="10.0.0.1:5000/x"
             ),
             patch.object(tools.registry, "relay_target", return_value="10.0.0.1:5000"),
-            patch.object(nr, "_rank_is_here", return_value=False),
+            patch.object(docker_state, "_rank_is_here", return_value=False),
         ):
             record = native.start(plan, docker=docker, wait=True)
 
@@ -1141,7 +1153,7 @@ class TestRegistryCopy:
                 tools.registry, "node_reference", return_value="10.0.0.1:5000/x"
             ),
             patch.object(tools.registry, "relay_target", return_value="10.0.0.1:5000"),
-            patch.object(nr, "_rank_is_here", return_value=False),
+            patch.object(docker_state, "_rank_is_here", return_value=False),
             patch.object(docker, "pull_image", side_effect=_pull),
         ):
             record = native.start(plan, docker=docker, wait=True)
@@ -1202,7 +1214,7 @@ class TestImagePull:
 
         plan = native.plan("qwen3-8b")
         _forget_image(docker, plan.container.image)
-        with patch.object(nr, "publish_event", side_effect=_capture):
+        with patch.object(docker_state, "publish_event", side_effect=_capture):
             record = native.start(plan, docker=docker, wait=True)
 
         assert record["status"] == "running"
@@ -1227,7 +1239,7 @@ class TestImagePull:
         events: list[str] = []
 
         with patch.object(
-            nr,
+            docker_state,
             "publish_event",
             side_effect=lambda t, *a, **kw: events.append(t.value),
         ):
@@ -1274,7 +1286,7 @@ class TestImagePull:
         events: list[str] = []
         with _no_pull_backoff():
             with patch.object(
-                nr,
+                docker_state,
                 "publish_event",
                 side_effect=lambda t, *a, **kw: events.append(t.value),
             ):
@@ -1373,6 +1385,36 @@ class TestImagePull:
 
         assert len(attempts) == 1
         assert record["status"] == "stopped"
+
+    @pytest.mark.parametrize(
+        "said",
+        [
+            # Podman, on the x86_64 lab node (#172).
+            "Docker responded with status code 500: no image found in image "
+            'index for architecture amd64, variant "", OS linux',
+            # Docker's wording for the same thing.
+            "no matching manifest for linux/amd64 in the manifest list entries",
+        ],
+    )
+    def test_an_image_with_no_build_for_the_node_is_not_retried(
+        self, native, docker, said
+    ):
+        """No attempt changes what platforms an image was built for."""
+        plan = native.plan("qwen3-8b")
+        _forget_image(docker, plan.container.image)
+        attempts: list[int] = []
+
+        def _no_platform(ref, progress=None, **_kwargs):
+            attempts.append(1)
+            raise RuntimeError(said)
+
+        with _no_pull_backoff():
+            with patch.object(docker, "pull_image", side_effect=_no_platform):
+                record = native.start(plan, docker=docker, wait=True)
+
+        assert len(attempts) == 1
+        assert record["status"] == "error"
+        assert "1 attempt" in record["error_message"]
 
     def test_an_unreachable_node_does_not_strand_the_record_in_pulling(
         self, native, docker
@@ -1765,8 +1807,10 @@ def _one_service(docker):
     service pins the resolver too.
     """
     with (
-        patch.object(nr, "_docker_service", return_value=docker),
-        patch.object(nr, "rank_services", return_value=lambda _address: docker),
+        patch.object(docker_state, "_docker_service", return_value=docker),
+        patch.object(
+            docker_state, "rank_services", return_value=lambda _address: docker
+        ),
     ):
         yield
 
@@ -2005,7 +2049,9 @@ class TestTeardownDoesNotStrandAContainer:
             raise native.NativeRuntimeError("engine did not become ready")
 
         with _one_service(docker):
-            with patch.object(nr, "_wait_ready", side_effect=_blocking_wait):
+            with patch.object(
+                docker_lifecycle, "_wait_ready", side_effect=_blocking_wait
+            ):
                 record = native.create_deployment("qwen3-8b")
                 dep_id = record["id"]
                 assert record["status"] == "starting"
@@ -2587,7 +2633,7 @@ class TestGenerations:
             "qwen3-8b-tp3", nodes=NODES, solo=False, deployment_id="dep1"
         )
 
-        with patch.object(nr, "_confirm_gone", return_value=False):
+        with patch.object(docker_lifecycle, "_confirm_gone", return_value=False):
             record = native.start(again, services=fleet.services, wait=True)
 
         assert record["status"] == "error"
@@ -2654,11 +2700,11 @@ class TestOrphans:
         fleet.nodes["10.0.0.3"].unreachable = True
         native.stop_deployment("dep1", services=fleet.services)
 
-        with patch.object(nr, "sweep_orphans") as swept:
+        with patch.object(docker_lifecycle, "sweep_orphans") as swept:
             native.list_deployments(docker=fleet.nodes[NODES[0]])
         swept.assert_not_called()
 
-        with patch.object(nr, "sweep_orphans") as swept:
+        with patch.object(docker_lifecycle, "sweep_orphans") as swept:
             native.list_deployments()
         swept.assert_called_once_with()
 
@@ -2672,7 +2718,7 @@ class TestOrphans:
     def test_a_container_still_present_after_a_stop_is_an_orphan(self, native, fleet):
         self._running(native, fleet)
 
-        with patch.object(nr, "_confirm_gone", return_value=False):
+        with patch.object(docker_lifecycle, "_confirm_gone", return_value=False):
             record = native.stop_deployment("dep1", services=fleet.services)
 
         assert [o["rank"] for o in record["orphans"]] == [0, 1, 2]
@@ -2776,7 +2822,7 @@ class TestADeletedDeploymentStaysDeleted:
             real_save(records_to_save)
 
         with patch.object(
-            nr, "_save_records", side_effect=save_pausing_only_the_writer
+            docker_state, "_save_records", side_effect=save_pausing_only_the_writer
         ):
             thread = threading.Thread(
                 target=lambda: nr._update_record(dep_id, status="pulling"),
@@ -2845,6 +2891,16 @@ class TestLlamaCppModelSource:
         )
         assert "--hf-file" not in plan.launch_command
         assert plan.model_source == "hf-cache"
+
+    def test_the_plan_says_which_files_a_download_needs(self, native):
+        """What a scheduled download is narrowed to (#208): the selected
+        packing, not the whole repository."""
+        selected = native.plan("bonsai-gguf-q8", services=self.node(MANY_GGUF))
+        assert selected.model_patterns == ["bonsai-q8.gguf", "*/bonsai-q8.gguf"]
+        assert selected.to_dict()["model_patterns"] == selected.model_patterns
+        # Without a selector there is nothing to narrow to.
+        unselected = native.plan("bonsai-gguf", services=self.node(MANY_GGUF))
+        assert unselected.model_patterns == []
 
     def test_a_node_without_the_file_keeps_hf_and_the_plan_says_why(self, native):
         plan = native.plan("bonsai-gguf-q8", services=self.node(None))
@@ -3276,10 +3332,380 @@ class TestProbeReadyNamesTheModel:
 
         with (
             _real_probe(_Response(200, _models("other/model"))) as get,
-            patch.object(nr, "serve_process_alive", return_value=True),
+            patch.object(docker_lifecycle, "serve_process_alive", return_value=True),
         ):
             with pytest.raises(nr.NativeRuntimeError) as exc:
                 nr._wait_ready(lambda _a: docker, plan, timeout=0.3, interval=0.05)
 
         assert get.call_count > 2
         assert "answered for other/model" in str(exc.value)
+
+
+# ── Golden plans: what a deploy renders, pinned byte for byte ───────────────
+
+#: Where the snapshots live. Each is the full serialised plan for one shape of
+#: run, so a change to anything a deploy would render (a container field, a
+#: mount, a rank, a warning) shows up as a diff here rather than on a node.
+GOLDEN_DIR = Path(__file__).parent / "golden" / "plan"
+
+#: Set to regenerate the snapshots instead of comparing against them. Never
+#: set in CI: a regenerated snapshot is a change somebody has to read.
+GOLDEN_UPDATE_ENV = "SPARK_PULSE_UPDATE_GOLDEN"
+
+#: Stand-in for the home directory of whoever runs the suite, so a snapshot
+#: does not carry the developer's username and passes in CI.
+GOLDEN_HOME = "<HOME>"
+
+
+def _golden_node(files: list[tuple[str, int]]):
+    """One simulated node holding the GGUF snapshot ``files``."""
+    service = MockDockerService(MockDockerClient())
+    service.snapshots = {GGUF_REPO: {GGUF_REV: list(files)}}
+    return lambda _address: service
+
+
+#: One case per shape of run the backend split has to keep rendering exactly:
+#: ``(name, plan() keyword arguments, services resolver or None)``.
+GOLDEN_CASES = [
+    ("vllm-solo", {"recipe_id": "qwen3-8b"}, None),
+    (
+        "vllm-pair",
+        {"recipe_id": "qwen3-8b-tp2", "nodes": PAIR, "solo": False},
+        None,
+    ),
+    ("sglang-solo", {"recipe_id": "generic", "engine": "sglang"}, None),
+    (
+        "llama-rpc-pair",
+        {
+            "recipe_id": "bonsai-gguf",
+            "nodes": PAIR,
+            "solo": False,
+            "variant": "prism",
+        },
+        ONE_GGUF,
+    ),
+    ("vllm-embedding", {"recipe_id": "qwen3-embedding"}, None),
+    (
+        "vllm-pinned-port",
+        {"recipe_id": "qwen3-8b", "params": {"port": 9123}},
+        None,
+    ),
+    ("llama-hf-cache", {"recipe_id": "bonsai-gguf-q8"}, MANY_GGUF),
+    # The same runs on a workstation (#174): x86_64, a 12 GiB card of its own,
+    # rootless Podman. The memory budget is the card's alone.
+    ("vllm-solo-workstation", {"recipe_id": "qwen3-8b"}, None),
+    ("llama-hf-cache-workstation", {"recipe_id": "bonsai-gguf-q8"}, MANY_GGUF),
+]
+
+#: Suffix of a case planned with every simulated node a workstation.
+WORKSTATION_SUFFIX = "-workstation"
+
+
+#: A token the golden plans are made with. It is fixed so the snapshots do
+#: not depend on whether the person running the suite exported one, and it is
+#: distinctive so the test can show it never reaches a serialised plan.
+GOLDEN_HF_TOKEN = "hf_golden_token_must_never_appear"
+
+#: The name a single-node plan gives this machine. ``NodeInfo.local()`` asks
+#: ``socket.gethostname()``, so without a fixed answer a snapshot would record
+#: whichever machine wrote it.
+GOLDEN_HOSTNAME = "golden-host"
+
+#: The plan's clock, which reaches the container labels as well as the plan.
+_CREATED_AT_LABEL = re.compile(r'("spark-pulse\.created_at": )"[^"]*"')
+
+
+@pytest.fixture
+def golden_config(monkeypatch):
+    """The bundled ``config.yaml`` alone, a known token and a known hostname.
+
+    ``config._data`` is loaded at import from the developer's own
+    ``settings.json`` as well, so without this a snapshot would record one
+    machine's memory limit or port range and fail everywhere else.
+    """
+    import socket
+
+    import yaml
+
+    from spark_pulse import config as config_module
+
+    monkeypatch.setattr(socket, "gethostname", lambda: GOLDEN_HOSTNAME)
+    with open(config_module._CONFIG_PATH) as handle:
+        defaults = yaml.safe_load(handle) or {}
+    defaults["auth_enabled"] = False
+    monkeypatch.setattr(config, "_data", defaults)
+    monkeypatch.setenv("HF_TOKEN", GOLDEN_HF_TOKEN)
+
+
+def _golden_text(plan) -> str:
+    """The plan as the snapshot stores it: stable keys, nothing per-machine.
+
+    The plan's clock (``created_at``, and the label carrying it onto every
+    container) is masked; the home directory is replaced wherever it appears,
+    because every host path a plan mounts is derived from it.
+    """
+    data = plan.to_dict()
+    data["created_at"] = "<CREATED_AT>"
+    # Masked before sorting: a mount is keyed by its host path, so sorting
+    # first would order the keys by wherever this machine keeps its home.
+    text = json.dumps(data)
+    text = _CREATED_AT_LABEL.sub(r'\1"<CREATED_AT>"', text)
+    home = os.path.expanduser("~")
+    if home and home != "/":
+        text = text.replace(home, GOLDEN_HOME)
+    return json.dumps(json.loads(text), indent=2, sort_keys=True) + "\n"
+
+
+class TestGoldenPlans:
+    """The deploy plan, pinned per shape of run.
+
+    The backend split moves most of ``plan()``; every step of it must leave
+    these byte-identical. To regenerate after a change that is meant to alter
+    the plan, run this class with ``SPARK_PULSE_UPDATE_GOLDEN=1`` and read the
+    diff before committing it.
+    """
+
+    @pytest.mark.parametrize(
+        ("case", "kwargs", "files"),
+        GOLDEN_CASES,
+        ids=[case for case, _kwargs, _files in GOLDEN_CASES],
+    )
+    def test_the_plan_matches_its_snapshot(
+        self, native, registry, golden_config, monkeypatch, case, kwargs, files
+    ):
+        if case.endswith(WORKSTATION_SUFFIX):
+            monkeypatch.setenv("SPARK_PULSE_SIM_PROFILE", "workstation")
+            # The bundled specs name arm64 only; the published index carries
+            # these images multi-arch, which is what a workstation pulls.
+            for spec in registry.list():
+                monkeypatch.setattr(spec, "arch", ["linux/arm64", "linux/amd64"])
+        services = _golden_node(files) if files is not None else None
+        plan = native.plan(**kwargs, deployment_id=f"golden-{case}", services=services)
+        actual = _golden_text(plan)
+        assert GOLDEN_HF_TOKEN not in actual
+        path = GOLDEN_DIR / f"{case}.json"
+
+        if os.environ.get(GOLDEN_UPDATE_ENV):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(actual)
+            return
+
+        missing = f"no snapshot for {case}; run with {GOLDEN_UPDATE_ENV}=1 to write it"
+        assert path.exists(), missing
+        assert actual == path.read_text(), (
+            f"the {case} plan changed; if that is intended, regenerate with "
+            f"{GOLDEN_UPDATE_ENV}=1 and review the diff"
+        )
+
+    def test_a_workstation_is_refused_an_arm64_only_image_before_the_pull(
+        self, native, golden_config, monkeypatch
+    ):
+        """#174/#176: the x86_64 node is known, so the plan says no up front."""
+        monkeypatch.setenv("SPARK_PULSE_SIM_PROFILE", "workstation")
+        with pytest.raises(nr.NativeRuntimeError, match="no build for linux/amd64"):
+            native.plan("qwen3-8b", deployment_id="golden-refused")
+
+    def test_every_snapshot_has_a_case(self):
+        """A case that is removed takes its snapshot with it, or a stale file
+        would sit in the tree looking like coverage."""
+        cases = {case for case, _kwargs, _files in GOLDEN_CASES}
+        on_disk = {path.stem for path in GOLDEN_DIR.glob("*.json")}
+        assert on_disk <= cases, f"snapshots without a case: {on_disk - cases}"
+
+
+# ── The intent and its realisation (#161) ───────────────────────────────────
+
+#: Modules a run's intent must not import: everything that is about how a run
+#: is executed rather than what it is.
+NOT_IN_AN_INTENT = (
+    "docker",
+    "spark_pulse.tools.docker",
+    "spark_pulse.tools.labels",
+    "spark_pulse.tools.images",
+    "spark_pulse.tools.registry",
+    "spark_pulse.tools.native_runtime",
+    "spark_pulse.tools.placement",
+    "spark_pulse.tools.backends",
+)
+
+
+class TestRunIntent:
+    def test_the_intent_imports_nothing_about_how_a_run_is_executed(self):
+        import ast
+
+        source = (
+            Path(__file__).parent.parent / "spark_pulse" / "tools" / "intent.py"
+        ).read_text(encoding="utf-8")
+        imported = set()
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.add(node.module)
+                imported.update(f"{node.module}.{a.name}" for a in node.names)
+        leaked = sorted(
+            name
+            for name in imported
+            for banned in NOT_IN_AN_INTENT
+            if name == banned or name.startswith(banned + ".")
+        )
+        assert not leaked, f"tools/intent.py imports execution modules: {leaked}"
+
+    def test_a_plan_is_its_intent_realised(self, native, registry):
+        """plan() is resolve_intent() then realise(), nothing more."""
+        from spark_pulse.tools.intent import resolve_intent
+
+        intent = resolve_intent(
+            "qwen3-8b", registry=docker_planning.get_registry(), deployment_id="same-id"
+        )
+        realised = nr.realise(intent)
+        planned = nr.plan("qwen3-8b", deployment_id="same-id")
+        # The golden normaliser masks only the creation time each plan stamps.
+        assert _golden_text(realised) == _golden_text(planned)
+
+    def test_the_intent_says_what_not_how(self, native, registry):
+        from spark_pulse.tools.intent import resolve_intent
+
+        intent = resolve_intent(
+            "qwen3-8b", registry=docker_planning.get_registry(), params={"port": 9123}
+        )
+        assert intent.engine_name == "vllm"
+        assert intent.port_pin == 9123
+        assert intent.topology.size == 1
+        # No container name, mount or label: those are the backend's.
+        assert not any(
+            hasattr(intent, attr) for attr in ("container", "mounts", "labels")
+        )
+
+    def test_a_pinned_reserved_port_is_refused_before_any_backend(
+        self, native, registry
+    ):
+        from spark_pulse.tools.intent import resolve_intent
+
+        engine = docker_planning.get_registry().engine("vllm", "default")
+        rendezvous = engine.rendezvous_port()
+        if not rendezvous:
+            pytest.skip("this engine binds no rendezvous port")
+        with pytest.raises(nr.NativeRuntimeError, match="rendezvous port"):
+            resolve_intent(
+                "qwen3-8b",
+                registry=docker_planning.get_registry(),
+                params={"port": rendezvous},
+            )
+
+    def test_the_docker_backend_realises_and_locates_through_the_runtime(
+        self, native, registry
+    ):
+        from spark_pulse.tools.backends import DockerBackend
+        from spark_pulse.tools.intent import resolve_intent
+
+        intent = resolve_intent("qwen3-8b", registry=docker_planning.get_registry())
+        backend = DockerBackend()
+        plan = backend.realise(intent)
+        assert plan.deployment_id == intent.deployment_id
+        warnings: list[str] = []
+        assert backend.model_location(intent, "", nr.rank_services(), warnings) == (
+            plan.model_path,
+            plan.model_source,
+        )
+
+
+class TestARunRecordsItsBackendAndIntent:
+    """#162: what ran it, what it was, and a hash that says "same run"."""
+
+    def _intent(self, **kwargs):
+        from spark_pulse.tools.intent import resolve_intent
+
+        return resolve_intent(
+            "qwen3-8b", registry=docker_planning.get_registry(), **kwargs
+        )
+
+    def test_the_same_run_hashes_the_same_whatever_it_is_called(self, native, registry):
+        one = self._intent(deployment_id="a", name="first")
+        two = self._intent(deployment_id="b", name="second")
+        assert one.intent_hash() == two.intent_hash()
+        assert len(one.intent_hash()) == 64
+
+    def test_a_different_run_hashes_differently(self, native, registry):
+        base = self._intent().intent_hash()
+        assert self._intent(params={"port": 9123}).intent_hash() != base
+        assert self._intent(extra_args=["--enforce-eager"]).intent_hash() != base
+
+    def test_the_hash_is_over_canonical_json(self, native, registry):
+        import hashlib
+
+        intent = self._intent()
+        canonical = json.dumps(
+            intent.to_dict(), sort_keys=True, separators=(",", ":"), default=str
+        )
+        assert intent.intent_hash() == hashlib.sha256(canonical.encode()).hexdigest()
+
+    def test_a_credential_in_the_recipe_is_redacted_and_not_hashed(
+        self, native, registry
+    ):
+        intent = self._intent()
+        before = intent.intent_hash()
+        intent.recipe = {**intent.recipe, "env": {"HF_TOKEN": "hf_secret_one"}}
+        first = intent.intent_hash()
+        intent.recipe = {**intent.recipe, "env": {"HF_TOKEN": "hf_secret_two"}}
+        assert "hf_secret" not in json.dumps(intent.to_dict())
+        assert intent.to_dict()["recipe"]["env"]["HF_TOKEN"] == nr.REDACTED
+        # A rotated token is the same run; adding one at all is a change.
+        assert intent.intent_hash() == first != before
+
+    def test_a_listing_annotation_is_not_part_of_the_intent(self, native, registry):
+        intent = self._intent()
+        before = intent.intent_hash()
+        intent.recipe = {**intent.recipe, "engine_support": [{"engine": "x"}]}
+        assert "engine_support" not in intent.to_dict()["recipe"]
+        assert intent.intent_hash() == before
+
+    def test_a_new_run_carries_all_three(self, native, registry):
+        plan = native.plan("qwen3-8b")
+        record = nr._record_from_plan(plan, "starting")
+        assert record["backend"] == "docker"
+        assert record["intent"] == plan.intent
+        assert record["intent"]["recipe_id"] == "qwen3-8b"
+        assert record["intent_hash"] == plan.intent_hash
+        assert record["runtime"] == "native"  # the older note, unchanged
+
+    def test_an_old_record_reads_back_on_docker_with_no_hash(self):
+        deploy_dispatch = importlib.import_module("spark_pulse.tools.deploy_dispatch")
+
+        old = {"id": "old", "status": "stopped", "runtime": "native"}
+        served = deploy_dispatch._with_serves(old)
+        assert served["backend"] == "docker"
+        assert served["intent"] is None
+        assert served["intent_hash"] is None
+        assert "backend" not in old  # filled on the way out, not written back
+
+    def test_a_recorded_backend_is_kept(self):
+        deploy_dispatch = importlib.import_module("spark_pulse.tools.deploy_dispatch")
+
+        served = deploy_dispatch._with_serves(
+            {"id": "k", "backend": "kubernetes", "intent_hash": "abc"}
+        )
+        assert served["backend"] == "kubernetes"
+        assert served["intent_hash"] == "abc"
+
+
+class TestThePullProgressLine:
+    """The lab's timeline read "…: 49.12233720868858%"."""
+
+    def test_a_whole_percentage_and_how_much_has_moved(self):
+        line = nr.pull_progress_message(
+            "img@sha256:abc",
+            {
+                "percent": 49.12233720868858,
+                "bytes_done": 4_123_000_000,
+                "bytes_total": 8_400_000_000,
+            },
+        )
+        assert line == "pulling img@sha256:abc: 49% (4.1 of 8.4 GB)"
+
+    def test_an_unknown_total_says_what_has_moved(self):
+        assert (
+            nr.pull_progress_message("img", {"percent": 0, "bytes_done": 2_000_000_000})
+            == "pulling img: 0% (2.0 GB)"
+        )
+        assert nr.pull_progress_message("img", {}) == "pulling img: 0%"

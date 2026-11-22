@@ -45,7 +45,9 @@
     "in_sync": "Synchronisé",
     "in_progress": "Modification en cours",
     "deleting": "Suppression",
-    "unverified": "Non vérifié"
+    "unverified": "Non vérifié",
+    "stopping": "Arrêt…",
+    "queued": "En file d’attente"
   },
   "nodeState": {
     "ok": "Opérationnel",
@@ -287,10 +289,6 @@
     "downloadStarted": "Téléchargement démarré",
     "downloadStartedBody": "{model} est en cours de téléchargement. « {name} » se déploiera tout seul une fois terminé — suivez la progression sur la page Modèles, où vous pouvez aussi l'annuler.",
     "managedRecipe": "Recette gérée — suppression impossible",
-    "hideUnavailable": {
-      "one": "Masquer {count} recette indisponible (grappe uniquement)",
-      "other": "Masquer {count} recettes indisponibles (grappe uniquement)"
-    },
     "missingModelTitle": "Ce modèle n'est pas encore téléchargé",
     "newMod": "Nouveau mod",
     "newRecipe": "Nouvelle recette",
@@ -307,10 +305,6 @@
     "reset": "Réinitialiser",
     "resetBody": "Réinitialiser « {name} » à sa recette d'origine ? Vos personnalisations seront perdues.",
     "resetTitle": "Réinitialiser la personnalisation",
-    "showUnavailable": {
-      "one": "Afficher {count} recette indisponible (grappe uniquement)",
-      "other": "Afficher {count} recettes indisponibles (grappe uniquement)"
-    },
     "subtitleBundled": "Les recettes et mods que ce plan de contrôle peut exécuter.",
     "subtitleCustom": "Vos propres recettes et mods.",
     "tabMods": "Mods",
@@ -319,7 +313,6 @@
     "toggleCustom": "Basculer le mode personnalisé",
     "uninstallBody": "{name} est retiré du disque. Réinstallez-le depuis la page Registre OCI si besoin.",
     "uninstallFailed": "Désinstallation de {name} impossible",
-    "uninstallRecipe": "Désinstaller {name}",
     "uninstallRecipeTitle": "Désinstaller cette recette",
     "heading": "Recettes et mods.",
     "deploy": "Déployer",
@@ -332,17 +325,31 @@
     "modExplainer": "Un mod est un run.sh qui s'exécute dans le conteneur avant le démarrage du moteur.",
     "patches": "correctifs",
     "missingModelBody": "{model} n'est pas dans le catalogue local, donc {name} ne peut pas démarrer.",
-    "missingModelWait": "Le téléchargement peut être long. Vous n'avez pas à attendre ici : l'exécution est enregistrée et démarre toute seule quand le modèle arrive, et vous pouvez l'annuler depuis la Bibliothèque à tout moment."
+    "missingModelWait": "Le téléchargement peut être long. Vous n'avez pas à attendre ici : l'exécution est enregistrée et démarre toute seule quand le modèle arrive, et vous pouvez l'annuler depuis la Bibliothèque à tout moment.",
+    "showNotHere": {
+      "one": "Afficher {count} recette qui ne tourne pas ici",
+      "other": "Afficher {count} recettes qui ne tournent pas ici"
+    },
+    "hideNotHere": {
+      "one": "Masquer {count} recette qui ne tourne pas ici",
+      "other": "Masquer {count} recettes qui ne tournent pas ici"
+    },
+    "nothingRunsHere": "Rien dans ce catalogue ne tourne encore sur cette flotte. Les recettes ci-dessous disent pourquoi ; un moteur publié pour cette plateforme, ou une recette pour un moteur qui l'est, y remédie.",
+    "uninstall": "Désinstaller"
   },
   "recipeCard": {
     "running": "En cours",
     "clusterOnly": "Grappe uniquement",
     "resetToOriginal": "Rétablir l'original",
     "clusterRequired": "Cette recette nécessite le mode grappe.",
-    "solo": "Seul",
+    "solo": "Nœud unique",
     "cluster": "Grappe",
     "custom": "Personnalisée",
-    "editCustom": "Modifier la personnalisation"
+    "editCustom": "Modifier la personnalisation",
+    "notHere": "Ne tourne pas ici : {reason}",
+    "notHereBanner": "Cette recette ne tourne pas sur cette flotte : {reason}. Elle peut être lue, pas déployée.",
+    "queued": "En file",
+    "tight": "Juste"
   },
   "registry": {
     "testConnection": "Tester la connexion",
@@ -512,6 +519,8 @@
       "updateHint": "Ce nœud exécute l'agent {version} ; ce plan de contrôle livre {current}. Réinstaller garde l'identité du nœud et ne remplace que le binaire. La clé du plan de contrôle est déjà sur le nœud, aucun mot de passe n'est nécessaire."
     },
     "agentVersion": "agent {version}",
+    "runtime": "{name} {version}",
+    "rootless": "sans root",
     "agentStale": "mise à jour disponible",
     "updateAction": "Mettre à jour",
     "doctor": {
@@ -568,7 +577,6 @@
     "parseFailed": "Échec de l'analyse du YAML"
   },
   "deployOptions": {
-    "recipeDefault": "Valeur par défaut de la recette",
     "extraArgsPlaceholder": "--enable-prefix-caching --max-num-seqs 16",
     "extraArgsNote": "Ajouté à la commande du moteur, entre guillemets.",
     "parallelism": "Parallélisme",
@@ -620,7 +628,10 @@
     "unprivileged": "non privilégié",
     "networkHost": "réseau hôte",
     "ipcHost": "IPC hôte",
-    "shm": "shm {gb} Go"
+    "shm": "shm {gb} Go",
+    "notForThisFleet": "aucune image pour la plateforme de cette flotte",
+    "recipeDefaultEngine": "{engine} (par défaut de la recette)",
+    "recipeDefault": "Valeur par défaut de la recette"
   },
   "newRecipe": {
     "validationFailed": "Échec de la validation",
@@ -855,7 +866,13 @@
     "delete": "Supprimer cette analyse",
     "deleteTitle": "Supprimer cette analyse ?",
     "deleteMessage": "« {name} » et ses mesures seront supprimés définitivement. Rien d'autre ne change.",
-    "deleteFailed": "Échec de la suppression de l'analyse"
+    "deleteFailed": "Échec de la suppression de l'analyse",
+    "offNotice": "Le benchmarking est désactivé : rien ne serait mesuré.",
+    "turnOn": "L'activer dans Réglages → Fonctionnalités",
+    "toolMissing": "llama-benchy, l'outil qui mesure une exécution, n'est pas installé sur le plan de contrôle. Installez-le, puis redémarrez le plan de contrôle :",
+    "toolMissingHint": "Cliquez sur la commande pour la copier. Lancez-la dans l'environnement Python du plan de contrôle.",
+    "copyInstall": "Copier la commande d'installation {command}",
+    "installCopied": "Copié dans le presse-papiers"
   },
   "oci": {
     "noCollections": "Aucune collection trouvée",
@@ -988,7 +1005,47 @@
     "head": "tête",
     "rank": "rang {rank}",
     "orphanRank": "Le rang {rank} n'a pas pu être confirmé arrêté",
-    "orphanPorts": "Son conteneur tourne peut-être encore et retient les ports de {node} tant que ce n'est pas réglé."
+    "orphanPorts": "Son conteneur tourne peut-être encore et retient les ports de {node} tant que ce n'est pas réglé.",
+    "waitingStatus": "En attente du modèle",
+    "deployingStatus": "Déploiement",
+    "waitingForModel": "Téléchargement du modèle : {percent} % ({done} sur {total})",
+    "waitingForModelUnknown": "Téléchargement du modèle",
+    "waitingQueued": "Le téléchargement du modèle est en file d'attente",
+    "waitingDeploying": "Le modèle est là ; l'exécution est en cours de création",
+    "waitingWatchDownload": "suivre le téléchargement",
+    "waitingProgressLabel": "Téléchargement du modèle de {name}",
+    "cancelWaiting": "Annuler le déploiement de {name}",
+    "copyEndpoint": "Copier le point d'accès {url}",
+    "endpointCopied": "Copié dans le presse-papiers",
+    "endpointTitle": "Le point d'accès compatible OpenAI de l'exécution",
+    "endpointCopyFailed": "Copie impossible — sélectionnez-le",
+    "copyCurl": "Copier un curl qui demande une anecdote à cette exécution",
+    "copyCurlTitle": "Copier un curl prêt à lancer : une complétion qui demande une anecdote",
+    "curlCopied": "curl copié",
+    "funFact": {
+      "prompt": "Donne-moi une anecdote surprenante sur {topic}, en deux phrases. Réponds en français.",
+      "topics": {
+        "octopuses": "les pieuvres",
+        "moon": "la Lune",
+        "honey": "le miel",
+        "volcanoes": "les volcans",
+        "tardigrades": "les tardigrades",
+        "deepSea": "les grands fonds marins",
+        "bananas": "les bananes",
+        "lightning": "la foudre",
+        "crows": "les corbeaux",
+        "saturnRings": "les anneaux de Saturne",
+        "brain": "le cerveau humain",
+        "coffee": "le café",
+        "glaciers": "les glaciers",
+        "sharks": "les requins",
+        "lightSpeed": "la vitesse de la lumière",
+        "ancientRome": "la Rome antique"
+      }
+    },
+    "pullingImage": "Téléchargement de l'image du moteur : {percent} % ({done} sur {total})",
+    "pullProgressLabel": "Téléchargement de l'image de {name}",
+    "benchmarkMeasuring": "mesure…"
   },
   "library": {
     "cacheUnreachable": "Injoignable",
@@ -1035,7 +1092,9 @@
     "whereOnly": "{node} seulement",
     "wherePartial": "partiel sur {node}",
     "wherePartialTitle": "Un nœud n'a qu'une partie de l'instantané. Répliquez-le à nouveau.",
-    "whereUnknown": "non vérifié"
+    "whereUnknown": "non vérifié",
+    "whereDownloading": "téléchargement {percent} %",
+    "whereDownloadingUnknown": "téléchargement"
   },
   "fleet": {
     "nodes": {
@@ -1156,5 +1215,15 @@
     "updateAllDone": "Mise à jour terminée",
     "outcome": "Faites : {done} · ignorées (modifications locales) : {skipped} · en échec : {failed}",
     "failed": "Échec de l'opération"
+  },
+  "kubernetesPreview": {
+    "heading": "Kubernetes",
+    "cache": "Cache des modèles",
+    "cachePvc": "PersistentVolumeClaim",
+    "cacheHostPath": "Chemin sur l’hôte",
+    "render": "Générer les manifestes",
+    "failed": "Impossible de générer les manifestes",
+    "notApplied": "Un essai à blanc. Rien n’est appliqué au cluster.",
+    "findings": "Ce que l’exécution ne précise pas"
   }
 }

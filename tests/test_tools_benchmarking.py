@@ -189,7 +189,9 @@ class TestExecuteBenchmark:
 
     def test_execute_missing_llama_benchy_stores_error(self, monkeypatch, _bench_path):
         """execute_benchmark stores error status when llama_benchy is not installed."""
-        monkeypatch.delitem(sys.modules, "llama_benchy", raising=False)
+        # ``None`` in sys.modules makes the import fail whether or not the
+        # package is installed; deleting the entry only works where it is not.
+        monkeypatch.setitem(sys.modules, "llama_benchy", None)
 
         from spark_pulse.tools import benchmarking
 

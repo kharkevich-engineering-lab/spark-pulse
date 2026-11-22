@@ -800,8 +800,12 @@ message NodeFacts {
   uint32 gpu_count = 10;
   repeated NetworkInterface interfaces = 11;
   repeated string infiniband_interfaces = 12;
-  // Stable across reboots, unstable across a reimage. Compared on every
-  // heartbeat against what enrollment recorded.
+  // The first fingerprint: a board serial, else a hash of the interface
+  // names, CPU count, *memory size* and machine-id. The memory size is net of
+  // kernel reservations and moved by one page across a reboot on a DGX Spark,
+  // which read as a reimage. Still sent, unchanged, because it is all a
+  // control plane before `stable_fingerprint` compares; a current one ignores
+  // it whenever `stable_fingerprint` is set.
   string hardware_fingerprint = 13;
   // What `ibdev2netdev` prints: each RoCE device and the netdev it drives,
   // with whether the port is ACTIVE. The control plane builds a node's fabric
@@ -812,6 +816,35 @@ message NodeFacts {
   // plane compares against the binary it packages to say "current": a
   // version string is baked at build time and can lie, bytes cannot.
   string binary_sha256 = 15;
+  // Stable across reboots, unstable across a reimage: the board serial, else
+  // a hash of the interface names, CPU count and machine-id — nothing the
+  // kernel recomputes at boot. Compared on every connection against what
+  // enrollment (or the first connection that carried it) recorded.
+  string stable_fingerprint = 16;
+  // Which container runtime answers on the agent's socket: `docker` or
+  // `podman`, from `/version`'s components (Podman names itself `Podman
+  // Engine`); empty when nothing answers, and from an agent older than the
+  // field. Podman takes a different create body (its compat API drops a GPU
+  // request without saying so), so the agent decides from this, and the
+  // pre-flight and doctor speak to the runtime it names.
+  string container_runtime = 17;
+  // That runtime's own version: Docker's or Podman's, never mixed up with
+  // `docker_version`, which a Podman node fills with Podman's.
+  string runtime_version = 18;
+  // The runtime runs as the agent's user, not as root: `/info`'s
+  // SecurityOptions carry `name=rootless` on rootless Podman and rootless
+  // Docker alike.
+  bool rootless = 19;
+  // Every CDI device the node's spec directories name, as `kind=name`
+  // (`nvidia.com/gpu=all`). How a GPU reaches a Podman container; empty when
+  // there is no spec, which on Podman means no GPU at all.
+  repeated string cdi_devices = 20;
+  // The OCI platform this node runs, `linux/arm64` (a DGX Spark) or
+  // `linux/amd64`, from `uname`'s machine. What an engine image's `arch` is
+  // matched against, so a recipe whose images were not built for this node is
+  // said to not run here before anything is pulled. Empty from an agent older
+  // than the field, which is unknown, never a mismatch.
+  string platform = 21;
 }
 
 message RoceLink {

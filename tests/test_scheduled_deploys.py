@@ -149,6 +149,53 @@ class TestSchedulingTheDeploy:
         assert entry["download_job_id"]
         assert entry["download"]["model"] == ABSENT
 
+    def test_the_download_fetches_only_what_the_run_needs(self, client, monkeypatch):
+        """A GGUF repository holds every packing; the lab's came down at 5 GB
+        for a recipe that loads one 400 MB file (#208). The plan says which
+        files the run reads, and the download is narrowed to them."""
+        planned = {
+            "model": ABSENT,
+            "model_present": False,
+            "model_patterns": ["q4.gguf", "*/q4.gguf"],
+        }
+        monkeypatch.setattr(
+            tools.deploy_dispatch, "plan_deployment", lambda **_kw: planned
+        )
+        asked: dict = {}
+
+        def start_download(model, **kwargs):
+            asked.update(kwargs, model=model)
+            return {"id": "job-1", "model": model}
+
+        monkeypatch.setattr(tools.models, "start_download", start_download)
+
+        response = client.post(
+            "/api/scheduled-deploys", json={"recipe_id": RECIPE, "model": ABSENT}
+        )
+
+        assert response.status_code == 200, response.text
+        assert asked["allow_patterns"] == ["q4.gguf", "*/q4.gguf"]
+
+    def test_a_plan_with_no_patterns_downloads_the_whole_repository(
+        self, client, monkeypatch
+    ):
+        planned = {"model": ABSENT, "model_present": False, "model_patterns": []}
+        monkeypatch.setattr(
+            tools.deploy_dispatch, "plan_deployment", lambda **_kw: planned
+        )
+        asked: dict = {}
+        monkeypatch.setattr(
+            tools.models,
+            "start_download",
+            lambda model, **kw: asked.update(kw) or {"id": "j", "model": model},
+        )
+
+        client.post(
+            "/api/scheduled-deploys", json={"recipe_id": RECIPE, "model": ABSENT}
+        )
+
+        assert asked["allow_patterns"] is None
+
     def test_the_recipe_supplies_the_model_when_the_request_does_not(self, client):
         """The planner resolves the model; the client should not have to."""
         response = client.post("/api/scheduled-deploys", json={"recipe_id": RECIPE})
@@ -475,3 +522,53 @@ def _complete(job_id: str, model: str) -> None:
     tools.models._record_downloaded(model, 1_000)
     job = tools.models._set_job(job_id, status="completed", bytes_done=1_000)
     tools.models._publish_job(tools.models.EVENT_COMPLETED, job)
+
+
+# ── What the run it started is doing ────────────────────────────────────────
+
+
+class TestTheRunItStarted:
+    """``done`` means the deployment was created, not that it came up (lab:
+    the run failed on a pull with no amd64 image, and Models said "Deployed")."""
+
+    def _listed(self, client, monkeypatch, record):
+        from spark_pulse import tools
+
+        entry = {
+            "id": "s-1",
+            "model": ABSENT,
+            "download_job_id": "j-1",
+            "status": "done",
+            "deployment_id": "d-1",
+        }
+        monkeypatch.setattr(
+            tools.scheduled_deploys, "listing", lambda active_only=False: [entry]
+        )
+        monkeypatch.setattr(
+            tools.deployment_records,
+            "get",
+            lambda deployment_id: record if deployment_id == "d-1" else None,
+        )
+        return client.get("/api/scheduled-deploys").json()[0]
+
+    def test_a_run_that_failed_after_it_was_created_says_so(self, client, monkeypatch):
+        listed = self._listed(
+            client,
+            monkeypatch,
+            {"status": "error", "error_message": "no image found for amd64"},
+        )
+        assert listed["run"] == {
+            "id": "d-1",
+            "status": "error",
+            "error": "no image found for amd64",
+        }
+
+    def test_a_run_whose_record_is_gone_is_none(self, client, monkeypatch):
+        assert self._listed(client, monkeypatch, None)["run"] is None
+
+    def test_one_not_yet_deployed_has_no_run(self, client):
+        client.post(
+            "/api/scheduled-deploys", json={"recipe_id": RECIPE, "model": ABSENT}
+        )
+        listed = client.get("/api/scheduled-deploys?active_only=true").json()
+        assert listed[0]["run"] is None

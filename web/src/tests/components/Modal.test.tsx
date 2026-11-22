@@ -367,6 +367,27 @@ describe("AlertModal", () => {
     expect(screen.getByText(/not in the node registry/)).toBeInTheDocument();
   });
 
+  it("wears the error mark unless it is told otherwise", () => {
+    const { container } = render(<AlertModal open onClose={vi.fn()} title="Error" message="boom" />);
+    expect(container.ownerDocument.querySelector("[data-tone]")).toHaveAttribute("data-tone", "error");
+  });
+
+  it("wears an info mark for news that is not a failure, like a download that started", () => {
+    const { container } = render(
+      <AlertModal open onClose={vi.fn()} title="Download started" message="Qwen is downloading" tone="info" />,
+    );
+    const mark = container.ownerDocument.querySelector("[data-tone]");
+    expect(mark).toHaveAttribute("data-tone", "info");
+    expect(mark).not.toHaveClass("text-bad");
+  });
+
+  it("wears a warning mark for something that half worked", () => {
+    const { container } = render(
+      <AlertModal open onClose={vi.fn()} title="Some nodes were not cleared" message="node-b: busy" tone="warning" />,
+    );
+    expect(container.ownerDocument.querySelector("[data-tone]")).toHaveAttribute("data-tone", "warning");
+  });
+
   it("dismisses from OK, from the X and from Escape", () => {
     const onClose = vi.fn();
     const { unmount } = render(

@@ -29,7 +29,7 @@ import {
   stopDeployment,
   connectLogStream,
 } from "@/lib/api";
-import { eventFromFrame, mergeEvents } from "@/lib/operations";
+import { eventFromFrame, mergeEvents, latestPullProgress } from "@/lib/operations";
 import type { DeploymentEvent } from "@/lib/operations";
 import { useQuery } from "@/hooks/useQuery";
 import { useDeployments, isLiveRun } from "@/hooks/useDeployments";
@@ -46,6 +46,9 @@ import EventStreamViewer from "@/components/EventStreamViewer";
 import RankList from "@/components/RankList";
 import EngineMetricsPanel from "@/components/EngineMetrics";
 import RunRow from "@/components/RunRow";
+import WaitingRunRow from "@/components/WaitingRunRow";
+import { useWaitingDeploys } from "@/hooks/useWaitingDeploys";
+import { cancelScheduledDeploy } from "@/lib/api";
 import BenchmarkLauncher from "@/components/BenchmarkLauncher";
 import BenchmarksPanel from "@/components/BenchmarksPanel";
 import { Terminal } from "lucide-react";
@@ -92,6 +95,15 @@ export default function RunsPage({ initialTab }: RunsPageProps = {}) {
     refetch: refetchBenchmarks,
   } = useQuery(readBenchmarks);
 
+  // While a benchmark runs, read again until it settles: the row says
+  // "measuring…" and then the result, or why it failed, without a reload.
+  const anyMeasuring = (benchmarks ?? []).some((b) => b.status === "running");
+  useEffect(() => {
+    if (!anyMeasuring) return;
+    const timer = setInterval(() => refetchBenchmarks(), 3000);
+    return () => clearInterval(timer);
+  }, [anyMeasuring, refetchBenchmarks]);
+
   /** The most recent measurement per run, which is what a row shows. */
   const latestBenchmark = useMemo(() => {
     const latest = new Map<string, BenchmarkResult>();
@@ -105,6 +117,11 @@ export default function RunsPage({ initialTab }: RunsPageProps = {}) {
   }, [benchmarks]);
 
   const live = useMemo(() => (deployments ?? []).filter(isLiveRun), [deployments]);
+  const pulls = useMemo(() => latestPullProgress(events), [events]);
+  // Deploys waiting on their model: not runs yet, but the thing the operator
+  // just started, so they are counted and shown with what is live.
+  const { waiting, refetch: refetchWaiting } = useWaitingDeploys();
+  const waitingCount = waiting.length;
   const finished = useMemo(
     () => (deployments ?? []).filter((d) => !isLiveRun(d)),
     [deployments],
@@ -114,7 +131,8 @@ export default function RunsPage({ initialTab }: RunsPageProps = {}) {
    *  whichever pill has something in it — landing on an empty Live tab while
    *  a history sits behind Finished is a page that looks broken. */
   const [chosenTab, setChosenTab] = useState<RunTab | null>(initialTab ?? null);
-  let tab: RunTab = chosenTab ?? (live.length === 0 && finished.length > 0 ? "finished" : "live");
+  let tab: RunTab =
+    chosenTab ?? (live.length === 0 && waitingCount === 0 && finished.length > 0 ? "finished" : "live");
   if (tab === "benchmarks" && !benchmarkingEnabled) tab = "live";
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -412,6 +430,7 @@ export default function RunsPage({ initialTab }: RunsPageProps = {}) {
             key={run.id}
             run={run}
             benchmark={latestBenchmark.get(run.id)}
+            pull={run.status === "pulling" ? pulls.get(run.id) : undefined}
             expanded={expandedId === run.id}
             onToggle={() => toggle(run.id)}
             onTeardown={() => setTeardownTarget(run)}
@@ -425,14 +444,32 @@ export default function RunsPage({ initialTab }: RunsPageProps = {}) {
   };
 
   const tabs = [
-    { id: "live", label: t("runs.tabLive"), count: live.length },
+    { id: "live", label: t("runs.tabLive"), count: live.length + waitingCount },
     { id: "finished", label: t("runs.tabFinished"), count: finished.length },
     ...(benchmarkingEnabled
       ? [{ id: "benchmarks", label: t("runs.tabBenchmarks"), count: benchmarks?.length }]
       : []),
   ];
 
-  const nothingAtAll = !loading && !error && live.length === 0 && finished.length === 0;
+  const nothingAtAll =
+    !loading && !error && live.length === 0 && waitingCount === 0 && finished.length === 0;
+
+  const cancelWaiting = async (id: string) => {
+    try {
+      await cancelScheduledDeploy(id);
+    } catch (e) {
+      setAlertModal({ title: t("common.error"), message: e instanceof Error ? e.message : t("common.unknownError") });
+    }
+    void refetchWaiting();
+  };
+
+  const waitingRows = waiting.length > 0 && (
+    <div className="space-y-2" data-testid="waiting-runs">
+      {waiting.map((w) => (
+        <WaitingRunRow key={w.entry.id} waiting={w} onCancel={() => void cancelWaiting(w.entry.id)} />
+      ))}
+    </div>
+  );
 
   return (
     <div className="space-y-6">
@@ -468,12 +505,17 @@ export default function RunsPage({ initialTab }: RunsPageProps = {}) {
           {t("runs.empty")}
         </EmptyState>
       ) : tab === "live" ? (
-        renderList(
-          live,
-          <EmptyState icon={Terminal} hint={t("runs.noneLiveHint")}>
-            {t("runs.noneLive")}
-          </EmptyState>,
-        )
+        <div className="space-y-2">
+          {waitingRows}
+          {renderList(
+            live,
+            waitingCount > 0 ? null : (
+              <EmptyState icon={Terminal} hint={t("runs.noneLiveHint")}>
+                {t("runs.noneLive")}
+              </EmptyState>
+            ),
+          )}
+        </div>
       ) : (
         renderList(
           finished,
@@ -513,6 +555,8 @@ export default function RunsPage({ initialTab }: RunsPageProps = {}) {
       {benchmarkTarget && (
         <BenchmarkLauncher
           run={benchmarkTarget}
+          enabled={benchmarkingEnabled}
+          tool={config?.benchmarking_tool}
           onClose={() => setBenchmarkTarget(null)}
           onStarted={() => {
             setBenchmarkTarget(null);

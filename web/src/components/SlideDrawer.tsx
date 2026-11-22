@@ -27,10 +27,13 @@ interface SlideDrawerProps {
   onClose: () => void;
   header: React.ReactNode;
   actions: React.ReactNode;
+  /** What the drawer's subject can have done to it, pinned to the bottom so
+   *  the actions stay put while the details scroll. */
+  footer?: React.ReactNode;
   children: React.ReactNode;
 }
 
-export default function SlideDrawer({ open, onClose, header, actions, children }: SlideDrawerProps) {
+export default function SlideDrawer({ open, onClose, header, actions, footer, children }: SlideDrawerProps) {
   const drawerRef = useRef<HTMLDivElement>(null);
 
   const handleKeyDown = useCallback(() => {
@@ -73,6 +76,15 @@ export default function SlideDrawer({ open, onClose, header, actions, children }
         <div className="flex-1 overflow-y-auto">
           {children}
         </div>
+
+        {footer && (
+          <div
+            data-testid="drawer-footer"
+            className="shrink-0 border-t border-border bg-surface px-6 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] flex flex-wrap items-center gap-2"
+          >
+            {footer}
+          </div>
+        )}
       </div>
     </div>
   );

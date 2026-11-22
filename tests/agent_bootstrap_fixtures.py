@@ -40,6 +40,7 @@ def make_node(
     system_manager: bool = True,
     agent_dials_home: bool = True,
     runner=None,
+    machine: str = "aarch64",
 ) -> SimulatedNode:
     """One point of the matrix, with every dimension named at the call site."""
     account = SimulatedUser(
@@ -53,6 +54,7 @@ def make_node(
         host,
         tmp_path / f"node-{host}",
         users={user: account},
+        machine=machine,
         docker_socket_users={user} if docker_socket else set(),
         docker_running=docker_running,
         linger={} if linger is None else {user: linger},

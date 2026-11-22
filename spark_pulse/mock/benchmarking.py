@@ -58,6 +58,15 @@ _BENCHMARK_MODELS: dict[str, dict] = {
 }
 
 
+def tool_status() -> dict[str, Any]:
+    """Simulation measures nothing for real, so the tool is never missing here."""
+    return {
+        "available": True,
+        "reason": "",
+        "install": "pip install 'spark-pulse[benchmarking]'",
+    }
+
+
 def _load() -> list[dict]:
     if not _BENCHMARKS_PATH.exists():
         return []

@@ -34,6 +34,30 @@ describe("StatusBadge", () => {
     expect(screen.getByText(label)).toBeInTheDocument();
   });
 
+  /** A Stop on the lab read "In progress", which said nothing about what. */
+  it("names a stop in flight as stopping", () => {
+    render(<StatusBadge status="running" sync="in_progress" syncIntent="stop" />);
+    expect(screen.getByTestId("sync-in_progress")).toHaveTextContent("Stopping…");
+  });
+
+  /** "Running · Stopping…" was two chips for one fact: a stop in flight is a
+   *  run that is still up. */
+  it("shows a named change alone, not beside the lifecycle", () => {
+    render(<StatusBadge status="running" sync="in_progress" syncIntent="stop" />);
+    expect(screen.queryByText("Running")).not.toBeInTheDocument();
+  });
+
+  it("keeps the lifecycle beside a change it has no name for", () => {
+    render(<StatusBadge status="running" sync="deleting" />);
+    expect(screen.getByText("Running")).toBeInTheDocument();
+    expect(screen.getByTestId("sync-deleting")).toBeInTheDocument();
+  });
+
+  it("keeps the generic label for a change it has no name for", () => {
+    render(<StatusBadge status="running" sync="in_progress" />);
+    expect(screen.getByTestId("sync-in_progress")).toHaveTextContent("In progress");
+  });
+
   /** Through `t()`, so the French page is in French — it used to capitalise
    *  whatever the API sent, which is English whichever language you chose. */
   it("says the status in the reader's own language", () => {
@@ -138,6 +162,74 @@ describe("StatusBadge", () => {
       [undefined, false],
     ])("%s → %s", (sync, expected) => {
       expect(isSettling(sync as string | undefined)).toBe(expected);
+    });
+  });
+
+  describe("a run's phase (#205)", () => {
+    it("is one chip, whatever status and sync say", () => {
+      const { container } = render(
+        <StatusBadge status="running" sync="in_progress" syncIntent="stop" phase="stopping" />,
+      );
+      expect(screen.getByTestId("phase-stopping")).toHaveTextContent("Stopping…");
+      expect(screen.queryByText("Running")).toBeNull();
+      expect(dots(container)).toHaveLength(1);
+    });
+
+    it.each([
+      ["queued", "Queued", "text-warn"],
+      ["running", "Running", "text-good"],
+      ["deleting", "Deleting", "text-bad"],
+      ["stopped", "Stopped", "text-muted"],
+      ["error", "Error", "text-bad"],
+    ])("%s reads %s", (phase, label, tone) => {
+      render(<StatusBadge status="whatever" phase={phase} />);
+      const chip = screen.getByTestId(`phase-${phase}`);
+      expect(chip).toHaveTextContent(label);
+      expect(chip.className).toContain(tone);
+    });
+
+    it("a phase this build has never heard of still names itself", () => {
+      render(<StatusBadge status="x" phase="quiescing" />);
+      expect(screen.getByTestId("phase-quiescing")).toHaveTextContent("Quiescing");
+    });
+
+    it("says how far a pull has got", () => {
+      render(<StatusBadge status="pulling" phase="pulling" progress={45.7} />);
+      expect(screen.getByTestId("phase-pulling")).toHaveTextContent("Pulling… 45%");
+    });
+
+    it("says when the nodes did not confirm it, and why on hover", () => {
+      render(
+        <StatusBadge status="running" phase="running" phaseVerified={false} phaseReason="spark-02 did not answer" />,
+      );
+      const chip = screen.getByTestId("phase-running");
+      expect(chip).toHaveAttribute("title", "spark-02 did not answer");
+      expect(screen.getByTestId("phase-unverified")).toHaveTextContent("Unverified");
+    });
+
+    it("a verified phase says nothing extra", () => {
+      render(<StatusBadge status="running" phase="running" phaseVerified={true} />);
+      expect(screen.queryByTestId("phase-unverified")).toBeNull();
+    });
+
+    it("speaks the operator's language", () => {
+      localStorage.setItem("spark-pulse-lang", "fr");
+      render(
+        <I18nProvider>
+          <StatusBadge status="pending" phase="queued" />
+        </I18nProvider>,
+      );
+      expect(screen.getByTestId("phase-queued")).toHaveTextContent("En file d’attente");
+      localStorage.removeItem("spark-pulse-lang");
+    });
+
+    it.each([
+      ["stopping", true],
+      ["deleting", true],
+      ["running", false],
+      ["stopped", false],
+    ])("settling on phase %s → %s, whatever sync says", (phase, expected) => {
+      expect(isSettling("in_progress", phase)).toBe(expected);
     });
   });
 });

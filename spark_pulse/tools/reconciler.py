@@ -293,7 +293,7 @@ class Reconciler:
             return None
 
         try:
-            tools.native_runtime.list_deployments()
+            tools.deploy_dispatch.list_deployments()
         except Exception as exc:  # noqa: BLE001 — an unreachable node
             logger.debug("could not settle %s: %s", deployment_id, exc)
             return mark(

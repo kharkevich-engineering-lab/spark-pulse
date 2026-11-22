@@ -18,14 +18,16 @@
  * 44px target at 390.
  */
 
-import { useT } from "@/lib/i18n";
+import { useT, type Translator } from "@/lib/i18n";
 import { StatusBadge, Button, isSettling } from "@/ui";
-import { formatDuration, servesChat } from "@/lib/utils";
+import { formatDuration, formatSize, servesChat } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import ServesChip from "./ServesChip";
 import { isLiveRun } from "@/hooks/useDeployments";
-import { ChevronDown, ChevronUp, Flame, Square, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Flame, Square, Terminal, Trash2, X } from "lucide-react";
+import { useState } from "react";
 import type { BenchmarkResult, Deployment } from "@/lib/types";
+import type { PullProgress } from "@/lib/operations";
 
 /** Seconds between two timestamps, floored at zero. */
 function secondsBetween(from: string, to: number | string): number {
@@ -53,9 +55,156 @@ function metric(result: BenchmarkResult | undefined, ...keys: string[]): number 
  * the control plane runs on, which is still a node — it just has not told us
  * which one. */
 export function placement(run: Deployment, thisNode: string): string {
-  const nodes = run.nodes?.length ? run.nodes.join(" + ") : thisNode;
+  // The machines by name where the record knows them (each rank's host), so a
+  // solo run says "ark-desktop" rather than "this node", which reads as
+  // whichever machine the browser happens to be on.
+  const hosts = (run.ranks ?? []).map((r) => r.host || r.node).filter(Boolean);
+  const nodes = hosts.length ? hosts.join(" + ") : run.nodes?.length ? run.nodes.join(" + ") : thisNode;
   const tp = Number(run.params?.tensor_parallel);
   return Number.isFinite(tp) && tp > 1 ? `tp ${tp} · ${nodes}` : nodes;
+}
+
+/** The run's OpenAI-compatible endpoint, as something a client can be pointed at.
+ *
+ *  The head rank serves the API on the host network, so the address is its
+ *  node's — empty for the control node, which is the machine the browser
+ *  reached this page on, so that hostname is the one that works from here. */
+export function endpointUrl(run: Deployment, pageHost: string): string | null {
+  if (!run.port) return null;
+  const head = (run.ranks ?? []).find((r) => r.is_head) ?? run.ranks?.[0];
+  const host = head?.node || run.nodes?.[0] || pageHost;
+  const bracketed = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+  return `http://${bracketed}:${run.port}/v1`;
+}
+
+/** What the curl example asks about: one topic drawn at random, so a copied
+ *  command is a small surprise rather than "hello" again. Ids only — the
+ *  topic and the question around it are in the dictionaries
+ *  (`runs.funFact.*`), so a French page copies a French question. */
+export const FUN_FACT_TOPICS = [
+  "octopuses",
+  "moon",
+  "honey",
+  "volcanoes",
+  "tardigrades",
+  "deepSea",
+  "bananas",
+  "lightning",
+  "crows",
+  "saturnRings",
+  "brain",
+  "coffee",
+  "glaciers",
+  "sharks",
+  "lightSpeed",
+  "ancientRome",
+] as const;
+
+/** A copy-and-run chat completion against the endpoint, asked in the page's
+ *  language. Pure but for the topic, which `pick` chooses (random by default). */
+export function curlExample(
+  url: string,
+  model: string,
+  t: Translator["t"],
+  pick: (n: number) => number = (n) => Math.floor(Math.random() * n),
+): string {
+  const id = FUN_FACT_TOPICS[pick(FUN_FACT_TOPICS.length)];
+  const question = t("runs.funFact.prompt", { topic: t(`runs.funFact.topics.${id}`) });
+  const body = JSON.stringify({
+    model,
+    messages: [{ role: "user", content: question }],
+    max_tokens: 200,
+  });
+  return `curl -s ${url}/chat/completions -H 'Content-Type: application/json' -d ${shellQuote(body)}`;
+}
+
+/** `text` as one single-quoted shell word. A `'` inside closes the quote, so
+ *  it is written as `'\''` — close, an escaped quote, reopen — the one form
+ *  every POSIX shell reads back as the same text. */
+export function shellQuote(text: string): string {
+  return `'${text.replace(/'/g, "'\\''")}'`;
+}
+
+/** Copy `text`, and say on the control what happened for a moment. */
+function useCopy() {
+  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
+  const copy = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setState("copied");
+    } catch {
+      setState("failed");
+    }
+    setTimeout(() => setState("idle"), 1800);
+  };
+  return { state, copy };
+}
+
+/** A curl that asks the run for a fun fact, copied in one click. */
+function CurlExample({ url, model }: { url: string; model: string }) {
+  const t = useT();
+  const { state, copy } = useCopy();
+  return (
+    <button
+      type="button"
+      onClick={() => void copy(curlExample(url, model, t))}
+      aria-label={t("runs.copyCurl")}
+      title={t("runs.copyCurlTitle")}
+      data-testid="run-curl"
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[13px] transition-colors",
+        state === "copied"
+          ? "border-success/60 bg-success/10 text-success"
+          : state === "failed"
+            ? "border-bad/60 bg-bad/10 text-bad"
+            : "border-line text-muted hover:border-blue2 hover:text-blue2",
+      )}
+    >
+      {state === "copied" ? <Check size={13} aria-hidden="true" /> : <Terminal size={13} aria-hidden="true" />}
+      <span className="font-mono">
+        {state === "copied" ? t("runs.curlCopied") : state === "failed" ? t("runs.endpointCopyFailed") : "curl"}
+      </span>
+      <span role="status" aria-live="polite" className="sr-only">
+        {state === "copied" ? t("runs.curlCopied") : state === "failed" ? t("runs.endpointCopyFailed") : ""}
+      </span>
+    </button>
+  );
+}
+
+/** The endpoint, as one chip that copies itself when clicked.
+ *
+ *  The whole chip is the button — a separate copy icon beside it was a second
+ *  target for one action — and the answer is on the chip itself for a moment:
+ *  it turns green and says "Copied to clipboard", where the operator is
+ *  already looking. A clipboard that refuses (a non-secure origin) says so
+ *  the same way, and the address stays selectable. */
+function Endpoint({ url }: { url: string }) {
+  const t = useT();
+  const { state, copy } = useCopy();
+  return (
+    <button
+      type="button"
+      onClick={() => void copy(url)}
+      aria-label={t("runs.copyEndpoint", { url })}
+      title={t("runs.endpointTitle")}
+      className={cn(
+        "inline-flex max-w-full items-center gap-1.5 rounded-full border px-2 py-0.5 text-[13px] transition-colors",
+        state === "copied"
+          ? "border-success/60 bg-success/10 text-success"
+          : state === "failed"
+            ? "border-bad/60 bg-bad/10 text-bad"
+            : "border-line text-text hover:border-blue2 hover:text-blue2",
+      )}
+    >
+      {state === "copied" && <Check size={13} className="shrink-0" aria-hidden="true" />}
+      <span role="status" aria-live="polite" className="sr-only">
+        {state === "copied" ? t("runs.endpointCopied") : state === "failed" ? t("runs.endpointCopyFailed") : ""}
+      </span>
+      <code className="truncate font-mono select-all" data-testid="run-endpoint">
+        {state === "copied" ? t("runs.endpointCopied") : state === "failed" ? t("runs.endpointCopyFailed") : url}
+      </code>
+    </button>
+  );
 }
 
 export interface RunRowProps {
@@ -67,6 +216,8 @@ export interface RunRowProps {
   /** Stop, cancel or remove — the row decides which word, the page confirms. */
   onTeardown: () => void;
   onBenchmark: () => void;
+  /** The image pull's progress while the run is pulling, from its frames. */
+  pull?: PullProgress;
   /** The expanded panel: logs, ranks, the engine's metrics. */
   children?: React.ReactNode;
 }
@@ -89,14 +240,22 @@ function Chip({ children, title }: { children: React.ReactNode; title?: string }
   );
 }
 
-function Figure({ label, value }: { label: string; value: string }) {
+function Figure({ label, value, tone }: { label: string; value: string; tone?: "busy" }) {
   return (
     <div className="min-[900px]:text-right">
       <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">{label}</p>
-      <p className="font-mono text-[14px] tabular-nums text-text">{value}</p>
+      <p
+        className={cn(
+          "font-mono text-[14px] tabular-nums",
+          tone === "busy" ? "text-blue2 animate-pulse" : "text-text",
+        )}
+      >
+        {value}
+      </p>
     </div>
   );
 }
+
 
 export default function RunRow({
   run,
@@ -105,12 +264,16 @@ export default function RunRow({
   onToggle,
   onTeardown,
   onBenchmark,
+  pull,
   children,
 }: RunRowProps) {
   const t = useT();
   const live = isLiveRun(run);
-  const settling = isSettling(run.sync);
+  const settling = isSettling(run.sync, run.phase);
 
+  // While the latest benchmark runs, the row says so. Why one failed is the
+  // launcher's to say, when the operator clicks Benchmark — not the row's.
+  const measuring = benchmark?.status === "running";
   const throughput = metric(benchmark, "throughput");
   // No engine publishes a time-to-first-token of its own, so the first-token
   // figure is the benchmark's own latency — named for what it measures rather
@@ -135,6 +298,8 @@ export default function RunRow({
 
   // Benchmarks drive chat completions; against an embeddings endpoint the
   // button would only start a run the backend refuses.
+  // Shown whether or not the feature is on: off, the launcher says so and
+  // where to turn it on, rather than the button vanishing without a word.
   const benchmarkable = live && servesChat(run.serves);
   const actionCount = benchmarkable ? 3 : 2;
 
@@ -154,7 +319,7 @@ export default function RunRow({
             >
               {run.name}
             </button>
-            <StatusBadge status={run.status} sync={run.sync} syncReason={run.sync_reason} />
+            <StatusBadge status={run.status} sync={run.sync} syncReason={run.sync_reason} syncIntent={run.sync_intent} phase={run.phase} phaseVerified={run.phase_verified} phaseReason={run.phase_reason} progress={pull?.percent} />
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             {run.engine && (
@@ -167,10 +332,39 @@ export default function RunRow({
             <ServesChip serves={run.serves} />
 
             <Chip>{placement(run, t("runs.thisNode"))}</Chip>
-            {run.port && (
-              <span className="font-mono text-[13px] text-muted">:{run.port}</span>
-            )}
           </div>
+          {/* Its own line, not one more chip: "Copied to clipboard" is shorter
+              than the address, so in the wrapping chip row the chip jumped up
+              a line on click and back down after. */}
+          {(() => {
+            const url = endpointUrl(run, window.location.hostname);
+            return url && live ? (
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                <Endpoint url={url} />
+                <CurlExample url={url} model={run.served_model || run.model || ""} />
+              </div>
+            ) : null;
+          })()}
+          {pull && (
+            <div className="mt-2" data-testid={`pull-${run.id}`}>
+              <p className="text-[13px] text-muted">
+                {t("runs.pullingImage", {
+                  percent: Math.floor(pull.percent),
+                  done: formatSize(pull.bytesDone),
+                  total: pull.bytesTotal ? formatSize(pull.bytesTotal) : "?",
+                })}
+              </p>
+              <div className="mt-1 h-1.5 max-w-[420px] overflow-hidden rounded-full bg-bg2">
+                <div
+                  role="progressbar"
+                  aria-label={t("runs.pullProgressLabel", { name: run.name })}
+                  aria-valuenow={Math.floor(pull.percent)}
+                  className="h-full bg-blue-cta transition-all"
+                  style={{ width: `${pull.percent}%` }}
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="flex shrink-0 flex-col gap-3 min-[900px]:items-end">
@@ -179,7 +373,14 @@ export default function RunRow({
           <div className="flex flex-wrap items-start gap-x-5 gap-y-2 min-[900px]:flex-nowrap min-[900px]:gap-x-6">
             <Figure
               label={t("runs.throughput")}
-              value={throughput != null ? `${throughput.toFixed(1)} tok/s` : "—"}
+              tone={measuring ? "busy" : undefined}
+              value={
+                measuring
+                  ? t("runs.benchmarkMeasuring")
+                  : throughput != null
+                    ? `${throughput.toFixed(1)} tok/s`
+                    : "—"
+              }
             />
             <Figure
               label={t("runs.firstToken")}
@@ -197,7 +398,7 @@ export default function RunRow({
               {t("runs.logs")}
             </Button>
             {benchmarkable && (
-              <Button size="sm" icon={Flame} onClick={onBenchmark} disabled={run.status !== "running"}>
+              <Button size="sm" icon={Flame} onClick={onBenchmark} disabled={run.status !== "running" || measuring} loading={measuring}>
                 {t("runs.benchmark")}
               </Button>
             )}

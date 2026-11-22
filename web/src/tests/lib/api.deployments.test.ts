@@ -6,6 +6,7 @@ import {
   fetchDeploymentEvents,
   fetchDeployments,
   planDeployment,
+  planKubernetes,
 } from "@/lib/api";
 
 const ok = (body: unknown) =>
@@ -88,6 +89,21 @@ describe("deployment api", () => {
       engine: "vllm",
       model: "Qwen/Qwen3-8B",
       extra_args: ["--enable-prefix-caching"],
+    });
+  });
+
+  it("planKubernetes POSTs the same body, with the cache choice, to its own route", async () => {
+    fetchMock().mockReturnValue(ok({ backend: "kubernetes", yaml: "kind: Deployment\n" }));
+
+    const plan = await planKubernetes({ recipe_id: "qwen3-8b", hf_cache: "hostPath" });
+
+    expect(plan.yaml).toBe("kind: Deployment\n");
+    const [url, init] = fetchMock().mock.calls[0];
+    expect(url).toBe("/api/deployments/plan/kubernetes");
+    expect(init?.method).toBe("POST");
+    expect(JSON.parse(init?.body as string)).toEqual({
+      recipe_id: "qwen3-8b",
+      hf_cache: "hostPath",
     });
   });
 

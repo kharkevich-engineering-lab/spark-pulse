@@ -54,6 +54,7 @@ The consequences, all of them deliberate:
 from __future__ import annotations
 
 import ipaddress
+import re
 from typing import Any
 
 from spark_pulse.engines.base import (
@@ -109,6 +110,10 @@ HF_FILE_ARG = "--hf-file"
 
 #: The extension llama.cpp reads. Lower-cased before matching.
 GGUF_SUFFIX = ".gguf"
+
+
+#: The shard numbering of a split GGUF: ``model-00001-of-00003.gguf``.
+_SHARD = re.compile(r"-\d{5}-of-(?P<total>\d{5})(?P<suffix>\.gguf)$", re.IGNORECASE)
 
 
 def split_hf_file(args: str) -> tuple[str, str]:
@@ -281,6 +286,31 @@ class LlamaCppEngine(SoloEngine):
             f"the snapshot holds {len(ggufs)} {GGUF_SUFFIX} files and the "
             f"recipe names none with {HF_FILE_ARG}"
         )
+
+    def model_patterns(self, recipe: dict[str, Any]) -> list[str]:
+        """The recipe's ``--hf-file``, and nothing else of the repository.
+
+        A GGUF repository carries one file per quantisation: the lab's
+        ``Qwen2.5-0.5B-Instruct-GGUF`` came down at 5 GB for a recipe that
+        loads one 400 MB file. The selector is the one place the packing is
+        named, so it is also what the download is narrowed to — the same
+        selector :meth:`choose_model_file` later finds in the snapshot.
+
+        A name written bare may sit in a directory of the repository, which
+        is how :meth:`choose_model_file` matches it too; and a split GGUF
+        (``…-00001-of-00003.gguf``) is useless without its other shards, so
+        every shard of that set is asked for. No selector, or a variant that
+        hands the engine a model id, keeps the whole repository.
+        """
+        if not self.resolves_model_file():
+            return []
+        selector = split_hf_file(self._block_args(recipe))[0]
+        if not selector:
+            return []
+        selector = _SHARD.sub(r"-*-of-\g<total>\g<suffix>", selector)
+        if "/" in selector:
+            return [selector]
+        return [selector, f"*/{selector}"]
 
     def rpc_port(self) -> int | None:
         """The port each worker binds, or None when this variant is solo.
