@@ -86,6 +86,14 @@
   --good: #10b981;
   --warn: #f59e0b;
   --bad: #ef4444;
+  /* One colour per run on the memory bars, so a run spanning two nodes is
+     the same colour on both. Distinct from the status colours on purpose. */
+  --run-1: #3b8cff;
+  --run-2: #9b87f5;
+  --run-3: #2dd4bf;
+  --run-4: #f472b6;
+  --run-5: #c4b5fd;
+  --mem-system: #36506a;
   color-scheme: dark;
 }
 
@@ -101,6 +109,12 @@ html.light {
   --blue2: #0068e0;
   --blue-cta: #006fed;
   --brand-accent: #0369a1;
+  --run-1: #1f6fe0;
+  --run-2: #6b52d9;
+  --run-3: #0f9b8e;
+  --run-4: #d6337f;
+  --run-5: #8b72e8;
+  --mem-system: #b7c6d6;
   color-scheme: light;
 }
 
@@ -130,23 +144,21 @@ html.light {
     line-height: 1.1;
     letter-spacing: -0.02em;
   }
+  /* A console's scale: the page title is the largest thing on the page and a
+     section title never outgrows it. */
   h1 {
-    font-size: 36px;
-    font-weight: 800;
-    letter-spacing: -0.03em;
-  }
-  h2 {
-    font-size: 22px;
+    font-size: 20px;
     font-weight: 700;
   }
-  h3 {
-    font-size: 17px;
+  h2 {
+    font-size: 14px;
     font-weight: 600;
+    letter-spacing: -0.01em;
   }
-  @media (max-width: 520px) {
-    h1 {
-      font-size: 28px;
-    }
+  h3 {
+    font-size: 13.5px;
+    font-weight: 600;
+    letter-spacing: 0;
   }
 
   code,

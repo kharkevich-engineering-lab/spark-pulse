@@ -289,13 +289,34 @@ describe("RecipesPage", () => {
     });
   });
 
+  /** `?recipe=<id>` is how the command palette opens a recipe's drawer. */
+  it("opens the drawer of the recipe a link names", async () => {
+    render(
+      <MemoryRouter initialEntries={["/recipes?recipe=" + encodeURIComponent(SOLO.id)]}>
+        <RecipesPage />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(fetchRecipe).toHaveBeenCalledWith(SOLO.id));
+    expect(await screen.findByTestId("drawer-footer")).toBeInTheDocument();
+  });
+
+  it("ignores a link to a recipe it does not have", async () => {
+    render(
+      <MemoryRouter initialEntries={["/recipes?recipe=nope"]}>
+        <RecipesPage />
+      </MemoryRouter>,
+    );
+    await screen.findByText("Qwen3 8B");
+    expect(fetchRecipe).not.toHaveBeenCalled();
+  });
+
   describe("listing", () => {
     it("lists each recipe with what it runs and where", async () => {
       renderPage();
 
       expect(await screen.findByText("Qwen3 8B")).toBeInTheDocument();
       expect(screen.getByText("Qwen3 at 8B, one GPU")).toBeInTheDocument();
-      expect(screen.getByRole("tab", { name: /Recipes \(1\)/ })).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: /All \(1\)/ })).toBeInTheDocument();
     });
 
     it("marks a recipe that is already running", async () => {
@@ -324,6 +345,65 @@ describe("RecipesPage", () => {
 
       await userEvent.click(screen.getByRole("button", { name: /Hide 1 recipe that doesn't run here/ }));
       expect(screen.queryByText("Big Mesh")).not.toBeInTheDocument();
+    });
+
+    /** A console lists recipes as rows on a wide screen, the unavailable
+     *  ones folded into a second table. */
+    it("lists recipes as a table on a wide screen, opening the drawer from a row", async () => {
+      Object.defineProperty(window, "innerWidth", { writable: true, configurable: true, value: 1400 });
+      vi.mocked(fetchRecipes).mockResolvedValue([SOLO, CLUSTER_ONLY]);
+      renderPage();
+
+      const table = await screen.findByTestId("recipes-table");
+      expect(within(table).getByText("Qwen3 8B")).toBeInTheDocument();
+      await userEvent.click(
+        screen.getByRole("button", { name: /Show 1 recipe that doesn't run here/ }),
+      );
+      const folded = screen.getByTestId("recipes-table-unavailable");
+      expect(within(folded).getByText("Cluster only")).toBeInTheDocument();
+
+      await userEvent.click(within(table).getByRole("button", { name: "Qwen3 8B" }));
+      await waitFor(() => expect(fetchRecipe).toHaveBeenCalledWith(SOLO.id));
+      expect(await screen.findByTestId("drawer-footer")).toBeInTheDocument();
+    });
+
+    it("narrows the list by source and by search", async () => {
+      const user = userEvent.setup();
+      vi.mocked(fetchRecipes).mockResolvedValue([
+        SOLO,
+        OCI_RECIPE,
+        summary({ id: "custom-mine", name: "Mine Deployable", source: "custom", engines: ["sglang"] }),
+      ]);
+      renderPage();
+      await screen.findByText("Qwen3 8B");
+      expect(screen.getByRole("tab", { name: /^All \(3\)/ })).toBeInTheDocument();
+
+      await user.click(screen.getByRole("tab", { name: /^Collections \(1\)/ }));
+      expect(screen.getByText("Qwen3 32B")).toBeInTheDocument();
+      expect(screen.queryByText("Qwen3 8B")).toBeNull();
+
+      await user.click(screen.getByRole("tab", { name: /^Bundled \(1\)/ }));
+      expect(screen.getByText("Qwen3 8B")).toBeInTheDocument();
+      expect(screen.queryByText("Qwen3 32B")).toBeNull();
+
+      await user.click(screen.getByRole("tab", { name: /^All/ }));
+      await user.type(screen.getByRole("searchbox", { name: "Search recipes" }), "sglang");
+      expect(screen.getByText("Mine Deployable")).toBeInTheDocument();
+      expect(screen.queryByText("Qwen3 8B")).toBeNull();
+
+      await user.type(screen.getByRole("searchbox", { name: "Search recipes" }), " nothing");
+      expect(screen.getByText("Nothing matches.")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Clear" }));
+      expect(screen.getByText("Qwen3 8B")).toBeInTheDocument();
+    });
+
+    it("says nothing matches in the wide table too", async () => {
+      const user = userEvent.setup();
+      Object.defineProperty(window, "innerWidth", { writable: true, configurable: true, value: 1400 });
+      renderPage();
+      await screen.findByTestId("recipes-table");
+      await user.type(screen.getByRole("searchbox", { name: "Search recipes" }), "zzz");
+      expect(within(screen.getByTestId("recipes-table")).getByText("Nothing matches.")).toBeInTheDocument();
     });
 
     /** "Download and deploy" used to leave the card looking untouched while
@@ -453,7 +533,7 @@ describe("RecipesPage", () => {
   describe("uninstalling an OCI recipe", () => {
     it("offers an uninstall action and calls the API with the installed filename", async () => {
       vi.mocked(fetchRecipes).mockResolvedValue([SOLO, OCI_RECIPE]);
-      render(<RecipesPage />);
+      renderPage();
       await screen.findByText("Qwen3 8B");
 
       // From the recipe's details, at the bottom — the card has no trash icon.
@@ -471,7 +551,7 @@ describe("RecipesPage", () => {
 
     it("asks before uninstalling, and does nothing on cancel", async () => {
       vi.mocked(fetchRecipes).mockResolvedValue([SOLO, OCI_RECIPE]);
-      render(<RecipesPage />);
+      renderPage();
       await screen.findByText("Qwen3 8B");
 
       vi.mocked(fetchRecipe).mockResolvedValue(detail({ id: OCI_RECIPE.id, name: "Qwen3 32B", source: "oci" }));
@@ -486,7 +566,7 @@ describe("RecipesPage", () => {
     it("reports a failed uninstall without removing the card", async () => {
       vi.mocked(fetchRecipes).mockResolvedValue([SOLO, OCI_RECIPE]);
       vi.mocked(uninstallOciRecipe).mockRejectedValue(new Error("recipe is in use"));
-      render(<RecipesPage />);
+      renderPage();
       await screen.findByText("Qwen3 8B");
 
       vi.mocked(fetchRecipe).mockResolvedValue(detail({ id: OCI_RECIPE.id, name: "Qwen3 32B", source: "oci" }));
@@ -499,68 +579,11 @@ describe("RecipesPage", () => {
     });
 
     it("offers no uninstall for a bundled recipe, only the managed hint", async () => {
-      render(<RecipesPage />);
+      renderPage();
       const card = (await screen.findByText("Qwen3 8B")).closest('[role="button"]')!;
 
       expect(within(card as HTMLElement).queryByRole("button", { name: /Uninstall/ })).not.toBeInTheDocument();
       expect(card).toHaveAttribute("title", "Managed recipe — cannot be deleted");
-    });
-  });
-
-  describe("mods tab", () => {
-    it("lists the mods with their assets", async () => {
-      renderPage();
-      await userEvent.click(await screen.findByRole("tab", { name: /Mods \(1\)/ }));
-
-      expect(screen.getByText("flash-attn")).toBeInTheDocument();
-      expect(screen.getByText("Swap in the fused attention kernel")).toBeInTheDocument();
-      expect(screen.getByText("patches")).toBeInTheDocument();
-      expect(screen.getByText("run.sh")).toBeInTheDocument();
-    });
-
-    it("says there are no mods rather than showing an empty grid", async () => {
-      vi.mocked(fetchMods).mockResolvedValue([]);
-      renderPage();
-      await userEvent.click(await screen.findByRole("tab", { name: /Mods \(0\)/ }));
-
-      expect(screen.getByText("No mods found")).toBeInTheDocument();
-    });
-
-    /** A mod is a shell script that runs inside the container as root; the
-     *  drawer exists so an operator can read it before applying it. */
-    it("opens a mod and shows the script it would run", async () => {
-      renderPage();
-      await userEvent.click(await screen.findByRole("tab", { name: /Mods \(1\)/ }));
-      await userEvent.click(screen.getByText("flash-attn"));
-
-      await waitFor(() => expect(fetchMod).toHaveBeenCalledWith("flash-attn"));
-      expect(await screen.findByText(/echo patched/)).toBeInTheDocument();
-    });
-
-    it("reports a mod whose script could not be read", async () => {
-      vi.mocked(fetchMod).mockRejectedValue(new Error("mod dir vanished"));
-      renderPage();
-      await userEvent.click(await screen.findByRole("tab", { name: /Mods \(1\)/ }));
-      await userEvent.click(screen.getByText("flash-attn"));
-
-      expect(await screen.findByText(/mod dir vanished/)).toBeInTheDocument();
-    });
-
-    /** The script is the thing an operator wants in a terminal next, so the
-     *  drawer copies it rather than making them select it out of a <pre>. */
-    it("copies the mod's script to the clipboard", async () => {
-      const writeText = vi.fn().mockResolvedValue(undefined);
-      vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
-      renderPage();
-      await userEvent.click(await screen.findByRole("tab", { name: /Mods \(1\)/ }));
-      await userEvent.click(screen.getByText("flash-attn"));
-      await screen.findByText(/echo patched/);
-
-      await userEvent.click(screen.getByRole("button", { name: /Copy/ }));
-
-      await waitFor(() => expect(writeText).toHaveBeenCalledWith("#!/bin/bash\necho patched\n"));
-      expect(await screen.findByText("Copied")).toBeInTheDocument();
-      vi.unstubAllGlobals();
     });
   });
 
@@ -910,9 +933,9 @@ describe("RecipesPage", () => {
     });
   });
 
-  describe("custom mode", () => {
+  describe("the Custom filter", () => {
     const enterCustomMode = async () => {
-      await userEvent.click(await screen.findByRole("switch", { name: "Toggle custom mode" }));
+      await userEvent.click(await screen.findByRole("tab", { name: /^Custom/ }));
       await waitFor(() => expect(listCustomRecipes).toHaveBeenCalled());
     };
 
@@ -925,7 +948,18 @@ describe("RecipesPage", () => {
       expect(await screen.findByText("Mine")).toBeInTheDocument();
       expect(screen.getByText("mine.yaml")).toBeInTheDocument();
       expect(screen.queryByText("Qwen3 8B")).not.toBeInTheDocument();
-      expect(screen.getByText("Your own recipes and mods.")).toBeInTheDocument();
+    });
+
+    it("deploys a custom file through the recipe it lists as", async () => {
+      vi.mocked(fetchRecipes).mockResolvedValue([SOLO, summary({ id: "custom-mine", name: "Mine", source: "custom" })]);
+      renderPage();
+      await screen.findByText("Qwen3 8B");
+      await enterCustomMode();
+
+      await userEvent.click(await screen.findByRole("button", { name: "Deploy Mine" }));
+      await waitFor(() => expect(fetchRecipe).toHaveBeenCalledWith("custom-mine"));
+      await userEvent.click(screen.getByRole("button", { name: "Edit Mine" }));
+      expect(await screen.findByLabelText("Recipe YAML")).toBeInTheDocument();
     });
 
     it("says there are none rather than showing an empty grid", async () => {
@@ -937,8 +971,6 @@ describe("RecipesPage", () => {
       await enterCustomMode();
 
       expect(await screen.findByText("No custom recipes")).toBeInTheDocument();
-      await userEvent.click(screen.getByRole("tab", { name: /Mods \(0\)/ }));
-      expect(screen.getByText("No custom mods")).toBeInTheDocument();
     });
 
     /** The dead end this fixes: the "New recipe" button used to be rendered
@@ -957,19 +989,6 @@ describe("RecipesPage", () => {
       expect(screen.getByRole("button", { name: /New recipe/ })).toBeInTheDocument();
     });
 
-    it("offers to create the first mod when there are none", async () => {
-      vi.mocked(listCustomRecipes).mockResolvedValue([]);
-      vi.mocked(listCustomMods).mockResolvedValue([]);
-      renderPage();
-      await screen.findByText("Qwen3 8B");
-      await enterCustomMode();
-
-      await userEvent.click(screen.getByRole("tab", { name: /Mods \(0\)/ }));
-
-      expect(screen.getByText("No custom mods")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /New mod/ })).toBeInTheDocument();
-    });
-
     it("still offers to create one when some already exist", async () => {
       renderPage();
       await screen.findByText("Qwen3 8B");
@@ -985,7 +1004,7 @@ describe("RecipesPage", () => {
       renderPage();
       await screen.findByText("Qwen3 8B");
 
-      await userEvent.click(screen.getByRole("switch", { name: "Toggle custom mode" }));
+      await userEvent.click(screen.getByRole("tab", { name: /^Custom/ }));
 
       expect(await screen.findByText("config dir missing")).toBeInTheDocument();
     });
@@ -1063,54 +1082,6 @@ describe("RecipesPage", () => {
       expect(await screen.findByText("permission denied")).toBeInTheDocument();
     });
 
-    it("opens a custom mod with the files it holds and saves them together", async () => {
-      renderPage();
-      await screen.findByText("Qwen3 8B");
-      await enterCustomMode();
-      await userEvent.click(screen.getByRole("tab", { name: /Mods \(1\)/ }));
-
-      await userEvent.click(await screen.findByText("My Mod"));
-
-      await waitFor(() => expect(getCustomModFiles).toHaveBeenCalledWith("custom/my-mod"));
-      const editor = await screen.findByRole("textbox");
-      await userEvent.clear(editor);
-      await userEvent.type(editor, "#!/bin/sh");
-      await userEvent.click(screen.getByRole("button", { name: /Save/ }));
-
-      await waitFor(() =>
-        expect(saveCustomModFiles).toHaveBeenCalledWith("custom/my-mod", {
-          "run.sh": "#!/bin/sh",
-        }),
-      );
-    });
-
-    it("reports a custom mod whose files could not be read", async () => {
-      vi.mocked(getCustomModFiles).mockRejectedValue(new Error("gone"));
-      renderPage();
-      await screen.findByText("Qwen3 8B");
-      await enterCustomMode();
-      await userEvent.click(screen.getByRole("tab", { name: /Mods \(1\)/ }));
-
-      await userEvent.click(await screen.findByText("My Mod"));
-
-      expect(await screen.findByText("Failed to load mod")).toBeInTheDocument();
-    });
-
-    it("deletes a custom mod once the operator confirms", async () => {
-      renderPage();
-      await screen.findByText("Qwen3 8B");
-      await enterCustomMode();
-      await userEvent.click(screen.getByRole("tab", { name: /Mods \(1\)/ }));
-      await userEvent.click(await screen.findByText("My Mod"));
-      await screen.findByRole("textbox");
-
-      // The drawer's control; the card's is named for what it removes.
-      await userEvent.click(screen.getByRole("button", { name: /^Delete$/ }));
-      await userEvent.click(screen.getAllByRole("button", { name: "Delete" }).at(-1)!);
-
-      await waitFor(() => expect(deleteCustomMod).toHaveBeenCalledWith("custom/my-mod"));
-    });
-
     it("reports a custom recipe the drawer could not read", async () => {
       vi.mocked(getCustomRecipeContent).mockRejectedValue(new Error("mine.yaml is gone"));
       renderPage();
@@ -1178,43 +1149,6 @@ describe("RecipesPage", () => {
 
       await userEvent.click(screen.getAllByRole("button", { name: "Cancel" })[0]);
       expect(screen.queryByRole("heading", { name: "Upload a recipe" })).not.toBeInTheDocument();
-    });
-
-    it("re-reads the custom directory after a new mod is written", async () => {
-      vi.stubGlobal(
-        "fetch",
-        vi
-          .fn()
-          .mockResolvedValue({ ok: true, status: 200, json: async () => ({ id: "custom/m", name: "m" }) }),
-      );
-      renderPage();
-      await screen.findByText("Qwen3 8B");
-      await enterCustomMode();
-      await userEvent.click(screen.getByRole("tab", { name: /Mods \(1\)/ }));
-      const before = vi.mocked(listCustomMods).mock.calls.length;
-
-      await userEvent.click(await screen.findByRole("button", { name: /New mod/ }));
-      await userEvent.type(screen.getByPlaceholderText("my-mod"), "fresh");
-      await userEvent.click(screen.getByRole("button", { name: /Create mod/ }));
-
-      await waitFor(() =>
-        expect(vi.mocked(listCustomMods).mock.calls.length).toBeGreaterThan(before),
-      );
-      expect(screen.queryByRole("heading", { name: "New mod" })).not.toBeInTheDocument();
-      vi.unstubAllGlobals();
-    });
-
-    it("abandons the new-mod form without writing anything", async () => {
-      renderPage();
-      await screen.findByText("Qwen3 8B");
-      await enterCustomMode();
-      await userEvent.click(screen.getByRole("tab", { name: /Mods \(1\)/ }));
-
-      await userEvent.click(await screen.findByRole("button", { name: /New mod/ }));
-      expect(screen.getByRole("heading", { name: "New mod" })).toBeInTheDocument();
-
-      await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
-      expect(screen.queryByRole("heading", { name: "New mod" })).not.toBeInTheDocument();
     });
   });
 });

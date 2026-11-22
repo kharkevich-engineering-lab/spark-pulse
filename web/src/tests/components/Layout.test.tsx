@@ -90,38 +90,51 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("the header nav", () => {
-  it("lists five groups, not eleven routes", () => {
+describe("the sidebar", () => {
+  it("lists every object type, grouped as Operate, Library and System", () => {
     renderLayout();
 
     const labels = primaryNav()
       .getAllByRole("link")
-      .map((a) => a.textContent?.replace(/exp$/, "").trim());
-    expect(labels).toEqual(["Deploy", "Runs", "Fleet", "Library", "Settings"]);
+      .map((a) => a.textContent?.trim());
+    expect(labels).toEqual([
+      "Overview",
+      "Runs",
+      "Nodes",
+      "Recipes",
+      "Models",
+      "Engines",
+      "Mods",
+      "Collections",
+      "Settings",
+    ]);
+    for (const section of ["Operate", "Library", "System"]) {
+      expect(primaryNav().getByText(section)).toBeInTheDocument();
+    }
   });
 
-  /** The reason the nav is groups: a route that is not a group's own href is
-   *  still *in* that group, and reading `/monitoring` with nothing lit is how
+  /** A route without an entry of its own still belongs to one: `/mcp` is
+   *  Settings, `/cache` is Models, and reading either with nothing lit is how
    *  an operator loses track of where they are. */
-  it("marks a group for any route it speaks for", () => {
+  it("marks the entry for any route it speaks for", () => {
     for (const [path, label] of [
-      ["/", "Deploy"],
-      ["/benchmarking", "Runs"],
-      ["/monitoring", "Fleet"],
-      ["/engines", "Library"],
-      ["/oci", "Library"],
+      ["/", "Overview"],
+      ["/recipes", "Recipes"],
+      ["/jobs", "Runs"],
+      ["/monitoring", "Nodes"],
+      ["/mods", "Mods"],
+      ["/engines", "Engines"],
+      ["/oci", "Collections"],
+      ["/cache", "Models"],
       ["/mcp", "Settings"],
     ] as const) {
       const { unmount } = renderLayout(path);
-      expect(primaryNav().getByRole("link", { name: new RegExp(label) })).toHaveAttribute(
-        "aria-current",
-        "page",
-      );
+      expect(primaryNav().getByRole("link", { name: label })).toHaveAttribute("aria-current", "page");
       unmount();
     }
   });
 
-  it("marks nothing for a path no group claims", () => {
+  it("marks nothing for a path no entry claims", () => {
     expect(activeGroup("/nope")).toBe("");
     renderLayout("/nope");
     for (const link of primaryNav().getAllByRole("link")) {
@@ -129,11 +142,12 @@ describe("the header nav", () => {
     }
   });
 
-  it("covers every route the groups were built from", () => {
+  it("covers every route the app answers", () => {
     const routes = NAV_GROUPS.flatMap((g) => g.routes);
     expect(routes).toEqual(
       expect.arrayContaining([
         "/",
+        "/recipes",
         "/jobs",
         "/benchmarking",
         "/cluster",
@@ -148,67 +162,42 @@ describe("the header nav", () => {
     );
   });
 
-  /** Fleet was marked with a chip while multi-node had not been run on
-   *  hardware. It has, so the nav entry is a nav entry. */
-  it("carries no chip beside Fleet", () => {
-    renderLayout();
-    const fleet = primaryNav().getByRole("link", { name: /Fleet/ });
-    expect(fleet).toHaveTextContent(/^Fleet$/);
-  });
-
-  /** Benchmarking is a tab of Runs now, so the flag no longer removes a nav
-   *  entry — Runs is there either way. */
-  it("shows the same five groups whether or not benchmarking is enabled", () => {
+  /** Benchmarks has an entry only where the feature is on; off, `/benchmarking`
+   *  still answers and lights nothing rather than a dead link. */
+  it("lists Benchmarks only when benchmarking is enabled", () => {
     config = withAuth({ benchmarking_enabled: false });
     const { unmount } = renderLayout();
-    expect(primaryNav().getAllByRole("link")).toHaveLength(5);
+    expect(primaryNav().queryByRole("link", { name: "Benchmarks" })).toBeNull();
     unmount();
 
     config = withAuth({ benchmarking_enabled: true });
-    renderLayout();
-    expect(primaryNav().getAllByRole("link")).toHaveLength(5);
+    renderLayout("/benchmarking");
+    expect(primaryNav().getByRole("link", { name: "Benchmarks" })).toHaveAttribute("aria-current", "page");
   });
 });
 
 describe("the brand lockup", () => {
   it("reports the backend version beside the company", async () => {
     renderLayout();
-    expect(await screen.findByText("1.2.3")).toBeInTheDocument();
+    expect((await screen.findAllByText("1.2.3")).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Kharkevich Engineering Lab/).length).toBeGreaterThan(0);
   });
 
   it("goes home", () => {
     renderLayout("/settings");
-    expect(screen.getByRole("link", { name: /Spark Pulse home/ })).toHaveAttribute("href", "/");
+    for (const link of screen.getAllByRole("link", { name: /Spark Pulse home/ })) {
+      expect(link).toHaveAttribute("href", "/");
+    }
   });
 });
 
 describe("the header actions", () => {
-  it("cycles the theme system → light → dark and says which it is on", async () => {
-    const user = userEvent.setup();
+  it("leaves the theme and the language to Settings", () => {
     renderLayout();
-
-    const button = () => screen.getAllByRole("button", { name: /Colour theme/ })[0];
-    expect(button()).toHaveAttribute("aria-label", "Colour theme: System");
-    await user.click(button());
-    expect(button()).toHaveAttribute("aria-label", "Colour theme: Light");
-    await user.click(button());
-    expect(button()).toHaveAttribute("aria-label", "Colour theme: Dark");
-    await user.click(button());
-    expect(button()).toHaveAttribute("aria-label", "Colour theme: System");
-  });
-
-  it("offers the other language and marks the current one", async () => {
-    const user = userEvent.setup();
-    renderLayout();
-
-    const control = screen.getAllByRole("button", { name: /Language/ })[0];
-    expect(within(control).getByText("EN")).toHaveAttribute("aria-current", "true");
-    expect(within(control).getByText("FR")).not.toHaveAttribute("aria-current");
-
-    await user.click(control);
-    const after = screen.getAllByRole("button", { name: /Langue/ })[0];
-    expect(within(after).getByText("FR")).toHaveAttribute("aria-current", "true");
+    // Both are preferences set once, not controls used while reading a page;
+    // they live on Settings → Preferences and nowhere in the shell.
+    expect(screen.queryByRole("button", { name: /Colour theme/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Language/ })).toBeNull();
   });
 
   it("says nothing about a user when the installation has no auth", () => {
@@ -275,7 +264,7 @@ describe("the mobile menu", () => {
     renderLayout();
 
     await user.click(screen.getByRole("button", { name: "Menu" }));
-    await user.click(within(screen.getByTestId("mobile-nav")).getByRole("link", { name: /Fleet/ }));
+    await user.click(within(screen.getByTestId("mobile-nav")).getByRole("link", { name: "Nodes" }));
     expect(screen.queryByTestId("mobile-nav")).toBeNull();
   });
 

@@ -11,6 +11,7 @@ import {
 } from "@/lib/api";
 import type { DockerSettings, ModelSource } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import {
   Bot,
   Check,
@@ -23,19 +24,20 @@ import {
   Sun,
   Trash2,
   FlaskConical,
+  Undo2,
 } from "lucide-react";
 import { SunMoonIcon } from "@/components/BrandIcons";
 import { type ThemeMode, getTheme, setTheme } from "@/lib/theme";
 import { LANGUAGES, useI18n, useT } from "@/lib/i18n";
 import { getConfig, useConfig } from "@/lib/config";
-import SettingsSection from "@/components/SettingsSection";
+import SettingsSection, { SettingRow } from "@/components/SettingsSection";
+import Brief from "@/components/Brief";
 import SettingsLibrary from "@/components/SettingsLibrary";
 import SettingsMcp from "@/components/SettingsMcp";
 import {
   Button,
   Code,
   ErrorLine,
-  Field,
   IconButton,
   Input,
   Select,
@@ -96,26 +98,21 @@ function storedTab(): TabId | null {
   return null;
 }
 
-/** A form is read one field at a time, in order; a second column doubles the
- *  eye travel for every field. The one tab that is a reference table rather
- *  than a form — Environment — keeps two columns, because it is scanned. */
-const formCls = "max-w-3xl";
-const referenceCls = "grid grid-cols-1 items-start gap-x-12 lg:grid-cols-2";
-
-/** One read-only fact about how this process is configured. */
-function Fact({ label, value, hint }: { label: string; value: React.ReactNode; hint?: string }) {
+/** One read-only fact about how this process is configured: a row like any
+ *  setting, with the value where a control would be. */
+function Fact({ label, value, hint }: { label: string; value: React.ReactNode; hint?: React.ReactNode }) {
   return (
-    <div className="flex items-start justify-between gap-4 border-b border-line py-2.5 last:border-0">
+    <div className="grid grid-cols-1 gap-x-8 gap-y-1.5 min-[760px]:grid-cols-[minmax(0,45fr)_minmax(0,55fr)] min-[760px]:items-start">
       <div className="min-w-0">
-        <p className="text-[14px] font-medium">{label}</p>
-        {hint && <p className="mt-0.5 text-[13px] leading-snug text-muted">{hint}</p>}
+        <p className="text-[13.5px] font-medium">{label}</p>
+        {hint && <p className="mt-0.5 text-[12.5px] leading-snug text-muted">{hint}</p>}
       </div>
-      <div className="max-w-[55%] shrink-0 text-right">{value}</div>
+      <div className="flex min-w-0 flex-wrap items-center gap-2 break-all min-[760px]:justify-end min-[760px]:text-right">{value}</div>
     </div>
   );
 }
 
-/** A switch with its name and its one line of explanation. */
+/** A switch with its name and its one line of explanation, as a row. */
 function SwitchRow({
   label,
   hint,
@@ -124,19 +121,19 @@ function SwitchRow({
   onChange,
 }: {
   label: string;
-  hint: string;
+  hint: React.ReactNode;
   icon?: typeof Bot;
   on: boolean;
   onChange: (next: boolean) => void;
 }) {
   return (
-    <div className="flex items-start justify-between gap-4">
+    <div className="flex items-start justify-between gap-6">
       <div className="min-w-0">
-        <p className="flex items-center gap-1.5 text-[14px] font-medium">
+        <p className="flex items-center gap-1.5 text-[13.5px] font-medium">
           {Icon && <Icon size={14} className="text-muted" />}
           {label}
         </p>
-        <p className="mt-0.5 text-[13px] leading-snug text-muted">{hint}</p>
+        <p className="mt-0.5 text-[12.5px] leading-snug text-muted">{hint}</p>
       </div>
       <Toggle on={on} onChange={onChange} label={label} />
     </div>
@@ -369,6 +366,15 @@ export default function SettingsPage() {
     }
   };
 
+  const wide = useMediaQuery("(min-width: 900px)");
+
+  /** Put every field back to what the server holds. */
+  const discard = () => {
+    if (settings) setForm({ ...settings });
+    if (modelSources) setSources(modelSources);
+    setSaveError(null);
+  };
+
   const tabItems = useMemo(
     () => TABS.map(({ id, labelKey }) => ({ id, label: t(labelKey) })),
     [t],
@@ -384,52 +390,65 @@ export default function SettingsPage() {
 
   return (
     <div>
-      <PageHeader
-        eyebrow={t("nav.settings")}
-        title={t("settings.heading")}
-        description={t("settingsPage.subtitle")}
-        actions={
-          /* Save is on every tab, not on the three that happen to hold
-             `/api/settings` fields. One form means an edit on Containers is
-             still unsaved while the operator is reading Environment, and a
-             button that disappears when they look away is how it gets lost. */
-          <div className="flex flex-wrap items-center gap-3">
-            {saveError ? (
-              <ErrorLine>{saveError}</ErrorLine>
-            ) : saved ? (
-              <span className="text-[13px] text-good">
-                {t("settings.savedTo")} <Code>~/.config/spark-pulse/settings.json</Code>
-              </span>
-            ) : isDirty ? (
-              <span className="text-[13px] text-muted">{t("settings.unsaved")}</span>
-            ) : null}
-            <Button
-              variant="primary"
-              icon={saved ? Check : undefined}
-              loading={saving}
-              disabled={!isDirty}
-              onClick={handleSave}
-            >
-              {saving ? t("common.saving") : t("settings.save")}
-            </Button>
-          </div>
-        }
-      />
+      <PageHeader eyebrow={t("nav.settings")} title={t("settings.heading")} />
 
-      <Tabs
-        label={t("settings.title")}
-        value={tab}
-        onChange={(id) => selectTab(id as TabId)}
-        tabs={tabItems}
-        className="mb-8"
-      />
+      <div className="min-[900px]:grid min-[900px]:grid-cols-[180px_minmax(0,1100px)] min-[900px]:items-start min-[900px]:gap-6">
+        {wide ? (
+          <nav
+            role="tablist"
+            aria-orientation="vertical"
+            aria-label={t("settings.title")}
+            className="sticky top-[72px] flex flex-col gap-0.5"
+            onKeyDown={(e) => {
+              const at = TABS.findIndex((x) => x.id === tab);
+              let next = at;
+              if (e.key === "ArrowDown") next = (at + 1) % TABS.length;
+              else if (e.key === "ArrowUp") next = (at - 1 + TABS.length) % TABS.length;
+              else return;
+              e.preventDefault();
+              selectTab(TABS[next].id);
+              (e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next])?.focus();
+            }}
+          >
+            {tabItems.map((item) => {
+              const active = item.id === tab;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  tabIndex={active ? 0 : -1}
+                  onClick={() => selectTab(item.id as TabId)}
+                  className={
+                    active
+                      ? "rounded-sm bg-surface px-2.5 py-1.5 text-left text-[13.5px] font-medium text-text shadow-[inset_2px_0_0_var(--blue)]"
+                      : "rounded-sm px-2.5 py-1.5 text-left text-[13.5px] font-medium text-muted transition-colors hover:text-text"
+                  }
+                >
+                  {item.label}
+                </button>
+              );
+            })}
+          </nav>
+        ) : (
+          <Tabs
+            label={t("settings.title")}
+            value={tab}
+            onChange={(id) => selectTab(id as TabId)}
+            tabs={tabItems}
+            className="mb-4"
+          />
+        )}
 
+        <div className="min-w-0">
       {/* ── Deployment ───────────────────────────────────────────────────── */}
       {tab === "deployment" && (
-        <div className={formCls}>
+        <div>
           <SettingsSection first title={t("settings.defaults")}>
-            <Field label={t("settings.portRange")} hint={t("settings.portRangeHelp")}>
+            <SettingRow label={t("settings.portRange")} hint={<Brief text={t("settings.portRangeHelp")} />}>
               <div className="flex items-center gap-2">
+                <div className="w-28 min-w-0 shrink">
                 <Input
                   mono
                   aria-label={t("settings.portRangeStart")}
@@ -440,7 +459,9 @@ export default function SettingsPage() {
                   }
                   placeholder="9000"
                 />
+                </div>
                 <span className="shrink-0 text-[14px] text-muted">–</span>
+                <div className="w-28 min-w-0 shrink">
                 <Input
                   mono
                   aria-label={t("settings.portRangeEnd")}
@@ -451,12 +472,13 @@ export default function SettingsPage() {
                   }
                   placeholder="9100"
                 />
+                </div>
               </div>
-            </Field>
+            </SettingRow>
           </SettingsSection>
 
           <SettingsSection title={t("settings.timeouts")}>
-            <Field label={t("settings.readyTimeout")} hint={t("settings.readyTimeoutHelp")}>
+            <SettingRow label={t("settings.readyTimeout")} hint={<Brief text={t("settings.readyTimeoutHelp")} />}>
               {(control) => (
                 <div className="flex items-center gap-2">
                   {/* The width is on the wrapper, not the control: `Input` is
@@ -481,9 +503,9 @@ export default function SettingsPage() {
                   <span className="shrink-0 text-[14px] text-muted">{t("common.seconds")}</span>
                 </div>
               )}
-            </Field>
+            </SettingRow>
 
-            <Field label={t("settings.pullTimeout")} hint={t("settings.pullTimeoutHelp")}>
+            <SettingRow label={t("settings.pullTimeout")} hint={<Brief text={t("settings.pullTimeoutHelp")} />}>
               {(control) => (
                 <div className="flex items-center gap-2">
                   <div className="w-28 shrink-0">
@@ -505,9 +527,9 @@ export default function SettingsPage() {
                   <span className="shrink-0 text-[14px] text-muted">{t("common.seconds")}</span>
                 </div>
               )}
-            </Field>
+            </SettingRow>
 
-            <Field label={t("settings.retention")} hint={t("settings.retentionHelp")}>
+            <SettingRow label={t("settings.retention")} hint={<Brief text={t("settings.retentionHelp")} />}>
               {(control) => (
                 <div className="flex items-center gap-2">
                   <div className="w-28 shrink-0">
@@ -526,110 +548,120 @@ export default function SettingsPage() {
                   <span className="shrink-0 text-[14px] text-muted">{t("common.days")}</span>
                 </div>
               )}
-            </Field>
+            </SettingRow>
           </SettingsSection>
         </div>
       )}
 
       {/* ── Containers ───────────────────────────────────────────────────── */}
       {tab === "containers" && (
-        <div className={formCls}>
-          <SettingsSection first title={t("settings.limits")} hint={t("settings.limitsHelp")}>
+        <div>
+          <SettingsSection first title={t("settings.limits")} hint={<Brief text={t("settings.limitsHelp")} />}>
             <SwitchRow
               label={t("settings.privileged")}
-              hint={t("settings.privilegedHelp")}
+              hint={<Brief text={t("settings.privilegedHelp")} />}
               on={dockerCfg.privileged !== false}
               onChange={() => setDocker("privileged", dockerCfg.privileged === false)}
             />
 
-            <Field label={t("settings.memLimit")} hint={t("settings.memLimitHelp")}>
+            <SettingRow label={t("settings.memLimit")} hint={<Brief text={t("settings.memLimitHelp")} />}>
               {(control) => (
-                <Input
-                  {...control}
-                  mono
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={dockerCfg.memory_limit_gb ?? ""}
-                  onChange={(e) =>
-                    setDocker(
-                      "memory_limit_gb",
-                      e.target.value === "" ? null : parseFloat(e.target.value),
-                    )
-                  }
-                  placeholder={t("settings.noLimit")}
-                />
+                <div className="w-40">
+                  <Input
+                    {...control}
+                    mono
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={dockerCfg.memory_limit_gb ?? ""}
+                    onChange={(e) =>
+                      setDocker(
+                        "memory_limit_gb",
+                        e.target.value === "" ? null : parseFloat(e.target.value),
+                      )
+                    }
+                    placeholder={t("settings.noLimit")}
+                  />
+                </div>
               )}
-            </Field>
+            </SettingRow>
 
-            <Field label={t("settings.swapLimit")} hint={t("settings.swapLimitHelp")}>
+            <SettingRow label={t("settings.swapLimit")} hint={<Brief text={t("settings.swapLimitHelp")} />}>
               {(control) => (
-                <Input
-                  {...control}
-                  mono
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={dockerCfg.memory_swap_limit_gb ?? ""}
-                  onChange={(e) =>
-                    setDocker(
-                      "memory_swap_limit_gb",
-                      e.target.value === "" ? null : parseFloat(e.target.value),
-                    )
-                  }
-                  placeholder={t("settings.noLimit")}
-                />
+                <div className="w-40">
+                  <Input
+                    {...control}
+                    mono
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={dockerCfg.memory_swap_limit_gb ?? ""}
+                    onChange={(e) =>
+                      setDocker(
+                        "memory_swap_limit_gb",
+                        e.target.value === "" ? null : parseFloat(e.target.value),
+                      )
+                    }
+                    placeholder={t("settings.noLimit")}
+                  />
+                </div>
               )}
-            </Field>
+            </SettingRow>
 
-            <Field label={t("settings.shm")} hint={t("settingsPage.shmHelp")}>
+            <SettingRow label={t("settings.shm")} hint={<Brief text={t("settingsPage.shmHelp")} />}>
               {(control) => (
-                <Input
-                  {...control}
-                  mono
-                  type="number"
-                  min="1"
-                  step="1"
-                  value={Number(dockerCfg.shm_size_gb ?? 64)}
-                  onChange={(e) => setDocker("shm_size_gb", parseInt(e.target.value) || 64)}
-                  placeholder="64"
-                />
+                <div className="w-40">
+                  <Input
+                    {...control}
+                    mono
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={Number(dockerCfg.shm_size_gb ?? 64)}
+                    onChange={(e) => setDocker("shm_size_gb", parseInt(e.target.value) || 64)}
+                    placeholder="64"
+                  />
+                </div>
               )}
-            </Field>
+            </SettingRow>
 
-            <Field label={t("settings.pids")} hint={t("settingsPage.pidsHelp")}>
+            <SettingRow label={t("settings.pids")} hint={<Brief text={t("settingsPage.pidsHelp")} />}>
               {(control) => (
-                <Input
-                  {...control}
-                  mono
-                  type="number"
-                  min="64"
-                  step="64"
-                  value={Number(dockerCfg.pids_limit ?? 4096)}
-                  onChange={(e) => setDocker("pids_limit", parseInt(e.target.value) || 4096)}
-                  placeholder="4096"
-                />
+                <div className="w-40">
+                  <Input
+                    {...control}
+                    mono
+                    type="number"
+                    min="64"
+                    step="64"
+                    value={Number(dockerCfg.pids_limit ?? 4096)}
+                    onChange={(e) => setDocker("pids_limit", parseInt(e.target.value) || 4096)}
+                    placeholder="4096"
+                  />
+                </div>
               )}
-            </Field>
+            </SettingRow>
 
-            <Field label={t("settings.nofile")} hint={t("settingsPage.nofileHelp")}>
+            <SettingRow label={t("settings.nofile")} hint={<Brief text={t("settingsPage.nofileHelp")} />}>
               {(control) => (
-                <Input
-                  {...control}
-                  mono
-                  type="number"
-                  min="1024"
-                  step="1024"
-                  value={Number(dockerCfg.nofile_limit ?? 1048576)}
-                  onChange={(e) => setDocker("nofile_limit", parseInt(e.target.value) || 1048576)}
-                  placeholder="1048576"
-                />
+                <div className="w-40">
+                  <Input
+                    {...control}
+                    mono
+                    type="number"
+                    min="1024"
+                    step="1024"
+                    value={Number(dockerCfg.nofile_limit ?? 1048576)}
+                    onChange={(e) => setDocker("nofile_limit", parseInt(e.target.value) || 1048576)}
+                    placeholder="1048576"
+                  />
+                </div>
               )}
-            </Field>
+            </SettingRow>
           </SettingsSection>
 
           <SettingsSection title={t("settings.caches")}>
-            <Field label={t("settings.cacheDirs")} hint={t("settings.cacheDirsHelp")}>
+            <SettingRow label={t("settings.cacheDirs")} hint={<Brief text={t("settings.cacheDirsHelp")} />}>
               {(control) => (
                 <Textarea
                   {...control}
@@ -646,18 +678,18 @@ export default function SettingsPage() {
                   placeholder="~/.cache/vllm"
                 />
               )}
-            </Field>
+            </SettingRow>
 
             <SwitchRow
               label={t("settings.keepEntrypoint")}
-              hint={t("settings.keepEntrypointHelp")}
+              hint={<Brief text={t("settings.keepEntrypointHelp")} />}
               on={!!dockerCfg.keep_entrypoint}
               onChange={() => setDocker("keep_entrypoint", !dockerCfg.keep_entrypoint)}
             />
           </SettingsSection>
 
           <SettingsSection title={t("settings.mods")}>
-            <Field label={t("settings.modPolicy")} hint={t("settings.modPolicyHelp")}>
+            <SettingRow label={t("settings.modPolicy")} hint={<Brief text={t("settings.modPolicyHelp")} />}>
               <Select
                 aria-label={t("settings.modPolicyLabel")}
                 value={String(modCfg.network_policy ?? "warn")}
@@ -667,19 +699,19 @@ export default function SettingsPage() {
                 <option value="warn">{t("settings.modWarn")}</option>
                 <option value="deny">{t("settings.modDeny")}</option>
               </Select>
-            </Field>
+            </SettingRow>
           </SettingsSection>
         </div>
       )}
 
       {/* ── Features ─────────────────────────────────────────────────────── */}
       {tab === "features" && (
-        <div className={formCls}>
-          <SettingsSection first title={t("settings.features")} hint={t("settings.featuresHelp")}>
+        <div>
+          <SettingsSection first title={t("settings.features")} hint={<Brief text={t("settings.featuresHelp")} />}>
             <SwitchRow
               icon={FlaskConical}
               label={t("settings.benchmarking")}
-              hint={t("settings.benchmarkingHelp")}
+              hint={<Brief text={t("settings.benchmarkingHelp")} />}
               on={!!form.benchmarking_enabled}
               onChange={() => setForm({ ...form, benchmarking_enabled: !form.benchmarking_enabled })}
             />
@@ -691,14 +723,14 @@ export default function SettingsPage() {
             <SwitchRow
               icon={Network}
               label={t("settings.clusterMode")}
-              hint={t("settings.clusterModeHelp")}
+              hint={<Brief text={t("settings.clusterModeHelp")} />}
               on={!!form.cluster_enabled}
               onChange={() => setForm({ ...form, cluster_enabled: !form.cluster_enabled })}
             />
 
             <SwitchRow
               label={t("settings.agentAutoUpdate")}
-              hint={t("settings.agentAutoUpdateHelp")}
+              hint={<Brief text={t("settings.agentAutoUpdateHelp")} />}
               on={form.agent_auto_update !== false}
               onChange={() =>
                 setForm({ ...form, agent_auto_update: !(form.agent_auto_update !== false) })
@@ -709,11 +741,11 @@ export default function SettingsPage() {
                 it is *for* now has a tab of its own. */}
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
-                <p className="flex items-center gap-1.5 text-[14px] font-medium">
+                <p className="flex items-center gap-1.5 text-[13.5px] font-medium">
                   <Bot size={14} className="text-muted" />
                   {t("settings.mcpEndpoint")}
                 </p>
-                <p className="mt-0.5 text-[13px] leading-snug text-muted">
+                <p className="mt-0.5 text-[12.5px] leading-snug text-muted">
                   {t("settings.mcpFeatureHelp")}
                 </p>
               </div>
@@ -729,49 +761,49 @@ export default function SettingsPage() {
 
       {/* ── Library ──────────────────────────────────────────────────────── */}
       {tab === "library" && (
-        <div className="max-w-4xl">
+        <div>
           <SettingsLibrary form={form} setForm={setForm} sources={sources} setSources={setSources} />
         </div>
       )}
 
       {/* ── MCP ──────────────────────────────────────────────────────────── */}
       {tab === "mcp" && (
-        <div className="max-w-4xl">
+        <div>
           <SettingsMcp enabled={mcpEnabled} port={Number(settings?.webui_port ?? 8100)} />
         </div>
       )}
 
       {/* ── Preferences ──────────────────────────────────────────────────── */}
       {tab === "preferences" && (
-        <div className={formCls}>
-          <SettingsSection first title={t("preferences.appearance")} hint={t("preferences.themeNote")}>
-            <Field label={t("preferences.theme")}>
+        <div>
+          <SettingsSection first title={t("preferences.appearance")} hint={<Brief text={t("preferences.themeNote")} />}>
+            <SettingRow label={t("preferences.theme")}>
               <ThemePicker />
-            </Field>
+            </SettingRow>
           </SettingsSection>
 
-          <SettingsSection title={t("preferences.language")} hint={t("preferences.languageNote")}>
-            <Field label={t("preferences.languageLabel")}>
+          <SettingsSection title={t("preferences.language")} hint={<Brief text={t("preferences.languageNote")} />}>
+            <SettingRow label={t("preferences.languageLabel")}>
               <LanguagePicker />
-            </Field>
+            </SettingRow>
           </SettingsSection>
         </div>
       )}
 
       {/* ── Secrets ──────────────────────────────────────────────────────── */}
       {tab === "secrets" && (
-        <div className={formCls}>
+        <div>
           <SettingsSection
             first
             title={t("settings.secrets")}
-            hint={t("settings.hfHelp")}
+            hint={<Brief text={t("settings.hfHelp")} />}
             actions={
               <span className="rounded-sm border border-line bg-bg px-2 py-0.5 font-mono text-[12.5px] text-muted">
                 {t("settings.mode600")}
               </span>
             }
           >
-            <Field
+            <SettingRow
               label={t("settings.hfToken")}
               error={tokenError}
               hint={
@@ -826,19 +858,18 @@ export default function SettingsPage() {
                   )}
                 </div>
               )}
-            </Field>
+            </SettingRow>
           </SettingsSection>
         </div>
       )}
 
       {/* ── Environment ──────────────────────────────────────────────────── */}
       {tab === "environment" && environment && (
-        <div className={referenceCls}>
-          <SettingsSection first title={t("settings.runtime")} hint={t("settings.runtimeNote")}>
-            <div>
+        <div>
+          <SettingsSection first title={t("settings.runtime")} hint={<Brief text={t("settings.runtimeNote")} />}>
               <Fact
                 label={t("settings.stateStore")}
-                hint={t("settings.stateStoreHelp")}
+                hint={<Brief text={t("settings.stateStoreHelp")} />}
                 value={
                   <Code>
                     {environment.database_url ||
@@ -848,7 +879,7 @@ export default function SettingsPage() {
               />
               <Fact
                 label={t("settings.runtimeRow")}
-                hint={t("settings.runtimeRowHelp")}
+                hint={<Brief text={t("settings.runtimeRowHelp")} />}
                 value={<Code>{String(form.runtime ?? "native")}</Code>}
               />
               <Fact
@@ -863,7 +894,7 @@ export default function SettingsPage() {
               />
               <Fact
                 label={t("settings.workerThreads")}
-                hint={t("settings.workerThreadsHelp")}
+                hint={<Brief text={t("settings.workerThreadsHelp")} />}
                 value={<Code>{environment.thread_pool_size}</Code>}
               />
               {environment.image_registry?.mode && (
@@ -881,11 +912,9 @@ export default function SettingsPage() {
                   }
                 />
               )}
-            </div>
           </SettingsSection>
 
-          <SettingsSection first title={t("settings.access")} className="max-lg:mt-10 max-lg:border-t max-lg:border-line max-lg:pt-12">
-            <div>
+          <SettingsSection title={t("settings.access")}>
               <Fact
                 label={t("settings.auth")}
                 hint={environment.auth_enabled ? t("settings.authOn") : t("settings.authOff")}
@@ -902,12 +931,12 @@ export default function SettingsPage() {
               )}
               <Fact
                 label={t("settings.externalUrl")}
-                hint={t("settings.externalUrlHelp")}
+                hint={<Brief text={t("settings.externalUrlHelp")} />}
                 value={<Code>{environment.external_url || t("settings.notPinned")}</Code>}
               />
               <Fact
                 label={t("settings.origins")}
-                hint={t("settings.originsHelp")}
+                hint={<Brief text={t("settings.originsHelp")} />}
                 value={
                   <div className="space-y-0.5">
                     {environment.cors_allowed_origins.map((o) => (
@@ -920,7 +949,7 @@ export default function SettingsPage() {
               />
               <Fact
                 label={t("settings.mcpEndpoint")}
-                hint={t("settings.mcpHelp")}
+                hint={<Brief text={t("settings.mcpHelp")} />}
                 value={
                   environment.mcp_enabled ? (
                     <Code>{environment.mcp_path}</Code>
@@ -929,10 +958,49 @@ export default function SettingsPage() {
                   )
                 }
               />
-            </div>
           </SettingsSection>
         </div>
       )}
+
+          {/* The save bar exists only while there is something to save (or
+              something to say about the last save): one form across every
+              tab, so it follows the operator from tab to tab rather than
+              sitting disabled in a header nobody was looking at. */}
+          {(isDirty || saving || saved || saveError) && (
+            <div
+              data-testid="settings-save-bar"
+              className="sticky bottom-3 z-30 mt-4 flex flex-wrap items-center gap-3 rounded-md border border-line-strong bg-bg2 px-4 py-2.5 shadow-lg"
+            >
+              <div className="min-w-0 flex-1 text-[13px]">
+                {saveError ? (
+                  <ErrorLine>{saveError}</ErrorLine>
+                ) : saved ? (
+                  <span className="text-good">
+                    {t("settings.savedTo")} <Code>~/.config/spark-pulse/settings.json</Code>
+                  </span>
+                ) : (
+                  <span className="text-muted">{t("settings.unsaved")}</span>
+                )}
+              </div>
+              {isDirty && (
+                <Button size="sm" variant="ghost" icon={Undo2} onClick={discard} disabled={saving}>
+                  {t("settings.discard")}
+                </Button>
+              )}
+              <Button
+                size="sm"
+                variant="primary"
+                icon={saved && !isDirty ? Check : undefined}
+                loading={saving}
+                disabled={!isDirty}
+                onClick={handleSave}
+              >
+                {saving ? t("common.saving") : t("settings.save")}
+              </Button>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

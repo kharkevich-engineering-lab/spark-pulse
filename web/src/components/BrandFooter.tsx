@@ -13,15 +13,21 @@ import { cn } from "@/lib/utils";
  * product is not "for DGX Spark" any more, and a footer that repeats the
  * header's mark reads as clutter, not identity.
  */
-export function BrandFooter({ className }: { className?: string }) {
+export function BrandFooter({ className, compact = false }: { className?: string; compact?: boolean }) {
   const t = useT();
   return (
     <footer
       className={cn(
-        "w-full max-w-[1100px] mx-auto flex flex-col items-start gap-3",
-        "px-5 pt-6 pb-8 border-t border-line text-[12px] text-muted",
-        "min-[900px]:flex-row min-[900px]:items-center min-[900px]:justify-between",
-        "min-[900px]:gap-x-6 min-[900px]:px-7 min-[900px]:pt-7 min-[900px]:pb-10",
+        compact
+          ? // In the sidebar: the links over the copyright, at the foot of the
+            // nav, so the page itself ends where its content does.
+            "flex flex-col-reverse gap-2 border-t border-line px-1.5 pt-3 text-[11.5px] text-muted"
+          : cn(
+              "w-full max-w-[1400px] mx-auto flex flex-col items-start gap-3",
+              "px-4 pt-4 pb-6 border-t border-line text-[12px] text-muted",
+              "min-[900px]:flex-row min-[900px]:items-center min-[900px]:justify-between",
+              "min-[900px]:gap-x-6 min-[900px]:px-6 min-[900px]:pt-4 min-[900px]:pb-6",
+            ),
         className,
       )}
     >
@@ -29,7 +35,10 @@ export function BrandFooter({ className }: { className?: string }) {
         href="https://kharkevich.com"
         target="_blank"
         rel="noopener"
-        className="whitespace-nowrap text-muted no-underline hover:text-text hover:no-underline transition-colors"
+        className={cn(
+          !compact && "whitespace-nowrap",
+          "text-muted no-underline hover:text-text hover:no-underline transition-colors",
+        )}
       >
         © {new Date().getFullYear()} {t("brand.company")}
       </a>

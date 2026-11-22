@@ -87,7 +87,10 @@ afterEach(() => {
 
 Object.defineProperty(window, "matchMedia", {
   writable: true,
-  value: vi.fn().mockImplementation((query) => ({
+  // A plain function, not `vi.fn()`: a test that calls `vi.resetAllMocks()`
+  // would otherwise strip the implementation and every media query would read
+  // `undefined`.
+  value: (query: string) => ({
     matches: widthMatches(query),
     media: query,
     onchange: null,
@@ -96,7 +99,7 @@ Object.defineProperty(window, "matchMedia", {
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
     dispatchEvent: vi.fn(),
-  })),
+  }),
 });
 
 // Mock EventSource

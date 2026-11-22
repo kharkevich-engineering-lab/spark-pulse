@@ -1,24 +1,25 @@
-/** The hub's `.section-heading`, as a component.
+/** A page's toolbar row: title, one muted line, and the page's actions.
  *
- * Eyebrow and title on the left, the one-line description and the page's
- * actions on the right, aligned to the baseline of the title. Two equal
- * columns down to 900px, one column under it — so the description never
- * becomes a narrow ribbon beside a wide title.
+ * It used to be the hub's `.section-heading` — an 11px eyebrow over a 36px
+ * extrabold title, with the description in a second column — which is the
+ * right shape for a landing page and the wrong one for a tool: on a laptop it
+ * pushed the first useful row a third of the way down every page. A console
+ * names the page in the size of its body text and gives the screen to the
+ * data, so this is one row that wraps under 900px.
  *
- * Nothing calls this yet: the pages get it with the shell, in the next change.
- * It lands here so the shell is a layout change rather than a layout change
- * plus a new component.
+ * `eyebrow` is still accepted and rendered for screen readers only, so a page
+ * that names its section keeps saying so without spending a line on it.
  */
 
 import { cn } from "@/lib/utils";
 
 export interface PageHeaderProps {
-  /** 11px uppercase accent above the title — the section this page is in. */
+  /** The section this page is in. Read out, not drawn: the nav already shows it. */
   eyebrow?: string;
   title: string;
   /** One line. If it needs two sentences it belongs on the page, not here. */
   description?: React.ReactNode;
-  /** Buttons, right-aligned under the description. */
+  /** Buttons, right-aligned. */
   actions?: React.ReactNode;
   className?: string;
 }
@@ -27,28 +28,16 @@ export function PageHeader({ eyebrow, title, description, actions, className }: 
   return (
     <div
       className={cn(
-        "grid grid-cols-1 items-end gap-6 mb-8 min-[900px]:grid-cols-2 min-[900px]:gap-x-12",
+        "flex flex-wrap items-center gap-x-4 gap-y-2 mb-4 pb-3 border-b border-line",
         className,
       )}
     >
-      <div>
-        {eyebrow && (
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-brand-accent mb-2">
-            {eyebrow}
-          </p>
-        )}
-        <h1 className="text-[36px] font-extrabold tracking-[-0.03em] leading-tight max-[520px]:text-[28px]">
-          {title}
-        </h1>
+      <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-3 gap-y-0.5">
+        {eyebrow && <span className="sr-only">{eyebrow}</span>}
+        <h1 className="text-[20px] font-bold tracking-[-0.02em] leading-tight">{title}</h1>
+        {description && <p className="min-w-0 text-[13px] text-muted">{description}</p>}
       </div>
-      {(description || actions) && (
-        <div className="flex flex-col gap-3 min-[900px]:items-end">
-          {description && <p className="text-[15px] text-muted">{description}</p>}
-          {actions && (
-            <div className="flex flex-wrap items-center gap-2 min-[900px]:justify-end">{actions}</div>
-          )}
-        </div>
-      )}
+      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </div>
   );
 }

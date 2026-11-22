@@ -41,6 +41,8 @@ vi.mock("@/components/Layout", () => ({
 // Every routed page, stubbed to nothing but its own name. The factories are
 // hoisted above every local binding, so each one spells itself out.
 vi.mock("@/pages/RecipesPage", () => ({ default: () => <div>recipes page</div> }));
+vi.mock("@/pages/ModsPage", () => ({ default: () => <div>mods page</div> }));
+vi.mock("@/pages/OverviewPage", () => ({ default: () => <div>overview page</div> }));
 vi.mock("@/pages/RunsPage", () => ({
   default: ({ initialTab }: { initialTab?: string }) => <div>runs page {initialTab ?? "live"}</div>,
 }));
@@ -57,7 +59,9 @@ function renderAt(path: string) {
 }
 
 const ROUTES: [string, string][] = [
-  ["/", "recipes page"],
+  ["/", "overview page"],
+  ["/recipes", "recipes page"],
+  ["/mods", "mods page"],
   ["/jobs", "runs page live"],
   ["/cluster", "fleet page"],
   // Monitoring is a tab of Fleet, so the route renders the same page.
@@ -110,7 +114,7 @@ describe("App routing", () => {
   it("sends /benchmarking home while the backend has the feature off", async () => {
     renderAt("/benchmarking");
 
-    await waitFor(() => expect(screen.getByText("recipes page")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("overview page")).toBeInTheDocument());
     expect(screen.queryByText("runs page benchmarks")).toBeNull();
   });
 
@@ -131,6 +135,6 @@ describe("App routing", () => {
 
     await waitFor(() => expect(screen.getByTestId("shell")).toBeInTheDocument());
     expect(screen.queryByText("runs page benchmarks")).toBeNull();
-    expect(screen.queryByText("recipes page")).toBeNull();
+    expect(screen.queryByText("overview page")).toBeNull();
   });
 });

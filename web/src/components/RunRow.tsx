@@ -14,23 +14,25 @@
  * its latest benchmark, how long it has been serving, and the actions, which
  * are labelled buttons rather than icons because "square" and "flame" are not
  * words. Under 900px the column drops below the two lines and the actions
- * become full-width thirds, which is the only shape that gives a thumb a
- * 44px target at 390.
+ * become full-width halves, which is the only shape that gives a thumb a
+ * 44px target at 390. The name opens the run's own page, where the logs, the
+ * ranks and the events are.
  */
 
+import { Link } from "react-router-dom";
 import { useT, type Translator } from "@/lib/i18n";
 import { StatusBadge, Button, isSettling } from "@/ui";
 import { formatDuration, formatSize, servesChat } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import ServesChip from "./ServesChip";
 import { isLiveRun } from "@/hooks/useDeployments";
-import { Check, ChevronDown, ChevronUp, Flame, Square, Terminal, Trash2, X } from "lucide-react";
+import { Check, Flame, Square, Terminal, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import type { BenchmarkResult, Deployment } from "@/lib/types";
 import type { PullProgress } from "@/lib/operations";
 
 /** Seconds between two timestamps, floored at zero. */
-function secondsBetween(from: string, to: number | string): number {
+export function secondsBetween(from: string, to: number | string): number {
   const start = new Date(from).getTime();
   const end = typeof to === "number" ? to : new Date(to).getTime();
   if (!Number.isFinite(start) || !Number.isFinite(end)) return 0;
@@ -38,7 +40,7 @@ function secondsBetween(from: string, to: number | string): number {
 }
 
 /** A number out of a benchmark's result bag, when it is one. */
-function metric(result: BenchmarkResult | undefined, ...keys: string[]): number | null {
+export function metric(result: BenchmarkResult | undefined, ...keys: string[]): number | null {
   const results = result?.results as Record<string, unknown> | null | undefined;
   if (!results) return null;
   for (const key of keys) {
@@ -141,7 +143,7 @@ function useCopy() {
 }
 
 /** A curl that asks the run for a fun fact, copied in one click. */
-function CurlExample({ url, model }: { url: string; model: string }) {
+export function CurlExample({ url, model }: { url: string; model: string }) {
   const t = useT();
   const { state, copy } = useCopy();
   return (
@@ -178,7 +180,7 @@ function CurlExample({ url, model }: { url: string; model: string }) {
  *  it turns green and says "Copied to clipboard", where the operator is
  *  already looking. A clipboard that refuses (a non-secure origin) says so
  *  the same way, and the address stays selectable. */
-function Endpoint({ url }: { url: string }) {
+export function Endpoint({ url }: { url: string }) {
   const t = useT();
   const { state, copy } = useCopy();
   return (
@@ -211,25 +213,21 @@ export interface RunRowProps {
   run: Deployment;
   /** The most recent benchmark for this run, if one was ever taken. */
   benchmark?: BenchmarkResult;
-  expanded: boolean;
-  onToggle: () => void;
   /** Stop, cancel or remove — the row decides which word, the page confirms. */
   onTeardown: () => void;
   onBenchmark: () => void;
   /** The image pull's progress while the run is pulling, from its frames. */
   pull?: PullProgress;
-  /** The expanded panel: logs, ranks, the engine's metrics. */
-  children?: React.ReactNode;
 }
 
 /** Grid columns for the phone layout, one per action. Static classes, because
  *  Tailwind reads them out of the source rather than out of a template. */
 const ACTION_COLUMNS: Record<number, string> = {
+  1: "grid-cols-1",
   2: "grid-cols-2",
-  3: "grid-cols-3",
 };
 
-function Chip({ children, title }: { children: React.ReactNode; title?: string }) {
+export function Chip({ children, title }: { children: React.ReactNode; title?: string }) {
   return (
     <span
       title={title}
@@ -260,12 +258,9 @@ function Figure({ label, value, tone }: { label: string; value: string; tone?: "
 export default function RunRow({
   run,
   benchmark,
-  expanded,
-  onToggle,
   onTeardown,
   onBenchmark,
   pull,
-  children,
 }: RunRowProps) {
   const t = useT();
   const live = isLiveRun(run);
@@ -301,7 +296,7 @@ export default function RunRow({
   // Shown whether or not the feature is on: off, the launcher says so and
   // where to turn it on, rather than the button vanishing without a word.
   const benchmarkable = live && servesChat(run.serves);
-  const actionCount = benchmarkable ? 3 : 2;
+  const actionCount = benchmarkable ? 2 : 1;
 
   return (
     <div
@@ -311,14 +306,12 @@ export default function RunRow({
       <div className="flex flex-col gap-4 p-4 min-[900px]:flex-row min-[900px]:items-center min-[900px]:gap-6">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-            <button
-              type="button"
-              onClick={onToggle}
-              aria-expanded={expanded}
-              className="max-w-full truncate text-left text-[17px] font-semibold tracking-[-0.02em] hover:text-blue2"
+            <Link
+              to={`/jobs/${encodeURIComponent(run.id)}`}
+              className="max-w-full truncate text-[17px] font-semibold tracking-[-0.02em] text-text hover:text-blue2"
             >
               {run.name}
-            </button>
+            </Link>
             <StatusBadge status={run.status} sync={run.sync} syncReason={run.sync_reason} syncIntent={run.sync_intent} phase={run.phase} phaseVerified={run.phase_verified} phaseReason={run.phase_reason} progress={pull?.percent} />
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -389,14 +382,6 @@ export default function RunRow({
             <Figure label={live ? t("runs.serving") : t("runs.ended")} value={timing} />
           </div>
           <div className={cn("grid gap-2 min-[900px]:flex", ACTION_COLUMNS[actionCount])}>
-            <Button
-              size="sm"
-              icon={expanded ? ChevronUp : ChevronDown}
-              aria-expanded={expanded}
-              onClick={onToggle}
-            >
-              {t("runs.logs")}
-            </Button>
             {benchmarkable && (
               <Button size="sm" icon={Flame} onClick={onBenchmark} disabled={run.status !== "running" || measuring} loading={measuring}>
                 {t("runs.benchmark")}
@@ -415,7 +400,6 @@ export default function RunRow({
           </div>
         </div>
       </div>
-      {expanded && <div className="border-t border-line">{children}</div>}
     </div>
   );
 }

@@ -62,17 +62,37 @@ describe("NodeDoctor", () => {
     vi.mocked(treatNode).mockResolvedValue(report());
   });
 
-  it("diagnoses on open and groups findings by who can fix them", async () => {
+  it("diagnoses on open, worst first, and says who can fix each", async () => {
+    const user = userEvent.setup();
     render(<NodeDoctor node={node()} onChanged={() => {}} />);
     const findings = await screen.findByTestId("doctor-findings");
-    expect(within(findings).getByText("docker-socket")).toBeInTheDocument();
-    expect(findings).toHaveTextContent("Fixable from here");
-    expect(findings).toHaveTextContent("Needs someone on that node");
-    expect(findings).toHaveTextContent("usermod -aG docker spark");
+    const rows = within(findings).getAllByRole("row");
+    // Header, the broken one, the warning, then the fold for the rest.
+    expect(rows[1]).toHaveTextContent("docker-socket");
+    expect(rows[1]).toHaveTextContent("Fixable from here");
+    expect(rows[2]).toHaveTextContent("disk");
+    expect(rows[2]).toHaveTextContent("Needs someone on that node");
     expect(screen.getByText("2 to look at")).toBeInTheDocument();
+    // The remedy is one hover away, not a paragraph under every check.
+    expect(findings).not.toHaveTextContent("usermod -aG docker spark");
+    await user.click(within(rows[1]).getByRole("button", { name: "How to fix" }));
+    expect(screen.getByRole("tooltip")).toHaveTextContent("usermod -aG docker spark");
     expect(fetchNodeDoctor).toHaveBeenCalledWith("peer");
     // Diagnosis alone never repairs.
     expect(treatNode).not.toHaveBeenCalled();
+  });
+
+  it("folds what passed into one row, and opens it on request", async () => {
+    const user = userEvent.setup();
+    render(<NodeDoctor node={node()} onChanged={() => {}} />);
+    const findings = await screen.findByTestId("doctor-findings");
+    expect(within(findings).queryByText("unit")).toBeNull();
+    const fold = within(findings).getByRole("button", { name: "1 more check, passed or not looked at" });
+    expect(fold).toHaveAttribute("aria-expanded", "false");
+    await user.click(fold);
+    expect(within(findings).getByTestId("doctor-check-unit")).toHaveTextContent("active and enabled");
+    // A passing check carries no remedy and no verdict.
+    expect(within(screen.getByTestId("doctor-check-unit")).queryByRole("button")).toBeNull();
   });
 
   it("offers a repair only for fixable findings, and passes the sudo password", async () => {

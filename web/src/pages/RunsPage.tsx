@@ -14,23 +14,18 @@
  * something you do to a run. `/benchmarking` still answers; it opens this page
  * on that tab.
  *
- * The rows are `RunRow`. What stays here is everything that needs one row open
- * at a time: the log stream, the per-rank read, the engine's metrics window.
+ * The list is `RunsTable` on a wide screen and `RunRow`'s cards under it,
+ * full width either way. A run opens on its own page, `/jobs/:id`
+ * (`RunDetailPage`), where the log stream, the per-rank read, the engine's
+ * metrics window and the event timeline are.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Navigate, useSearchParams } from "react-router-dom";
 import { useI18n } from "@/lib/i18n";
 import { useConfig } from "@/lib/config";
-import {
-  fetchBenchmarks,
-  fetchDeployment,
-  fetchDeploymentEvents,
-  fetchEngineMetrics,
-  stopDeployment,
-  connectLogStream,
-} from "@/lib/api";
-import { eventFromFrame, mergeEvents, latestPullProgress } from "@/lib/operations";
-import type { DeploymentEvent } from "@/lib/operations";
+import { fetchBenchmarks, stopDeployment, cancelScheduledDeploy } from "@/lib/api";
+import { latestPullProgress } from "@/lib/operations";
 import { useQuery } from "@/hooks/useQuery";
 import { useDeployments, isLiveRun } from "@/hooks/useDeployments";
 import {
@@ -41,31 +36,21 @@ import {
   PageHeader,
   Spinner,
   Tabs,
+  Button,
+  Toolbar,
+  SearchInput,
+  matchesQuery,
 } from "@/ui";
-import EventStreamViewer from "@/components/EventStreamViewer";
-import RankList from "@/components/RankList";
-import EngineMetricsPanel from "@/components/EngineMetrics";
 import RunRow from "@/components/RunRow";
+import { RunsTable, runPath, teardownKind } from "@/components/RunsTable";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import WaitingRunRow from "@/components/WaitingRunRow";
 import { useWaitingDeploys } from "@/hooks/useWaitingDeploys";
-import { cancelScheduledDeploy } from "@/lib/api";
 import BenchmarkLauncher from "@/components/BenchmarkLauncher";
 import BenchmarksPanel from "@/components/BenchmarksPanel";
-import { Terminal } from "lucide-react";
-import type { BenchmarkResult, Deployment, EngineMetricsWindow } from "@/lib/types";
-
-/** How often the open row's per-rank state is re-read, in ms. Matches the
- *  list's own poll so the two never drift by more than one interval. */
-const RANK_POLL_MS = 10000;
-
-/** How often the open row re-reads the engine's metrics window, in ms.
- *  Matches the backend sampler's own cadence: reading faster would return the
- *  same window twice and would not make a new measurement exist. */
-const METRICS_POLL_MS = 5000;
-
-/** How many stored events the open row reads. One page, newest first: a
- *  thousand-event run is a scroll, not a reason to hold a thousand rows. */
-const EVENT_HISTORY_LIMIT = 200;
+import { Rocket, Terminal } from "lucide-react";
+import { openCommandPalette } from "@/components/CommandPalette";
+import type { BenchmarkResult, Deployment } from "@/lib/types";
 
 export type RunTab = "live" | "finished" | "benchmarks";
 
@@ -79,7 +64,7 @@ export default function RunsPage({ initialTab }: RunsPageProps = {}) {
   const { config } = useConfig();
   const benchmarkingEnabled = config?.benchmarking_enabled ?? false;
 
-  const { deployments, loading, error, refetch, events, clearEvents } = useDeployments();
+  const { deployments, loading, error, refetch, events } = useDeployments();
 
   // Only asked for when the feature is on: with it off there is no launcher,
   // no tab and nothing on a row to fill, so the request would be for nothing.
@@ -117,6 +102,12 @@ export default function RunsPage({ initialTab }: RunsPageProps = {}) {
   }, [benchmarks]);
 
   const live = useMemo(() => (deployments ?? []).filter(isLiveRun), [deployments]);
+  // The search narrows both lists; the counts in the pills stay the totals.
+  const [query, setQuery] = useState("");
+  const matchesRun = useCallback(
+    (r: Deployment) => matchesQuery(query, r.name, r.model, r.engine, r.variant, r.recipe_id, r.id),
+    [query],
+  );
   const pulls = useMemo(() => latestPullProgress(events), [events]);
   // Deploys waiting on their model: not runs yet, but the thing the operator
   // just started, so they are counted and shown with what is live.
@@ -126,6 +117,8 @@ export default function RunsPage({ initialTab }: RunsPageProps = {}) {
     () => (deployments ?? []).filter((d) => !isLiveRun(d)),
     [deployments],
   );
+  const shownLive = useMemo(() => live.filter(matchesRun), [live, matchesRun]);
+  const shownFinished = useMemo(() => finished.filter(matchesRun), [finished, matchesRun]);
 
   /** The operator's choice, once they make one. Until then the page opens on
    *  whichever pill has something in it — landing on an empty Live tab while
@@ -135,196 +128,17 @@ export default function RunsPage({ initialTab }: RunsPageProps = {}) {
     chosenTab ?? (live.length === 0 && waitingCount === 0 && finished.length > 0 ? "finished" : "live");
   if (tab === "benchmarks" && !benchmarkingEnabled) tab = "live";
 
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  /** The open row's live detail. Only ever the one row — see `rankDetail`. */
-  const [detail, setDetail] = useState<Deployment | null>(null);
-  /** Which deployment's detail is currently wanted, for discarding late replies. */
-  const wantedRef = useRef<string | null>(null);
-  const [logs, setLogs] = useState<Record<string, string[]>>({});
-  const [streaming, setStreaming] = useState<Record<string, boolean>>({});
-  const logRef = useRef<Record<string, HTMLDivElement | null>>({});
-  const stopRef = useRef<Record<string, () => void>>({});
-  const atBottomRef = useRef<Record<string, boolean>>({});
-  /** The open row's stored event history, and which row it belongs to.
-   *
-   * The SSE connection carries only what has happened since the page loaded,
-   * which is nothing at all for a run that finished an hour ago — the panel
-   * said "No events to display" under a footer promising thirty days of
-   * retention. The row now reads `GET /deployments/{id}/events` when it opens
-   * and the live frames are appended to that. */
-  const [history, setHistory] = useState<{
-    id: string;
-    events: DeploymentEvent[];
-    total: number;
-  } | null>(null);
-  const [historyLoading, setHistoryLoading] = useState(false);
-  const historyWantedRef = useRef<string | null>(null);
-  /** The open row's engine metrics window, and which row it belongs to. */
-  const [metrics, setMetrics] = useState<EngineMetricsWindow | null>(null);
-  const [metricsLoading, setMetricsLoading] = useState(false);
-  const metricsWantedRef = useRef<string | null>(null);
   const [teardownTarget, setTeardownTarget] = useState<Deployment | null>(null);
   const [alertModal, setAlertModal] = useState<{ title: string; message: string } | null>(null);
   const [benchmarkTarget, setBenchmarkTarget] = useState<Deployment | null>(null);
 
-  /** Read one deployment's live per-rank container state.
-   *
-   * The list deliberately does not carry it. `GET /deployments` is a single
-   * Docker enumerate on this machine however many deployments and ranks there
-   * are; a rank's live state is an inspect *per rank*, through that rank's own
-   * node. Putting that in the list would charge four agent round trips per
-   * four-node deployment on every ten-second poll — for rows nobody has
-   * opened. So it is paid for one deployment, only while its row is open.
-   *
-   * A failure leaves the list's ranks standing: no container state is the
-   * status quo, and an error banner over a log pane would say less than the
-   * row's own badge already does.
-   */
-  const loadDetail = useCallback((id: string) => {
-    // Asked for a row that is no longer the one wanted: not sent, and a reply
-    // that arrives after the row changed is dropped rather than shown against
-    // whatever is open now.
-    if (wantedRef.current !== id) return;
-    fetchDeployment(id)
-      .then((dep) => { if (wantedRef.current === id) setDetail(dep); })
-      .catch(() => {});
-  }, []);
-
-  // Only a running deployment is asked. A pending one has no containers yet
-  // and a stopped one has none by design; inspecting either would paint every
-  // rank red for saying exactly what the row already says.
-  const expandedRunning =
-    expandedId && deployments?.find((d) => d.id === expandedId)?.status === "running"
-      ? expandedId
-      : null;
-  wantedRef.current = expandedRunning;
-
-  useEffect(() => {
-    setDetail(null);
-    if (!expandedRunning) return;
-    loadDetail(expandedRunning);
-    const i = setInterval(() => loadDetail(expandedRunning), RANK_POLL_MS);
-    return () => clearInterval(i);
-  }, [expandedRunning, loadDetail]);
-
-  /** The open row's detail, or nothing when it belongs to another row. */
-  const rankDetail = (id: string) => (detail && detail.id === id ? detail : null);
-
-  /** Read the open row's engine metrics window.
-   *
-   * Asked for every open row, running or not: a stopped deployment answers
-   * with "there is no engine to ask", which is worth showing. A failure is
-   * left as the previous window rather than blanked, because a single missed
-   * poll is not evidence that the engine stopped publishing.
-   */
-  const loadMetrics = useCallback((id: string) => {
-    if (metricsWantedRef.current !== id) return;
-    fetchEngineMetrics(id)
-      .then((w) => {
-        if (metricsWantedRef.current !== id) return;
-        setMetrics(w);
-        setMetricsLoading(false);
-      })
-      .catch(() => {
-        if (metricsWantedRef.current === id) setMetricsLoading(false);
-      });
-  }, []);
-
-  metricsWantedRef.current = expandedId;
-
-  useEffect(() => {
-    setMetrics(null);
-    if (!expandedId) return;
-    setMetricsLoading(true);
-    loadMetrics(expandedId);
-    const i = setInterval(() => loadMetrics(expandedId), METRICS_POLL_MS);
-    return () => clearInterval(i);
-  }, [expandedId, loadMetrics]);
-
-  /** The open row's metrics window, or nothing when it belongs to another. */
-  const metricsFor = (id: string) =>
-    metrics && metrics.deployment_id === id ? metrics : null;
-
-  /** Read one run's stored timeline. Read once, when the row opens: the store
-   *  is append-only and the live stream carries everything that lands after.
-   *
-   * A failure leaves the panel on the live frames alone — which is what it
-   * had before this existed — rather than replacing a working list with an
-   * error about the half of it that could not be read. */
-  useEffect(() => {
-    historyWantedRef.current = expandedId;
-    setHistory(null);
-    if (!expandedId) {
-      setHistoryLoading(false);
-      return;
-    }
-    const id = expandedId;
-    setHistoryLoading(true);
-    fetchDeploymentEvents(id, { limit: EVENT_HISTORY_LIMIT })
-      .then((page) => {
-        if (historyWantedRef.current !== id) return;
-        setHistory({
-          id,
-          events: page.events.map(eventFromFrame),
-          total: page.total,
-        });
-        setHistoryLoading(false);
-      })
-      .catch(() => {
-        if (historyWantedRef.current === id) setHistoryLoading(false);
-      });
-  }, [expandedId]);
-
-  /** What the panel shows: the live frames for this run over its history,
-   *  every event once. The live frame wins a tie — it and the stored row are
-   *  the same event under the same id, and the id is what makes that
-   *  knowable. */
-  const timelineFor = (id: string) => {
-    const live = events.filter((e) => e.resource === id);
-    const stored = history && history.id === id ? history.events : [];
-    const merged = mergeEvents(live, stored);
-    const held = history && history.id === id ? history.total : 0;
-    return { events: merged, total: Math.max(held, merged.length) };
-  };
-
-  // Auto-scroll only if already pinned to the bottom
-  useEffect(() => {
-    if (!expandedId) return;
-    const el = logRef.current[expandedId];
-    if (el && atBottomRef.current[expandedId] !== false) {
-      el.scrollTop = el.scrollHeight;
-    }
-  }, [logs[expandedId || ""]]);
-
-  const handleLogScroll = (id: string) => {
-    const el = logRef.current[id];
-    if (el) atBottomRef.current[id] = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-  };
-
-  const toggle = (id: string) => {
-    if (expandedId === id) { stopRef.current[id]?.(); setStreaming((s) => ({ ...s, [id]: false })); setExpandedId(null); return; }
-    setExpandedId(id);
-    atBottomRef.current[id] = true; // start pinned to bottom
-    setStreaming((s) => ({ ...s, [id]: true }));
-    stopRef.current[id] = connectLogStream(id, (event, data) => {
-      if (event === "log") {
-        setLogs((l) => {
-          const prev = l[id] || [];
-          return { ...l, [id]: [...prev.slice(-499), (data as { text: string }).text] };
-        });
-      }
-      else if (event === "status") { refetch(); loadDetail(id); }
-      // The stream is over — the deployment is no longer running, so there is
-      // nothing further to tail. The connection has already closed itself.
-      else if (event === "end") { setStreaming((s) => ({ ...s, [id]: false })); }
-    });
-  };
+  // `?run=<id>` — an older link to one run. The run has a page of its own now.
+  const [searchParams] = useSearchParams();
+  const linkedRun = searchParams.get("run");
 
   const doTeardown = async (id: string) => {
     try {
       await stopDeployment(id);
-      stopRef.current[id]?.();
-      setStreaming((s) => ({ ...s, [id]: false }));
       refetch();
     } catch (e) {
       setAlertModal({
@@ -334,95 +148,17 @@ export default function RunsPage({ initialTab }: RunsPageProps = {}) {
     }
   };
 
-  /** Which of the three words the confirmation uses. A live deployment is
-   *  stopped, one that never started is cancelled, and a finished one is a
-   *  record being cleared — three different consequences, three dialogs. */
-  const teardownKind = (run: Deployment) =>
-    !isLiveRun(run) ? "remove" : run.status === "pending" ? "cancel" : "stop";
-
-  const renderExpanded = (run: Deployment) => (
-    <>
-      <dl className="grid grid-cols-[auto,1fr] gap-x-4 gap-y-1 border-b border-line bg-bg px-4 py-3 text-[13px]">
-        <dt className="text-muted">{t("runs.recipe")}</dt>
-        <dd className="truncate font-mono">{run.recipe_id}</dd>
-        {run.engine && (
-          <>
-            <dt className="text-muted">{t("runs.engine")}</dt>
-            <dd className="truncate font-mono">{run.engine}{run.variant ? `/${run.variant}` : ""}</dd>
-          </>
-        )}
-        {run.image_ref && (
-          <>
-            <dt className="text-muted">{t("runs.image")}</dt>
-            <dd className="truncate font-mono">{run.image_ref}</dd>
-          </>
-        )}
-        <dt className="text-muted">{t("runs.model")}</dt>
-        <dd className="truncate font-mono">{run.model || t("runs.modelFromCommand")}</dd>
-        {run.container_name && (
-          <>
-            <dt className="text-muted">{t("runs.container")}</dt>
-            <dd className="truncate font-mono">{run.container_name}</dd>
-          </>
-        )}
-      </dl>
-      <RankList
-        ranks={rankDetail(run.id)?.ranks ?? run.ranks}
-        orphans={rankDetail(run.id)?.orphans ?? run.orphans}
-        className="border-b border-line bg-bg px-4 py-3"
-      />
-      <EngineMetricsPanel
-        window={metricsFor(run.id)}
-        loading={metricsLoading}
-        className="border-b border-line bg-bg px-4 py-3"
-      />
-      <div className="flex items-center gap-2 bg-bg px-4 py-2 text-[13px] text-muted">
-        {streaming[run.id] ? (
-          <span className="flex items-center gap-1.5">
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-good" />
-            {t("runs.streaming")}
-          </span>
-        ) : (
-          <span>{t("runs.streamStopped")}</span>
-        )}
-        <button onClick={() => toggle(run.id)} className="ml-auto text-blue2 hover:underline">
-          {t("runs.hide")}
-        </button>
-      </div>
-      <div
-        ref={(el) => { logRef.current[run.id] = el; }}
-        onScroll={() => handleLogScroll(run.id)}
-        className="max-h-[60vh] min-h-[240px] overflow-auto whitespace-pre-wrap bg-bg p-4 font-mono text-[13px] text-text"
-      >
-        {(logs[run.id] || [t("runs.noLogs")]).map((line, i) => (
-          <div key={i} className="leading-relaxed text-muted last:text-text">{line}</div>
-        ))}
-      </div>
-      <div className="border-t border-line p-4">
-        {(() => {
-          const timeline = timelineFor(run.id);
-          return (
-            <EventStreamViewer
-              events={timeline.events}
-              total={timeline.total}
-              loading={historyLoading && expandedId === run.id}
-              resource={run.id}
-              onClear={() => {
-                // The panel is cleared, not the store: re-opening the row
-                // reads the timeline back. Nothing an operator can click here
-                // should be able to destroy the history of a run.
-                clearEvents(run.id);
-                setHistory({ id: run.id, events: [], total: 0 });
-              }}
-            />
-          );
-        })()}
-      </div>
-    </>
-  );
+  // A console lays runs out as a table; under 1200px the rows stay cards.
+  // Either way the list has the width, and a run opens on its own page.
+  const wide = useMediaQuery("(min-width: 1200px)");
 
   const renderList = (runs: Deployment[], empty: React.ReactNode) => {
     if (runs.length === 0) return empty;
+    if (wide) {
+      return (
+        <RunsTable runs={runs} onTeardown={setTeardownTarget} benchmarks={latestBenchmark} pulls={pulls} />
+      );
+    }
     return (
       <div className="space-y-2">
         {runs.map((run) => (
@@ -431,13 +167,9 @@ export default function RunsPage({ initialTab }: RunsPageProps = {}) {
             run={run}
             benchmark={latestBenchmark.get(run.id)}
             pull={run.status === "pulling" ? pulls.get(run.id) : undefined}
-            expanded={expandedId === run.id}
-            onToggle={() => toggle(run.id)}
             onTeardown={() => setTeardownTarget(run)}
             onBenchmark={() => setBenchmarkTarget(run)}
-          >
-            {renderExpanded(run)}
-          </RunRow>
+          />
         ))}
       </div>
     );
@@ -471,20 +203,33 @@ export default function RunsPage({ initialTab }: RunsPageProps = {}) {
     </div>
   );
 
+  if (linkedRun) return <Navigate to={runPath(linkedRun)} replace />;
+
   return (
     <div className="space-y-6">
       <PageHeader
         eyebrow={t("nav.runs")}
         title={t("runs.heading")}
-        description={t("runs.subtitle")}
+        description={t("runs.counts", { live: live.length, finished: finished.length })}
+        actions={
+          <Button variant="primary" icon={Rocket} onClick={openCommandPalette}>
+            {t("overview.deploy")}
+          </Button>
+        }
       />
 
-      <Tabs
-        label={t("runs.heading")}
-        value={tab}
-        onChange={(id) => setChosenTab(id as RunTab)}
-        tabs={tabs}
-      />
+      {/* Search, then the filters — the order every list page uses. */}
+      <Toolbar>
+        {tab !== "benchmarks" && (
+          <SearchInput value={query} onChange={setQuery} label={t("runs.search")} clearLabel={t("common.clear")} />
+        )}
+        <Tabs
+          label={t("runs.heading")}
+          value={tab}
+          onChange={(id) => setChosenTab(id as RunTab)}
+          tabs={tabs}
+        />
+      </Toolbar>
 
       {loading && (
         <div className="flex justify-center py-20">
@@ -508,7 +253,7 @@ export default function RunsPage({ initialTab }: RunsPageProps = {}) {
         <div className="space-y-2">
           {waitingRows}
           {renderList(
-            live,
+            shownLive,
             waitingCount > 0 ? null : (
               <EmptyState icon={Terminal} hint={t("runs.noneLiveHint")}>
                 {t("runs.noneLive")}
@@ -518,7 +263,7 @@ export default function RunsPage({ initialTab }: RunsPageProps = {}) {
         </div>
       ) : (
         renderList(
-          finished,
+          shownFinished,
           <EmptyState icon={Terminal} hint={t("runs.noneFinishedHint")}>
             {t("runs.noneFinished")}
           </EmptyState>,

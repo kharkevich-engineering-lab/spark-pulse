@@ -1,4 +1,4 @@
-/** The app shell: one header, five groups, and a menu that fits a phone.
+/** The app shell: one header, six groups, and a menu that fits a phone.
  *
  * Runs under both projects. The desktop project reads the header nav; the
  * mobile one presses the menu button first, which is the whole difference —
@@ -13,6 +13,7 @@ import {
   gotoPage,
   navLabel,
   openNav,
+  readConfig,
   stubMemoryEndpoints,
 } from "./helpers";
 
@@ -20,15 +21,16 @@ test("loads the SPA and renders the shell", async ({ page }) => {
   await gotoPage(page, "/");
 
   await expect(page.getByRole("link", { name: /Spark Pulse home/ })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Recipes and mods." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Overview." })).toBeVisible();
   await expectNoCrash(page);
 });
 
-test("the nav lists every group and nothing else", async ({ page }) => {
+test("the sidebar lists every object type and nothing else", async ({ page, request }) => {
+  const config = await readConfig(request);
   await gotoPage(page, "/");
 
   const links = (await openNav(page)).getByRole("link");
-  const expected = expectedNavLabels();
+  const expected = expectedNavLabels(config.benchmarking_enabled);
 
   await expect(links).toHaveCount(expected.length);
   expect((await links.allInnerTexts()).map(navLabel)).toEqual(expected);
@@ -55,8 +57,8 @@ test("marks the group a route belongs to, not only the route itself", async ({ p
   await stubMemoryEndpoints(page);
 
   for (const [path, label] of [
-    ["/monitoring", "Fleet"],
-    ["/engines", "Library"],
+    ["/monitoring", "Nodes"],
+    ["/cache", "Models"],
     ["/mcp", "Settings"],
   ] as const) {
     await gotoPage(page, path);
@@ -71,7 +73,8 @@ test("reports the backend version in the brand lockup", async ({ page, request }
   const { version } = (await response.json()) as { version: string };
 
   await gotoPage(page, "/");
-  await expect(page.getByText(version, { exact: true })).toBeVisible();
+  // The brand is drawn once per layout (sidebar, phone header); one is shown.
+  await expect(page.getByText(version, { exact: true }).locator("visible=true")).toHaveCount(1);
 });
 
 /** The old shell put a hamburger at `fixed top-4 left-4` and the user chip at
@@ -80,7 +83,7 @@ test("reports the backend version in the brand lockup", async ({ page, request }
 test("the shell does not overlap the page", async ({ page }) => {
   await gotoPage(page, "/");
 
-  const title = page.getByRole("heading", { name: "Recipes and mods." });
+  const title = page.getByRole("heading", { name: "Overview." });
   const titleBox = await title.boundingBox();
   expect(titleBox).not.toBeNull();
 
@@ -117,7 +120,7 @@ test.describe("the menu", () => {
       await expect(nav.getByRole("link", { name: group.label })).toBeVisible();
     }
 
-    await nav.getByRole("link", { name: "Fleet" }).click();
+    await nav.getByRole("link", { name: "Nodes" }).click();
     await expect(page).toHaveURL(/\/cluster$/);
     await expect(page.getByTestId("mobile-nav")).toHaveCount(0);
   });

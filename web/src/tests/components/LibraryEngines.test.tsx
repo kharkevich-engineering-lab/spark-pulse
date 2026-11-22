@@ -9,7 +9,7 @@
 
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { translatorFor } from "@/lib/i18n";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import LibraryPage from "@/pages/LibraryPage";
@@ -237,7 +237,7 @@ describe("updateReason", () => {
   });
 
   it("calls out an image that was never pulled", () => {
-    expect(updateReason(IMAGES[2], T)).toBe("not pulled");
+    expect(updateReason(IMAGES[2], T)).toBe("Not pulled");
   });
 
   it("says nothing about an up-to-date image", () => {
@@ -274,13 +274,58 @@ describe("Library — engines", () => {
     vi.mocked(fetchSettings).mockResolvedValue(SETTINGS);
   });
 
+  it("opens a row in place, acts from the row, and closes it again", async () => {
+    const user = userEvent.setup();
+    vi.mocked(fetchImagePresence).mockResolvedValue({ ref: DRIFTED, local: true, image_id: "x", nodes: [] });
+    vi.mocked(startImagePull).mockResolvedValue({ id: "j2", ref: DRIFTED, status: "queued" } as never);
+    renderPage();
+
+    await user.click(await screen.findByTestId(`engine-${DRIFTED}`));
+    // What the engine is opens under its row, not in a panel beside the list.
+    expect(await screen.findByTestId(`engine-detail-${DRIFTED}`)).toBeInTheDocument();
+
+    const row = screen.getByTestId(`engine-${DRIFTED}`);
+    await user.click(within(row).getByLabelText(`Pull ${DRIFTED}`));
+    expect(startImagePull).toHaveBeenCalledWith(DRIFTED);
+
+    await user.click(within(row).getByLabelText(/^Copy /));
+    expect(await screen.findByRole("dialog", { name: "Copy this image" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await user.click(within(row).getByLabelText(/^Delete /));
+    expect(await screen.findByRole("dialog", { name: "Delete this image" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    // A second click on the same row folds it again.
+    await user.click(screen.getByTestId(`engine-${DRIFTED}`));
+    expect(screen.queryByTestId(`engine-detail-${DRIFTED}`)).toBeNull();
+  });
+
+  it("cancels the pull dialog, and reports a pull that failed", async () => {
+    const user = userEvent.setup();
+    vi.mocked(fetchImagePresence).mockResolvedValue({ ref: DRIFTED, local: true, image_id: "x", nodes: [] });
+    vi.mocked(startImagePull).mockRejectedValue(new Error("manifest unknown"));
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "Pull image" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByLabelText("Image reference")).toBeNull();
+
+    await user.click(screen.getByLabelText(`Pull ${DRIFTED}`));
+    expect(await screen.findByText("manifest unknown")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "OK" }));
+    await waitFor(() => expect(screen.queryByText("manifest unknown")).toBeNull());
+  });
+
   it("lists every image with its presence and size", async () => {
     renderPage();
 
-    await waitFor(() => expect(screen.getAllByText("present").length).toBe(2));
+    // A republished image reads as an update, not as pulled.
+    await waitFor(() => expect(within(screen.getByTestId("engines-table")).getAllByText("Pulled").length).toBe(1));
+    expect(screen.getAllByText("Update available").length).toBeGreaterThan(0);
     // Once, not twice: the chip beside the status is for what the status word
     // cannot say, and "not pulled  not pulled" is one fact in two colours.
-    expect(screen.getAllByText("not pulled").length).toBe(1);
+    expect(within(screen.getByTestId("engines-table")).getAllByText("Not pulled").length).toBe(1);
     expect(screen.getAllByText("25.0 GB").length).toBe(2);
   });
 
@@ -289,8 +334,12 @@ describe("Library — engines", () => {
     vi.mocked(startImagePull).mockResolvedValue({ id: "job1", ref: DRIFTED, status: "queued" } as never);
     renderPage();
 
-    await waitFor(() => expect(screen.getByText("newer digest published")).toBeTruthy());
-    expect(screen.getByText("cccccccccccc")).toBeTruthy();
+    // One dot and a word; why is on the hover.
+    const status = await screen.findByTitle("A newer digest is published for this tag. Pull to update.");
+    expect(status).toHaveTextContent("Update available");
+    // The digests are in the open row's detail, not a column.
+    await user.click(screen.getByRole("button", { name: `Details for ${DRIFTED}` }));
+    expect(await screen.findByText("cccccccccccc")).toBeTruthy();
 
     await user.click(screen.getByLabelText(`Pull ${DRIFTED}`));
 
@@ -351,7 +400,7 @@ describe("Library — engines", () => {
 
     // A node that holds it is pre-ticked: the point is reclaiming disk.
     expect(screen.getByRole("checkbox", { name: /10\.0\.0\.2/ })).toBeChecked();
-    await user.click(screen.getByRole("button", { name: "Delete" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Delete" }));
 
     await waitFor(() => expect(deleteImage).toHaveBeenCalledWith(PRESENT, ["10.0.0.2"]));
   });
@@ -468,8 +517,9 @@ describe("Library — engines", () => {
     vi.mocked(startImagePull).mockResolvedValue({ id: "j", ref: "x", status: "queued" } as never);
     renderPage();
 
+    await user.click(await screen.findByRole("button", { name: "Pull image" }));
     await user.type(await screen.findByLabelText("Image reference"), "docker.io/me/thing:1");
-    await user.click(screen.getByRole("button", { name: "Pull" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Pull" }));
 
     expect(startImagePull).toHaveBeenCalledWith("docker.io/me/thing:1");
   });
@@ -484,7 +534,7 @@ describe("Library — engines", () => {
     renderPage();
 
     // Every row for that engine says so — three images, one unpublished engine.
-    expect((await screen.findAllByText("no image published")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(/no image published/)).length).toBeGreaterThan(0);
   });
 });
 
@@ -528,13 +578,15 @@ describe("Library — digest-pinned image refs", () => {
     expect(screen.getByText(DIGEST_REF)).toBeInTheDocument();
   });
 
-  it("leaves a tag-pinned ref exactly as it was, with no hover title", async () => {
+  /** The repository is truncated in the column, so the full reference is on
+   *  hover; the tag itself is never cut. */
+  it("leaves a tag-pinned ref exactly as it was, with the full ref on hover", async () => {
     vi.mocked(fetchImages).mockResolvedValue([entry({})]);
     renderPage();
 
     await screen.findByText("ghcr.io/acme/engine/vllm");
     expect(screen.getByText(":0.1.0")).toBeInTheDocument();
-    expect(screen.queryByTitle(PRESENT)).not.toBeInTheDocument();
+    expect(screen.getByTitle(PRESENT)).toBeInTheDocument();
   });
 });
 
@@ -662,19 +714,34 @@ describe("Library — engines, and the width they are read at", () => {
 
   /** The indexes are configuration and move to Settings; leaving no trace of
    *  where they went is how an operator concludes the feature was removed. */
-  it("says where engine indexes are configured now", async () => {
+  it("says where engine indexes are configured now, behind the info tip", async () => {
+    const user = userEvent.setup();
     renderPage();
 
-    expect(
-      await screen.findByText("Engine indexes are configured in Settings."),
-    ).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Where engines come from" }));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Engine indexes are configured in Settings.");
     expect(screen.queryByLabelText("Engine indexes")).toBeNull();
   });
 
-  it("counts the images that want attention", async () => {
+  /** Not pulled is not a problem, so it is a neutral filter rather than an
+   *  orange count; an update available is the one that wants attention. */
+  it("filters by what is pulled, what is not, and what has an update", async () => {
+    const user = userEvent.setup();
     renderPage();
+    await screen.findByTestId(`engine-${PRESENT}`);
 
-    expect(await screen.findByText("2 need attention")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^All \(3\)/ })).toHaveAttribute("aria-selected", "true");
+    await user.click(screen.getByRole("tab", { name: /^Not pulled/ }));
+    expect(screen.queryByTestId(`engine-${PRESENT}`)).toBeNull();
+    await user.click(screen.getByRole("tab", { name: /^Update available \(1\)/ }));
+    expect(screen.getByTestId(`engine-${DRIFTED}`)).toBeInTheDocument();
+    expect(screen.queryByTestId(`engine-${PRESENT}`)).toBeNull();
+    await user.click(screen.getByRole("tab", { name: /^Pulled/ }));
+    expect(screen.getByTestId(`engine-${PRESENT}`)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: /^All/ }));
+    await user.type(screen.getByRole("searchbox", { name: "Filter engines" }), "zzz");
+    expect(await screen.findByText("Nothing matches.")).toBeInTheDocument();
   });
 
   it("says the catalogue is empty rather than showing a blank table", async () => {

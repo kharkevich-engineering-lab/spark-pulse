@@ -39,28 +39,28 @@ export default function RecipeCard({ r, isRunning, isQueued, clusterBlocked, not
   // wrapping row put Solo and Cluster wherever they happened to fit.
   const badges = (
     <>
-      <div className="flex w-full flex-wrap gap-1.5" data-testid={`recipe-line1-${r.id}`}>
+      <div className="flex flex-wrap gap-1.5" data-testid={`recipe-line1-${r.id}`}>
         {r.source && r.source !== "unknown" && (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-tag-bg text-text-muted">
+          <span className="inline-flex items-center gap-1 py-0.5 text-xs text-text-muted">
             <Package size={11} />{r.source}
           </span>
         )}
         {/* Which engines can run it, one or several: a single-engine recipe
             (the llama.cpp one) used to say nothing at all. */}
         {engines.length > 0 && (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-success/15 text-success">
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-line text-xs text-text-muted font-mono">
             <Layers size={11} />{engines.join(" · ")}
           </span>
         )}
       </div>
-      <div className="flex w-full flex-wrap gap-1.5" data-testid={`recipe-line2-${r.id}`}>
+      <div className="flex flex-wrap gap-1.5" data-testid={`recipe-line2-${r.id}`}>
         {(r.solo_only || (!r.solo_only && !r.cluster_only)) && (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-primary/20 text-blue2">
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-line text-xs text-text-muted">
             <Cpu size={11} />{t("recipeCard.solo")}
           </span>
         )}
         {(r.cluster_only || (!r.solo_only && !r.cluster_only)) && (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-warning/20 text-warning">
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-line text-xs text-text-muted">
             <Network size={11} />{t("recipeCard.cluster")}
           </span>
         )}

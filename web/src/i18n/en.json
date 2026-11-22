@@ -63,16 +63,23 @@
     "logout": "Logout",
     "primaryNav": "Primary",
     "menu": "Menu",
-    "home": "Spark Pulse home",
-    "theme": "Colour theme: {mode}",
-    "language": "Language: {language}"
+    "home": "Spark Pulse home"
   },
   "nav": {
     "settings": "Settings",
-    "deploy": "Deploy",
     "runs": "Runs",
-    "fleet": "Fleet",
-    "library": "Library"
+    "library": "Library",
+    "overview": "Overview",
+    "benchmarks": "Benchmarks",
+    "nodes": "Nodes",
+    "recipes": "Recipes",
+    "models": "Models",
+    "engines": "Engines",
+    "collections": "Collections",
+    "sectionOperate": "Operate",
+    "sectionLibrary": "Library",
+    "sectionSystem": "System",
+    "mods": "Mods"
   },
   "brand": {
     "product": "Spark Pulse",
@@ -114,7 +121,10 @@
     "confirmOneTitle": "Clean cache",
     "confirmOneBody": "Clean cache \"{name}\" on {node}? This cannot be undone.",
     "failed": "Failed",
-    "atLeast": "at least {size}"
+    "atLeast": "at least {size}",
+    "colCache": "Cache",
+    "colPath": "Path",
+    "colFiles": "Files"
   },
   "errorBoundary": {
     "heading": "Something went wrong",
@@ -141,24 +151,22 @@
     "deleteFailed": "Delete failed",
     "deleteTitle": "Delete this image",
     "differentImage": "different image",
-    "empty": "No engines yet. Pull one above.",
+    "empty": "No engines yet. Pull one with Pull image.",
     "indexTtl": "Index cache lifetime",
     "indexes": "Engine indexes",
     "indexesHelp": "One OCI reference per line. Fetched on demand and cached, never on startup.",
     "lastEngineMessage": "At least one engine has to stay enabled, or no recipe could be deployed.",
     "lastEngineTitle": "Can't disable the last engine",
     "live": "live",
-    "needAttention": "{count} need attention",
     "neverVerified": "never verified on hardware",
     "noCapabilities": "no capabilities declared",
     "noDescription": "No description.",
-    "none": "No engines available.",
-    "notPulled": "not pulled",
+    "notPulled": "Not pulled",
     "notThere": "(not there)",
     "onNodes": "On the other nodes",
     "partialDelete": "Some nodes were not cleared",
     "polling": "polling",
-    "present": "present",
+    "present": "Pulled",
     "pull": "Pull",
     "pullFailed": "Pull failed",
     "pulls": "Pulls",
@@ -171,16 +179,31 @@
     "soloNode": "This is the only node registered.",
     "source": "from {source}",
     "syncFailed": "Copy failed",
-    "syncTitle": "Copy to every registered node",
     "toggleFailed": "Could not change that engine",
     "toggleLabel": "Enable or disable {engine}",
     "unmanaged": "not from an index",
     "unpublished": "no image published",
     "verifiedCount": "verified on hardware {count} time(s)",
-    "defaultTag": "default",
-    "offTag": "off",
-    "verifiedTag": "verified",
-    "digestDrift": "newer digest published"
+    "digestDrift": "newer digest published",
+    "pullImage": "Pull image",
+    "refHint": "Any OCI reference. Engines from an index are pulled from their row.",
+    "filterEngines": "Filter engines",
+    "filterLabel": "Which engines",
+    "filterAll": "All",
+    "filterPulled": "Pulled",
+    "filterMissing": "Not pulled",
+    "filterUpdate": "Update available",
+    "aboutIndexes": "Where engines come from",
+    "colVersion": "Version",
+    "colEnabled": "Enabled",
+    "capabilities": "Capabilities",
+    "ports": "Ports",
+    "hardware": "Hardware",
+    "index": "Index",
+    "statusUpdate": "Update available",
+    "digestDriftTitle": "A newer digest is published for this tag. Pull to update.",
+    "presentTitle": "The image is on this node.",
+    "notPulledTitle": "The image is not on this node yet."
   },
   "preflight": {
     "label": "Pre-flight",
@@ -227,31 +250,19 @@
     }
   },
   "cluster": {
-    "heading": "The nodes."
+    "heading": "Nodes."
   },
   "monitoring": {
-    "noData": "No data available.",
     "memory": "Memory",
-    "unified": "Unified memory — usage not reported by nvidia-smi",
-    "utilization": "Utilization",
     "temperature": "Temperature",
-    "powerDraw": "Power draw",
-    "powerLimit": "Power limit",
-    "liveHistory": "Live history",
     "gpuProcesses": "GPU processes",
     "killTitle": "Kill this GPU process?",
     "killConfirm": "Kill process",
-    "killProcess": "Kill process (SIGTERM)",
     "killBody": "SIGTERM will be sent to PID {pid} ({name}), holding {held}. {provenance} Any run it is serving stops immediately, and this cannot be undone.",
     "killHeld": "{mb} MB of GPU memory",
     "killUntracked": "Nothing on this page started it, so it belongs to something else on this node.",
     "killTracked": "It belongs to a run this page is tracking, which will stop.",
-    "cpuMemory": "CPU memory",
     "ram": "RAM",
-    "used": "Used",
-    "free": "Free",
-    "avail": "Avail",
-    "usage": "Usage",
     "controlPlane": "Control plane",
     "unreachable": "Could not be asked",
     "couldNotRead": "Could not read: {what}",
@@ -259,19 +270,13 @@
     "heldBy": "held by {deployment}",
     "killOnNode": "It is running on {node}.",
     "tracked": "started here",
-    "kill": "Kill",
     "gpuUtilization": "GPU utilization"
   },
   "recipes": {
     "assets": "Assets",
-    "customModCount": {
-      "one": "{count} custom mod",
-      "other": "{count} custom mods"
-    },
     "clusterHint": "Cluster recipes need two or more nodes. You have {count}.",
     "clusterHintAddNode": "Add a node",
     "clusterHintForce": "Force cluster mode in Settings",
-    "customMode": "Custom mode",
     "customRecipeCount": {
       "one": "{count} custom recipe",
       "other": "{count} custom recipes"
@@ -293,28 +298,19 @@
     "newMod": "New mod",
     "newRecipe": "New recipe",
     "noCustomMods": "No custom mods",
-    "noCustomModsYet": "No custom mods yet",
     "noCustomRecipes": "No custom recipes",
     "noCustomRecipesHint": "Upload a YAML file, or write one here — v1 and v2 recipes are both accepted.",
-    "noCustomRecipesYet": "No custom recipes yet",
     "noMods": "No mods found",
-    "noModsHint": "Mods live in ~/.config/spark-pulse/custom-mods.",
     "noRecipes": "No recipes found.",
     "noRecipesHint": "Write one here, or install a collection from a registry.",
     "preflightBlocked": "Pre-flight blocked this deploy",
     "reset": "Reset",
     "resetBody": "Reset \"{name}\" to its original recipe? Any customizations you made will be lost.",
     "resetTitle": "Reset customization",
-    "subtitleBundled": "The recipes and mods this control plane can run.",
-    "subtitleCustom": "Your own recipes and mods.",
-    "tabMods": "Mods",
-    "tabRecipes": "Recipes",
-    "title": "Recipes and mods",
-    "toggleCustom": "Toggle custom mode",
     "uninstallBody": "{name} is removed from disk. Reinstall it from the OCI Registry page if you need it again.",
     "uninstallFailed": "Could not uninstall {name}",
     "uninstallRecipeTitle": "Uninstall this recipe",
-    "heading": "Recipes and mods.",
+    "heading": "Recipes.",
     "deploy": "Deploy",
     "emptyScript": "(empty)",
     "loadCustomFailed": "Failed to load custom data",
@@ -335,7 +331,20 @@
       "other": "Hide {count} recipes that don't run here"
     },
     "nothingRunsHere": "Nothing in this catalogue runs on this fleet yet. The recipes below say why; an engine published for this platform, or a recipe for one that is, changes that.",
-    "uninstall": "Uninstall"
+    "uninstall": "Uninstall",
+    "meta": {
+      "one": "{count} recipe",
+      "other": "{count} recipes"
+    },
+    "search": "Search recipes",
+    "sourceLabel": "Source",
+    "sourceAll": "All",
+    "sourceBundled": "Bundled",
+    "sourceCollections": "Collections",
+    "sourceCustom": "Custom",
+    "noMatch": "Nothing matches.",
+    "customFiles": "Your recipe files",
+    "editRecipe": "Edit {name}"
   },
   "recipeCard": {
     "running": "Running",
@@ -362,7 +371,16 @@
     "versionCount": {
       "one": "{count} version",
       "other": "{count} versions"
-    }
+    },
+    "colRegistry": "Registry",
+    "colStatus": "Status",
+    "test": "Test",
+    "edit": "Edit",
+    "testConnectionFor": "Test the connection to {name}",
+    "editFor": "Edit {name}",
+    "removeFor": "Remove {name}",
+    "disableFor": "Disable {name}",
+    "enableFor": "Enable {name}"
   },
   "engineMetrics": {
     "unavailable": "Engine metrics unavailable",
@@ -451,7 +469,6 @@
   "nodes": {
     "addNode": "Add node",
     "heading": "Nodes",
-    "subtitle": "The nodes this control plane knows about. Each keeps a minted identity, so renaming or re-addressing one does not re-enroll it.",
     "address": "Address *",
     "addressPlaceholder": "10.0.0.11",
     "name": "Name",
@@ -538,9 +555,15 @@
       "notApplied": "not done",
       "sudoPassword": "sudo password",
       "sudoNote": "Only if a repair needs root, such as adding the docker group. Kept nowhere.",
-      "remedyLabel": "Remedy",
       "diagnoseFailed": "Could not diagnose the node",
-      "repairFailed": "The repair failed"
+      "repairFailed": "The repair failed",
+      "colCheck": "Check",
+      "colWho": "Who fixes it",
+      "colFound": "What it found",
+      "moreChecks": {
+        "one": "{count} more check, passed or not looked at",
+        "other": "{count} more checks, passed or not looked at"
+      }
     },
     "updating": "Updating…",
     "updateFailed": "Update failed",
@@ -761,7 +784,9 @@
     "agentAutoUpdate": "Automatically update agents",
     "agentAutoUpdateHelp": "Keep each node's agent on the version this control plane ships. A node running an older binary is updated over its own stream, no SSH. On by default.",
     "heading": "Settings.",
-    "envBadge": "env"
+    "envBadge": "env",
+    "discard": "Discard",
+    "more": "More about this"
   },
   "models": {
     "sources": "Model sources",
@@ -815,7 +840,8 @@
     "replicateVerified": "verified",
     "replicateSkipped": "already verified — skipped",
     "replicateNodeFailed": "failed",
-    "heading": "What is on disk."
+    "heading": "Models.",
+    "downloadModel": "Download model"
   },
   "mcp": {
     "status": "Server status",
@@ -908,11 +934,7 @@
     "registryUpdateFailed": "Failed to update registry",
     "removeRegistry": "Forget registry",
     "removeRegistryConfirm": "Forget {name}? Collections already installed from it stay where they are.",
-    "noDescription": "No description.",
-    "recipeCount": {
-      "one": "{count} recipe",
-      "other": "{count} recipes"
-    }
+    "noDescription": "No description."
   },
   "fabric": {
     "heading": "ConnectX fabric",
@@ -949,11 +971,11 @@
     "noWired": "10G port down",
     "showPlan": "Planned addresses for {name}",
     "applyFailed": "The apply failed",
-    "readFailed": "Could not read the fabric"
+    "readFailed": "Could not read the fabric",
+    "about": "About the fabric"
   },
   "runs": {
-    "heading": "What is serving.",
-    "subtitle": "Every run this control plane started, live and finished, with its logs and its numbers.",
+    "heading": "Runs.",
     "tabLive": "Live",
     "tabFinished": "Finished",
     "tabBenchmarks": "Benchmarks",
@@ -1045,7 +1067,19 @@
     },
     "pullingImage": "Pulling the engine image: {percent}% ({done} of {total})",
     "pullProgressLabel": "{name} image pull",
-    "benchmarkMeasuring": "measuring…"
+    "benchmarkMeasuring": "measuring…",
+    "endedAt": "{at} · ran {duration}",
+    "actions": "Actions",
+    "teardownFor": "{action} {name}",
+    "counts": "{live} live · {finished} finished",
+    "search": "Filter runs",
+    "tabOverview": "Overview",
+    "tabEvents": "Events",
+    "notFound": "No run with this id.",
+    "notFoundHint": "It may have been removed.",
+    "recentEvents": "Latest events",
+    "allEvents": "All events",
+    "noEvents": "No events yet."
   },
   "library": {
     "cacheUnreachable": "Could not ask",
@@ -1059,7 +1093,6 @@
     "colQuant": "Quant",
     "colWhere": "Where",
     "connectionFailed": "Registry did not answer",
-    "copy": "Copy",
     "copyImage": "Copy {ref} to other nodes",
     "deleteImage": "Delete {ref}",
     "detailsFor": "Details for {ref}",
@@ -1075,16 +1108,12 @@
     "registryUpdateFailed": "Could not change that registry",
     "remove": "Remove",
     "removeModel": "Remove {model}",
-    "replicate": "Replicate",
     "replicateModel": "Replicate {model} to other nodes",
     "sourcesInSettings": "Model sources are configured in Settings.",
     "syncBody": "{ref} is {size}. Each node selected pulls its own copy.",
     "syncConfirm": "Copy",
     "syncTitle": "Copy this image",
     "syncTo": "Copy to",
-    "tabEngines": "Engines",
-    "tabModels": "Models",
-    "tabRegistries": "Registries",
     "testFailed": "Test failed",
     "thisNode": "this node",
     "whereFiltered": "Downloaded with a file filter; only the files it asked for are expected.",
@@ -1094,7 +1123,19 @@
     "wherePartialTitle": "A node holds part of the snapshot. Replicate it again.",
     "whereUnknown": "not checked",
     "whereDownloading": "downloading {percent}%",
-    "whereDownloadingUnknown": "downloading"
+    "whereDownloadingUnknown": "downloading",
+    "headingEngines": "Engines.",
+    "filterModels": "Filter models",
+    "modelCount": {
+      "one": "{count} model",
+      "other": "{count} models"
+    },
+    "noMatch": "Nothing matches.",
+    "presenceVerified": "verified",
+    "presencePartial": "partial",
+    "presenceAbsent": "absent",
+    "aboutCaches": "About the caches",
+    "aboutRegistries": "About the registries"
   },
   "fleet": {
     "nodes": {
@@ -1102,9 +1143,6 @@
       "other": "{count} nodes"
     },
     "runsPrefix": "what runs on them is under",
-    "tabNodes": "Nodes",
-    "tabMonitoring": "Monitoring",
-    "detailsFor": "Details for {name}",
     "fabricPorts": "Fabric ports",
     "fabricNone": "No agent has reported this node's ports.",
     "doctorSection": "Doctor",
@@ -1116,13 +1154,11 @@
     "peerSshOnly": "SSH only",
     "peerSparkPulse": "Spark Pulse {version}",
     "peerUnnamed": "unnamed",
-    "historyCaption": "Sampled from the live metrics stream since this page was opened. Nothing stores it, so it starts over on reload.",
     "killFailed": "PID {pid} was not killed",
     "killNoReason": "The backend refused to signal {name} (PID {pid}) and gave no reason.",
     "killError": "Could not kill PID {pid}"
   },
   "settingsPage": {
-    "subtitle": "One form; Save writes everything.",
     "tabLibrary": "Library",
     "tabMcp": "MCP",
     "shmHelp": "/dev/shm. Tensor-parallel workers pass tensors through it; too small shows up as a hang, not an error.",
@@ -1185,11 +1221,6 @@
     "benchmarkChatOnly": "This run does not serve chat, so it cannot be benchmarked."
   },
   "collection": {
-    "heading": "Collections",
-    "installedCount": {
-      "one": "{count} installed",
-      "other": "{count} installed"
-    },
     "available": "available",
     "updateAll": "Update all ({count})",
     "installAll": "Install all ({count})",
@@ -1214,7 +1245,14 @@
     "installAllDone": "Install finished",
     "updateAllDone": "Update finished",
     "outcome": "{done} done · {skipped} skipped for local edits · {failed} failed",
-    "failed": "Could not apply"
+    "failed": "Could not apply",
+    "pageHeading": "Collections.",
+    "colCollection": "Collection",
+    "colVersion": "Version",
+    "colRecipes": "Recipes",
+    "colInstalled": "Installed",
+    "colPublisher": "Publisher",
+    "colLicense": "License"
   },
   "kubernetesPreview": {
     "heading": "Kubernetes",
@@ -1225,5 +1263,104 @@
     "failed": "Could not render the manifests",
     "notApplied": "A dry run. Nothing is applied to a cluster.",
     "findings": "What the run does not say"
+  },
+  "overview": {
+    "heading": "Overview.",
+    "deploy": "Deploy",
+    "runningCount": {
+      "one": "{count} run serving",
+      "other": "{count} runs serving"
+    },
+    "memoryAria": "Unified memory: {free} free of {total}",
+    "freeOf": "free of {total}",
+    "memSystem": "System and other processes",
+    "memOther": "GPU processes not started by Spark Pulse",
+    "memoryUnknown": "Memory not reported",
+    "agentOutdated": "Agent outdated",
+    "gpu": "GPU",
+    "temp": "Temp",
+    "power": "Power",
+    "liveRuns": "Live runs",
+    "allRuns": "All runs",
+    "activity": "Activity",
+    "noActivity": "Nothing has happened yet.",
+    "noRuns": "Nothing is running.",
+    "noRunsHint": "Press ⌘K and type a recipe name to deploy it.",
+    "browseRecipes": "Browse recipes",
+    "colRun": "Run",
+    "colPhase": "Phase",
+    "colEngine": "Engine",
+    "colNodes": "Nodes",
+    "colPort": "Port",
+    "colUp": "Up",
+    "howToFix": "How to fix",
+    "recentRuns": "Recently finished",
+    "colEnded": "Ended",
+    "colLasted": "Lasted"
+  },
+  "palette": {
+    "title": "Command palette",
+    "open": "Open the command palette",
+    "trigger": "Deploy, find, jump to…",
+    "placeholder": "Deploy a recipe, open a run, go to a page…",
+    "empty": "Nothing matches.",
+    "groupDeploy": "Deploy",
+    "groupRuns": "Runs",
+    "groupNodes": "Nodes",
+    "groupPages": "Pages",
+    "esc": "esc"
+  },
+  "recipesTable": {
+    "colRecipe": "Recipe",
+    "colEngines": "Engines",
+    "colNodes": "Nodes",
+    "colState": "State",
+    "soloOrCluster": "One or more",
+    "colServes": "Serves",
+    "colFile": "File",
+    "deployFor": "Deploy {name}"
+  },
+  "mods": {
+    "heading": "Mods.",
+    "meta": {
+      "one": "{count} mod",
+      "other": "{count} mods"
+    },
+    "search": "Search mods",
+    "sourceLabel": "Source",
+    "colMod": "Mod",
+    "colDescription": "Description",
+    "colFiles": "Files",
+    "colSource": "Source"
+  },
+  "nodesPage": {
+    "healthy": "{count} healthy",
+    "memory": "Memory",
+    "colPid": "PID",
+    "colProcess": "Process",
+    "colMemory": "Memory",
+    "killFor": "Kill {name} (PID {pid})",
+    "hostAndDisk": "Host memory and disk",
+    "diskFree": "{free} free · {percent}% used",
+    "howToFix": "How to fix",
+    "interfaces": "Interfaces",
+    "agent": "Agent",
+    "colNode": "Node",
+    "colState": "State",
+    "colAddress": "Address",
+    "colGpu": "GPU",
+    "colTemp": "Temp",
+    "backToNodes": "Back to nodes",
+    "notFound": "No node with id {id}.",
+    "noProcesses": "Nothing is holding the GPU.",
+    "noStorage": "This node reports no memory or disks.",
+    "usedOf": "used of {total}",
+    "power": "Power",
+    "findings": "Findings",
+    "noFindings": "No findings.",
+    "runChecks": "Run checks",
+    "runChecksAgain": "Run again",
+    "checksIdle": "Checks log into the node. Run them when needed.",
+    "noGpu": "No GPU reported."
   }
 }

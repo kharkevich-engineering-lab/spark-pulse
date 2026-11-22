@@ -63,16 +63,23 @@
     "logout": "Se déconnecter",
     "primaryNav": "Principale",
     "menu": "Menu",
-    "home": "Accueil Spark Pulse",
-    "theme": "Thème de couleurs : {mode}",
-    "language": "Langue : {language}"
+    "home": "Accueil Spark Pulse"
   },
   "nav": {
     "settings": "Paramètres",
-    "deploy": "Déployer",
     "runs": "Exécutions",
-    "fleet": "Parc",
-    "library": "Bibliothèque"
+    "library": "Bibliothèque",
+    "overview": "Vue d’ensemble",
+    "benchmarks": "Bancs d’essai",
+    "nodes": "Nœuds",
+    "recipes": "Recettes",
+    "models": "Modèles",
+    "engines": "Moteurs",
+    "collections": "Collections",
+    "sectionOperate": "Exploiter",
+    "sectionLibrary": "Bibliothèque",
+    "sectionSystem": "Système",
+    "mods": "Mods (correctifs)"
   },
   "brand": {
     "product": "Spark Pulse",
@@ -114,7 +121,10 @@
     "confirmOneTitle": "Vider le cache",
     "confirmOneBody": "Vider le cache « {name} » sur {node} ? Cette action est irréversible.",
     "failed": "Échec",
-    "atLeast": "au moins {size}"
+    "atLeast": "au moins {size}",
+    "colCache": "Cache (moteur)",
+    "colPath": "Chemin",
+    "colFiles": "Fichiers"
   },
   "errorBoundary": {
     "heading": "Une erreur est survenue",
@@ -141,24 +151,22 @@
     "deleteFailed": "Échec de la suppression",
     "deleteTitle": "Supprimer cette image",
     "differentImage": "image différente",
-    "empty": "Aucun moteur. Téléchargez-en un ci-dessus.",
+    "empty": "Aucun moteur pour l’instant. Récupérez-en un avec « Récupérer une image ».",
     "indexTtl": "Durée du cache d'index",
     "indexes": "Index de moteurs",
     "indexesHelp": "Une référence OCI par ligne. Récupérée à la demande et mise en cache, jamais au démarrage.",
     "lastEngineMessage": "Au moins un moteur doit rester activé, sinon aucune recette ne pourrait être déployée.",
     "lastEngineTitle": "Impossible de désactiver le dernier moteur",
     "live": "en direct",
-    "needAttention": "{count} à examiner",
     "neverVerified": "jamais vérifié sur du matériel",
     "noCapabilities": "aucune capacité déclarée",
     "noDescription": "Aucune description.",
-    "none": "Aucun moteur disponible.",
-    "notPulled": "non téléchargée",
+    "notPulled": "Non téléchargée",
     "notThere": "(absente)",
     "onNodes": "Sur les autres nœuds",
     "partialDelete": "Certains nœuds n'ont pas été nettoyés",
     "polling": "sondage",
-    "present": "présente",
+    "present": "Téléchargée",
     "pull": "Télécharger",
     "pullFailed": "Échec du téléchargement",
     "pulls": "Téléchargements",
@@ -171,16 +179,31 @@
     "soloNode": "C'est le seul nœud enregistré.",
     "source": "depuis {source}",
     "syncFailed": "Échec de la copie",
-    "syncTitle": "Copier vers chaque nœud enregistré",
     "toggleFailed": "Impossible de modifier ce moteur",
     "toggleLabel": "Activer ou désactiver {engine}",
     "unmanaged": "hors index",
     "unpublished": "aucune image publiée",
     "verifiedCount": "vérifié {count} fois sur du matériel",
-    "defaultTag": "par défaut",
-    "offTag": "désactivé",
-    "verifiedTag": "vérifié",
-    "digestDrift": "empreinte plus récente publiée"
+    "digestDrift": "empreinte plus récente publiée",
+    "pullImage": "Récupérer une image",
+    "refHint": "Toute référence OCI. Les moteurs d’un index se récupèrent depuis leur ligne.",
+    "filterEngines": "Filtrer les moteurs",
+    "filterLabel": "Quels moteurs",
+    "filterAll": "Tous",
+    "filterPulled": "Récupérés",
+    "filterMissing": "Non récupérés",
+    "filterUpdate": "Mise à jour disponible",
+    "aboutIndexes": "D’où viennent les moteurs",
+    "colVersion": "Version (moteur)",
+    "colEnabled": "Activé",
+    "capabilities": "Capacités",
+    "ports": "Ports (réseau)",
+    "hardware": "Matériel",
+    "index": "Index (moteurs)",
+    "statusUpdate": "Mise à jour disponible",
+    "digestDriftTitle": "Une empreinte plus récente est publiée pour ce tag. Téléchargez pour mettre à jour.",
+    "presentTitle": "L'image est sur ce nœud.",
+    "notPulledTitle": "L'image n'est pas encore sur ce nœud."
   },
   "preflight": {
     "label": "Pré-vol",
@@ -227,31 +250,19 @@
     }
   },
   "cluster": {
-    "heading": "Les nœuds."
+    "heading": "Nœuds."
   },
   "monitoring": {
-    "noData": "Aucune donnée disponible.",
     "memory": "Mémoire",
-    "unified": "Mémoire unifiée — utilisation non rapportée par nvidia-smi",
-    "utilization": "Utilisation",
     "temperature": "Température",
-    "powerDraw": "Consommation",
-    "powerLimit": "Limite de puissance",
-    "liveHistory": "Historique en direct",
     "gpuProcesses": "Processus GPU",
     "killTitle": "Terminer ce processus GPU ?",
     "killConfirm": "Terminer le processus",
-    "killProcess": "Terminer le processus (SIGTERM)",
     "killBody": "SIGTERM sera envoyé au PID {pid} ({name}), qui retient {held}. {provenance} Toute exécution qu'il sert s'arrête aussitôt, et c'est irréversible.",
     "killHeld": "{mb} Mo de mémoire GPU",
     "killUntracked": "Rien sur cette page ne l'a lancé : il appartient à autre chose sur ce nœud.",
     "killTracked": "Il appartient à une exécution suivie par cette page, qui s'arrêtera.",
-    "cpuMemory": "Mémoire CPU",
     "ram": "RAM",
-    "used": "Utilisé",
-    "free": "Libre",
-    "avail": "Dispo",
-    "usage": "Utilisation",
     "controlPlane": "Plan de contrôle",
     "unreachable": "Impossible d'interroger ce nœud",
     "couldNotRead": "Lecture impossible : {what}",
@@ -259,19 +270,13 @@
     "heldBy": "retenu par {deployment}",
     "killOnNode": "Il s'exécute sur {node}.",
     "tracked": "démarré ici",
-    "kill": "Terminer",
     "gpuUtilization": "Utilisation du GPU"
   },
   "recipes": {
     "assets": "Ressources",
-    "customModCount": {
-      "one": "{count} mod personnalisé",
-      "other": "{count} mods personnalisés"
-    },
     "clusterHint": "Les recettes en grappe exigent au moins deux nœuds. Vous en avez {count}.",
     "clusterHintAddNode": "Ajouter un nœud",
     "clusterHintForce": "Forcer le mode grappe dans les Paramètres",
-    "customMode": "Mode personnalisé",
     "customRecipeCount": {
       "one": "{count} recette personnalisée",
       "other": "{count} recettes personnalisées"
@@ -293,28 +298,19 @@
     "newMod": "Nouveau mod",
     "newRecipe": "Nouvelle recette",
     "noCustomMods": "Aucun mod personnalisé",
-    "noCustomModsYet": "Aucun mod personnalisé pour l'instant",
     "noCustomRecipes": "Aucune recette personnalisée",
     "noCustomRecipesHint": "Téléversez un fichier YAML, ou écrivez-en un ici — les recettes v1 et v2 sont acceptées.",
-    "noCustomRecipesYet": "Aucune recette personnalisée pour l'instant",
     "noMods": "Aucun mod trouvé",
-    "noModsHint": "Les mods se trouvent dans ~/.config/spark-pulse/custom-mods.",
     "noRecipes": "Aucune recette trouvée.",
     "noRecipesHint": "Écrivez-en une ici, ou installez une collection depuis un registre.",
     "preflightBlocked": "Le pré-vol a bloqué ce déploiement",
     "reset": "Réinitialiser",
     "resetBody": "Réinitialiser « {name} » à sa recette d'origine ? Vos personnalisations seront perdues.",
     "resetTitle": "Réinitialiser la personnalisation",
-    "subtitleBundled": "Les recettes et mods que ce plan de contrôle peut exécuter.",
-    "subtitleCustom": "Vos propres recettes et mods.",
-    "tabMods": "Mods",
-    "tabRecipes": "Recettes",
-    "title": "Recettes et mods",
-    "toggleCustom": "Basculer le mode personnalisé",
     "uninstallBody": "{name} est retiré du disque. Réinstallez-le depuis la page Registre OCI si besoin.",
     "uninstallFailed": "Désinstallation de {name} impossible",
     "uninstallRecipeTitle": "Désinstaller cette recette",
-    "heading": "Recettes et mods.",
+    "heading": "Recettes.",
     "deploy": "Déployer",
     "emptyScript": "(vide)",
     "loadCustomFailed": "Échec du chargement des données personnalisées",
@@ -335,7 +331,20 @@
       "other": "Masquer {count} recettes qui ne tournent pas ici"
     },
     "nothingRunsHere": "Rien dans ce catalogue ne tourne encore sur cette flotte. Les recettes ci-dessous disent pourquoi ; un moteur publié pour cette plateforme, ou une recette pour un moteur qui l'est, y remédie.",
-    "uninstall": "Désinstaller"
+    "uninstall": "Désinstaller",
+    "meta": {
+      "one": "{count} recette",
+      "other": "{count} recettes"
+    },
+    "search": "Chercher une recette",
+    "sourceLabel": "Origine",
+    "sourceAll": "Toutes",
+    "sourceBundled": "Fournies",
+    "sourceCollections": "Collections OCI",
+    "sourceCustom": "Personnelles",
+    "noMatch": "Aucun résultat.",
+    "customFiles": "Vos fichiers de recettes",
+    "editRecipe": "Modifier {name}"
   },
   "recipeCard": {
     "running": "En cours",
@@ -362,7 +371,16 @@
     "versionCount": {
       "one": "{count} version",
       "other": "{count} versions"
-    }
+    },
+    "colRegistry": "Registre",
+    "colStatus": "État",
+    "test": "Tester",
+    "edit": "Modifier",
+    "testConnectionFor": "Tester la connexion à {name}",
+    "editFor": "Modifier {name}",
+    "removeFor": "Retirer {name}",
+    "disableFor": "Désactiver {name}",
+    "enableFor": "Activer {name}"
   },
   "engineMetrics": {
     "unavailable": "Métriques du moteur indisponibles",
@@ -451,7 +469,6 @@
   "nodes": {
     "addNode": "Ajouter un nœud",
     "heading": "Nœuds",
-    "subtitle": "Les nœuds que ce plan de contrôle connaît. Chacun garde une identité frappée : le renommer ou le ré-adresser ne le ré-enrôle pas.",
     "address": "Adresse *",
     "addressPlaceholder": "10.0.0.11",
     "name": "Nom",
@@ -538,9 +555,15 @@
       "notApplied": "non fait",
       "sudoPassword": "Mot de passe sudo",
       "sudoNote": "Seulement si une réparation demande root, comme ajouter le groupe docker. Conservé nulle part.",
-      "remedyLabel": "Remède",
       "diagnoseFailed": "Impossible de diagnostiquer le nœud",
-      "repairFailed": "La réparation a échoué"
+      "repairFailed": "La réparation a échoué",
+      "colCheck": "Vérification",
+      "colWho": "Qui corrige",
+      "colFound": "Constat",
+      "moreChecks": {
+        "one": "{count} autre vérification, réussie ou non examinée",
+        "other": "{count} autres vérifications, réussies ou non examinées"
+      }
     },
     "updating": "Mise à jour…",
     "updateFailed": "Échec de la mise à jour",
@@ -761,7 +784,9 @@
     "agentAutoUpdate": "Mettre à jour les agents automatiquement",
     "agentAutoUpdateHelp": "Garde l'agent de chaque nœud sur la version livrée par ce plan de contrôle. Un nœud sur un binaire plus ancien est mis à jour par son propre flux, sans SSH. Activé par défaut.",
     "heading": "Paramètres.",
-    "envBadge": "env"
+    "envBadge": "env",
+    "discard": "Annuler les modifications",
+    "more": "En savoir plus"
   },
   "models": {
     "sources": "Sources de modèles",
@@ -815,7 +840,8 @@
     "replicateVerified": "vérifié",
     "replicateSkipped": "déjà vérifié — ignoré",
     "replicateNodeFailed": "échec",
-    "heading": "Ce qui est sur le disque."
+    "heading": "Modèles.",
+    "downloadModel": "Télécharger un modèle"
   },
   "mcp": {
     "status": "État du serveur",
@@ -908,11 +934,7 @@
     "registryUpdateFailed": "Échec de la mise à jour du registre",
     "removeRegistry": "Oublier le registre",
     "removeRegistryConfirm": "Oublier {name} ? Les collections déjà installées depuis ce registre restent en place.",
-    "noDescription": "Aucune description.",
-    "recipeCount": {
-      "one": "{count} recette",
-      "other": "{count} recettes"
-    }
+    "noDescription": "Aucune description."
   },
   "fabric": {
     "heading": "Fabric ConnectX",
@@ -949,11 +971,11 @@
     "noWired": "Port 10G inactif",
     "showPlan": "Adresses prévues pour {name}",
     "applyFailed": "L'application a échoué",
-    "readFailed": "Impossible de lire le fabric"
+    "readFailed": "Impossible de lire le fabric",
+    "about": "À propos du fabric"
   },
   "runs": {
-    "heading": "Ce qui tourne.",
-    "subtitle": "Chaque exécution lancée par ce plan de contrôle, en cours ou terminée, avec ses journaux et ses mesures.",
+    "heading": "Exécutions.",
     "tabLive": "En cours",
     "tabFinished": "Terminées",
     "tabBenchmarks": "Analyses",
@@ -1045,7 +1067,19 @@
     },
     "pullingImage": "Téléchargement de l'image du moteur : {percent} % ({done} sur {total})",
     "pullProgressLabel": "Téléchargement de l'image de {name}",
-    "benchmarkMeasuring": "mesure…"
+    "benchmarkMeasuring": "mesure…",
+    "endedAt": "{at} · a tourné {duration}",
+    "actions": "Actions (exécution)",
+    "teardownFor": "{action} : {name}",
+    "counts": "{live} en cours · {finished} terminées",
+    "search": "Filtrer les exécutions",
+    "tabOverview": "Aperçu",
+    "tabEvents": "Événements",
+    "notFound": "Aucune exécution avec cet identifiant.",
+    "notFoundHint": "Elle a peut-être été supprimée.",
+    "recentEvents": "Derniers événements",
+    "allEvents": "Tous les événements",
+    "noEvents": "Aucun événement pour l'instant."
   },
   "library": {
     "cacheUnreachable": "Injoignable",
@@ -1059,7 +1093,6 @@
     "colQuant": "Quantif.",
     "colWhere": "Où",
     "connectionFailed": "Le registre n'a pas répondu",
-    "copy": "Copier",
     "copyImage": "Copier {ref} vers d'autres nœuds",
     "deleteImage": "Supprimer {ref}",
     "detailsFor": "Détails de {ref}",
@@ -1075,16 +1108,12 @@
     "registryUpdateFailed": "Impossible de modifier ce registre",
     "remove": "Supprimer",
     "removeModel": "Supprimer {model}",
-    "replicate": "Répliquer",
     "replicateModel": "Répliquer {model} vers d'autres nœuds",
     "sourcesInSettings": "Les sources de modèles se configurent dans Paramètres.",
     "syncBody": "{ref} pèse {size}. Chaque nœud sélectionné récupère sa propre copie.",
     "syncConfirm": "Copier",
     "syncTitle": "Copier cette image",
     "syncTo": "Copier vers",
-    "tabEngines": "Moteurs",
-    "tabModels": "Modèles",
-    "tabRegistries": "Registres",
     "testFailed": "Échec du test",
     "thisNode": "ce nœud",
     "whereFiltered": "Téléchargé avec un filtre de fichiers ; seuls les fichiers demandés sont attendus.",
@@ -1094,7 +1123,19 @@
     "wherePartialTitle": "Un nœud n'a qu'une partie de l'instantané. Répliquez-le à nouveau.",
     "whereUnknown": "non vérifié",
     "whereDownloading": "téléchargement {percent} %",
-    "whereDownloadingUnknown": "téléchargement"
+    "whereDownloadingUnknown": "téléchargement",
+    "headingEngines": "Moteurs.",
+    "filterModels": "Filtrer les modèles",
+    "modelCount": {
+      "one": "{count} modèle",
+      "other": "{count} modèles"
+    },
+    "noMatch": "Aucun résultat.",
+    "presenceVerified": "vérifié",
+    "presencePartial": "partiel",
+    "presenceAbsent": "absent du nœud",
+    "aboutCaches": "À propos des caches",
+    "aboutRegistries": "À propos des registres"
   },
   "fleet": {
     "nodes": {
@@ -1102,9 +1143,6 @@
       "other": "{count} nœuds"
     },
     "runsPrefix": "ce qui y tourne se trouve sous",
-    "tabNodes": "Nœuds",
-    "tabMonitoring": "Supervision",
-    "detailsFor": "Détails de {name}",
     "fabricPorts": "Ports du fabric",
     "fabricNone": "Aucun agent n'a signalé les ports de ce nœud.",
     "doctorSection": "Diagnostic",
@@ -1116,13 +1154,11 @@
     "peerSshOnly": "SSH uniquement",
     "peerSparkPulse": "Spark Pulse {version}",
     "peerUnnamed": "sans nom",
-    "historyCaption": "Échantillonné depuis le flux de métriques en direct depuis l'ouverture de cette page. Rien n'est conservé : tout repart de zéro au rechargement.",
     "killFailed": "Le PID {pid} n'a pas été arrêté",
     "killNoReason": "Le backend a refusé de signaler {name} (PID {pid}) sans donner de raison.",
     "killError": "Impossible d'arrêter le PID {pid}"
   },
   "settingsPage": {
-    "subtitle": "Un seul formulaire ; Enregistrer écrit tout.",
     "tabLibrary": "Bibliothèque",
     "tabMcp": "MCP",
     "shmHelp": "/dev/shm. Les travailleurs en parallélisme de tenseurs y font transiter les tenseurs ; trop petit, cela se manifeste par un blocage et non par une erreur.",
@@ -1185,11 +1221,6 @@
     "benchmarkChatOnly": "Cette exécution ne sert pas de chat : elle ne peut pas être analysée."
   },
   "collection": {
-    "heading": "Collections de recettes",
-    "installedCount": {
-      "one": "{count} installée",
-      "other": "{count} installées"
-    },
     "available": "disponible",
     "updateAll": "Tout mettre à jour ({count})",
     "installAll": "Tout installer ({count})",
@@ -1214,7 +1245,14 @@
     "installAllDone": "Installation terminée",
     "updateAllDone": "Mise à jour terminée",
     "outcome": "Faites : {done} · ignorées (modifications locales) : {skipped} · en échec : {failed}",
-    "failed": "Échec de l'opération"
+    "failed": "Échec de l'opération",
+    "pageHeading": "Collections de recettes.",
+    "colCollection": "Collection (OCI)",
+    "colVersion": "Version (collection)",
+    "colRecipes": "Recettes",
+    "colInstalled": "Installées",
+    "colPublisher": "Éditeur",
+    "colLicense": "Licence"
   },
   "kubernetesPreview": {
     "heading": "Kubernetes",
@@ -1225,5 +1263,104 @@
     "failed": "Impossible de générer les manifestes",
     "notApplied": "Un essai à blanc. Rien n’est appliqué au cluster.",
     "findings": "Ce que l’exécution ne précise pas"
+  },
+  "overview": {
+    "heading": "Vue d’ensemble.",
+    "deploy": "Déployer",
+    "runningCount": {
+      "one": "{count} exécution en service",
+      "other": "{count} exécutions en service"
+    },
+    "memoryAria": "Mémoire unifiée : {free} libres sur {total}",
+    "freeOf": "libres sur {total}",
+    "memSystem": "Système et autres processus",
+    "memOther": "Processus GPU non lancés par Spark Pulse",
+    "memoryUnknown": "Mémoire non signalée",
+    "agentOutdated": "Agent obsolète",
+    "gpu": "GPU",
+    "temp": "Temp.",
+    "power": "Puissance",
+    "liveRuns": "Exécutions actives",
+    "allRuns": "Toutes les exécutions",
+    "activity": "Activité",
+    "noActivity": "Rien ne s’est encore produit.",
+    "noRuns": "Rien ne tourne.",
+    "noRunsHint": "Appuyez sur ⌘K et tapez le nom d’une recette pour la déployer.",
+    "browseRecipes": "Parcourir les recettes",
+    "colRun": "Exécution",
+    "colPhase": "Phase",
+    "colEngine": "Moteur",
+    "colNodes": "Nœuds",
+    "colPort": "Port",
+    "colUp": "Durée",
+    "howToFix": "Comment corriger",
+    "recentRuns": "Terminés récemment",
+    "colEnded": "Fin",
+    "colLasted": "Durée"
+  },
+  "palette": {
+    "title": "Palette de commandes",
+    "open": "Ouvrir la palette de commandes",
+    "trigger": "Déployer, chercher, aller à…",
+    "placeholder": "Déployer une recette, ouvrir une exécution, aller à une page…",
+    "empty": "Aucun résultat.",
+    "groupDeploy": "Déployer",
+    "groupRuns": "Exécutions",
+    "groupNodes": "Nœuds",
+    "groupPages": "Pages",
+    "esc": "échap"
+  },
+  "recipesTable": {
+    "colRecipe": "Recette",
+    "colEngines": "Moteurs",
+    "colNodes": "Nœuds",
+    "colState": "État",
+    "soloOrCluster": "Un ou plusieurs",
+    "colServes": "Sert",
+    "colFile": "Fichier",
+    "deployFor": "Déployer {name}"
+  },
+  "mods": {
+    "heading": "Mods (correctifs).",
+    "meta": {
+      "one": "{count} mod disponible",
+      "other": "{count} mods disponibles"
+    },
+    "search": "Chercher un mod",
+    "sourceLabel": "Origine des mods",
+    "colMod": "Mod (correctif)",
+    "colDescription": "Description du mod",
+    "colFiles": "Fichiers",
+    "colSource": "Origine"
+  },
+  "nodesPage": {
+    "healthy": "{count} en bonne santé",
+    "memory": "Mémoire",
+    "colPid": "PID (processus)",
+    "colProcess": "Processus",
+    "colMemory": "Mémoire",
+    "killFor": "Tuer {name} (PID {pid})",
+    "hostAndDisk": "Mémoire hôte et disque",
+    "diskFree": "{free} libres · {percent} % utilisés",
+    "howToFix": "Comment corriger",
+    "interfaces": "Interfaces réseau",
+    "agent": "Agent (nœud)",
+    "colNode": "Nœud",
+    "colState": "État",
+    "colAddress": "Adresse",
+    "colGpu": "GPU (util.)",
+    "colTemp": "Temp.",
+    "backToNodes": "Retour aux nœuds",
+    "notFound": "Aucun nœud avec l’identifiant {id}.",
+    "noProcesses": "Rien n’occupe le GPU.",
+    "noStorage": "Ce nœud ne signale ni mémoire ni disque.",
+    "usedOf": "utilisés sur {total}",
+    "power": "Puissance",
+    "findings": "Constats",
+    "noFindings": "Aucun constat.",
+    "runChecks": "Lancer les vérifications",
+    "runChecksAgain": "Relancer",
+    "checksIdle": "Les vérifications se connectent au nœud. Lancez-les au besoin.",
+    "noGpu": "Aucun GPU signalé."
   }
 }

@@ -125,8 +125,8 @@ test("the deploy preview shows the pre-flight verdict and its remedies", async (
 }) => {
   const report = await preflight(request);
 
-  await gotoPage(page, "/");
-  await page.getByRole("button", { name: new RegExp(escapeRegExp(RECIPE_NAME)) }).click();
+  await gotoPage(page, "/recipes");
+  await page.getByRole("button", { name: new RegExp(escapeRegExp(RECIPE_NAME)) }).first().click();
   await expect(page.getByRole("heading", { name: RECIPE_NAME, exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Deploy options" }).click();
   await page.getByRole("button", { name: "Preview" }).click();

@@ -163,8 +163,8 @@ export default function EventStreamViewer({
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Activity size={20} className="text-blue2" />
-          <h3 className="text-lg font-semibold">{t("eventStream.title")}</h3>
+          <Activity size={14} className="text-blue2" />
+          <h3 className="text-[14px] font-semibold">{t("eventStream.title")}</h3>
           <span className="text-xs text-text-muted bg-surface-hover px-2 py-0.5 rounded-full">
             {plural("eventStream.eventCount", counted)}
           </span>
@@ -206,7 +206,9 @@ export default function EventStreamViewer({
       </div>
 
       {/* Event Timeline */}
-      <div className="space-y-1 max-h-96 overflow-y-auto">
+      {/* No scroll box of its own: the timeline is a page tab, and a page
+          that scrolls inside a page that scrolls is the thing it left. */}
+      <div className="space-y-1">
         {filteredEvents.length === 0 ? (
           <div className="p-8 text-center text-text-muted text-sm">
             {loading ? t("common.loading") : t("eventStream.noEvents")}

@@ -26,6 +26,8 @@ import {
   expectNoCrash,
   gotoPage,
   listDeployments,
+  backToRuns,
+  openRun,
   purgeDeployments,
 } from "./helpers";
 
@@ -72,7 +74,7 @@ async function forgetAddress(request: APIRequestContext, address: string): Promi
 
 /** Open a recipe's deploy drawer and expand the deploy options. */
 async function openDeployOptions(page: Page, recipeName: string): Promise<void> {
-  await gotoPage(page, "/");
+  await gotoPage(page, "/recipes");
   await page.getByRole("button", { name: new RegExp(escapeRegExp(recipeName)) }).first().click();
   await expect(page.getByRole("heading", { name: recipeName, exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Deploy options" }).click();
@@ -117,23 +119,26 @@ test("enrol, select, preview, deploy, see the ranks, stop", async ({ page, reque
   await install.getByRole("button", { name: "Later" }).click();
   await expect(install).toBeHidden();
 
-  const enrolledRow = registry.getByRole("listitem", { name: "spark-journey" });
+  const enrolledRow = registry.getByRole("row", { name: "spark-journey" });
   await expect(enrolledRow).toContainText(enrolled);
-  await expect(enrolledRow).toContainText("Peer");
+  // Its role is in its panel; the row carries a chip only for the control plane.
+  await expect(enrolledRow).not.toContainText("Control plane");
 
   // Interface names are not an operator-typed field — they come from the
   // node's own probe — so the row that has them is the peer the backend
   // already knows, and having them is what makes it deployable: NCCL pinning
   // is find-or-fail against exactly these names.
-  const peerRow = registry.getByRole("listitem", { name: PEER_NAME });
-  await expect(peerRow).toContainText("eth0");
-  await expect(peerRow).toContainText("ib0");
+  await registry.getByRole("link", { name: PEER_NAME, exact: true }).click();
+  const peerPage = page.locator('[data-testid^="node-detail-"]');
+  await expect(peerPage).toContainText("eth0");
+  await expect(peerPage).toContainText("ib0");
+  await page.goBack();
 
   // Forget the one this test enrolled, so the deploy form below offers the
   // seeded peer and nothing else.
   await registry.getByRole("button", { name: "Forget spark-journey" }).click();
   await page.getByRole("button", { name: "Forget", exact: true }).click();
-  await expect(registry.getByRole("listitem", { name: "spark-journey" })).toHaveCount(0);
+  await expect(registry.getByRole("row", { name: "spark-journey" })).toHaveCount(0);
 
   // ── 2. Choose more than one node, and see the world size ─────────────────
   await openDeployOptions(page, RECIPE_NAME);
@@ -244,7 +249,7 @@ test("enrol, select, preview, deploy, see the ranks, stop", async ({ page, reque
   await expect(row).toContainText(PEER);
 
   // ── 5. The ranks, with their nodes, rank 0 the head ──────────────────────
-  await row.getByRole("button", { name: "Logs" }).click();
+  const runDetail = await openRun(page, deployment.id);
   const rankZero = page.getByTestId("rank-row-0");
   const rankOne = page.getByTestId("rank-row-1");
   await expect(rankZero).toContainText("rank 0");
@@ -256,18 +261,21 @@ test("enrol, select, preview, deploy, see the ranks, stop", async ({ page, reque
   await expect(rankOne).not.toContainText("head");
 
   // ── 6. Stop it, and see every rank torn down ─────────────────────────────
-  await row.getByRole("button", { name: "Stop", exact: true }).click();
+  await runDetail.getByRole("button", { name: "Stop", exact: true }).click();
   const stopDialog = page.getByRole("dialog");
   await expect(stopDialog.getByRole("heading", { name: "Stop this run" })).toBeVisible();
   await stopDialog.getByRole("button", { name: "Stop", exact: true }).last().click();
 
-  // A stopped run leaves the Live pill for Finished; the record stays.
-  await page.getByRole("tab", { name: /^Finished/ }).click();
-  await expect(row.getByText("Stopped", { exact: true })).toBeVisible();
+  await expect(runDetail.getByText("Stopped", { exact: true }).first()).toBeVisible();
   // The page's own evidence that both ranks went: an orphan is a rank we asked
   // to stop and could not confirm gone, and it is rendered right here when
   // there is one. None means both containers were confirmed removed.
   await expect(page.getByTestId("rank-orphan")).toHaveCount(0);
+
+  // A stopped run leaves the Live pill for Finished; the record stays.
+  await backToRuns(page);
+  await page.getByRole("tab", { name: /^Finished/ }).click();
+  await expect(row.getByText("Stopped", { exact: true })).toBeVisible();
 
   // `GET /api/deployments` carries the rank list but not each rank's live
   // container, so per-rank teardown is not on the page to assert — the record
@@ -446,6 +454,6 @@ test("refuses a duplicate address where it was typed", async ({ page }) => {
   await expect(dialog.getByLabel("Address *")).toHaveValue(PEER);
 
   await dialog.getByRole("button", { name: "Cancel" }).click();
-  await expect(registry.getByRole("listitem").filter({ hasText: PEER })).toHaveCount(1);
+  await expect(registry.getByRole("row").filter({ hasText: PEER })).toHaveCount(1);
   await expectNoCrash(page);
 });

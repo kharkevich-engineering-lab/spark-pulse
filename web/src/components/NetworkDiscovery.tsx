@@ -17,8 +17,6 @@ import { runDiscovery, type DiscoveryResult, type ValidationResult } from "@/lib
 import { useI18n } from "@/lib/i18n";
 import { Button, Code, ErrorLine } from "@/ui";
 
-/** The rule that separates one section of the page from the next. */
-const SECTION = "border-t border-line pt-12 mt-10 first:border-t-0 first:pt-0 first:mt-0";
 
 export default function NetworkDiscovery() {
   const { t } = useI18n();
@@ -43,19 +41,19 @@ export default function NetworkDiscovery() {
   };
 
   return (
-    <section data-testid="network-discovery" className={SECTION}>
+    <section data-testid="network-discovery" className="rounded-md border border-line bg-surface">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
-        className="flex items-center gap-2 text-[22px] font-bold tracking-[-0.02em] hover:text-blue2 transition-colors duration-200"
+        className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-[14px] font-semibold hover:text-blue2 transition-colors duration-200"
       >
-        {open ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+        {open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
         {t("fleet.discover")}
       </button>
 
       {open && (
-        <div className="mt-4 space-y-4">
+        <div className="space-y-4 border-t border-line p-4">
           <Button size="sm" icon={Radio} loading={discoveryLoading} onClick={handleDiscover}>
             {t("settings.discover")}
           </Button>

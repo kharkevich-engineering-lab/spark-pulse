@@ -1,15 +1,19 @@
-import { BrowserRouter, Routes, Route, useLocation, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, useLocation, Navigate, matchPath } from "react-router-dom";
 import Layout from "@/components/Layout";
 import { AuthProvider } from "@/lib/auth";
 import { ConfigProvider, useConfig } from "@/lib/config";
 import { I18nProvider } from "@/lib/i18n";
 import RecipesPage from "@/pages/RecipesPage";
+import ModsPage from "@/pages/ModsPage";
+import OverviewPage from "@/pages/OverviewPage";
 import RunsPage from "@/pages/RunsPage";
 import LibraryPage from "@/pages/LibraryPage";
 import SettingsPage from "@/pages/SettingsPage";
 import LoginPage from "@/pages/LoginPage";
 import NotFoundPage from "@/pages/NotFoundPage";
 import FleetPage from "@/pages/FleetPage";
+import RunDetailPage from "@/pages/RunDetailPage";
+import NodeDetailPage from "@/pages/NodeDetailPage";
 import { ErrorBoundary, DefaultErrorFallback } from "@/components/ErrorBoundary";
 import { initCsrfToken } from "@/lib/api";
 
@@ -48,9 +52,16 @@ function BenchmarkingRoute() {
  * added a page.
  */
 const PAGES: { path: string; element: React.ReactNode }[] = [
-  { path: "/", element: <RecipesPage /> },
+  // The overview is home; the recipes moved to their own address.
+  { path: "/", element: <OverviewPage /> },
+  { path: "/recipes", element: <RecipesPage /> },
+  { path: "/mods", element: <ModsPage /> },
   { path: "/jobs", element: <RunsPage /> },
+  // A run and a node each have a page: too much to say for a panel beside
+  // the list, which became a second scrolling column inside the page.
+  { path: "/jobs/:id", element: <RunDetailPage /> },
   { path: "/cluster", element: <FleetPage /> },
+  { path: "/cluster/:id", element: <NodeDetailPage /> },
   { path: "/benchmarking", element: <BenchmarkingRoute /> },
   // Monitoring is a tab of Fleet; the route deep-links to it.
   { path: "/monitoring", element: <FleetPage /> },
@@ -76,7 +87,7 @@ function AppRoutes() {
   const isLoginPage = location.pathname === "/login";
   // Rendered outside Layout: a not-found page framed by the application's own
   // navigation invites the reader to believe the page half loaded.
-  if (!KNOWN_PATHS.includes(location.pathname)) return <NotFoundPage />;
+  if (!KNOWN_PATHS.some((path) => matchPath(path, location.pathname))) return <NotFoundPage />;
 
   return (
     <>

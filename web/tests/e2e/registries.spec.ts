@@ -62,12 +62,7 @@ test("lists the collections a registry offers", async ({ page, request }) => {
   expect(collections.length, "simulation should serve collections").toBeGreaterThan(0);
 
   await gotoPage(page, "/oci");
-  await expect(page.getByRole("heading", { name: "What is on disk.", exact: true })).toBeVisible();
-  await expect(page.getByRole("tab", { name: /^Registries/ })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  await expect(page.getByRole("heading", { name: "Collections", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Collections.", exact: true })).toBeVisible();
 
   for (const collection of collections) {
     await expect(page.getByText(collection.name, { exact: true }).first()).toBeVisible();
@@ -89,7 +84,8 @@ test("lists the registries themselves, beside what they offer", async ({ page, r
     await expect(page.getByText(registry.url, { exact: true }).first()).toBeVisible();
   }
   // The schedule is configuration, and has left for Settings.
-  await expect(page.getByText("The update schedule is configured in Settings.")).toBeVisible();
+  await page.getByRole("button", { name: "About the registries" }).click();
+  await expect(page.getByRole("tooltip")).toContainText("The update schedule is configured in Settings.");
   await expectNoCrash(page);
 });
 

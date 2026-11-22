@@ -1,4 +1,6 @@
-/** Monitoring, on the hardware this actually runs on and across the cluster.
+/** A node's live stats, on the hardware this actually runs on and across the
+ *  cluster. Monitoring was a page of its own; `/monitoring` now opens Nodes,
+ *  and what a node is doing is on the node's own page, one page per node.
  *
  * A GB10 shares one pool of memory between host and GPU, so `nvidia-smi`
  * reports `[N/A]` for GPU memory and the node's agent leaves the measurement
@@ -23,87 +25,93 @@ import {
   stubMemoryEndpoints,
 } from "./helpers";
 
+/** The stub answers for the registered nodes, so its ids are theirs. */
+async function nodeIds(request: import("@playwright/test").APIRequestContext) {
+  const nodes = (await (await request.get("/api/nodes")).json()) as { id: string; name: string }[];
+  const byName = Object.fromEntries(nodes.map((n) => [n.name, n.id]));
+  return { control: byName["spark-01"], peer: byName["spark-02"] };
+}
+
+/** Follow a node's name to its page. */
+async function openNode(page: import("@playwright/test").Page, name: string) {
+  await page.getByTestId("node-registry").getByRole("link", { name, exact: true }).click();
+  const detail = page.locator('[data-testid^="node-detail-"]');
+  await expect(detail.getByRole("heading", { level: 1, name })).toBeVisible();
+  return detail;
+}
+
 test("asks every node, and says which one runs the control plane", async ({ page }) => {
   await gotoPage(page, "/monitoring");
 
-  // Monitoring is a tab of Fleet now, and `/monitoring` deep-links to it: the
-  // page is the machines, and this is the reading of what they are doing.
-  await expect(page.getByRole("heading", { name: "The nodes.", exact: true })).toBeVisible();
-  await expect(page.getByRole("tab", { name: "Monitoring" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  // The registry's two Sparks, each with its own section.
-  await expect(page.getByRole("heading", { name: "spark-01" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "spark-02" })).toBeVisible();
-  await expect(page.getByText("Control plane", { exact: true })).toHaveCount(1);
-  await expect(page.getByText("10.0.0.11", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Nodes.", exact: true })).toBeVisible();
+  const table = page.getByTestId("node-registry");
+  await expect(table.getByRole("row", { name: "spark-01" })).toBeVisible();
+  await expect(table.getByRole("row", { name: "spark-02" })).toBeVisible();
+  await expect(table.getByText("Control plane", { exact: true })).toHaveCount(1);
+  await expect(table.getByText("10.0.0.11", { exact: true })).toBeVisible();
 
-  // And each answers for its own hardware, through its own agent.
-  await expect(page.getByRole("heading", { name: "NVIDIA GB10" })).toHaveCount(2);
-  await expect(page.getByRole("heading", { name: "CPU memory" })).toHaveCount(2);
+  // Each answers for its own hardware, through its own agent.
+  for (const name of ["spark-01", "spark-02"]) {
+    const detail = await openNode(page, name);
+    await expect(detail.getByText("NVIDIA GB10")).toBeVisible();
+    await expect(detail.getByRole("heading", { name: "Host memory and disk" })).toBeVisible();
+    await page.goBack();
+  }
   await expectNoCrash(page);
 });
 
 test("marks a GPU process nothing here started", async ({ page }) => {
   await gotoPage(page, "/monitoring");
+  const panel = await openNode(page, "spark-02");
 
-  // Rows, not a table: each process stacks into a card under 900 so a phone
-  // reads it without scrolling sideways.
-  const process = page.getByRole("listitem").filter({ hasText: "untracked" }).first();
+  const process = panel.getByRole("row").filter({ hasText: "untracked" }).first();
   await expect(process).toBeVisible();
-  await expect(process.getByText("untracked")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Kill" }).first()).toBeVisible();
+  await expect(process.getByRole("button", { name: /^Kill / })).toBeVisible();
   await expectNoCrash(page);
 });
 
-test("renders a GPU whose memory usage is not reported", async ({ page }) => {
-  await stubMemoryEndpoints(page);
+test("renders a GPU whose memory usage is not reported", async ({ page, request }) => {
+  const { control } = await nodeIds(request);
+  await stubMemoryEndpoints(page, { nodes: [{ ...UNIFIED_MEMORY_NODE, id: control }] });
   await gotoPage(page, "/monitoring");
+  const panel = await openNode(page, "spark-01");
 
-  await expect(page.getByRole("heading", { name: "NVIDIA GB10" })).toBeVisible();
-
-  // No usage bar, and an explanation in its place.
-  await expect(
-    page.getByText("Unified memory — usage not reported by nvidia-smi"),
-  ).toBeVisible();
-  // No "used / total MB" readout and no "N MB free" line — there is nothing
-  // to divide, and 0/0 would have rendered as a full or NaN-wide bar.
-  await expect(page.getByText(/^\d+ \/ \d+ MB$/)).toHaveCount(0);
-  await expect(page.getByText(/MB free$/)).toHaveCount(0);
+  await expect(panel.getByText("NVIDIA GB10")).toBeVisible();
+  // No GPU memory cell: there is nothing to divide, and 0/0 would have drawn a
+  // full or NaN-wide bar. The unified pool is the node's memory cell.
+  await expect(panel.getByText("GPU memory", { exact: true })).toHaveCount(0);
 
   // What nvidia-smi does report is still shown.
   const gpu = UNIFIED_MEMORY_NODE.gpu[0];
-  await expect(page.getByText(`${gpu.utilization}%`, { exact: true })).toBeVisible();
-  await expect(page.getByText(`${gpu.temperature}°C`, { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("— W", { exact: true })).toHaveCount(2); // draw and limit
-  await expect(page.getByText(gpu.uuid, { exact: true })).toBeVisible();
-
+  await expect(panel.getByText(`${gpu.utilization}%`, { exact: true })).toBeVisible();
+  await expect(panel.getByText(`${gpu.temperature}°C`, { exact: true })).toBeVisible();
+  await expect(panel.getByText("—", { exact: true })).toHaveCount(1); // power, neither drawn nor limited
   await expectNoCrash(page);
-  await expect(page.getByText("No data available.")).toHaveCount(0);
 });
 
-test("renders host CPU and disk without a GPU at all", async ({ page }) => {
+test("renders host memory and disk without a GPU at all", async ({ page, request }) => {
+  const { control } = await nodeIds(request);
   // What a CI runner or a laptop reports: no GPU, no processes.
   await stubMemoryEndpoints(page, {
-    nodes: [{ ...UNIFIED_MEMORY_NODE, gpu: [], processes: [] }],
+    nodes: [{ ...UNIFIED_MEMORY_NODE, id: control, gpu: [], processes: [] }],
   });
   await gotoPage(page, "/monitoring");
+  const panel = await openNode(page, "spark-01");
 
-  await expect(page.getByRole("heading", { name: "The nodes.", exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "CPU memory" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "/", exact: true })).toBeVisible();
-  await expect(page.getByText("64.9%", { exact: true })).toBeVisible();
+  await expect(panel.getByRole("heading", { name: "Host memory and disk" })).toBeVisible();
+  await expect(panel.getByText(/64\.9% used/)).toBeVisible();
+  await expect(panel.getByText("No GPU reported.")).toBeVisible();
   await expectNoCrash(page);
 });
 
-test("keeps the section of a node that could not be asked", async ({ page }) => {
+test("keeps a node that could not be asked, and says why", async ({ page, request }) => {
+  const { control, peer } = await nodeIds(request);
   // Unknown is not idle: the row stays, and it says what happened.
   await stubMemoryEndpoints(page, {
     nodes: [
-      UNIFIED_MEMORY_NODE,
+      { ...UNIFIED_MEMORY_NODE, id: control },
       {
-        id: "peer",
+        id: peer,
         name: "spark-02",
         address: "10.0.0.11",
         is_control_plane: false,
@@ -119,9 +127,9 @@ test("keeps the section of a node that could not be asked", async ({ page }) => 
   });
   await gotoPage(page, "/monitoring");
 
-  await expect(page.getByText("Could not be asked")).toBeVisible();
-  await expect(page.getByText("10.0.0.11 has no enrolled agent")).toBeVisible();
-  // One machine answered, so exactly one CPU card, not two.
-  await expect(page.getByRole("heading", { name: "CPU memory" })).toHaveCount(1);
+  await expect(page.getByRole("row", { name: "spark-02" }).getByText("Could not be asked")).toBeVisible();
+  const panel = await openNode(page, "spark-02");
+  await expect(panel.getByText("10.0.0.11 has no enrolled agent")).toBeVisible();
+  await expect(panel.getByRole("heading", { name: "Host memory and disk" })).toHaveCount(0);
   await expectNoCrash(page);
 });

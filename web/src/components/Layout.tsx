@@ -1,50 +1,88 @@
-/** The app shell: one sticky header, five groups, and the page under it.
+/** The app shell: a console.
  *
- * It was a 256px sidebar listing eleven routes, with a `fixed top-4 left-4`
- * hamburger and a `fixed top-4 right-4` user chip floating over whatever the
- * page had drawn there. Below `lg:` the chip was hidden outright, so an
- * operator on a phone had no way to sign out at all.
+ * A sidebar listing every kind of thing this control plane manages — runs,
+ * nodes, recipes, models, engines, collections — grouped as Operate, Library
+ * and System, and a thin toolbar over the page with the command palette, the
+ * language and the theme. It replaced a centred header of five groups, which
+ * hid half the object types behind tabs: in a console every object type is
+ * one click away and the address names it.
  *
- * This is hub.kharkevich.com's header instead: brand left, the five groups
- * centred, the actions right, and under 900px one menu button that opens a
- * panel in the flow beneath the header rather than a drawer over the page.
- * Eleven routes became five groups because a nav is a map, not an index — the
- * routes are unchanged and a group lights up for any of its members.
+ * Under 900px the sidebar folds into a menu button whose panel opens beneath
+ * the toolbar (Escape closes it, a route change closes it, the body scroll
+ * locks, focus goes in and comes back).
  */
 
 import { useAuth } from "@/lib/auth";
-import { useI18n, useT, LANGUAGES } from "@/lib/i18n";
+import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { useConfig } from "@/lib/config";
 import { BrandFooter } from "@/components/BrandFooter";
-import { getTheme, setTheme, type ThemeMode } from "@/lib/theme";
-import { LogOut, Menu, Moon, Sun, User, X } from "lucide-react";
-import { PulseIcon, SunMoonIcon } from "@/components/BrandIcons";
+import {
+  BookOpen,
+  Box,
+  Cpu,
+  Gauge,
+  LayoutDashboard,
+  LogOut,
+  Menu,
+  Package,
+  Puzzle,
+  Search,
+  Server,
+  Settings,
+  Terminal,
+  User,
+  X,
+  type LucideIcon,
+} from "lucide-react";
+import CommandPalette, { openCommandPalette } from "@/components/CommandPalette";
+import { PulseIcon } from "@/components/BrandIcons";
 import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { Link, useLocation } from "react-router-dom";
 
-/** A header group: where it takes you, and which routes it speaks for.
+/** One sidebar entry: where it takes you, and which routes it speaks for.
  *
- * `routes` is the whole reason this is a list of groups rather than a list of
- * links — Monitoring is part of Fleet whether or not it has its own entry, and
- * an operator reading `/monitoring` should see Fleet lit up rather than
- * nothing at all.
+ * `routes` is why this is more than a list of links — `/mcp` is Settings
+ * whether or not it has its own entry, and an operator reading it should see
+ * Settings lit rather than nothing at all. `flag` hides an entry whose
+ * feature the backend has switched off.
  */
 export interface NavGroup {
   href: string;
   labelKey: string;
   routes: string[];
+  icon: LucideIcon;
+  section: "operate" | "library" | "system";
+  flag?: "benchmarking_enabled";
 }
 
 export const NAV_GROUPS: NavGroup[] = [
-  { href: "/", labelKey: "nav.deploy", routes: ["/"] },
-  { href: "/jobs", labelKey: "nav.runs", routes: ["/jobs", "/benchmarking"] },
-  { href: "/cluster", labelKey: "nav.fleet", routes: ["/cluster", "/monitoring"] },
-  { href: "/models", labelKey: "nav.library", routes: ["/models", "/engines", "/cache", "/oci"] },
-  { href: "/settings", labelKey: "nav.settings", routes: ["/settings", "/mcp"] },
+  { href: "/", labelKey: "nav.overview", routes: ["/"], icon: LayoutDashboard, section: "operate" },
+  { href: "/jobs", labelKey: "nav.runs", routes: ["/jobs"], icon: Terminal, section: "operate" },
+  {
+    href: "/benchmarking",
+    labelKey: "nav.benchmarks",
+    routes: ["/benchmarking"],
+    icon: Gauge,
+    section: "operate",
+    flag: "benchmarking_enabled",
+  },
+  { href: "/cluster", labelKey: "nav.nodes", routes: ["/cluster", "/monitoring"], icon: Server, section: "operate" },
+  { href: "/recipes", labelKey: "nav.recipes", routes: ["/recipes"], icon: BookOpen, section: "library" },
+  { href: "/models", labelKey: "nav.models", routes: ["/models", "/cache"], icon: Box, section: "library" },
+  { href: "/engines", labelKey: "nav.engines", routes: ["/engines"], icon: Cpu, section: "library" },
+  { href: "/mods", labelKey: "nav.mods", routes: ["/mods"], icon: Puzzle, section: "library" },
+  { href: "/oci", labelKey: "nav.collections", routes: ["/oci"], icon: Package, section: "library" },
+  { href: "/settings", labelKey: "nav.settings", routes: ["/settings", "/mcp"], icon: Settings, section: "system" },
 ];
 
-/** Which group a path belongs to, or "" for a path no group claims. */
+const SECTIONS: { id: NavGroup["section"]; labelKey: string }[] = [
+  { id: "operate", labelKey: "nav.sectionOperate" },
+  { id: "library", labelKey: "nav.sectionLibrary" },
+  { id: "system", labelKey: "nav.sectionSystem" },
+];
+
+/** Which entry a path belongs to, or "" for a path no entry claims. */
 export function activeGroup(pathname: string): string {
   return NAV_GROUPS.find((g) => g.routes.includes(pathname))?.href ?? "";
 }
@@ -59,71 +97,6 @@ const ICON_BUTTON = cn(
   "hover:text-text",
 );
 
-const THEME_ORDER: ThemeMode[] = ["system", "light", "dark"];
-const THEME_LABEL: Record<ThemeMode, string> = {
-  system: "preferences.themeSystem",
-  light: "preferences.themeLight",
-  dark: "preferences.themeDark",
-};
-
-/** system → light → dark → system, in one 40×40 button.
- *
- * The theme also lives on Settings → Preferences, which is where it is
- * *explained*. This is the same preference one click away, because changing it
- * is something an operator does while looking at the page they want changed.
- */
-function ThemeCycler() {
-  const t = useT();
-  const [mode, setMode] = useState<ThemeMode>(() => getTheme());
-
-  const cycle = () => {
-    const next = THEME_ORDER[(THEME_ORDER.indexOf(mode) + 1) % THEME_ORDER.length];
-    setTheme(next);
-    setMode(next);
-  };
-
-  const Icon = mode === "light" ? Sun : mode === "dark" ? Moon : SunMoonIcon;
-  return (
-    <button
-      type="button"
-      onClick={cycle}
-      className={ICON_BUTTON}
-      aria-label={t("a11y.theme", { mode: t(THEME_LABEL[mode]) })}
-    >
-      <Icon size={20} />
-    </button>
-  );
-}
-
-/** EN/FR, as the hub draws it: both halves always visible, the current one in
- *  full contrast. One control, so the choice is a single target. */
-function LanguageSwitch() {
-  const { language, setLanguage } = useI18n();
-  const t = useT();
-  const other = LANGUAGES.find((l) => l.id !== language) ?? LANGUAGES[0];
-
-  return (
-    <button
-      type="button"
-      onClick={() => setLanguage(other.id)}
-      aria-label={t("a11y.language", { language: other.label })}
-      className={cn(
-        "inline-flex gap-0.5 px-2.5 py-2 rounded-sm border-0 bg-transparent",
-        "text-[12px] font-semibold tracking-[0.06em] text-muted transition-colors",
-        HOVER,
-      )}
-    >
-      {LANGUAGES.map((l, i) => (
-        <span key={l.id}>
-          {i > 0 && <span aria-hidden="true">/</span>}
-          <span aria-current={l.id === language ? "true" : undefined} className={cn(l.id === language && "text-text")}>
-            {l.id.toUpperCase()}
-          </span>
-        </span>
-      ))}
-    </button>
-  );
-}
 
 /** Who is signed in, and the way out. Renders nothing when auth is off. */
 function UserChip({ className }: { className?: string }) {
@@ -148,6 +121,7 @@ function UserChip({ className }: { className?: string }) {
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const t = useT();
+  const { config } = useConfig();
   const [open, setOpen] = useState(false);
   const location = useLocation();
   const [version, setVersion] = useState("");
@@ -162,6 +136,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   }, []);
 
   const current = useMemo(() => activeGroup(location.pathname), [location.pathname]);
+  const groups = useMemo(
+    () => NAV_GROUPS.filter((g) => !g.flag || Boolean(config?.[g.flag])),
+    [config],
+  );
 
   // A route change puts the menu away: it covers the page it just navigated to.
   useEffect(() => {
@@ -188,8 +166,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     };
   }, [open]);
 
-  // Focus follows the menu in and back out again, so a keyboard user is never
-  // left tabbing through a panel that is no longer on screen.
+  // Focus follows the menu in and back out again.
   const wasOpen = useRef(false);
   useEffect(() => {
     if (open) {
@@ -200,71 +177,92 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     wasOpen.current = open;
   }, [open]);
 
-  const renderLink = useCallback(
-    (group: NavGroup, variant: "desktop" | "mobile") => {
-      const active = current === group.href;
-      return (
-        <Link
-          key={group.href}
-          to={group.href}
-          aria-current={active ? "page" : undefined}
-          className={cn(
-            "inline-flex items-center gap-2 text-[13.5px] font-medium no-underline hover:no-underline transition-colors",
-            HOVER,
-            active ? "text-text" : "text-muted hover:text-text",
-            variant === "desktop"
-              ? cn("px-3 py-2 rounded-sm", active && "rounded-none shadow-[inset_0_-2px_0_var(--blue)]")
-              : "px-1 py-3.5 border-b border-line rounded-none",
-          )}
-        >
-          {t(group.labelKey)}
-        </Link>
-      );
-    },
-    [current, t],
+  const renderNav = useCallback(
+    (testId: string) => (
+      <nav data-testid={testId} aria-label={t("a11y.primaryNav")} className="flex flex-col gap-4">
+        {SECTIONS.map((section) => {
+          const items = groups.filter((g) => g.section === section.id);
+          if (items.length === 0) return null;
+          return (
+            <div key={section.id} className="flex flex-col gap-0.5">
+              <p className="px-2.5 pb-1 text-[10.5px] font-semibold uppercase tracking-[0.1em] text-muted">
+                {t(section.labelKey)}
+              </p>
+              {items.map((group) => {
+                const active = current === group.href;
+                const Icon = group.icon;
+                return (
+                  <Link
+                    key={group.href}
+                    to={group.href}
+                    aria-current={active ? "page" : undefined}
+                    className={cn(
+                      "flex items-center gap-2.5 rounded-sm px-2.5 py-1.5 text-[13.5px] font-medium no-underline hover:no-underline transition-colors",
+                      active ? "bg-surface text-text shadow-[inset_2px_0_0_var(--blue)]" : cn("text-muted hover:text-text", HOVER),
+                    )}
+                  >
+                    <Icon size={16} aria-hidden="true" className="shrink-0" />
+                    {t(group.labelKey)}
+                  </Link>
+                );
+              })}
+            </div>
+          );
+        })}
+      </nav>
+    ),
+    [current, groups, t],
+  );
+
+  const brand = (
+    <Link
+      to="/"
+      aria-label={t("a11y.home")}
+      className="inline-flex items-center gap-2.5 text-text no-underline hover:no-underline"
+    >
+      <PulseIcon className="text-blue2 shrink-0" size={26} />
+      <span className="flex flex-col leading-[1.05]">
+        <strong className="text-[14.5px] font-bold tracking-[-0.01em] whitespace-nowrap">{t("brand.product")}</strong>
+        {version && (
+          <small className="mt-[3px] text-[9.5px] font-medium uppercase tracking-[0.2em] text-muted">{version}</small>
+        )}
+      </span>
+    </Link>
   );
 
   return (
-    <div className="min-h-screen flex flex-col bg-bg text-text">
-      <header
-        className={cn(
-          "sticky top-0 z-50 flex items-center gap-6 h-[72px] px-5 min-[900px]:px-7",
-          "bg-[color-mix(in_srgb,var(--bg)_82%,transparent)] backdrop-blur-[18px]",
-          "border-b border-line",
-        )}
-      >
-        <Link
-          to="/"
-          aria-label={t("a11y.home")}
-          className="inline-flex items-center gap-2.5 text-text no-underline hover:no-underline min-[900px]:min-w-[260px]"
+    <div className="min-h-screen bg-bg text-text min-[900px]:grid min-[900px]:grid-cols-[220px_minmax(0,1fr)]">
+      <aside className="hidden min-[900px]:flex sticky top-0 h-screen flex-col gap-6 overflow-y-auto border-r border-line bg-bg2 px-3 py-4">
+        <div className="px-1.5">{brand}</div>
+        {renderNav("primary-nav")}
+        <div className="mt-auto flex flex-col gap-3 px-1">
+          <UserChip />
+          <BrandFooter compact />
+        </div>
+      </aside>
+
+      <div className="flex min-h-screen min-w-0 flex-col">
+        <header
+          className={cn(
+            "sticky top-0 z-50 flex items-center gap-2 h-14 px-4 min-[900px]:px-6",
+            "bg-[color-mix(in_srgb,var(--bg)_86%,transparent)] backdrop-blur-[18px] border-b border-line",
+          )}
         >
-          <PulseIcon className="text-blue2 shrink-0" size={34} />
-          <span className="flex flex-col leading-[1.05]">
-            <strong className="text-[15px] font-bold tracking-[-0.01em] whitespace-nowrap max-[520px]:text-[13px]">
-              {t("brand.product")}
-            </strong>
-            {version && (
-              <small className="mt-[3px] text-[9.5px] font-medium uppercase tracking-[0.22em] text-muted max-[520px]:text-[8.5px]">
-                {version}
-              </small>
+          <div className="min-[900px]:hidden">{brand}</div>
+          <button
+            type="button"
+            onClick={openCommandPalette}
+            aria-label={t("palette.open")}
+            className={cn(
+              "ml-auto min-[900px]:ml-0 inline-flex items-center gap-2 h-9 rounded-sm border border-line px-2.5 text-[13px] text-muted transition-colors min-[900px]:w-[360px]",
+              HOVER,
+              "hover:text-text",
             )}
-          </span>
-        </Link>
-
-        <nav
-          data-testid="primary-nav"
-          aria-label={t("a11y.primaryNav")}
-          className="hidden min-[900px]:flex gap-1 mx-auto"
-        >
-          {NAV_GROUPS.map((group) => renderLink(group, "desktop"))}
-        </nav>
-
-        <div className="flex items-center gap-1 ml-auto min-[900px]:ml-0 min-[900px]:min-w-[200px] min-[900px]:justify-end">
-          <div className="hidden min-[900px]:flex items-center gap-1">
-            <UserChip />
-            <LanguageSwitch />
-            <ThemeCycler />
-          </div>
+          >
+            <Search size={15} aria-hidden="true" />
+            <span className="hidden min-[900px]:inline">{t("palette.trigger")}</span>
+            <kbd className="hidden min-[900px]:inline ml-auto rounded border border-line px-1 font-mono text-[10px]">⌘K</kbd>
+          </button>
           <button
             ref={menuButtonRef}
             type="button"
@@ -276,36 +274,31 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           >
             {open ? <X size={22} /> : <Menu size={22} />}
           </button>
-        </div>
-      </header>
+        </header>
 
-      {open && (
-        <div
-          id="mobile-menu"
-          ref={menuRef}
-          className={cn(
-            "fixed top-[72px] left-0 right-0 z-40 flex flex-col min-[900px]:hidden",
-            "bg-bg border-b border-line px-5 pt-3 pb-5 max-h-[calc(100vh-72px)] overflow-y-auto",
-          )}
-        >
-          <nav data-testid="mobile-nav" aria-label={t("a11y.primaryNav")} className="flex flex-col">
-            {NAV_GROUPS.map((group) => renderLink(group, "mobile"))}
-          </nav>
-          <div className="flex items-center justify-between gap-2 pt-4">
-            <UserChip />
-            <div className="flex items-center gap-1 ml-auto">
-              <LanguageSwitch />
-              <ThemeCycler />
+        {open && (
+          <div
+            id="mobile-menu"
+            ref={menuRef}
+            className={cn(
+              "fixed top-14 left-0 right-0 z-40 flex flex-col gap-4 min-[900px]:hidden",
+              "bg-bg border-b border-line px-4 pt-3 pb-5 max-h-[calc(100vh-56px)] overflow-y-auto",
+            )}
+          >
+            {renderNav("mobile-nav")}
+            <div className="flex items-center justify-between gap-2 border-t border-line pt-3">
+              <UserChip />
             </div>
+            <BrandFooter compact />
           </div>
-        </div>
-      )}
+        )}
 
-      <main className="flex-1 w-full max-w-[1100px] mx-auto px-5 pt-8 pb-[60px] min-[900px]:px-7 min-[900px]:pt-12 min-[900px]:pb-20">
-        {children}
-      </main>
+        <main className="flex-1 w-full max-w-[1600px] px-4 pt-5 pb-12 min-[900px]:px-6 min-[900px]:pt-5 min-[900px]:pb-14">
+          {children}
+        </main>
+      </div>
 
-      <BrandFooter />
+      <CommandPalette />
     </div>
   );
 }

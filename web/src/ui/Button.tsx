@@ -37,9 +37,12 @@ const VARIANTS: Record<ButtonVariant, string> = {
 };
 
 const PADDING: Record<ButtonSize, string> = {
-  // h-11 is an Input's height (Field.tsx), so a button beside a field lines up.
-  md: "h-11 px-[18px] text-[14px] gap-2",
-  sm: "px-3 py-[7px] text-[13px] gap-1.5",
+  // h-9 is an Input's height (Field.tsx), so a button beside a field lines up.
+  // The console's scale: a page action is as tall as a toolbar row, not the
+  // 44px call to action of a landing page.
+  md: "h-9 px-3.5 text-[13.5px] gap-1.5",
+  // A row's actions: 32px, the same as a small icon button beside it.
+  sm: "h-8 px-2.5 text-[12.5px] gap-1.5",
 };
 
 /** Everything but the padding, so the square icon button can set its own. */
@@ -111,7 +114,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(
         className={cn(
           SHELL,
           VARIANTS[variant],
-          size === "md" ? "w-10 h-10" : "w-8 h-8",
+          size === "md" ? "w-9 h-9" : "w-8 h-8",
           className,
         )}
         {...rest}

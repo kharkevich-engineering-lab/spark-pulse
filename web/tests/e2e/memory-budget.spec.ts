@@ -41,8 +41,8 @@ test("a run that does not fit beside another is blocked, and the fit is offered"
   });
   expect(created.ok(), "the first run fits on an empty node").toBeTruthy();
 
-  await gotoPage(page, "/");
-  await page.getByRole("button", { name: new RegExp(escapeRegExp(RECIPE_NAME)) }).click();
+  await gotoPage(page, "/recipes");
+  await page.getByRole("button", { name: new RegExp(escapeRegExp(RECIPE_NAME)) }).first().click();
   await expect(page.getByRole("heading", { name: RECIPE_NAME, exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Deploy options" }).click();
 

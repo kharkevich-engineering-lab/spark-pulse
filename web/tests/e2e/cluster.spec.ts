@@ -18,14 +18,14 @@ import { expectNoCrash, gotoPage, openNav } from "./helpers";
 test("is the nodes, with nothing disclaiming them", async ({ page }) => {
   await gotoPage(page, "/cluster");
 
-  await expect(page.getByRole("heading", { name: "The nodes." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Nodes." })).toBeVisible();
   // The page keeps its own notes; what is gone is the one that disclaimed the
   // machines it is about.
   await expect(
     page.getByRole("note").filter({ hasText: /experimental|unproven/i }),
   ).toHaveCount(0);
 
-  const fleet = (await openNav(page)).getByRole("link", { name: "Fleet" });
+  const fleet = (await openNav(page)).getByRole("link", { name: "Nodes" });
   await expect(fleet).toBeVisible();
   await expect(fleet.getByText("exp", { exact: true })).toHaveCount(0);
   await expectNoCrash(page);
@@ -46,7 +46,7 @@ test("points at Runs instead of listing the deployments a second time", async ({
   await page.getByRole("main").getByRole("link", { name: "Runs" }).click();
 
   await expect(page).toHaveURL(/\/jobs$/);
-  await expect(page.getByRole("heading", { name: "What is serving." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Runs." })).toBeVisible();
   await expectNoCrash(page);
 });
 

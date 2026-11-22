@@ -8,7 +8,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import SettingsMcp from "@/components/SettingsMcp";
 
@@ -142,11 +142,12 @@ describe("SettingsMcp when the endpoint is not mounted", () => {
     render(<SettingsMcp enabled={false} port={8100} />);
 
     expect(await screen.findByRole("heading", { name: "Tools (1)" })).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "These are what MCP would expose. None of them can be called while it is disabled.",
-      ),
-    ).toBeInTheDocument();
+    // The first sentence is the line; the rest is one hover away.
+    expect(screen.getByText(/These are what MCP would expose\./)).toBeInTheDocument();
+    fireEvent.mouseEnter(screen.getByRole("button", { name: "More about this" }).parentElement!);
+    expect(screen.getByRole("tooltip")).toHaveTextContent(
+      "These are what MCP would expose. None of them can be called while it is disabled.",
+    );
   });
 });
 

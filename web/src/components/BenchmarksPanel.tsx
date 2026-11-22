@@ -374,6 +374,7 @@ export default function BenchmarksPanel({
   return (
     <div className="space-y-4">
       <Tabs
+        variant="sections"
         label={t("benchmarking.title")}
         value={view}
         onChange={(id) => setView(id === "summary" ? "summary" : "history")}

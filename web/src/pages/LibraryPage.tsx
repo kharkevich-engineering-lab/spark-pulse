@@ -6,35 +6,42 @@
  * for a hundred gigabytes read four navigation entries to find out which of
  * them was holding it.
  *
- * One page, three tabs, and the caches as a section of the first — because a
- * cache is not a destination, it is a line item under the catalogue it belongs
- * to. The old addresses all still work: `/engines` and `/oci` open their tab,
+ * One page component behind three sidebar entries, the caches a section of
+ * the first — a cache is not a destination, it is a line item under the
+ * catalogue it belongs to. Each address has its own title and one primary
+ * action in the header, opening the dialog its tab owns. The old addresses all still work: `/engines` and `/oci` open their tab,
  * `/cache` opens Models at the caches section, and every bookmark, MCP tool
  * and Playwright spec that named them still arrives somewhere true.
  */
 
-import { useCallback, useMemo } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useMemo, useState } from "react";
+import { ArrowDownToLine, Download, Plus } from "lucide-react";
+import { useLocation } from "react-router-dom";
 import { useI18n } from "@/lib/i18n";
 import { fetchCache, fetchImages, fetchModels, fetchOciRegistries } from "@/lib/api";
 import { useQuery } from "@/hooks/useQuery";
 import { formatSize } from "@/lib/utils";
-import { PageHeader, Tabs } from "@/ui";
+import { Button, PageHeader } from "@/ui";
 import ModelsTab from "@/components/library/ModelsTab";
 import EnginesTab from "@/components/library/EnginesTab";
 import RegistriesTab from "@/components/library/RegistriesTab";
 
 export type LibraryTab = "models" | "engines" | "registries";
 
-/** Which tab an address opens, and which address a tab restores.
- *
- * The paths are the ones that already existed: a tab that changed the URL to
- * something new would break every bookmark this merge was supposed to keep.
- */
-const PATH_FOR: Record<LibraryTab, string> = {
-  models: "/models",
-  engines: "/engines",
-  registries: "/oci",
+
+/** The page title per address: the sidebar names each one, so the page does
+ *  too, rather than one title over three tabs the sidebar already lists. */
+const TITLE_FOR: Record<LibraryTab, string> = {
+  models: "models.heading",
+  engines: "library.headingEngines",
+  registries: "collection.pageHeading",
+};
+
+/** The one primary action per address, in the page header. */
+const ACTION_FOR: Record<LibraryTab, { label: string; icon: typeof Download }> = {
+  models: { label: "models.downloadModel", icon: Download },
+  engines: { label: "engines.pullImage", icon: ArrowDownToLine },
+  registries: { label: "oci.addRegistryButton", icon: Plus },
 };
 
 export function tabForPath(pathname: string): LibraryTab {
@@ -46,7 +53,6 @@ export function tabForPath(pathname: string): LibraryTab {
 export default function LibraryPage() {
   const { t } = useI18n();
   const location = useLocation();
-  const navigate = useNavigate();
 
   const models = useQuery(fetchModels);
   const cache = useQuery(fetchCache);
@@ -54,6 +60,12 @@ export default function LibraryPage() {
   const registries = useQuery(fetchOciRegistries);
 
   const tab = tabForPath(location.pathname);
+  // Which tab's primary dialog is open. Keyed by tab so changing address
+  // never leaves a dialog open over a page it does not belong to.
+  const [actionFor, setActionFor] = useState<LibraryTab | null>(null);
+  const actionOpen = actionFor === tab;
+  const setActionOpen = (open: boolean) => setActionFor(open ? tab : null);
+  const action = ACTION_FOR[tab];
   const atCaches = location.pathname === "/cache";
 
   const modelBytes = useMemo(
@@ -75,39 +87,44 @@ export default function LibraryPage() {
     [cache.data],
   );
 
-  const select = useCallback(
-    (next: string) => navigate(PATH_FOR[next as LibraryTab]),
-    [navigate],
-  );
-
   return (
-    <div className="space-y-8">
+    <div>
       <PageHeader
         eyebrow={t("nav.library")}
-        title={t("models.heading")}
-        description={t("library.onDisk", {
-          total: formatSize(modelBytes + imageBytes + cacheBytes),
-          cache: formatSize(cacheBytes),
-        })}
-      />
-
-      <Tabs
-        label={t("nav.library")}
-        value={tab}
-        onChange={select}
-        tabs={[
-          { id: "models", label: t("library.tabModels"), count: models.data?.length },
-          { id: "engines", label: t("library.tabEngines"), count: images.data?.length },
-          { id: "registries", label: t("library.tabRegistries"), count: registries.data?.length },
-        ]}
+        title={t(TITLE_FOR[tab])}
+        description={
+          tab === "models"
+            ? t("library.onDisk", {
+                total: formatSize(modelBytes + imageBytes + cacheBytes),
+                cache: formatSize(cacheBytes),
+              })
+            : undefined
+        }
+        actions={
+          <Button variant="primary" icon={action.icon} onClick={() => setActionOpen(true)}>
+            {t(action.label)}
+          </Button>
+        }
       />
 
       {/* Only the tab on screen is mounted: each one opens streams and asks
           every node questions, and three of those running at once for two
           nobody is reading is how a page comes to take a second to settle. */}
-      {tab === "models" && <ModelsTab models={models} cache={cache} scrollToCaches={atCaches} />}
-      {tab === "engines" && <EnginesTab images={images} />}
-      {tab === "registries" && <RegistriesTab registries={registries} />}
+      {tab === "models" && (
+        <ModelsTab
+          models={models}
+          cache={cache}
+          scrollToCaches={atCaches}
+          downloadOpen={actionOpen}
+          onDownloadOpenChange={setActionOpen}
+        />
+      )}
+      {tab === "engines" && (
+        <EnginesTab images={images} pullOpen={actionOpen} onPullOpenChange={setActionOpen} />
+      )}
+      {tab === "registries" && (
+        <RegistriesTab registries={registries} addOpen={actionOpen} onAddOpenChange={setActionOpen} />
+      )}
 
     </div>
   );

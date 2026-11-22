@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import LibraryPage from "@/pages/LibraryPage";
@@ -212,6 +212,7 @@ describe("Library — models", () => {
   it("lists hub sources in the download form", async () => {
     renderPage();
     await screen.findByText("acme/plain-7b");
+    fireEvent.click(screen.getByRole("button", { name: "Download model" }));
     const select = screen.getByLabelText("Source") as HTMLSelectElement;
     expect([...select.options].map((o) => o.value)).toEqual(["", "hf", "mirror"]);
   });
@@ -225,6 +226,7 @@ describe("Library — models", () => {
     const user = userEvent.setup();
     renderPage();
     await screen.findByText("acme/plain-7b");
+    fireEvent.click(screen.getByRole("button", { name: "Download model" }));
 
     await user.type(screen.getByLabelText("Model id"), "acme/new");
     await user.selectOptions(screen.getByLabelText("Source"), "mirror");
@@ -311,6 +313,7 @@ describe("Library — models", () => {
     vi.mocked(startModelDownload).mockRejectedValue(new Error("no such repo on the hub"));
     renderPage();
     await screen.findByText("acme/plain-7b");
+    fireEvent.click(screen.getByRole("button", { name: "Download model" }));
 
     await user.type(screen.getByLabelText("Model id"), "acme/missing");
     await user.click(screen.getByRole("button", { name: /^Download$/ }));
@@ -354,6 +357,7 @@ describe("Library — models", () => {
     const user = userEvent.setup();
     renderPage();
     await screen.findByText("acme/plain-7b");
+    fireEvent.click(screen.getByRole("button", { name: "Download model" }));
     const before = vi.mocked(startModelDownload).mock.calls.length;
 
     await user.click(screen.getByRole("button", { name: /^Download$/ }));
@@ -1083,5 +1087,98 @@ describe("Library — models on a phone", () => {
     expect(screen.queryByRole("table")).toBeNull();
     expect(screen.getByTestId("model-acme/plain-7b")).toHaveTextContent("4.0 GB · bfloat16");
     expect(screen.getAllByLabelText("Remove acme/plain-7b")).toHaveLength(1);
+  });
+});
+
+/** The console: a search over the catalogue, and the selected model in a
+ *  panel with where it is, node by node, and what can be done to it. */
+describe("Library — an open model and the search", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(fetchModels).mockResolvedValue(models);
+    vi.mocked(fetchModelDownloads).mockResolvedValue([]);
+    vi.mocked(fetchScheduledDeploys).mockResolvedValue([]);
+    vi.mocked(fetchModelSources).mockResolvedValue([]);
+    vi.mocked(fetchNodes).mockResolvedValue([
+      { id: "c", name: "spark-01", address: "10.0.0.1", is_control_plane: true },
+      { id: "p", name: "spark-02", address: "10.0.0.2", is_control_plane: false },
+      { id: "q", name: "spark-03", address: "10.0.0.3", is_control_plane: false },
+    ] as never);
+    vi.mocked(fetchModelPresence).mockResolvedValue({
+      local: true,
+      local_state: "verified",
+      local_filtered: false,
+      nodes: [
+        { node: "10.0.0.2", state: "partial" },
+        { node: "10.0.0.3", error: "agent unreachable" },
+      ],
+    } as never);
+  });
+
+  it("narrows the table to the models the query names", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText("acme/plain-7b");
+
+    await user.type(screen.getByRole("searchbox", { name: "Filter models" }), "awq");
+    expect(screen.queryByTestId("model-acme/plain-7b")).toBeNull();
+    expect(screen.getByTestId("model-acme/quant-70b")).toBeInTheDocument();
+    expect(screen.getByText("1 model")).toBeInTheDocument();
+
+    await user.clear(screen.getByRole("searchbox", { name: "Filter models" }));
+    await user.type(screen.getByRole("searchbox", { name: "Filter models" }), "nothing-like-it");
+    expect(screen.getByText("Nothing matches.")).toBeInTheDocument();
+  });
+
+  it("opens a row in place with every node's own verdict, and acts from the row", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    const row = await screen.findByTestId("model-acme/plain-7b");
+    await within(row).findByText(/^partial on /);
+
+    await user.click(row);
+    // The copies open under the row, not in a panel beside the list.
+    const detail = await screen.findByTestId("model-detail-acme/plain-7b");
+    expect(row).toHaveAttribute("aria-expanded", "true");
+    expect(within(detail).getByText("aaaabbbbccccdddd")).toBeInTheDocument();
+    expect(within(detail).getByText("verified")).toBeInTheDocument();
+    expect(within(detail).getByText("partial")).toBeInTheDocument();
+    expect(within(detail).getByText("could not ask")).toBeInTheDocument();
+
+    await user.click(within(row).getByRole("button", { name: /^Replicate / }));
+    expect(await screen.findByRole("dialog", { name: "Replicate to nodes" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await user.click(within(row).getByRole("button", { name: "Remove acme/plain-7b" }));
+    expect(await screen.findByRole("dialog", { name: "Delete model" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await user.click(row);
+    expect(screen.queryByTestId("model-detail-acme/plain-7b")).toBeNull();
+  });
+
+  it("folds the row of a model it has just removed", async () => {
+    vi.mocked(deleteModel).mockResolvedValue({ deleted: "acme/plain-7b", freed_bytes: 1, nodes: [] } as never);
+    const user = userEvent.setup();
+    renderPage();
+    const row = await screen.findByTestId("model-acme/plain-7b");
+    await user.click(row);
+    await screen.findByTestId("model-detail-acme/plain-7b");
+
+    await user.click(within(row).getByRole("button", { name: "Remove acme/plain-7b" }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete model" });
+    await user.click(within(dialog).getByRole("button", { name: /Delete/ }));
+    await waitFor(() => expect(screen.queryByTestId("model-detail-acme/plain-7b")).toBeNull());
+  });
+
+  it("opens a card in place on a phone, and folds it again", async () => {
+    Object.defineProperty(window, "innerWidth", { writable: true, configurable: true, value: 390 });
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText("acme/plain-7b");
+    await user.click(within(screen.getByTestId("model-acme/plain-7b")).getByText("acme/plain-7b"));
+    expect(await screen.findByTestId("model-detail-acme/plain-7b")).toBeInTheDocument();
+    await user.click(within(screen.getByTestId("model-acme/plain-7b")).getByText("acme/plain-7b"));
+    expect(screen.queryByTestId("model-detail-acme/plain-7b")).toBeNull();
   });
 });

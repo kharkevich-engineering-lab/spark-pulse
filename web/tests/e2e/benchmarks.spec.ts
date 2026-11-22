@@ -13,7 +13,7 @@
  */
 
 import { expect, test } from "@playwright/test";
-import { expectNoCrash, gotoPage, purgeDeployments, readConfig } from "./helpers";
+import { backToRuns, expectNoCrash, gotoPage, openRun, purgeDeployments, readConfig } from "./helpers";
 
 const RECIPE_ID = "bundled/qwen3.8-27b";
 const RECIPE_NAME = "Qwen3.8-27B";
@@ -30,7 +30,7 @@ test("puts the benchmarks beside the runs rather than on a page of their own", a
 }) => {
   const config = await readConfig(request);
   await gotoPage(page, "/jobs");
-  await expect(page.getByRole("heading", { name: "What is serving." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Runs." })).toBeVisible();
 
   const tab = page.getByRole("tab", { name: /^Benchmarks/ });
   if (!config.benchmarking_enabled) {
@@ -53,11 +53,11 @@ test("deep-links /benchmarking to that tab", async ({ page, request }) => {
 
   if (!config.benchmarking_enabled) {
     // The feature is off, so the route goes home rather than to a blank tab.
-    await expect(page.getByRole("heading", { name: "Recipes and mods." })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Overview." })).toBeVisible();
     return;
   }
 
-  await expect(page.getByRole("heading", { name: "What is serving." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Runs." })).toBeVisible();
   await expect(page.getByRole("tab", { name: /^Benchmarks/ })).toHaveAttribute(
     "aria-selected",
     "true",
@@ -85,7 +85,7 @@ test("lists what has been measured, and starts a run from the run itself", async
 
   // The launcher opens from the run, so the target is settled before the
   // dialog appears — there is no id to type and nothing to mistype.
-  await row.getByRole("button", { name: "Benchmark" }).click();
+  await (await openRun(page, deployment.id)).getByRole("button", { name: "Benchmark" }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByRole("heading", { name: "Benchmark this run" })).toBeVisible();
   await expect(dialog).toContainText(RECIPE_NAME);
@@ -93,7 +93,8 @@ test("lists what has been measured, and starts a run from the run itself", async
   await dialog.getByRole("button", { name: "Run" }).click();
   await expect(dialog).toHaveCount(0);
 
-  // The measurement it just started is in the history.
+  // The measurement it just started is in the history, back on the list.
+  await backToRuns(page);
   await page.getByRole("tab", { name: /^Benchmarks/ }).click();
   await expect(page.getByRole("tab", { name: /^History/ })).toBeVisible();
   await expect(page.getByText(RECIPE_NAME).first()).toBeVisible();

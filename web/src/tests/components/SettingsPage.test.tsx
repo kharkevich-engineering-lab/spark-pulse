@@ -119,6 +119,8 @@ async function openTab(name: RegExp | string) {
 }
 
 const saveButton = () => screen.getByRole("button", { name: /save settings/i });
+/** The save bar is drawn only while there is something to save. */
+const noSaveBar = () => expect(screen.queryByTestId("settings-save-bar")).toBeNull();
 
 function seedApi() {
   vi.clearAllMocks();
@@ -456,9 +458,17 @@ describe("SettingsPage containers tab", () => {
     renderPage();
     await openTab(/containers/i);
 
-    expect(
-      await screen.findByText(/Tensor-parallel workers pass tensors through it/),
-    ).toBeInTheDocument();
+    // The help's first sentence is under the field; the rest — the line that
+    // used to be English in the JSX — is in its tip.
+    await screen.findByRole("heading", { name: "Container limits" });
+    const tips = screen.getAllByRole("button", { name: "More about this" });
+    const found = tips.some((tip) => {
+      fireEvent.focus(tip);
+      const text = screen.queryByRole("tooltip")?.textContent ?? "";
+      fireEvent.blur(tip);
+      return /Tensor-parallel workers pass tensors through it/.test(text);
+    });
+    expect(found).toBe(true);
   });
 
   /** These three sat in the Docker block and in this form with no reader
@@ -690,15 +700,14 @@ describe("SettingsPage saving", () => {
     renderPage();
     await screen.findByLabelText("Port range start");
 
-    expect(saveButton()).toBeDisabled();
+    noSaveBar();
   });
 
-  /** It was rendered on three tabs of six. An edit made on Containers and then
-   *  read back from Environment had no button to write it with, and the
-   *  operator's only clue was that the button had gone. */
-  it("offers Save on every tab", async () => {
+  /** One form across every tab: an edit made on Runs is still unsaved while
+   *  the operator reads Environment, so the bar follows them there. */
+  it("keeps the save bar on every tab once something has changed", async () => {
     renderPage();
-    await screen.findByLabelText("Port range start");
+    fireEvent.change(await screen.findByLabelText("Port range start"), { target: { value: "9500" } });
 
     for (const tab of [
       /containers/i,
@@ -711,8 +720,42 @@ describe("SettingsPage saving", () => {
       /runs/i,
     ]) {
       await openTab(tab);
-      expect(saveButton()).toBeVisible();
+      expect(saveButton()).toBeEnabled();
     }
+  });
+
+  it("discards the edits and puts every field back", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    const start = await screen.findByLabelText("Port range start");
+    fireEvent.change(start, { target: { value: "9500" } });
+
+    await user.click(screen.getByRole("button", { name: "Discard" }));
+
+    expect(screen.getByLabelText("Port range start")).toHaveValue(9000);
+    noSaveBar();
+    expect(updateSettings).not.toHaveBeenCalled();
+  });
+
+  /** On a narrow screen the tabs are the segmented control, and still tabs. */
+  it("offers the same tabs on a phone", async () => {
+    Object.defineProperty(window, "innerWidth", { writable: true, configurable: true, value: 390 });
+    renderPage();
+    await screen.findByRole("heading", { name: "Run defaults" });
+    expect(screen.queryByRole("tablist", { name: "Settings" })?.getAttribute("aria-orientation")).not.toBe("vertical");
+    await openTab(/containers/i);
+    expect(await screen.findByRole("heading", { name: "Container limits" })).toBeInTheDocument();
+  });
+
+  it("moves between tabs with the arrow keys", async () => {
+    renderPage();
+    await screen.findByRole("heading", { name: "Run defaults" });
+    const list = screen.getByRole("tablist");
+    fireEvent.keyDown(list, { key: "ArrowDown" });
+    expect(await screen.findByRole("heading", { name: "Container limits" })).toBeInTheDocument();
+    fireEvent.keyDown(list, { key: "ArrowUp" });
+    expect(await screen.findByRole("heading", { name: "Run defaults" })).toBeInTheDocument();
+    fireEvent.keyDown(list, { key: "x" });
   });
 
   it("saves the edited fields and confirms where they landed", async () => {
@@ -810,7 +853,7 @@ describe("SettingsPage environment tab", () => {
 
     expect(screen.queryAllByRole("textbox")).toHaveLength(0);
     expect(screen.queryAllByRole("switch")).toHaveLength(0);
-    expect(saveButton()).toBeDisabled();
+    noSaveBar();
   });
 
   /** A field the environment owns cannot be changed here, because the process
@@ -921,7 +964,7 @@ describe("SettingsPage preferences tab", () => {
 
     await user.click(await screen.findByRole("button", { name: "Dark" }));
 
-    expect(saveButton()).toBeDisabled();
+    noSaveBar();
     expect(updateSettings).not.toHaveBeenCalled();
   });
 

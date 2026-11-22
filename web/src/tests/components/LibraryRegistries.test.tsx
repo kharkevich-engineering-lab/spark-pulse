@@ -173,11 +173,21 @@ describe("Library — registries", () => {
 
       expect(await screen.findByText("spark-recipes")).toBeInTheDocument();
       expect(screen.getByText("Recipes for the DGX Spark")).toBeInTheDocument();
-      expect(screen.getByText("4 recipes")).toBeInTheDocument();
+      const row = screen.getByTestId("collection-spark-recipes");
+      expect(row).toHaveTextContent("4");
       expect(screen.getByText("Apache-2.0")).toBeInTheDocument();
-      expect(await screen.findByText("1 installed")).toBeInTheDocument();
+      expect(await within(row).findByTestId("collection-installed-count")).toHaveTextContent("1");
       // One view now: no Browse/Installed sub-tabs.
       expect(screen.queryByRole("tab", { name: /^Browse/ })).not.toBeInTheDocument();
+    });
+
+    it("opens a collection from anywhere on its row", async () => {
+      const user = userEvent.setup();
+      renderPage();
+      await user.click(await screen.findByTestId("collection-spark-recipes"));
+      await waitFor(() =>
+        expect(fetchOciCollectionState).toHaveBeenCalledWith("spark-recipes", "ghcr", expect.anything()),
+      );
     });
 
     it("points at Settings when no registry has produced a collection", async () => {
@@ -505,7 +515,7 @@ describe("Library — registries", () => {
     it("toggles a registry off without deleting it", async () => {
       renderPage();
 
-      await userEvent.click(await screen.findByRole("button", { name: "Disable" }));
+      await userEvent.click(await screen.findByRole("button", { name: "Disable ghcr" }));
 
       await waitFor(() =>
         expect(updateOciRegistry).toHaveBeenCalledWith("ghcr", { enabled: false }),
@@ -516,7 +526,7 @@ describe("Library — registries", () => {
       vi.mocked(updateOciRegistry).mockRejectedValue(new Error("registries.yaml is read-only"));
       renderPage();
 
-      await userEvent.click(await screen.findByRole("button", { name: "Disable" }));
+      await userEvent.click(await screen.findByRole("button", { name: "Disable ghcr" }));
 
       expect(await screen.findByText("registries.yaml is read-only")).toBeInTheDocument();
     });
@@ -525,7 +535,7 @@ describe("Library — registries", () => {
       vi.mocked(fetchOciRegistries).mockResolvedValue([REGISTRY_WITH_AUTH]);
       renderPage();
 
-      await userEvent.click(await screen.findByRole("button", { name: "Edit registry" }));
+      await userEvent.click(await screen.findByRole("button", { name: "Edit ghcr" }));
 
       expect(screen.getByLabelText("URL")).toHaveValue("ghcr.io/acme/recipes");
       expect(screen.getByLabelText("Authentication")).toHaveValue("username_password");
@@ -539,7 +549,7 @@ describe("Library — registries", () => {
       vi.mocked(fetchOciRegistries).mockResolvedValue([REGISTRY_WITH_AUTH]);
       renderPage();
 
-      await userEvent.click(await screen.findByRole("button", { name: "Edit registry" }));
+      await userEvent.click(await screen.findByRole("button", { name: "Edit ghcr" }));
       const url = screen.getByLabelText("URL");
       await userEvent.clear(url);
       await userEvent.type(url, "ghcr.io/acme/recipes-v2");
@@ -561,7 +571,7 @@ describe("Library — registries", () => {
       vi.mocked(fetchOciRegistries).mockResolvedValue([REGISTRY_WITH_AUTH]);
       renderPage();
 
-      await userEvent.click(await screen.findByRole("button", { name: "Edit registry" }));
+      await userEvent.click(await screen.findByRole("button", { name: "Edit ghcr" }));
       const url = screen.getByLabelText("URL");
       await userEvent.clear(url);
       await userEvent.type(url, "ghcr.io/acme/recipes-v2");
@@ -578,7 +588,7 @@ describe("Library — registries", () => {
       vi.mocked(updateOciRegistry).mockRejectedValue(new Error("registries.yaml is read-only"));
       renderPage();
 
-      await userEvent.click(await screen.findByRole("button", { name: "Edit registry" }));
+      await userEvent.click(await screen.findByRole("button", { name: "Edit ghcr" }));
       const url = screen.getByLabelText("URL");
       await userEvent.clear(url);
       await userEvent.type(url, "ghcr.io/acme/recipes-v2");
@@ -592,7 +602,7 @@ describe("Library — registries", () => {
       vi.mocked(fetchOciRegistries).mockResolvedValue([REGISTRY_WITH_AUTH]);
       renderPage();
 
-      await userEvent.click(await screen.findByRole("button", { name: "Edit registry" }));
+      await userEvent.click(await screen.findByRole("button", { name: "Edit ghcr" }));
       const username = screen.getByLabelText("Username");
       await userEvent.clear(username);
       await userEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -606,7 +616,7 @@ describe("Library — registries", () => {
     it("requires a URL", async () => {
       renderPage();
 
-      await userEvent.click(await screen.findByRole("button", { name: "Edit registry" }));
+      await userEvent.click(await screen.findByRole("button", { name: "Edit ghcr" }));
       const url = screen.getByLabelText("URL");
       await userEvent.clear(url);
       await userEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -618,7 +628,7 @@ describe("Library — registries", () => {
     it("switches to token authentication with a new token", async () => {
       renderPage();
 
-      await userEvent.click(await screen.findByRole("button", { name: "Edit registry" }));
+      await userEvent.click(await screen.findByRole("button", { name: "Edit ghcr" }));
       await userEvent.selectOptions(screen.getByLabelText("Authentication"), "token");
       await userEvent.type(screen.getByLabelText(/New token/), "abc123");
       await userEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -633,7 +643,7 @@ describe("Library — registries", () => {
     it("requires a new secret before switching to a different authentication type", async () => {
       renderPage();
 
-      await userEvent.click(await screen.findByRole("button", { name: "Edit registry" }));
+      await userEvent.click(await screen.findByRole("button", { name: "Edit ghcr" }));
       await userEvent.selectOptions(screen.getByLabelText("Authentication"), "token");
       await userEvent.click(screen.getByRole("button", { name: "Save" }));
 
@@ -646,7 +656,7 @@ describe("Library — registries", () => {
     it("closes without saving when nothing changed", async () => {
       renderPage();
 
-      await userEvent.click(await screen.findByRole("button", { name: "Edit registry" }));
+      await userEvent.click(await screen.findByRole("button", { name: "Edit ghcr" }));
       await userEvent.click(screen.getByRole("button", { name: "Save" }));
 
       expect(updateOciRegistry).not.toHaveBeenCalled();
@@ -656,7 +666,7 @@ describe("Library — registries", () => {
     it("abandons the edit dialog on cancel", async () => {
       renderPage();
 
-      await userEvent.click(await screen.findByRole("button", { name: "Edit registry" }));
+      await userEvent.click(await screen.findByRole("button", { name: "Edit ghcr" }));
       await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
       expect(screen.queryByLabelText("URL")).not.toBeInTheDocument();
@@ -666,7 +676,7 @@ describe("Library — registries", () => {
     it("removes a registry the operator no longer wants", async () => {
       renderPage();
 
-      await userEvent.click(await screen.findByRole("button", { name: "Remove registry" }));
+      await userEvent.click(await screen.findByRole("button", { name: "Remove ghcr" }));
       await confirmDialog("Delete");
 
       await waitFor(() => expect(removeOciRegistry).toHaveBeenCalledWith("ghcr"));
@@ -676,7 +686,7 @@ describe("Library — registries", () => {
       vi.mocked(removeOciRegistry).mockRejectedValue(new Error("cannot remove the default"));
       renderPage();
 
-      await userEvent.click(await screen.findByRole("button", { name: "Remove registry" }));
+      await userEvent.click(await screen.findByRole("button", { name: "Remove ghcr" }));
       await confirmDialog("Delete");
 
       expect(await screen.findByText("cannot remove the default")).toBeInTheDocument();
@@ -689,7 +699,7 @@ describe("Library — registries", () => {
       vi.mocked(testOciRegistry).mockResolvedValue({ ok: false } as never);
       renderPage();
 
-      await userEvent.click(await screen.findByRole("button", { name: "Test connection" }));
+      await userEvent.click(await screen.findByRole("button", { name: "Test the connection to ghcr" }));
 
       expect(await screen.findByText("ghcr is not reachable from here.")).toBeInTheDocument();
     });
@@ -699,7 +709,7 @@ describe("Library — registries", () => {
       vi.mocked(testOciRegistry).mockRejectedValue(new Error("DNS failure"));
       renderPage();
 
-      await userEvent.click(await screen.findByRole("button", { name: "Test connection" }));
+      await userEvent.click(await screen.findByRole("button", { name: "Test the connection to ghcr" }));
 
       expect(await screen.findByText("DNS failure")).toBeInTheDocument();
     });
@@ -709,14 +719,14 @@ describe("Library — registries", () => {
       renderPage();
 
       expect(await screen.findByText("ghcr")).toBeInTheDocument();
-      expect(screen.queryByText(/versions/)).not.toBeInTheDocument();
+      expect(within(screen.getByTestId("registry-ghcr")).queryByText(/\d+ versions?/)).not.toBeInTheDocument();
     });
 
     it("lets the operator dismiss whatever the page reported", async () => {
       vi.mocked(fetchOciRegistries).mockResolvedValue([{ ...REGISTRY, connected: false }]);
       vi.mocked(testOciRegistry).mockResolvedValue({ ok: false } as never);
       renderPage();
-      await userEvent.click(await screen.findByRole("button", { name: "Test connection" }));
+      await userEvent.click(await screen.findByRole("button", { name: "Test the connection to ghcr" }));
       const alert = await screen.findByText("ghcr is not reachable from here.");
 
       await userEvent.click(

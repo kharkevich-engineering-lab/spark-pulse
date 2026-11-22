@@ -28,12 +28,13 @@ test("lists every recipe the API serves", async ({ page, request }) => {
   const recipes = await recipesFromApi(request);
   expect(recipes.length, "simulation mode should serve bundled recipes").toBeGreaterThan(0);
 
-  await gotoPage(page, "/");
+  await gotoPage(page, "/recipes");
 
-  await expect(page.getByRole("tab", { name: `Recipes (${recipes.length})` })).toBeVisible();
+  await expect(page.getByRole("tab", { name: `All (${recipes.length})` })).toBeVisible();
   for (const recipe of recipes) {
+    // The name opens the recipe: a table row's name button, or the card.
     await expect(
-      page.getByRole("button", { name: new RegExp(escapeRegExp(recipe.name)) }),
+      page.getByRole("button", { name: new RegExp(escapeRegExp(recipe.name)) }).first(),
     ).toBeVisible();
   }
   await expectNoCrash(page);
@@ -48,12 +49,15 @@ test("shows both engines on the bundled v2 recipes", async ({ page, request }) =
   ).toBeGreaterThan(0);
   expect(multiEngine.every((r) => r.recipe_version === "2")).toBeTruthy();
 
-  await gotoPage(page, "/");
+  await gotoPage(page, "/recipes");
 
   for (const recipe of multiEngine) {
-    const card = page.getByRole("button", { name: new RegExp(escapeRegExp(recipe.name)) });
-    // One badge lists every usable engine, joined with a middle dot.
-    await expect(card.getByText(usableEngines(recipe).join(" · "), { exact: true })).toBeVisible();
+    // The table's Engines column, or the card's engine badge: every usable
+    // engine, joined with a middle dot.
+    const where = page.locator(
+      `[data-testid="recipe-row-${recipe.id}"], [data-testid="recipe-line1-${recipe.id}"], [data-testid="recipe-line2-${recipe.id}"]`,
+    );
+    await expect(where.getByText(usableEngines(recipe).join(" · "), { exact: true })).toBeVisible();
   }
 });
 
@@ -61,8 +65,8 @@ test("opens a recipe drawer and closes it again", async ({ page, request }) => {
   const recipes = await recipesFromApi(request);
   const recipe = recipes.find((r) => r.id === "bundled/qwen2.5-0.5b-instruct") ?? recipes[0];
 
-  await gotoPage(page, "/");
-  await page.getByRole("button", { name: new RegExp(escapeRegExp(recipe.name)) }).click();
+  await gotoPage(page, "/recipes");
+  await page.getByRole("button", { name: new RegExp(escapeRegExp(recipe.name)) }).first().click();
 
   const heading = page.getByRole("heading", { name: recipe.name, exact: true });
   await expect(heading).toBeVisible();
@@ -82,14 +86,15 @@ test("lists the mods the API serves", async ({ page, request }) => {
   expect(response.ok(), "GET /api/mods should succeed").toBeTruthy();
   const mods = (await response.json()) as { id: string }[];
 
-  await gotoPage(page, "/");
-  await page.getByRole("tab", { name: `Mods (${mods.length})` }).click();
+  // Mods have their own page now, not a tab on Recipes.
+  await gotoPage(page, "/mods");
+  await expect(page.getByRole("heading", { name: "Mods.", exact: true })).toBeVisible();
 
   if (mods.length === 0) {
     await expect(page.getByText("No mods found")).toBeVisible();
   }
   for (const mod of mods.slice(0, 3)) {
-    await expect(page.getByRole("button", { name: new RegExp(escapeRegExp(mod.id)) })).toBeVisible();
+    await expect(page.getByRole("button", { name: new RegExp(escapeRegExp(mod.id)) }).first()).toBeVisible();
   }
   await expectNoCrash(page);
 });

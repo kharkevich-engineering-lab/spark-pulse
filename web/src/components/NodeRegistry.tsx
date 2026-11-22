@@ -28,14 +28,14 @@
  *   the control plane's public key.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { useI18n } from "@/lib/i18n";
 import {
   addNode,
   updateNode,
   updateNodeAgent,
   discoverNodes,
-  fetchFabric,
   fetchNodeDiagnostics,
   fetchNodeHostKey,
   fetchNodes,
@@ -54,25 +54,31 @@ import {
   NodeState as NodeStateBadge,
   Spinner,
   Textarea,
+  InfoTip,
+  Section,
+  Table,
+  THead,
+  Th,
+  Tr,
+  Td,
+  IconButton,
   type NodeCondition,
 } from "@/ui";
-import NodeDoctor from "@/components/NodeDoctor";
-import { NodeFabricPorts } from "@/components/FabricCard";
+import { UsageBar } from "@/components/nodes/NodeLive";
+import { formatMb, type MemoryLayout } from "@/lib/memoryLayout";
 import type {
   ClusterNode,
   DiscoveredPeer,
-  FabricResponse,
   InstallReport,
   NodeAuthMethod,
   NodeFinding,
   NodeHostKey,
   NodeState,
+  NodeStats,
 } from "@/lib/types";
 import {
   AlertCircle,
   CheckCircle2,
-  ChevronDown,
-  ChevronRight,
   Download,
   KeyRound,
   Pencil,
@@ -84,13 +90,13 @@ import {
 
 /** The registry's three words in the one node vocabulary. `unknown` is the one
  *  that matters: a node we could not reach has not failed. */
-const STATE_CONDITION: Record<NodeState, NodeCondition> = {
+export const STATE_CONDITION: Record<NodeState, NodeCondition> = {
   healthy: "ok",
   unknown: "unknown",
   dead: "bad",
 };
 
-function interfaceSummary(node: ClusterNode): string {
+export function interfaceSummary(node: ClusterNode): string {
   const names = [node.ethernet_interface, ...node.infiniband_interfaces].filter(Boolean);
   return names.length > 0 ? names.join(", ") : "—";
 }
@@ -106,13 +112,19 @@ function interfaceSummary(node: ClusterNode): string {
  * A finding that names nodes is rendered on each of those nodes' rows, where
  * the machine it is about is; one that names none is rendered above the list,
  * because it is about the fleet rather than a machine. */
-function FindingLine({ finding }: { finding: NodeFinding }) {
+export function FindingLine({ finding }: { finding: NodeFinding }) {
+  const { t } = useI18n();
   return (
     <p
       role="note"
-      className={`text-[13px] ${finding.severity === "warning" ? "text-warn" : "text-muted"}`}
+      className={`flex items-start gap-1.5 text-[13px] ${finding.severity === "warning" ? "text-warn" : "text-muted"}`}
     >
-      {finding.summary} <span className="text-muted">{finding.remedy}</span>
+      <span className="min-w-0">{finding.summary}</span>
+      {finding.remedy && (
+        <InfoTip label={t("nodesPage.howToFix")}>
+          <span className="break-words font-mono text-[12px]">{finding.remedy}</span>
+        </InfoTip>
+      )}
     </p>
   );
 }
@@ -789,200 +801,211 @@ function InstallOutcome({ report }: { report: InstallReport }) {
   );
 }
 
-/** The rule that separates one section of the page from the next. */
-const SECTION = "border-t border-line pt-12 mt-10 first:border-t-0 first:pt-0 first:mt-0";
-
 export interface NodeRegistryProps {
   /** The add dialog, when the page owns the button. Left undefined the
    *  registry renders its own — which is what a test, or any other caller,
    *  gets. */
   addOpen?: boolean;
   onAddOpenChange?: (open: boolean) => void;
+  /** Each node's own live stats, from the page. Absent, the live columns say
+   *  nothing rather than zero. */
+  stats?: NodeStats[];
+  /** Memory cut by run, per node id. */
+  layouts?: Record<string, MemoryLayout | null>;
 }
 
-/** One machine: two lines and its actions, with the detail folded away.
- *
- * Line one is the name and whether it is answering — the two things an
- * operator scans a list of machines for. Line two is everything that
- * identifies it: address, role, interfaces, agent version. What a node's
- * cables are doing and what the doctor makes of it are a fold below, because
- * they are a question about one machine and this list is about all of them.
- */
-function NodeRow({
-  node,
-  findings,
-  expanded,
-  onToggle,
-  fabric,
-  updating,
-  onUpdate,
-  onInstall,
-  onEdit,
-  onForget,
-  onChanged,
-}: {
-  node: ClusterNode;
-  findings: NodeFinding[];
-  expanded: boolean;
-  onToggle: () => void;
-  fabric: FabricResponse | null;
+/** What a node's agent is, in one cell. */
+export function AgentCell({ node }: { node: ClusterNode }) {
+  const { t } = useI18n();
+  const stale = node.agent?.current === false;
+  if (node.agent && !node.agent.enrolled) return <span className="text-muted">{t("nodes.noAgent")}</span>;
+  if (!node.agent?.version) return <span className="text-muted">—</span>;
+  return (
+    <span data-testid={`agent-version-${node.id}`} className={stale ? "text-warn" : "text-muted"}>
+      {node.agent.version}
+      {stale && ` · ${t("nodes.agentStale")}`}
+    </span>
+  );
+}
+
+/** The memory cell: a thin bar and how much of the total is in use. */
+function MemoryCell({ stats, layout }: { stats?: NodeStats; layout?: MemoryLayout | null }) {
+  const { t } = useI18n();
+  if (!stats) return <span className="text-muted">—</span>;
+  if (!stats.reachable) return <span className="text-muted" title={stats.error ?? undefined}>{t("monitoring.unreachable")}</span>;
+  if (!layout || layout.totalMb <= 0) return <span className="text-muted">—</span>;
+  return (
+    <div className="min-w-[140px] space-y-1">
+      <UsageBar percent={(layout.usedMb / layout.totalMb) * 100} />
+      <p className="font-mono text-[11.5px] text-muted tabular-nums">
+        {formatMb(layout.usedMb)} / {formatMb(layout.totalMb)}
+      </p>
+    </div>
+  );
+}
+
+export interface RowActions {
   updating: boolean;
   onUpdate: () => void;
   onInstall: () => void;
   onEdit: () => void;
   onForget: () => void;
-  onChanged: () => void;
-}) {
+}
+
+/** Install/update, edit, forget — as buttons on the node's page, icons in the row. */
+export function NodeActions({ node, compact, updating, onUpdate, onInstall, onEdit, onForget }: RowActions & { node: ClusterNode; compact?: boolean }) {
   const { t } = useI18n();
   const stale = node.agent?.current === false;
-  const fabricNode = fabric?.nodes.find((n) => n.node_id === node.id);
-  const fabricPlan = fabric?.plan?.nodes.find((n) => n.node_id === node.id);
+  const agentLabel = stale
+    ? updating
+      ? t("nodes.updating")
+      : t("nodes.updateAction")
+    : node.agent?.enrolled
+      ? t("nodes.install.reinstall")
+      : t("nodes.install.action");
+  const items = [
+    !node.is_control_plane && {
+      key: "agent",
+      icon: Download,
+      label: agentLabel,
+      title: stale ? t("nodes.install.update") : node.agent?.enrolled ? t("nodes.install.reinstall") : t("nodes.install.action"),
+      aria: t("nodes.install.actionFor", { name: node.name }),
+      onClick: stale ? onUpdate : onInstall,
+      loading: stale && updating,
+      danger: false,
+    },
+    { key: "edit", icon: Pencil, label: t("nodes.edit.action"), title: t("nodes.edit.action"), aria: t("nodes.edit.actionFor", { name: node.name }), onClick: onEdit, loading: false, danger: false },
+    !node.is_control_plane && {
+      key: "forget",
+      icon: Trash2,
+      label: t("nodes.forgetConfirm"),
+      title: t("nodes.forget"),
+      aria: t("fleet.forgetFor", { name: node.name }),
+      onClick: onForget,
+      loading: false,
+      danger: true,
+    },
+  ].filter(Boolean) as { key: string; icon: typeof Download; label: string; title: string; aria: string; onClick: () => void; loading: boolean; danger: boolean }[];
 
-  return (
-    <div
-      role="listitem"
-      aria-label={node.name}
-      data-testid={`node-row-${node.id}`}
-      className="py-4 space-y-3"
-    >
-      {/* Line 1 — who, and whether it answers. */}
-      <div className="flex flex-wrap items-center gap-3">
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-expanded={expanded}
-          aria-label={t("fleet.detailsFor", { name: node.name })}
-          className="inline-flex items-center gap-1.5 text-[17px] font-semibold tracking-[-0.02em] hover:text-blue2 transition-colors duration-200"
-        >
-          {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-          {node.name}
-        </button>
-        <NodeStateBadge state={STATE_CONDITION[node.state] ?? "unknown"} />
-      </div>
-
-      {/* Whatever the fleet diagnostic says about *this* machine — a warn
-          line under its name, not a box at the top of a list of machines it
-          may not even be about. */}
-      {findings.length > 0 && (
-        <div className="space-y-1" data-testid={`node-finding-${node.id}`}>
-          {findings.map((finding) => (
-            <FindingLine key={finding.code} finding={finding} />
-          ))}
-        </div>
-      )}
-
-      {/* Line 2 — what identifies it. */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[13px] text-muted">
-        <span className="font-mono">{node.address || "—"}</span>
-        <span className="rounded-full border border-line px-2 py-0.5">
-          {node.is_control_plane ? t("nodes.controlPlane") : t("nodes.peer")}
-        </span>
-        <span className="font-mono">{interfaceSummary(node)}</span>
-        {node.agent?.version && (
-          <span data-testid={`agent-version-${node.id}`} className={stale ? "text-warn" : undefined}>
-            {t("nodes.agentVersion", { version: node.agent.version })}
-            {" · "}
-            {stale ? t("nodes.agentStale") : t("fleet.agentCurrent")}
-          </span>
-        )}
-        {node.agent?.runtime?.name && (
-          <span data-testid={`node-runtime-${node.id}`}>
-            {t("nodes.runtime", {
-              name: node.agent.runtime.name,
-              version: node.agent.runtime.version,
-            })}
-            {node.agent.runtime.rootless && ` · ${t("nodes.rootless")}`}
-          </span>
-        )}
-        {node.agent && !node.agent.enrolled && <span>{t("nodes.noAgent")}</span>}
-      </div>
-
-      {/* The actions: full-width thirds under 900 so a thumb has a target, and
-          one column under 520, where a third of the screen is narrower than
-          the word "Install agent" and the row would scroll sideways. */}
-      <div className="grid grid-cols-1 gap-2 min-[520px]:grid-cols-3 min-[900px]:flex min-[900px]:flex-wrap">
-        {!node.is_control_plane &&
-          (stale ? (
-            <Button
-              size="sm"
-              icon={Download}
-              loading={updating}
-              onClick={onUpdate}
-              aria-label={t("nodes.install.actionFor", { name: node.name })}
-              title={t("nodes.install.update")}
-            >
-              {updating ? t("nodes.updating") : t("nodes.updateAction")}
-            </Button>
-          ) : (
-            <Button
-              size="sm"
-              icon={Download}
-              onClick={onInstall}
-              aria-label={t("nodes.install.actionFor", { name: node.name })}
-              title={node.agent?.enrolled ? t("nodes.install.reinstall") : t("nodes.install.action")}
-            >
-              {node.agent?.enrolled ? t("nodes.install.reinstall") : t("nodes.install.action")}
-            </Button>
-          ))}
-        <Button
-          size="sm"
-          icon={Pencil}
-          onClick={onEdit}
-          aria-label={t("nodes.edit.actionFor", { name: node.name })}
-          title={t("nodes.edit.action")}
-        >
-          {t("nodes.edit.action")}
-        </Button>
-        {!node.is_control_plane && (
-          <Button
+  if (compact) {
+    return (
+      <>
+        {items.map((a) => (
+          <IconButton
+            key={a.key}
             size="sm"
-            variant="danger"
-            icon={Trash2}
-            onClick={onForget}
-            aria-label={t("fleet.forgetFor", { name: node.name })}
-            title={t("nodes.forget")}
-          >
-            {t("nodes.forgetConfirm")}
-          </Button>
-        )}
-      </div>
-
-      {expanded && (
-        <div className="space-y-6 pt-2">
-          <div className="space-y-2">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">
-              {t("fleet.fabricPorts")}
-            </p>
-            <NodeFabricPorts node={fabricNode} plan={fabricPlan} />
-          </div>
-          <div className="space-y-2">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">
-              {t("fleet.doctorSection")}
-            </p>
-            {/* The doctor runs because the row was opened. Diagnosis changes
-                nothing, so there is no reason to make an operator press a
-                second button to be told what is wrong. */}
-            <NodeDoctor node={node} onChanged={onChanged} />
-          </div>
-        </div>
-      )}
-    </div>
+            icon={a.icon}
+            label={a.aria}
+            title={a.title}
+            loading={a.loading}
+            variant={a.danger ? "danger" : "ghost"}
+            onClick={a.onClick}
+          />
+        ))}
+      </>
+    );
+  }
+  return (
+    <>
+      {items.map((a) => (
+        <Button key={a.key} size="sm" icon={a.icon} loading={a.loading} variant={a.danger ? "danger" : undefined} onClick={a.onClick} title={a.title}>
+          {a.label}
+        </Button>
+      ))}
+    </>
   );
 }
 
-export default function NodeRegistry({ addOpen, onAddOpenChange }: NodeRegistryProps = {}) {
+/** What can be done to a node, and the dialogs that do it.
+ *
+ * The table's row icons and the node page's buttons are the same four
+ * actions; this holds their state once so both places open the same dialogs.
+ * `reload` is whatever re-reads the nodes; `onForgotten` runs after a node is
+ * forgotten (the node's page leaves for the list).
+ */
+export function useNodeActions({ reload, onForgotten }: { reload: () => void; onForgotten?: (node: ClusterNode) => void }) {
+  const { t } = useI18n();
+  const [installing, setInstalling] = useState<ClusterNode | null>(null);
+  const [editing, setEditing] = useState<ClusterNode | null>(null);
+  const [updating, setUpdating] = useState<string | null>(null);
+  const [forgetting, setForgetting] = useState<ClusterNode | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const runUpdate = useCallback(
+    async (node: ClusterNode) => {
+      setError(null);
+      setUpdating(node.id);
+      try {
+        const result = await updateNodeAgent(node.id);
+        if (result.needs_reinstall) {
+          // The agent is too old to update itself over its stream. Hand the
+          // operator straight to the reinstall dialog, which defaults to the
+          // control-plane key already trusted on the node.
+          setInstalling(node);
+          return;
+        }
+        if (!result.updated) {
+          setError(`${node.name}: ${result.detail || t("nodes.updateFailed")}`);
+        }
+        // The agent restarts onto the new binary; reload once it reconnects.
+        setTimeout(reload, 4000);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : t("nodes.updateFailed"));
+      } finally {
+        setUpdating(null);
+      }
+    },
+    [reload, t],
+  );
+
+  const actionsFor = (node: ClusterNode): RowActions => ({
+    updating: updating === node.id,
+    onUpdate: () => void runUpdate(node),
+    onInstall: () => setInstalling(node),
+    onEdit: () => setEditing(node),
+    onForget: () => {
+      setError(null);
+      setForgetting(node);
+    },
+  });
+
+  const dialogs = (
+    <>
+      {installing && <InstallAgentDialog node={installing} onClose={() => setInstalling(null)} onInstalled={reload} />}
+      {editing && <EditNodeDialog node={editing} onClose={() => setEditing(null)} onSaved={reload} />}
+      {forgetting && (
+        <ConfirmModal
+          open
+          onClose={() => setForgetting(null)}
+          title={t("nodes.forgetTitle")}
+          message={t("nodes.forgetBody", { name: forgetting.name })}
+          confirmLabel={t("nodes.forgetConfirm")}
+          confirmVariant="danger"
+          onConfirm={async () => {
+            const node = forgetting;
+            try {
+              await removeNode(node.id);
+              setForgetting(null);
+              reload();
+              onForgotten?.(node);
+            } catch (e) {
+              setForgetting(null);
+              setError(e instanceof Error ? e.message : t("nodes.forgetFailed"));
+            }
+          }}
+        />
+      )}
+    </>
+  );
+
+  return { actionsFor, dialogs, error, openInstall: setInstalling };
+}
+
+export default function NodeRegistry({ addOpen, onAddOpenChange, stats, layouts }: NodeRegistryProps = {}) {
   const { t } = useI18n();
   const { data: nodes, loading, error, refetch } = useQuery<ClusterNode[]>(fetchNodes);
   const [findings, setFindings] = useState<NodeFinding[]>([]);
   const [ownAdd, setOwnAdd] = useState(false);
-  const [installing, setInstalling] = useState<ClusterNode | null>(null);
-  const [editing, setEditing] = useState<ClusterNode | null>(null);
-  const [expanded, setExpanded] = useState<string | null>(null);
-  const [fabric, setFabric] = useState<FabricResponse | null>(null);
-  const [updating, setUpdating] = useState<string | null>(null);
-  const [updateError, setUpdateError] = useState<string | null>(null);
-  const [forgetting, setForgetting] = useState<ClusterNode | null>(null);
-  const [removeError, setRemoveError] = useState<string | null>(null);
 
   // Controlled when the page owns the button, uncontrolled otherwise, so the
   // same component works with a page header above it and on its own.
@@ -1005,160 +1028,119 @@ export default function NodeRegistry({ addOpen, onAddOpenChange }: NodeRegistryP
     loadDiagnostics();
   }, [refetch, loadDiagnostics]);
 
-  /** The fabric is read the first time a row is opened, and not before: a
-   *  list of machines does not need to know what every cable is doing. */
-  const fabricAsked = useRef(false);
-  const toggle = useCallback((id: string) => {
-    setExpanded((current) => (current === id ? null : id));
-    if (fabricAsked.current) return;
-    fabricAsked.current = true;
-    fetchFabric()
-      .then(setFabric)
-      .catch(() => {
-        // A fabric nobody can read is said so by the ports section itself.
-      });
-  }, []);
+  const { actionsFor, dialogs, error: actionError, openInstall } = useNodeActions({ reload });
 
-  const runUpdate = useCallback(
-    async (node: ClusterNode) => {
-      setUpdateError(null);
-      setUpdating(node.id);
-      try {
-        const result = await updateNodeAgent(node.id);
-        if (result.needs_reinstall) {
-          // The agent is too old to update itself over its stream. Hand the
-          // operator straight to the reinstall dialog, which defaults to the
-          // control-plane key already trusted on the node — one confirmation,
-          // no password, and the first hop onto a self-updating agent is done.
-          setInstalling(node);
-          return;
-        }
-        if (!result.updated) {
-          setUpdateError(`${node.name}: ${result.detail || t("nodes.updateFailed")}`);
-        }
-        // The agent restarts onto the new binary; give it a moment, then reload
-        // so the row reflects the new version once it reconnects.
-        setTimeout(reload, 4000);
-      } catch (e) {
-        setUpdateError(e instanceof Error ? e.message : t("nodes.updateFailed"));
-      } finally {
-        setUpdating(null);
-      }
-    },
-    [reload],
-  );
-
-  /** A finding that names no node is about the fleet, not a machine. */
-  const fleetFindings = findings.filter((f) => f.node_ids.length === 0);
+  /** A finding that names no node, or several, is about the fleet: said once
+   *  above the list. One that names a single node is on that node's page, and
+   *  marked on its row. */
+  const fleetFindings = findings.filter((f) => f.node_ids.length !== 1);
+  const findingsFor = (id: string) => findings.filter((f) => f.node_ids.length === 1 && f.node_ids[0] === id);
+  const statsFor = (id: string) => stats?.find((s) => s.id === id);
 
   return (
-    <section data-testid="node-registry" className={SECTION}>
-      <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 className="text-[22px] font-bold tracking-[-0.02em]">{t("nodes.heading")}</h2>
-          <p className="mt-1 text-[13px] text-muted">{t("nodes.subtitle")}</p>
-        </div>
-        {!controlled && (
-          <Button size="sm" icon={Plus} onClick={() => setShowAdd(true)}>
-            {t("nodes.addNode")}
-          </Button>
-        )}
-      </div>
-
+    <div data-testid="node-registry" className="space-y-3">
       {fleetFindings.length > 0 && (
-        <div className="mb-4 space-y-1" data-testid="node-diagnostics">
+        <div className="space-y-1 rounded-md border border-warn/40 bg-warn/10 px-3 py-2" data-testid="node-diagnostics">
           {fleetFindings.map((finding) => (
             <FindingLine key={finding.code} finding={finding} />
           ))}
         </div>
       )}
 
-      <ErrorLine className="mb-3">{error}</ErrorLine>
-      <ErrorLine className="mb-3">{updateError}</ErrorLine>
-      <ErrorLine className="mb-3">{removeError}</ErrorLine>
+      <ErrorLine>{error}</ErrorLine>
+      <ErrorLine>{actionError}</ErrorLine>
 
-      {loading && (
-        <div className="flex justify-center py-10">
-          <Spinner size="lg" label={t("common.loading")} />
-        </div>
-      )}
-
-      {nodes && nodes.length === 0 && (
-        <EmptyState icon={Server}>{t("nodes.none")}</EmptyState>
-      )}
-
-      {nodes && nodes.length > 0 && (
-        <div role="list" className="border-y border-line divide-y divide-line">
-          {nodes.map((node) => (
-            <NodeRow
-              key={node.id}
-              node={node}
-              findings={findings.filter((f) => f.node_ids.includes(node.id))}
-              expanded={expanded === node.id}
-              onToggle={() => toggle(node.id)}
-              fabric={fabric}
-              updating={updating === node.id}
-              onUpdate={() => void runUpdate(node)}
-              onInstall={() => setInstalling(node)}
-              onEdit={() => setEditing(node)}
-              onForget={() => {
-                setRemoveError(null);
-                setForgetting(node);
-              }}
-              onChanged={reload}
-            />
-          ))}
-        </div>
-      )}
+      <Section
+        flush
+        title={t("nodes.heading")}
+        meta={nodes ? String(nodes.length) : undefined}
+        actions={
+          !controlled && (
+            <Button size="sm" icon={Plus} onClick={() => setShowAdd(true)}>
+              {t("nodes.addNode")}
+            </Button>
+          )
+        }
+      >
+        {loading && (
+          <div className="flex justify-center py-10">
+            <Spinner size="lg" label={t("common.loading")} />
+          </div>
+        )}
+        {nodes && nodes.length === 0 && <EmptyState icon={Server}>{t("nodes.none")}</EmptyState>}
+        {nodes && nodes.length > 0 && (
+          <Table>
+            <THead>
+              <Th>{t("nodesPage.colNode")}</Th>
+              <Th>{t("nodesPage.colState")}</Th>
+              <Th>{t("nodesPage.colAddress")}</Th>
+              <Th>{t("nodesPage.colMemory")}</Th>
+              <Th numeric>{t("nodesPage.colGpu")}</Th>
+              <Th numeric>{t("nodesPage.colTemp")}</Th>
+              <Th>{t("nodesPage.agent")}</Th>
+              <Th srOnly>{t("runs.actions")}</Th>
+            </THead>
+            <tbody>
+              {nodes.map((node) => {
+                const live = statsFor(node.id);
+                const gpu = live?.reachable ? live.gpu[0] : undefined;
+                const nodeFindings = findingsFor(node.id);
+                return (
+                  <Tr key={node.id} aria-label={node.name} data-testid={`node-row-${node.id}`}>
+                    <Td>
+                      <div className="flex items-center gap-2 whitespace-nowrap">
+                        <Link to={`/cluster/${encodeURIComponent(node.id)}`} className="font-semibold text-text hover:text-blue2">
+                          {node.name}
+                        </Link>
+                        {node.is_control_plane && (
+                          <span className="rounded-full border border-line px-1.5 py-px text-[11px] text-muted">
+                            {t("nodes.controlPlane")}
+                          </span>
+                        )}
+                        {nodeFindings.some((f) => f.severity === "warning") && (
+                          <span className="h-1.5 w-1.5 rounded-full bg-warn" title={nodeFindings.map((f) => f.summary).join("\n")} />
+                        )}
+                      </div>
+                    </Td>
+                    <Td className="whitespace-nowrap">
+                      <NodeStateBadge state={STATE_CONDITION[node.state] ?? "unknown"} />
+                    </Td>
+                    <Td mono muted className="whitespace-nowrap">
+                      {node.address || "—"}
+                    </Td>
+                    <Td>
+                      <MemoryCell stats={live} layout={layouts?.[node.id]} />
+                    </Td>
+                    <Td numeric>{gpu?.utilization != null ? `${gpu.utilization}%` : "—"}</Td>
+                    <Td numeric muted>
+                      {gpu?.temperature != null ? `${gpu.temperature}°` : "—"}
+                    </Td>
+                    <Td className="whitespace-nowrap text-[12.5px]">
+                      <AgentCell node={node} />
+                    </Td>
+                    <Td actions>
+                      <NodeActions node={node} compact {...actionsFor(node)} />
+                    </Td>
+                  </Tr>
+                );
+              })}
+            </tbody>
+          </Table>
+        )}
+      </Section>
 
       {showAdd && (
         <AddNodeDialog
           onClose={() => setShowAdd(false)}
           onAdded={(added) => {
             reload();
-            // Registering is half of it. The agent is what makes the machine
-            // reachable, so the install follows without another click to find.
-            if (!added.is_control_plane) setInstalling(added);
+            // Registering is half of it: the install follows without another click.
+            if (!added.is_control_plane) openInstall(added);
           }}
         />
       )}
 
-      {installing && (
-        <InstallAgentDialog
-          node={installing}
-          onClose={() => setInstalling(null)}
-          onInstalled={reload}
-        />
-      )}
-
-      {editing && (
-        <EditNodeDialog
-          node={editing}
-          onClose={() => setEditing(null)}
-          onSaved={reload}
-        />
-      )}
-
-      {forgetting && (
-        <ConfirmModal
-          open
-          onClose={() => setForgetting(null)}
-          title={t("nodes.forgetTitle")}
-          message={t("nodes.forgetBody", { name: forgetting.name })}
-          confirmLabel={t("nodes.forgetConfirm")}
-          confirmVariant="danger"
-          onConfirm={async () => {
-            try {
-              await removeNode(forgetting.id);
-              setForgetting(null);
-              reload();
-            } catch (e) {
-              setForgetting(null);
-              setRemoveError(e instanceof Error ? e.message : t("nodes.forgetFailed"));
-            }
-          }}
-        />
-      )}
-    </section>
+      {dialogs}
+    </div>
   );
 }

@@ -55,6 +55,12 @@ interface HealthHistoryChartProps {
   /** One line saying where the numbers came from and how long they last. */
   caption?: string;
   className?: string;
+  /** Inside a panel section that already names it: no frame, no heading, and
+   *  a one-line placeholder rather than a dashed box. */
+  bare?: boolean;
+  /** One series in a section that already names it: a taller line, and no
+   *  label of its own beside the figures. */
+  tall?: boolean;
 }
 
 /** Two points is the minimum that can honestly be drawn as a line. */
@@ -168,7 +174,7 @@ function formatValue(value: number, unit: string): string {
   return `${rounded}${unit}`;
 }
 
-function Sparkline({ series }: { series: HealthSeries }) {
+function Sparkline({ series, tall = false }: { series: HealthSeries; tall?: boolean }) {
   const { t, plural } = useI18n();
   const values = series.samples.map((s) => s.value);
   const latest = values[values.length - 1];
@@ -182,8 +188,8 @@ function Sparkline({ series }: { series: HealthSeries }) {
 
   return (
     <div className="space-y-1">
-      <div className="flex items-baseline justify-between gap-3 text-xs">
-        <span className="font-medium">{series.label}</span>
+      <div className={`flex items-baseline gap-3 text-xs ${tall ? "justify-end" : "justify-between"}`}>
+        {!tall && <span className="font-medium">{series.label}</span>}
         <span className="text-text-muted font-mono">
           {t("health.nowLowPeak", {
             now: formatValue(latest, series.unit),
@@ -195,7 +201,7 @@ function Sparkline({ series }: { series: HealthSeries }) {
       <svg
         viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
         preserveAspectRatio="none"
-        className="w-full h-10"
+        className={tall ? "w-full h-24" : "w-full h-10"}
         role="img"
         aria-label={`${series.label}, ${plural("health.samplesOver", series.samples.length, {
           span,
@@ -236,10 +242,20 @@ export function HealthHistoryChart({
   title,
   caption,
   className = "",
+  bare = false,
+  tall = false,
 }: HealthHistoryChartProps) {
   const { t, plural } = useI18n();
   const drawable = series.filter((s) => s.samples.length >= MIN_SAMPLES);
   const collected = series.reduce((most, s) => Math.max(most, s.samples.length), 0);
+
+  if (drawable.length === 0 && bare) {
+    return (
+      <p className={`text-[12.5px] text-muted ${className}`}>
+        {collected === 0 ? t("health.nothingYet") : plural("health.samplesSoFar", collected)}
+      </p>
+    );
+  }
 
   if (drawable.length === 0) {
     return (
@@ -260,15 +276,27 @@ export function HealthHistoryChart({
     );
   }
 
+  if (bare) {
+    return (
+      <div className={`@container grid grid-cols-1 gap-4 @[560px]:grid-cols-2 ${className}`}>
+        {drawable.map((s) => (
+          <Sparkline key={s.label} series={s} tall={tall} />
+        ))}
+      </div>
+    );
+  }
+
   return (
-    <div className={`rounded-sm border border-border p-4 space-y-4 ${className}`}>
+    <div className={`@container rounded-sm border border-border p-4 space-y-4 ${className}`}>
       <div>
         <h4 className="text-sm font-semibold">{title ?? t("health.title")}</h4>
         {caption && <p className="text-xs text-text-muted mt-0.5">{caption}</p>}
       </div>
-      {drawable.map((s) => (
-        <Sparkline key={s.label} series={s} />
-      ))}
+      <div className="grid grid-cols-1 gap-4 @[560px]:grid-cols-2 @[960px]:grid-cols-3">
+        {drawable.map((s) => (
+          <Sparkline key={s.label} series={s} />
+        ))}
+      </div>
     </div>
   );
 }
