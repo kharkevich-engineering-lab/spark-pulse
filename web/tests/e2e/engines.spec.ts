@@ -35,12 +35,6 @@ interface ImageEntry {
   index_digest: string;
 }
 
-function shortDigest(digest: string | null | undefined): string {
-  if (!digest) return "—";
-  const body = digest.startsWith("sha256:") ? digest.slice(7) : digest;
-  return body.slice(0, 12);
-}
-
 test("shows the engines the registry knows about", async ({ page, request }) => {
   const response = await request.get("/api/engines");
   expect(response.ok(), "GET /api/engines should succeed").toBeTruthy();
@@ -48,11 +42,7 @@ test("shows the engines the registry knows about", async ({ page, request }) => 
   expect(engines.length, "simulation mode should serve an engine registry").toBeGreaterThan(0);
 
   await gotoPage(page, "/engines");
-  await expect(page.getByRole("heading", { name: "What is on disk.", exact: true })).toBeVisible();
-  await expect(page.getByRole("tab", { name: /^Engines/ })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
+  await expect(page.getByRole("heading", { name: "Engines.", exact: true })).toBeVisible();
 
   for (const engine of engines) {
     // The row is keyed by the image reference, which is what the catalogue and
@@ -64,17 +54,20 @@ test("shows the engines the registry knows about", async ({ page, request }) => 
     await expect(row).toContainText(label);
     await expect(row).toContainText(`v${engine.version}`);
 
-    // Opening the row is what asks for its capabilities and its ports.
-    await row.getByRole("button", { name: `Details for ${engine.image_ref}` }).click();
-    const detail = page.getByTestId(`presence-${engine.image_ref}`);
-    await expect(detail).toBeVisible();
-    await expect(page.getByText(`:${engine.ports.api}`, { exact: false }).first()).toBeVisible();
-    await row.getByRole("button", { name: `Details for ${engine.image_ref}` }).click();
+    // Opening the row puts its capabilities and ports in a strip under it.
+    const toggle = row.getByRole("button", { name: `Details for ${engine.image_ref}` });
+    await toggle.click();
+    const detail = page.getByTestId(`engine-detail-${engine.image_ref}`);
+    await expect(detail.getByTestId(`presence-${engine.image_ref}`)).toBeVisible();
+    await expect(detail.getByText(`:${engine.ports.api}`, { exact: false }).first()).toBeVisible();
+    await toggle.click();
+    await expect(detail).toHaveCount(0);
   }
 
   // The indexes are configuration and live in Settings now; leaving no trace
   // of where they went reads as a feature that was removed.
-  await expect(page.getByText("Engine indexes are configured in Settings.")).toBeVisible();
+  await page.getByRole("button", { name: "Where engines come from" }).click();
+  await expect(page.getByRole("tooltip")).toContainText("Engine indexes are configured in Settings.");
   await expectNoCrash(page);
 });
 
@@ -113,7 +106,7 @@ test("distinguishes a missing image from a republished digest", async ({ page, r
 
   for (const image of missing) {
     const row = page.getByTestId(`engine-${image.ref}`);
-    await expect(row).toContainText("not pulled");
+    await expect(row).toContainText("Not pulled");
     await expect(row.getByRole("button", { name: `Pull ${image.ref}` })).toBeVisible();
     // Nothing to delete, and no size to report, for an image that is not here.
     await expect(row.getByRole("button", { name: `Delete ${image.ref}` })).toHaveCount(0);
@@ -121,16 +114,15 @@ test("distinguishes a missing image from a republished digest", async ({ page, r
 
   for (const image of drifted) {
     const row = page.getByTestId(`engine-${image.ref}`);
-    await expect(row.getByText("present", { exact: true })).toBeVisible();
-    await expect(row.getByText("newer digest published", { exact: true })).toBeVisible();
-    // The digest column shows local → index, so the two can be compared by eye.
-    await expect(row).toContainText(shortDigest(image.local_digest));
-    await expect(row).toContainText(shortDigest(image.index_digest));
+    // One dot and a word; why is on the hover, and Pull is in the same row.
+    const status = row.getByText("Update available", { exact: true });
+    await expect(status).toBeVisible();
+    await expect(row.getByTitle(/newer digest is published/)).toBeVisible();
     await expect(row.getByRole("button", { name: `Pull ${image.ref}` })).toBeVisible();
   }
 
-  const needsAttention = images.filter((i) => i.update_available).length;
-  await expect(page.getByText(`${needsAttention} need attention`)).toBeVisible();
+  // The filter counts what a pull would change: a republished digest.
+  await expect(page.getByRole("tab", { name: `Update available (${drifted.length})` })).toBeVisible();
   await expectNoCrash(page);
 });
 

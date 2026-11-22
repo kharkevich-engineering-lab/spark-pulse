@@ -139,7 +139,7 @@ describe("Library — caches per node", () => {
     renderAt("/cache");
 
     expect(await screen.findByRole("heading", { name: "Caches" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /Models/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("heading", { level: 1, name: "Models." })).toBeInTheDocument();
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
   });
 

@@ -8,7 +8,16 @@
  */
 
 import { expect, test } from "@playwright/test";
-import { escapeRegExp, expectNoCrash, gotoPage, listDeployments, openNav, purgeDeployments } from "./helpers";
+import {
+  backToRuns,
+  escapeRegExp,
+  expectNoCrash,
+  gotoPage,
+  listDeployments,
+  openNav,
+  openRun,
+  purgeDeployments,
+} from "./helpers";
 
 const RECIPE_ID = "bundled/qwen3.8-27b";
 const RECIPE_NAME = "Qwen3.8-27B";
@@ -26,8 +35,8 @@ test.afterEach(async ({ request }) => {
 });
 
 test("deploys a recipe, shows it on the Runs page and stops it", async ({ page, request }) => {
-  await gotoPage(page, "/");
-  await page.getByRole("button", { name: new RegExp(escapeRegExp(RECIPE_NAME)) }).click();
+  await gotoPage(page, "/recipes");
+  await page.getByRole("button", { name: new RegExp(escapeRegExp(RECIPE_NAME)) }).first().click();
 
   const drawerHeading = page.getByRole("heading", { name: RECIPE_NAME, exact: true });
   await expect(drawerHeading).toBeVisible();
@@ -51,23 +60,27 @@ test("deploys a recipe, shows it on the Runs page and stops it", async ({ page, 
     .toBe("running");
 
   await (await openNav(page)).getByRole("link", { name: "Runs" }).click();
-  await expect(page.getByRole("heading", { name: "What is serving.", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Runs.", exact: true })).toBeVisible();
 
   // A live run is under Live, which is the pill the page opens on.
   await expect(page.getByRole("tab", { name: /^Live/ })).toHaveAttribute("aria-selected", "true");
   const row = page.getByTestId(`deployment-${deployment.id}`);
   await expect(row).toBeVisible();
-  await expect(row.getByRole("button", { name: RECIPE_NAME, exact: true })).toBeVisible();
+  await expect(row.getByRole("link", { name: RECIPE_NAME, exact: true })).toBeVisible();
   await expect(row.getByText("Running", { exact: true })).toBeVisible();
 
-  await row.getByRole("button", { name: "Stop", exact: true }).click();
+  // Stopped from its own page, which says so once the nodes have caught up.
+  const detail = await openRun(page, deployment.id);
+  await detail.getByRole("button", { name: "Stop", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole("heading", { name: "Stop this run" })).toBeVisible();
   await dialog.getByRole("button", { name: "Stop", exact: true }).last().click();
+  await expect(detail.getByText("Stopped", { exact: true }).first()).toBeVisible();
 
   // A stopped run leaves Live for Finished — the record stays, it is just not
   // serving any more.
+  await backToRuns(page);
   await page.getByRole("tab", { name: /^Finished/ }).click();
   await expect(row.getByText("Stopped", { exact: true })).toBeVisible();
   await expectNoCrash(page);
@@ -91,12 +104,13 @@ test("shows the log stream for a run", async ({ page, request }) => {
   await gotoPage(page, "/jobs");
   const row = page.getByTestId(`deployment-${deployment.id}`);
   await expect(row).toBeVisible();
-  // The recipe the run came from is in the expanded detail, not on the row:
-  // the row says what is serving, the panel says what it was made from.
-  await row.getByRole("button", { name: "Logs" }).click();
-  await expect(row.getByText(RECIPE_ID, { exact: true })).toBeVisible();
-  await expect(row.getByRole("button", { name: "Hide" })).toBeVisible();
-  await expect(row.getByText("Streaming")).toBeVisible();
+  // The recipe the run came from is on the run's page, not on the row: the
+  // row says what is serving, the page says what it was made from.
+  const detail = await openRun(page, deployment.id);
+  await expect(detail.getByText(RECIPE_ID, { exact: true })).toBeVisible();
+  await detail.getByRole("tab", { name: "Logs" }).click();
+  await expect(detail.getByText("Streaming")).toBeVisible();
+  await expect(detail.getByTestId("run-logs")).toBeVisible();
   await expectNoCrash(page);
 });
 
@@ -126,8 +140,8 @@ test("shows a run's stored event timeline on the expanded row", async ({ page, r
   expect(history.events.map((e) => e.type)).toContain("deployment_planned");
 
   await gotoPage(page, "/jobs");
-  const row = page.getByTestId(`deployment-${deployment.id}`);
-  await row.getByRole("button", { name: "Logs" }).click();
+  const row = await openRun(page, deployment.id);
+  await row.getByRole("tab", { name: /^Events/ }).click();
 
   await expect(row.getByText("Event stream", { exact: true })).toBeVisible();
   await expect(row.getByText("No events to display")).toHaveCount(0);
@@ -155,8 +169,7 @@ test("shows the engine's own metrics for a running run", async ({ page, request 
   const deployment = (await created.json()) as { id: string };
 
   await gotoPage(page, "/jobs");
-  const row = page.getByTestId(`deployment-${deployment.id}`);
-  await row.getByRole("button", { name: "Logs" }).click();
+  const row = await openRun(page, deployment.id);
 
   // Up to one backend sweep plus one UI poll before the first window arrives.
   await expect(row.getByText("Queued", { exact: true })).toBeVisible({ timeout: 20_000 });

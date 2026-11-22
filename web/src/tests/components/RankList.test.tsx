@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
-import RankList from "@/components/RankList";
+import RankList, { hasRanksToShow } from "@/components/RankList";
 import type { DeploymentOrphan, DeploymentRank } from "@/lib/types";
 
 const rank = (over: Partial<DeploymentRank> = {}): DeploymentRank => ({
@@ -90,5 +90,14 @@ describe("RankList", () => {
     const row = screen.getByTestId("rank-orphan");
     expect(row).toHaveTextContent("this node");
     expect(row).toHaveTextContent(/holding this node's ports/);
+  });
+});
+
+describe("hasRanksToShow", () => {
+  it("agrees with what RankList draws, so a page draws no empty frame", () => {
+    expect(hasRanksToShow([rank()])).toBe(false);
+    expect(hasRanksToShow(undefined, undefined)).toBe(false);
+    expect(hasRanksToShow([rank(), rank({ rank: 1, is_head: false })])).toBe(true);
+    expect(hasRanksToShow([rank()], [orphan()])).toBe(true);
   });
 });

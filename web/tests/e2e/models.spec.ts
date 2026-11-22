@@ -42,11 +42,7 @@ test("lists the cached model catalogue", async ({ page, request }) => {
   expect(models.length, "simulation mode should serve a model catalogue").toBeGreaterThan(0);
 
   await gotoPage(page, "/models");
-  await expect(page.getByRole("heading", { name: "What is on disk.", exact: true })).toBeVisible();
-  await expect(page.getByRole("tab", { name: /^Models/ })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
+  await expect(page.getByRole("heading", { name: "Models.", exact: true })).toBeVisible();
 
   for (const model of models) {
     const row = page.getByTestId(`model-${model.id}`);
@@ -59,12 +55,12 @@ test("lists the cached model catalogue", async ({ page, request }) => {
 
   // Where the copies are, decided from presence rather than from the catalogue
   // this machine happens to hold.
-  await expect(page.getByTestId(`model-${models[0].id}`)).toContainText(/node/);
+  await expect(page.getByTestId(`model-${models[0].id}`)).toContainText(/ on |node/);
 
   if (await isNarrow(page)) {
-    await expect(page.getByRole("table")).toHaveCount(0);
+    await expect(page.getByTestId("models-table")).toHaveCount(0);
   } else {
-    await expect(page.getByRole("table").first()).toBeVisible();
+    await expect(page.getByTestId("models-table")).toBeVisible();
   }
   await expectNoCrash(page);
 });
@@ -75,8 +71,12 @@ test("starts a download and reports its progress to completion", async ({ page }
   const modelId = `e2e-org/e2e-model-${Date.now().toString(36)}`;
 
   await gotoPage(page, "/models");
-  await page.getByLabel("Model id").fill(modelId);
-  await page.getByRole("button", { name: "Download", exact: true }).click();
+  // Downloading is the page's one action; its form is a dialog.
+  await page.getByRole("button", { name: "Download model" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Model id").fill(modelId);
+  await dialog.getByRole("button", { name: "Download", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
 
   // The job appears with a progress bar wired to the download's byte counts.
   // `.first()`: the POST response and the SSE "queued" frame can both add the
@@ -100,11 +100,13 @@ test("offers the configured sources, and says where they are edited", async ({ p
   const { sources } = (await response.json()) as { sources: { name: string; type: string }[] };
 
   await gotoPage(page, "/models");
+  await page.getByRole("button", { name: "Download model" }).click();
+  const dialog = page.getByRole("dialog");
 
-  // The editor moved to Settings; what stays here is the choice a download
+  // The editor is in Settings; what stays with the download is the choice it
   // needs, and one line saying where the list itself is kept.
-  await expect(page.getByText("Model sources are configured in Settings.")).toBeVisible();
-  const select = page.getByLabel("Source", { exact: true });
+  await expect(dialog.getByText("Model sources are configured in Settings.")).toBeVisible();
+  const select = dialog.getByLabel("Source", { exact: true });
   for (const source of sources.filter((s) => s.type === "hf_hub")) {
     await expect(select.locator(`option[value="${source.name}"]`)).toHaveCount(1);
   }
@@ -123,11 +125,7 @@ test("keeps the old /cache address, on the caches section, one node at a time", 
   expect(nodes.length, "simulation mode should serve two nodes").toBeGreaterThan(1);
 
   await gotoPage(page, "/cache");
-  await expect(page.getByRole("heading", { name: "What is on disk.", exact: true })).toBeVisible();
-  await expect(page.getByRole("tab", { name: /^Models/ })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
+  await expect(page.getByRole("heading", { name: "Models.", exact: true })).toBeVisible();
 
   const caches = page.getByRole("heading", { name: "Caches", exact: true });
   await expect(caches).toBeVisible();

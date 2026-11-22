@@ -23,6 +23,8 @@ import {
   NodeState,
   Spinner,
   type NodeCondition,
+  InfoTip,
+  Section,
 } from "@/ui";
 import type {
   FabricApplyReport,
@@ -232,9 +234,6 @@ function ApplyDialog({ plan, onClose, onApplied }: ApplyDialogProps) {
   );
 }
 
-/** The rule that separates one section of the page from the next. Cards are
- *  for destinations and panels; a section is a heading over a rule. */
-const SECTION = "border-t border-line pt-12 mt-10 first:border-t-0 first:pt-0 first:mt-0";
 
 /** One node's ConnectX ports, as its agent reported them, with what the plan
  * would change.
@@ -328,41 +327,38 @@ export default function FabricCard() {
   };
 
   return (
-    <section data-testid="fabric-card" className={SECTION}>
-      <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 className="text-[22px] font-bold tracking-[-0.02em]">{t("fabric.heading")}</h2>
-          <p className="mt-1 text-[13px] text-muted">{t("fabric.subtitle")}</p>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <IconButton
-            size="sm"
-            icon={RefreshCw}
-            label={t("fabric.refresh")}
-            loading={loading}
-            onClick={() => void load()}
-          />
+    <Section
+      data-testid="fabric-card"
+      flush
+      title={
+        <span className="inline-flex items-center gap-1">
+          {t("fabric.heading")}
+          <InfoTip label={t("fabric.about")}>{t("fabric.subtitle")}</InfoTip>
+        </span>
+      }
+      meta={data?.transport ? modeText : undefined}
+      actions={
+        <>
+          <IconButton size="sm" icon={RefreshCw} label={t("fabric.refresh")} loading={loading} onClick={() => void load()} />
           <Button
             size="sm"
-            variant="primary"
             icon={Cable}
             onClick={() => setConfiguring(true)}
             disabled={!data || !data.transport || (proposed === 0 && !plan?.nodes.some((n) => n.status === "configured"))}
           >
             {t("fabric.configure")}
           </Button>
-        </div>
-      </div>
+        </>
+      }
+    >
+      <ErrorLine className="mx-4 my-3">{error}</ErrorLine>
 
-      <ErrorLine className="mb-3">{error}</ErrorLine>
-
-      {data && !data.transport && <p className="text-[14px] text-muted">{t("fabric.noTransport")}</p>}
+      {data && !data.transport && <p className="px-4 py-3 text-[13px] text-muted">{t("fabric.noTransport")}</p>}
 
       {data && data.transport && (
         <>
-          <p className="mb-3 text-[14px] text-muted">{modeText}</p>
           {plan && (plan.advice?.length ?? 0) > 0 && (
-            <ul className="mb-3 space-y-1" data-testid="fabric-advice">
+            <ul className="space-y-1 border-b border-line px-4 py-2" data-testid="fabric-advice">
               {plan.advice!.map((a, i) => (
                 <li key={i} role="note" className="text-[13px] text-muted">
                   {a}
@@ -371,7 +367,7 @@ export default function FabricCard() {
             </ul>
           )}
           {plan && plan.problems.length > 0 && (
-            <ul className="mb-3 space-y-1" data-testid="fabric-problems">
+            <ul className="space-y-1 border-b border-line px-4 py-2" data-testid="fabric-problems">
               {plan.problems.map((p, i) => (
                 <li key={i} role="note" className="text-[13px] text-warn">
                   {p}
@@ -382,7 +378,7 @@ export default function FabricCard() {
           {/* Rows, not a table: a node's ports are a short list under its name,
               which reads the same at 1280 and at 390 — the five-column table
               this replaced could only be scrolled sideways on a phone. */}
-          <div role="list" className="border-y border-line divide-y divide-line">
+          <div role="list" className="divide-y divide-line">
             {data.nodes.map((node) => {
               const nodePlan = planFor(node.node_id);
               return (
@@ -391,10 +387,10 @@ export default function FabricCard() {
                   role="listitem"
                   aria-label={node.name}
                   data-testid={`fabric-node-${node.node_id}`}
-                  className="py-4 space-y-2"
+                  className="grid gap-2 px-4 py-2.5 min-[900px]:grid-cols-[260px_minmax(0,1fr)] min-[900px]:gap-4"
                 >
-                  <div className="flex flex-wrap items-center gap-3">
-                    <span className="text-[15px] font-semibold">{node.name}</span>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <span className="text-[13.5px] font-semibold">{node.name}</span>
                     {nodePlan && (
                       <NodeState
                         state={STATUS_STATE[nodePlan.status]}
@@ -403,7 +399,7 @@ export default function FabricCard() {
                       />
                     )}
                     {node.reported && (
-                      <span className="text-[13px] text-muted">
+                      <span className="text-[12px] text-muted">
                         {node.pinned?.fabric_mode ? t("fabric.pinned") : t("fabric.notPinned")}
                       </span>
                     )}
@@ -422,6 +418,6 @@ export default function FabricCard() {
       {configuring && plan && (
         <ApplyDialog plan={plan.nodes} onClose={() => setConfiguring(false)} onApplied={() => void load()} />
       )}
-    </section>
+    </Section>
   );
 }

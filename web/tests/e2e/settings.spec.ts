@@ -97,14 +97,13 @@ test("shows the configuration the backend is running with", async ({ page, reque
   await expect(page.getByRole("heading", { name: "Access", exact: true })).toBeVisible();
   expect(await page.locator("input").count()).toBe(0);
 
-  // Save is on every tab — it used to be rendered on three of six, so an edit
-  // made on Containers and read back from Environment had no button to write
-  // it with. It stays inert until something changes, which is also what keeps
-  // this spec from writing to the settings file of whoever is running it.
+  // Save appears only once something has changed, on whichever tab the edit
+  // was made — and nothing here edits, which also keeps this spec from writing
+  // to the settings file of whoever is running it.
   for (const tab of ["Preferences", "Secrets", "Environment", "Runs"]) {
     await page.getByRole("tab", { name: tab, exact: true }).click();
-    await expect(save).toBeVisible();
-    await expect(save).toBeDisabled();
+    await expect(save).toHaveCount(0);
+    await expect(page.getByTestId("settings-save-bar")).toHaveCount(0);
   }
 
   // The old `/mcp` page is that tab now. The route stays, because it is in the

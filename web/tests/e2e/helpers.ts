@@ -24,27 +24,29 @@ export interface Deployment {
   status: string;
 }
 
-/** The header groups as `Layout.tsx` declares them, in order.
+/** The sidebar entries as `Layout.tsx` declares them, in order.
  *
- * Five, not eleven: the routes are unchanged, but the nav names groups and a
- * group lights up for any route it speaks for. `heading` is the hub title on
- * the group's own page.
+ * Every object type is one entry; `heading` is the page title on its route.
+ * Benchmarks has an entry only when benchmarking is enabled, so it is not in
+ * this fixed list — `expectedNavLabels` adds it from the config.
  */
 export const NAV_GROUPS = [
-  { href: "/", label: "Deploy", heading: "Recipes and mods." },
-  { href: "/jobs", label: "Runs", heading: "What is serving." },
-  { href: "/cluster", label: "Fleet", heading: "The nodes." },
-  { href: "/models", label: "Library", heading: "What is on disk." },
+  { href: "/", label: "Overview", heading: "Overview." },
+  { href: "/jobs", label: "Runs", heading: "Runs." },
+  { href: "/cluster", label: "Nodes", heading: "Nodes." },
+  { href: "/recipes", label: "Recipes", heading: "Recipes." },
+  { href: "/models", label: "Models", heading: "Models." },
+  { href: "/engines", label: "Engines", heading: "Engines." },
+  { href: "/mods", label: "Mods", heading: "Mods." },
+  { href: "/oci", label: "Collections", heading: "Collections." },
   { href: "/settings", label: "Settings", heading: "Settings." },
 ] as const;
 
-/** The labels the header should carry.
- *
- * Nothing hides a group any more: benchmarking is reached through Runs, so the
- * flag that used to remove a nav entry removes a tab instead.
- */
-export function expectedNavLabels(): string[] {
-  return NAV_GROUPS.map((item) => item.label);
+/** The labels the sidebar should carry, given whether benchmarking is on. */
+export function expectedNavLabels(benchmarking = false): string[] {
+  const labels: string[] = NAV_GROUPS.map((item) => item.label);
+  if (benchmarking) labels.splice(2, 0, "Benchmarks");
+  return labels;
 }
 
 export async function readConfig(request: APIRequestContext): Promise<AppConfig> {
@@ -189,4 +191,26 @@ export async function stubMemoryEndpoints(
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(payload) }),
   );
   await page.route("**/sse/metrics", (route) => route.abort());
+}
+
+/** Open a run's page from the Runs list and return it.
+ *
+ * A run has a page of its own (`/jobs/:id`), reached from its name on the
+ * list — a table row at 1200px and over, a card under it, the same link on
+ * both. The page carries the endpoint, the actions and three tabs (Overview,
+ * Logs, Events); a spec that reads the logs or the events opens that tab.
+ */
+export async function openRun(page: Page, id: string): Promise<Locator> {
+  const row = page.getByTestId(`deployment-${id}`);
+  await expect(row).toBeVisible();
+  await row.getByRole("link").first().click();
+  const detail = page.getByTestId(`run-detail-${id}`);
+  await expect(detail).toBeVisible();
+  return detail;
+}
+
+/** Back from a run's page to the list. */
+export async function backToRuns(page: Page): Promise<void> {
+  await page.getByRole("main").getByRole("link", { name: "Runs", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Runs.", exact: true })).toBeVisible();
 }

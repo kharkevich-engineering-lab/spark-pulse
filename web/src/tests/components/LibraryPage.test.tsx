@@ -9,8 +9,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import LibraryPage, { tabForPath } from "@/pages/LibraryPage";
 import type { CacheNode, ImageEntry, ModelEntry } from "@/lib/types";
@@ -142,29 +141,39 @@ describe("Library — the shell", () => {
     expect(await screen.findByText("16.0 GB on disk, 1.0 GB of it cache.")).toBeInTheDocument();
   });
 
-  it("counts each tab's contents in the tab itself", async () => {
+  it("titles each address for what it shows, with no tabs repeating the sidebar", async () => {
     renderAt("/models");
-
-    expect(await screen.findByRole("tab", { name: "Models (1)" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Engines (1)" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Registries (1)" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "Models." })).toBeInTheDocument();
+    expect(screen.queryByRole("tab")).toBeNull();
   });
 
-  it("opens the engines tab at its own address", async () => {
+  it("opens the engine images at their own address, with Pull image as its action", async () => {
     renderAt("/engines");
 
+    expect(await screen.findByTestId("engines-table")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Engines." })).toBeInTheDocument();
+    expect(screen.queryByText(/on disk/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Pull image" }));
     expect(await screen.findByLabelText("Image reference")).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /Engines/ })).toHaveAttribute("aria-selected", "true");
   });
 
-  it("opens the registries tab at its own address", async () => {
+  it("opens the collections at their own address, titled once", async () => {
     renderAt("/oci");
 
-    expect(await screen.findByRole("heading", { name: "Collections" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /Registries/ })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+    expect(await screen.findByRole("heading", { level: 1, name: "Collections." })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Registries" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Collections" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Add registry" }));
+    expect(await screen.findByRole("dialog", { name: "Add a registry" })).toBeInTheDocument();
+  });
+
+  it("opens the download dialog from the header and closes it on cancel", async () => {
+    renderAt("/models");
+    await screen.findByText("acme/plain-7b");
+    fireEvent.click(screen.getByRole("button", { name: "Download model" }));
+    expect(await screen.findByLabelText("Model id")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByLabelText("Model id")).toBeNull();
   });
 
   /** Only one tab is mounted: the engines tab is what opens /sse/images and
@@ -175,16 +184,5 @@ describe("Library — the shell", () => {
     await screen.findByText("acme/plain-7b");
 
     expect(screen.queryByLabelText("Image reference")).toBeNull();
-  });
-
-  it("puts the tab's own address in the bar when it is chosen", async () => {
-    const user = userEvent.setup();
-    renderAt("/models");
-    await screen.findByText("acme/plain-7b");
-
-    await user.click(screen.getByRole("tab", { name: /Engines/ }));
-
-    expect(await screen.findByLabelText("Image reference")).toBeInTheDocument();
-    await waitFor(() => expect(screen.queryByText("acme/plain-7b")).toBeNull());
   });
 });

@@ -50,7 +50,7 @@ export default function BaseCard({ icon, title, subtitle, description, badges, o
       onClick={interactive ? onClick : undefined}
       onKeyDown={handleKeyDown}
       title={onDelete ? undefined : hint}
-      className={`text-left p-5 rounded-md bg-surface border transition-colors ${
+      className={`text-left p-4 rounded-md bg-surface border transition-colors ${
         disabled
           ? "opacity-50 cursor-not-allowed border-border"
           : "border-border hover:border-primary/50 hover:bg-surface-hover cursor-pointer group"
@@ -89,7 +89,7 @@ export default function BaseCard({ icon, title, subtitle, description, badges, o
           {!disabled && <ChevronRight size={16} className="text-text-muted group-hover:text-blue2 transition-colors" />}
         </div>
       </div>
-      {badges && <div className="flex flex-wrap gap-1.5 mt-3">{badges}</div>}
+      {badges && <div className="flex flex-wrap gap-x-3 gap-y-1.5 mt-3">{badges}</div>}
     </div>
   );
 }

@@ -3,9 +3,9 @@
  * This was a page of its own, then a section listing four directories. Both
  * were about *one* machine while saying nothing about which: the control plane
  * walked its own `~/.cache` and the page presented the answer as the cluster's.
- * Every node is asked through its own agent now, so the section is a list of
- * machines — a heading, a total, and the four caches under it — the same rhythm
- * Fleet's monitoring uses, because it is the same list of machines.
+ * Every node is asked through its own agent now, so the section is one table
+ * grouped by machine — a header row with its total and "clean all", then a
+ * row per directory — rather than a grid of cards whose paths wrapped.
  *
  * A node that could not be asked keeps its heading and says why. Dropping it
  * would make a cluster look smaller than it is, and showing it empty would make
@@ -13,12 +13,28 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Database } from "lucide-react";
+import { Database, Eraser } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { cleanAllCaches, cleanCache } from "@/lib/api";
 import type { UseQueryResult } from "@/hooks/useQuery";
 import { formatSize } from "@/lib/utils";
-import { AlertModal, Button, ConfirmModal, EmptyState, ErrorLine, NodeState, Spinner } from "@/ui";
+import {
+  AlertModal,
+  Button,
+  ConfirmModal,
+  EmptyState,
+  ErrorLine,
+  IconButton,
+  InfoTip,
+  NodeState,
+  Section,
+  Spinner,
+  Table,
+  Td,
+  Th,
+  THead,
+  Tr,
+} from "@/ui";
 import type { CacheEntry, CacheNode, CacheResponse } from "@/lib/types";
 
 export interface CachesSectionProps {
@@ -72,29 +88,48 @@ export default function CachesSection({ cache, scrollTo }: CachesSectionProps) {
   };
 
   return (
-    <section ref={anchor} id="caches" className="border-t border-line pt-12 mt-10 scroll-mt-20">
-      <h2 className="text-[22px] font-bold tracking-[-0.02em]">{t("library.caches")}</h2>
-      <p className="text-[13px] text-muted mt-1">{t("library.cachesHint")}</p>
+    <section ref={anchor} id="caches" className="scroll-mt-20">
+      <Section
+        title={t("library.caches")}
+        meta={
+          <span className="inline-flex items-center gap-1">
+            {data ? formatSize(nodes.filter((n) => n.reachable).reduce((sum, n) => sum + n.total_bytes, 0)) : null}
+            <InfoTip label={t("library.aboutCaches")}>{t("library.cachesHint")}</InfoTip>
+          </span>
+        }
+        flush
+      >
+        {loading && !data && (
+          <div className="flex justify-center py-12">
+            <Spinner size="lg" label={t("common.loading")} />
+          </div>
+        )}
+        <ErrorLine className="m-3">{error}</ErrorLine>
 
-      {loading && !data && (
-        <div className="flex justify-center py-12">
-          <Spinner size="lg" label={t("common.loading")} />
-        </div>
-      )}
-      <ErrorLine className="mt-3">{error}</ErrorLine>
+        {nodes.length > 0 && (
+          <Table data-testid="caches-table">
+            <THead>
+              <Th>{t("cache.colCache")}</Th>
+              <Th>{t("cache.colPath")}</Th>
+              <Th numeric>{t("models.colSize")}</Th>
+              <Th numeric>{t("cache.colFiles")}</Th>
+              <Th srOnly>{t("models.colActions")}</Th>
+            </THead>
+            {nodes.map((node) => (
+              <NodeCaches
+                key={node.node_id || node.address}
+                node={node}
+                cleaning={cleaning}
+                onClean={(entry) => setTarget({ node, entry })}
+              />
+            ))}
+          </Table>
+        )}
 
-      {nodes.map((node) => (
-        <NodeCaches
-          key={node.node_id || node.address}
-          node={node}
-          cleaning={cleaning}
-          onClean={(entry) => setTarget({ node, entry })}
-        />
-      ))}
-
-      {data && nodes.length === 0 && !loading && (
-        <EmptyState icon={Database}>{t("cache.empty")}</EmptyState>
-      )}
+        {data && nodes.length === 0 && !loading && (
+          <EmptyState icon={Database}>{t("cache.empty")}</EmptyState>
+        )}
+      </Section>
 
       {target && (
         <ConfirmModal
@@ -131,7 +166,7 @@ export default function CachesSection({ cache, scrollTo }: CachesSectionProps) {
   );
 }
 
-/** One machine's caches. Separated by a rule, like Fleet's node sections. */
+/** One machine's caches: a group header row, then a row per directory. */
 function NodeCaches({
   node,
   cleaning,
@@ -143,74 +178,70 @@ function NodeCaches({
 }) {
   const { t, plural } = useI18n();
   const label = nodeLabel(node, t);
+  const id = node.node_id || node.address;
 
   return (
-    <section
-      data-testid={`cache-node-${node.node_id || node.address}`}
-      className="mt-8 first:mt-5"
-    >
-      <div className="flex items-center gap-3 flex-wrap">
-        <h3 className="text-[17px] font-semibold tracking-[-0.02em]">{label}</h3>
-        {node.reachable ? (
-          <NodeState state="ok" dotOnly />
-        ) : (
-          <NodeState
-            state="unknown"
-            label={t("library.cacheUnreachable")}
-            title={node.reason ?? undefined}
-          />
-        )}
-        <span className="ml-auto flex items-center gap-3">
-          {node.reachable && (
-            <span className="font-mono text-[13px]">{formatSize(node.total_bytes)}</span>
-          )}
-          {node.reachable && (
-            <Button
-              size="sm"
-              loading={cleaning === cleanKey(node, null)}
-              onClick={() => onClean(null)}
-            >
-              {t("library.cleanNode")}
-            </Button>
-          )}
-        </span>
-      </div>
-
-      {!node.reachable ? (
-        // Unknown, not empty: the node did not answer, and a section showing
-        // four zeroes would say this machine is holding nothing.
-        <p className="text-[13px] text-muted mt-2">{node.reason}</p>
-      ) : (
-        <div className="mt-4 grid grid-cols-1 gap-4 min-[600px]:grid-cols-2 min-[1000px]:grid-cols-4">
-          {node.dirs.map((entry) => (
-            <div
-              key={entry.name}
-              data-testid={`cache-${node.node_id || node.address}-${entry.name}`}
-              className="rounded-md bg-surface border border-line p-4 flex flex-col gap-2"
-            >
-              <h4 className="text-[15px] font-semibold">{entry.name}</h4>
-              <p className="font-mono text-[12.5px] text-muted break-all">{entry.path}</p>
-              {entry.error && <p className="text-[12.5px] text-warn">{entry.error}</p>}
-              <div className="mt-auto flex items-center justify-between gap-2 pt-2">
-                <span className="font-mono text-[13px]">
-                  {entry.truncated ? t("cache.atLeast", { size: formatSize(entry.size_bytes) }) : formatSize(entry.size_bytes)}
-                  <span className="text-muted"> · {plural("cache.files", entry.file_count)}</span>
-                </span>
-                <button
-                  type="button"
-                  onClick={() => onClean(entry)}
-                  disabled={cleaning === cleanKey(node, entry)}
-                  aria-label={t("library.cleanOne", { name: entry.name, node: label })}
-                  className="text-[13px] text-blue2 hover:underline disabled:opacity-[0.55]"
+    <tbody data-testid={`cache-node-${id}`}>
+      <tr className="border-b border-line bg-bg2">
+        <td colSpan={5} className="px-3 py-1.5">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <h3 className="text-[13px]">{label}</h3>
+            {node.reachable ? (
+              <NodeState state="ok" dotOnly />
+            ) : (
+              <NodeState
+                state="unknown"
+                label={t("library.cacheUnreachable")}
+                title={node.reason ?? undefined}
+              />
+            )}
+            {node.reachable && (
+              <span className="ml-auto flex items-center gap-2">
+                <span className="font-mono text-[12.5px] tabular-nums">{formatSize(node.total_bytes)}</span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  loading={cleaning === cleanKey(node, null)}
+                  onClick={() => onClean(null)}
                 >
-                  {t("cache.clean")}
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
+                  {t("library.cleanNode")}
+                </Button>
+              </span>
+            )}
+          </div>
+        </td>
+      </tr>
+      {!node.reachable ? (
+        // Unknown, not empty: the node did not answer, and four zeroes would
+        // say this machine is holding nothing.
+        <tr className="border-b border-line">
+          <td colSpan={5} className="px-3 py-2 text-[12.5px] text-muted">{node.reason}</td>
+        </tr>
+      ) : (
+        node.dirs.map((entry) => (
+          <Tr key={entry.name} data-testid={`cache-${id}-${entry.name}`}>
+            <Td className="whitespace-nowrap font-medium">{entry.name}</Td>
+            <Td mono muted truncate title={entry.path} className="max-w-[320px]">
+              {entry.path}
+              {entry.error && <span className="ml-2 font-sans text-warn">{entry.error}</span>}
+            </Td>
+            <Td numeric>
+              {entry.truncated ? t("cache.atLeast", { size: formatSize(entry.size_bytes) }) : formatSize(entry.size_bytes)}
+            </Td>
+            <Td numeric className="text-muted">{plural("cache.files", entry.file_count)}</Td>
+            <Td actions>
+              <IconButton
+                size="sm"
+                icon={Eraser}
+                label={t("library.cleanOne", { name: entry.name, node: label })}
+                loading={cleaning === cleanKey(node, entry)}
+                onClick={() => onClean(entry)}
+              />
+            </Td>
+          </Tr>
+        ))
       )}
-    </section>
+    </tbody>
   );
 }
 

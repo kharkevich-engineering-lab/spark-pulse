@@ -1,4 +1,4 @@
-/** The pill sub-nav.
+/** The segmented control: a compact sub-nav, one per page at most.
  *
  * Four `border-b-2` tab bars were in the tree, each with its own active
  * colour, and none of them answered an arrow key: `role="tablist"` promises a
@@ -27,9 +27,17 @@ export interface TabsProps {
   /** Names the bar for a screen reader. */
   label?: string;
   className?: string;
+  /**
+   * `filter` (the default) narrows a list: a segmented control the height of
+   * the search box beside it, so a toolbar is one even row. `sections` switches
+   * between parts of one page — a run's Overview, Logs, Events — and is drawn
+   * as underlined tabs on the page's rule, the way a document has sections.
+   */
+  variant?: "filter" | "sections";
 }
 
-export function Tabs({ tabs, value, onChange, label, className }: TabsProps) {
+export function Tabs({ tabs, value, onChange, label, className, variant = "filter" }: TabsProps) {
+  const sections = variant === "sections";
   const rowRef = useRef<HTMLDivElement>(null);
 
   /** Left/Right/Home/End move the selection, which is what `tablist` promises.
@@ -56,7 +64,12 @@ export function Tabs({ tabs, value, onChange, label, className }: TabsProps) {
       role="tablist"
       aria-label={label}
       onKeyDown={onKeyDown}
-      className={cn("flex items-center gap-2 overflow-x-auto", className)}
+      className={cn(
+        sections
+          ? "flex max-w-full items-end gap-5 overflow-x-auto border-b border-line"
+          : "inline-flex h-9 max-w-full items-stretch gap-0.5 overflow-x-auto rounded-sm border border-line bg-bg2 p-[3px]",
+        className,
+      )}
     >
       {tabs.map((tab) => {
         const active = tab.id === value;
@@ -69,11 +82,16 @@ export function Tabs({ tabs, value, onChange, label, className }: TabsProps) {
             tabIndex={active ? 0 : -1}
             onClick={() => onChange(tab.id)}
             className={cn(
-              "inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border",
-              "px-3 py-[7px] text-[13px] font-medium transition-colors duration-200",
-              active
-                ? "border-line-strong text-text"
-                : "border-line text-muted hover:text-text",
+              "inline-flex items-center gap-1.5 whitespace-nowrap text-[13px] font-medium transition-colors duration-150",
+              sections
+                ? cn(
+                    "-mb-px border-b-2 px-0.5 pb-2 pt-1",
+                    active ? "border-blue text-text" : "border-transparent text-muted hover:text-text",
+                  )
+                : cn(
+                    "rounded-[4px] px-3",
+                    active ? "bg-surface text-text shadow-[0_0_0_1px_var(--line)]" : "text-muted hover:text-text",
+                  ),
             )}
           >
             {tab.label}
@@ -81,9 +99,19 @@ export function Tabs({ tabs, value, onChange, label, className }: TabsProps) {
               <>
                 {/* A real space, not the flex gap: the accessible name is the
                     concatenation of the text nodes, and without this a screen
-                    reader (and every by-name selector) reads "Recipes(1)". */}
+                    reader (and every by-name selector) reads "Recipes(1)". The
+                    count is read as "(1)" and drawn as a badge. */}
                 {" "}
-                <span className="text-muted tabular-nums">({tab.count})</span>
+                <span className="sr-only">({tab.count})</span>
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    "min-w-[18px] rounded-full px-1.5 text-center text-[11px] leading-[18px] tabular-nums",
+                    active ? "bg-blue/15 text-blue2" : "bg-[color-mix(in_srgb,var(--text)_8%,transparent)] text-muted",
+                  )}
+                >
+                  {tab.count}
+                </span>
               </>
             )}
           </button>

@@ -8,6 +8,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import ServesChip from "@/components/ServesChip";
 import RunRow from "@/components/RunRow";
 import RecipeCard from "@/components/RecipeCard";
@@ -55,7 +56,9 @@ const recipe = (over: Partial<RecipeSummary> = {}): RecipeSummary => ({
 
 const row = (r: Deployment) =>
   render(
-    <RunRow run={r} expanded={false} onToggle={vi.fn()} onTeardown={vi.fn()} onBenchmark={vi.fn()} />,
+    <MemoryRouter>
+      <RunRow run={r} onTeardown={vi.fn()} onBenchmark={vi.fn()} />
+    </MemoryRouter>,
   );
 
 describe("servesChat", () => {
@@ -107,8 +110,7 @@ describe("RunRow", () => {
     row(run({ serves: "embedding" }));
     expect(screen.queryByRole("button", { name: /Benchmark/ })).toBeNull();
     expect(screen.getByTestId("serves-chip")).toHaveTextContent("Embeddings");
-    // Logs and Stop are still there, as halves rather than thirds.
-    expect(screen.getByRole("button", { name: /Logs/ })).toBeInTheDocument();
+    // Stop is still there, the one action, full width.
     expect(screen.getByRole("button", { name: /Stop/ })).toBeInTheDocument();
   });
 });

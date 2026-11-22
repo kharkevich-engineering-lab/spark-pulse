@@ -33,6 +33,13 @@ function isUnhealthy(rank: DeploymentRank): boolean {
   return !!rank.container && !rank.container.running;
 }
 
+/** Whether RankList has anything to draw: several ranks, a rank in trouble,
+ *  or an orphan. A single healthy rank says nothing the run row has not. */
+export function hasRanksToShow(ranks?: RankListProps["ranks"], orphans?: RankListProps["orphans"]): boolean {
+  const list = ranks ?? [];
+  return list.length >= 2 || list.some(isUnhealthy) || (orphans ?? []).length > 0;
+}
+
 export default function RankList({ ranks, orphans, className = "" }: RankListProps) {
   const t = useT();
   const list = ranks ?? [];

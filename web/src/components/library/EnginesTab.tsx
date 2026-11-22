@@ -10,13 +10,14 @@
  * indexes, the cache lifetime, the default — is configuration, and lives with
  * the rest of it in Settings; this tab is what is here now.
  *
- * The other half of the merge is per-node. Expanding a row asks each node what
- * it holds, and both destructive verbs — delete, and the copy that fills a
- * disk — name the machines they touch before they touch them.
+ * The other half of the merge is per-node. Opening a row shows what the engine
+ * is in a strip under it and asks each node what it holds, and both destructive verbs — delete, and
+ * the copy that fills a disk — name the machines they touch before they touch
+ * them. Pulling by reference is the page's primary action, in a dialog.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowDownToLine, ChevronDown, ChevronRight, Layers } from "lucide-react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { ArrowDownToLine, Copy, Layers, Trash2 } from "lucide-react";
 import {
   cancelImagePull,
   deleteImage,
@@ -34,23 +35,37 @@ import { useWideLayout } from "@/hooks/useMediaQuery";
 import { useSSEConnection } from "@/hooks/useSSEConnection";
 import { SSEConnectionState } from "@/lib/operations";
 import { useI18n, type Translator } from "@/lib/i18n";
-import { formatSize } from "@/lib/utils";
+import { cn, formatSize } from "@/lib/utils";
 import {
   ACTIVE_STATES,
   AlertModal,
   Button,
+  DetailRow,
   EmptyState,
   ErrorLine,
   Field,
+  IconButton,
   Input,
+  InfoTip,
+  KeyValues,
+  Modal,
   NodeScopedDialog,
   NodeState,
   ProgressRow,
+  SearchInput,
+  Section,
   Spinner,
+  Table,
+  Tabs,
+  Td,
+  Th,
+  THead,
   Toggle,
+  Toolbar,
+  Tr,
+  matchesQuery,
 } from "@/ui";
 import type { AlertTone } from "@/ui";
-import EngineBadge from "@/components/EngineBadge";
 import type { EngineSummary, ImageEntry, ImagePresence, ImagePullJob } from "@/lib/types";
 
 interface ImageEventFrame {
@@ -92,6 +107,22 @@ export function updateReason(image: ImageEntry, t: Translator["t"]): string {
   return "";
 }
 
+export type EngineFilter = "all" | "pulled" | "missing" | "update";
+
+/** Does this image belong under a filter? */
+export function inEngineFilter(image: ImageEntry, filter: EngineFilter): boolean {
+  switch (filter) {
+    case "pulled":
+      return image.present;
+    case "missing":
+      return !image.present;
+    case "update":
+      return Boolean(image.digest_drift);
+    default:
+      return true;
+  }
+}
+
 /** One engine, with everything known about it in one place.
  *
  * The join is on the image reference, which both sides already agree on: the
@@ -129,9 +160,12 @@ function normalizeEngineEntry(entry: unknown): { enabled?: boolean } {
 
 export interface EnginesTabProps {
   images: UseQueryResult<ImageEntry[]>;
+  /** The page header's Pull button opens the dialog this tab owns. */
+  pullOpen?: boolean;
+  onPullOpenChange?: (open: boolean) => void;
 }
 
-export default function EnginesTab({ images: imagesQuery }: EnginesTabProps) {
+export default function EnginesTab({ images: imagesQuery, pullOpen = false, onPullOpenChange }: EnginesTabProps) {
   const { t } = useI18n();
   const { data: images, loading, error, refetch } = imagesQuery;
   const { data: engineData, refetch: refetchEngines } = useQuery(fetchEngines);
@@ -142,11 +176,13 @@ export default function EnginesTab({ images: imagesQuery }: EnginesTabProps) {
   const [jobs, setJobs] = useState<ImagePullJob[]>([]);
   const [pulling, setPulling] = useState<string | null>(null);
   const [ref, setRef] = useState("");
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
   const [presence, setPresence] = useState<Record<string, ImagePresence | "loading">>({});
   const [deleteTarget, setDeleteTarget] = useState<EngineRow | null>(null);
   const [syncTarget, setSyncTarget] = useState<EngineRow | null>(null);
   const [alert, setAlert] = useState<{ title: string; message: string; tone?: AlertTone } | null>(null);
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<EngineFilter>("all");
   // Optimistic per-engine enabled state: set on click, cleared on success (the
   // refetch below is then the source of truth) or on failure (which restores
   // whatever the server last said by simply removing the override).
@@ -184,13 +220,29 @@ export default function EnginesTab({ images: imagesQuery }: EnginesTabProps) {
   const peers = useMemo(() => (nodes ?? []).filter((n) => !n.is_control_plane), [nodes]);
   const peerAddresses = useMemo(() => peers.map((n) => n.address), [peers]);
   const active = useMemo(() => jobs.filter((j) => ACTIVE_STATES.includes(j.status)), [jobs]);
-  const needsAttention = useMemo(
-    () => (images ?? []).filter((i) => i.update_available).length,
-    [images],
-  );
   const recent = useMemo(
     () => jobs.filter((j) => !ACTIVE_STATES.includes(j.status)).slice(0, 5),
     [jobs],
+  );
+
+  const counts = useMemo(() => {
+    const all = images ?? [];
+    return {
+      all: all.length,
+      pulled: all.filter((i) => inEngineFilter(i, "pulled")).length,
+      missing: all.filter((i) => inEngineFilter(i, "missing")).length,
+      update: all.filter((i) => inEngineFilter(i, "update")).length,
+    };
+  }, [images]);
+
+  const shown = useMemo(
+    () =>
+      rows.filter(
+        (row) =>
+          inEngineFilter(row.image, filter) &&
+          matchesQuery(query, row.image.ref, row.image.engine, row.image.variant, row.engine?.engine),
+      ),
+    [rows, filter, query],
   );
 
   // Enabled state is per engine name, not per image row: two variants of the
@@ -252,13 +304,13 @@ export default function EnginesTab({ images: imagesQuery }: EnginesTabProps) {
     }
   };
 
-  /** Ask the nodes about one image, once, when its row is opened. */
-  const toggleRow = async (row: EngineRow) => {
-    if (expanded === row.key) {
-      setExpanded(null);
+  /** Open one image in the panel, asking the nodes about it once. */
+  const selectRow = async (row: EngineRow) => {
+    if (selected === row.key) {
+      setSelected(null);
       return;
     }
-    setExpanded(row.key);
+    setSelected(row.key);
     if (peers.length === 0 || presence[row.key]) return;
     setPresence((current) => ({ ...current, [row.key]: "loading" }));
     try {
@@ -280,6 +332,7 @@ export default function EnginesTab({ images: imagesQuery }: EnginesTabProps) {
       const job = await startImagePull(target.trim());
       setJobs((current) => (current.some((j) => j.id === job.id) ? current : [job, ...current]));
       setRef("");
+      onPullOpenChange?.(false);
     } catch (err) {
       setAlert({
         title: t("engines.pullFailed"),
@@ -343,144 +396,119 @@ export default function EnginesTab({ images: imagesQuery }: EnginesTabProps) {
     }
   };
 
-  /** The three verbs a row offers, as text links rather than a row of icons:
-   *  the same set in the table and in the card. */
+  /** The three verbs a row offers, as icon buttons that never wrap. */
   const actionsFor = (row: EngineRow) => {
     const { image } = row;
     const reason = updateReason(image, t);
     return (
-      <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-[13px] max-[899px]:justify-start">
+      <>
         {reason && (
-          <button
-            type="button"
-            aria-label={t("library.pullImage", { ref: image.ref })}
+          <IconButton
+            size="sm"
+            icon={ArrowDownToLine}
+            label={t("library.pullImage", { ref: image.ref })}
+            loading={pulling === image.ref}
             onClick={() => pull(image.ref)}
-            className="text-blue2 hover:underline"
-          >
-            {t("engines.pull")}
-          </button>
-        )}
-        {image.present && peers.length > 0 && (
-          <button
-            type="button"
-            aria-label={t("library.copyImage", { ref: image.ref })}
-            title={t("engines.syncTitle")}
-            onClick={() => setSyncTarget(row)}
-            className="text-blue2 hover:underline"
-          >
-            {t("library.copy")}
-          </button>
-        )}
-        {image.present && (
-          <button
-            type="button"
-            aria-label={t("library.deleteImage", { ref: image.ref })}
-            onClick={() => setDeleteTarget(row)}
-            className="text-blue2 hover:underline"
-          >
-            {t("common.delete")}
-          </button>
-        )}
-      </div>
-    );
-  };
-
-  /** The engine badge, its version and its switch — the cell that identifies
-   *  a row, in the table and in the card alike. */
-  const identityFor = (row: EngineRow, open: boolean) => {
-    const { image, engine } = row;
-    return (
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => toggleRow(row)}
-          aria-expanded={open}
-          // Two rows can carry the same engine name at different versions, so
-          // the reference is what distinguishes them — for a screen reader as
-          // much as for a test.
-          aria-label={t("library.detailsFor", { ref: image.ref })}
-          className="flex items-center gap-2 text-left hover:text-blue2 transition-colors"
-        >
-          {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-          <span className="flex items-center gap-2">
-            {/* The catalogue knows the engine name even for a version the
-                registry no longer advertises — a second tag of an engine we
-                have is still that engine, not an unmanaged image. Only
-                something with no engine at all is unmanaged. */}
-            {image.engine ? (
-              <EngineBadge
-                engine={image.engine}
-                variant={image.variant}
-                enabled={engine ? effectiveEnabled(engine.engine) : true}
-              />
-            ) : (
-              <span className="text-muted">{t("engines.unmanaged")}</span>
-            )}
-            {(engine?.version || image.version) && (
-              <span className="text-[13px] text-muted font-mono">
-                v{engine?.version || image.version}
-              </span>
-            )}
-          </span>
-        </button>
-        {/* Enable/disable is a per-engine setting, not a per-image one — two
-            variants of the same engine share this switch, so it lives beside
-            the badge rather than in the per-row action column. */}
-        {engine && (
-          <Toggle
-            on={effectiveEnabled(engine.engine)}
-            disabled={togglingEngine === engine.engine}
-            onChange={(next) => toggleEngineEnabled(engine.engine, next)}
-            label={t("engines.toggleLabel", { engine: engine.engine })}
           />
         )}
-      </div>
+        {image.present && peers.length > 0 && (
+          <IconButton
+            size="sm"
+            icon={Copy}
+            label={t("library.copyImage", { ref: image.ref })}
+            onClick={() => setSyncTarget(row)}
+          />
+        )}
+        {image.present && (
+          <IconButton
+            size="sm"
+            icon={Trash2}
+            label={t("library.deleteImage", { ref: image.ref })}
+            onClick={() => setDeleteTarget(row)}
+          />
+        )}
+      </>
     );
   };
 
-  /** Present or not, plus anything the status word does not already say.
-   *
-   *  The chip used to repeat it: an image that was never pulled read "not
-   *  pulled  not pulled", once as the status and once as the reason it wants
-   *  attention, which is the same fact in two type sizes and two colours. The
-   *  chip is for the reason the status cannot carry — a tag that now resolves
-   *  to a different image than the one on disk. */
+  /** The engine and its variant on one line — the cell that names a row. The
+   *  button is what a keyboard user presses to open the panel. */
+  const identityFor = (row: EngineRow) => {
+    const { image, engine } = row;
+    const on = engine ? effectiveEnabled(engine.engine) : true;
+    return (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          selectRow(row);
+        }}
+        aria-expanded={selected === row.key}
+        // Two rows can carry the same engine name at different versions, so
+        // the reference is what distinguishes them — for a screen reader as
+        // much as for a test.
+        aria-label={t("library.detailsFor", { ref: image.ref })}
+        className={cn("whitespace-nowrap text-left font-semibold hover:text-blue2", !on && "text-muted")}
+      >
+        {/* The catalogue knows the engine name even for a version the
+            registry no longer advertises — a second tag of an engine we have
+            is still that engine, not an unmanaged image. Only something with
+            no engine at all is unmanaged. */}
+        {image.engine ? (
+          <>
+            {image.engine}
+            {image.variant && image.variant !== "default" && (
+              <span className="font-normal text-muted"> · {image.variant}</span>
+            )}
+          </>
+        ) : (
+          <span className="font-normal text-muted">{t("engines.unmanaged")}</span>
+        )}
+      </button>
+    );
+  };
+
+  const toggleFor = (row: EngineRow) =>
+    row.engine ? (
+      <Toggle
+        on={effectiveEnabled(row.engine.engine)}
+        disabled={togglingEngine === row.engine.engine}
+        onChange={(next) => toggleEngineEnabled(row.engine!.engine, next)}
+        label={t("engines.toggleLabel", { engine: row.engine.engine })}
+      />
+    ) : null;
+
+  /** Present or not, plus anything the status word does not already say. */
+  /** One dot and a word, like every other status here. A republished digest
+   *  is "Update available" in amber, and why is on the hover — the Pull
+   *  button in the same row is what acts on it. */
   const statusFor = (row: EngineRow) => {
     const { image, engine } = row;
+    const status = image.digest_drift ? (
+      <NodeState state="warn" label={t("engines.statusUpdate")} title={t("engines.digestDriftTitle")} />
+    ) : image.present ? (
+      <NodeState state="ok" label={t("engines.present")} title={t("engines.presentTitle")} />
+    ) : (
+      <NodeState state="unknown" label={t("engines.notPulled")} title={t("engines.notPulledTitle")} />
+    );
     return (
-      <div className="flex flex-wrap items-center gap-1.5 text-[13px]">
-        {image.present ? (
-          <span className="whitespace-nowrap text-good">{t("engines.present")}</span>
-        ) : (
-          <span className="whitespace-nowrap text-muted">{t("engines.notPulled")}</span>
-        )}
-        {engine?.available === false && (
-          <span className="whitespace-nowrap px-1.5 py-0.5 rounded-sm border border-line text-muted">
-            {t("engines.unpublished")}
-          </span>
-        )}
-        {image.digest_drift && (
-          <span className="whitespace-nowrap px-1.5 py-0.5 rounded-sm border border-warn text-warn">
-            {updateReason(image, t)}
-          </span>
-        )}
+      <div className="flex items-center gap-2 whitespace-nowrap text-[12.5px]">
+        {status}
+        {engine?.available === false && <span className="text-muted">· {t("engines.unpublished")}</span>}
       </div>
     );
   };
 
+  /** The repository can be long and is truncated; the tag never is. */
   const imageRefFor = (image: ImageEntry) => (
     <>
-      {/* A digest-pinned tag is 64 hex characters — rendered in full it was
-          pushing the table past the viewport. It is shortened for display, but
-          the full ref stays in the DOM (for a screen reader and for copy) and
-          on hover. */}
       <div
-        className="flex items-center gap-1 min-w-0"
-        title={isDigestTag(image.tag) ? image.ref : undefined}
+        className="flex min-w-0 items-center"
+        title={image.ref}
         aria-hidden={isDigestTag(image.tag) || undefined}
       >
-        <span className="truncate">{image.repository}</span>
-        <span className="text-muted shrink-0">:{shortImageTag(image.tag)}</span>
+        <span className="min-w-0 truncate">{image.repository}</span>
+        <span className="shrink-0 text-muted">:{shortImageTag(image.tag)}</span>
       </div>
       {isDigestTag(image.tag) && <span className="sr-only">{image.ref}</span>}
     </>
@@ -501,54 +529,13 @@ export default function EnginesTab({ images: imagesQuery }: EnginesTabProps) {
   );
 
   return (
-    <div className="space-y-6">
-      {/* Pull by reference. Kept from the Images page: an engine index is the
-          usual way an image arrives, but not the only one. */}
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          pull(ref);
-        }}
-        className="grid grid-cols-1 gap-3 min-[520px]:grid-cols-[1fr_auto] min-[520px]:items-end"
-      >
-        <Field label={t("engines.refLabel")}>
-          {(control) => (
-            <Input
-              {...control}
-              mono
-              placeholder={t("engines.refPlaceholder")}
-              value={ref}
-              onChange={(e) => setRef(e.target.value)}
-            />
-          )}
-        </Field>
-        <Button
-          type="submit"
-          variant="primary"
-          icon={ArrowDownToLine}
-          loading={!!pulling}
-          disabled={!ref.trim()}
-          className="max-[519px]:w-full"
-        >
-          {t("engines.pull")}
-        </Button>
-      </form>
-
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        {needsAttention > 0 && (
-          <p className="text-[13px] text-warn">{t("engines.needAttention", { count: needsAttention })}</p>
-        )}
-        <p className="text-[13px] text-muted">{t("library.enginesInSettings")}</p>
-      </div>
-
+    <div className="space-y-4">
       {(active.length > 0 || recent.length > 0) && (
-        <section className="space-y-2">
-          <div className="flex items-center gap-2">
-            <h3 className="text-[17px] font-semibold tracking-[-0.02em]">{t("engines.pulls")}</h3>
-            <span className="text-[13px] text-muted">
-              {connected ? t("engines.live") : t("engines.polling")}
-            </span>
-          </div>
+        <Section
+          title={t("engines.pulls")}
+          meta={connected ? t("engines.live") : t("engines.polling")}
+          bodyClassName="space-y-2"
+        >
           {[...active, ...recent].map((job) => (
             <ProgressRow
               key={job.id}
@@ -561,92 +548,165 @@ export default function EnginesTab({ images: imagesQuery }: EnginesTabProps) {
               onCancel={ACTIVE_STATES.includes(job.status) ? () => doCancel(job.id) : undefined}
             />
           ))}
-        </section>
+        </Section>
       )}
 
-      {loading && (
-        <div className="flex justify-center py-16">
-          <Spinner size="lg" label={t("common.loading")} />
-        </div>
-      )}
-      <ErrorLine>{error}</ErrorLine>
+      <div>
+        <Toolbar>
+          <SearchInput
+            value={query}
+            onChange={setQuery}
+            label={t("engines.filterEngines")}
+            clearLabel={t("common.clear")}
+          />
+          <Tabs
+            label={t("engines.filterLabel")}
+            value={filter}
+            onChange={(id) => setFilter(id as EngineFilter)}
+            tabs={[
+              { id: "all", label: t("engines.filterAll"), count: counts.all },
+              { id: "pulled", label: t("engines.filterPulled"), count: counts.pulled },
+              { id: "missing", label: t("engines.filterMissing"), count: counts.missing },
+              { id: "update", label: t("engines.filterUpdate"), count: counts.update },
+            ]}
+          />
+          <InfoTip label={t("engines.aboutIndexes")} className="ml-auto">
+            {t("library.enginesInSettings")}
+          </InfoTip>
+        </Toolbar>
 
-      {rows.length > 0 && wide && (
-        <div className="rounded-md bg-surface border border-line overflow-x-auto">
-          <table className="w-full text-[14px]">
-            <thead>
-              <tr className="text-left text-muted border-b border-line">
-                <th className="p-3 font-medium">{t("engines.colEngine")}</th>
-                <th className="p-3 font-medium">{t("engines.colImage")}</th>
-                <th className="p-3 font-medium">{t("engines.colStatus")}</th>
-                <th className="p-3 font-medium">{t("engines.colSize")}</th>
-                <th className="p-3 font-medium">{t("engines.colDigest")}</th>
-                <th className="p-3 font-medium sr-only">{t("engines.colActions")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => {
-                const { image } = row;
-                const open = expanded === row.key;
-                return [
-                  <tr
-                    key={row.key}
-                    data-testid={`engine-${image.ref}`}
-                    className="border-b border-line last:border-0"
-                  >
-                    <td className="p-3">{identityFor(row, open)}</td>
-                    <td className="p-3 font-mono min-w-0 max-w-[15rem]">{imageRefFor(image)}</td>
-                    <td className="p-3">{statusFor(row)}</td>
-                    <td className="p-3 font-mono">
-                      {image.present ? formatSize(image.size_bytes) : "—"}
-                    </td>
-                    <td className="p-3 font-mono text-muted">{digestFor(image)}</td>
-                    <td className="p-3">{actionsFor(row)}</td>
-                  </tr>,
-                  open && (
-                    <tr key={`${row.key}-detail`} className="border-b border-line last:border-0 bg-bg2">
-                      <td colSpan={6} className="p-4">
-                        <EngineDetail row={row} presence={presence[row.key]} peerCount={peers.length} />
-                      </td>
-                    </tr>
-                  ),
-                ];
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+        {loading && (
+          <div className="flex justify-center py-16">
+            <Spinner size="lg" label={t("common.loading")} />
+          </div>
+        )}
+        <ErrorLine>{error}</ErrorLine>
 
-      {rows.length > 0 && !wide && (
-        <div className="space-y-3">
-          {rows.map((row) => {
-            const { image } = row;
-            const open = expanded === row.key;
-            return (
-              <div
-                key={row.key}
-                data-testid={`engine-${image.ref}`}
-                className="rounded-md bg-surface border border-line p-4 space-y-2"
+        {rows.length > 0 && (
+          <>
+            <Section flush>
+              {wide ? (
+                <Table data-testid="engines-table">
+                  <THead>
+                    <Th>{t("engines.colEngine")}</Th>
+                    <Th>{t("engines.colVersion")}</Th>
+                    <Th>{t("engines.colImage")}</Th>
+                    <Th>{t("engines.colStatus")}</Th>
+                    <Th numeric>{t("engines.colSize")}</Th>
+                    <Th>{t("engines.colEnabled")}</Th>
+                    <Th srOnly>{t("engines.colActions")}</Th>
+                  </THead>
+                  <tbody>
+                    {shown.map((row) => {
+                      const { image, engine } = row;
+                      const open = selected === row.key;
+                      return (
+                        <Fragment key={row.key}>
+                          <Tr
+                            data-testid={`engine-${image.ref}`}
+                            interactive
+                            selected={open}
+                            onClick={() => selectRow(row)}
+                          >
+                            <Td>{identityFor(row)}</Td>
+                            <Td mono muted className="whitespace-nowrap">
+                              {engine?.version || image.version ? `v${engine?.version || image.version}` : "—"}
+                            </Td>
+                            <Td mono className="max-w-[300px]">{imageRefFor(image)}</Td>
+                            <Td>{statusFor(row)}</Td>
+                            <Td numeric>{image.present ? formatSize(image.size_bytes) : "—"}</Td>
+                            <Td onClick={(e) => e.stopPropagation()}>{toggleFor(row)}</Td>
+                            <Td actions>{actionsFor(row)}</Td>
+                          </Tr>
+                          {open && (
+                            <DetailRow colSpan={7}>
+                              <EngineDetail row={row} presence={presence[row.key]} peerCount={peers.length} digest={digestFor(image)} />
+                            </DetailRow>
+                          )}
+                        </Fragment>
+                      );
+                    })}
+                  </tbody>
+                </Table>
+              ) : (
+                <ul className="divide-y divide-line">
+                  {shown.map((row) => {
+                    const { image, engine } = row;
+                    return (
+                      <li key={row.key} data-testid={`engine-${image.ref}`} className="space-y-1.5 p-3">
+                        <div className="flex items-center gap-2">
+                          {identityFor(row)}
+                          {(engine?.version || image.version) && (
+                            <span className="font-mono text-[12.5px] text-muted">v{engine?.version || image.version}</span>
+                          )}
+                          <span className="ml-auto">{toggleFor(row)}</span>
+                        </div>
+                        <div className="font-mono text-[12.5px]">{imageRefFor(image)}</div>
+                        <div className="flex items-center gap-2">
+                          {statusFor(row)}
+                          <span className="font-mono text-[12.5px] text-muted">
+                            {image.present ? formatSize(image.size_bytes) : "—"}
+                          </span>
+                          <span className="ml-auto flex items-center gap-0.5">{actionsFor(row)}</span>
+                        </div>
+                        {selected === row.key && (
+                          <div className="mt-2 border-t border-line pt-3">
+                            <EngineDetail row={row} presence={presence[row.key]} peerCount={peers.length} digest={digestFor(image)} />
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+              {shown.length === 0 && (
+                <p className="px-3 py-8 text-center text-[13px] text-muted">{t("library.noMatch")}</p>
+              )}
+            </Section>
+          </>
+        )}
+
+        {rows.length === 0 && !loading && <EmptyState icon={Layers}>{t("engines.empty")}</EmptyState>}
+      </div>
+
+      {pullOpen && (
+        <Modal open onClose={() => onPullOpenChange?.(false)} title={t("engines.pullImage")} size="md">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              pull(ref);
+            }}
+            className="space-y-4"
+          >
+            <Field label={t("engines.refLabel")} hint={t("engines.refHint")}>
+              {(control) => (
+                <Input
+                  {...control}
+                  mono
+                  autoFocus
+                  placeholder={t("engines.refPlaceholder")}
+                  value={ref}
+                  onChange={(e) => setRef(e.target.value)}
+                />
+              )}
+            </Field>
+            <div className="flex justify-end gap-2">
+              <Button type="button" onClick={() => onPullOpenChange?.(false)}>
+                {t("common.cancel")}
+              </Button>
+              <Button
+                type="submit"
+                variant="primary"
+                icon={ArrowDownToLine}
+                loading={!!pulling}
+                disabled={!ref.trim()}
               >
-                {identityFor(row, open)}
-                <p className="font-mono text-[13px] break-all">{imageRefFor(image)}</p>
-                {statusFor(row)}
-                <p className="font-mono text-[13px] text-muted">
-                  {image.present ? formatSize(image.size_bytes) : "—"} · {digestFor(image)}
-                </p>
-                {actionsFor(row)}
-                {open && (
-                  <div className="pt-2 border-t border-line">
-                    <EngineDetail row={row} presence={presence[row.key]} peerCount={peers.length} />
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+                {t("engines.pull")}
+              </Button>
+            </div>
+          </form>
+        </Modal>
       )}
-
-      {rows.length === 0 && !loading && <EmptyState icon={Layers}>{t("engines.empty")}</EmptyState>}
 
       {deleteTarget && (
         <DeleteDialog
@@ -683,78 +743,89 @@ export default function EnginesTab({ images: imagesQuery }: EnginesTabProps) {
   );
 }
 
-/** What an engine is, and where its image is, under the row. */
+/** What an engine is, and where its image is — the strip under an open row. */
 function EngineDetail({
   row,
   presence,
   peerCount,
+  digest,
 }: {
   row: EngineRow;
   presence: ImagePresence | "loading" | undefined;
   peerCount: number;
+  digest: React.ReactNode;
 }) {
   const { t } = useI18n();
   const { engine, image } = row;
+  const capabilities = engine
+    ? Object.entries(engine.capabilities)
+        .filter(([, on]) => on)
+        .map(([name]) => name)
+        .join(", ") || t("engines.noCapabilities")
+    : null;
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <div className="space-y-2 text-[13px]">
-        <p className="font-medium text-[14px]">
-          {engine?.description || image.description || t("engines.noDescription")}
-        </p>
-        <p className="font-mono text-muted break-all">{image.ref}</p>
-        {engine && (
-          <>
-            <p className="text-muted">
-              {Object.entries(engine.capabilities)
-                .filter(([, on]) => on)
-                .map(([name]) => name)
-                .join(", ") || t("engines.noCapabilities")}
-              {" · "}
-              <span className="font-mono">:{engine.ports.api}</span>
-              {engine.ports.rendezvous ? (
-                <span className="font-mono"> / :{engine.ports.rendezvous}</span>
-              ) : null}
-            </p>
-            <p className="text-muted">
-              {engine.verified.length > 0
-                ? t("engines.verifiedCount", { count: engine.verified.length })
-                : t("engines.neverVerified")}
-              {" · "}
-              {t("engines.source", { source: engine.source })}
-            </p>
-          </>
-        )}
-      </div>
+    <div className="space-y-3 text-[12.5px]" data-testid={`engine-detail-${image.ref}`}>
+      <p className="text-[13px]">{engine?.description || image.description || t("engines.noDescription")}</p>
+      <div className="flex flex-wrap gap-x-10 gap-y-3">
+        <KeyValues
+          items={[
+            [t("engines.colVersion"), <span className="font-mono">{engine?.version || image.version || "—"}</span>],
+            [t("engines.colSize"), <span className="font-mono">{image.present ? formatSize(image.size_bytes) : "—"}</span>],
+            [t("engines.colDigest"), <span className="font-mono">{digest}</span>],
+            ...(engine
+              ? ([
+                  [t("engines.capabilities"), capabilities],
+                  [
+                    t("engines.ports"),
+                    <span className="font-mono">
+                      :{engine.ports.api}
+                      {engine.ports.rendezvous ? ` / :${engine.ports.rendezvous}` : ""}
+                    </span>,
+                  ],
+                  [
+                    t("engines.hardware"),
+                    engine.verified.length > 0
+                      ? t("engines.verifiedCount", { count: engine.verified.length })
+                      : t("engines.neverVerified"),
+                  ],
+                  [t("engines.index"), t("engines.source", { source: engine.source })],
+                ] as [React.ReactNode, React.ReactNode][])
+              : []),
+          ]}
+        />
 
-      <div className="space-y-2 text-[13px]" data-testid={`presence-${image.ref}`}>
-        <p className="font-medium text-[14px]">{t("engines.onNodes")}</p>
-        {peerCount === 0 && <p className="text-muted">{t("engines.soloNode")}</p>}
-        {peerCount > 0 && presence === "loading" && (
-          <p className="text-muted flex items-center gap-1.5">
-            <Spinner size="sm" />
-            {t("engines.asking")}
-          </p>
-        )}
-        {peerCount > 0 && presence && presence !== "loading" && (
-          <ul className="space-y-1">
-            {presence.nodes.map((node) => (
-              <li key={node.node} className="flex items-center justify-between gap-3">
-                <span className="font-mono">{node.node}</span>
-                {node.error ? (
-                  <NodeState state="unknown" label={t("engines.couldNotAsk")} title={node.error} />
-                ) : node.present ? (
-                  <NodeState
-                    state={node.matches ? "ok" : "warn"}
-                    label={node.matches ? t("engines.sameImage") : t("engines.differentImage")}
-                  />
-                ) : (
-                  <NodeState state="unknown" label={t("engines.absent")} />
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
+      <div className="min-w-[220px]">
+        <p className="mb-1 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-muted">{t("engines.onNodes")}</p>
+        <div className="space-y-2" data-testid={`presence-${image.ref}`}>
+          {peerCount === 0 && <p className="text-muted">{t("engines.soloNode")}</p>}
+          {peerCount > 0 && presence === "loading" && (
+            <p className="text-muted flex items-center gap-1.5">
+              <Spinner size="sm" />
+              {t("engines.asking")}
+            </p>
+          )}
+          {peerCount > 0 && presence && presence !== "loading" && (
+            <ul className="space-y-1">
+              {presence.nodes.map((node) => (
+                <li key={node.node} className="flex items-center justify-between gap-3">
+                  <span className="font-mono">{node.node}</span>
+                  {node.error ? (
+                    <NodeState state="unknown" label={t("engines.couldNotAsk")} title={node.error} />
+                  ) : node.present ? (
+                    <NodeState
+                      state={node.matches ? "ok" : "warn"}
+                      label={node.matches ? t("engines.sameImage") : t("engines.differentImage")}
+                    />
+                  ) : (
+                    <NodeState state="unknown" label={t("engines.absent")} />
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
       </div>
     </div>
   );

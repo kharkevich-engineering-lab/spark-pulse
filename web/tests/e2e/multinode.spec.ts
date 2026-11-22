@@ -155,8 +155,8 @@ test("the deploy form's node selector adds a rank per peer, and warns about noth
   const nodes = await listNodes(request);
   test.skip(nodes.length < 2, "the node selector only appears with a peer to select");
 
-  await gotoPage(page, "/");
-  await page.getByRole("button", { name: new RegExp(escapeRegExp(RECIPE_NAME)) }).click();
+  await gotoPage(page, "/recipes");
+  await page.getByRole("button", { name: new RegExp(escapeRegExp(RECIPE_NAME)) }).first().click();
   await expect(page.getByRole("heading", { name: RECIPE_NAME, exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Deploy options" }).click();
   const selector = page.getByTestId("deploy-node-selector");

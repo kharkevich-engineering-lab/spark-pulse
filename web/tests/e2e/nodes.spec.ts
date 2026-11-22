@@ -70,19 +70,23 @@ test("lists the nodes the backend holds, with interfaces, role and state", async
   expect(nodes.length, "the control node is never transient").toBeGreaterThan(0);
 
   for (const node of nodes) {
-    const row = registry.getByRole("listitem", { name: node.name });
+    const row = registry.getByRole("row", { name: node.name });
     await expect(row).toHaveCount(1);
     if (node.address) await expect(row).toContainText(node.address);
+    // The interfaces are on the node's own page rather than crowding the row.
+    await row.getByRole("link", { name: node.name, exact: true }).click();
+    const detail = page.getByTestId(`node-detail-${node.id}`);
     for (const iface of [node.ethernet_interface, ...node.infiniband_interfaces]) {
-      if (iface) await expect(row).toContainText(iface);
+      if (iface) await expect(detail).toContainText(iface);
     }
+    await page.goBack();
   }
 
   // Exactly one node is the control plane, and it is marked as such.
   const control = nodes.find((n) => n.is_control_plane);
   expect(control, "a control-plane node should exist").toBeTruthy();
   await expect(
-    registry.getByRole("listitem", { name: control!.name }),
+    registry.getByRole("row", { name: control!.name }),
   ).toContainText("Control plane");
 
   // Three states, shown as three states — never a bare spinner.
@@ -90,7 +94,7 @@ test("lists the nodes the backend holds, with interfaces, role and state", async
   if (peer) {
     const expected = { healthy: "Healthy", unknown: "Unknown", dead: "Dead" }[peer.state];
     await expect(
-      registry.getByRole("listitem", { name: peer.name }),
+      registry.getByRole("row", { name: peer.name }),
     ).toContainText(expected!);
   }
 
@@ -120,15 +124,17 @@ test("adds a node by address and keeps it across a reload", async ({ page, reque
   await install.getByRole("button", { name: "Later" }).click();
   await expect(install).toBeHidden();
 
-  const row = registry.getByRole("listitem", { name: "spark-e2e" });
+  const row = registry.getByRole("row", { name: "spark-e2e" });
   await expect(row).toContainText(address);
-  await expect(row).toContainText("Peer");
+  await row.getByRole("link", { name: "spark-e2e", exact: true }).click();
+  await expect(page.locator('[data-testid^="node-detail-"]')).toContainText("Peer");
+  await page.goBack();
 
   // It is persisted, not just in React state.
   expect((await listNodes(request)).some((n) => n.address === address)).toBeTruthy();
   await page.reload();
   await expect(
-    page.getByTestId("node-registry").getByRole("listitem", { name: "spark-e2e" }),
+    page.getByTestId("node-registry").getByRole("row", { name: "spark-e2e" }),
   ).toBeVisible();
 
   await expectNoCrash(page);
@@ -162,7 +168,7 @@ test("offers discovered peers without ever requiring them", async ({ page, reque
   await install.getByRole("button", { name: "Later" }).click();
   await expect(install).toBeHidden();
   await expect(
-    page.getByTestId("node-registry").getByRole("listitem", { name: address }),
+    page.getByTestId("node-registry").getByRole("row", { name: address }),
   ).toBeVisible();
 
   await expectNoCrash(page);
@@ -179,12 +185,12 @@ test("forgets a peer but never the control plane", async ({ page, request }) => 
 
   await gotoPage(page, "/cluster");
   const registry = page.getByTestId("node-registry");
-  await expect(registry.getByRole("listitem", { name: "spark-doomed" })).toBeVisible();
+  await expect(registry.getByRole("row", { name: "spark-doomed" })).toBeVisible();
 
   await registry.getByRole("button", { name: "Forget spark-doomed" }).click();
   await page.getByRole("button", { name: "Forget", exact: true }).click();
 
-  await expect(registry.getByRole("listitem", { name: "spark-doomed" })).toHaveCount(0);
+  await expect(registry.getByRole("row", { name: "spark-doomed" })).toHaveCount(0);
   expect((await listNodes(request)).some((n) => n.address === address)).toBeFalsy();
 
   // The control plane carries no forget button at all.
@@ -200,23 +206,33 @@ test("names each diagnostic finding with its remedy", async ({ page, request }) 
   const response = await request.get("/api/nodes/diagnostics");
   expect(response.ok()).toBeTruthy();
   const { findings } = (await response.json()) as {
-    findings: { summary: string; remedy: string }[];
+    findings: { summary: string; remedy: string; node_ids: string[] }[];
   };
+  const nodes = await listNodes(request);
 
   await gotoPage(page, "/cluster");
-  // A finding that names nodes is a warn line on each of those nodes' rows;
-  // one that names none sits above the list. Either way it is inside the
-  // registry, with its remedy.
-  const registry = page.getByTestId("node-registry");
-
+  // A finding about the fleet is a line above the table; one about a single
+  // node is on that node's page. Either way the remedy is one click away.
   if (findings.length === 0) {
     await expect(page.getByTestId("node-diagnostics")).toHaveCount(0);
   } else {
     for (const finding of findings) {
-      await expect(registry).toContainText(finding.summary);
-      // A finding without a remedy is a mystery, which is the thing these
-      // lines exist to stop being.
-      await expect(registry).toContainText(finding.remedy.split(".")[0]);
+      let scope = page.getByTestId("node-diagnostics");
+      let panel = null;
+      if (finding.node_ids.length === 1) {
+        const node = nodes.find((n) => n.id === finding.node_ids[0]);
+        if (!node) continue;
+        await page.getByTestId("node-registry").getByRole("link", { name: node.name, exact: true }).click();
+        panel = page.getByTestId(`node-detail-${node.id}`);
+        scope = panel;
+      }
+      const line = scope.getByRole("note").filter({ hasText: finding.summary });
+      await expect(line).toBeVisible();
+      // A finding without a remedy is a mystery, which is what these exist to stop.
+      await line.getByRole("button", { name: "How to fix" }).click();
+      await expect(page.getByRole("tooltip")).toContainText(finding.remedy.split(".")[0]);
+      await page.keyboard.press("Escape");
+      if (panel) await page.goBack();
     }
   }
   await expectNoCrash(page);
@@ -274,23 +290,26 @@ test("shows the fabric card, and says which nodes no agent has reported", async 
   await expectNoCrash(page);
 });
 
-test("diagnoses a node, and shows its ports, from its own row", async ({ page }) => {
+test("diagnoses a node, and shows its ports, on its own page", async ({ page }) => {
   await gotoPage(page, "/cluster");
-  const registry = page.getByTestId("node-registry");
-  // Opening the row is what runs the doctor: a diagnosis changes nothing, so
-  // there is no second button to press, and the reading no longer covers the
-  // list of machines it belongs to.
-  await registry.getByRole("button", { name: "Details for spark-02" }).click();
-  const row = registry.getByRole("listitem", { name: "spark-02" });
-  await expect(row).toContainText("Fabric ports");
+  await page.getByTestId("node-registry").getByRole("link", { name: "spark-02", exact: true }).click();
+  const detail = page.locator('[data-testid^="node-detail-"]');
+  await expect(detail.getByRole("heading", { level: 1, name: "spark-02" })).toBeVisible();
+
+  // The ports are on the page; the machine is diagnosed only when somebody
+  // runs the checks, because the doctor logs into it.
+  await expect(detail.getByRole("heading", { name: "Fabric ports" })).toBeVisible();
+  await expect(page.getByTestId("doctor-findings")).toHaveCount(0);
+
+  await detail.getByRole("button", { name: "Run checks" }).click();
   // In simulation the node has no live agent, so the doctor reports rather
   // than repairs; either way the section resolves to a report or a reason,
   // and the SSH connect timeout is what it can take to get there.
-  await expect(row.getByTestId("doctor-findings").or(row.getByRole("alert"))).toBeVisible({
+  await expect(detail.getByTestId("doctor-findings").or(detail.getByRole("alert"))).toBeVisible({
     timeout: 30_000,
   });
-  await registry.getByRole("button", { name: "Details for spark-02" }).click();
-  await expect(row.getByTestId("doctor-findings")).toHaveCount(0);
+
+  await page.getByRole("main").getByRole("link", { name: "Nodes", exact: true }).click();
+  await expect(page).toHaveURL(/\/cluster$/);
   await expectNoCrash(page);
 });
-

@@ -34,7 +34,7 @@ export type InputProps = React.InputHTMLAttributes<HTMLInputElement> & {
  * form row of fields and a button lines up whatever the controls are. Left to
  * their content, a native `<select>` came out 3px shorter than an input beside
  * it, and a button 2px taller — the row's labels and bottoms visibly stepped. */
-const SINGLE_LINE = "h-11";
+const SINGLE_LINE = "h-9";
 
 export function Input({ className, mono, ...rest }: InputProps) {
   return <input className={cn(CONTROL, SINGLE_LINE, mono && "font-mono text-[13px]", className)} {...rest} />;

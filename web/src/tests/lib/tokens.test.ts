@@ -55,6 +55,8 @@ const TAILWIND = new Set([
   // sizes (text-sm, ring-2, border-2, rounded-*)
   "xs", "sm", "base", "md", "lg", "xl", "2xl", "3xl", "4xl", "5xl", "6xl",
   "7xl", "8xl", "9xl", "0", "1", "2", "3", "4", "6", "8", "inner", "outline",
+  // border-collapse / border-separate: table layout, not colours
+  "collapse", "separate",
   // border/divide sides and their widths
   "t", "b", "l", "r", "x", "y",
   "t-0", "b-0", "l-0", "r-0", "x-0", "y-0",

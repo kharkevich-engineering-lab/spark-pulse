@@ -1,24 +1,22 @@
 import { useState, useEffect, useMemo } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useI18n } from "@/lib/i18n";
-import { fetchRecipes, fetchRecipe, createDeployment, scheduleDeploy, fetchSettings, fetchRecipeCustomization, saveRecipeCustomization, deleteRecipeCustomization, fetchMods, fetchMod, listCustomRecipes, saveCustomRecipe, deleteCustomRecipe, listCustomMods, getCustomModFiles, saveCustomModFiles, deleteCustomMod, uninstallOciRecipe, ApiError } from "@/lib/api";
+import { fetchRecipes, fetchRecipe, createDeployment, scheduleDeploy, fetchSettings, fetchRecipeCustomization, saveRecipeCustomization, deleteRecipeCustomization, listCustomRecipes, saveCustomRecipe, deleteCustomRecipe, uninstallOciRecipe, ApiError } from "@/lib/api";
 import { tightHere, wontRunHere } from "@/lib/types";
-import type { Deployment, RecipeDetail, RecipeCustomization, RecipeSummary, ModSummary, ModDetail, CustomRecipeInfo, CustomModInfo, ModFileMap, PreflightReport } from "@/lib/types";
+import type { Deployment, RecipeDetail, RecipeCustomization, RecipeSummary, CustomRecipeInfo, PreflightReport } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
 import { useDeployments } from "@/hooks/useDeployments";
-import { AlertModal, Button, ConfirmModal, ErrorLine, Modal, PageHeader, Spinner, Tabs, Toggle } from "@/ui";
+import { AlertModal, Button, ConfirmModal, EmptyRow, ErrorLine, IconButton, Modal, PageHeader, SearchInput, Section, Spinner, Table, Tabs, Td, Th, THead, Toolbar, Tr, matchesQuery } from "@/ui";
 import type { AlertTone } from "@/ui";
 import PreflightPanel from "@/components/PreflightPanel";
-import { Loader2, AlertCircle, ChevronDown, X, Copy, Check, Wrench, FileCode2, FileText, FileCode, Plus, Download } from "lucide-react";
+import { ChevronDown, Download, Pencil, Plus, Rocket, Trash2 } from "lucide-react";
 import RecipeCard from "@/components/RecipeCard";
+import RecipesTable from "@/components/RecipesTable";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useWaitingDeploys } from "@/hooks/useWaitingDeploys";
 import RecipeDrawer from "@/components/RecipeDrawer";
-import SlideDrawer from "@/components/SlideDrawer";
-import BaseCard from "@/components/BaseCard";
 import CustomRecipeDrawer from "@/components/CustomRecipeDrawer";
-import CustomModDrawer from "@/components/CustomModDrawer";
 import NewRecipeModal from "@/components/NewRecipeModal";
-import NewModModal from "@/components/NewModModal";
 import type { DeployOptionsValue } from "@/components/DeployOptions";
 
 /** What a blocked create is waiting on: the deploy the operator asked for,
@@ -78,129 +76,14 @@ function ociRecipeName(recipeId: string): string {
   return recipeId.startsWith(OCI_ID_PREFIX) ? recipeId.slice(OCI_ID_PREFIX.length) : recipeId;
 }
 
-// ── File-kind badge colours ──────────────────────────────────────────────────
+/** Where a recipe came from, as the source filter names it. */
+type RecipeSource = "all" | "bundled" | "oci" | "custom";
 
-const KIND_STYLE: Record<string, string> = {
-  patch: "bg-warning/15 text-warning border-warning/30",
-  template: "bg-primary/15 text-blue2 border-primary/30",
-  python: "bg-success/15 text-success border-success/30",
-  script: "bg-tag-bg text-text-muted border-border",
-  yaml: "bg-tag-bg text-text-muted border-border",
-  file: "bg-tag-bg text-text-muted border-border",
-};
-
-const KIND_ICON: Record<string, React.ReactNode> = {
-  patch: <FileCode2 size={12} />,
-  template: <FileText size={12} />,
-  python: <FileCode size={12} />,
-  script: <FileCode size={12} />,
-};
-
-function FileBadge({ name, kind }: { name: string; kind: string }) {
-  const cls = KIND_STYLE[kind] ?? KIND_STYLE.file;
-  const icon = KIND_ICON[kind];
-  return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border text-xs font-mono ${cls}`}>
-      {icon}
-      {name}
-    </span>
-  );
-}
-
-// ── Mod detail drawer ────────────────────────────────────────────────────────
-
-function ModDrawer({ modId, onClose }: { modId: string; onClose: () => void }) {
-  const { t } = useI18n();
-  const [detail, setDetail] = useState<ModDetail | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    setLoading(true);
-    setError(null);
-    fetchMod(modId)
-      .then(setDetail)
-      .catch((e) => setError(String(e)))
-      .finally(() => setLoading(false));
-  }, [modId]);
-
-  const copyScript = async () => {
-    if (!detail?.script) return;
-    await navigator.clipboard.writeText(detail.script);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  return (
-    <SlideDrawer
-      open={!!modId}
-      onClose={onClose}
-      header={
-        <div>
-          <div className="flex items-center gap-2">
-            <Wrench size={18} className="text-blue2" />
-            <span className="text-xl font-mono font-bold truncate">{modId}</span>
-          </div>
-        </div>
-      }
-      actions={
-        <button type="button" onClick={onClose} className="p-1.5 rounded-md hover:bg-surface-hover transition-colors">
-          <X size={18} />
-        </button>
-      }
-    >
-      {loading && (
-        <div className="flex-1 flex items-center justify-center">
-          <Loader2 className="animate-spin text-blue2" size={32} />
-        </div>
-      )}
-      {error && (
-        <div className="flex-1 flex items-center justify-center px-6">
-          <div className="flex items-center gap-3 text-danger">
-            <AlertCircle size={20} />
-            <span>{error}</span>
-          </div>
-        </div>
-      )}
-      {detail && !loading && (
-        <div className="p-6 space-y-5">
-          {detail.description && (
-            <div className="p-4 rounded-sm bg-bg border border-border">
-              <p className="text-sm text-text-muted leading-relaxed">{detail.description}</p>
-            </div>
-          )}
-          {detail.files.length > 0 && (
-            <div>
-              <p className="text-sm font-medium mb-2 text-text-muted uppercase tracking-wide text-xs">{t("recipes.assets")}</p>
-              <div className="flex flex-wrap gap-2">
-                {detail.files.map((f) => (
-                  <FileBadge key={f.name} name={f.name} kind={f.kind} />
-                ))}
-              </div>
-            </div>
-          )}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-sm font-medium">run.sh</p>
-              <button
-                onClick={copyScript}
-                className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text transition-colors"
-              >
-                {copied ? <Check size={14} className="text-success" /> : <Copy size={14} />}
-                {copied ? t("common.copied") : t("common.copy")}
-              </button>
-            </div>
-            <div className="rounded-md bg-bg border border-border overflow-hidden">
-              <pre className="p-4 text-xs font-mono overflow-x-auto leading-relaxed whitespace-pre">
-                {detail.script || t("recipes.emptyScript")}
-              </pre>
-            </div>
-          </div>
-        </div>
-      )}
-    </SlideDrawer>
-  );
+function inSource(r: RecipeSummary, source: RecipeSource): boolean {
+  if (source === "all") return true;
+  if (source === "custom") return r.source === "custom" || r.id.startsWith("custom-");
+  if (source === "oci") return r.source === "oci" || r.id.startsWith("oci-");
+  return r.source === "bundled" || r.id.startsWith("bundled/");
 }
 
 export default function RecipesPage() {
@@ -211,38 +94,30 @@ export default function RecipesPage() {
   // how the badge came to outlive the run it was marking.
   const { deployments } = useDeployments();
   const { data: settings } = useQuery(fetchSettings);
-  const { data: mods, loading: modsLoading, error: modsError } = useQuery(fetchMods);
-  const [showCustom, setShowCustom] = useState(false);
-  const [toggling, setToggling] = useState(false);
-  const [tab, setTab] = useState<"recipes" | "mods">("recipes");
+  const [source, setSource] = useState<RecipeSource>("all");
+  const [query, setQuery] = useState("");
   const [customRecipes, setCustomRecipes] = useState<CustomRecipeInfo[]>([]);
-  const [customMods, setCustomMods] = useState<CustomModInfo[]>([]);
+  const [customLoaded, setCustomLoaded] = useState(false);
   const [customLoading, setCustomLoading] = useState(false);
+  const [customError, setCustomError] = useState<string | null>(null);
   const [selected, setSelected] = useState<{ recipe: RecipeDetail; customization: RecipeCustomization } | null>(null);
   const [alertModal, setAlertModal] = useState<{ title: string; message: string; tone?: AlertTone } | null>(null);
   const [blockedDeploy, setBlockedDeploy] = useState<BlockedDeploy | null>(null);
   const [missingModelDeploy, setMissingModelDeploy] = useState<MissingModelDeploy | null>(null);
   const [scheduling, setScheduling] = useState(false);
   const [showUnavailable, setShowUnavailable] = useState(false);
-  const [activeModId, setActiveModId] = useState<string | null>(null);
 
-  // Custom recipe modal state
+  // Custom recipe editor state
   const [selectedRecipe, setSelectedRecipe] = useState<CustomRecipeInfo | null>(null);
   const [showRecipeModal, setShowRecipeModal] = useState(false);
-  // Custom mod modal state
-  const [selectedMod, setSelectedMod] = useState<CustomModInfo | null>(null);
-  const [showModModal, setShowModModal] = useState(false);
-  const [modFiles, setModFiles] = useState<ModFileMap>({});
 
   // Confirmation modal state for reset
   const [resetConfirm, setResetConfirm] = useState<{ recipeId: string; recipeName: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<
-    { kind: "recipe" | "mod" | "oci"; id: string; name: string } | null
+    { kind: "recipe" | "oci"; id: string; name: string } | null
   >(null);
 
-  // New recipe/mod modal state
   const [showNewRecipe, setShowNewRecipe] = useState(false);
-  const [showNewMod, setShowNewMod] = useState(false);
 
   // What decides whether a `cluster_only` recipe is offered is the cluster the
   // control plane actually has — `/api/settings` derives it from the registry
@@ -265,43 +140,53 @@ export default function RecipesPage() {
     return new Set(deployments.filter(live).map(d => d.recipe_id));
   }, [deployments]);
 
-  // What does not run here goes last and folded away: the cluster-only ones
-  // with no cluster, and the ones the backend says have no image for this
-  // fleet's platform or too few nodes (#172). "Only what runs here" is the
-  // folded default; unfolded, each is dimmed and says why.
+  // The source filter and the search narrow the list first; then what does
+  // not run here goes last and folded away: the cluster-only ones with no
+  // cluster, and the ones the backend says have no image for this fleet's
+  // platform or too few nodes (#172). Unfolded, each is dimmed and says why.
+  const visible = useMemo(
+    () =>
+      (recipes ?? []).filter(
+        (r) =>
+          inSource(r, source) &&
+          matchesQuery(query, r.name, r.model, r.description, (r.engines ?? []).join(" "), r.engine),
+      ),
+    [recipes, source, query],
+  );
   const { available, unavailable } = useMemo(() => {
-    if (!recipes) return { available: [], unavailable: [] };
     const blocked = (r: RecipeSummary) => (r.cluster_only && !clusterAvailable) || wontRunHere(r);
-    return { available: recipes.filter(r => !blocked(r)), unavailable: recipes.filter(blocked) };
-  }, [recipes, clusterAvailable]);
+    return { available: visible.filter(r => !blocked(r)), unavailable: visible.filter(blocked) };
+  }, [visible, clusterAvailable]);
+  const sourceCounts = useMemo(() => {
+    const all = recipes ?? [];
+    return {
+      all: all.length,
+      bundled: all.filter((r) => inSource(r, "bundled")).length,
+      oci: all.filter((r) => inSource(r, "oci")).length,
+      custom: all.filter((r) => inSource(r, "custom")).length,
+    };
+  }, [recipes]);
   const anyClusterBlocked = unavailable.some(r => r.cluster_only && !clusterAvailable);
 
 
+  // Custom recipe files are read straight from ~/.config/spark-pulse, and
+  // only once somebody asks to see them: the Custom filter is that ask.
   const loadCustomData = async () => {
     setCustomLoading(true);
     try {
-      const [r, m] = await Promise.all([listCustomRecipes(), listCustomMods()]);
-      setCustomRecipes(r);
-      setCustomMods(m);
+      setCustomRecipes(await listCustomRecipes());
+      setCustomError(null);
     } catch (e) {
-      setAlertModal({ title: t("common.error"), message: e instanceof Error ? e.message : t("recipes.loadCustomFailed") });
+      setCustomError(e instanceof Error ? e.message : t("recipes.loadCustomFailed"));
     } finally {
+      setCustomLoaded(true);
       setCustomLoading(false);
     }
   };
 
-  const handleToggleCustom = async () => {
-    if (toggling) return;
-    setToggling(true);
-    const next = !showCustom;
-    try {
-      // Custom recipes and mods are read straight from ~/.config/spark-pulse,
-      // so showing them is a load — there is nothing to sync into a checkout.
-      if (next) await loadCustomData();
-      setShowCustom(next);
-    } finally {
-      setToggling(false);
-    }
+  const chooseSource = (next: string) => {
+    setSource(next as RecipeSource);
+    if (next === "custom" && !customLoaded) void loadCustomData();
   };
 
   const handleOpenCustomRecipe = async (recipe: CustomRecipeInfo) => {
@@ -310,8 +195,8 @@ export default function RecipesPage() {
   };
 
   /** A custom recipe is also a recipe: the main list carries it as
-   *  `custom-<file>`. Refreshing only Custom mode's own list left a deleted
-   *  one on the recipe grid until a reload. */
+   *  `custom-<file>`. Refreshing only the file list left a deleted one on
+   *  the recipe list until a reload. */
   const customRecipesChanged = async () => {
     await Promise.all([loadCustomData(), refetch()]);
   };
@@ -332,7 +217,7 @@ export default function RecipesPage() {
    * two clicks and a scroll away from the card, so the list looked as though
    * what it created could not be removed.
    */
-  const confirmDelete = (kind: "recipe" | "mod" | "oci", id: string, name: string) =>
+  const confirmDelete = (kind: "recipe" | "oci", id: string, name: string) =>
     setDeleteTarget({ kind, id, name });
 
   /** OCI recipes are not read from `~/.config/spark-pulse/custom-recipes`, so
@@ -350,7 +235,6 @@ export default function RecipesPage() {
     setDeleteTarget(null);
     try {
       if (kind === "recipe") await handleDeleteCustomRecipe(id);
-      else if (kind === "mod") await handleDeleteCustomMod(id);
       else await handleUninstallOciRecipe(id);
     } catch (e) {
       setAlertModal({
@@ -361,27 +245,6 @@ export default function RecipesPage() {
         message: e instanceof Error ? e.message : t("common.unknownError"),
       });
     }
-  };
-
-  const handleOpenCustomMod = async (mod: CustomModInfo) => {
-    setSelectedMod(mod);
-    try {
-      const { files } = await getCustomModFiles(mod.id);
-      setModFiles(files);
-      setShowModModal(true);
-    } catch {
-      setAlertModal({ title: t("common.error"), message: t("recipes.loadModFailed") });
-    }
-  };
-
-  const handleSaveCustomMod = async (_id: string, fileMap: ModFileMap) => {
-    await saveCustomModFiles(_id, fileMap);
-    await loadCustomData();
-  };
-
-  const handleDeleteCustomMod = async (_id: string) => {
-    await deleteCustomMod(_id);
-    await loadCustomData();
   };
 
   const handleSelect = async (recipe: RecipeSummary) => {
@@ -395,6 +258,23 @@ export default function RecipesPage() {
       setAlertModal({ title: t("common.error"), message: e instanceof Error ? e.message : t("recipes.loadRecipeFailed") });
     }
   };
+
+  // `?recipe=<id>` — the command palette opens a recipe's drawer here. Read
+  // once the list has loaded, then dropped so closing the drawer stays closed.
+  // A console lists recipes as a table; under 1200px they stay cards.
+  const wide = useMediaQuery("(min-width: 1200px)");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const linkedRecipe = searchParams.get("recipe");
+  useEffect(() => {
+    if (!linkedRecipe || !recipes) return;
+    const recipe = recipes.find((r) => r.id === linkedRecipe);
+    if (recipe) void handleSelect(recipe);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete("recipe");
+      return next;
+    }, { replace: true });
+  }, [linkedRecipe, recipes]);
 
   const handleDeploy = async (name: string, params: Record<string, unknown>, options?: DeployOptionsValue) => {
     if (!selected) return;
@@ -520,257 +400,230 @@ export default function RecipesPage() {
     setResetConfirm({ recipeId: recipe.id, recipeName: recipe.name });
   };
 
-  const isAnyLoading = recipesLoading || modsLoading || customLoading;
-  const isError = recipesError || modsError;
-  const combinedError = [recipesError, modsError].filter(Boolean).join("; ");
+  const isError = recipesError;
+
+  const stateOf = (r: RecipeSummary) => ({ running: runningIds.has(r.id), queued: queuedIds.has(r.id), tight: tightHere(r) });
+  const unavailableStateOf = (r: RecipeSummary) => ({
+    clusterBlocked: r.cluster_only && !clusterAvailable,
+    notHere: wontRunHere(r) ? r.fit?.reason : undefined,
+  });
+  const nothingMatches = <>{t("recipes.noMatch")}</>;
+
+  /** The recipe a custom file deploys as: `custom/<stem>` is `custom-<stem>`. */
+  const summaryForFile = (file: CustomRecipeInfo) =>
+    recipes?.find((r) => r.id === `custom-${file.id.replace(/^custom\//, "")}`);
 
   return (
-    <div className="space-y-6">
+    <div>
       <PageHeader
-        eyebrow={t("nav.deploy")}
+        eyebrow={t("nav.recipes")}
         title={t("recipes.heading")}
-        description={showCustom ? t("recipes.subtitleCustom") : t("recipes.subtitleBundled")}
+        description={recipes ? plural("recipes.meta", recipes.length) : undefined}
+        actions={
+          <Button variant="primary" icon={Plus} onClick={() => setShowNewRecipe(true)}>
+            {t("recipes.newRecipe")}
+          </Button>
+        }
       />
 
-      {/* Tabs + Toggle */}
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
+      <Toolbar>
+        <SearchInput value={query} onChange={setQuery} label={t("recipes.search")} clearLabel={t("common.clear")} />
         <Tabs
-          label={t("recipes.title")}
-          value={tab}
-          onChange={(id) => setTab(id as "recipes" | "mods")}
+          label={t("recipes.sourceLabel")}
+          value={source}
+          onChange={chooseSource}
           tabs={[
-            {
-              id: "recipes",
-              label: t("recipes.tabRecipes"),
-              count: showCustom ? customRecipes.length : (recipes?.length ?? 0),
-            },
-            {
-              id: "mods",
-              label: t("recipes.tabMods"),
-              count: showCustom ? customMods.length : (mods?.length ?? 0),
-            },
+            { id: "all", label: t("recipes.sourceAll"), count: sourceCounts.all },
+            { id: "bundled", label: t("recipes.sourceBundled"), count: sourceCounts.bundled },
+            { id: "oci", label: t("recipes.sourceCollections"), count: sourceCounts.oci },
+            { id: "custom", label: t("recipes.sourceCustom"), count: sourceCounts.custom },
           ]}
         />
-        {/* Toggle + label */}
-        <div className="flex items-center gap-2 shrink-0">
-          <Toggle
-            on={showCustom}
-            onChange={handleToggleCustom}
-            disabled={customLoading || toggling}
-            label={t("recipes.toggleCustom")}
-          />
-          <span className={`text-[13px] font-medium ${showCustom ? "text-text" : "text-muted"}`}>
-            {t("recipes.customMode")}
-          </span>
-        </div>
-      </div>
+      </Toolbar>
 
-      {/* Loading / error overlay */}
-      {isAnyLoading && (
+      {recipesLoading && (
         <div className="flex justify-center py-20">
           <Spinner size="lg" label={t("common.loading")} />
         </div>
       )}
-      {isError && !isAnyLoading && (
-        <ErrorLine>{combinedError}</ErrorLine>
-      )}
+      {isError && !recipesLoading && <ErrorLine>{recipesError}</ErrorLine>}
 
-      {/* ── Recipes tab ─────────────────────────────────────────────────── */}
-      {tab === "recipes" && !isAnyLoading && (
-        <div className="space-y-6">
-          {showCustom ? (
-            <>
-              {/* The create button sits outside the "we already have some"
-                  branch. It used to be inside it, so the state everybody
-                  starts in — no custom recipes — offered no way to make the
-                  first one: an empty page saying "create a new recipe to get
-                  started" beside no button that would. */}
-              <div className="flex items-center justify-between">
-                <p className="text-sm text-text-muted">
-                  {customRecipes.length === 0
-                    ? t("recipes.noCustomRecipesYet")
-                    : plural("recipes.customRecipeCount", customRecipes.length)}
-                </p>
-                <button
-                  onClick={() => setShowNewRecipe(true)}
-                  className="px-3 py-1.5 rounded-sm bg-primary hover:bg-primary-hover text-white text-sm font-medium flex items-center gap-1.5 transition-colors"
-                >
-                  <Plus size={14} />
-                  {t("recipes.newRecipe")}
-                </button>
+      {!recipesLoading && recipes && (
+        <div className="space-y-4">
+          {recipes.length === 0 ? (
+            <Section>
+              <div className="py-10 text-center text-muted">
+                <p>{t("recipes.noRecipes")}</p>
+                <p className="mt-1 text-[13px]">{t("recipes.noRecipesHint")}</p>
               </div>
-              {customRecipes.length > 0 ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                  {customRecipes.map((r) => (
-                    <BaseCard
+            </Section>
+          ) : (
+            <>
+              {available.length === 0 && unavailable.length > 0 && (
+                <p className="text-[13px] text-muted" data-testid="nothing-runs-here">
+                  {t("recipes.nothingRunsHere")}
+                </p>
+              )}
+              {wide ? (
+                (available.length > 0 || unavailable.length === 0) && (
+                  <Section flush>
+                    <RecipesTable
+                      recipes={available}
+                      stateOf={stateOf}
+                      onSelect={(r) => void handleSelect(r)}
+                      onReset={openResetConfirm}
+                      empty={nothingMatches}
+                    />
+                  </Section>
+                )
+              ) : available.length === 0 && unavailable.length === 0 ? (
+                <p className="py-8 text-center text-[13px] text-muted">{nothingMatches}</p>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {available.map((r) => (
+                    <RecipeCard
                       key={r.id}
-                      icon={<FileText size={16} className="shrink-0 text-blue2" />}
-                      title={r.name}
-                      subtitle={r.filename}
-                      onClick={() => handleOpenCustomRecipe(r)}
-                      onDelete={() => confirmDelete("recipe", r.id, r.name)}
-                      deleteLabel={t("recipes.deleteRecipe", { name: r.name })}
+                      r={r}
+                      isRunning={runningIds.has(r.id)}
+                      isQueued={queuedIds.has(r.id)}
+                      clusterBlocked={false}
+                      tight={tightHere(r)}
+                      onSelect={() => handleSelect(r)}
+                      onReset={() => openResetConfirm(r)}
                     />
                   ))}
                 </div>
-              ) : (
-                <div className="text-center py-20 text-text-muted">
-                  <FileText size={48} className="mx-auto mb-4 opacity-30" />
-                  <p className="text-lg font-medium">{t("recipes.noCustomRecipes")}</p>
-                  <p className="text-sm mt-1">
-                    {t("recipes.noCustomRecipesHint")}
-                  </p>
-                </div>
               )}
-            </>
-          ) : (
-            <>
-              {recipes && recipes.length > 0 && (
-                <>
-                  {available.length === 0 && unavailable.length > 0 && (
-                    <p className="text-sm text-text-muted" data-testid="nothing-runs-here">
-                      {t("recipes.nothingRunsHere")}
+
+              {unavailable.length > 0 && (
+                <div>
+                  <button
+                    onClick={() => setShowUnavailable(v => !v)}
+                    className="mb-2 flex items-center gap-2 text-[13px] text-muted transition-colors hover:text-text"
+                  >
+                    <ChevronDown size={15} className={`transition-transform ${showUnavailable ? "rotate-180" : ""}`} />
+                    {plural(showUnavailable ? "recipes.hideNotHere" : "recipes.showNotHere", unavailable.length)}
+                  </button>
+                  {/* Why they are unavailable, with the two things that would
+                      change it: a count beats naming a setting. */}
+                  {anyClusterBlocked && (
+                    <p className="mb-2 text-[13px] text-muted">
+                      {t("recipes.clusterHint", { count: clusterNodeCount })}{" "}
+                      <Link to="/cluster" className="text-blue2 hover:underline">{t("recipes.clusterHintAddNode")}</Link>
+                      {" · "}
+                      <Link to="/settings" className="text-blue2 hover:underline">{t("recipes.clusterHintForce")}</Link>
                     </p>
                   )}
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                    {available.map((r) => (
-                      <RecipeCard
-                        key={r.id}
-                        r={r}
-                        isRunning={runningIds.has(r.id)}
-                        isQueued={queuedIds.has(r.id)}
-                        clusterBlocked={false}
-                        tight={tightHere(r)}
-                        onSelect={() => handleSelect(r)}
-                        onReset={() => openResetConfirm(r)}
+                  {showUnavailable && wide && (
+                    <Section flush>
+                      <RecipesTable
+                        testId="recipes-table-unavailable"
+                        recipes={unavailable}
+                        stateOf={unavailableStateOf}
+                        onSelect={(r) => void handleSelect(r)}
+                        onReset={openResetConfirm}
                       />
-                    ))}
-                  </div>
-
-                  {unavailable.length > 0 && (
-                    <div>
-                      <button
-                        onClick={() => setShowUnavailable(v => !v)}
-                        className="flex items-center gap-2 text-sm text-text-muted hover:text-text transition-colors mb-3"
-                      >
-                        <ChevronDown size={16} className={`transition-transform ${showUnavailable ? "rotate-180" : ""}`} />
-                        {plural(showUnavailable ? "recipes.hideNotHere" : "recipes.showNotHere", unavailable.length)}
-                      </button>
-                      {/* Why they are unavailable, with the two things that
-                          would change it. A count the operator can check
-                          against the Cluster page beats "enable cluster
-                          mode", which names a setting and not a condition. */}
-                      {anyClusterBlocked && (
-                        <p className="text-sm text-text-muted mb-3">
-                          {t("recipes.clusterHint", { count: clusterNodeCount })}{" "}
-                          <Link to="/cluster" className="text-blue2 hover:underline">{t("recipes.clusterHintAddNode")}</Link>
-                          {" · "}
-                          <Link to="/settings" className="text-blue2 hover:underline">{t("recipes.clusterHintForce")}</Link>
-                        </p>
-                      )}
-                      {showUnavailable && (
-                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                          {unavailable.map((r) => (
-                            <RecipeCard
-                              key={r.id}
-                              r={r}
-                              isRunning={false}
-                              clusterBlocked={r.cluster_only && !clusterAvailable}
-                              notHere={wontRunHere(r) ? r.fit?.reason : undefined}
-                              onSelect={() => handleSelect(r)}
-                              onReset={() => openResetConfirm(r)}
-                                  />
-                          ))}
-                        </div>
-                      )}
+                    </Section>
+                  )}
+                  {showUnavailable && !wide && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {unavailable.map((r) => (
+                        <RecipeCard
+                          key={r.id}
+                          r={r}
+                          isRunning={false}
+                          clusterBlocked={r.cluster_only && !clusterAvailable}
+                          notHere={wontRunHere(r) ? r.fit?.reason : undefined}
+                          onSelect={() => handleSelect(r)}
+                          onReset={() => openResetConfirm(r)}
+                        />
+                      ))}
                     </div>
                   )}
-                </>
-              )}
-
-              {recipes && recipes.length === 0 && (
-                <div className="text-center py-20 text-text-muted">
-                  <p>{t("recipes.noRecipes")}</p>
-                  <p className="text-sm mt-1">{t("recipes.noRecipesHint")}</p>
                 </div>
               )}
             </>
           )}
-        </div>
-      )}
 
-      {/* ── Mods tab ────────────────────────────────────────────────────── */}
-      {tab === "mods" && !isAnyLoading && (
-        <div className="space-y-4">
-          {showCustom ? (
-            <>
-              {/* Same as the recipes tab: the button that makes the first one
-                  cannot live inside the branch that needs one to exist. */}
-              <div className="flex items-center justify-between">
-                <p className="text-sm text-text-muted">
-                  {customMods.length === 0
-                    ? t("recipes.noCustomModsYet")
-                    : plural("recipes.customModCount", customMods.length)}
-                </p>
-                <button
-                  onClick={() => setShowNewMod(true)}
-                  className="px-3 py-1.5 rounded-sm bg-primary hover:bg-primary-hover text-white text-sm font-medium flex items-center gap-1.5 transition-colors"
-                >
-                  <Plus size={14} />
-                  {t("recipes.newMod")}
-                </button>
-              </div>
-              {customMods.length === 0 && (
-                <div className="py-20 text-center text-text-muted">
-                  <Wrench size={48} className="mx-auto mb-4 opacity-30" />
-                  <p className="text-lg font-medium">{t("recipes.noCustomMods")}</p>
-                  <p className="text-sm mt-1 opacity-70">{t("recipes.modExplainer")}</p>
+          {/* The operator's own recipe files: the YAML they wrote, editable
+              and deletable here. Only under the Custom filter. */}
+          {source === "custom" && (
+            <Section
+              flush
+              title={t("recipes.customFiles")}
+              meta={customLoaded && !customError ? plural("recipes.customRecipeCount", customRecipes.length) : undefined}
+              data-testid="custom-recipe-files"
+            >
+              {customLoading ? (
+                <div className="flex justify-center py-8">
+                  <Spinner label={t("common.loading")} />
                 </div>
-              )}
-
-              {customMods.length > 0 && (
-                <>
-                  <div className="grid gap-3 sm:grid-cols-1 lg:grid-cols-2">
-                    {customMods.map((m) => (
-                      <BaseCard
-                        key={m.id}
-                        icon={<Wrench size={16} className="shrink-0 text-blue2" />}
-                        title={m.name}
-                        description={m.description}
-                        onDelete={() => confirmDelete("mod", m.id, m.name)}
-                        deleteLabel={t("recipes.deleteMod", { name: m.name })}
-                        badges={m.has_run_sh ? (
-                          <span className="flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-success/15 text-success">
-                            <span className="w-1.5 h-1.5 rounded-full bg-success" />run.sh
-                          </span>
-                        ) : undefined}
-                        onClick={() => handleOpenCustomMod(m)}
-                      />
-                    ))}
-                  </div>
-                </>
-              )}
-            </>
-          ) : (
-            <>
-              {mods && mods.length === 0 && (
-                <div className="py-20 text-center text-text-muted">
-                  <Wrench size={48} className="mx-auto mb-4 opacity-30" />
-                  <p className="text-lg font-medium">{t("recipes.noMods")}</p>
-                  <p className="text-sm mt-1 opacity-70">
-                    {t("recipes.noModsHint")}
-                  </p>
+              ) : customError ? (
+                <div className="p-4">
+                  <ErrorLine>{customError}</ErrorLine>
                 </div>
+              ) : (
+                <Table>
+                  <THead>
+                    <Th>{t("recipesTable.colRecipe")}</Th>
+                    <Th>{t("recipesTable.colFile")}</Th>
+                    <Th srOnly>{t("runs.actions")}</Th>
+                  </THead>
+                  <tbody>
+                    {customRecipes.length === 0 && (
+                      <EmptyRow colSpan={3}>
+                        <p>{t("recipes.noCustomRecipes")}</p>
+                        <p className="mt-1">{t("recipes.noCustomRecipesHint")}</p>
+                      </EmptyRow>
+                    )}
+                    {customRecipes.map((file) => {
+                      const deployable = summaryForFile(file);
+                      return (
+                        <Tr key={file.id} interactive onClick={() => handleOpenCustomRecipe(file)}>
+                          <Td>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handleOpenCustomRecipe(file);
+                              }}
+                              className="text-left font-semibold hover:text-blue2"
+                            >
+                              {file.name}
+                            </button>
+                          </Td>
+                          <Td mono muted>{file.filename}</Td>
+                          <Td actions>
+                            <IconButton
+                              size="sm"
+                              icon={Pencil}
+                              label={t("recipes.editRecipe", { name: file.name })}
+                              onClick={() => void handleOpenCustomRecipe(file)}
+                            />
+                            <IconButton
+                              size="sm"
+                              icon={Trash2}
+                              label={t("recipes.deleteRecipe", { name: file.name })}
+                              onClick={() => confirmDelete("recipe", file.id, file.name)}
+                            />
+                            {deployable && (
+                              <Button
+                                size="sm"
+                                icon={Rocket}
+                                aria-label={t("recipesTable.deployFor", { name: file.name })}
+                                onClick={() => void handleSelect(deployable)}
+                              >
+                                {t("recipes.deploy")}
+                              </Button>
+                            )}
+                          </Td>
+                        </Tr>
+                      );
+                    })}
+                  </tbody>
+                </Table>
               )}
-
-              {mods && mods.length > 0 && (
-                <div className="grid gap-3 sm:grid-cols-1 lg:grid-cols-2">
-                  {mods.map((mod) => (
-                    <ModCard key={mod.id} mod={mod} onClick={() => setActiveModId(mod.id)} />
-                  ))}
-                </div>
-              )}
-            </>
+            </Section>
           )}
         </div>
       )}
@@ -802,10 +655,6 @@ export default function RecipesPage() {
         />
       )}
 
-      {activeModId && (
-        <ModDrawer modId={activeModId} onClose={() => setActiveModId(null)} />
-      )}
-
       {/* Custom recipe modal */}
       {showRecipeModal && selectedRecipe && (
         <CustomRecipeDrawer
@@ -818,19 +667,6 @@ export default function RecipesPage() {
         />
       )}
 
-      {/* Custom mod modal */}
-      {showModModal && selectedMod && (
-        <CustomModDrawer
-          open={showModModal}
-          mod={selectedMod}
-          files={modFiles}
-          onClose={() => { setShowModModal(false); setSelectedMod(null); }}
-          onSave={handleSaveCustomMod}
-          onDelete={handleDeleteCustomMod}
-          onError={(msg) => setAlertModal({ title: t("common.error"), message: msg })}
-        />
-      )}
-
       {/* New recipe modal */}
       {showNewRecipe && (
         <NewRecipeModal
@@ -839,19 +675,6 @@ export default function RecipesPage() {
           onSave={async (_id, _name, _content) => {
             await customRecipesChanged();
             setShowNewRecipe(false);
-          }}
-          onError={(msg) => setAlertModal({ title: t("common.error"), message: msg })}
-        />
-      )}
-
-      {/* New mod modal */}
-      {showNewMod && (
-        <NewModModal
-          open={showNewMod}
-          onClose={() => setShowNewMod(false)}
-          onSave={async (_id, _name) => {
-            await loadCustomData();
-            setShowNewMod(false);
           }}
           onError={(msg) => setAlertModal({ title: t("common.error"), message: msg })}
         />
@@ -929,9 +752,7 @@ export default function RecipesPage() {
           title={
             deleteTarget.kind === "recipe"
               ? t("recipes.deleteRecipeTitle")
-              : deleteTarget.kind === "mod"
-                ? t("recipes.deleteModTitle")
-                : t("recipes.uninstallRecipeTitle")
+              : t("recipes.uninstallRecipeTitle")
           }
           message={
             deleteTarget.kind === "oci"
@@ -955,33 +776,5 @@ export default function RecipesPage() {
         />
       )}
     </div>
-  );
-}
-
-// ── Mod card ─────────────────────────────────────────────────────────────────
-
-function ModCard({ mod, onClick }: { mod: ModSummary; onClick: () => void }) {
-  const { t } = useI18n();
-  const badges = (
-    <>
-      {mod.has_patches && (
-        <span className="px-1.5 py-0.5 rounded text-xs bg-warning/15 text-warning border border-warning/30 font-mono">
-          {t("recipes.patches")}
-        </span>
-      )}
-      {mod.files.map((f) => (
-        <FileBadge key={f.name} name={f.name} kind={f.kind} />
-      ))}
-    </>
-  );
-
-  return (
-    <BaseCard
-      icon={<Wrench size={16} className="shrink-0 text-blue2" />}
-      title={mod.id}
-      description={mod.description}
-      badges={badges}
-      onClick={onClick}
-    />
   );
 }

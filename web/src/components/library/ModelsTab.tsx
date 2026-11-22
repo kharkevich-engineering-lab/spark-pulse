@@ -1,17 +1,18 @@
 /** What is cached, where it is, and what is still arriving.
  *
- * The Models page and the Cache page answered the same question — what is on
- * this disk — in two places, so an operator hunting for space read one page,
- * failed to find it, and went looking for the other. They are one tab now: the
- * catalogue, then a rule, then the cache directories under it.
+ * A console list: a search box and the catalogue as one table. A row opens in
+ * place to say which node holds which copy — a few lines, so it stays a strip
+ * under the row rather than a panel beside the list. Downloading is the page's one primary action and opens a dialog — it
+ * is done now and then, while the list is read every visit. The cache
+ * directories are a second table under the catalogue.
  *
  * The column that is new is **Where**. Deleting a model from this machine and
  * calling it gone is what left 26 GB on three Sparks; the dialog already knew
  * which nodes held a copy, but only once it was open. The row says it.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Boxes, Download, Rocket, X } from "lucide-react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Boxes, ChevronRight, Copy, Download, Rocket, Trash2, X } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import {
   cancelModelDownload,
@@ -29,21 +30,33 @@ import { useQuery, type UseQueryResult } from "@/hooks/useQuery";
 import { useWideLayout } from "@/hooks/useMediaQuery";
 import { useSSEConnection } from "@/hooks/useSSEConnection";
 import { SSEConnectionState } from "@/lib/operations";
-import { formatSize } from "@/lib/utils";
+import { cn, formatSize } from "@/lib/utils";
 import {
   ACTIVE_STATES,
   AlertModal,
   Button,
+  DetailRow,
   EmptyState,
   ErrorLine,
   Field,
   IconButton,
   Input,
+  KeyValues,
+  Modal,
   NodeScopedDialog,
   NodeState,
   ProgressRow,
+  SearchInput,
+  Section,
   Select,
   Spinner,
+  Table,
+  Td,
+  Th,
+  THead,
+  Toolbar,
+  Tr,
+  matchesQuery,
   type NodeCondition,
 } from "@/ui";
 import type { AlertTone } from "@/ui";
@@ -162,6 +175,9 @@ export interface ModelsTabProps {
   cache: UseQueryResult<CacheResponse>;
   /** `/cache` is still a bookmark: it opens this tab at the caches section. */
   scrollToCaches?: boolean;
+  /** The page header's Download button opens the dialog this tab owns. */
+  downloadOpen?: boolean;
+  onDownloadOpenChange?: (open: boolean) => void;
 }
 
 /** A scheduled deploy whose run was created and then failed — the image did
@@ -170,8 +186,14 @@ function runFailed(entry: ScheduledDeploy): boolean {
   return entry.run?.status === "error";
 }
 
-export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }: ModelsTabProps) {
-  const { t } = useI18n();
+export default function ModelsTab({
+  models: modelsQuery,
+  cache,
+  scrollToCaches,
+  downloadOpen = false,
+  onDownloadOpenChange,
+}: ModelsTabProps) {
+  const { t, plural } = useI18n();
   const { data: models, loading, error, refetch } = modelsQuery;
   const { data: sources } = useQuery(fetchModelSources);
   const { data: nodes } = useQuery(fetchNodes);
@@ -187,6 +209,8 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
   const [alert, setAlert] = useState<{ title: string; message: string; tone?: AlertTone } | null>(null);
   const [scheduled, setScheduled] = useState<ScheduledDeploy[]>([]);
   const [presence, setPresence] = useState<Record<string, ModelPresence>>({});
+  const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState<string | null>(null);
 
   // The other machines a copy could be sitting on. Deleting from this one and
   // calling the model gone is what left 26 GB on three Sparks.
@@ -235,6 +259,21 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
     }
   }, [models, peers]);
 
+  /** Every node's own verdict on one model, this machine first. */
+  const entriesFor = useCallback(
+    (id: string): PresenceEntry[] | null => {
+      const answer = presence[id];
+      if (!answer) return null;
+      const here: PresenceEntry = {
+        node: controlName,
+        state: answer.local_state ?? (answer.local ? "verified" : "absent"),
+        filtered: answer.local_filtered,
+      };
+      return [here, ...answer.nodes];
+    },
+    [presence, controlName],
+  );
+
   const whereFor = useCallback(
     (model: ModelEntry): WhereVerdict => {
       // A download still running is not a copy anywhere yet, whatever the
@@ -252,16 +291,11 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
               : t("library.whereDownloadingUnknown"),
         };
       }
-      const answer = presence[model.id];
-      if (!answer) return { state: "unknown", label: t("library.whereUnknown") };
-      const here: PresenceEntry = {
-        node: controlName,
-        state: answer.local_state ?? (answer.local ? "verified" : "absent"),
-        filtered: answer.local_filtered,
-      };
-      return describeWhere([here, ...answer.nodes], t);
+      const entries = entriesFor(model.id);
+      if (!entries) return { state: "unknown", label: t("library.whereUnknown") };
+      return describeWhere(entries, t);
     },
-    [jobs, presence, controlName, t],
+    [jobs, entriesFor, t],
   );
 
   const onEvent = useCallback(
@@ -318,6 +352,11 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
     [jobs, needsAttention],
   );
 
+  const shown = useMemo(
+    () => (models ?? []).filter((m) => matchesQuery(query, m.id, describePrecision(m))),
+    [models, query],
+  );
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!modelId.trim()) return;
@@ -331,6 +370,7 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
       setJobs((current) => [job, ...current]);
       setModelId("");
       setRevision("");
+      onDownloadOpenChange?.(false);
     } catch (err) {
       setAlert({
         title: t("models.downloadFailed"),
@@ -425,244 +465,339 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
    *  is a node short of a copy, `bad` is a partial one worth re-sending, and
    *  `unknown` is a node that could not be asked — which is not evidence it
    *  has the model, so the operator must still be able to send it. */
+  const canReplicate = (where: WhereVerdict) => peers.length > 0 && where.state !== "ok";
+
   const actionsFor = (model: ModelEntry, where: WhereVerdict) => (
-    <div className="flex items-center gap-3 text-[13px]">
-      {peers.length > 0 && where.state !== "ok" && (
-        <button
-          type="button"
+    <>
+      {canReplicate(where) && (
+        <IconButton
+          size="sm"
+          icon={Copy}
+          label={t("library.replicateModel", { model: model.id })}
           onClick={() => setReplicateTarget(model.id)}
-          aria-label={t("library.replicateModel", { model: model.id })}
-          className="text-blue2 hover:underline"
-        >
-          {t("library.replicate")}
-        </button>
+        />
       )}
-      <button
-        type="button"
+      <IconButton
+        size="sm"
+        icon={Trash2}
+        label={t("library.removeModel", { model: model.id })}
         onClick={() => setDeleteTarget(model.id)}
-        aria-label={t("library.removeModel", { model: model.id })}
-        className="text-blue2 hover:underline"
-      >
-        {t("library.remove")}
-      </button>
-    </div>
+      />
+    </>
+  );
+
+  /** The few lines a row has to add: the full revision, and each node's copy. */
+  const detailFor = (model: ModelEntry) => {
+    const where = whereFor(model);
+    const entries = entriesFor(model.id);
+    return (
+      <div className="flex flex-wrap gap-x-8 gap-y-3 text-[12.5px]" data-testid={`model-detail-${model.id}`}>
+        <KeyValues
+          items={[
+            [t("models.colRevision"), <span className="font-mono break-all">{model.revision || "—"}</span>],
+            [t("library.colQuant"), <span title={ggufDetail(model)}>{describePrecision(model)}</span>],
+          ]}
+        />
+        <div className="min-w-0">
+          <p className="mb-1 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-muted">{t("library.colWhere")}</p>
+          {entries ? (
+            <ul className="flex flex-wrap gap-x-5 gap-y-1">
+              {entries.map((entry) => (
+                <li key={entry.node} className="inline-flex items-center gap-2">
+                  <span className="font-mono">{entry.node}</span>
+                  <NodeState
+                    state={entry.error ? "unknown" : entry.state === "verified" ? "ok" : entry.state === "partial" ? "bad" : "unknown"}
+                    label={
+                      entry.error
+                        ? t("engines.couldNotAsk")
+                        : entry.state === "verified"
+                          ? t("library.presenceVerified")
+                          : entry.state === "partial"
+                            ? t("library.presencePartial")
+                            : t("library.presenceAbsent")
+                    }
+                    title={entry.error ?? undefined}
+                  />
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <NodeState state={where.state} label={where.label} title={where.title} />
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const downloads = (active.length > 0 || recent.length > 0) && (
+    <Section
+      title={t("models.downloads")}
+      meta={connected ? t("models.live") : t("models.polling")}
+      bodyClassName="space-y-2"
+    >
+      {[...active, ...recent].map((job) => (
+        <ProgressRow
+          key={job.id}
+          data-testid={`job-${job.id}`}
+          title={job.model}
+          detail={`${job.status}${job.current_file ? ` · ${job.current_file}` : ""}${job.error ? ` · ${job.error}` : ""}`}
+          job={job}
+          progressLabel={t("models.progress", { model: job.model })}
+          cancelLabel={t("models.cancelDownload", { model: job.model })}
+          onCancel={ACTIVE_STATES.includes(job.status) ? () => doCancel(job.id) : undefined}
+        >
+          {waitingOn(job.id).map((entry) => (
+            <div
+              key={entry.id}
+              data-testid={`scheduled-${entry.id}`}
+              className="mt-2 flex items-center justify-between gap-3 px-3 py-2 rounded-sm border border-line bg-bg2"
+            >
+              <p className="text-[13px] text-muted flex items-center gap-2 min-w-0">
+                <Rocket
+                  size={13}
+                  className={
+                    entry.status === "failed" || runFailed(entry) ? "text-bad shrink-0" : "text-blue2 shrink-0"
+                  }
+                />
+                <span className="truncate">
+                  {entry.status === "waiting" && (
+                    <>
+                      {t("models.scheduledTo")}{" "}
+                      <span className="font-medium text-text">{entry.name}</span>{" "}
+                      {t("models.whenFinishes")}
+                    </>
+                  )}
+                  {entry.status === "deploying" && (
+                    <>
+                      {t("models.deployingNow")}{" "}
+                      <span className="font-medium text-text">{entry.name}</span>{" "}
+                      {t("models.now")}
+                    </>
+                  )}
+                  {entry.status === "done" && runFailed(entry) && (
+                    <>
+                      <span className="font-medium text-text">{entry.name}</span>{" "}
+                      {t("models.couldNotDeploy")} {entry.run?.error || t("common.unknownError")}
+                    </>
+                  )}
+                  {entry.status === "done" && !runFailed(entry) && (
+                    <>
+                      {t("models.deployed")}{" "}
+                      <span className="font-medium text-text">{entry.name}</span>
+                    </>
+                  )}
+                  {entry.status === "failed" && (
+                    <>
+                      <span className="font-medium text-text">{entry.name}</span>{" "}
+                      {t("models.couldNotDeploy")} {entry.error}
+                    </>
+                  )}
+                </span>
+              </p>
+              {entry.status === "waiting" && (
+                <IconButton
+                  size="sm"
+                  icon={X}
+                  label={t("models.cancelScheduled", { name: entry.name })}
+                  onClick={() => doCancelScheduled(entry)}
+                  className="border-transparent text-muted hover:text-bad hover:border-line"
+                />
+              )}
+            </div>
+          ))}
+        </ProgressRow>
+      ))}
+    </Section>
   );
 
   return (
-    <div className="space-y-6">
-      {/* One row: what to fetch, where from, which revision. Under 520 it is
-          one column, and the button goes full width with it. */}
-      <form
-        onSubmit={submit}
-        className="grid grid-cols-1 gap-3 min-[520px]:grid-cols-[2fr_1fr_1fr_auto] min-[520px]:items-end"
-      >
-        <Field label={t("models.modelId")}>
-          {(control) => (
-            <Input
-              {...control}
-              mono
-              placeholder={t("models.modelIdPlaceholder")}
-              value={modelId}
-              onChange={(e) => setModelId(e.target.value)}
-            />
-          )}
-        </Field>
-        <Field label={t("models.source")}>
-          {(control) => (
-            <Select
-              {...control}
-              value={sourceName}
-              onChange={(e) => setSourceName(e.target.value)}
-            >
-              <option value="">{t("models.defaultSource")}</option>
-              {(sources ?? [])
-                .filter((s) => s.type === "hf_hub")
-                .map((s) => (
-                  <option key={s.name} value={s.name}>
-                    {s.name}
-                  </option>
-                ))}
-            </Select>
-          )}
-        </Field>
-        <Field label={t("models.revision")}>
-          {(control) => (
-            <Input
-              {...control}
-              mono
-              placeholder={t("models.revisionPlaceholder")}
-              value={revision}
-              onChange={(e) => setRevision(e.target.value)}
-            />
-          )}
-        </Field>
-        <Button
-          type="submit"
-          variant="primary"
-          icon={Download}
-          loading={starting}
-          disabled={!modelId.trim()}
-          className="max-[519px]:w-full"
-        >
-          {t("library.download")}
-        </Button>
-      </form>
+    <div className="space-y-4">
+      {downloads}
 
-      <p className="text-[13px] text-muted">{t("library.sourcesInSettings")}</p>
-
-      {/* Active downloads */}
-      {(active.length > 0 || recent.length > 0) && (
-        <section className="space-y-2">
-          <div className="flex items-center gap-2">
-            <h3 className="text-[17px] font-semibold tracking-[-0.02em]">{t("models.downloads")}</h3>
-            <span className="text-[13px] text-muted">
-              {connected ? t("models.live") : t("models.polling")}
+      <div>
+        <Toolbar>
+          <SearchInput
+            value={query}
+            onChange={setQuery}
+            label={t("library.filterModels")}
+            clearLabel={t("common.clear")}
+          />
+          {models && (
+            <span className="ml-auto text-[12.5px] text-muted tabular-nums">
+              {plural("library.modelCount", shown.length)}
             </span>
+          )}
+        </Toolbar>
+
+        {loading && (
+          <div className="flex justify-center py-16">
+            <Spinner size="lg" label={t("common.loading")} />
           </div>
-          {[...active, ...recent].map((job) => (
-            <ProgressRow
-              key={job.id}
-              data-testid={`job-${job.id}`}
-              title={job.model}
-              detail={`${job.status}${job.current_file ? ` · ${job.current_file}` : ""}${job.error ? ` · ${job.error}` : ""}`}
-              job={job}
-              progressLabel={t("models.progress", { model: job.model })}
-              cancelLabel={t("models.cancelDownload", { model: job.model })}
-              onCancel={ACTIVE_STATES.includes(job.status) ? () => doCancel(job.id) : undefined}
-            >
-              {waitingOn(job.id).map((entry) => (
-                <div
-                  key={entry.id}
-                  data-testid={`scheduled-${entry.id}`}
-                  className="mt-2 flex items-center justify-between gap-3 px-3 py-2 rounded-sm border border-line bg-bg2"
-                >
-                  <p className="text-[13px] text-muted flex items-center gap-2 min-w-0">
-                    <Rocket
-                      size={13}
-                      className={
-                        entry.status === "failed" || runFailed(entry) ? "text-bad shrink-0" : "text-blue2 shrink-0"
-                      }
-                    />
-                    <span className="truncate">
-                      {entry.status === "waiting" && (
-                        <>
-                          {t("models.scheduledTo")}{" "}
-                          <span className="font-medium text-text">{entry.name}</span>{" "}
-                          {t("models.whenFinishes")}
-                        </>
-                      )}
-                      {entry.status === "deploying" && (
-                        <>
-                          {t("models.deployingNow")}{" "}
-                          <span className="font-medium text-text">{entry.name}</span>{" "}
-                          {t("models.now")}
-                        </>
-                      )}
-                      {entry.status === "done" && runFailed(entry) && (
-                        <>
-                          <span className="font-medium text-text">{entry.name}</span>{" "}
-                          {t("models.couldNotDeploy")} {entry.run?.error || t("common.unknownError")}
-                        </>
-                      )}
-                      {entry.status === "done" && !runFailed(entry) && (
-                        <>
-                          {t("models.deployed")}{" "}
-                          <span className="font-medium text-text">{entry.name}</span>
-                        </>
-                      )}
-                      {entry.status === "failed" && (
-                        <>
-                          <span className="font-medium text-text">{entry.name}</span>{" "}
-                          {t("models.couldNotDeploy")} {entry.error}
-                        </>
-                      )}
-                    </span>
-                  </p>
-                  {entry.status === "waiting" && (
-                    <IconButton
-                      size="sm"
-                      icon={X}
-                      label={t("models.cancelScheduled", { name: entry.name })}
-                      onClick={() => doCancelScheduled(entry)}
-                      className="border-transparent text-muted hover:text-bad hover:border-line"
-                    />
-                  )}
-                </div>
-              ))}
-            </ProgressRow>
-          ))}
-        </section>
-      )}
+        )}
+        <ErrorLine>{error}</ErrorLine>
 
-      {/* Catalogue */}
-      {loading && (
-        <div className="flex justify-center py-16">
-          <Spinner size="lg" label={t("common.loading")} />
-        </div>
-      )}
-      <ErrorLine>{error}</ErrorLine>
+        {models && models.length > 0 && (
+          <>
+            {wide ? (
+              <Section flush>
+                <Table data-testid="models-table">
+                  <THead>
+                    <Th>{t("models.colModel")}</Th>
+                    <Th numeric>{t("models.colSize")}</Th>
+                    <Th>{t("models.colRevision")}</Th>
+                    <Th>{t("library.colQuant")}</Th>
+                    <Th>{t("library.colWhere")}</Th>
+                    <Th srOnly>{t("models.colActions")}</Th>
+                  </THead>
+                  <tbody>
+                    {shown.map((m) => {
+                      const where = whereFor(m);
+                      const open = m.id === selected;
+                      return (
+                        <Fragment key={m.id}>
+                          <Tr
+                            data-testid={`model-${m.id}`}
+                            interactive
+                            selected={open}
+                            aria-expanded={open}
+                            onClick={() => setSelected(open ? null : m.id)}
+                          >
+                            <Td mono truncate title={m.id} className="max-w-[420px]">
+                              <ChevronRight
+                                size={13}
+                                aria-hidden="true"
+                                className={cn("mr-1.5 inline text-muted transition-transform", open && "rotate-90")}
+                              />
+                              {m.id}
+                            </Td>
+                            <Td numeric>{formatSize(m.size_bytes)}</Td>
+                            <Td mono muted>{shortRevision(m.revision)}</Td>
+                            <Td title={ggufDetail(m)} className="whitespace-nowrap">{describePrecision(m)}</Td>
+                            <Td className="whitespace-nowrap">
+                              <NodeState state={where.state} label={where.label} title={where.title} />
+                            </Td>
+                            <Td actions>{actionsFor(m, where)}</Td>
+                          </Tr>
+                          {open && <DetailRow colSpan={6}>{detailFor(m)}</DetailRow>}
+                        </Fragment>
+                      );
+                    })}
+                  </tbody>
+                </Table>
+                {shown.length === 0 && (
+                  <p className="px-3 py-8 text-center text-[13px] text-muted">{t("library.noMatch")}</p>
+                )}
+              </Section>
+            ) : (
+              <Section flush>
+                <ul className="divide-y divide-line">
+                  {shown.map((m) => {
+                    const where = whereFor(m);
+                    return (
+                      <li key={m.id} data-testid={`model-${m.id}`} className="p-3">
+                        <div className="flex items-start gap-2">
+                        <button
+                          type="button"
+                          aria-expanded={m.id === selected}
+                          onClick={() => setSelected(m.id === selected ? null : m.id)}
+                          className="min-w-0 flex-1 space-y-1 text-left"
+                        >
+                          <p className="font-mono text-[13px] break-all">{m.id}</p>
+                          <p className="text-[12.5px] text-muted font-mono">
+                            {formatSize(m.size_bytes)} · <span title={ggufDetail(m)}>{describePrecision(m)}</span>
+                          </p>
+                          <NodeState state={where.state} label={where.label} title={where.title} />
+                        </button>
+                        <div className="flex shrink-0 items-center gap-0.5">{actionsFor(m, where)}</div>
+                        </div>
+                        {m.id === selected && <div className="mt-3 border-t border-line pt-3">{detailFor(m)}</div>}
+                      </li>
+                    );
+                  })}
+                </ul>
+                {shown.length === 0 && (
+                  <p className="px-3 py-8 text-center text-[13px] text-muted">{t("library.noMatch")}</p>
+                )}
+              </Section>
+            )}
+          </>
+        )}
 
-      {models && models.length > 0 && wide && (
-        <div className="rounded-md bg-surface border border-line overflow-x-auto">
-          <table className="w-full text-[14px]">
-            <thead>
-              <tr className="text-left text-muted border-b border-line">
-                <th className="p-3 font-medium">{t("models.colModel")}</th>
-                <th className="p-3 font-medium">{t("models.colSize")}</th>
-                <th className="p-3 font-medium">{t("models.colRevision")}</th>
-                <th className="p-3 font-medium">{t("library.colQuant")}</th>
-                <th className="p-3 font-medium">{t("library.colWhere")}</th>
-                <th className="p-3 font-medium sr-only">{t("models.colActions")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {models.map((m) => {
-                const where = whereFor(m);
-                return (
-                  <tr key={m.id} data-testid={`model-${m.id}`} className="border-b border-line last:border-0">
-                    <td className="p-3 font-mono">{m.id}</td>
-                    <td className="p-3 font-mono">{formatSize(m.size_bytes)}</td>
-                    <td className="p-3 font-mono text-muted">{shortRevision(m.revision)}</td>
-                    <td className="p-3" title={ggufDetail(m)}>{describePrecision(m)}</td>
-                    <td className="p-3">
-                      <NodeState state={where.state} label={where.label} title={where.title} />
-                    </td>
-                    <td className="p-3 text-right whitespace-nowrap">{actionsFor(m, where)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {models && models.length > 0 && !wide && (
-        <div className="space-y-3">
-          {models.map((m) => {
-            const where = whereFor(m);
-            return (
-              <div
-                key={m.id}
-                data-testid={`model-${m.id}`}
-                className="rounded-md bg-surface border border-line p-4 space-y-2"
-              >
-                <p className="font-mono text-[14px] break-all">{m.id}</p>
-                <p className="text-[13px] text-muted font-mono">
-                  {formatSize(m.size_bytes)} · <span title={ggufDetail(m)}>{describePrecision(m)}</span>
-                </p>
-                <NodeState state={where.state} label={where.label} title={where.title} />
-                {actionsFor(m, where)}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {models && models.length === 0 && !loading && (
-        <EmptyState icon={Boxes}>{t("models.empty")}</EmptyState>
-      )}
+        {models && models.length === 0 && !loading && (
+          <EmptyState icon={Boxes}>{t("models.empty")}</EmptyState>
+        )}
+      </div>
 
       <CachesSection cache={cache} scrollTo={scrollToCaches} />
+
+      {downloadOpen && (
+        <Modal
+          open
+          onClose={() => onDownloadOpenChange?.(false)}
+          title={t("models.downloadModel")}
+          size="md"
+        >
+          <form onSubmit={submit} className="space-y-4">
+            <Field label={t("models.modelId")}>
+              {(control) => (
+                <Input
+                  {...control}
+                  mono
+                  autoFocus
+                  placeholder={t("models.modelIdPlaceholder")}
+                  value={modelId}
+                  onChange={(e) => setModelId(e.target.value)}
+                />
+              )}
+            </Field>
+            <div className="grid grid-cols-1 gap-4 min-[520px]:grid-cols-2">
+              <Field label={t("models.source")} hint={t("library.sourcesInSettings")}>
+                {(control) => (
+                  <Select
+                    {...control}
+                    value={sourceName}
+                    onChange={(e) => setSourceName(e.target.value)}
+                  >
+                    <option value="">{t("models.defaultSource")}</option>
+                    {(sources ?? [])
+                      .filter((s) => s.type === "hf_hub")
+                      .map((s) => (
+                        <option key={s.name} value={s.name}>
+                          {s.name}
+                        </option>
+                      ))}
+                  </Select>
+                )}
+              </Field>
+              <Field label={t("models.revision")}>
+                {(control) => (
+                  <Input
+                    {...control}
+                    mono
+                    placeholder={t("models.revisionPlaceholder")}
+                    value={revision}
+                    onChange={(e) => setRevision(e.target.value)}
+                  />
+                )}
+              </Field>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button type="button" onClick={() => onDownloadOpenChange?.(false)}>
+                {t("common.cancel")}
+              </Button>
+              <Button
+                type="submit"
+                variant="primary"
+                icon={Download}
+                loading={starting}
+                disabled={!modelId.trim()}
+              >
+                {t("library.download")}
+              </Button>
+            </div>
+          </form>
+        </Modal>
+      )}
 
       {deleteTarget && (
         <ModelDeleteDialog
@@ -672,6 +807,7 @@ export default function ModelsTab({ models: modelsQuery, cache, scrollToCaches }
           onConfirm={(onNodes) => {
             const id = deleteTarget;
             setDeleteTarget(null);
+            if (selected === id) setSelected(null);
             doDelete(id, onNodes);
           }}
         />

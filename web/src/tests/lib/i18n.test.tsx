@@ -49,6 +49,17 @@ describe("the dictionaries", () => {
    *  French borrowed unchanged. */
   const IDENTICAL_ON_PURPOSE = new Set([
     "common.ok",
+    // The overview's column heads and the palette's group: GPU is an
+    // initialism, and Phase, Port and Pages are the same word in French.
+    "overview.gpu",
+    "overview.colPhase",
+    "overview.colPort",
+    "palette.groupPages",
+    "nav.collections",
+    // A node page's GPU tab and section; "Fabric" is the ConnectX term of art.
+    "nodesPage.tabGpu",
+    "nodesPage.gpu",
+    "nodesPage.tabFabric",
     // Kubernetes and its object kinds are names, the same in every language.
     "kubernetesPreview.heading",
     "kubernetesPreview.cachePvc",

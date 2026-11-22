@@ -50,7 +50,7 @@ import {
 } from "@/ui";
 import RegistryCard from "@/components/RegistryCard";
 import EditRegistryDialog from "@/components/EditRegistryDialog";
-import SettingsSection from "@/components/SettingsSection";
+import SettingsSection, { SettingRow } from "@/components/SettingsSection";
 
 /** The `/api/settings` keys this tab edits. Held by the page, so the page's
  *  Save writes them with everything else. */
@@ -238,7 +238,7 @@ export default function SettingsLibrary({ form, setForm, sources, setSources }: 
           </Button>
         }
       >
-        <Field label={t("engines.defaultEngine")} hint={t("settingsPage.defaultEngineHint")}>
+        <SettingRow label={t("engines.defaultEngine")} hint={t("settingsPage.defaultEngineHint")}>
           {(control) => (
             <Input
               {...control}
@@ -249,9 +249,9 @@ export default function SettingsLibrary({ form, setForm, sources, setSources }: 
               placeholder="vllm"
             />
           )}
-        </Field>
+        </SettingRow>
 
-        <Field label={t("engines.indexes")} hint={t("engines.indexesHelp")} error={engineError}>
+        <SettingRow label={t("engines.indexes")} hint={t("engines.indexesHelp")} error={engineError}>
           {(control) => (
             <Textarea
               {...control}
@@ -266,9 +266,9 @@ export default function SettingsLibrary({ form, setForm, sources, setSources }: 
               }
             />
           )}
-        </Field>
+        </SettingRow>
 
-        <Field label={t("engines.indexTtl")} hint={t("settingsPage.indexTtlHint")}>
+        <SettingRow label={t("engines.indexTtl")} hint={t("settingsPage.indexTtlHint")}>
           {(control) => (
             <div className="flex items-center gap-2">
               {/* The width is on the wrapper, not the control: `Input` is
@@ -292,7 +292,7 @@ export default function SettingsLibrary({ form, setForm, sources, setSources }: 
               <span className="shrink-0 text-[14px] text-muted">{t("common.seconds")}</span>
             </div>
           )}
-        </Field>
+        </SettingRow>
       </SettingsSection>
 
       {/* ── Model sources ────────────────────────────────────────────────── */}
@@ -464,40 +464,33 @@ export default function SettingsLibrary({ form, setForm, sources, setSources }: 
           <>
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
-                <p className="text-[14px] font-medium">{t("oci.enableAutoUpdate")}</p>
-                <p className="mt-1 text-[13px] leading-snug text-muted">
+                <p className="text-[13.5px] font-medium">{t("oci.enableAutoUpdate")}</p>
+                <p className="mt-0.5 text-[12.5px] leading-snug text-muted">
                   {t("settingsPage.autoUpdateToggleHint")}
                 </p>
               </div>
               <Toggle on={auto.enabled} onChange={toggleAuto} label={t("oci.enableAutoUpdate")} />
             </div>
 
-            <div className="flex flex-col gap-3 min-[520px]:flex-row min-[520px]:items-end min-[520px]:gap-4">
-              <Field
-                label={t("oci.schedule")}
-                hint={t("settingsPage.scheduleHint")}
-                className="min-[520px]:flex-1"
-              >
-                {(control) => (
-                  <Input
-                    {...control}
-                    mono
-                    type="text"
-                    value={scheduleDraft ?? auto.schedule}
-                    onChange={(e) => setScheduleDraft(e.target.value)}
-                    onBlur={() => saveSchedule(auto.schedule)}
-                  />
-                )}
-              </Field>
-              <Button
-                variant="primary"
-                loading={autoRunning}
-                onClick={runNow}
-                className="max-[519px]:w-full"
-              >
-                {t("settingsPage.runNow")}
-              </Button>
-            </div>
+            <SettingRow label={t("oci.schedule")} hint={t("settingsPage.scheduleHint")}>
+              {(control) => (
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="min-w-[160px] flex-1">
+                    <Input
+                      {...control}
+                      mono
+                      type="text"
+                      value={scheduleDraft ?? auto.schedule}
+                      onChange={(e) => setScheduleDraft(e.target.value)}
+                      onBlur={() => saveSchedule(auto.schedule)}
+                    />
+                  </div>
+                  <Button loading={autoRunning} onClick={runNow}>
+                    {t("settingsPage.runNow")}
+                  </Button>
+                </div>
+              )}
+            </SettingRow>
 
             {autoResult && <p className="text-[13px] text-good">{autoResult}</p>}
             <ErrorLine>{autoError}</ErrorLine>

@@ -1,15 +1,14 @@
-/** Fleet: two tabs over one set of machines, and the table that is not here.
+/** Nodes: one table over the machines, and the table that is not here.
  *
- * `/cluster` and `/monitoring` are the same page now — "which machines do I
- * have" and "what are they doing" are two readings of the same hardware — so
- * what is worth pinning is that each route opens on its own tab, that
- * switching tabs is a navigation somebody can bookmark, and that the
- * deployments table is gone rather than duplicated: what is running is
- * answered on Runs, where the controls to act on it are.
+ * `/cluster` and `/monitoring` are the same page — "which machines do I have"
+ * and "what are they doing" are two readings of the same hardware — so what is
+ * worth pinning is that the live readings are on each row, that a node's name
+ * opens its own page, and that the deployments table is gone rather than
+ * duplicated: what is running is answered on Runs.
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import FleetPage from "@/pages/FleetPage";
@@ -29,12 +28,11 @@ vi.mock("@/lib/api", () => ({
   discoverNodes: vi.fn(),
   fetchNodeHostKey: vi.fn(),
   installNodeAgent: vi.fn(),
-  fetchNodeDoctor: vi.fn(),
-  treatNode: vi.fn(),
   runDiscovery: vi.fn(),
   fetchMemory: vi.fn(),
   connectMetricsStream: vi.fn(),
-  killGpuProcess: vi.fn(),
+  fetchDeployments: vi.fn(() => Promise.resolve([])),
+  connectEventStream: vi.fn(() => () => {}),
 }));
 
 import {
@@ -93,36 +91,51 @@ describe("FleetPage", () => {
     expect(screen.queryByRole("note")).not.toBeInTheDocument();
   });
 
-  it("opens /cluster on the nodes tab, with the fabric and discovery under it", async () => {
+  it("opens /cluster on the registry, with the fabric and discovery under it", async () => {
     renderAt("/cluster");
 
     expect(await screen.findByTestId("node-registry")).toBeInTheDocument();
     expect(screen.getByTestId("fabric-card")).toBeInTheDocument();
     expect(screen.getByTestId("network-discovery")).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /Nodes/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Nodes.");
+    expect(screen.queryByRole("tab")).toBeNull();
   });
 
-  it("opens /monitoring on the monitoring tab", async () => {
+  /** Monitoring was a second page about the same machines; its address opens
+   *  this one, the live readings on each row and the rest on the node's page. */
+  it("answers /monitoring with the same page, the live readings on each row", async () => {
+    vi.mocked(fetchMemory).mockResolvedValue({
+      nodes: [
+        {
+          id: "peer",
+          name: "spark-02",
+          address: "10.0.0.11",
+          is_control_plane: false,
+          reachable: true,
+          error: null,
+          unavailable: ["disk"],
+          gpu: [
+            {
+              index: 0, gpu: "0", uuid: "g", name: "GB10", memory_total: 1000, memory_used: 250, memory_free: 750,
+              memory_supported: true, temperature: 82, utilization: 64, power_draw: 90.4, power_limit: 140,
+            },
+          ],
+          cpu: { total: 121 * 1024, used: 60 * 1024, free: 61 * 1024, available: 61 * 1024, usage_percent: 50 },
+          disk: [{ mount: "/", total: 2 * 1024 ** 4, used: 1024 ** 4, free: 1024 ** 4, usage_percent: 50 }],
+          processes: [{ gpu_uuid: "g", pid: 42, process_name: "python3", used_memory: 2048, is_tracked: false }],
+        },
+        { id: "control", name: "spark-01", address: "10.0.0.10", is_control_plane: true, reachable: false, error: "agent unreachable", unavailable: [], gpu: [], cpu: { total: 0, used: 0, free: 0, available: 0, usage_percent: 0 }, disk: [], processes: [] },
+      ],
+    } as never);
     renderAt("/monitoring");
 
-    expect(await screen.findByRole("tab", { name: "Monitoring" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-    expect(screen.queryByTestId("node-registry")).toBeNull();
-    expect(fetchMemory).toHaveBeenCalled();
-  });
-
-  it("switches to monitoring, and back, from the tab bar", async () => {
-    const user = userEvent.setup();
-    renderAt("/cluster");
-    await screen.findByTestId("node-registry");
-
-    await user.click(screen.getByRole("tab", { name: "Monitoring" }));
-    expect(screen.queryByTestId("node-registry")).toBeNull();
-
-    await user.click(screen.getByRole("tab", { name: /Nodes/ }));
-    expect(await screen.findByTestId("node-registry")).toBeInTheDocument();
+    const row = await screen.findByTestId("node-row-peer");
+    expect(await within(row).findByText("64%")).toBeInTheDocument();
+    expect(within(row).getByText("82°")).toBeInTheDocument();
+    expect(within(screen.getByTestId("node-row-control")).getByText("Could not be asked")).toBeInTheDocument();
+    // No panel beside the table: the name is a link to the node's page.
+    expect(within(row).getByRole("link", { name: "spark-02" })).toHaveAttribute("href", "/cluster/peer");
+    expect(screen.queryByRole("complementary")).toBeNull();
   });
 
   it("counts the machines, and points at Runs for what is on them", async () => {
@@ -130,16 +143,6 @@ describe("FleetPage", () => {
 
     expect(await screen.findByText(/2 nodes/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Runs" })).toHaveAttribute("href", "/jobs");
-  });
-
-  /** The registry is only mounted on the Nodes tab, so a header that took its
-   *  count from it said "0 nodes" the moment you opened Monitoring — a lie
-   *  about the one thing the page is named for. */
-  it("still counts the machines on the monitoring tab", async () => {
-    renderAt("/monitoring");
-
-    expect(await screen.findByText(/2 nodes/)).toBeInTheDocument();
-    expect(screen.queryByTestId("node-registry")).toBeNull();
   });
 
   it("opens the add dialog from the page's own action", async () => {
@@ -159,6 +162,7 @@ describe("FleetPage", () => {
     await screen.findByTestId("node-registry");
 
     expect(screen.queryByTestId("cluster-deployments")).toBeNull();
-    expect(screen.queryByRole("table")).toBeNull();
+    // The one table here is the nodes'.
+    expect(screen.getAllByRole("table")).toHaveLength(1);
   });
 });
