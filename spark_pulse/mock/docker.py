@@ -569,6 +569,13 @@ class MockDockerService(DockerService):
                 available_bytes=profile.memory_available_bytes,
             ),
         )
+        if profile.buddyinfo:
+            from spark_pulse.tools import memory_shape
+
+            stats.buddy.page_size_bytes = profile.page_size_bytes
+            stats.buddy.free_blocks.extend(
+                memory_shape.parse_buddyinfo(profile.buddyinfo)
+            )
         gpu = stats.gpus.add()
         gpu.index = 0
         gpu.name = profile.gpu_name

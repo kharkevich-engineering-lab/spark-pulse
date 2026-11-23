@@ -1365,6 +1365,9 @@
     "runChecks": "Lancer les vérifications",
     "runChecksAgain": "Relancer",
     "checksIdle": "Les vérifications se connectent au nœud. Lancez-les au besoin.",
-    "noGpu": "Aucun GPU signalé."
+    "noGpu": "Aucun GPU signalé.",
+    "memoryShape": "Libre contigu",
+    "memoryShapeDetail": "{contiguous} sur {free} en blocs de 2 Mio ou plus · le plus grand {largest}",
+    "memoryShapeFragmented": "Fragmentée. Compactez-la avant la prochaine exécution."
   }
 }

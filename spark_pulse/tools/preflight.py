@@ -75,7 +75,7 @@ from spark_pulse.tools.backends.runtime_checks import (  # noqa: F401
     parse_runtimes,
     parse_toolkit,
 )
-from spark_pulse.tools import vram
+from spark_pulse.tools import memory_shape, vram
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +106,7 @@ CHECK_FABRIC = "fabric"
 CHECK_DISK = "disk"
 CHECK_VRAM = "vram"
 CHECK_MEMORY = "memory"
+CHECK_MEMORY_SHAPE = "memory_shape"
 
 CHECK_ORDER = (
     CHECK_REACHABILITY,
@@ -120,6 +121,7 @@ CHECK_ORDER = (
     CHECK_DISK,
     CHECK_MEMORY,
     CHECK_VRAM,
+    CHECK_MEMORY_SHAPE,
 )
 
 #: Headroom demanded beyond the bytes that must actually land, as a multiplier.
@@ -380,6 +382,21 @@ def parse_meminfo(text: str) -> dict[str, int]:
     return values
 
 
+def parse_memory_shape(text: str) -> dict[str, Any] | None:
+    """``getconf PAGESIZE`` then ``/proc/buddyinfo``, summarised.
+
+    ``None`` when either half is missing — a node without ``/proc`` (the
+    probe answered, but there is no buddy allocator to read) says nothing
+    about its shape rather than reporting an empty one.
+    """
+    first, _, rest = text.strip().partition("\n")
+    try:
+        page_size = int(first.strip())
+    except ValueError:
+        return None
+    return memory_shape.summarize(page_size, memory_shape.parse_buddyinfo(rest))
+
+
 def parse_gpu_query(text: str) -> list[dict[str, Any]]:
     """``nvidia-smi --query-gpu`` CSV rows, memory left ``None`` when absent.
 
@@ -445,6 +462,9 @@ GPU_COMMAND = (
 
 MEMINFO_COMMAND = "cat /proc/meminfo 2>/dev/null"
 
+#: The page size first, then the buddy allocator's free blocks per order.
+MEMORY_SHAPE_COMMAND = "getconf PAGESIZE 2>/dev/null; cat /proc/buddyinfo 2>/dev/null"
+
 PORTS_COMMAND = "ss -H -ltn 2>/dev/null || netstat -an 2>/dev/null | grep -i listen"
 
 INTERFACES_COMMAND = (
@@ -486,6 +506,8 @@ class _NodeFacts:
     gpu: ProbeResult | None = None
     gpus: list[dict[str, Any]] = field(default_factory=list)
     meminfo: dict[str, int] = field(default_factory=dict)
+    #: :func:`memory_shape.summarize` of the node's buddyinfo; ``None`` unread.
+    memory_shape: dict[str, Any] | None = None
     ports: ProbeResult | None = None
     listening: set[int] = field(default_factory=set)
     interfaces: ProbeResult | None = None
@@ -526,6 +548,9 @@ def _gather(
     meminfo = probe.run(MEMINFO_COMMAND)
     if meminfo.ok:
         facts.meminfo = parse_meminfo(meminfo.stdout)
+    shape = probe.run(MEMORY_SHAPE_COMMAND)
+    if shape.ok:
+        facts.memory_shape = parse_memory_shape(shape.stdout)
 
     facts.ports = probe.run(PORTS_COMMAND)
     if facts.ports.ok:
@@ -1924,6 +1949,75 @@ def _available_bytes(facts: _NodeFacts) -> int | None:
     return int(available) if available else None
 
 
+def _mib(value: int) -> str:
+    return f"{value / (1024 * 1024):.0f} MiB"
+
+
+def _check_memory_shape(target: NodeTarget, ctx: _Context) -> list[Check]:
+    """Is the free memory in pieces a GPU can map with large pages?
+
+    Only on unified memory, where the GPU takes its memory from the host's
+    pool and the shape of that pool is the shape the weights land in; a card
+    with memory of its own is not affected by how the host's RAM is cut up.
+    A node that did not report its buddyinfo gets no line: this is advice,
+    and a line saying "could not tell" on every node teaches skimming.
+
+    It warns and never blocks: a fragmented node still loads the model, only
+    over smaller blocks, and the remedy — dropping caches and compacting with
+    the engine stopped — is the operator's call on a node that may be serving.
+    """
+    facts = ctx.facts[target.id]
+    if any(g.get("memory_free_mib") is not None for g in facts.gpus):
+        return []
+    shape = facts.memory_shape
+    if shape is None:
+        return []
+
+    title = "Memory shape"
+    free = shape["free_bytes"]
+    contiguous = shape["contiguous_bytes"]
+    available = int(facts.meminfo.get("MemAvailable") or 0)
+    reclaimable = max(0, available - free)
+    observed = (
+        f"{_gib(contiguous)} of {_gib(free)} free on {target.label} is in "
+        f"blocks of 2 MiB or more ({shape['contiguous_percent']:.0f}%), "
+        f"largest {_mib(shape['largest_block_bytes'])}"
+    )
+    if reclaimable:
+        observed += f"; {_gib(reclaimable)} more is cache the kernel can drop"
+    detail = {
+        key: shape[key]
+        for key in (
+            "page_size_bytes",
+            "free_bytes",
+            "contiguous_bytes",
+            "contiguous_percent",
+            "largest_block_bytes",
+        )
+    }
+    detail["reclaimable_bytes"] = reclaimable
+
+    if not shape["fragmented"]:
+        return [
+            _check(CHECK_MEMORY_SHAPE, title, target, STATUS_PASS, observed, **detail)
+        ]
+
+    return [
+        _check(
+            CHECK_MEMORY_SHAPE,
+            title,
+            target,
+            STATUS_WARN,
+            observed + ", so the weights will land in small blocks",
+            "With no engine running on the node, run "
+            "sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches; "
+            "echo 1 > /proc/sys/vm/compact_memory' — it frees the cache and "
+            "joins the free blocks, most of what a reboot would.",
+            **detail,
+        )
+    ]
+
+
 _CHECKS: tuple[tuple[str, Callable[[NodeTarget, _Context], Any]], ...] = (
     (CHECK_REACHABILITY, _check_reachability),
     (CHECK_DOCKER, _check_runtime),
@@ -1936,6 +2030,7 @@ _CHECKS: tuple[tuple[str, Callable[[NodeTarget, _Context], Any]], ...] = (
     (CHECK_DISK, _check_disk),
     (CHECK_MEMORY, _check_memory_budget),
     (CHECK_VRAM, _check_vram),
+    (CHECK_MEMORY_SHAPE, _check_memory_shape),
 )
 
 
@@ -2395,6 +2490,7 @@ __all__ = [
     "CHECK_GPU",
     "CHECK_IMAGE",
     "CHECK_INTERFACES",
+    "CHECK_MEMORY_SHAPE",
     "CHECK_MODEL",
     "CHECK_ORDER",
     "CHECK_PORTS",
@@ -2406,6 +2502,7 @@ __all__ = [
     "GPU_COMMAND",
     "INTERFACES_COMMAND",
     "MEMINFO_COMMAND",
+    "MEMORY_SHAPE_COMMAND",
     "PORTS_COMMAND",
     "PROBE_TIMEOUT",
     "REACH_COMMAND",
@@ -2428,6 +2525,7 @@ __all__ = [
     "parse_gpu_query",
     "parse_listening_ports",
     "parse_meminfo",
+    "parse_memory_shape",
     "parse_runtimes",
     "parse_toolkit",
     "probe_for",

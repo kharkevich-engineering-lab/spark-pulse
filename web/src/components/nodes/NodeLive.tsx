@@ -12,7 +12,7 @@ import { useState } from "react";
 import { OctagonX } from "lucide-react";
 import { translate, useI18n, type Language } from "@/lib/i18n";
 import { killGpuProcess } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { cn, formatSize } from "@/lib/utils";
 import { formatMb, type MemoryLayout } from "@/lib/memoryLayout";
 import { AlertModal, ConfirmModal, IconButton, NodeState, Section, Spinner, Table, THead, Th, Tr, Td } from "@/ui";
 import { HealthHistoryChart, type HealthSeries } from "@/components/HealthHistoryChart";
@@ -108,6 +108,9 @@ export function NodeStatStrip({
   const runtime = node.agent?.runtime;
   const gpus = stats?.reachable ? stats.gpu : [];
   const gpuMemory = gpus.filter((g) => g.memory_supported);
+  // A card with memory of its own does not draw from the host's pool, so the
+  // shape of that pool says nothing about where its weights land.
+  const shape = stats?.reachable && gpuMemory.length === 0 ? stats.memory_shape : null;
   const hottest = gpus.reduce<number | null>((max, g) => (g.temperature == null ? max : Math.max(max ?? g.temperature, g.temperature)), null);
 
   return (
@@ -178,6 +181,19 @@ export function NodeStatStrip({
               </Cell>
             )}
           </>
+        )}
+        {shape && (
+          <Cell label={t("nodesPage.memoryShape")} testId={`memory-shape-${node.id}`}>
+            <p className={cn(READING, shape.fragmented && "text-warn")}>{`${Math.round(shape.contiguous_percent)}%`}</p>
+            <p className="text-[12px] text-muted">
+              {t("nodesPage.memoryShapeDetail", {
+                contiguous: formatSize(shape.contiguous_bytes),
+                free: formatSize(shape.free_bytes),
+                largest: formatSize(shape.largest_block_bytes),
+              })}
+            </p>
+            {shape.fragmented && <p className="text-[12px] text-warn">{t("nodesPage.memoryShapeFragmented")}</p>}
+          </Cell>
         )}
         {stats?.reachable && gpus.length === 0 && (
           <Cell label={t("monitoring.gpuUtilization")}>

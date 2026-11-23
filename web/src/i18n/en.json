@@ -1365,6 +1365,9 @@
     "runChecks": "Run checks",
     "runChecksAgain": "Run again",
     "checksIdle": "Checks log into the node. Run them when needed.",
-    "noGpu": "No GPU reported."
+    "noGpu": "No GPU reported.",
+    "memoryShape": "Contiguous free",
+    "memoryShapeDetail": "{contiguous} of {free} in blocks of 2 MiB or more · largest {largest}",
+    "memoryShapeFragmented": "Fragmented. Compact it before the next run."
   }
 }

@@ -1845,3 +1845,69 @@ class TestProbeFor:
         assert node.address == "10.0.0.11"
         assert node.is_self is False
         assert node.ssh_user == "spark"
+
+
+# ── Memory shape ─────────────────────────────────────────────────────────────
+
+
+def _shape(text: str) -> ProbeResult:
+    return ProbeResult(reachable=True, returncode=0, stdout=text)
+
+
+def test_the_spark_as_read_passes_and_says_how_much_is_contiguous():
+    check = check_of(run(), preflight.CHECK_MEMORY_SHAPE)
+    assert check["status"] == STATUS_PASS
+    assert "blocks of 2 MiB or more" in check["observed"]
+    assert "spark-01" in check["observed"]
+    assert check["detail"]["largest_block_bytes"] == 32 * 1024 * 1024
+    # MemAvailable is far above the buddy allocator's free: that gap is cache.
+    assert check["detail"]["reclaimable_bytes"] > 0
+    assert "cache the kernel can drop" in check["observed"]
+
+
+def test_shredded_free_memory_warns_with_the_compaction_line():
+    shredded = _shape("4096\nNode 0, zone Normal 0 0 0 0 0 0 0 0 4096\n")
+    report = run(
+        probes={
+            CONTROL.id: Probe(
+                CONTROL.address,
+                overrides={preflight.MEMORY_SHAPE_COMMAND: shredded},
+            )
+        }
+    )
+    check = check_of(report, preflight.CHECK_MEMORY_SHAPE)
+    assert check["status"] == STATUS_WARN
+    assert "compact_memory" in check["remedy"]
+    assert "no engine running" in check["remedy"]
+    # Advice, not a delay: the deploy is still ready.
+    assert report["verdict"] == VERDICT_READY
+
+
+def test_a_node_that_cannot_read_buddyinfo_gets_no_shape_line():
+    report = run(
+        probes={
+            CONTROL.id: Probe(
+                CONTROL.address,
+                overrides={
+                    preflight.MEMORY_SHAPE_COMMAND: ProbeResult(
+                        reachable=True, returncode=1
+                    )
+                },
+            )
+        }
+    )
+    assert preflight.CHECK_MEMORY_SHAPE not in {c["id"] for c in report["checks"]}
+
+
+def test_a_card_with_its_own_memory_gets_no_shape_line():
+    reported = _stdout("0, NVIDIA H100 80GB HBM3, 81559, 79000")
+    report = run(
+        probes={CONTROL.id: Probe(CONTROL.address, overrides={"nvidia-smi": reported})}
+    )
+    assert preflight.CHECK_MEMORY_SHAPE not in {c["id"] for c in report["checks"]}
+
+
+def test_parse_memory_shape_needs_the_page_size_first():
+    assert preflight.parse_memory_shape("Node 0, zone Normal 1 2\n") is None
+    shape = preflight.parse_memory_shape("4096\nNode 0, zone Normal 1 2\n")
+    assert shape["free_bytes"] == 4096 + 2 * 8192

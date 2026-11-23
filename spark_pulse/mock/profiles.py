@@ -67,6 +67,9 @@ class NodeProfile:
     cdi_devices: tuple[str, ...] = ()
     #: What ``podman info`` would call the image store, for the disk check.
     store_root: str = ""
+    #: ``getconf PAGESIZE`` and ``/proc/buddyinfo``, for the memory shape.
+    page_size_bytes: int = 4096
+    buddyinfo: str = ""
     extra_facts: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -115,6 +118,14 @@ SPARK = NodeProfile(
     container_runtime="docker",
     runtime_version="",
     rootless=False,
+    # What 192.168.29.60 read on 2026-11-23, 21 days up with a run loaded:
+    # 4 KiB pages, 14 orders, about half the free memory in blocks of 2 MiB+.
+    buddyinfo=(
+        "Node 0, zone      DMA     36     34     44     51     72     64     62"
+        "     34     25      5      4      7      5     10\n"
+        "Node 0, zone   Normal   2195   1363   1804  14409    580    259    134"
+        "     65     32     30      6      3      1      6\n"
+    ),
 )
 
 #: The lab desktop, as its agent reported it on 2026-11-13.

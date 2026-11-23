@@ -706,7 +706,7 @@ class DiskStat(_message.Message):
     def __init__(self, mount: _Optional[str] = ..., total_bytes: _Optional[int] = ..., used_bytes: _Optional[int] = ..., free_bytes: _Optional[int] = ...) -> None: ...
 
 class NodeStats(_message.Message):
-    __slots__ = ("gpus", "memory", "disks", "processes", "cpu_count", "load_average_1m", "unavailable")
+    __slots__ = ("gpus", "memory", "disks", "processes", "cpu_count", "load_average_1m", "unavailable", "buddy")
     GPUS_FIELD_NUMBER: _ClassVar[int]
     MEMORY_FIELD_NUMBER: _ClassVar[int]
     DISKS_FIELD_NUMBER: _ClassVar[int]
@@ -714,6 +714,7 @@ class NodeStats(_message.Message):
     CPU_COUNT_FIELD_NUMBER: _ClassVar[int]
     LOAD_AVERAGE_1M_FIELD_NUMBER: _ClassVar[int]
     UNAVAILABLE_FIELD_NUMBER: _ClassVar[int]
+    BUDDY_FIELD_NUMBER: _ClassVar[int]
     gpus: _containers.RepeatedCompositeFieldContainer[GpuStat]
     memory: MemoryStat
     disks: _containers.RepeatedCompositeFieldContainer[DiskStat]
@@ -721,7 +722,16 @@ class NodeStats(_message.Message):
     cpu_count: int
     load_average_1m: float
     unavailable: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, gpus: _Optional[_Iterable[_Union[GpuStat, _Mapping]]] = ..., memory: _Optional[_Union[MemoryStat, _Mapping]] = ..., disks: _Optional[_Iterable[_Union[DiskStat, _Mapping]]] = ..., processes: _Optional[_Iterable[_Union[GpuProcess, _Mapping]]] = ..., cpu_count: _Optional[int] = ..., load_average_1m: _Optional[float] = ..., unavailable: _Optional[_Iterable[str]] = ...) -> None: ...
+    buddy: BuddyInfo
+    def __init__(self, gpus: _Optional[_Iterable[_Union[GpuStat, _Mapping]]] = ..., memory: _Optional[_Union[MemoryStat, _Mapping]] = ..., disks: _Optional[_Iterable[_Union[DiskStat, _Mapping]]] = ..., processes: _Optional[_Iterable[_Union[GpuProcess, _Mapping]]] = ..., cpu_count: _Optional[int] = ..., load_average_1m: _Optional[float] = ..., unavailable: _Optional[_Iterable[str]] = ..., buddy: _Optional[_Union[BuddyInfo, _Mapping]] = ...) -> None: ...
+
+class BuddyInfo(_message.Message):
+    __slots__ = ("page_size_bytes", "free_blocks")
+    PAGE_SIZE_BYTES_FIELD_NUMBER: _ClassVar[int]
+    FREE_BLOCKS_FIELD_NUMBER: _ClassVar[int]
+    page_size_bytes: int
+    free_blocks: _containers.RepeatedScalarFieldContainer[int]
+    def __init__(self, page_size_bytes: _Optional[int] = ..., free_blocks: _Optional[_Iterable[int]] = ...) -> None: ...
 
 class InstallBundle(_message.Message):
     __slots__ = ("tarball", "dir_name", "version")

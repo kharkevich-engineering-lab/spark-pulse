@@ -24,7 +24,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use super::bounded;
-use crate::proto::{DiskStat, GpuProcess, GpuStat, MemoryStat, NodeStats};
+use crate::proto::{BuddyInfo, DiskStat, GpuProcess, GpuStat, MemoryStat, NodeStats};
 
 /// How long `nvidia-smi` may run before it is killed and reported unavailable.
 ///
@@ -78,9 +78,23 @@ pub fn collect() -> NodeStats {
         }
     };
 
+    let buddy = match fs::read_to_string("/proc/buddyinfo") {
+        Ok(text) => Some(BuddyInfo {
+            page_size_bytes: page_size(),
+            free_blocks: buddy_blocks(&text),
+        }),
+        Err(error) => {
+            unavailable.push(format!(
+                "memory shape: /proc/buddyinfo is unreadable ({error})"
+            ));
+            None
+        }
+    };
+
     NodeStats {
         gpus,
         memory,
+        buddy,
         disks: disks(),
         processes,
         cpu_count: num_cpus(),
@@ -203,6 +217,48 @@ fn meminfo() -> Option<MemoryStat> {
     })
 }
 
+/// Free blocks per order, summed over every zone of every NUMA node.
+///
+/// Each line of `/proc/buddyinfo` reads `Node 0, zone   Normal  a b c …`,
+/// the counts indexed by order. Zones differ in how many orders they print on
+/// some kernels, so the sum is as long as the longest line, and a line that
+/// does not parse adds nothing rather than shifting the others.
+fn buddy_blocks(text: &str) -> Vec<u64> {
+    let mut sums: Vec<u64> = Vec::new();
+    for line in text.lines() {
+        let Some((_, rest)) = line.split_once("zone") else {
+            continue;
+        };
+        // After `zone` comes the zone's name, then the counts.
+        let counts: Option<Vec<u64>> = rest
+            .split_whitespace()
+            .skip(1)
+            .map(|field| field.parse().ok())
+            .collect();
+        let Some(counts) = counts else { continue };
+        if sums.len() < counts.len() {
+            sums.resize(counts.len(), 0);
+        }
+        for (order, count) in counts.into_iter().enumerate() {
+            sums[order] += count;
+        }
+    }
+    sums
+}
+
+/// The base page size, which order zero means. 4 KiB on a DGX Spark (whose
+/// kernel keeps 14 orders, so its largest block is 32 MiB), 64 KiB on some
+/// arm64 kernels, and the counts mean nothing without it.
+fn page_size() -> u64 {
+    // SAFETY: sysconf takes no pointers and has no preconditions.
+    let size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    if size > 0 {
+        size as u64
+    } else {
+        4096
+    }
+}
+
 fn disks() -> Vec<DiskStat> {
     MOUNTS.iter().filter_map(|mount| disk(mount)).collect()
 }
@@ -301,6 +357,26 @@ mod tests {
         assert_eq!(process.pid, 2957747);
         assert_eq!(process.name, "python3");
         assert_eq!(process.used_memory_bytes, Some(24576 * 1_048_576));
+    }
+
+    #[test]
+    fn buddy_counts_are_summed_per_order_across_zones() {
+        let text = "Node 0, zone      DMA      1      0      2\n\
+                    Node 0, zone   Normal    100     50     25      3\n";
+
+        assert_eq!(buddy_blocks(text), vec![101, 50, 27, 3]);
+    }
+
+    #[test]
+    fn a_buddy_line_that_does_not_parse_adds_nothing() {
+        let text = "garbage\nNode 0, zone Normal 1 x 3\nNode 0, zone Movable 4 5\n";
+
+        assert_eq!(buddy_blocks(text), vec![4, 5]);
+    }
+
+    #[test]
+    fn the_page_size_is_a_power_of_two() {
+        assert!(page_size().is_power_of_two());
     }
 
     #[test]
