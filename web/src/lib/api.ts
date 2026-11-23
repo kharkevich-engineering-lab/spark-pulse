@@ -620,10 +620,18 @@ export async function fetchNodeDoctor(id: string): Promise<DoctorReport> {
 
 /** Diagnose, repair what is safely repairable over SSH, and check again. The
  * sudo password, if any, is used for this call and kept nowhere. */
-export async function treatNode(id: string, sudoPassword?: string): Promise<DoctorReport> {
+export async function treatNode(
+  id: string,
+  sudoPassword?: string,
+  /** Node clean-ups to change. Naming one is the only way one is changed. */
+  change?: { apply?: string[]; restore?: string[] },
+): Promise<DoctorReport> {
+  const body: Record<string, unknown> = sudoPassword ? { sudo_password: sudoPassword } : {};
+  if (change?.apply?.length) body.apply = change.apply;
+  if (change?.restore?.length) body.restore = change.restore;
   return json<DoctorReport>(`/nodes/${encodeURIComponent(id)}/doctor`, {
     method: "POST",
-    body: JSON.stringify(sudoPassword ? { sudo_password: sudoPassword } : {}),
+    body: JSON.stringify(body),
   });
 }
 

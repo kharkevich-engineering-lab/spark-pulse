@@ -655,7 +655,9 @@ class TestDoctor:
 
         captured = {}
 
-        async def fake_diagnose(server, node_id, *, access=None, connector=None):
+        async def fake_diagnose(
+            server, node_id, *, access=None, connector=None, tunings=()
+        ):
             captured["node_id"] = node_id
             captured["access"] = access
             report = node_doctor.DoctorReport(
@@ -692,7 +694,9 @@ class TestDoctor:
         mock_registry.update_node(PEER_ID, ssh_user="")
         seen = {}
 
-        async def fake_diagnose(server, node_id, *, access=None, connector=None):
+        async def fake_diagnose(
+            server, node_id, *, access=None, connector=None, tunings=()
+        ):
             seen["access"] = access
             return node_doctor.DoctorReport(node_id=node_id)
 
@@ -706,7 +710,9 @@ class TestDoctor:
     ):
         from spark_pulse.agent import doctor as node_doctor
 
-        async def fake_diagnose(server, node_id, *, access=None, connector=None):
+        async def fake_diagnose(
+            server, node_id, *, access=None, connector=None, tunings=()
+        ):
             # The report carries the internal target id, which for the control
             # node is not the registry id the caller clicked.
             return node_doctor.DoctorReport(node_id=node_id or "internal-cp-id")
@@ -729,9 +735,18 @@ class TestDoctor:
         seen = {}
 
         async def fake_treat(
-            server, node_id, *, access, connector=None, sudo_password_prompt=None
+            server,
+            node_id,
+            *,
+            access,
+            connector=None,
+            sudo_password_prompt=None,
+            tunings=(),
+            apply=(),
+            restore=(),
         ):
             seen["node_id"] = node_id
+            seen["named"] = (list(apply), list(restore))
             seen["sudo"] = (
                 await sudo_password_prompt("?") if sudo_password_prompt else None
             )
@@ -754,6 +769,61 @@ class TestDoctor:
         assert body["repairs"][0]["applied"] is True
         assert seen["sudo"] == "s3cret"
         assert "s3cret" not in response.text
+
+    async def test_treat_names_the_clean_ups_to_apply_and_restore(
+        self, client, running, monkeypatch
+    ):
+        from spark_pulse.agent import doctor as node_doctor
+        from spark_pulse.config import config
+
+        seen = {}
+
+        async def fake_treat(server, node_id, *, access, **kwargs):
+            seen.update(kwargs)
+            return node_doctor.DoctorReport(node_id=node_id)
+
+        monkeypatch.setattr(node_doctor, "treat", fake_treat)
+        monkeypatch.setitem(config._data, "memory", {"node_tuning": ["desktop"]})
+        response = await client.post(
+            f"/api/nodes/{PEER_ID}/doctor",
+            json={"apply": ["desktop"], "restore": ["bluetooth"]},
+        )
+        assert response.status_code == 200, response.text
+        assert seen["apply"] == ["desktop"]
+        assert seen["restore"] == ["bluetooth"]
+        assert seen["tunings"] == ["desktop"]
+
+    async def test_treat_refuses_a_clean_up_it_does_not_know(self, client, running):
+        response = await client.post(
+            f"/api/nodes/{PEER_ID}/doctor", json={"apply": ["avahi"]}
+        )
+        assert response.status_code == 400
+        assert "avahi" in response.json()["detail"]
+        response = await client.post(
+            f"/api/nodes/{PEER_ID}/doctor", json={"restore": "desktop"}
+        )
+        assert response.status_code == 400
+
+    async def test_diagnose_looks_only_at_the_selected_clean_ups(
+        self, client, running, monkeypatch
+    ):
+        from spark_pulse.agent import doctor as node_doctor
+        from spark_pulse.config import config
+
+        seen = {}
+
+        async def fake_diagnose(server, node_id, *, tunings=(), **kwargs):
+            seen["tunings"] = list(tunings)
+            return node_doctor.DoctorReport(node_id=node_id)
+
+        monkeypatch.setattr(node_doctor, "diagnose", fake_diagnose)
+        await client.get(f"/api/nodes/{PEER_ID}/doctor")
+        assert seen["tunings"] == [], "nothing selected, nothing looked at"
+        monkeypatch.setitem(
+            config._data, "memory", {"node_tuning": ["snapd", "desktop"]}
+        )
+        await client.get(f"/api/nodes/{PEER_ID}/doctor")
+        assert seen["tunings"] == ["desktop", "snapd"]
 
     async def test_treat_a_node_without_an_ssh_user_is_a_400(self, client, running):
         mock_registry.update_node(PEER_ID, ssh_user="")

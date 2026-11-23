@@ -564,6 +564,23 @@ class _Config:
         """Hand multi-node ranks ``TORCH_DIST_USE_NCCL2=0`` (torch 2.16+)."""
         return bool(self._data.get("memory", {}).get("lazy_nccl_communicators", False))
 
+    @property
+    def memory_node_tuning(self) -> list[str]:
+        """The node clean-ups the doctor looks at, by id. None by default.
+
+        Choosing one is "check this on every node", never "do this": the
+        doctor changes a node only when an operator names one on that node.
+        Anything that is not a known id is dropped, so a settings file written
+        by hand cannot make the doctor ask a node for something it has no
+        command for.
+        """
+        from spark_pulse.agent.node_tuning import TUNING_IDS
+
+        raw = self._data.get("memory", {}).get("node_tuning", [])
+        if not isinstance(raw, list):
+            return []
+        return [i for i in TUNING_IDS if i in raw]
+
     # ── Mod Settings ───────────────────────────────────────────────────────
 
     @property

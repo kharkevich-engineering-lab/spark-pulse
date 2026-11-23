@@ -64,7 +64,9 @@ The doctor asks why a node is not working. It reads only — the hub already kno
 
 One check is about the upgrade rather than the machine: **engine cache ownership**. Engines ran as root until 1.28.2 and run as the operator now, so a node that deployed before then has root-owned files under `~/.cache/vllm`, `~/.cache/flashinfer`, `~/.triton`, `~/.tilelang` and `~/.cache/huggingface`, and the next deploy fails with `Permission denied` on a temp file inside one of them. The doctor names the directories and the counts, repairs a peer with `chown -R`, and on the control node — which it reads over that node's own agent and never repairs over SSH — hands you the `sudo chown -R $USER …` line to run there.
 
-The API is `GET /api/nodes/{id}/doctor` (diagnose) and `POST /api/nodes/{id}/doctor` (treat).
+The doctor also looks at **node clean-up**: the desktop, Bluetooth, printing, snapd, the DGX dashboard, the firmware refresh timer, the kernel's watermark boost and the boot splash (advice only), all memory a model could have. It looks only at the items selected in Settings → Memory, and changes one only when you click Apply on that node's row. [The monitoring guide](monitoring.md#memory-the-operating-system-holds) has each item, what it costs and how to undo it.
+
+The API is `GET /api/nodes/{id}/doctor` (diagnose) and `POST /api/nodes/{id}/doctor` (treat). A treat names the clean-ups to change in `apply` and `restore`; without them it never touches one.
 
 ## Diagnostics
 

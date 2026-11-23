@@ -480,8 +480,20 @@ class PrivilegedRunner:
             )
         return "sudo needs a password and none was given"
 
-    async def run(self, command: str, *, why: str, timeout: float = 60.0) -> RunResult:
+    async def run(
+        self,
+        command: str,
+        *,
+        why: str,
+        timeout: float = 60.0,
+        stdin: str | None = None,
+    ) -> RunResult:
         """Run ``command`` with elevation, or raise :class:`SudoDeclined`.
+
+        ``stdin`` is the command's own input (``tee`` is fed this way, the one
+        idiom that puts root on the *open* of a file). With a password it
+        follows the password line: ``sudo -S`` reads one line and leaves the
+        rest for the command.
 
         ``why`` is the operator-facing reason, and it is what appears in the
         report next to the call — so a report says "enable lingering for alex"
@@ -489,15 +501,17 @@ class PrivilegedRunner:
         """
         sudo = self._caps.sudo
         if sudo.is_root:
-            result = await self._session.run(command, timeout=timeout)
+            result = await self._session.run(command, stdin=stdin, timeout=timeout)
             via = "root"
         elif sudo.free_for(command):
-            result = await self._session.run(f"sudo -n {command}", timeout=timeout)
+            result = await self._session.run(
+                f"sudo -n {command}", stdin=stdin, timeout=timeout
+            )
             via = "sudo -n"
         elif not self.can(command):
             raise SudoDeclined(why, self.why_not(command))
         else:
-            result = await self._authenticate(command, timeout)
+            result = await self._authenticate(command, timeout, stdin)
             if _refused(result) and self._prompt is not None and not self._reprompted:
                 self._reprompted = True
                 fresh = await self._prompt(
@@ -506,7 +520,7 @@ class PrivilegedRunner:
                 )
                 if fresh and fresh != self._password:
                     self._password = fresh
-                    result = await self._authenticate(command, timeout)
+                    result = await self._authenticate(command, timeout, stdin)
             via = "sudo -S"
         self.calls.append(
             PrivilegedCall(
@@ -516,7 +530,9 @@ class PrivilegedRunner:
         _raise_for_sudo(result, why)
         return result
 
-    async def _authenticate(self, command: str, timeout: float) -> RunResult:
+    async def _authenticate(
+        self, command: str, timeout: float, stdin: str | None = None
+    ) -> RunResult:
         """One ``sudo -S`` attempt.
 
         ``-S`` reads the password from stdin; ``-p ''`` suppresses the prompt
@@ -527,7 +543,7 @@ class PrivilegedRunner:
         """
         return await self._session.run(
             f"sudo -S -p '' {command}",
-            stdin=f"{self._password}\n",
+            stdin=f"{self._password}\n{stdin or ''}",
             timeout=timeout,
         )
 

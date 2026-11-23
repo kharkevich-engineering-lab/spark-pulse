@@ -49,8 +49,9 @@ import re
 import shlex
 import time
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, Sequence
 
+from spark_pulse.agent import node_tuning
 from spark_pulse.agent.bootstrap import (
     InstallPaths,
     NodeAccess,
@@ -168,6 +169,12 @@ class Finding:
     channel: str = "control-plane"
     verdict: str = NOTHING_TO_DO
     remedy: str = ""
+    #: Set only on a node clean-up (``tuning-*``): what it reads as on this
+    #: node and the commands that apply and undo it. The page offers Apply and
+    #: Restore from this, and the generic repair never acts on a finding that
+    #: carries it — a clean-up is changed when it is named, never as a side
+    #: effect of fixing something else.
+    tuning: dict[str, Any] | None = None
 
     @property
     def ok(self) -> bool:
@@ -210,11 +217,19 @@ class DoctorReport:
 
     @property
     def healthy(self) -> bool:
-        return all(f.status in ("ok", "unknown") for f in self.findings)
+        """No fault. A node clean-up that is not applied is memory to win back,
+        not a fault, so it is left out of this and of :attr:`problems`."""
+        return not self.problems and all(
+            f.status in ("ok", "unknown") for f in self.findings if f.tuning is None
+        )
 
     @property
     def problems(self) -> list[Finding]:
-        return [f for f in self.findings if f.status in ("warn", "broken")]
+        return [
+            f
+            for f in self.findings
+            if f.status in ("warn", "broken") and f.tuning is None
+        ]
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -231,8 +246,13 @@ async def diagnose(
     *,
     access: NodeAccess | None = None,
     connector: Connector | None = None,
+    tunings: Sequence[str] = (),
 ) -> DoctorReport:
     """Look at a node and say what is wrong. Changes nothing.
+
+    ``tunings`` names the node clean-ups to look at (the operator's selection
+    in Settings, :mod:`spark_pulse.agent.node_tuning`); none by default, so a
+    node's report holds nothing it did not ask for.
 
     ``access`` is optional: without it only the checks the control plane and
     the agent channel can answer are run, and the host-level ones are recorded
@@ -272,6 +292,7 @@ async def diagnose(
 
     if access is None:
         await _check_engine_caches_over_agent(server, node_id, connected, report)
+        await _check_tunings_over_agent(server, node_id, connected, tunings, report)
         for check in _ssh_checks(report):
             report.add(
                 Finding(
@@ -292,6 +313,7 @@ async def diagnose(
         reason = f"could not reach {access.host} over SSH: {str(exc)[:160]}"
         logger.info("doctor: %s", reason)
         await _check_engine_caches_over_agent(server, node_id, connected, report)
+        await _check_tunings_over_agent(server, node_id, connected, tunings, report)
         for check in _ssh_checks(report):
             report.add(Finding(check, "unknown", reason, channel="ssh"))
         return report
@@ -302,6 +324,13 @@ async def diagnose(
         report.capabilities = caps.to_dict()
         paths = await detect_installation(session, caps) or paths_for("user", caps)
         await _check_host(server, session, caps, paths, report)
+        await _check_tunings(
+            _ssh_probe(session),
+            tunings,
+            report,
+            channel="ssh",
+            repairable=_has_sudo_path(caps),
+        )
     finally:
         await session.close()
     return report
@@ -1102,6 +1131,268 @@ def _has_sudo_path(caps: NodeCapabilities) -> bool:
     return bool(sudo.present and sudo.permitted and not sudo.requiretty)
 
 
+# ── The node clean-ups ──────────────────────────────────────────────────────
+#
+# What DGX OS runs that a model server does not need (see
+# :mod:`spark_pulse.agent.node_tuning`). Looked at only for the tunings the
+# operator selected in Settings, read unprivileged on whichever channel the
+# rest of the doctor uses, and changed only when a request names one.
+
+
+def _agent_run(server: ControlPlaneServer, node_id: str) -> Any:
+    """``RunHostProbe`` as the ``(stdout, error)`` callable the checks take."""
+    from spark_pulse.agent.operations import NodeOperations
+
+    ops = NodeOperations(server.hub, node_id)
+
+    async def run(command: str) -> tuple[str, str]:
+        try:
+            result = await ops.run_host_probe(
+                command, timeout_seconds=CACHE_PROBE_TIMEOUT
+            )
+        except Exception as exc:  # noqa: BLE001 — every transport failure alike
+            return "", f"the node's agent could not run the check: {str(exc)[:160]}"
+        return str(getattr(result, "stdout", "") or ""), ""
+
+    return run
+
+
+async def _check_tunings_over_agent(
+    server: ControlPlaneServer,
+    node_id: str,
+    connected: bool,
+    tunings: Sequence[str],
+    report: DoctorReport,
+) -> None:
+    """The clean-ups with no SSH at all: the control node's case, read-only.
+
+    Never ``fixable-here``: this channel is unprivileged and the control node
+    is not treated from here, so a finding carries the commands to run on that
+    machine instead.
+    """
+    if not tunings:
+        return
+    if not connected:
+        for tuning_id in tunings:
+            if node_tuning.tuning_for(tuning_id) is not None:
+                report.add(
+                    Finding(
+                        node_tuning.check_name(tuning_id),
+                        "unknown",
+                        "neither SSH nor the agent could be asked",
+                        channel="agent",
+                    )
+                )
+        return
+    await _check_tunings(
+        _agent_run(server, node_id),
+        tunings,
+        report,
+        channel="agent",
+        repairable=False,
+    )
+
+
+async def _check_tunings(
+    run: Any,
+    tunings: Sequence[str],
+    report: DoctorReport,
+    *,
+    channel: str,
+    repairable: bool,
+) -> None:
+    for tuning_id in tunings:
+        tuning = node_tuning.tuning_for(tuning_id)
+        if tuning is not None:
+            report.add(await _read_tuning(run, tuning, channel, repairable))
+
+
+def _mib(count: int) -> str:
+    return f"{count / 1024**2:.0f} MiB"
+
+
+def _tuning_commands(
+    tuning: node_tuning.Tuning, direction: str, present: tuple[str, ...]
+) -> list[str]:
+    """The commands for one direction, limited to the units the node has."""
+    build = (
+        node_tuning.apply_commands
+        if direction == "apply"
+        else node_tuning.restore_commands
+    )
+    return build(tuning, present) if tuning.units else build(tuning)
+
+
+async def _read_tuning(
+    run: Any, tuning: node_tuning.Tuning, channel: str, repairable: bool
+) -> Finding:
+    """One clean-up as this node reads: present, applied, or still costing."""
+    check = node_tuning.check_name(tuning.id)
+    outputs: list[str] = []
+    for command in node_tuning.probe_commands(tuning):
+        stdout, error = await run(command)
+        if error:
+            return Finding(check, "unknown", error, channel=channel)
+        outputs.append(stdout)
+
+    info: dict[str, Any] = {
+        "id": tuning.id,
+        "consequential": tuning.consequential,
+        "can_treat": repairable,
+    }
+    units: list[node_tuning.UnitReading] = []
+    held: int | None = None
+    present_units: tuple[str, ...] = ()
+    if tuning.advisory:
+        words = outputs[0].split()
+        present = bool(words)
+        applied = present and "splash" not in words
+        info["cmdline_has_splash"] = "splash" in words
+    elif tuning.id == "watermark_boost":
+        raw = outputs[0].strip()
+        present = raw.isdigit()
+        applied = present and int(raw) == 0
+        if present:
+            info["value"] = int(raw)
+    else:
+        readings = node_tuning.parse_show(outputs[-1])
+        if not readings:
+            return Finding(
+                check, "unknown", "systemctl did not answer", channel=channel
+            )
+        wanted = (*tuning.units, *tuning.stop_units)
+        units = [readings.get(n) or node_tuning.UnitReading(n) for n in wanted]
+        present_units = tuple(u.name for u in units if u.present)
+        main = [u for u in units if u.name in tuning.units]
+        present = any(u.present for u in main)
+        applied = present and not any(u.on for u in main)
+        known = [
+            u.memory_bytes
+            for u in units
+            if u.active_state == "active" and u.memory_bytes is not None
+        ]
+        held = sum(known) if known else None
+        if tuning.id == "desktop":
+            target = outputs[0].strip()
+            info["default_target"] = target
+            # A node whose default is the desktop has one to turn off even
+            # when gdm3 is not the unit that draws it.
+            present = present or target == "graphical.target"
+            applied = (
+                present and target != "graphical.target" and not any(u.on for u in main)
+            )
+        if tuning.id == "snapd":
+            stdout, error = await run(node_tuning.SNAP_NAMES_COMMAND)
+            info["snaps"] = [] if error else node_tuning.parse_snap_list(stdout)
+
+    info["present"] = present
+    info["applied"] = applied
+    info["memory_bytes"] = held
+    info["units"] = [{**u.to_dict(), "present": u.present} for u in units]
+    if tuning.advisory:
+        info["can_treat"] = False
+        info["apply_commands"] = node_tuning.advisory_lines(tuning, "apply")
+        info["restore_commands"] = node_tuning.advisory_lines(tuning, "restore")
+    else:
+        info["apply_commands"] = node_tuning.operator_lines(
+            _tuning_commands(tuning, "apply", present_units)
+        )
+        info["restore_commands"] = node_tuning.operator_lines(
+            _tuning_commands(tuning, "restore", present_units)
+        )
+
+    if not present:
+        return Finding(check, "ok", "not present on this node", channel, tuning=info)
+    if applied:
+        return Finding(
+            check, "ok", f"applied. Undo: {tuning.undo}", channel, tuning=info
+        )
+    now = f" (holds {_mib(held)} now)" if held else ""
+    detail = f"{tuning.frees}{now}. It costs: {tuning.loses}."
+    if info.get("snaps"):
+        detail += f" Snaps installed: {', '.join(info['snaps'])}."
+    return Finding(
+        check,
+        "warn",
+        detail,
+        channel,
+        verdict=FIXABLE if repairable and not tuning.advisory else NEEDS_HUMAN,
+        remedy=("do: " if tuning.advisory else "run: ")
+        + (", then " if tuning.advisory else " && ").join(info["apply_commands"])
+        + (
+            ". To undo: " + ", then ".join(info["restore_commands"])
+            if tuning.advisory
+            else ""
+        ),
+        tuning=info,
+    )
+
+
+async def _change_tuning(
+    runner: PrivilegedRunner,
+    finding: Finding,
+    direction: str,
+    report: DoctorReport,
+) -> None:
+    """Apply or restore one clean-up, one privileged command at a time.
+
+    Stops at the first command that fails, so a node is never left with the
+    second half of a change and a report that says it was done.
+    """
+    check = finding.check
+    info = finding.tuning or {}
+    tuning = node_tuning.tuning_for(str(info.get("id", "")))
+
+    def declined(detail: str) -> None:
+        report.repairs.append(Repair(check, "none", False, detail))
+
+    if tuning is None or not info.get("present"):
+        return declined("not present on this node")
+    applied = bool(info.get("applied"))
+    if direction == "apply" and applied:
+        return declined("already applied")
+    if direction == "restore" and not applied:
+        return declined("not applied, so there is nothing to undo")
+    if finding.verdict == NEEDS_HUMAN or not info.get("can_treat"):
+        return declined(
+            f"not attempted ({NEEDS_HUMAN}): run these on that machine: "
+            + " && ".join(
+                info.get("restore_commands" if applied else "apply_commands", [])
+            )
+        )
+    present = tuple(u["name"] for u in info.get("units", []) if u.get("present"))
+    done: list[str] = []
+    for command in _tuning_commands(tuning, direction, present):
+        stdin = (
+            node_tuning.WATERMARK_BOOST_CONF
+            if command.startswith(f"{node_tuning.TEE} ")
+            else None
+        )
+        try:
+            result = await runner.run(
+                command, why=f"{direction} {tuning.id}", stdin=stdin
+            )
+        except SudoDeclined as exc:
+            report.repairs.append(
+                Repair(check, " && ".join(done) or command, False, exc.reason)
+            )
+            return
+        except BootstrapError as exc:  # a refused password, a dropped session
+            report.repairs.append(
+                Repair(check, " && ".join(done) or command, False, str(exc))
+            )
+            return
+        if not result.ok:
+            detail = (result.stderr or result.stdout).strip()[:200]
+            report.repairs.append(
+                Repair(check, command, False, detail or f"{command} failed")
+            )
+            return
+        done.append(command)
+    verb = "applied" if direction == "apply" else "restored"
+    report.repairs.append(Repair(check, " && ".join(done), True, f"{tuning.id} {verb}"))
+
+
 # ── Treatment ───────────────────────────────────────────────────────────────
 
 
@@ -1113,8 +1404,16 @@ async def treat(
     connector: Connector | None = None,
     sudo_password_prompt: Prompt | None = None,
     reverify: bool = True,
+    tunings: Sequence[str] = (),
+    apply: Sequence[str] = (),
+    restore: Sequence[str] = (),
 ) -> DoctorReport:
     """Diagnose, repair what is safely repairable, and check again.
+
+    ``apply`` and ``restore`` name node clean-ups to change
+    (:mod:`spark_pulse.agent.node_tuning`). They are the only way one is
+    changed: the repair of everything else never touches a ``tuning-*``
+    finding, so a click on "Repair" cannot turn the desktop off.
 
     Only findings whose verdict is ``fixable-here`` are acted on. A
     ``needs-a-decision`` finding is never attempted — re-enrolment destroys a
@@ -1122,8 +1421,17 @@ async def treat(
     ``needs-a-human-on-that-machine`` finding is reported without a doomed
     attempt, because a failed repair reads as a second fault.
     """
-    report = await diagnose(server, node_id, access=access, connector=connector)
+    named = list(dict.fromkeys([*tunings, *apply, *restore]))
+    report = await diagnose(
+        server, node_id, access=access, connector=connector, tunings=named
+    )
     actionable = [f for f in report.problems if f.verdict == FIXABLE]
+    changes = [
+        (f, "apply") for i in apply if (f := report.get(node_tuning.check_name(i)))
+    ]
+    changes += [
+        (f, "restore") for i in restore if (f := report.get(node_tuning.check_name(i)))
+    ]
     for finding in report.problems:
         if finding.verdict in (NEEDS_DECISION, NEEDS_HUMAN):
             report.repairs.append(
@@ -1134,7 +1442,7 @@ async def treat(
                     f"not attempted ({finding.verdict}): {finding.remedy}",
                 )
             )
-    if not actionable:
+    if not actionable and not changes:
         return report
 
     session = await open_node_session(server, access, connector=connector)
@@ -1143,7 +1451,7 @@ async def treat(
         caps = await probe_node(session, username=access.username)
         paths = await detect_installation(session, caps) or paths_for("user", caps)
         runner = PrivilegedRunner(session, caps, prompt=sudo_password_prompt)
-        needs_elevation = any(
+        needs_elevation = bool(changes) or any(
             f.check in ("linger", "docker-socket", ENGINE_CACHE_CHECK)
             for f in actionable
         )
@@ -1157,13 +1465,17 @@ async def treat(
             )
         for finding in actionable:
             await _repair(server, session, runner, caps, paths, finding, report)
+        for finding, direction in changes:
+            await _change_tuning(runner, finding, direction, report)
     finally:
         if runner is not None:
             runner.drop()
         await session.close()
 
     if reverify:
-        fresh = await diagnose(server, node_id, access=access, connector=connector)
+        fresh = await diagnose(
+            server, node_id, access=access, connector=connector, tunings=named
+        )
         fresh.repairs = report.repairs
         fresh.channels = report.channels
         return fresh

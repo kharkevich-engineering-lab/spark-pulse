@@ -463,7 +463,32 @@ export interface ClusterReport {
 export interface MemorySettings {
   compact_before_launch?: boolean;
   lazy_nccl_communicators?: boolean;
+  /** Which node clean-ups the doctor checks. Checking changes nothing. */
+  node_tuning?: NodeTuningId[];
 }
+
+/** The node clean-ups, in the doctor's catalogue order
+ *  (`spark_pulse/agent/node_tuning.py`). */
+export type NodeTuningId =
+  | "desktop"
+  | "bluetooth"
+  | "printing"
+  | "snapd"
+  | "dgx_dashboard"
+  | "fwupd_refresh"
+  | "watermark_boost"
+  | "splash";
+
+export const NODE_TUNING_IDS: NodeTuningId[] = [
+  "desktop",
+  "bluetooth",
+  "printing",
+  "snapd",
+  "dgx_dashboard",
+  "fwupd_refresh",
+  "watermark_boost",
+  "splash",
+];
 
 /** The container knobs every deployment inherits.
  *
@@ -1284,6 +1309,28 @@ export interface DoctorFinding {
   channel: string;
   verdict: "fixable-here" | "needs-a-decision" | "needs-a-human-on-that-machine" | "nothing-to-do";
   remedy: string;
+  /** Set only on a node clean-up (`tuning-*`). */
+  tuning?: DoctorTuning | null;
+}
+
+/** What one node clean-up reads as on one node. */
+export interface DoctorTuning {
+  id: NodeTuningId;
+  /** The node has what this would turn off. */
+  present: boolean;
+  /** It is already off. */
+  applied: boolean;
+  /** Applying it changes what a person at the machine sees or loses. */
+  consequential: boolean;
+  /** Whether the doctor can apply it from here (a peer with a sudo path). */
+  can_treat: boolean;
+  /** What the units hold now, when systemd accounts for it. */
+  memory_bytes: number | null;
+  /** Snaps installed, on the snapd item only. */
+  snaps?: string[];
+  /** What to type on that machine, for a node the doctor cannot treat. */
+  apply_commands: string[];
+  restore_commands: string[];
 }
 
 /** Something the doctor did, or declined to do, and why. */

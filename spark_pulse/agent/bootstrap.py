@@ -475,6 +475,47 @@ def render_memory_sudoers(user: str) -> str:
     )
 
 
+def render_tuning_sudoers(user: str) -> str:
+    """A drop-in letting the doctor apply and undo the node clean-ups unprompted.
+
+    The doctor treats a peer over SSH with the sudo password it is given, so
+    nothing here is *required*; this makes the same commands passwordless, for
+    exactly the argv the catalogue in :mod:`spark_pulse.agent.node_tuning` can
+    run and nothing wider. Each line is one literal command — ``systemctl
+    disable --now bluetooth.service``, ``systemctl enable --now
+    bluetooth.service``, ``set-default multi-user.target`` and its undo,
+    ``tee`` on the one sysctl file, ``sysctl -w`` with the two values, ``rm -f``
+    of that file — with no wildcard. That is the opposite choice from the nmcli
+    rule, whose connection names are data: here every argument is known in
+    advance, so every argument is pinned. ``systemctl *`` would be root over
+    every unit on the machine, which is the one thing this must not be.
+
+    A sudoers command spec with arguments and no wildcard matches that exact
+    argument vector. Nothing in it can disable a unit this module does not name,
+    write another file under ``/etc``, or set another sysctl.
+
+    It grants the *ability*; it never runs anything. Applying a tuning is an
+    operator's click on the node page, per node and per item.
+    """
+    from spark_pulse.agent import node_tuning
+
+    if not _POSIX_USERNAME.fullmatch(user):
+        raise BootstrapError(
+            f"{user!r} is not a username this can write a sudoers rule for; "
+            "expected letters, digits, and any of '_', '-', '.', '$'"
+        )
+    lines = "".join(
+        f"{user} ALL=(root) NOPASSWD: {command}\n"
+        for command in node_tuning.sudoers_commands()
+    )
+    return (
+        "# Installed by spark-pulse. Lets the doctor apply and undo the node\n"
+        "# clean-ups an operator asks for: one literal command per line, with no\n"
+        "# wildcard, so no other unit, no other file and no other sysctl.\n"
+        f"{lines}"
+    )
+
+
 def render_sudoers(user: str, *, unit: str = UNIT_NAME) -> str:
     """A drop-in covering three verbs on one unit. Offered, never required.
 
@@ -1047,6 +1088,7 @@ async def _place_agent(
     if offer_sudoers:
         await _write_network_sudoers(session, runner, paths, caps, report)
         await _write_memory_sudoers(session, runner, paths, caps, report)
+        await _write_tuning_sudoers(session, runner, paths, caps, report)
     await _start_unit(session, runner, paths, report)
     return AgentInstallation(paths=paths, node_id=node_id, bundle_name=bundle.name)
 
@@ -1291,6 +1333,53 @@ async def _write_network_sudoers(
             "fabric-sudoers",
             f"writing {path} failed: {result.stderr.strip()[:200]}",
             "the fabric cannot be configured through this node's agent",
+        )
+
+
+async def _write_tuning_sudoers(
+    session: NodeSession,
+    runner: PrivilegedRunner,
+    paths: InstallPaths,
+    caps: NodeCapabilities,
+    report: InstallReport,
+) -> None:
+    """Make the doctor's node clean-ups passwordless, with exact-argv rules.
+
+    Staged, parsed with ``visudo -cf``, then installed, as the other drop-ins
+    are. A node where this cannot be installed still enrols; the doctor then
+    asks for the sudo password when a clean-up is applied, which is said as a
+    concession.
+    """
+    path = "/etc/sudoers.d/spark-pulse-agent-tuning"
+    staged = f"{paths.staging}/sudoers-tuning"
+    await session.upload(render_tuning_sudoers(caps.user).encode(), staged, mode=0o600)
+    check = await session.run(f"visudo -cf {shlex.quote(staged)}", timeout=30)
+    if not check.ok:
+        report.concede(
+            "tuning-sudoers",
+            f"the node clean-up sudoers drop-in did not parse: {(check.stderr or check.stdout).strip()[:200]}",
+            "the doctor needs the sudo password to apply a node clean-up",
+        )
+        return
+    try:
+        result = await runner.run(
+            f"install -m 0440 -o root -g root {shlex.quote(staged)} {shlex.quote(path)}",
+            why="let the doctor apply node clean-ups without a password",
+        )
+    except SudoDeclined as exc:
+        report.concede(
+            "tuning-sudoers",
+            f"the node clean-up sudoers drop-in was not installed: {exc.reason}",
+            "the doctor needs the sudo password to apply a node clean-up",
+        )
+        return
+    if result.ok:
+        report.note(f"installed {path} (node clean-ups through the doctor)")
+    else:  # pragma: no cover - defensive
+        report.concede(
+            "tuning-sudoers",
+            f"writing {path} failed: {result.stderr.strip()[:200]}",
+            "the doctor needs the sudo password to apply a node clean-up",
         )
 
 

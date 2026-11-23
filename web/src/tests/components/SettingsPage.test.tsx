@@ -347,6 +347,100 @@ describe("SettingsPage features tab", () => {
   });
 });
 
+// ── Memory ──────────────────────────────────────────────────────────────────
+
+describe("SettingsPage memory tab", () => {
+  beforeEach(seedApi);
+
+  it("lists the node clean-ups, each off until chosen", async () => {
+    renderPage();
+    await openTab(/memory/i);
+
+    const group = await screen.findByRole("heading", { name: "Node clean-up" });
+    expect(group).toBeInTheDocument();
+    for (const name of [
+      "Desktop session",
+      "Bluetooth",
+      "Printing",
+      "Snap daemon",
+      "DGX dashboard",
+      "Firmware refresh timer",
+      "Watermark boost",
+      "Boot splash",
+    ]) {
+      expect(screen.getByRole("switch", { name })).toHaveAttribute("aria-checked", "false");
+    }
+  });
+
+  it("saves the chosen clean-ups as a list in catalogue order", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await openTab(/memory/i);
+    await screen.findByRole("heading", { name: "Node clean-up" });
+
+    await user.click(screen.getByRole("switch", { name: "Watermark boost" }));
+    await user.click(screen.getByRole("switch", { name: "Desktop session" }));
+    await user.click(saveButton());
+
+    await waitFor(() =>
+      expect(updateSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          memory: expect.objectContaining({ node_tuning: ["desktop", "watermark_boost"] }),
+        }),
+      ),
+    );
+  });
+
+  it("switches one back off", async () => {
+    const user = userEvent.setup();
+    vi.mocked(fetchSettings).mockResolvedValue({ ...SETTINGS, memory: { node_tuning: ["snapd", "printing"] } });
+    renderPage();
+    await openTab(/memory/i);
+
+    const printing = await screen.findByRole("switch", { name: "Printing" });
+    expect(printing).toHaveAttribute("aria-checked", "true");
+    await user.click(printing);
+    await user.click(saveButton());
+
+    await waitFor(() =>
+      expect(updateSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ memory: expect.objectContaining({ node_tuning: ["snapd"] }) }),
+      ),
+    );
+  });
+
+  it("Enable all checks every clean-up and applies nothing", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await openTab(/memory/i);
+    await user.click(await screen.findByRole("button", { name: "Enable all" }));
+
+    expect(screen.getByRole("switch", { name: "Bluetooth" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("switch", { name: "Compact before launch" })).toHaveAttribute("aria-checked", "true");
+    expect(updateSettings).not.toHaveBeenCalled();
+
+    await user.click(saveButton());
+    await waitFor(() =>
+      expect(updateSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          memory: expect.objectContaining({
+            node_tuning: [
+              "desktop",
+              "bluetooth",
+              "printing",
+              "snapd",
+              "dgx_dashboard",
+              "fwupd_refresh",
+              "watermark_boost",
+              "splash",
+            ],
+          }),
+        }),
+      ),
+    );
+  });
+});
+
 // ── Containers ──────────────────────────────────────────────────────────────
 
 describe("SettingsPage containers tab", () => {

@@ -32,9 +32,11 @@ from fastapi import APIRouter, Body, HTTPException, Query
 
 from spark_pulse import tools
 from spark_pulse.agent import doctor as node_doctor
+from spark_pulse.agent import node_tuning
 from spark_pulse.agent import onboarding
 from spark_pulse.agent import runtime as agent_runtime
 from spark_pulse.agent.bootstrap import ExistingIdentity
+from spark_pulse.config import config
 from spark_pulse.agent.bootstrap_transport import (
     AuthFailed,
     BootstrapError,
@@ -407,6 +409,7 @@ async def diagnose_node(node_id: str):
         target,
         access=_doctor_access(node),
         connector=onboarding.connector_factory(),
+        tunings=config.memory_node_tuning,
     )
     return {**report.to_dict(), "node_id": node.id}
 
@@ -442,6 +445,8 @@ async def treat_node(node_id: str, body: dict[str, Any] = Body(default={})):
             status_code=503, detail="the agent transport is not running"
         )
     sudo_password = str(body.get("sudo_password") or "") or None
+    apply = _tuning_ids(body, "apply")
+    restore = _tuning_ids(body, "restore")
 
     async def sudo(_question: str) -> str | None:
         return sudo_password
@@ -453,10 +458,30 @@ async def treat_node(node_id: str, body: dict[str, Any] = Body(default={})):
             access=access,
             connector=onboarding.connector_factory(),
             sudo_password_prompt=sudo,
+            tunings=config.memory_node_tuning,
+            apply=apply,
+            restore=restore,
         )
     except BootstrapError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {**report.to_dict(), "node_id": node.id}
+
+
+def _tuning_ids(body: dict[str, Any], key: str) -> list[str]:
+    """The node clean-ups a treat names, refused if any is not in the catalogue.
+
+    Naming one is the only way one is changed, so an id this build does not
+    know is an error, never silently dropped.
+    """
+    ids = body.get(key) or []
+    if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+        raise HTTPException(status_code=400, detail=f"'{key}' must be a list of ids")
+    unknown = sorted(set(ids) - set(node_tuning.TUNING_IDS))
+    if unknown:
+        raise HTTPException(
+            status_code=400, detail=f"Unknown node clean-up(s): {', '.join(unknown)}"
+        )
+    return ids
 
 
 def _doctor_access(node: Any) -> Any | None:

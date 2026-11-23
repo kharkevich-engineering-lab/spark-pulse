@@ -695,6 +695,20 @@ const CASES: Case[] = [
     body: {},
   },
   {
+    name: "treatNode naming clean-ups",
+    call: () => api.treatNode("node-1", undefined, { apply: ["desktop"], restore: ["bluetooth"] }),
+    path: "/api/nodes/node-1/doctor",
+    method: "POST",
+    body: { apply: ["desktop"], restore: ["bluetooth"] },
+  },
+  {
+    name: "treatNode with an empty clean-up list",
+    call: () => api.treatNode("node-1", "pw", { apply: [] }),
+    path: "/api/nodes/node-1/doctor",
+    method: "POST",
+    body: { sudo_password: "pw" },
+  },
+  {
     name: "updateNodeAgent",
     call: () => api.updateNodeAgent("node-1"),
     path: "/api/nodes/node-1/update",

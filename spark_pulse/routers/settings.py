@@ -27,6 +27,7 @@ from urllib.parse import urlsplit, urlunsplit
 from fastapi import APIRouter, HTTPException
 
 from spark_pulse import tools
+from spark_pulse.agent.node_tuning import TUNING_IDS
 from spark_pulse.config import config
 from spark_pulse.engines import reset_registry
 
@@ -93,8 +94,11 @@ _ALLOWED_MOD_KEYS = frozenset({"network_policy"})
 
 _MOD_NETWORK_POLICIES = ("allow", "warn", "deny")
 
-#: The keys the `memory:` block may carry, each a boolean.
-_ALLOWED_MEMORY_KEYS = frozenset({"compact_before_launch", "lazy_nccl_communicators"})
+#: The keys the `memory:` block may carry: two booleans, and `node_tuning`, a
+#: list of ids from the doctor's catalogue.
+_ALLOWED_MEMORY_KEYS = frozenset(
+    {"compact_before_launch", "lazy_nccl_communicators", "node_tuning"}
+)
 
 
 def _redacted(url: str) -> str:
@@ -243,6 +247,7 @@ def _settings_response() -> dict:
         "memory": {
             "compact_before_launch": config.memory_compact_before_launch,
             "lazy_nccl_communicators": config.memory_lazy_nccl_communicators,
+            "node_tuning": config.memory_node_tuning,
         },
         "env_managed": config.env_managed,
         "environment": _environment_block(),
@@ -312,7 +317,28 @@ def update_settings(req: dict):
         incoming["mod"] = block
     if "memory" in incoming:
         block = _checked_block("memory", incoming["memory"], _ALLOWED_MEMORY_KEYS)
-        wrong = sorted(k for k, v in block.items() if not isinstance(v, bool))
+        tuning = block.get("node_tuning")
+        if "node_tuning" in block:
+            if not isinstance(tuning, list) or not all(
+                isinstance(i, str) for i in tuning
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail="memory.node_tuning must be a list of clean-up ids",
+                )
+            unknown = sorted(set(tuning) - set(TUNING_IDS))
+            if unknown:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unknown node clean-up(s): {', '.join(unknown)}; "
+                    f"expected {', '.join(TUNING_IDS)}",
+                )
+            block["node_tuning"] = [i for i in TUNING_IDS if i in tuning]
+        wrong = sorted(
+            k
+            for k, v in block.items()
+            if k != "node_tuning" and not isinstance(v, bool)
+        )
         if wrong:
             raise HTTPException(
                 status_code=400,

@@ -1380,5 +1380,63 @@
     "lazyNccl": "Communicateurs NCCL paresseux",
     "lazyNcclHelp": "Expérimental, torch 2.16 et suivants. Les rangs multi-nœuds créent leurs communicateurs NCCL au premier usage.",
     "previewCompact": "La mémoire est compactée sur chaque nœud inactif avant le lancement."
+  },
+  "nodeCleanup": {
+    "title": "Nettoyage du nœud",
+    "settingsHint": "Vérifié par le médecin de chaque nœud. Rien n'est appliqué d'ici.",
+    "items": {
+      "desktop": {
+        "name": "Session de bureau",
+        "help": "Libère environ 1 Gio. Un écran branché sur le nœud affiche une console texte."
+      },
+      "bluetooth": {
+        "name": "Bluetooth",
+        "help": "Libère le démon Bluetooth. Claviers et audio Bluetooth s'arrêtent."
+      },
+      "printing": {
+        "name": "Impression",
+        "help": "Libère le serveur d'impression. Le nœud ne peut plus imprimer."
+      },
+      "snapd": {
+        "name": "Démon snap",
+        "help": "Libère snapd et ses minuteurs. Les snaps installés ne sont plus mis à jour."
+      },
+      "dgx_dashboard": {
+        "name": "Tableau de bord DGX",
+        "help": "Libère jusqu'à 850 Mio à sa vérification de mise à jour. La page du tableau de bord disparaît."
+      },
+      "fwupd_refresh": {
+        "name": "Minuteur d'actualisation du firmware",
+        "help": "Arrête la vérification quotidienne. fwupd reste installé ; mise à jour à la main."
+      },
+      "watermark_boost": {
+        "name": "Watermark boost",
+        "help": "Rend jusqu'à 0,87 Gio de mémoire libre. Rien d'autre ne change."
+      },
+      "splash": {
+        "name": "Écran de démarrage",
+        "help": "Lit la ligne de commande du noyau. Indicatif : une modification de GRUB et un redémarrage, à la main."
+      }
+    },
+    "doctor": {
+      "summary": "{applied} sur {total} appliqués",
+      "colItem": "Nettoyage",
+      "colState": "État",
+      "colAction": "Action",
+      "state": {
+        "applied": "Appliqué",
+        "notApplied": "Non appliqué",
+        "notPresent": "Absent de ce nœud",
+        "unknown": "Non lu"
+      },
+      "holds": "Occupe {size}",
+      "apply": "Appliquer",
+      "restore": "Rétablir",
+      "runThere": "À lancer sur ce nœud",
+      "confirmTitle": "Appliquer {name} ?",
+      "confirmDesktop": "Un écran branché sur ce nœud affichera une console texte, pas un bureau. L'accès à distance n'est pas touché. Rétablir ramène le bureau.",
+      "confirmSnapd": "Ces snaps ne sont plus mis à jour, et les services qu'ils lancent s'arrêtent : {snaps}. Rétablir relance snapd.",
+      "confirmSnapdNone": "Aucun snap n'est installé. Rétablir relance snapd."
+    }
   }
 }

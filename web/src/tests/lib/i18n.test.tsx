@@ -122,6 +122,11 @@ describe("the dictionaries", () => {
     // An abbreviation that reads the same in both: the chip marking a field
     // the environment owns.
     "settings.envBadge",
+    // Names of a protocol and of a kernel setting, the same in French.
+    "nodeCleanup.items.bluetooth.name",
+    "nodeCleanup.items.watermark_boost.name",
+    // "Action" is the same word in French.
+    "nodeCleanup.doctor.colAction",
   ]);
 
   /** A French dictionary that is a copy of the English one is not a

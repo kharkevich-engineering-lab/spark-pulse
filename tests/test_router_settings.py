@@ -330,6 +330,7 @@ class TestTheMemoryBlock:
         assert body["memory"] == {
             "compact_before_launch": False,
             "lazy_nccl_communicators": False,
+            "node_tuning": [],
         }
 
     def test_both_switches_round_trip(self, client):
@@ -346,6 +347,7 @@ class TestTheMemoryBlock:
         assert body["memory"] == {
             "compact_before_launch": True,
             "lazy_nccl_communicators": True,
+            "node_tuning": [],
         }
         assert config.memory_compact_before_launch is True
         assert config.memory_lazy_nccl_communicators is True
@@ -363,6 +365,47 @@ class TestTheMemoryBlock:
 
         assert response.status_code == 400
         assert "compact_before_launch" in response.json()["detail"]
+
+
+class TestTheNodeCleanUps:
+    """``memory.node_tuning`` says which clean-ups the doctor *checks*."""
+
+    def test_none_are_selected_by_default(self, client):
+        assert client.get("/api/settings").json()["memory"]["node_tuning"] == []
+        assert config.memory_node_tuning == []
+
+    def test_a_selection_round_trips_in_catalogue_order(self, client):
+        body = client.put(
+            "/api/settings",
+            json={"memory": {"node_tuning": ["watermark_boost", "desktop"]}},
+        ).json()
+
+        assert body["memory"]["node_tuning"] == ["desktop", "watermark_boost"]
+        assert config.memory_node_tuning == ["desktop", "watermark_boost"]
+
+    def test_an_unknown_item_is_refused(self, client):
+        response = client.put(
+            "/api/settings", json={"memory": {"node_tuning": ["desktop", "avahi"]}}
+        )
+
+        assert response.status_code == 400
+        assert "avahi" in response.json()["detail"]
+        assert config.memory_node_tuning == []
+
+    def test_the_selection_must_be_a_list_of_ids(self, client):
+        for bad in ("desktop", [1], {"desktop": True}):
+            response = client.put(
+                "/api/settings", json={"memory": {"node_tuning": bad}}
+            )
+            assert response.status_code == 400
+
+    def test_a_hand_edited_unknown_id_is_ignored_when_read(self, monkeypatch):
+        monkeypatch.setitem(
+            config._data, "memory", {"node_tuning": ["desktop", "nope"]}
+        )
+        assert config.memory_node_tuning == ["desktop"]
+        monkeypatch.setitem(config._data, "memory", {"node_tuning": "desktop"})
+        assert config.memory_node_tuning == []
 
 
 class TestTheRuntimeReport:
