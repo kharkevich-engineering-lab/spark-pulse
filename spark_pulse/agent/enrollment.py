@@ -642,6 +642,7 @@ class EnrollmentLedger:
             # the legacy one moves when the kernel reports a page more memory
             # after a reboot, and comparing it as well would keep the bug.
             v2 = facts.get("fingerprint_v2") or ""
+            pending_v2 = ""
             if v2:
                 # The versioned print, once the agent sends one. A record
                 # that has none yet adopts it when the session presents the
@@ -655,11 +656,17 @@ class EnrollmentLedger:
                         public_key_fingerprint
                         and public_key_fingerprint == entry.public_key_fingerprint
                     )
-                    if key_held or not entry.public_key_fingerprint:
+                    if key_held:
                         logger.info("node %s: recording its v2 fingerprint", node_id)
                         entry.fingerprint_v2 = v2
                         self._write(nodes=(entry,))
                         return IdentityVerdict(True)
+                    # No issued key to vouch for the session (a record from
+                    # before keys were kept, or a session that presented
+                    # none): adopting v2 here would skip the v1 comparison
+                    # entirely. Judge it on v1 as before, and adopt v2 only
+                    # if that passes.
+                    pending_v2 = v2
                 elif v2 != entry.fingerprint_v2:
                     reason = "hardware fingerprint changed; the node may be reimaged"
                     entry.state = NodeState.DENIED.value
@@ -681,6 +688,8 @@ class EnrollmentLedger:
                 # which a reimage would have lost, so this is an upgrade.
                 logger.info("node %s: recording its stable fingerprint", node_id)
                 entry.stable_fingerprint = stable
+                if pending_v2:
+                    entry.fingerprint_v2 = pending_v2
                 self._write(nodes=(entry,))
                 return IdentityVerdict(True)
             if presented and recorded and presented != recorded:
@@ -689,6 +698,10 @@ class EnrollmentLedger:
                 entry.denied_reason = reason
                 self._write(nodes=(entry,))
                 return IdentityVerdict(False, reason)
+            if pending_v2:
+                logger.info("node %s: recording its v2 fingerprint", node_id)
+                entry.fingerprint_v2 = pending_v2
+                self._write(nodes=(entry,))
             return IdentityVerdict(True)
 
     # ── Housekeeping ─────────────────────────────────────────────────────

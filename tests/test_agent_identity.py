@@ -714,3 +714,39 @@ def test_a_stored_record_without_the_v2_field_loads():
     )
     assert entry.fingerprint_v2 == ""
     assert entry.stable_fingerprint == "s"
+
+
+def _keyless(ledger, **facts):
+    """A record from before keys were kept: nothing to vouch for a session."""
+    node_id = ledger.redeem_token(ledger.mint_token("spark-a"))
+    ledger.record_issue(node_id, public_key_fingerprint="", not_after=1.0, facts=facts)
+    return node_id
+
+
+def test_a_keyless_record_does_not_adopt_v2_over_a_moved_v1(ledger):
+    """No key to vouch for the session, so v1 is still the judge: a reimaged
+    machine behind an old record must not be let in by sending any v2."""
+    node_id = _keyless(ledger, stable_fingerprint="v1")
+    verdict = ledger.authorize(
+        node_id, facts={"stable_fingerprint": "other", "fingerprint_v2": "v2-a"}
+    )
+    assert not verdict
+    assert "reimaged" in verdict.reason
+    assert ledger.get(node_id).fingerprint_v2 == ""
+
+
+def test_a_keyless_record_adopts_v2_once_v1_matches(ledger):
+    node_id = _keyless(ledger, stable_fingerprint="v1")
+    assert ledger.authorize(
+        node_id, facts={"stable_fingerprint": "v1", "fingerprint_v2": "v2-a"}
+    )
+    assert ledger.get(node_id).fingerprint_v2 == "v2-a"
+
+
+def test_a_session_presenting_no_key_is_judged_on_v1(ledger):
+    node_id = _enrolled(ledger, stable_fingerprint="v1")
+    verdict = ledger.authorize(
+        node_id, facts={"stable_fingerprint": "other", "fingerprint_v2": "v2-a"}
+    )
+    assert not verdict
+    assert ledger.get(node_id).fingerprint_v2 == ""
