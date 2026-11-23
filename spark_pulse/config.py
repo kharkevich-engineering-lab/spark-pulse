@@ -560,6 +560,20 @@ class _Config:
         return bool(self._data.get("memory", {}).get("compact_before_launch", False))
 
     @property
+    def memory_check_before_launch(self) -> bool:
+        """Re-check each node's free memory after the pull, before the engine."""
+        return bool(self._data.get("memory", {}).get("check_before_launch", True))
+
+    @property
+    def memory_launch_wait_seconds(self) -> int:
+        """How long a launch short of memory waits for it before failing."""
+        raw = self._data.get("memory", {}).get("launch_wait_seconds", 90)
+        try:
+            return max(0, min(int(raw), 3600))
+        except (TypeError, ValueError):
+            return 90
+
+    @property
     def memory_lazy_nccl_communicators(self) -> bool:
         """Hand multi-node ranks ``TORCH_DIST_USE_NCCL2=0`` (torch 2.16+)."""
         return bool(self._data.get("memory", {}).get("lazy_nccl_communicators", False))

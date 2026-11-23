@@ -36,11 +36,30 @@ So the plan does the arithmetic first. For each node the run occupies, it lists 
 
 - a run whose engine takes a fraction claims that fraction of the node's total;
 - a run whose engine allocates as it goes (llama.cpp) claims what the node, asked through its agent, says its containers hold;
+- a run counts at the **largest** of what its fraction entitles it to, what the node measures it holding, and what a run of the same recipe and settings was seen holding before (below) — SGLang's static fraction leaves out its CUDA graphs and its heap, and llama.cpp grows its cache under load;
 - a run whose claim cannot be read — the node did not answer, or reports no memory for it — is **unknown**, never zero.
 
-What is left is the total, less those claims, less 4 GiB for the host itself (the kernel, Docker, the agent: memory no run's fraction may count on). A run that asks for more is **blocked** — *run qwen holds 0.80 (96.9 GiB); at most 0.16 is left and this run asks 0.50* — and an unknown co-tenant turns the check into a warning instead, since the budget has a hole in it. A run alone on its node is judged by the engine, as before.
+What is left is the total, less those claims, less 4 GiB for the host itself (the kernel, Docker, the agent: memory no run's fraction may count on) — and never more than what the node says is free right now, less 2 GiB when somebody else is on it, because that figure moves by a couple of gigabytes from one minute to the next. The free figure is what catches memory no run of ours holds: a download, a container somebody started by hand, the desktop. A run that asks for more is **blocked** — *run qwen holds 0.80 (96.9 GiB); at most 0.16 is left and this run asks 0.50* — and an unknown co-tenant turns the check into a warning instead, since the budget has a hole in it. Alone on its node, a run is blocked only when the node's free memory is short of its claim, which is the engine's own check run early.
 
-**GPU memory** in Deploy options sets the fraction (empty takes the recipe's). After a preview, a node somebody else is on gets one line — *Shares spark-01 with qwen (0.80). Up to 0.16 fits.* — and, when the run does not fit, a button that takes that value. The plan carries the same figures as `memory_budget`, one entry per node.
+**GPU memory** in Deploy options sets the fraction (empty takes the recipe's). After a preview, every node gets a bar — each run on it, the host reserve, memory held outside any run, this run's claim and what is free — and a node somebody else is on gets one line — *Shares spark-01 with qwen (0.80). Up to 0.16 fits.* — with a button that takes that value when the run does not fit. The plan carries the same figures as `memory_budget`, one entry per node.
+
+### Does the model fit inside its fraction?
+
+Fitting beside the others is half the question; the model then has to fit in the fraction it was given. vLLM sizes its KV cache from what is left of the fraction after the weights and refuses — *no available memory for the cache blocks* — after the load. The pre-flight's **GPU memory** line estimates weights (measured from the snapshot on the node) plus the KV cache at the run's context, and when that is more than the fraction it says by how much and offers the two ways down: the smallest fraction that holds it (a one-click value in the preview, when that much is left beside the others) and the longest context that fits in the fraction as given.
+
+### Checked again at the launch
+
+The plan is judged before the image pull, and on a Spark the pull fills the unified pool with page cache. So after the pull, before any container is made, each node is asked again whether this run's claim is free — less whatever runs still starting there have claimed and not yet mapped. Short of it, the page cache is dropped (on a node another run is serving on, only that: compaction would stall it), and the launch waits up to `memory.launch_wait_seconds` (90 by default) for the memory to come — a run beside one that is stopping gets it a moment later. If it does not, the run fails before anything was started, with the numbers and who holds them:
+
+> not enough free memory on spark-01 to start the engine: it asks 0.12 of 121.6 GiB (14.6 GiB) and 11.2 GiB is free after waiting 90s (run inkling holds 85.6 GiB; 21.4 GiB is held outside any run). To start it, lower gpu_memory_utilization to 0.09 or less, or stop a run on this node
+
+A node that cannot be asked is let through with an event saying so — the engine's own check is still there. Settings → Memory turns the check off (`memory.check_before_launch`) or changes the wait. The control node can drop its caches only when the `spark-pulse` service unit lets its agent use sudo; a unit written before this release carried `NoNewPrivileges`, and an event says to reinstall it (`spark-pulse install`, `--user` for a user service).
+
+### What a run was seen holding
+
+Every minute, each node a ready run is on is asked what that run's containers hold, and the largest figure is kept against the run's intent hash — what the run *is*, whatever it was called — and the node's size in whole GiB. The next plan of the same thing on a node of that size counts at least that much, for itself and as a co-tenant: an estimate is replaced by a measurement once there is one. The figure only rises.
+
+When an engine fails before it is ready, its error keeps the exception lines from above the last 20 log lines under *Root cause:* — vLLM's last lines are its API server's wrapper traceback, and the line that says why is further up, in a container that may have been removed by the time anybody looks.
 
 ## Deploying a model that is not downloaded
 

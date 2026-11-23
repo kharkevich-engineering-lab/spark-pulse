@@ -721,9 +721,13 @@ message CacheDirResult {
 // The agent writes `3` to /proc/sys/vm/drop_caches (when `drop_caches`) and
 // `1` to /proc/sys/vm/compact_memory, each through `sudo -n /usr/bin/tee` with
 // a fixed path, because the agent runs unprivileged. Both stall whatever else
-// is on the node, so the control plane only asks an idle one.
+// is on the node, so the control plane compacts only an idle one; beside a
+// serving run it may still drop the caches alone (`skip_compaction`) when a
+// launch needs the memory the page cache is holding.
 message CompactMemory {
   bool drop_caches = 1;
+  // Only drop the caches. An agent older than the field compacts anyway.
+  bool skip_compaction = 2;
 }
 
 message MemoryCompaction {

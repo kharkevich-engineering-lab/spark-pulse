@@ -22,6 +22,7 @@ import { AlertTriangle, CheckCircle2, Info, XCircle } from "lucide-react";
 import { useI18n, type Translator } from "@/lib/i18n";
 import type { PreflightCheck, PreflightReport, PreflightVerdict } from "@/lib/types";
 import { formatSize } from "@/lib/utils";
+import { Button } from "@/ui";
 
 /** How each verdict reads, and the tone it is shown in.
  *
@@ -90,6 +91,42 @@ export function memoryLine(report: PreflightReport): string {
   return estimate ? estimate.observed : "";
 }
 
+/** What the vram check says about the GPU memory field: the range that holds
+ *  the model at its context, and the longest context that fits. */
+export interface VramFit {
+  key: string;
+  node: string;
+  min: string | null;
+  max: string | null;
+  context: number | null;
+  /** The fraction in the field now; a one-click value is pointless when it is the same. */
+  current: number | null;
+}
+
+const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+
+export function vramFits(report: PreflightReport): VramFit[] {
+  return report.checks
+    .filter((c) => c.id === "vram")
+    .flatMap((c) => {
+      const min = num(c.detail?.min_fraction);
+      const max = num(c.detail?.max_fraction);
+      const context = num(c.detail?.max_model_len_fit);
+      if (min === null && context === null) return [];
+      return [
+        {
+          key: `${c.node_id}-${c.id}`,
+          node: c.node,
+          // Rounded up: a fraction a hair under the minimum is not enough.
+          min: min === null ? null : (Math.ceil(min * 100) / 100).toFixed(2),
+          max: max === null ? null : (Math.floor(max * 100) / 100).toFixed(2),
+          context,
+          current: num(c.detail?.fraction),
+        },
+      ];
+    });
+}
+
 const STATUS_ICON = {
   fail: XCircle,
   warn: AlertTriangle,
@@ -102,11 +139,19 @@ const STATUS_TONE = {
   pass: "text-success",
 } as const;
 
-export default function PreflightPanel({ report }: { report: PreflightReport }) {
+export default function PreflightPanel({
+  report,
+  onUseFraction,
+}: {
+  report: PreflightReport;
+  /** Puts a fraction in the deploy dialog's GPU memory field. */
+  onUseFraction?: (fraction: string) => void;
+}) {
   const i18n = useI18n();
   const { t, plural } = i18n;
   const rows = checksToShow(report);
   const memory = memoryLine(report);
+  const fits = vramFits(report);
   const style = VERDICT_STYLE[report.verdict];
 
   return (
@@ -136,6 +181,31 @@ export default function PreflightPanel({ report }: { report: PreflightReport }) 
           {memory}
         </p>
       )}
+
+      {fits.map((fit) => (
+        <p
+          key={fit.key}
+          className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-text-muted"
+          data-testid="preflight-vram-fit"
+        >
+          {fit.min !== null && fit.max !== null && (
+            <span>{t("preflight.fitRange", { min: fit.min, max: fit.max })}</span>
+          )}
+          {fit.context !== null && (
+            <span>{t("preflight.fitContext", { n: fit.context.toLocaleString("en-US") })}</span>
+          )}
+          {onUseFraction && fit.min !== null && fit.current !== null && Math.abs(fit.current - Number(fit.min)) > 0.001 && (
+            <Button
+              size="sm"
+              variant="ghost"
+              data-testid="preflight-use-min"
+              onClick={() => onUseFraction(fit.min as string)}
+            >
+              {t("preflight.useMin", { min: fit.min })}
+            </Button>
+          )}
+        </p>
+      ))}
 
       {rows.length === 0 ? (
         <p className="flex items-center gap-1.5 text-xs text-success">

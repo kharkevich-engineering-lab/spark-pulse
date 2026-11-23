@@ -119,7 +119,10 @@ SPARK = NodeProfile(
     platform="linux/arm64",
     cpu_count=20,
     memory_total_bytes=130_000_000_000,
-    memory_available_bytes=104_000_000_000,
+    # An idle Spark's own reading: ~117 of 121.6 GiB available. Lower and a
+    # recipe at vLLM's default 0.9 would be refused by the launch's memory
+    # check on a node no real Spark would refuse it on.
+    memory_available_bytes=125_000_000_000,
     gpu_name="NVIDIA GB10",
     gpu_uuid="GPU-00000000-0000-0000-0000-000000000000",
     gpu_memory_total_bytes=None,

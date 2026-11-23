@@ -534,7 +534,7 @@ def realise(
         served_model = _served_model_name(ranks[0].command) or intent.model
 
     fraction = _claimed_fraction(engine_obj, ranks[0].command, merged)
-    budget = _memory_budget(node_list, fraction, dep_id, services)
+    budget = _memory_budget(node_list, fraction, dep_id, services, intent.intent_hash())
     return state.DeployPlan(
         deployment_id=dep_id,
         recipe_id=str(recipe.get("id") or recipe_id),

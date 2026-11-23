@@ -81,6 +81,16 @@ def describe(label: str, result: Any) -> tuple[str, dict[str, Any]]:
             "missing, reinstall the agent",
             meta,
         )
+    if "no new privileges" in detail or "is owned by uid 65534" in detail:
+        # The control node's agent inherits the spark-pulse service's sandbox,
+        # and units written before 2026-11 blocked sudo; rewriting the unit
+        # is the whole fix.
+        return (
+            f"{label}: memory was not compacted; the spark-pulse service unit "
+            "blocks sudo for the agent it runs; reinstall it with "
+            "`spark-pulse install` (`--user` for a user service)",
+            meta,
+        )
     if not result.compacted:
         suffix = f" ({detail})" if detail else ""
         return f"{label}: memory was not compacted{suffix}", meta

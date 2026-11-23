@@ -352,6 +352,29 @@ describe("SettingsPage features tab", () => {
 describe("SettingsPage memory tab", () => {
   beforeEach(seedApi);
 
+  it("saves the launch memory check and its wait, the wait disabled with the check off", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await openTab(/memory/i);
+
+    const check = await screen.findByRole("switch", { name: "Check memory before launch" });
+    expect(check).toHaveAttribute("aria-checked", "true");
+    const wait = screen.getByLabelText("Memory wait");
+    expect(wait).toHaveValue(90);
+    await user.clear(wait);
+    await user.type(wait, "120");
+    await user.click(saveButton());
+    await waitFor(() =>
+      expect(updateSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ memory: expect.objectContaining({ launch_wait_seconds: 120 }) }),
+      ),
+    );
+
+    await user.click(check);
+    expect(check).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByLabelText("Memory wait")).toBeDisabled();
+  });
+
   it("lists the node clean-ups, each off until chosen", async () => {
     renderPage();
     await openTab(/memory/i);

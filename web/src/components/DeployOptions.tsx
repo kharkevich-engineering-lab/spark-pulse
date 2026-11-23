@@ -24,6 +24,7 @@ import type {
 import { AlertCircle, ChevronDown, Eye } from "lucide-react";
 import { Button, ErrorLine, Field, Input, Select } from "@/ui";
 import { formatSize } from "@/lib/utils";
+import MemoryBar from "@/components/MemoryBar";
 import PreflightPanel from "@/components/PreflightPanel";
 
 export interface DeployOptionsValue {
@@ -931,7 +932,8 @@ export default function DeployOptions({
                 )}
               </div>
 
-              {sharedNodes(plan).map((entry) => {
+              {(plan.memory_budget ?? []).map((entry) => {
+                const shared = entry.holders.length > 0;
                 // Offered only where it would change the answer: a fraction
                 // engine asking for more than is left, with something left.
                 const suggest =
@@ -942,25 +944,29 @@ export default function DeployOptions({
                     ? entry.max_fraction.toFixed(2)
                     : null;
                 return (
-                  <p
-                    key={entry.key}
-                    className={`flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] ${
-                      entry.fits === false ? "text-warn" : "text-muted"
-                    }`}
-                    data-testid="deploy-memory-budget"
-                  >
-                    <span>{describeBudget(entry, i18n)}</span>
-                    {suggest !== null && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        data-testid="deploy-memory-apply"
-                        onClick={() => editFraction(suggest)}
+                  <div key={entry.key} className="space-y-1.5">
+                    {shared && (
+                      <p
+                        className={`flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] ${
+                          entry.fits === false ? "text-warn" : "text-muted"
+                        }`}
+                        data-testid="deploy-memory-budget"
                       >
-                        {t("memoryBudget.apply", { max: suggest })}
-                      </Button>
+                        <span>{describeBudget(entry, i18n)}</span>
+                        {suggest !== null && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            data-testid="deploy-memory-apply"
+                            onClick={() => editFraction(suggest)}
+                          >
+                            {t("memoryBudget.apply", { max: suggest })}
+                          </Button>
+                        )}
+                      </p>
                     )}
-                  </p>
+                    <MemoryBar entry={entry} />
+                  </div>
                 );
               })}
 
@@ -970,7 +976,7 @@ export default function DeployOptions({
                 </p>
               ))}
 
-              {preflight && <PreflightPanel report={preflight} />}
+              {preflight && <PreflightPanel report={preflight} onUseFraction={editFraction} />}
 
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted mb-1">

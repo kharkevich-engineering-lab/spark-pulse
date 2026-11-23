@@ -33,6 +33,7 @@ this module reads a file, opens a socket or knows what a node is.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -45,6 +46,8 @@ __all__ = [
     "KV_LAYOUT_DENSE",
     "KV_LAYOUT_MLA",
     "KV_LAYOUT_UNKNOWN",
+    "context_that_fits",
+    "min_fraction",
 ]
 
 GIB = 1024**3
@@ -326,3 +329,57 @@ def estimate(
         layout=shape.layout,
         unknowns=unknowns,
     )
+
+
+def min_fraction(need_bytes: int | None, total_bytes: int | None) -> float | None:
+    """The smallest fraction of ``total_bytes`` that holds ``need_bytes``.
+
+    Rounded *up* to 0.01, the opposite of the budget's ``max_fraction``, so
+    that taking it never lands a hair under what the model needs.
+    """
+    if not need_bytes or not total_bytes or total_bytes <= 0:
+        return None
+    return math.ceil(need_bytes / total_bytes * 100 - 1e-9) / 100
+
+
+#: What a suggested context length is rounded down to. An engine takes any
+#: length, but an operator reads 57,344 as a number somebody chose and
+#: 57,519 as one a calculator did.
+CONTEXT_STEP = 1024
+
+
+def context_that_fits(
+    shape: ModelShape,
+    workload: Workload,
+    budget_bytes: int | None,
+) -> int | None:
+    """The longest ``max_model_len`` whose estimate fits in ``budget_bytes``.
+
+    The inverse of :func:`estimate`: what is left of the budget after the
+    weights and the runtime's overhead, divided by what one token costs for
+    every sequence the pool is asked to hold. ``None`` when the cache cannot
+    be sized or the weights alone do not fit; never more than the context the
+    workload asked for, because a suggestion is a way down, not a way up.
+    """
+    if not budget_bytes or shape.weight_bytes is None or not shape.can_size_kv():
+        return None
+    element = _dtype_bytes(shape.kv_dtype)
+    if element is None:
+        return None
+    per_token = _kv_bytes_per_token(shape, element)
+    if not per_token:
+        return None
+    ranks = max(int(workload.tensor_parallel or 1), 1) * max(
+        int(workload.pipeline_parallel or 1), 1
+    )
+    seqs = max(int(workload.max_num_seqs or 1), 1)
+    room = (budget_bytes - RUNTIME_OVERHEAD_BYTES) * ranks - shape.weight_bytes
+    if room <= 0:
+        return None
+    tokens = room // (per_token * seqs)
+    tokens = (tokens // CONTEXT_STEP) * CONTEXT_STEP
+    if tokens <= 0:
+        return None
+    if workload.max_model_len:
+        tokens = min(tokens, int(workload.max_model_len))
+    return int(tokens)

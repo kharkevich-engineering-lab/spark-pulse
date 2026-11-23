@@ -756,6 +756,34 @@ export default function SettingsPage() {
               on={!!memoryCfg.lazy_nccl_communicators}
               onChange={() => setMemory({ lazy_nccl_communicators: !memoryCfg.lazy_nccl_communicators })}
             />
+            <SwitchRow
+              label={t("memorySettings.checkLaunch")}
+              hint={<Brief text={t("memorySettings.checkLaunchHelp")} />}
+              on={memoryCfg.check_before_launch ?? true}
+              onChange={() => setMemory({ check_before_launch: !(memoryCfg.check_before_launch ?? true) })}
+            />
+            <SettingRow label={t("memorySettings.launchWait")} hint={<Brief text={t("memorySettings.launchWaitHelp")} />}>
+              {(control) => (
+                <div className="flex items-center gap-2">
+                  <div className="w-28 shrink-0">
+                    <Input
+                      {...control}
+                      mono
+                      type="number"
+                      min="0"
+                      max="3600"
+                      disabled={!(memoryCfg.check_before_launch ?? true)}
+                      value={memoryCfg.launch_wait_seconds ?? 90}
+                      onChange={(e) => {
+                        const n = parseInt(e.target.value, 10);
+                        setMemory({ launch_wait_seconds: Number.isNaN(n) ? 0 : Math.min(3600, Math.max(0, n)) });
+                      }}
+                    />
+                  </div>
+                  <span className="shrink-0 text-[14px] text-muted">{t("common.seconds")}</span>
+                </div>
+              )}
+            </SettingRow>
           </SettingsSection>
           <SettingsSection title={t("nodeCleanup.title")} hint={<Brief text={t("nodeCleanup.settingsHint")} />}>
             {NODE_TUNING_IDS.map((id) => (

@@ -463,6 +463,10 @@ export interface ClusterReport {
 export interface MemorySettings {
   compact_before_launch?: boolean;
   lazy_nccl_communicators?: boolean;
+  /** Wait for (and make) free memory before a run starts. */
+  check_before_launch?: boolean;
+  /** How long the launch waits for memory, 0 to 3600. */
+  launch_wait_seconds?: number;
   /** Which node clean-ups the doctor checks. Checking changes nothing. */
   node_tuning?: NodeTuningId[];
 }
@@ -923,7 +927,12 @@ export interface MemoryHolder {
   name: string;
   fraction: number | null;
   bytes: number | null;
-  source: "fraction" | "measured" | "unknown";
+  /** `observed`: the largest a run of the same intent was seen holding. */
+  source: "fraction" | "measured" | "observed" | "unknown";
+  /** What the node's containers were measured holding, when read. */
+  measured_bytes?: number | null;
+  /** The largest this intent was seen holding on an earlier run. */
+  observed_bytes?: number | null;
   reason: string;
 }
 
@@ -941,6 +950,10 @@ export interface MemoryBudget {
   max_fraction: number | null;
   claim_fraction: number | null;
   claim_bytes: number | null;
+  /** Where the claim came from; empty when there is none. */
+  claim_source?: "fraction" | "observed" | "estimate" | "";
+  /** Memory in use on a unified node that no run accounts for. */
+  unattributed_bytes?: number | null;
   fits: boolean | null;
   complete: boolean;
   reason: string;

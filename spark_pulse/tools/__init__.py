@@ -22,6 +22,8 @@ import os
 # switch must not see them); ``event_log``, which is a database table written
 # on the way to the broadcaster and read back by the run's own history — the
 # same code and the same table in both modes, only a different database file;
+# ``footprints``, the peak each run was seen holding, a table and a sampler
+# that reaches every node through the switch, for the same reason;
 # ``scheduled_deploys``, which is a database table and reaches everything it
 # acts on *through* the switch, so it is the same code in both modes; and
 # ``reconciler``, which is a thread over the records and reaches every node
@@ -40,6 +42,7 @@ from spark_pulse.tools import custom_files as custom_files
 from spark_pulse.tools import custom_recipes as custom_recipes
 from spark_pulse.tools import deployment_records as deployment_records
 from spark_pulse.tools import event_log as event_log
+from spark_pulse.tools import footprints as footprints
 from spark_pulse.tools import hub_cache as hub_cache
 from spark_pulse.tools import intent as intent
 from spark_pulse.tools import labels as labels

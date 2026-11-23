@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shlex
 import socket
 import tempfile
@@ -62,7 +63,13 @@ from typing import Any, Callable
 
 from spark_pulse import tools
 from spark_pulse.config import config
-from spark_pulse.tools.backends.docker import compaction, images, planning, state
+from spark_pulse.tools.backends.docker import (
+    compaction,
+    images,
+    memory_gate,
+    planning,
+    state,
+)
 from spark_pulse.tools.docker import (
     ContainerMetadata,
     PullCancelled,
@@ -203,6 +210,23 @@ def _deploy_script(docker: Any, rank_plan: state.RankPlan) -> None:
 #: still there: a readiness failure does not tear the container down, so
 #: ``GET /api/deployments/{id}/logs`` still has the whole log.
 ERROR_LOG_LINES = 20
+
+#: How far back an error message looks for the exception that started it.
+#: vLLM's last twenty lines are the API server's own traceback ending in
+#: "Engine core initialization failed. See root cause above" — and by the
+#: time anybody reads the record, the container holding "above" may be gone.
+ROOT_CAUSE_SCAN_LINES = 400
+
+#: How many exception lines from above the tail an error message carries.
+ROOT_CAUSE_LINES = 3
+
+#: A line that states an exception: ``ValueError: …``, ``torch.OutOfMemoryError:
+#: …``, optionally behind vLLM's ``(EngineCore pid=126)`` prefix or a log
+#: level. Traceback frames (``File "…"``) and caret lines never match.
+_EXCEPTION_LINE = re.compile(
+    r"^\s*(?:\([\w ]+pid=\d+\)\s*)?(?:ERROR\b.*?\]\s*)?"
+    r"(?:[A-Za-z_][\w]*\.)*[A-Za-z_]\w*(?:Error|Exception|Exit)\b:?.*\S"
+)
 
 #: What the liveness probe exits with when it could not find out. Any code
 #: that is neither "alive" (0) nor "no such process" (1) means the same
@@ -444,8 +468,43 @@ def _exit_code_of(status: dict[str, Any]) -> int | None:
 
 
 def _log_tail(docker: Any, name: str) -> str:
-    """The container's last words, for an error that would otherwise have none."""
-    return logs_for_container(docker, name, ERROR_LOG_LINES)
+    """The container's last words, for an error that would otherwise have none.
+
+    The last :data:`ERROR_LOG_LINES`, plus the exception lines above them
+    (:func:`error_excerpt`): an engine whose last words are a wrapper's
+    traceback said why somewhere earlier, and that is the line worth keeping.
+    """
+    return error_excerpt(logs_for_container(docker, name, ROOT_CAUSE_SCAN_LINES))
+
+
+def error_excerpt(log: str) -> str:
+    """The tail of ``log`` with the root cause above it, when it is not in it.
+
+    Pure. vLLM's API server dies with ``RuntimeError: Engine core
+    initialization failed. See root cause above``, and "above" — the engine
+    core's ``ValueError: Free memory on device …`` — is further back than the
+    tail reaches. The last :data:`ROOT_CAUSE_LINES` distinct exception lines
+    from above the tail are put first, under ``Root cause:``; a tail that
+    already holds every exception the log does comes back unchanged.
+    """
+    lines = log.splitlines()
+    if len(lines) <= ERROR_LOG_LINES:
+        return log
+    head, tail = lines[:-ERROR_LOG_LINES], lines[-ERROR_LOG_LINES:]
+    seen = {line.strip() for line in tail}
+    causes: list[str] = []
+    for line in reversed(head):
+        text = line.strip()
+        if text in seen or not _EXCEPTION_LINE.match(line):
+            continue
+        seen.add(text)
+        causes.insert(0, text)
+        if len(causes) == ROOT_CAUSE_LINES:
+            break
+    body = "\n".join(tail)
+    if not causes:
+        return body
+    return "Root cause:\n" + "\n".join(causes) + "\n…\n" + body
 
 
 def _container_exit_message(
@@ -1010,6 +1069,13 @@ def start(
             "error_message": state._error_text(message),
         }
 
+    def _cancelled_before_create() -> dict[str, Any]:
+        message = f"deploy of {dep_id} cancelled by teardown"
+        state.publish_event(EventType.DEPLOYMENT_STOPPED, dep_id, message)
+        return state._update_record(
+            dep_id, status="stopped", stopped_at=state._now()
+        ) or {**record, "status": "stopped"}
+
     # Nothing of an earlier attempt may still be alive when this one claims
     # the names and the GPUs.
     try:
@@ -1053,6 +1119,17 @@ def start(
         # not get to return without settling it.
         logger.exception("the pull phase of %s failed", dep_id)
         return _fail(f"could not pull image {spec.image}: {exc}")
+
+    # The pull took minutes and filled the page cache; the budget the plan was
+    # judged on is that old. Ask every node again, now, whether the memory the
+    # engine will ask for is free — and wait a little for it — rather than
+    # letting the engine find out after the containers are made. Outside the
+    # lifecycle lock, because waiting under it would hold a stop off.
+    short = memory_gate.check(services, plan_obj, lambda: _teardown_requested(dep_id))
+    if _teardown_requested(dep_id):
+        return _cancelled_before_create()
+    if short:
+        return _fail(short)
 
     # Two phases, as upstream has them. Every container is created and
     # modded before any of them is launched, so an image that is missing on

@@ -264,6 +264,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"Warning: could not start the engine metrics sampler: {e}")
 
+    # What each running run holds, sampled once a minute, so the next plan of
+    # the same thing is budgeted from a measurement rather than arithmetic.
+    try:
+        tools.footprints.start_sampler()
+    except Exception as e:
+        print(f"Warning: could not start the footprint sampler: {e}")
+
     # The reconciler, which is what makes a delete answer immediately: the
     # request records the intent, this thread converges the nodes. Started
     # after the recovery pass above so its first sweep sees a settled store.
@@ -292,6 +299,7 @@ async def lifespan(app: FastAPI):
 
     try:
         tools.engine_metrics.stop_sampler()
+        tools.footprints.stop_sampler()
         tools.reconciler.stop_reconciler()
     except Exception as e:  # pragma: no cover — shutdown is best effort
         print(f"Warning: could not stop a background thread: {e}")
