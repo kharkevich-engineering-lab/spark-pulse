@@ -320,6 +320,7 @@ class EngineRegistry:
         # race on its cache file.
         self._refresh_lock = threading.Lock()
         self._attempted_at: dict[str, float] = {}
+        self._errors: dict[str, str] = {}
         self._fixed: list[EngineSpec] = []
         self._indexed: dict[str, list[EngineSpec]] = {}
         self._fetched_at: dict[str, float] = {}
@@ -387,13 +388,16 @@ class EngineRegistry:
                 data = fetch_index(ref)
             except Exception as exc:
                 logger.warning("Engine index %s refresh failed: %s", ref, exc)
+                self._errors[ref] = str(exc) or type(exc).__name__
                 results.append({"ref": ref, "status": "error", "error": str(exc)})
                 continue
             if data is None:
+                self._errors[ref] = "no index.yaml"
                 results.append(
                     {"ref": ref, "status": "error", "error": "no index.yaml"}
                 )
                 continue
+            self._errors.pop(ref, None)
             specs = parse_index(data, ref)
             with self._lock:
                 self._indexed[ref] = specs
@@ -444,6 +448,24 @@ class EngineRegistry:
             for ref in self.index_refs
         ):
             self.refresh(force=False)
+
+    def index_status(self) -> list[dict[str, Any]]:
+        """Per configured index: what it gave, when, and the last failure.
+
+        ``error`` is the most recent fetch's and is cleared by the next one
+        that succeeds; an index that failed but has a cached copy still serves
+        that copy, which is why ``engines`` and ``error`` can both be set.
+        """
+        with self._lock:
+            return [
+                {
+                    "ref": ref,
+                    "engines": len(self._indexed.get(ref, [])),
+                    "fetched_at": self._fetched_at.get(ref) or None,
+                    "error": self._errors.get(ref),
+                }
+                for ref in self.index_refs
+            ]
 
     # -- disk cache --------------------------------------------------------
 

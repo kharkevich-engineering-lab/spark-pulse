@@ -208,12 +208,17 @@ def test_a_failed_fetch_is_retried_after_the_backoff(tmp_path, monkeypatch, inde
     reg = EngineRegistry(cache_dir=tmp_path / "cache", cache_ttl=3600)
     reg.refresh_in_background().join(timeout=10)
     assert reg.list() == []
+    [status] = reg.index_status()
+    assert status["error"] == "registry down" and status["engines"] == 0
     # Within the backoff nothing is started; after it, the fetch runs again.
     assert reg.refresh_in_background() is None
     clock[0] += registry_module.RETRY_SECONDS
     reg.refresh_in_background().join(timeout=10)
     assert [s.engine for s in reg.list()] == ["newcomer"]
     assert len(calls) == 2
+    [status] = reg.index_status()
+    assert status["error"] is None and status["engines"] == 1
+    assert status["fetched_at"] == clock[0]
     # The cache was written whole, and nothing temporary was left beside it.
     assert [p.suffix for p in (tmp_path / "cache").iterdir()] == [".json"]
 

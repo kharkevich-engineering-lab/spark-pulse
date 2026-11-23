@@ -62,6 +62,9 @@ def list_engines():
     registry.refresh_if_stale()
     return {
         "default_engine": config.default_engine,
+        "indexes": registry.index_status(),
+        "default_indexes": config.default_engine_indexes,
+        "indexes_env_managed": config.engine_indexes_env_managed,
         "engines": [
             {
                 **spec.summary(),

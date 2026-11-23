@@ -154,7 +154,7 @@
     "empty": "No engines yet. Pull one with Pull image.",
     "indexTtl": "Index cache lifetime",
     "indexes": "Engine indexes",
-    "indexesHelp": "One OCI reference per line. Fetched on demand and cached, never on startup.",
+    "indexesHelp": "One OCI reference (or index.yaml path) per line. Every engine comes from these; fetched in the background and cached.",
     "lastEngineMessage": "At least one engine has to stay enabled, or no recipe could be deployed.",
     "lastEngineTitle": "Can't disable the last engine",
     "live": "live",
@@ -1192,7 +1192,11 @@
     "toolsHeading": "Tools ({count})",
     "toolsHint": "Asked of the endpoint itself, so this is what a client would see — not a list kept by hand here.",
     "toolsFailed": "Could not read the tool list from {endpoint}.",
-    "guidesHint": "Each snippet carries the endpoint above, so there is nothing to fill in."
+    "guidesHint": "Each snippet carries the endpoint above, so there is nothing to fill in.",
+    "indexesFromEnv": "Set by SPARK_PULSE_ENGINE_INDEXES in this process's environment; change it there.",
+    "useDefaultIndex": "Use the default index",
+    "indexFetched": "· {count} engines, fetched {time}",
+    "indexNeverFetched": "· not fetched yet"
   },
   "deployPort": {
     "label": "API port",

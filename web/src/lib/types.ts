@@ -693,9 +693,26 @@ export interface EngineDetail extends EngineSummary {
   gpu_arch: string[];
 }
 
+/** One configured engine index, as the registry last saw it. */
+export interface EngineIndexStatus {
+  ref: string;
+  /** Engines it published at its last successful fetch (0: none yet). */
+  engines: number;
+  /** Epoch seconds of that fetch, or null if it has never succeeded. */
+  fetched_at: number | null;
+  /** The latest fetch's failure, cleared by the next one that succeeds. */
+  error: string | null;
+}
+
 export interface EngineListResponse {
   default_engine: string;
   engines: EngineSummary[];
+  /** Absent from a server older than the index being the registry. */
+  indexes?: EngineIndexStatus[];
+  /** The indexes this package ships with. */
+  default_indexes?: string[];
+  /** True when SPARK_PULSE_ENGINE_INDEXES decides them, not Settings. */
+  indexes_env_managed?: boolean;
 }
 
 export interface EngineIndexRefreshResult {

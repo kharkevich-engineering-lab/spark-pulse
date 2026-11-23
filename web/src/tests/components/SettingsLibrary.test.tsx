@@ -18,9 +18,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import SettingsLibrary from "@/components/SettingsLibrary";
-import type { ModelSource, OciRegistry } from "@/lib/types";
+import type { EngineListResponse, EngineSummary, ModelSource, OciRegistry } from "@/lib/types";
 
 vi.mock("@/lib/api", () => ({
+  fetchEngines: vi.fn(),
   refreshEngines: vi.fn(),
   fetchOciRegistries: vi.fn(),
   addOciRegistry: vi.fn(),
@@ -34,6 +35,7 @@ vi.mock("@/lib/api", () => ({
 
 import {
   addOciRegistry,
+  fetchEngines,
   fetchOciAutoUpdateSettings,
   fetchOciRegistries,
   refreshEngines,
@@ -52,6 +54,21 @@ const REGISTRY: OciRegistry = {
   connected: true,
   auth_type: "none",
 } as OciRegistry;
+
+const ENGINES: EngineListResponse = {
+  default_engine: "vllm",
+  engines: [
+    { engine: "vllm", variant: "default" },
+    { engine: "sglang", variant: "default" },
+    { engine: "sglang", variant: "inkling" },
+  ] as EngineSummary[],
+  indexes: [
+    { ref: "https://acme.test/engines.json", engines: 3, fetched_at: 1_700_000_000, error: null },
+    { ref: "ghcr.io/broken/index:1", engines: 0, fetched_at: null, error: "manifest unknown" },
+  ],
+  default_indexes: ["ghcr.io/kharkevich-engineering-lab/spark-pulse-engine/index:latest"],
+  indexes_env_managed: false,
+};
 
 const SOURCES: ModelSource[] = [
   { name: "huggingface", type: "hf_hub", endpoint: "https://huggingface.co", token_secret: "" },
@@ -73,6 +90,7 @@ function Harness({ sources = SOURCES }: { sources?: ModelSource[] | null }) {
 function seed() {
   vi.clearAllMocks();
   vi.mocked(fetchOciRegistries).mockResolvedValue([REGISTRY]);
+  vi.mocked(fetchEngines).mockResolvedValue(ENGINES);
   vi.mocked(fetchOciAutoUpdateSettings).mockResolvedValue({
     enabled: false,
     schedule: "0 3 * * *",
@@ -100,6 +118,48 @@ describe("SettingsLibrary engines", () => {
     await user.click(await screen.findByRole("button", { name: /refresh/i }));
 
     expect(await screen.findByText("index 404")).toBeInTheDocument();
+  });
+
+  it("offers the engines the indexes publish as the default engine", async () => {
+    render(<Harness />);
+    const select = await screen.findByRole("combobox", { name: /default engine/i });
+    await waitFor(() => expect(select.querySelectorAll("option")).toHaveLength(2));
+    expect([...select.querySelectorAll("option")].map((o) => o.textContent)).toEqual(["sglang", "vllm"]);
+  });
+
+  it("says what each index gave and why one failed", async () => {
+    render(<Harness />);
+    const status = await screen.findByTestId("index-status");
+    expect(status).toHaveTextContent("https://acme.test/engines.json");
+    expect(status).toHaveTextContent("3 engines");
+    expect(status).toHaveTextContent("not fetched yet");
+    expect(screen.getByText("manifest unknown")).toBeInTheDocument();
+  });
+
+  it("puts the default index back in one click", async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.click(await screen.findByRole("button", { name: /use the default index/i }));
+    expect(screen.getByRole("textbox", { name: /engine indexes/i })).toHaveValue(
+      "ghcr.io/kharkevich-engineering-lab/spark-pulse-engine/index:latest",
+    );
+    expect(screen.queryByRole("button", { name: /use the default index/i })).not.toBeInTheDocument();
+  });
+
+  it("does not offer an edit the environment would overrule", async () => {
+    vi.mocked(fetchEngines).mockResolvedValue({ ...ENGINES, indexes_env_managed: true });
+    render(<Harness />);
+    expect(await screen.findByTestId("indexes-from-env")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: /engine indexes/i })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /use the default index/i })).not.toBeInTheDocument();
+  });
+
+  it("keeps a free-text field when no engine is known yet", async () => {
+    vi.mocked(fetchEngines).mockResolvedValue({ default_engine: "vllm", engines: [] });
+    render(<Harness />);
+    await waitFor(() => expect(fetchEngines).toHaveBeenCalled());
+    // The current value alone makes one option; with none it is a text box.
+    expect(await screen.findByRole("combobox", { name: /default engine/i })).toHaveValue("vllm");
   });
 });
 

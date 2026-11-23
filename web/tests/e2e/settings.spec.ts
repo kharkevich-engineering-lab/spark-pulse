@@ -68,8 +68,12 @@ test("shows the configuration the backend is running with", async ({ page, reque
   // and the model sources, which were a panel at the top of Models.
   await page.getByRole("tab", { name: "Library" }).click();
   await expect(page.getByRole("heading", { name: "Where engines come from" })).toBeVisible();
-  const library = await valuesOnScreen();
-  expect(library).toContain(settings.default_engine);
+  // The default engine is picked from what the indexes publish.
+  await expect(page.getByRole("combobox", { name: "Default engine" })).toHaveValue(
+    settings.default_engine,
+  );
+  // Each configured index says what it gave (simulation fetches nothing).
+  await expect(page.getByTestId("index-status")).toContainText(settings.engine_indexes[0]);
   const indexes = await page.getByLabel("Engine indexes").inputValue();
   expect(indexes).toBe(settings.engine_indexes.join("\n"));
   await expect(page.getByRole("heading", { name: "Model sources" })).toBeVisible();

@@ -402,6 +402,28 @@ class _Config:
         )
 
     @property
+    def default_engine_indexes(self) -> list[str]:
+        """The engine indexes this package ships with, whatever is set now.
+
+        Read from ``config.yaml`` alone, so Settings can offer "use the
+        default" after an operator has pointed the control plane elsewhere.
+        """
+        try:
+            with open(_CONFIG_PATH) as f:
+                value = (yaml.safe_load(f) or {}).get("engine_indexes") or []
+        except (OSError, yaml.YAMLError):
+            return []
+        if isinstance(value, str):
+            value = value.split(",")
+        return [str(v).strip() for v in value if str(v).strip()]
+
+    @property
+    def engine_indexes_env_managed(self) -> bool:
+        """Whether ``SPARK_PULSE_ENGINE_INDEXES`` decides the indexes, which
+        makes the setting one nobody can change from Settings."""
+        return os.environ.get("SPARK_PULSE_ENGINE_INDEXES") is not None
+
+    @property
     def engine_indexes(self) -> list[str]:
         """OCI references of engine index artifacts, in priority order."""
         raw = os.environ.get("SPARK_PULSE_ENGINE_INDEXES")
