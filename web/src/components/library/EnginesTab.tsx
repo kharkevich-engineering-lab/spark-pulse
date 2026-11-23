@@ -7,8 +7,8 @@
  * capability list on one page and the size on another.
  *
  * So: one row per engine, carrying both. Where engines *come from* — the
- * indexes, the cache lifetime, the default — is configuration, and lives with
- * the rest of it in Settings; this tab is what is here now.
+ * indexes, the cache lifetime, the default — is the page's other section,
+ * Sources (`EngineSources`); this one is what is here now.
  *
  * The other half of the merge is per-node. Opening a row shows what the engine
  * is in a strip under it and asks each node what it holds, and both destructive verbs — delete, and
@@ -16,7 +16,7 @@
  * them. Pulling by reference is the page's primary action, in a dialog.
  */
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDownToLine, Copy, Layers, Trash2 } from "lucide-react";
 import {
   cancelImagePull,
@@ -46,7 +46,6 @@ import {
   Field,
   IconButton,
   Input,
-  InfoTip,
   KeyValues,
   Modal,
   NodeScopedDialog,
@@ -67,6 +66,13 @@ import {
 } from "@/ui";
 import type { AlertTone } from "@/ui";
 import type { EngineSummary, ImageEntry, ImagePresence, ImagePullJob } from "@/lib/types";
+import {
+  LibraryStateChip,
+  libraryFilterTabs,
+  matchesFilter,
+  type LibraryFilter,
+  type LibraryState,
+} from "./LibraryState";
 
 interface ImageEventFrame {
   type?: string;
@@ -107,20 +113,47 @@ export function updateReason(image: ImageEntry, t: Translator["t"]): string {
   return "";
 }
 
-export type EngineFilter = "all" | "pulled" | "missing" | "update";
+/** Where an engine's image stands, in the one vocabulary every Library page
+ *  speaks.
+ *
+ * Presence is per node and arrives after the catalogue, so until a node has
+ * answered the image is judged by this machine's copy alone; a node that could
+ * not be asked is *unknown*, never absent.
+ */
+export interface EngineStanding {
+  state: LibraryState;
+  detail?: string;
+  title?: string;
+}
 
-/** Does this image belong under a filter? */
-export function inEngineFilter(image: ImageEntry, filter: EngineFilter): boolean {
-  switch (filter) {
-    case "pulled":
-      return image.present;
-    case "missing":
-      return !image.present;
-    case "update":
-      return Boolean(image.digest_drift);
-    default:
-      return true;
+export function engineStanding(
+  row: { image: ImageEntry; engine: EngineSummary | null },
+  presence: ImagePresence | "loading" | undefined,
+  pulling: boolean,
+  t: Translator["t"],
+): EngineStanding {
+  const { image, engine } = row;
+  if (pulling) return { state: "getting" };
+  if (!image.present) {
+    return {
+      state: "available",
+      detail: engine?.available === false ? t("engines.unpublished") : undefined,
+      title: t("engines.notPulledTitle"),
+    };
   }
+  if (image.digest_drift) return { state: "update", title: t("engines.digestDriftTitle") };
+  if (presence && presence !== "loading") {
+    const failed = presence.nodes.filter((n) => n.error);
+    if (failed.length > 0) {
+      return { state: "unknown", title: failed.map((n) => `${n.node}: ${n.error}`).join("\n") };
+    }
+    const total = presence.nodes.length + 1;
+    const held = presence.nodes.filter((n) => n.present).length + 1;
+    if (held < total) {
+      return { state: "partial", detail: t("library.whereNodes", { count: held, total }) };
+    }
+  }
+  return { state: "on_nodes", title: t("engines.presentTitle") };
 }
 
 /** One engine, with everything known about it in one place.
@@ -182,7 +215,7 @@ export default function EnginesTab({ images: imagesQuery, pullOpen = false, onPu
   const [syncTarget, setSyncTarget] = useState<EngineRow | null>(null);
   const [alert, setAlert] = useState<{ title: string; message: string; tone?: AlertTone } | null>(null);
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<EngineFilter>("all");
+  const [filter, setFilter] = useState<LibraryFilter>("all");
   // Optimistic per-engine enabled state: set on click, cleared on success (the
   // refetch below is then the source of truth) or on failure (which restores
   // whatever the server last said by simply removing the override).
@@ -225,24 +258,24 @@ export default function EnginesTab({ images: imagesQuery, pullOpen = false, onPu
     [jobs],
   );
 
-  const counts = useMemo(() => {
-    const all = images ?? [];
-    return {
-      all: all.length,
-      pulled: all.filter((i) => inEngineFilter(i, "pulled")).length,
-      missing: all.filter((i) => inEngineFilter(i, "missing")).length,
-      update: all.filter((i) => inEngineFilter(i, "update")).length,
-    };
-  }, [images]);
+  const pullingRefs = useMemo(() => new Set(active.map((j) => j.ref)), [active]);
+  const standingOf = useCallback(
+    (row: EngineRow) => engineStanding(row, presence[row.key], pullingRefs.has(row.image.ref), t),
+    [presence, pullingRefs, t],
+  );
+  const filterTabs = useMemo(
+    () => libraryFilterTabs(t, rows.map((row) => standingOf(row).state)),
+    [rows, standingOf, t],
+  );
 
   const shown = useMemo(
     () =>
       rows.filter(
         (row) =>
-          inEngineFilter(row.image, filter) &&
+          matchesFilter(standingOf(row).state, filter) &&
           matchesQuery(query, row.image.ref, row.image.engine, row.image.variant, row.engine?.engine),
       ),
-    [rows, filter, query],
+    [rows, filter, query, standingOf],
   );
 
   // Enabled state is per engine name, not per image row: two variants of the
@@ -304,25 +337,42 @@ export default function EnginesTab({ images: imagesQuery, pullOpen = false, onPu
     }
   };
 
-  /** Open one image in the panel, asking the nodes about it once. */
-  const selectRow = async (row: EngineRow) => {
+  /** Ask the nodes about one image, once. The status column says *on which
+   *  nodes* for every row, so this runs for the whole catalogue, not only the
+   *  row that is open. */
+  const asked = useRef(new Set<string>());
+  const askPresence = useCallback(
+    async (key: string, imageRef: string) => {
+      if (peerAddresses.length === 0 || asked.current.has(key)) return;
+      asked.current.add(key);
+      setPresence((current) => ({ ...current, [key]: "loading" }));
+      try {
+        const answer = await fetchImagePresence(imageRef, peerAddresses);
+        setPresence((current) => ({ ...current, [key]: answer }));
+      } catch {
+        asked.current.delete(key);
+        setPresence((current) => {
+          const next = { ...current };
+          delete next[key];
+          return next;
+        });
+      }
+    },
+    [peerAddresses],
+  );
+
+  useEffect(() => {
+    for (const row of rows) if (row.image.present) void askPresence(row.key, row.image.ref);
+  }, [rows, askPresence]);
+
+  /** Open one image in the panel. */
+  const selectRow = (row: EngineRow) => {
     if (selected === row.key) {
       setSelected(null);
       return;
     }
     setSelected(row.key);
-    if (peers.length === 0 || presence[row.key]) return;
-    setPresence((current) => ({ ...current, [row.key]: "loading" }));
-    try {
-      const answer = await fetchImagePresence(row.image.ref, peerAddresses);
-      setPresence((current) => ({ ...current, [row.key]: answer }));
-    } catch {
-      setPresence((current) => {
-        const next = { ...current };
-        delete next[row.key];
-        return next;
-      });
-    }
+    void askPresence(row.key, row.image.ref);
   };
 
   const pull = async (target: string) => {
@@ -343,12 +393,14 @@ export default function EnginesTab({ images: imagesQuery, pullOpen = false, onPu
     }
   };
 
-  const forget = (key: string) =>
+  const forget = (key: string) => {
+    asked.current.delete(key);
     setPresence((current) => {
       const next = { ...current };
       delete next[key];
       return next;
     });
+  };
 
   const doDelete = async (target: string, onNodes: string[]) => {
     try {
@@ -478,23 +530,13 @@ export default function EnginesTab({ images: imagesQuery, pullOpen = false, onPu
       />
     ) : null;
 
-  /** Present or not, plus anything the status word does not already say. */
-  /** One dot and a word, like every other status here. A republished digest
-   *  is "Update available" in amber, and why is on the hover — the Pull
-   *  button in the same row is what acts on it. */
+  /** One dot and a word, the same chip every Library page uses. Why is on the
+   *  hover; the button in the same row is what acts on it. */
   const statusFor = (row: EngineRow) => {
-    const { image, engine } = row;
-    const status = image.digest_drift ? (
-      <NodeState state="warn" label={t("engines.statusUpdate")} title={t("engines.digestDriftTitle")} />
-    ) : image.present ? (
-      <NodeState state="ok" label={t("engines.present")} title={t("engines.presentTitle")} />
-    ) : (
-      <NodeState state="unknown" label={t("engines.notPulled")} title={t("engines.notPulledTitle")} />
-    );
+    const standing = standingOf(row);
     return (
-      <div className="flex items-center gap-2 whitespace-nowrap text-[12.5px]">
-        {status}
-        {engine?.available === false && <span className="text-muted">· {t("engines.unpublished")}</span>}
+      <div className="whitespace-nowrap text-[12.5px]">
+        <LibraryStateChip state={standing.state} detail={standing.detail} title={standing.title} />
       </div>
     );
   };
@@ -560,19 +602,12 @@ export default function EnginesTab({ images: imagesQuery, pullOpen = false, onPu
             clearLabel={t("common.clear")}
           />
           <Tabs
+            variant="filter"
             label={t("engines.filterLabel")}
             value={filter}
-            onChange={(id) => setFilter(id as EngineFilter)}
-            tabs={[
-              { id: "all", label: t("engines.filterAll"), count: counts.all },
-              { id: "pulled", label: t("engines.filterPulled"), count: counts.pulled },
-              { id: "missing", label: t("engines.filterMissing"), count: counts.missing },
-              { id: "update", label: t("engines.filterUpdate"), count: counts.update },
-            ]}
+            onChange={(id) => setFilter(id as LibraryFilter)}
+            tabs={filterTabs}
           />
-          <InfoTip label={t("engines.aboutIndexes")} className="ml-auto">
-            {t("library.enginesInSettings")}
-          </InfoTip>
         </Toolbar>
 
         {loading && (

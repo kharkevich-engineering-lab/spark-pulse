@@ -70,9 +70,9 @@ The **Kill** button stops the container when the process is in one of ours — k
 
 ## Library
 
-![Library — the models tab, with the caches under it](../assets/screenshots/library.png)
+![Library — the models catalogue, with the caches under it](../assets/screenshots/library.png)
 
-Four pages answered one question — what is on this disk — so an operator hunting for a hundred gigabytes read four navigation entries to find out which of them was holding it. Library is one page with three tabs, and the header says the total and how much of it is cache before you pick one. The old addresses all still resolve: `/engines` and `/oci` open their tab, `/cache` opens Models at the caches section.
+Engines, models, recipes and mods are the same kind of thing — sources offer them, a catalogue lists what is offered, and some of it is held — so every Library page has the same two sections. **Catalogue** lists every item with one state (*On nodes* or *Installed*, *Partial*, *Getting*, *Available*, *Update*, *Local*, *Removed*, *Unknown*), the same filters in the same order (All · On nodes · Available · Updates), and one action per row. **Sources** is where that kind comes from, edited beside what it fills and saved on its own. The section is in the address (`/recipes#sources`), and the header's one button follows it: get one, or add a source. `/cache` opens Models at the caches; `/oci` opens Recipes' sources.
 
 ### Models
 
@@ -92,17 +92,11 @@ An engine is a plugin plus a published image, and this tab is both: what each en
 
 The switch beside a badge enables or disables the engine, next to the image it gates. Copying an image to other nodes asks which ones now, rather than sending 26 GB to every node behind a button whose label said *every*.
 
-### Registries
+### Recipes and collections
 
-![Library — registries](../assets/screenshots/library-registries.png)
+Recipe collections published as OCI artifacts are a **source** of recipes, beside the bundled set and your own directory. Their recipes sit in the one catalogue with the installed ones: *Available* (Install), *Update* (Update), *Local* for one edited here (updating asks first, because it overwrites the edits), *Removed* for one the newest version no longer ships. **Update all** leaves local edits alone and says how many it skipped. Uninstalling is a row action, with every other way a recipe leaves.
 
-Recipe collections published as OCI artifacts, one card each, saying how many of its recipes are installed. A card opens the collection: the version you are on and the newest one, and every recipe with one state and at most one action — *not installed* (Install), *installed* (nothing to do), *update available* (Update), *local edits* (shown; updating asks first, because it overwrites them), or *removed upstream* for a recipe the newest version no longer ships. **Update all** leaves local edits alone and says how many it skipped; **Install all** asks before it writes. Uninstalling is on the Recipes page, with every other way a recipe leaves.
-
-![Library — a collection](../assets/screenshots/library-collection.png)
-
-The registries themselves are listed underneath, with whether each one answers — an unreachable registry is why collections are missing, and the fix belongs beside the symptom.
-
-Engine indexes, model sources and the OCI update schedule are configuration, and live in Settings.
+Recipes ▸ Sources lists each registry with whether it answers — an unreachable registry is why a collection's recipes are missing, and the fix sits beside the symptom — its collection and version, Test, Enable, Edit and Remove, and the schedule auto-update runs on.
 
 ## Settings
 
@@ -113,7 +107,6 @@ Every setting in the product, tabbed over one form, with **Save** on every tab �
 - **Runs** — port range, the readiness and pull timeouts, how long stopped runs are kept.
 - **Containers** — the profile every engine container is started with: privileged, memory and swap, `/dev/shm`, process and file limits, the cache directories mounted into each one, and the network policy a mod runs under.
 - **Features** — the switches that change what this control plane *offers* rather than how a run behaves: benchmarking, the cluster-mode override, agent auto-update.
-- **Library** — where things are fetched from, in one place instead of three: the engine index and its cache lifetime, the model sources, and the OCI registries with the schedule their auto-update runs on.
 - **MCP** — the Model Context Protocol endpoint, its address and transport, and the snippets that point an assistant at it. The tool list is read from the endpoint itself (`tools/list`), so it is what a client would see. Each tool is implemented by calling this app's own REST API, so MCP behaviour is the REST behaviour by construction. The old `/mcp` route redirects here.
 - **Preferences** — theme and language, both remembered in the browser and never sent to the server.
 - **Secrets** — the Hugging Face token, written to a 0600 file and only ever shown as its last four characters.

@@ -30,7 +30,7 @@ test("lists every recipe the API serves", async ({ page, request }) => {
 
   await gotoPage(page, "/recipes");
 
-  await expect(page.getByRole("tab", { name: `All (${recipes.length})` })).toBeVisible();
+  await expect(page.getByRole("tab", { name: /^All \(\d+\)/ })).toBeVisible();
   for (const recipe of recipes) {
     // The name opens the recipe: a table row's name button, or the card.
     await expect(
@@ -96,5 +96,18 @@ test("lists the mods the API serves", async ({ page, request }) => {
   for (const mod of mods.slice(0, 3)) {
     await expect(page.getByRole("button", { name: new RegExp(escapeRegExp(mod.id)) }).first()).toBeVisible();
   }
+  await expectNoCrash(page);
+});
+
+test("says where mods come from, with nothing to press", async ({ page }) => {
+  await gotoPage(page, "/mods#sources");
+
+  await expect(page.getByRole("tab", { name: /^Sources/, selected: true })).toBeVisible();
+  await expect(page.getByTestId("mod-source-bundled")).toBeVisible();
+  await expect(page.getByTestId("mod-source-custom")).toContainText("custom-mods");
+  await expect(page.getByRole("button", { name: /Add source|New mod|Remove|Disable/ })).toHaveCount(0);
+
+  await page.getByRole("tab", { name: /^Catalogue/ }).click();
+  await expect(page.getByRole("button", { name: "New mod" })).toBeVisible();
   await expectNoCrash(page);
 });

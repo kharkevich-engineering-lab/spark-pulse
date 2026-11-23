@@ -1,7 +1,9 @@
 # Models and replication
 
-The **Models** tab of Library (`/models`), with the caches that fill the same
-disk as a section under it — `/cache` is still an address, and it opens here.
+The **Models** page of Library (`/models`): the catalogue, with the caches that
+fill the same disk as a section under it — `/cache` is still an address, and it
+opens here — and **Sources** (`/models#sources`), where the model sources are
+edited.
 
 ## The catalogue
 

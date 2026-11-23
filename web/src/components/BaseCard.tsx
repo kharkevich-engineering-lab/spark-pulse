@@ -29,9 +29,12 @@ interface BaseCardProps {
    *  broken. Ignored when `onDelete` is set — the delete button already
    *  carries its own tooltip via `deleteLabel`. */
   hint?: string;
+  /** A row of its own under the badges, for the one action the card offers
+   *  besides being opened. A press on it is not a press on the card. */
+  footer?: React.ReactNode;
 }
 
-export default function BaseCard({ icon, title, subtitle, description, badges, onClick, disabled, dimmed, className, onDelete, deleteLabel, hint }: BaseCardProps) {
+export default function BaseCard({ icon, title, subtitle, description, badges, onClick, disabled, dimmed, className, onDelete, deleteLabel, hint, footer }: BaseCardProps) {
   const interactive = !disabled;
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -90,6 +93,15 @@ export default function BaseCard({ icon, title, subtitle, description, badges, o
         </div>
       </div>
       {badges && <div className="flex flex-wrap gap-x-3 gap-y-1.5 mt-3">{badges}</div>}
+      {footer && (
+        <div
+          className="mt-3 flex justify-end"
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          {footer}
+        </div>
+      )}
     </div>
   );
 }

@@ -43,7 +43,6 @@ const PAGES: { href: string; key: string }[] = [
   { href: "/recipes", key: "nav.recipes" },
   { href: "/models", key: "nav.models" },
   { href: "/engines", key: "nav.engines" },
-  { href: "/oci", key: "nav.collections" },
   { href: "/settings", key: "nav.settings" },
 ];
 

@@ -1,8 +1,11 @@
 /** Recipe card — uses BaseCard with recipe-specific badges and actions. */
 
-import { Ban, Cpu, Gauge, Layers, Network, Package, RotateCcw, Zap } from "lucide-react";
+import { Ban, Cpu, Download, RefreshCw, Gauge, Layers, Network, Package, RotateCcw, Zap } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
+import { Button } from "@/ui";
+import { LibraryStateChip } from "@/components/library/LibraryState";
 import BaseCard from "./BaseCard";
+import type { RecipeLibrary } from "./RecipesTable";
 import ServesChip from "./ServesChip";
 import type { RecipeSummary } from "@/lib/types";
 
@@ -14,7 +17,7 @@ function usableEngines(r: RecipeSummary): string[] {
   return r.engines ?? [];
 }
 
-export default function RecipeCard({ r, isRunning, isQueued, clusterBlocked, notHere, tight, onSelect, onReset }: {
+export default function RecipeCard({ r, isRunning, isQueued, clusterBlocked, notHere, tight, onSelect, onReset, library }: {
   r: RecipeSummary;
   isRunning: boolean;
   /** A deploy of it is waiting on its model download (Runs shows it). */
@@ -28,6 +31,8 @@ export default function RecipeCard({ r, isRunning, isQueued, clusterBlocked, not
   tight?: string;
   onSelect: () => void;
   onReset?: () => void;
+  /** Where it stands in the library, with the install or update it offers. */
+  library?: RecipeLibrary;
 }) {
   const { t } = useI18n();
   const engines = usableEngines(r);
@@ -40,6 +45,7 @@ export default function RecipeCard({ r, isRunning, isQueued, clusterBlocked, not
   const badges = (
     <>
       <div className="flex flex-wrap gap-1.5" data-testid={`recipe-line1-${r.id}`}>
+        {library && <LibraryStateChip state={library.state} heldAs="installed" />}
         {r.source && r.source !== "unknown" && (
           <span className="inline-flex items-center gap-1 py-0.5 text-xs text-text-muted">
             <Package size={11} />{r.source}
@@ -115,8 +121,25 @@ export default function RecipeCard({ r, isRunning, isQueued, clusterBlocked, not
       title={r.name}
       description={r.description || r.model}
       badges={badges}
-      onClick={onSelect}
-      disabled={clusterBlocked}
+      onClick={library?.offered ? () => {} : onSelect}
+      disabled={clusterBlocked && !library?.offered}
+      footer={
+        library?.action && (
+          <Button
+            size="sm"
+            variant={library.action === "install" ? "primary" : undefined}
+            icon={library.action === "install" ? Download : RefreshCw}
+            loading={library.busy}
+            disabled={library.busy}
+            aria-label={t(library.action === "install" ? "recipesTable.installFor" : "recipesTable.updateFor", {
+              name: r.name,
+            })}
+            onClick={library.onAction}
+          >
+            {t(library.action === "install" ? "oci.install" : "oci.update")}
+          </Button>
+        )
+      }
       dimmed={Boolean(notHere)}
       hint={isManaged ? t("recipes.managedRecipe") : undefined}
     />

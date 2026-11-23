@@ -18,7 +18,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import SettingsPage from "@/pages/SettingsPage";
 import type { ModelSource, Settings } from "@/lib/types";
 
@@ -43,7 +43,6 @@ vi.mock("@/lib/api", () => ({
 }));
 
 import {
-  addOciRegistry,
   deleteSecret,
   fetchModelSources,
   fetchOciAutoUpdateSettings,
@@ -52,10 +51,8 @@ import {
   fetchSettings,
   refreshEngines,
   fetchEngines,
-  runOciAutoUpdate,
   saveModelSources,
   saveSecrets,
-  updateOciAutoUpdateSettings,
   updateSettings,
 } from "@/lib/api";
 
@@ -614,143 +611,26 @@ describe("SettingsPage containers tab", () => {
 describe("SettingsPage library tab", () => {
   beforeEach(seedApi);
 
-  it("shows the engine registry the settings response described", async () => {
-    renderPage("/settings#library");
-
-    expect(await screen.findByDisplayValue("vllm")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("https://acme.test/engines.json")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("3600")).toBeInTheDocument();
-  });
-
-  it("writes the engine registry fields through the page's one Save", async () => {
-    const user = userEvent.setup();
-    renderPage("/settings#library");
-    await screen.findByDisplayValue("vllm");
-
-    fireEvent.change(screen.getByDisplayValue("https://acme.test/engines.json"), {
-      target: { value: "https://acme.test/a.json\n\n  https://acme.test/b.json  " },
-    });
-    fireEvent.change(screen.getByDisplayValue("3600"), { target: { value: "60" } });
-    await user.click(saveButton());
-
-    await waitFor(() =>
-      expect(updateSettings).toHaveBeenCalledWith(
-        expect.objectContaining({
-          engine_indexes: ["https://acme.test/a.json", "https://acme.test/b.json"],
-          engine_index_cache_ttl_seconds: 60,
-        }),
-      ),
+  /** Where each kind comes from is the Sources section of its own page now;
+   *  an old link to the tab lands on the engines' sources. */
+  it("is gone, and its old link goes to the engines' sources", async () => {
+    render(
+      <MemoryRouter initialEntries={["/settings#library"]}>
+        <Routes>
+          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/engines" element={<p>engines page</p>} />
+        </Routes>
+      </MemoryRouter>,
     );
+    expect(await screen.findByText("engines page")).toBeInTheDocument();
   });
 
-  it("re-reads the engine index on request", async () => {
-    const user = userEvent.setup();
-    renderPage("/settings#library");
-    await screen.findByDisplayValue("vllm");
-
-    await user.click(screen.getByRole("button", { name: /refresh/i }));
-
-    await waitFor(() => expect(refreshEngines).toHaveBeenCalled());
-  });
-
-  /** The sources are a different endpoint but the same form: a second Save
-   *  button inside a form that already has one is how half an edit gets lost. */
-  it("saves an edited model source with everything else", async () => {
-    const user = userEvent.setup();
-    renderPage("/settings#library");
-
-    const name = await screen.findByLabelText("Source 1 name");
-    fireEvent.change(name, { target: { value: "mirror" } });
-    await waitFor(() => expect(saveButton()).toBeEnabled());
-    await user.click(saveButton());
-
-    await waitFor(() =>
-      expect(saveModelSources).toHaveBeenCalledWith([expect.objectContaining({ name: "mirror" })]),
-    );
-    // Nothing on `/api/settings` changed, so it is not written.
-    expect(updateSettings).not.toHaveBeenCalled();
-  });
-
-  it("adds and removes a model source", async () => {
-    const user = userEvent.setup();
-    renderPage("/settings#library");
-    await screen.findByLabelText("Source 1 name");
-
-    await user.click(screen.getByRole("button", { name: /add source/i }));
-    expect(await screen.findByLabelText("Source 2 name")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Remove source 2" }));
-    await waitFor(() => expect(screen.queryByLabelText("Source 2 name")).toBeNull());
-  });
-
-  it("adds an OCI registry", async () => {
-    const user = userEvent.setup();
-    vi.mocked(addOciRegistry).mockResolvedValue({
-      name: "acme",
-      url: "ghcr.io/acme/recipes",
-      enabled: true,
-      default: false,
-      connected: true,
-    } as never);
-    renderPage("/settings#library");
-
-    await user.click(await screen.findByRole("button", { name: /add registry/i }));
-    await user.type(screen.getByLabelText("Name"), "acme");
-    await user.type(screen.getByLabelText("URL"), "ghcr.io/acme/recipes");
-    await user.click(screen.getByRole("button", { name: "Add" }));
-
-    await waitFor(() =>
-      expect(addOciRegistry).toHaveBeenCalledWith(
-        expect.objectContaining({ name: "acme", url: "ghcr.io/acme/recipes" }),
-      ),
-    );
-  });
-
-  /** Saved when the field loses focus, not per keystroke: the original handler
-   *  PUT the settings on every character, so a cron expression was saved once
-   *  per prefix and every invalid one along the way was briefly the schedule. */
-  it("saves the auto-update schedule on blur, not on every keystroke", async () => {
-    const user = userEvent.setup();
-    vi.mocked(updateOciAutoUpdateSettings).mockResolvedValue({
-      enabled: false,
-      schedule: "0 4 * * *",
-      overwrite_local: false,
-    });
-    renderPage("/settings#library");
-
-    const schedule = await screen.findByDisplayValue("0 3 * * *");
-    await user.clear(schedule);
-    await user.type(schedule, "0 4 * * *");
-    expect(updateOciAutoUpdateSettings).not.toHaveBeenCalled();
-
-    fireEvent.blur(schedule);
-    await waitFor(() =>
-      expect(updateOciAutoUpdateSettings).toHaveBeenCalledWith({ schedule: "0 4 * * *" }),
-    );
-  });
-
-  it("runs the update sweep now and says what it did", async () => {
-    const user = userEvent.setup();
-    vi.mocked(runOciAutoUpdate).mockResolvedValue({ success: true, updated: 2 });
-    renderPage("/settings#library");
-
-    await user.click(await screen.findByRole("button", { name: /run now/i }));
-
-    expect(await screen.findByText("2 recipe(s) updated.")).toBeInTheDocument();
-  });
-
-  it("says why the update sweep failed rather than claiming it ran", async () => {
-    const user = userEvent.setup();
-    vi.mocked(runOciAutoUpdate).mockResolvedValue({ success: false, error: "registry refused" });
-    renderPage("/settings#library");
-
-    await user.click(await screen.findByRole("button", { name: /run now/i }));
-
-    expect(await screen.findByText("registry refused")).toBeInTheDocument();
+  it("offers no Library tab", async () => {
+    renderPage();
+    await screen.findByRole("heading", { name: "Run defaults" });
+    expect(screen.queryByRole("tab", { name: /library/i })).toBeNull();
   });
 });
-
-// ── MCP ─────────────────────────────────────────────────────────────────────
 
 describe("SettingsPage mcp tab", () => {
   beforeEach(() => {
@@ -832,7 +712,6 @@ describe("SettingsPage saving", () => {
     for (const tab of [
       /containers/i,
       /features/i,
-      /library/i,
       /mcp/i,
       /preferences/i,
       /secrets/i,

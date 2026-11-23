@@ -105,7 +105,6 @@ describe("the sidebar", () => {
       "Models",
       "Engines",
       "Mods",
-      "Collections",
       "Settings",
     ]);
     for (const section of ["Operate", "Library", "System"]) {
@@ -124,7 +123,7 @@ describe("the sidebar", () => {
       ["/monitoring", "Nodes"],
       ["/mods", "Mods"],
       ["/engines", "Engines"],
-      ["/oci", "Collections"],
+      ["/oci", "Recipes"],
       ["/cache", "Models"],
       ["/mcp", "Settings"],
     ] as const) {

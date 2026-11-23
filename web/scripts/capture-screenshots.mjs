@@ -77,15 +77,6 @@ const SHOTS = [
   // images" is looking for the page, not for the section that links to it.
   { name: "library", path: "/models", settle: "[data-testid=models-table]" },
   { name: "library-engines", path: "/engines", settle: "[data-testid=engines-table]" },
-  { name: "library-registries", path: "/oci", settle: "[data-testid=registries-table]" },
-  // One collection open: the simulated one carries a recipe in every state,
-  // which is the thing this view exists to show.
-  {
-    name: "library-collection",
-    path: "/oci",
-    settle: "text=spark-recipes",
-    expand: "text=spark-recipes",
-  },
   // There is no MCP shot: MCP is a section of Settings, and a page that is
   // one section of another page is documented by that page's screenshot.
   { name: "settings", path: "/settings", settle: "text=Settings." },

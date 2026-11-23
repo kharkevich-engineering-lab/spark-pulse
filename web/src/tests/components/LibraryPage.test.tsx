@@ -1,7 +1,7 @@
 /** The Library shell: one page where four used to be.
  *
  * The properties that matter here are the ones a merge can silently break.
- * Every old address still has to resolve — `/engines`, `/oci` and `/cache`
+ * Every old address still has to resolve — `/engines` and `/cache` (and `/oci`, now Recipes' sources)
  * were bookmarks, MCP tool targets and spec entry points — and choosing a tab
  * has to put that address back in the bar, so the browser's own Back button
  * still means what it looks like it means. And only the tab on screen is
@@ -9,9 +9,10 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import LibraryPage, { tabForPath } from "@/pages/LibraryPage";
+import EnginesPage from "@/pages/EnginesPage";
+import ModelsPage from "@/pages/ModelsPage";
 import type { CacheNode, ImageEntry, ModelEntry } from "@/lib/types";
 
 vi.mock("@/lib/api", () => ({
@@ -22,7 +23,9 @@ vi.mock("@/lib/api", () => ({
   cleanCache: vi.fn(),
   cleanAllCaches: vi.fn(),
   // Whatever the mounted tab asks for on its own.
-  fetchModelSources: vi.fn(() => Promise.resolve([])),
+  fetchModelSources: vi.fn(() => Promise.resolve([{ name: "hf", type: "hf_hub" }])),
+  saveModelSources: vi.fn(),
+  refreshEngines: vi.fn(),
   fetchModelDownloads: vi.fn(() => Promise.resolve([])),
   fetchScheduledDeploys: vi.fn(() => Promise.resolve([])),
   fetchNodes: vi.fn(() => Promise.resolve([])),
@@ -32,7 +35,7 @@ vi.mock("@/lib/api", () => ({
   cancelScheduledDeploy: vi.fn(),
   deleteModel: vi.fn(),
   syncModelToNodes: vi.fn(),
-  fetchEngines: vi.fn(() => Promise.resolve({ default_engine: "vllm", engines: [] })),
+  fetchEngines: vi.fn(() => Promise.resolve({ default_engine: "vllm", engines: [], indexes: [{ ref: "idx-a", engines: 1, fetched_at: null, error: null }, { ref: "idx-b", engines: 1, fetched_at: null, error: null }] })),
   fetchImagePulls: vi.fn(() => Promise.resolve([])),
   fetchImagePresence: vi.fn(),
   startImagePull: vi.fn(),
@@ -106,24 +109,10 @@ const CACHE: CacheNode = {
   ],
 };
 
-const renderAt = (path: string) =>
-  render(
-    <MemoryRouter initialEntries={[path]}>
-      <LibraryPage />
-    </MemoryRouter>,
-  );
+const renderAt = (path: string, page = path.startsWith("/engines") ? <EnginesPage /> : <ModelsPage />) =>
+  render(<MemoryRouter initialEntries={[path]}>{page}</MemoryRouter>);
 
-describe("tabForPath", () => {
-  it("maps every address this page answers to the tab it opens", () => {
-    expect(tabForPath("/models")).toBe("models");
-    expect(tabForPath("/engines")).toBe("engines");
-    expect(tabForPath("/oci")).toBe("registries");
-    // `/cache` was the caches page: it opens Models, at that section.
-    expect(tabForPath("/cache")).toBe("models");
-  });
-});
-
-describe("Library — the shell", () => {
+describe("Library — the kind pages", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(fetchModels).mockResolvedValue([MODEL]);
@@ -141,10 +130,11 @@ describe("Library — the shell", () => {
     expect(await screen.findByText("16.0 GB on disk, 1.0 GB of it cache.")).toBeInTheDocument();
   });
 
-  it("titles each address for what it shows, with no tabs repeating the sidebar", async () => {
+  it("titles models once and offers the two sections, with the sources counted", async () => {
     renderAt("/models");
     expect(await screen.findByRole("heading", { level: 1, name: "Models." })).toBeInTheDocument();
-    expect(screen.queryByRole("tab")).toBeNull();
+    expect(screen.getByRole("tab", { name: "Catalogue" })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByRole("tab", { name: /^Sources/ })).toHaveTextContent("1");
   });
 
   it("opens the engine images at their own address, with Pull image as its action", async () => {
@@ -152,19 +142,36 @@ describe("Library — the shell", () => {
 
     expect(await screen.findByTestId("engines-table")).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 1, name: "Engines." })).toBeInTheDocument();
-    expect(screen.queryByText(/on disk/)).toBeNull();
+    expect(await screen.findByText("1 of 1 pulled, 5.0 GB on disk.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Pull image" }));
     expect(await screen.findByLabelText("Image reference")).toBeInTheDocument();
   });
 
-  it("opens the collections at their own address, titled once", async () => {
-    renderAt("/oci");
+  it("follows the section: Add index on the engine sources, and the sources count", async () => {
+    renderAt("/engines#sources");
 
-    expect(await screen.findByRole("heading", { level: 1, name: "Collections." })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "Registries" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Collections" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Add registry" }));
-    expect(await screen.findByRole("dialog", { name: "Add a registry" })).toBeInTheDocument();
+    expect(await screen.findByTestId("engine-sources")).toBeInTheDocument();
+    expect(screen.queryByTestId("engines-table")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Pull image" })).toBeNull();
+    await waitFor(() => expect(screen.getByRole("tab", { name: /^Sources/ })).toHaveTextContent("2"));
+    fireEvent.click(screen.getByRole("button", { name: "Add index" }));
+    expect(await screen.findByLabelText("Index 1")).toBeInTheDocument();
+  });
+
+  it("follows the section: Add source on the model sources", async () => {
+    renderAt("/models#sources");
+
+    expect(await screen.findByTestId("model-sources")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Download model" })).toBeNull();
+    await screen.findByLabelText("Source 1 name");
+    fireEvent.click(screen.getByRole("button", { name: "Add source" }));
+    expect(await screen.findByLabelText("Source 2 name")).toBeInTheDocument();
+  });
+
+  it("answers /cache with the models catalogue", async () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    renderAt("/cache");
+    expect(await screen.findByRole("heading", { level: 1, name: "Models." })).toBeInTheDocument();
   });
 
   it("opens the download dialog from the header and closes it on cancel", async () => {
@@ -176,10 +183,9 @@ describe("Library — the shell", () => {
     expect(screen.queryByLabelText("Model id")).toBeNull();
   });
 
-  /** Only one tab is mounted: the engines tab is what opens /sse/images and
-   *  asks every node what it holds, and doing that for a tab nobody is
-   *  reading is how a page comes to take a second to settle. */
-  it("mounts only the tab on screen", async () => {
+  /** Only one section is mounted: the engines catalogue is what opens
+   *  /sse/images and asks every node what it holds. */
+  it("mounts only the page on screen", async () => {
     renderAt("/models");
     await screen.findByText("acme/plain-7b");
 

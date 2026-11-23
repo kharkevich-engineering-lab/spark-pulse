@@ -19,6 +19,7 @@ import types
 
 import pytest
 
+from spark_pulse.mock import oci_registry as sim_oci
 from spark_pulse.mock import recipes as mock_recipes
 from spark_pulse.tools import custom_files, custom_recipes, recipe_sources
 
@@ -57,10 +58,24 @@ def without_bundled(entries: list[dict]) -> list[dict]:
 
 @pytest.fixture(autouse=True)
 def isolated_customizations(tmp_path, monkeypatch):
-    """Keep the developer's own saved customizations out of every listing."""
+    """Keep the developer's own saved customizations out of every listing, and
+    start with no simulated collection installs: those are the listing's to
+    add (``test_collection_installs_are_listed``), not every test's."""
     monkeypatch.setattr(
         custom_recipes, "_CUSTOM_PATH", tmp_path / "_custom-recipes.json"
     )
+    monkeypatch.setattr(sim_oci, "_INSTALLED", {})
+
+
+def test_collection_installs_are_listed_and_resolve(monkeypatch):
+    """The simulated registry installs in memory; the listing has to carry
+    those recipes as a real one carries the files the install writes."""
+    monkeypatch.setattr(sim_oci, "_INSTALLED", sim_oci._initial_installed())
+    ids = {r["id"] for r in mock_recipes.list_recipes()}
+
+    assert {f"oci-{stem}" for stem in sim_oci._INSTALLED} <= ids
+    stem = next(iter(sim_oci._INSTALLED))
+    assert mock_recipes.get_recipe(f"oci-{stem}")["source"] == "oci"
 
 
 @pytest.fixture

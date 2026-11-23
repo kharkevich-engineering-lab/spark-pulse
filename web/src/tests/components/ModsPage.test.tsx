@@ -47,9 +47,9 @@ const CUSTOM_MOD: CustomModInfo = {
   has_run_sh: true,
 };
 
-const renderPage = () =>
+const renderPage = (entry = "/mods") =>
   render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[entry]}>
       <ModsPage />
     </MemoryRouter>,
   );
@@ -65,6 +65,33 @@ beforeEach(() => {
 });
 
 describe("ModsPage", () => {
+  it("says what each mod is in the library's words", async () => {
+    renderPage();
+    await screen.findByText("My Mod");
+
+    // Bundled is installed; one of the operator's own is local.
+    expect(screen.getAllByTestId("library-state-on_nodes")).toHaveLength(1);
+    expect(screen.getAllByTestId("library-state-local")).toHaveLength(1);
+    expect(screen.getByText("Installed")).toBeInTheDocument();
+  });
+
+  it("has a catalogue and read-only sources, and only New mod to press", async () => {
+    renderPage("/mods#sources");
+
+    const table = await screen.findByTestId("mod-sources-table");
+    expect(within(table).getByTestId("mod-source-bundled")).toHaveTextContent("1");
+    expect(within(table).getByTestId("mod-source-custom")).toHaveTextContent("~/.config/spark-pulse/custom-mods");
+    expect(screen.getByRole("tab", { name: /^Sources \(2\)/ })).toBeInTheDocument();
+    // Nothing to add, enable or remove here.
+    expect(screen.queryByRole("button", { name: "New mod" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Add source|Remove|Disable/ })).toBeNull();
+    expect(screen.queryByTestId("mods-table")).toBeNull();
+
+    await userEvent.click(screen.getByRole("tab", { name: /^Catalogue/ }));
+    expect(await screen.findByTestId("mods-table")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New mod" })).toBeInTheDocument();
+  });
+
   it("lists bundled and custom mods in one table, with their files", async () => {
     renderPage();
     expect(await screen.findByRole("heading", { level: 1, name: "Mods." })).toBeInTheDocument();

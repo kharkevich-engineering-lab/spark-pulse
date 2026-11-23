@@ -65,6 +65,19 @@ vi.mock("@/lib/api", async () => {
     planDeployment: vi.fn(),
     runPreflight: vi.fn(),
     uninstallOciRecipe: vi.fn(),
+    fetchOciRegistries: vi.fn(),
+    fetchOciCollections: vi.fn(),
+    fetchOciCollectionState: vi.fn(),
+    applyOciCollection: vi.fn(),
+    fetchOciMeta: vi.fn(),
+    fetchOciRegistryVersions: vi.fn(),
+    fetchOciAutoUpdateSettings: vi.fn(),
+    addOciRegistry: vi.fn(),
+    updateOciRegistry: vi.fn(),
+    removeOciRegistry: vi.fn(),
+    testOciRegistry: vi.fn(),
+    updateOciAutoUpdateSettings: vi.fn(),
+    runOciAutoUpdate: vi.fn(),
   };
 });
 
@@ -104,6 +117,11 @@ import {
   saveCustomRecipe,
   saveRecipeCustomization,
   uninstallOciRecipe,
+  fetchOciAutoUpdateSettings,
+  fetchOciCollections,
+  fetchOciMeta,
+  fetchOciRegistries,
+  fetchOciRegistryVersions,
 } from "@/lib/api";
 
 const summary = (over: Partial<RecipeSummary> = {}): RecipeSummary => ({
@@ -256,6 +274,12 @@ describe("RecipesPage", () => {
     vi.mocked(fetchDeployments).mockResolvedValue([]);
     vi.mocked(fetchSettings).mockResolvedValue(SETTINGS);
     vi.mocked(fetchMods).mockResolvedValue([MOD]);
+    // No collections by default: the catalogue is the installed recipes.
+    vi.mocked(fetchOciRegistries).mockResolvedValue([]);
+    vi.mocked(fetchOciCollections).mockResolvedValue([]);
+    vi.mocked(fetchOciMeta).mockResolvedValue([]);
+    vi.mocked(fetchOciRegistryVersions).mockResolvedValue({ versions: [] });
+    vi.mocked(fetchOciAutoUpdateSettings).mockResolvedValue({ enabled: false, schedule: "0 3 * * *", overwrite_local: false });
     vi.mocked(fetchRecipe).mockResolvedValue(detail());
     vi.mocked(fetchRecipeCustomization).mockResolvedValue({});
     vi.mocked(listCustomRecipes).mockResolvedValue([CUSTOM_RECIPE]);
@@ -377,16 +401,18 @@ describe("RecipesPage", () => {
       renderPage();
       await screen.findByText("Qwen3 8B");
       expect(screen.getByRole("tab", { name: /^All \(3\)/ })).toBeInTheDocument();
+      const source = screen.getByRole("combobox", { name: "Source" });
+      expect(within(source).getByRole("option", { name: "Collections (1)" })).toBeInTheDocument();
 
-      await user.click(screen.getByRole("tab", { name: /^Collections \(1\)/ }));
+      await user.selectOptions(source, "oci");
       expect(screen.getByText("Qwen3 32B")).toBeInTheDocument();
       expect(screen.queryByText("Qwen3 8B")).toBeNull();
 
-      await user.click(screen.getByRole("tab", { name: /^Bundled \(1\)/ }));
+      await user.selectOptions(source, "bundled");
       expect(screen.getByText("Qwen3 8B")).toBeInTheDocument();
       expect(screen.queryByText("Qwen3 32B")).toBeNull();
 
-      await user.click(screen.getByRole("tab", { name: /^All/ }));
+      await user.selectOptions(source, "all");
       await user.type(screen.getByRole("searchbox", { name: "Search recipes" }), "sglang");
       expect(screen.getByText("Mine Deployable")).toBeInTheDocument();
       expect(screen.queryByText("Qwen3 8B")).toBeNull();
@@ -935,7 +961,7 @@ describe("RecipesPage", () => {
 
   describe("the Custom filter", () => {
     const enterCustomMode = async () => {
-      await userEvent.click(await screen.findByRole("tab", { name: /^Custom/ }));
+      await userEvent.selectOptions(await screen.findByRole("combobox", { name: "Source" }), "custom");
       await waitFor(() => expect(listCustomRecipes).toHaveBeenCalled());
     };
 
@@ -1004,7 +1030,7 @@ describe("RecipesPage", () => {
       renderPage();
       await screen.findByText("Qwen3 8B");
 
-      await userEvent.click(screen.getByRole("tab", { name: /^Custom/ }));
+      await userEvent.selectOptions(screen.getByRole("combobox", { name: "Source" }), "custom");
 
       expect(await screen.findByText("config dir missing")).toBeInTheDocument();
     });

@@ -9,11 +9,23 @@
  * keeps `RecipeCard`.
  */
 
-import { RotateCcw, Rocket } from "lucide-react";
+import { Download, RefreshCw, RotateCcw, Rocket } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { Button, IconButton, Table, THead, Th, Tr, Td, EmptyRow } from "@/ui";
+import { LibraryStateChip, type LibraryState } from "@/components/library/LibraryState";
 import ServesChip from "./ServesChip";
 import type { RecipeSummary } from "@/lib/types";
+
+/** Where a row stands in the library, and the one thing it offers besides
+ *  being opened. A row a collection offers and nothing holds (`offered`)
+ *  cannot be opened or deployed: it is installed first. */
+export interface RecipeLibrary {
+  state: LibraryState;
+  offered?: boolean;
+  action?: "install" | "update";
+  busy?: boolean;
+  onAction?: () => void;
+}
 
 function usableEngines(r: RecipeSummary): string[] {
   if (r.engine_support?.length) return r.engine_support.filter((e) => e.supported && e.enabled).map((e) => e.engine);
@@ -33,6 +45,8 @@ export interface RecipesTableProps {
   stateOf: (r: RecipeSummary) => RecipeRowState;
   onSelect: (r: RecipeSummary) => void;
   onReset: (r: RecipeSummary) => void;
+  /** The library state and action of a row; absent, the table is a plain list. */
+  libraryOf?: (r: RecipeSummary) => RecipeLibrary | undefined;
   /** Shown as a single row when the list (after search) is empty. */
   empty?: React.ReactNode;
   testId?: string;
@@ -64,7 +78,7 @@ function StateCell({ state }: { state: RecipeRowState }) {
   return null;
 }
 
-export default function RecipesTable({ recipes, stateOf, onSelect, onReset, empty, testId = "recipes-table" }: RecipesTableProps) {
+export default function RecipesTable({ recipes, stateOf, onSelect, onReset, libraryOf, empty, testId = "recipes-table" }: RecipesTableProps) {
   const { t } = useI18n();
 
   return (
@@ -84,28 +98,35 @@ export default function RecipesTable({ recipes, stateOf, onSelect, onReset, empt
           const engines = usableEngines(r);
           const solo = r.solo_only || !r.cluster_only;
           const cluster = r.cluster_only || !r.solo_only;
-          const blocked = Boolean(state.clusterBlocked);
+          const library = libraryOf?.(r);
+          const offered = Boolean(library?.offered);
+          const blocked = Boolean(state.clusterBlocked) && !offered;
+          const open = blocked || offered ? undefined : () => onSelect(r);
           return (
             <Tr
               key={r.id}
               data-testid={`recipe-row-${r.id}`}
-              interactive={!blocked}
+              interactive={Boolean(open)}
               muted={blocked || Boolean(state.notHere)}
-              onClick={blocked ? undefined : () => onSelect(r)}
+              onClick={open}
             >
               <Td className="max-w-[420px]">
                 <div className="flex min-w-0 items-center gap-2">
-                  <button
-                    type="button"
-                    disabled={blocked}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onSelect(r);
-                    }}
-                    className="truncate text-left font-semibold hover:text-blue2 disabled:hover:text-text"
-                  >
-                    {r.name}
-                  </button>
+                  {offered ? (
+                    <span className="truncate font-semibold">{r.name}</span>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={blocked}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSelect(r);
+                      }}
+                      className="truncate text-left font-semibold hover:text-blue2 disabled:hover:text-text"
+                    >
+                      {r.name}
+                    </button>
+                  )}
                   {r.is_customized && <span className="shrink-0 text-[11.5px] text-amber">{t("recipeCard.custom")}</span>}
                 </div>
                 <p className="truncate font-mono text-[11.5px] text-muted" title={r.model}>
@@ -126,21 +147,38 @@ export default function RecipesTable({ recipes, stateOf, onSelect, onReset, empt
                 <ServesChip serves={r.serves} />
               </Td>
               <Td className="text-[12.5px]">
+                {library && <LibraryStateChip state={library.state} heldAs="installed" />}
                 <StateCell state={state} />
               </Td>
               <Td actions>
                 {r.is_customized && (
                   <IconButton size="sm" icon={RotateCcw} label={t("recipeCard.resetToOriginal")} onClick={() => onReset(r)} />
                 )}
-                <Button
-                  size="sm"
-                  icon={Rocket}
-                  disabled={blocked}
-                  aria-label={t("recipesTable.deployFor", { name: r.name })}
-                  onClick={() => onSelect(r)}
-                >
-                  {t("recipes.deploy")}
-                </Button>
+                {library?.action ? (
+                  <Button
+                    size="sm"
+                    variant={library.action === "install" ? "primary" : undefined}
+                    icon={library.action === "install" ? Download : RefreshCw}
+                    loading={library.busy}
+                    disabled={library.busy}
+                    aria-label={t(library.action === "install" ? "recipesTable.installFor" : "recipesTable.updateFor", {
+                      name: r.name,
+                    })}
+                    onClick={library.onAction}
+                  >
+                    {t(library.action === "install" ? "oci.install" : "oci.update")}
+                  </Button>
+                ) : (
+                  <Button
+                    size="sm"
+                    icon={Rocket}
+                    disabled={blocked}
+                    aria-label={t("recipesTable.deployFor", { name: r.name })}
+                    onClick={() => onSelect(r)}
+                  >
+                    {t("recipes.deploy")}
+                  </Button>
+                )}
               </Td>
             </Tr>
           );

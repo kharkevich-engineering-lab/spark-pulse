@@ -69,6 +69,7 @@ import type {
   ScheduledDeploy,
 } from "@/lib/types";
 import CachesSection from "./CachesSection";
+import { LibraryStateChip, type LibraryState } from "./LibraryState";
 
 /** Shape of a DeploymentEvent frame as emitted by /sse/models. */
 interface ModelEventFrame {
@@ -101,6 +102,10 @@ export function ggufDetail(model: ModelEntry): string | undefined {
   const gguf = model.gguf ?? [];
   if (gguf.length < 2) return gguf[0]?.file;
   return gguf.map((g) => `${g.quant || g.file} · ${formatSize(g.size_bytes)}`).join("\n");
+}
+
+function StandingChip({ standing }: { standing: ModelStanding }) {
+  return <LibraryStateChip state={standing.state} detail={standing.detail} title={standing.title} />;
 }
 
 /** One node's verdict, as the presence endpoint reports it. */
@@ -168,6 +173,35 @@ export function describeWhere(
     label: t("library.whereNodes", { count: holders.length, total: entries.length }),
     title,
   };
+}
+
+/** Where a model stands, in the one vocabulary every Library page speaks.
+ *
+ *  Built from the same per-node verdict as the column it replaces: every node
+ *  holding a verified copy is *on nodes*, some short of one is *partial*, a
+ *  node that could not be asked is *unknown* — never counted as absent — and a
+ *  download in flight is *getting*. There is no catalogue to offer a model
+ *  from, so *available* and *update* do not occur. */
+export interface ModelStanding {
+  state: LibraryState;
+  detail?: string;
+  title?: string;
+}
+
+export function modelStanding(
+  where: WhereVerdict,
+  entries: PresenceEntry[] | null,
+  downloading: { percent: number | null } | null,
+): ModelStanding {
+  if (downloading) {
+    return { state: "getting", detail: downloading.percent != null ? `${downloading.percent}%` : undefined };
+  }
+  if (!entries || entries.length === 0) return { state: "unknown", title: where.title };
+  const failed = entries.some((e) => e.error);
+  if (where.state === "ok") return { state: "on_nodes", detail: where.label, title: where.title };
+  // A partial copy is a definite answer from one node, whatever the others said.
+  if (where.state !== "bad" && (failed || where.state === "unknown")) return { state: "unknown", title: where.title };
+  return { state: "partial", detail: where.label, title: where.title };
 }
 
 export interface ModelsTabProps {
@@ -296,6 +330,16 @@ export default function ModelsTab({
       return describeWhere(entries, t);
     },
     [jobs, entriesFor, t],
+  );
+
+  const standingFor = useCallback(
+    (model: ModelEntry): ModelStanding => {
+      const job = jobs.find((j) => j.model === model.id && ACTIVE_STATES.includes(j.status));
+      const percent =
+        job && job.bytes_total ? Math.floor(((job.bytes_done ?? 0) / job.bytes_total) * 100) : null;
+      return modelStanding(whereFor(model), entriesFor(model.id), job ? { percent } : null);
+    },
+    [jobs, whereFor, entriesFor],
   );
 
   const onEvent = useCallback(
@@ -674,7 +718,7 @@ export default function ModelsTab({
                             <Td mono muted>{shortRevision(m.revision)}</Td>
                             <Td title={ggufDetail(m)} className="whitespace-nowrap">{describePrecision(m)}</Td>
                             <Td className="whitespace-nowrap">
-                              <NodeState state={where.state} label={where.label} title={where.title} />
+                              <StandingChip standing={standingFor(m)} />
                             </Td>
                             <Td actions>{actionsFor(m, where)}</Td>
                           </Tr>
@@ -706,7 +750,7 @@ export default function ModelsTab({
                           <p className="text-[12.5px] text-muted font-mono">
                             {formatSize(m.size_bytes)} · <span title={ggufDetail(m)}>{describePrecision(m)}</span>
                           </p>
-                          <NodeState state={where.state} label={where.label} title={where.title} />
+                          <StandingChip standing={standingFor(m)} />
                         </button>
                         <div className="flex shrink-0 items-center gap-0.5">{actionsFor(m, where)}</div>
                         </div>

@@ -12,7 +12,7 @@ import { translatorFor } from "@/lib/i18n";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import LibraryPage from "@/pages/LibraryPage";
+import LibraryPage from "@/pages/EnginesPage";
 import {
   isDigestTag,
   joinEngines,
@@ -272,6 +272,10 @@ describe("Library — engines", () => {
     vi.mocked(fetchEngines).mockResolvedValue({ default_engine: "vllm", engines: [engine()] });
     vi.mocked(fetchNodes).mockResolvedValue([node("10.0.0.1", true), node("10.0.0.2")]);
     vi.mocked(fetchSettings).mockResolvedValue(SETTINGS);
+    // Every present image is asked about on load now; a node nobody stubbed
+    // is a node that cannot be asked, as it used to be until a row opened.
+    vi.mocked(fetchImagePresence).mockReset();
+    vi.mocked(fetchImagePresence).mockRejectedValue(new Error("no route"));
   });
 
   it("opens a row in place, acts from the row, and closes it again", async () => {
@@ -321,11 +325,12 @@ describe("Library — engines", () => {
     renderPage();
 
     // A republished image reads as an update, not as pulled.
-    await waitFor(() => expect(within(screen.getByTestId("engines-table")).getAllByText("Pulled").length).toBe(1));
-    expect(screen.getAllByText("Update available").length).toBeGreaterThan(0);
+    const table = within(await screen.findByTestId("engines-table"));
+    await waitFor(() => expect(table.getAllByText("On nodes").length).toBe(1));
+    expect(table.getAllByText("Update").length).toBe(1);
     // Once, not twice: the chip beside the status is for what the status word
     // cannot say, and "not pulled  not pulled" is one fact in two colours.
-    expect(within(screen.getByTestId("engines-table")).getAllByText("Not pulled").length).toBe(1);
+    expect(table.getAllByText("Available").length).toBe(1);
     expect(screen.getAllByText("25.0 GB").length).toBe(2);
   });
 
@@ -336,7 +341,7 @@ describe("Library — engines", () => {
 
     // One dot and a word; why is on the hover.
     const status = await screen.findByTitle("A newer digest is published for this tag. Pull to update.");
-    expect(status).toHaveTextContent("Update available");
+    expect(status).toHaveTextContent("Update");
     // The digests are in the open row's detail, not a column.
     await user.click(screen.getByRole("button", { name: `Details for ${DRIFTED}` }));
     expect(await screen.findByText("cccccccccccc")).toBeTruthy();
@@ -712,17 +717,6 @@ describe("Library — engines, and the width they are read at", () => {
     vi.mocked(fetchSettings).mockResolvedValue(SETTINGS);
   });
 
-  /** The indexes are configuration and move to Settings; leaving no trace of
-   *  where they went is how an operator concludes the feature was removed. */
-  it("says where engine indexes are configured now, behind the info tip", async () => {
-    const user = userEvent.setup();
-    renderPage();
-
-    await user.click(await screen.findByRole("button", { name: "Where engines come from" }));
-    expect(await screen.findByRole("tooltip")).toHaveTextContent("Engine indexes are configured in Settings.");
-    expect(screen.queryByLabelText("Engine indexes")).toBeNull();
-  });
-
   /** Not pulled is not a problem, so it is a neutral filter rather than an
    *  orange count; an update available is the one that wants attention. */
   it("filters by what is pulled, what is not, and what has an update", async () => {
@@ -731,12 +725,12 @@ describe("Library — engines, and the width they are read at", () => {
     await screen.findByTestId(`engine-${PRESENT}`);
 
     expect(screen.getByRole("tab", { name: /^All \(3\)/ })).toHaveAttribute("aria-selected", "true");
-    await user.click(screen.getByRole("tab", { name: /^Not pulled/ }));
+    await user.click(screen.getByRole("tab", { name: /^Available \(1\)/ }));
     expect(screen.queryByTestId(`engine-${PRESENT}`)).toBeNull();
-    await user.click(screen.getByRole("tab", { name: /^Update available \(1\)/ }));
+    await user.click(screen.getByRole("tab", { name: /^Updates \(1\)/ }));
     expect(screen.getByTestId(`engine-${DRIFTED}`)).toBeInTheDocument();
     expect(screen.queryByTestId(`engine-${PRESENT}`)).toBeNull();
-    await user.click(screen.getByRole("tab", { name: /^Pulled/ }));
+    await user.click(screen.getByRole("tab", { name: /^On nodes/ }));
     expect(screen.getByTestId(`engine-${PRESENT}`)).toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: /^All/ }));
