@@ -313,10 +313,11 @@ class EngineRegistry:
     ):
         self._specs_dir = specs_dir
         self._cache_dir = cache_dir or CACHE_DIR
+        self._explicit_cache = cache_dir is not None
         self._cache_ttl = cache_ttl
         self._lock = threading.RLock()
         # One fetch at a time: the background top-up and a request's
-        # ``refresh_if_stale`` would otherwise pull the same index twice and
+        # an explicit refresh would otherwise pull the same index twice and
         # race on its cache file.
         self._refresh_lock = threading.Lock()
         self._attempted_at: dict[str, float] = {}
@@ -349,6 +350,11 @@ class EngineRegistry:
                 self._fixed = []
             self._indexed = {}
             self._fetched_at = {}
+            # Simulation renders against its fixed index alone: a real
+            # control plane's cache on the same machine would shadow it. A
+            # test that names a cache directory still reads that one.
+            if _is_simulation() and not self._explicit_cache:
+                return
             for ref in self.index_refs:
                 cached = self._read_cache(ref)
                 if cached is not None:
@@ -374,11 +380,14 @@ class EngineRegistry:
         for ref in self.index_refs:
             # Read under the refresh lock, so a call that waited behind
             # another's fetch sees that fetch and skips.
-            if not force and now - self._fetched_at.get(ref, 0) < self.cache_ttl:
+            fresh = now - self._fetched_at.get(ref, 0) < self.cache_ttl
+            backing_off = now - self._attempted_at.get(ref, 0) < RETRY_SECONDS
+            if not force and (fresh or backing_off):
                 results.append(
                     {
                         "ref": ref,
-                        "status": "cached",
+                        # Backing off: tried and failed within RETRY_SECONDS.
+                        "status": "cached" if fresh else "retry_later",
                         "engines": len(self._indexed.get(ref, [])),
                     }
                 )
@@ -439,15 +448,13 @@ class EngineRegistry:
         return thread
 
     def refresh_if_stale(self) -> None:
-        """Top up expired indexes; safe to call from a request path."""
-        if _is_simulation():
-            return
-        now = time.time()
-        if any(
-            now - self._fetched_at.get(ref, 0) >= self.cache_ttl
-            for ref in self.index_refs
-        ):
-            self.refresh(force=False)
+        """Top up expired indexes without making a request wait for the network.
+
+        The background top-up, with its backoff: an unreachable index is a
+        normal state now that the indexes are the only source of engines, and
+        a page must show the last error rather than hang on the next fetch.
+        """
+        self.refresh_in_background()
 
     def index_status(self) -> list[dict[str, Any]]:
         """Per configured index: what it gave, when, and the last failure.

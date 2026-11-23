@@ -11,6 +11,10 @@ Citations below to `web/src/lib/experimental.ts` are to the UI's unproven list
 as it stood on 2026-09-04. That module was retired on 2026-09-21 along with the
 banner it fed; what is still unmeasured is §8 of `upstream-cluster-parity.md`.
 
+Citations to `mock/engines/*.yaml` are to the engine specs as Spark Pulse
+bundled them when this was written (then `engines/defaults/`). Engine specs
+now come from the engine index; those files remain as simulation's copy.
+
 Every claim carries a citation — a URL, a file and line in this repository, or a
 file and line in `eugr/spark-vllm-docker` at `358bf26` (read on the Spark at
 `~/projects/spark-vllm-docker`). Nothing here is reasoning presented as
@@ -24,7 +28,7 @@ Findings are classified:
   and what they failed to answer.
 
 Researched 2026-09-04. Versions: NCCL User Guide 2.31.2; NCCL source at
-`fd16832` (the ref `spark_pulse/engines/defaults/vllm.yaml:19` pins);
+`fd16832` (the ref `spark_pulse/mock/engines/vllm.yaml:19` pins);
 vLLM `main` @ `3284af6`; SGLang `v0.5.10.post1` and `main`; PyTorch `main`.
 
 ---
@@ -101,7 +105,7 @@ store.
 in PR #50999, commit `11ba93f36` (2026-08-10), first released in **v0.28.0**.
 In v0.11.1, `multiproc_executor.py:127-128` built a TCP rendezvous on loopback
 unconditionally. Our shipped image is `framework_version: "0.28.1"`
-(`engines/defaults/vllm.yaml:10`), so the store exists for us — but the
+(`mock/engines/vllm.yaml:10`), so the store exists for us — but the
 docstring's stated justification is nine months and four minor versions out of
 date relative to the floor it declares.
 
@@ -145,7 +149,7 @@ only. `autodiscover.sh:193` refuses anything but 2 or 4 *up CX7 interfaces*,
 which is a per-node port count, not a node count.
 
 Consequence: `MAX_CLUSTER_NODES = 4` (`base.py:29`) with
-`capabilities.mesh: true` on vLLM (`engines/defaults/vllm.yaml:70`) lets an
+`capabilities.mesh: true` on vLLM (`mock/engines/vllm.yaml:70`) lets an
 operator plan a four-node direct deployment that no source describes.
 `supports_size` (`base.py:431-440`) distinguishes only "≥3 needs mesh"; it does
 not distinguish three from four, nor direct from switched.
@@ -185,7 +189,7 @@ torchrun. vLLM uses its own `MultiprocExecutor`; SGLang calls
 
 ### 0.5 `NCCL_TIMEOUT=1200000` is inert  (§4)
 
-`spark_pulse/engines/defaults/sglang.yaml:33` sets it, copied from
+`spark_pulse/mock/engines/sglang.yaml:33` sets it, copied from
 `mark-ramsey-ri/sglang-dgx-spark` `config.env` and recorded in
 `docs/native-runtime-plan.md:137`. NCCL does not read it (see 0.4). It is set at
 **every** size, including solo, via `base_env`'s
@@ -198,7 +202,7 @@ effect.
 
 ### 0.6 `NCCL_NET_GDR_LEVEL=5` is out of range  (§3)
 
-`spark_pulse/engines/defaults/sglang.yaml:32`. NCCL documents the string form
+`spark_pulse/mock/engines/sglang.yaml:32`. NCCL documents the string form
 `LOC`/`PIX`/`PXB`/`PHB`/`SYS` and describes the integer form as legacy,
 "discouraged due to breaking changes in path types", with legacy values 0–4.
 `5` is outside that range. Inherited from the same `config.env`.
@@ -261,7 +265,7 @@ Both upstream and NVIDIA require three extra variables for the three-node ring:
 `grep -rn "NCCL_NET_PLUGIN\|SUBNET_AWARE\|MERGE_NICS" spark_pulse/` returns
 nothing. `pinning_env` (`engines/base.py:464-466`) branches only on
 `node_count > 1`; there is no `>= 3` branch anywhere. vLLM nevertheless declares
-`mesh: true` (`engines/defaults/vllm.yaml:70`), so a three-node plan is accepted
+`mesh: true` (`mock/engines/vllm.yaml:70`), so a three-node plan is accepted
 and rendered without them.
 
 `NCCL_IB_MERGE_NICS` defaults to `1` (`src/transport/net_ib/init.cc:29`), so
@@ -331,7 +335,7 @@ omit it is the part no source supports.
 
 ### 0.13 `NCCL_IB_DISABLE=0` is a documented no-op  (§3)
 
-`spark_pulse/engines/vllm.py:111` and `engines/defaults/sglang.yaml:31` set it
+`spark_pulse/engines/vllm.py:111` and `mock/engines/sglang.yaml:31` set it
 at every size. NCCL's default is already 0 (`src/transport/net_ib/init.cc:27`,
 `NCCL_PARAM(IbDisable, "IB_DISABLE", 0)`) and its sole use site is
 `if (ncclParamIbDisable()) return ncclInternalError;` (`init.cc:291`). Setting
@@ -489,7 +493,7 @@ escape a cgroup.
 `NCCL_IGNORE_CPU_AFFINITY=1` in the base `DOCKER_ARGS` with no comment, and
 `launch-cluster.sh:967` sets `NCCL_IB_DISABLE=0` in `get_env_flags` with no
 comment. Neither `README.md` nor `docs/NETWORKING.md` explains either. We
-reproduce both (`engines/defaults/vllm.yaml:51`, `engines/vllm.py:111`) without
+reproduce both (`mock/engines/vllm.yaml:51`, `engines/vllm.py:111`) without
 a rationale of our own, which is the honest position given the sources.
 
 Worth noting `get_env_flags` (`launch-cluster.sh:957-974`) emits every pinning
@@ -647,7 +651,7 @@ Findings worth carrying:
 `node_rank = 0`, `nnodes = 1`
 ([`vllm/config/parallel.py:277-288`](https://github.com/vllm-project/vllm/blob/3284af6bf1be8429c332bd5fafba579c2d7557da/vllm/config/parallel.py#L277-L288)).
 Our default rendezvous port is the same 29501
-(`engines/defaults/vllm.yaml:47`, `engines/vllm.py:209`).
+(`mock/engines/vllm.yaml:47`, `engines/vllm.py:209`).
 
 **"Since 0.11.1": specified by tags, unspecified by the changelog.** Added by PR
 #23691, commit `b316ac6589` (2025-11-16). `v0.11.0` does not contain the flags;
@@ -702,7 +706,7 @@ needs the rewrite 0.2 proposes.
 defaults to 1 and `--node-rank` to 0.
 
 **Read at `--nnodes 1`: specified.** There is no node-count guard. In
-`v0.5.10.post1` — the tag our image pins (`engines/defaults/sglang.yaml:8`,
+`v0.5.10.post1` — the tag our image pins (`mock/engines/sglang.yaml:8`,
 `:14`) —
 [`model_runner.py:917-930`](https://github.com/sgl-project/sglang/blob/v0.5.10.post1/python/sglang/srt/model_executor/model_runner.py#L917-L930):
 

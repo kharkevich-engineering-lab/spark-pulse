@@ -583,3 +583,20 @@ class TestEngineIndexes:
         assert isinstance(body["indexes_env_managed"], bool)
         for row in body["indexes"]:
             assert set(row) == {"ref", "engines", "fetched_at", "error"}
+
+    def test_an_empty_environment_value_does_not_block_other_saves(
+        self, client, monkeypatch
+    ):
+        monkeypatch.setenv("SPARK_PULSE_ENGINE_INDEXES", "")
+        resp = client.put(
+            "/api/settings", json={"engine_indexes": [], "job_retention_days": 9}
+        )
+        assert resp.status_code == 200
+        assert config.job_retention_days == 9
+
+    def test_a_repeated_environment_value_reads_as_unchanged(self, client, monkeypatch):
+        monkeypatch.setenv("SPARK_PULSE_ENGINE_INDEXES", "ghcr.io/a/i:1,ghcr.io/a/i:1")
+        resp = client.put(
+            "/api/settings", json={"engine_indexes": ["ghcr.io/a/i:1", "ghcr.io/a/i:1"]}
+        )
+        assert resp.status_code == 200

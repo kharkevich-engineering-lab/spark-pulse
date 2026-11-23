@@ -274,18 +274,19 @@ def update_settings(req: dict):
         k: v for k, v in req.items() if v is not None and k not in reported_only
     }
 
+    if "engine_indexes" in incoming and config.engine_indexes_env_managed:
+        # The environment decides, so nothing is written either way. The form
+        # writes every field it holds, so an unchanged value is the save of
+        # something else, not an attempt at this one — compared as the
+        # environment's own value is parsed, never normalised further.
+        if _as_refs(incoming.pop("engine_indexes")) != config.engine_indexes:
+            raise HTTPException(
+                status_code=409,
+                detail="engine indexes are set by SPARK_PULSE_ENGINE_INDEXES "
+                "in this process's environment; change it there",
+            )
     if "engine_indexes" in incoming:
         incoming["engine_indexes"] = _checked_engine_indexes(incoming["engine_indexes"])
-        if config.engine_indexes_env_managed:
-            # The form writes every field it holds, so an unchanged value is
-            # the save of something else, not an attempt at this one.
-            if incoming["engine_indexes"] != config.engine_indexes:
-                raise HTTPException(
-                    status_code=409,
-                    detail="engine indexes are set by SPARK_PULSE_ENGINE_INDEXES "
-                    "in this process's environment; change it there",
-                )
-            del incoming["engine_indexes"]
 
     if "docker" in incoming:
         incoming["docker"] = _checked_block(
@@ -309,15 +310,20 @@ def update_settings(req: dict):
     return _settings_response()
 
 
-def _checked_engine_indexes(value: Any) -> list[str]:
-    """A list of references, at least one: with no index there are no engines."""
+def _as_refs(value: Any) -> list[str]:
+    """``engine_indexes`` as a list of trimmed, non-empty references."""
     if isinstance(value, str):
         value = value.split(",")
     if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
         raise HTTPException(
             status_code=400, detail="engine_indexes must be a list of references"
         )
-    refs = list(dict.fromkeys(v.strip() for v in value if v.strip()))
+    return [v.strip() for v in value if v.strip()]
+
+
+def _checked_engine_indexes(value: Any) -> list[str]:
+    """A list of references, at least one: with no index there are no engines."""
+    refs = list(dict.fromkeys(_as_refs(value)))
     if not refs:
         raise HTTPException(
             status_code=400,

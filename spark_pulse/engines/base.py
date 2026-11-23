@@ -171,8 +171,9 @@ class EngineSpec(BaseModel):
     runtime: EngineRuntime = Field(default_factory=EngineRuntime)
     capabilities: EngineCapabilities = Field(default_factory=EngineCapabilities)
     verified: list[EngineVerification] = Field(default_factory=list)
-    source: str = "bundled"
-    """Where this spec came from: ``bundled`` or an engine index reference."""
+    source: str = "index"
+    """Where this spec came from: the index reference it was read from, or
+    ``simulation`` for simulation's fixed index."""
 
     @property
     def key(self) -> str:

@@ -244,3 +244,65 @@ def index_path(tmp_path):
         )
     )
     return path
+
+
+def test_a_stale_check_never_makes_the_caller_wait(tmp_path, monkeypatch, index_path):
+    import threading
+
+    from spark_pulse.engines import registry as registry_module
+
+    monkeypatch.setattr(registry_module, "_is_simulation", lambda: False)
+    monkeypatch.setattr(
+        EngineRegistry, "index_refs", property(lambda self: [str(index_path)])
+    )
+    release = threading.Event()
+
+    def slow(ref):
+        release.wait(10)
+        return yaml.safe_load(index_path.read_text())
+
+    monkeypatch.setattr(registry_module, "fetch_index", slow)
+    reg = EngineRegistry(cache_dir=tmp_path / "cache", cache_ttl=3600)
+    reg.refresh_if_stale()  # starts the fetch, returns at once
+    reg.refresh_if_stale()  # a fetch is in flight: nothing more, still at once
+    assert reg.list() == []
+    release.set()
+
+
+def test_a_failing_index_keeps_its_backoff_when_another_is_fetched(
+    tmp_path, monkeypatch, index_path
+):
+    from spark_pulse.engines import registry as registry_module
+
+    monkeypatch.setattr(registry_module, "_is_simulation", lambda: False)
+    refs = ["ghcr.io/broken/index:1"]
+    monkeypatch.setattr(EngineRegistry, "index_refs", property(lambda self: list(refs)))
+    calls = []
+
+    def fetch(ref):
+        calls.append(ref)
+        if "broken" in ref:
+            raise RuntimeError("down")
+        return yaml.safe_load(index_path.read_text())
+
+    monkeypatch.setattr(registry_module, "fetch_index", fetch)
+    reg = EngineRegistry(cache_dir=tmp_path / "cache", cache_ttl=3600)
+    reg.refresh(force=False)
+    refs.append(str(index_path))  # a second index arrives within the backoff
+    result = reg.refresh(force=False)
+    assert calls == ["ghcr.io/broken/index:1", str(index_path)]
+    assert result["indexes"][0]["status"] == "retry_later"
+
+
+def test_simulation_ignores_a_real_control_planes_cache(tmp_path, monkeypatch):
+    from spark_pulse.engines import registry as registry_module
+
+    real = EngineRegistry(cache_dir=tmp_path / "real")
+    real._write_cache(
+        registry_module.config.engine_indexes[0],
+        {"engines": [{"engine": "vllm", "spec": {"engine": "vllm", "version": "9"}}]},
+        1.0,
+    )
+    monkeypatch.setattr(registry_module, "CACHE_DIR", tmp_path / "real")
+    simulated = EngineRegistry()
+    assert simulated.get("vllm").source == "simulation"
