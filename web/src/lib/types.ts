@@ -434,6 +434,8 @@ export interface Settings {
   docker_pull_stall_timeout_seconds?: number;
   /** The `docker:` block: what every deployment's container is built with. */
   docker?: DockerSettings;
+  /** The `memory:` block: switches for how free memory is prepared. */
+  memory?: MemorySettings;
   /** The `mod:` block. */
   mod?: { network_policy?: "allow" | "warn" | "deny" };
   /** Fields the environment owns; the form shows them but cannot write them. */
@@ -455,6 +457,12 @@ export interface ClusterReport {
   /** Nodes to deploy across, this machine included. */
   node_count: number;
   forced: boolean;
+}
+
+/** The `memory:` block: switches for how free memory is prepared. */
+export interface MemorySettings {
+  compact_before_launch?: boolean;
+  lazy_nccl_communicators?: boolean;
 }
 
 /** The container knobs every deployment inherits.
@@ -873,6 +881,8 @@ export interface DeployPlan {
   /** The fraction of each node's memory this run claims; null for an engine
    *  that takes none (llama.cpp allocates as it goes). */
   gpu_memory_utilization?: number | null;
+  /** Whether memory will be compacted on each idle node before launch. */
+  compact_before_launch?: boolean;
   /** One entry per node the run occupies: who else is on it and what is left. */
   memory_budget?: MemoryBudget[];
   /** What the run will serve; the record keeps the same value. */

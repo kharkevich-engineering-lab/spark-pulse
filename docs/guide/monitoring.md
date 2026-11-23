@@ -39,6 +39,24 @@ The buddy allocator's free memory excludes the page cache, so it is usually far 
 
 For reference, a DGX Spark runs 4 KiB pages with 14 orders, so its largest possible block is 32 MiB. On 2026-11-23, 21 days up with a run loaded, one had 1.5 GiB free, 52% of it in 2 MiB+ blocks, and 22 GiB of cache.
 
+### Compacting memory before a run
+
+Settings → **Memory** has two switches and an **Enable all** button, saved with the rest of the form. Both are off by default.
+
+**Compact before launch** (`memory.compact_before_launch`). After the images and the model are ready and before the first rank starts, the control plane asks each node of the run, in parallel, to run what the remedy above runs: `sync`, then `3` into `/proc/sys/vm/drop_caches`, then `1` into `/proc/sys/vm/compact_memory`. It is the agent's `CompactMemory` operation, and the agent is rootless, so each write goes through `sudo -n /usr/bin/tee <path>` with the value on stdin. The agent installer's sudoers drop-in, `/etc/sudoers.d/spark-pulse-agent-memory`, grants exactly those two argument vectors, with no wildcard:
+
+```
+<user> ALL=(root) NOPASSWD: /usr/bin/tee /proc/sys/vm/drop_caches, /usr/bin/tee /proc/sys/vm/compact_memory
+```
+
+Because the rule names the whole command line, it cannot be used to write any other file. It is installed under the same opt-in as the network rule (the browser onboarding sets it); a node enrolled before this existed needs its agent reinstalled once.
+
+- **A node another run is on is skipped.** Dropping caches and compacting stall everything on the node, so a serving engine is left alone. The test is the one the port choice and memory budget use (`placement._occupied_nodes`), less the run being started.
+- **It never fails the deploy.** A missing sudoers rule, an agent too old for the operation, a timeout (60 s per write) or a node that cannot be asked each leave an event saying so, and the run goes on.
+- Each node leaves one event on the run, for example `spark-02: 25.1 GiB → 80.3 GiB free in blocks of 2 MiB or more`. The deploy preview says memory will be compacted when the switch is on.
+
+**Lazy NCCL communicators** (`memory.lazy_nccl_communicators`, experimental). Sets `TORCH_DIST_USE_NCCL2=0` on every rank of a multi-node run, for any engine, so that torch builds NCCL communicators when first used rather than all at once. It applies to torch 2.16 and later; the claim that it returns memory on a head rank comes from one operator's three-node run and is not yet measured on our images. A recipe that sets the variable itself wins. It is part of how a run is deployed, not of what it is, so it does not change the run's `intent_hash`.
+
 ### Ending a process
 
 `DELETE /api/memory/processes/{pid}?node=…` works on any node:

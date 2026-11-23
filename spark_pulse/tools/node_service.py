@@ -507,6 +507,10 @@ class NodeService(Protocol):
         """Empty the engine caches on the node."""
         ...
 
+    def compact_memory(self, drop_caches: bool = True) -> Any:
+        """Drop caches and compact free memory on the node."""
+        ...
+
 
 #: The method names the three implementations must agree on.
 NODE_SERVICE_METHODS: tuple[str, ...] = (
@@ -545,6 +549,7 @@ NODE_MACHINE_METHODS: tuple[str, ...] = (
     "remove_snapshot",
     "scan_cache",
     "clean_cache",
+    "compact_memory",
     "terminate_process",
     "configure_fabric",
     "install_bundle",

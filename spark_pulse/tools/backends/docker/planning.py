@@ -179,6 +179,14 @@ def _build_env(
     # The image's own HOME is root's, and the container is not root's. Set
     # after the recipe's block env, so a recipe that names one still wins.
     env.setdefault("HOME", state.CONTAINER_HOME)
+    # Experimental (`memory.lazy_nccl_communicators`): torch 2.16+ builds every
+    # NCCL communicator eagerly, which costs device memory on a multi-node
+    # head rank; `TORCH_DIST_USE_NCCL2=0` defers them. Set only where ranks
+    # actually talk (more than one node) and after the recipe, so a recipe that
+    # names the variable wins. It is a deployment setting like `HF_TOKEN`, not
+    # part of what the run *is*, so it stays out of `RunIntent` and its hash.
+    if topology.size > 1 and config.memory_lazy_nccl_communicators:
+        env.setdefault("TORCH_DIST_USE_NCCL2", "0")
     # Only rank zero carries the hub token. Every other rank loads from the
     # snapshot replication put on its node, so the token has no reason to be
     # there — the rule ``models.worker_env`` already applies to replication —
@@ -563,6 +571,7 @@ def realise(
         model_patterns=engine_obj.model_patterns(recipe),
         served_model=served_model,
         gpu_memory_utilization=fraction,
+        compact_before_launch=config.memory_compact_before_launch,
         memory_budget=budget,
         serves=intent.serves,
         warnings=warnings,

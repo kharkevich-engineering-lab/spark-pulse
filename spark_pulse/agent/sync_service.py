@@ -379,6 +379,10 @@ class AgentNodeService:
         """Empty the engine caches on the node."""
         return self._run(self.ops.clean_cache(paths, include_hub))
 
+    def compact_memory(self, drop_caches: bool = True) -> Any:
+        """Drop caches and compact free memory on the node."""
+        return self._run(self.ops.compact_memory(drop_caches))
+
     def terminate_process(self, pid: int, force: bool = False) -> Any:
         """Signal one process on the node."""
         return self._run(self.ops.terminate_process(pid, force))

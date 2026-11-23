@@ -32,6 +32,7 @@ test("shows the configuration the backend is running with", async ({ page, reque
   for (const tab of [
     "Runs",
     "Containers",
+    "Memory",
     "Features",
     "Library",
     "MCP",

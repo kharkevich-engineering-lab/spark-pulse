@@ -62,7 +62,7 @@ from typing import Any, Callable
 
 from spark_pulse import tools
 from spark_pulse.config import config
-from spark_pulse.tools.backends.docker import images, planning, state
+from spark_pulse.tools.backends.docker import compaction, images, planning, state
 from spark_pulse.tools.docker import (
     ContainerMetadata,
     PullCancelled,
@@ -1122,6 +1122,12 @@ def start(
         # re-checked here as well as before the create.
         if _teardown_requested(dep_id):
             return _cancelled()
+
+        # Every container exists and holds almost nothing; the engine is what
+        # will map memory. This is the last moment compaction can help it, and
+        # it never fails the launch (see compaction's own rules).
+        if config.memory_compact_before_launch:
+            compaction.run(services, plan_obj)
 
         for rank_plan in plan_obj.start_order():
             # Workers first, then the head — and for an engine whose workers

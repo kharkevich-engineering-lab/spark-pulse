@@ -9,7 +9,7 @@ import {
   saveSecrets,
   updateSettings,
 } from "@/lib/api";
-import type { DockerSettings, ModelSource } from "@/lib/types";
+import type { DockerSettings, MemorySettings, ModelSource } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import {
@@ -72,6 +72,7 @@ import {
 const TABS = [
   { id: "deployment", labelKey: "settings.tabDeployment" },
   { id: "containers", labelKey: "settings.tabContainers" },
+  { id: "memory", labelKey: "memorySettings.tab" },
   { id: "features", labelKey: "settings.tabFeatures" },
   { id: "library", labelKey: "settingsPage.tabLibrary" },
   { id: "mcp", labelKey: "settingsPage.tabMcp" },
@@ -286,6 +287,9 @@ export default function SettingsPage() {
   const dockerCfg = (form.docker ?? {}) as DockerSettings;
   const setDocker = <K extends keyof DockerSettings>(key: K, val: DockerSettings[K]) =>
     setForm({ ...form, docker: { ...dockerCfg, [key]: val } });
+
+  const memoryCfg = (form.memory ?? {}) as MemorySettings;
+  const setMemory = (patch: MemorySettings) => setForm({ ...form, memory: { ...memoryCfg, ...patch } });
 
   const modCfg = (form.mod ?? {}) as { network_policy?: string };
   const environment = settings?.environment;
@@ -707,6 +711,39 @@ export default function SettingsPage() {
                 <option value="deny">{t("settings.modDeny")}</option>
               </Select>
             </SettingRow>
+          </SettingsSection>
+        </div>
+      )}
+
+      {/* ── Memory ───────────────────────────────────────────────────────── */}
+      {tab === "memory" && (
+        <div>
+          <SettingsSection
+            first
+            title={t("memorySettings.title")}
+            hint={<Brief text={t("memorySettings.hint")} />}
+            actions={
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setMemory({ compact_before_launch: true, lazy_nccl_communicators: true })}
+              >
+                {t("memorySettings.enableAll")}
+              </Button>
+            }
+          >
+            <SwitchRow
+              label={t("memorySettings.compact")}
+              hint={<Brief text={t("memorySettings.compactHelp")} />}
+              on={!!memoryCfg.compact_before_launch}
+              onChange={() => setMemory({ compact_before_launch: !memoryCfg.compact_before_launch })}
+            />
+            <SwitchRow
+              label={t("memorySettings.lazyNccl")}
+              hint={<Brief text={t("memorySettings.lazyNcclHelp")} />}
+              on={!!memoryCfg.lazy_nccl_communicators}
+              onChange={() => setMemory({ lazy_nccl_communicators: !memoryCfg.lazy_nccl_communicators })}
+            />
           </SettingsSection>
         </div>
       )}

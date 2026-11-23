@@ -924,6 +924,11 @@ export default function DeployOptions({
                     </>
                   )}
                 </dl>
+                {plan.compact_before_launch && (
+                  <p className="mt-2 text-[12.5px] text-muted" data-testid="deploy-plan-compaction">
+                    {t("memorySettings.previewCompact")}
+                  </p>
+                )}
               </div>
 
               {sharedNodes(plan).map((entry) => {

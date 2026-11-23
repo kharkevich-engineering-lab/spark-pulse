@@ -24,6 +24,7 @@ pub mod fabric;
 pub mod images;
 pub mod labels;
 pub mod libpod;
+pub mod memory;
 pub mod probe;
 pub mod processes;
 pub mod selfupdate;
@@ -421,6 +422,10 @@ impl Executor {
                         let cleaned = blocking!(cache::clean(&req));
                         return ok!(Outcome::CacheClean(cleaned));
                     }
+                    Op::CompactMemory(req) => {
+                        let compaction = blocking!(memory::compact(&req));
+                        return ok!(Outcome::MemoryCompaction(compaction));
+                    }
                     _ => {}
                 }
                 return failure(id, &error.kind, error.message);
@@ -471,6 +476,10 @@ impl Executor {
             Op::CleanCache(req) => {
                 let cleaned = blocking!(cache::clean(&req));
                 ok!(Outcome::CacheClean(cleaned))
+            }
+            Op::CompactMemory(req) => {
+                let compaction = blocking!(memory::compact(&req));
+                ok!(Outcome::MemoryCompaction(compaction))
             }
 
             Op::RunContainer(req) => {

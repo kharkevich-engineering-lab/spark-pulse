@@ -223,7 +223,7 @@ fn meminfo() -> Option<MemoryStat> {
 /// the counts indexed by order. Zones differ in how many orders they print on
 /// some kernels, so the sum is as long as the longest line, and a line that
 /// does not parse adds nothing rather than shifting the others.
-fn buddy_blocks(text: &str) -> Vec<u64> {
+pub(crate) fn buddy_blocks(text: &str) -> Vec<u64> {
     let mut sums: Vec<u64> = Vec::new();
     for line in text.lines() {
         let Some((_, rest)) = line.split_once("zone") else {
@@ -249,7 +249,7 @@ fn buddy_blocks(text: &str) -> Vec<u64> {
 /// The base page size, which order zero means. 4 KiB on a DGX Spark (whose
 /// kernel keeps 14 orders, so its largest block is 32 MiB), 64 KiB on some
 /// arm64 kernels, and the counts mean nothing without it.
-fn page_size() -> u64 {
+pub(crate) fn page_size() -> u64 {
     // SAFETY: sysconf takes no pointers and has no preconditions.
     let size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
     if size > 0 {

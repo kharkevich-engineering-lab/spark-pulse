@@ -437,6 +437,44 @@ def render_network_sudoers(user: str) -> str:
     )
 
 
+#: The two kernel knobs ``CompactMemory`` writes. Exact paths, never a glob.
+MEMORY_SYSCTL_PATHS = (
+    "/proc/sys/vm/drop_caches",
+    "/proc/sys/vm/compact_memory",
+)
+
+
+def render_memory_sudoers(user: str) -> str:
+    """A drop-in letting the agent user write the two kernel memory knobs.
+
+    ``CompactMemory`` folds free memory back into large blocks before a run
+    starts: ``echo 3 > /proc/sys/vm/drop_caches`` then
+    ``echo 1 > /proc/sys/vm/compact_memory``. Both files are root-writable only
+    and the agent is rootless, and a shell redirect cannot be granted to sudo
+    (it is the unprivileged shell that opens the file). ``tee`` can: the agent
+    runs ``sudo -n /usr/bin/tee <path>`` with the value on stdin and discards
+    stdout, the one idiom that puts root on the *open* of a single file.
+
+    The boundary is the argument vector. A sudoers command spec with arguments
+    and no wildcard matches that exact argv and nothing else, so the rule below
+    allows ``tee`` on exactly these two ``/proc/sys/vm`` paths and cannot be
+    turned into ``tee /etc/...``: there is deliberately no ``*`` here, unlike
+    the nmcli rule whose connection names are data.
+    """
+    if not _POSIX_USERNAME.fullmatch(user):
+        raise BootstrapError(
+            f"{user!r} is not a username this can write a sudoers rule for; "
+            "expected letters, digits, and any of '_', '-', '.', '$'"
+        )
+    commands = ", ".join(f"/usr/bin/tee {path}" for path in MEMORY_SYSCTL_PATHS)
+    return (
+        "# Installed by spark-pulse. Lets the agent compact memory before a run:\n"
+        "# tee on exactly these two /proc/sys/vm files, with no wildcard, so no\n"
+        "# other path, no shell and no other command.\n"
+        f"{user} ALL=(root) NOPASSWD: {commands}\n"
+    )
+
+
 def render_sudoers(user: str, *, unit: str = UNIT_NAME) -> str:
     """A drop-in covering three verbs on one unit. Offered, never required.
 
@@ -1008,6 +1046,7 @@ async def _place_agent(
     # Off by default so a node that needs no elevation still takes none.
     if offer_sudoers:
         await _write_network_sudoers(session, runner, paths, caps, report)
+        await _write_memory_sudoers(session, runner, paths, caps, report)
     await _start_unit(session, runner, paths, report)
     return AgentInstallation(paths=paths, node_id=node_id, bundle_name=bundle.name)
 
@@ -1252,6 +1291,53 @@ async def _write_network_sudoers(
             "fabric-sudoers",
             f"writing {path} failed: {result.stderr.strip()[:200]}",
             "the fabric cannot be configured through this node's agent",
+        )
+
+
+async def _write_memory_sudoers(
+    session: NodeSession,
+    runner: PrivilegedRunner,
+    paths: InstallPaths,
+    caps: NodeCapabilities,
+    report: InstallReport,
+) -> None:
+    """Grant the agent user ``tee`` on the two memory sysctls, so it can compact.
+
+    Staged, parsed with ``visudo -cf``, then installed, exactly as the nmcli
+    drop-in is. A node where this cannot be installed still enrols and runs
+    containers; only compaction before a launch is unavailable, which is said
+    as a concession.
+    """
+    path = "/etc/sudoers.d/spark-pulse-agent-memory"
+    staged = f"{paths.staging}/sudoers-memory"
+    await session.upload(render_memory_sudoers(caps.user).encode(), staged, mode=0o600)
+    check = await session.run(f"visudo -cf {shlex.quote(staged)}", timeout=30)
+    if not check.ok:
+        report.concede(
+            "memory-sudoers",
+            f"the memory sudoers drop-in did not parse: {(check.stderr or check.stdout).strip()[:200]}",
+            "memory cannot be compacted before a run through this node's agent",
+        )
+        return
+    try:
+        result = await runner.run(
+            f"install -m 0440 -o root -g root {shlex.quote(staged)} {shlex.quote(path)}",
+            why="let the agent compact memory before a run",
+        )
+    except SudoDeclined as exc:
+        report.concede(
+            "memory-sudoers",
+            f"the memory sudoers drop-in was not installed: {exc.reason}",
+            "memory cannot be compacted before a run through this node's agent until it is",
+        )
+        return
+    if result.ok:
+        report.note(f"installed {path} (memory compaction before a run)")
+    else:  # pragma: no cover - defensive
+        report.concede(
+            "memory-sudoers",
+            f"writing {path} failed: {result.stderr.strip()[:200]}",
+            "memory cannot be compacted before a run through this node's agent",
         )
 
 

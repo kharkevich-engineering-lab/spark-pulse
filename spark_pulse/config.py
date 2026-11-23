@@ -552,6 +552,18 @@ class _Config:
     def docker_keep_entrypoint(self) -> bool:
         return bool(self._data.get("docker", {}).get("keep_entrypoint", False))
 
+    # ── Memory ─────────────────────────────────────────────────────────────
+
+    @property
+    def memory_compact_before_launch(self) -> bool:
+        """Drop caches and compact memory on each node before a run starts."""
+        return bool(self._data.get("memory", {}).get("compact_before_launch", False))
+
+    @property
+    def memory_lazy_nccl_communicators(self) -> bool:
+        """Hand multi-node ranks ``TORCH_DIST_USE_NCCL2=0`` (torch 2.16+)."""
+        return bool(self._data.get("memory", {}).get("lazy_nccl_communicators", False))
+
     # ── Mod Settings ───────────────────────────────────────────────────────
 
     @property

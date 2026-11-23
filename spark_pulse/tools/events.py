@@ -43,6 +43,7 @@ class EventType(str, Enum):
     DEPLOYMENT_MODS_APPLIED = "deployment_mods_applied"
     DEPLOYMENT_SERVING = "deployment_serving"
     DEPLOYMENT_READY = "deployment_ready"
+    DEPLOYMENT_MEMORY_COMPACTED = "deployment_memory_compacted"
     DEPLOYMENT_STARTING = "deployment_starting"
     DEPLOYMENT_STARTED = "deployment_started"
     DEPLOYMENT_STOPPED = "deployment_stopped"
