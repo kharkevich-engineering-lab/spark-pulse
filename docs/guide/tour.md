@@ -20,7 +20,7 @@ A recipe is a model, an engine and its arguments in one file. The card says whic
 
 ## Runs
 
-![The Runs page with a run expanded](../assets/screenshots/jobs.png)
+![A run's page](../assets/screenshots/jobs.png)
 
 One list of runs, under three pills: **Live** is what is still serving, **Finished** is the history a stopped run becomes, and **Benchmarks** is what has been measured. There used to be three lists of the same endpoint — this page, a table on Fleet and a page of its own for benchmarks — on three different polls.
 
@@ -44,7 +44,7 @@ The nodes, in two tabs over the same hardware. **Nodes** is what you have; **Mon
 
 ### Nodes
 
-![Fleet: the node registry](../assets/screenshots/fleet.png)
+![Nodes: the registry](../assets/screenshots/fleet.png)
 
 A node is two lines: its name and whether it is answering, then its address, its role, the interfaces we derived rather than guessed, and its agent's version with *current* or *update available* beside it. Anything the fleet diagnostic says about that node — a duplicate machine-id, say — is a warn line under its name rather than a box at the top of a list it may not be about.
 
@@ -56,7 +56,7 @@ What is *running* on these nodes is on Runs; this page is about the nodes.
 
 ### Monitoring
 
-![Fleet: what each node is doing](../assets/screenshots/fleet-monitoring.png)
+![Nodes: what one node is doing](../assets/screenshots/fleet-monitoring.png)
 
 Every registered node, asked for its own stats through its own agent — including the node the control plane runs on. Each section carries that node's GPUs, host memory and disks.
 

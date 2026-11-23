@@ -4,7 +4,7 @@ Spark Pulse is a web control plane for deploying inference engines (vLLM, SGLang
 
 It brings recipe discovery, deployment management, live monitoring, cache cleanup, and configuration into one interface. Multi-node deployment goes through the same deploy path and has run on two DGX Sparks — vLLM tensor-parallel and llama.cpp over its RPC backend, both benchmarked there. Three or more nodes, the fabric's full bandwidth and SGLang across machines have not been measured; `docs/upstream-cluster-parity.md` lists what is still open.
 
-**License:** [MIT](LICENSE) — Copyright © 2026 Kharkevich Engineering Lab
+**License:** [MIT](LICENSE) — Copyright © Kharkevich Engineering Lab
 
 > **Disclaimer:** This project is not sponsored by, endorsed by, or affiliated with NVIDIA Corporation or any of its subsidiaries. NVIDIA, DGX, and related trademarks are property of their respective owners.
 

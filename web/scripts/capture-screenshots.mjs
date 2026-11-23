@@ -40,39 +40,44 @@ const theme = args.includes("--theme") ? args[args.indexOf("--theme") + 1] : "da
  * `settle` is a selector rather than a timeout because these pages fill in
  * from several requests — a fixed wait either flakes or is always too long. */
 const SHOTS = [
-  { name: "recipes", path: "/", settle: "text=Recipes and mods." },
-  // Expanded, because a collapsed row shows a name and a badge; what the
-  // page is *for* — the ranks, the engine's own metrics, the live log — is
-  // what opens underneath it. Needs a deployment to exist: POST one to
-  // /api/deployments against the simulation backend first.
-  { name: "jobs", path: "/jobs", settle: "text=What is serving.", expand: 'button:has-text("Logs")' },
-  // The Benchmarks tab of that same page, on its Summary sub-view. Needs
-  // `benchmarking_enabled` on — `SPARK_PULSE_BENCHMARKING_ENABLED=true` on the
-  // backend — or the tab is not there and this shot fails loudly rather than
-  // capturing a page with a tab missing from it.
+  { name: "recipes", path: "/recipes", settle: "[data-testid=recipes-table]" },
+  // A run is a page of its own: the list links to it, and what the page is
+  // *for* — the ranks, the engine's own metrics, the latest events — is on
+  // that page. Needs a run to exist: POST one to /api/deployments against the
+  // simulation backend first.
+  {
+    name: "jobs",
+    path: "/jobs",
+    settle: "[data-testid=runs-table]",
+    expand: '[data-testid=runs-table] a[href^="/jobs/"]',
+  },
+  // The Benchmarks tab of that same page, on its History sub-view (Summary
+  // is empty until two benchmarks are compared). Needs `benchmarking_enabled`
+  // on — `SPARK_PULSE_BENCHMARKING_ENABLED=true` on the backend — or the tab is
+  // not there and this shot fails loudly rather than capturing a page with a
+  // tab missing from it.
   {
     name: "benchmarking",
     path: "/benchmarking",
-    settle: "text=What is serving.",
-    expand: '[role="tab"]:has-text("Summary")',
+    settle: '[role="tab"]:has-text("History")',
+    expand: '[role="tab"]:has-text("History")',
   },
   { name: "fleet", path: "/cluster", settle: "[data-testid=node-registry]" },
-  // Full page: the answer covers every node, and one node in a viewport is
-  // the picture this page was rebuilt to stop showing. Monitoring is a tab of
-  // Fleet, so the settle is a node's own section rather than the page title,
-  // which both tabs share.
+  // What one node is doing: its own page, opened from the registry. Full
+  // page, because the stat strip, the charts, the processes and the storage
+  // are one answer.
   {
     name: "fleet-monitoring",
-    path: "/monitoring",
-    settle: "text=CPU Memory",
+    path: "/cluster",
+    settle: "[data-testid=node-registry]",
+    expand: '[data-testid=node-registry] a[href^="/cluster/"]',
     fullPage: true,
   },
-  // Library is one page under four addresses; each tab is its own shot,
-  // because a reader looking for "where are my images" is looking for the
-  // tab, not for the page that contains it.
-  { name: "library", path: "/models", settle: "text=What is on disk." },
-  { name: "library-engines", path: "/engines", settle: "text=Engine indexes are configured" },
-  { name: "library-registries", path: "/oci", settle: "text=Registries" },
+  // The Library pages, each its own shot: a reader looking for "where are my
+  // images" is looking for the page, not for the section that links to it.
+  { name: "library", path: "/models", settle: "[data-testid=models-table]" },
+  { name: "library-engines", path: "/engines", settle: "[data-testid=engines-table]" },
+  { name: "library-registries", path: "/oci", settle: "[data-testid=registries-table]" },
   // One collection open: the simulated one carries a recipe in every state,
   // which is the thing this view exists to show.
   {
@@ -81,15 +86,16 @@ const SHOTS = [
     settle: "text=spark-recipes",
     expand: "text=spark-recipes",
   },
-  // There is no MCP shot any more: `/mcp` is a tab of Settings, and a page
-  // that is one tab of another page is documented by that page's screenshot.
+  // There is no MCP shot: MCP is a section of Settings, and a page that is
+  // one section of another page is documented by that page's screenshot.
   { name: "settings", path: "/settings", settle: "text=Settings." },
   // One phone-width shot, because the shell is the change a reader most needs
-  // to see at 390: the header collapses to a menu button and nothing overlaps.
+  // to see at 390: the sidebar folds into a menu button and nothing overlaps.
   {
     name: "mobile-runs",
     path: "/jobs",
-    settle: "text=What is serving.",
+    // Not the table: at 390 the rows are laid out as cards.
+    settle: "text=Runs.",
     viewport: { width: 390, height: 844 },
   },
 ];

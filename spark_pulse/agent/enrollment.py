@@ -125,6 +125,11 @@ class LedgerEntry:
     #: What a reimage is detected by. Recorded at enrolment, or by the first
     #: connection that carries it when the node enrolled before it existed.
     stable_fingerprint: str = ""
+    #: The versioned print (permanent MACs of physical NICs, see
+    #: ``agent/src/facts.rs``). Once recorded it is the only one compared.
+    #: Stored in the entry's JSON, so an older record simply lacks it; an
+    #: older control plane ignores it and keeps comparing the v1 above.
+    fingerprint_v2: str = ""
     cert_not_after: float = 0.0
     denied_reason: str = ""
     #: Certificates issued so far. A renewal bumps it; a jump means something
@@ -546,6 +551,7 @@ class EnrollmentLedger:
                 "boot_id",
                 "hardware_fingerprint",
                 "stable_fingerprint",
+                "fingerprint_v2",
             ):
                 if facts.get(key):
                     setattr(entry, key, facts[key])
@@ -635,6 +641,40 @@ class EnrollmentLedger:
             # The stable print when the agent sends one, and then only that:
             # the legacy one moves when the kernel reports a page more memory
             # after a reboot, and comparing it as well would keep the bug.
+            v2 = facts.get("fingerprint_v2") or ""
+            pending_v2 = ""
+            if v2:
+                # The versioned print, once the agent sends one. A record
+                # that has none yet adopts it when the session presents the
+                # key this uuid was issued — what a reimage would have lost,
+                # and what makes this an upgrade (or Podman installed, or an
+                # interface renamed) rather than a new machine. Even when v1
+                # has since moved: that is the reading v2 exists to fix. From
+                # then on v2 alone is compared.
+                if not entry.fingerprint_v2:
+                    key_held = bool(
+                        public_key_fingerprint
+                        and public_key_fingerprint == entry.public_key_fingerprint
+                    )
+                    if key_held:
+                        logger.info("node %s: recording its v2 fingerprint", node_id)
+                        entry.fingerprint_v2 = v2
+                        self._write(nodes=(entry,))
+                        return IdentityVerdict(True)
+                    # No issued key to vouch for the session (a record from
+                    # before keys were kept, or a session that presented
+                    # none): adopting v2 here would skip the v1 comparison
+                    # entirely. Judge it on v1 as before, and adopt v2 only
+                    # if that passes.
+                    pending_v2 = v2
+                elif v2 != entry.fingerprint_v2:
+                    reason = "hardware fingerprint changed; the node may be reimaged"
+                    entry.state = NodeState.DENIED.value
+                    entry.denied_reason = reason
+                    self._write(nodes=(entry,))
+                    return IdentityVerdict(False, reason)
+                else:
+                    return IdentityVerdict(True)
             stable = facts.get("stable_fingerprint") or ""
             if stable:
                 recorded, presented = entry.stable_fingerprint, stable
@@ -648,6 +688,8 @@ class EnrollmentLedger:
                 # which a reimage would have lost, so this is an upgrade.
                 logger.info("node %s: recording its stable fingerprint", node_id)
                 entry.stable_fingerprint = stable
+                if pending_v2:
+                    entry.fingerprint_v2 = pending_v2
                 self._write(nodes=(entry,))
                 return IdentityVerdict(True)
             if presented and recorded and presented != recorded:
@@ -656,6 +698,10 @@ class EnrollmentLedger:
                 entry.denied_reason = reason
                 self._write(nodes=(entry,))
                 return IdentityVerdict(False, reason)
+            if pending_v2:
+                logger.info("node %s: recording its v2 fingerprint", node_id)
+                entry.fingerprint_v2 = pending_v2
+                self._write(nodes=(entry,))
             return IdentityVerdict(True)
 
     # ── Housekeeping ─────────────────────────────────────────────────────
