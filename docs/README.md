@@ -4,7 +4,7 @@ A control plane for running inference engines — vLLM, SGLang, llama.cpp, Tenso
 
 It answers four questions that are otherwise four different shell sessions: *what can I run*, *what is running*, *what is each machine doing*, and *what is on each machine's disk*.
 
-![The Runs page, with a run expanded](assets/screenshots/jobs.png)
+![A run's page](assets/screenshots/jobs.png)
 
 > **Not affiliated with NVIDIA.** NVIDIA, DGX and related marks belong to their owners. Spark Pulse is MIT-licensed, © Kharkevich Engineering Lab.
 
