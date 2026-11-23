@@ -177,16 +177,10 @@ def fit(
 
     runnable: dict[str, list[str]] = {}
     by_unknown: dict[str, list[str]] = {}
-    pinned_engine, pinned_variant = recipe.get("engine"), recipe.get("variant")
     for engine in candidates:
         for spec in variants:
             if spec.engine != engine or not spec.usable:
                 continue
-            if pinned_variant and engine == pinned_engine:
-                # The recipe names its image; another variant of the same
-                # engine is not what it was written for.
-                if spec.variant != pinned_variant:
-                    continue
             arch = set(spec.arch)
             known = [n for n in fleet_nodes if n.platform and n.platform in arch]
             unknown = [n for n in fleet_nodes if not n.platform]

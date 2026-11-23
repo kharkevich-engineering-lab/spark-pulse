@@ -149,3 +149,93 @@ def test_an_engine_with_no_default_variant_is_still_asked(tmp_path):
     registry = _registry(tmp_path, INKLING)
     assert registry.variant_for("sglang") == "inkling"
     assert registry.variant_for("sglang", "inkling") == "inkling"
+
+
+def test_a_fork_runs_recipes_written_for_the_dialect_it_speaks():
+    spec = _spec(
+        engine="vllm-fork", runtime={"renderer": "vllm", "serve": "vllm serve"}
+    )
+    engine = engine_class(spec)(spec)
+    assert engine.answers_to == ("vllm-fork", "vllm")
+    assert engine.supports({"name": "r", "model": "m", "engines": {"vllm": {}}})[0]
+    assert engine.supports({"name": "r", "model": "m", "command": "vllm serve m"})[0]
+    # Its own block wins over the dialect's.
+    recipe = {"engines": {"vllm": {"args": "--a"}, "vllm-fork": {"args": "--b"}}}
+    assert engine._block_args(recipe) == "--b"
+
+
+def test_the_engine_table_refuses_a_size_the_engine_cannot_render(
+    tmp_path, monkeypatch
+):
+    from spark_pulse.engines import registry as registry_module
+    from spark_pulse.tools import recipe_sources
+
+    newcomer = {
+        "engine": "newcomer",
+        "image": "x/newcomer",
+        "runtime": {"serve": "newcomer serve"},
+        "capabilities": {"solo": True, "cluster": True},
+    }
+    reg = _registry(tmp_path, newcomer)
+    monkeypatch.setattr(registry_module, "get_registry", lambda: reg)
+    monkeypatch.setattr("spark_pulse.engines.get_registry", lambda: reg)
+    payload = {"name": "r", "model": "m", "engine": "newcomer"}
+    [row] = recipe_sources.engine_support(payload)
+    assert row["supported"] is True
+    [row] = recipe_sources.engine_support({**payload, "cluster_only": True})
+    assert row["supported"] is False
+    assert "one node" in row["reason"]
+
+
+def test_a_failed_fetch_is_retried_after_the_backoff(tmp_path, monkeypatch, index_path):
+    from spark_pulse.engines import registry as registry_module
+
+    monkeypatch.setattr(registry_module, "_is_simulation", lambda: False)
+    monkeypatch.setattr(
+        EngineRegistry, "index_refs", property(lambda self: [str(index_path)])
+    )
+    calls = []
+
+    def flaky(ref):
+        calls.append(ref)
+        if len(calls) == 1:
+            raise RuntimeError("registry down")
+        return yaml.safe_load(index_path.read_text())
+
+    monkeypatch.setattr(registry_module, "fetch_index", flaky)
+    clock = [1_000_000.0]
+    monkeypatch.setattr(registry_module.time, "time", lambda: clock[0])
+    reg = EngineRegistry(cache_dir=tmp_path / "cache", cache_ttl=3600)
+    reg.refresh_in_background().join(timeout=10)
+    assert reg.list() == []
+    # Within the backoff nothing is started; after it, the fetch runs again.
+    assert reg.refresh_in_background() is None
+    clock[0] += registry_module.RETRY_SECONDS
+    reg.refresh_in_background().join(timeout=10)
+    assert [s.engine for s in reg.list()] == ["newcomer"]
+    assert len(calls) == 2
+    # The cache was written whole, and nothing temporary was left beside it.
+    assert [p.suffix for p in (tmp_path / "cache").iterdir()] == [".json"]
+
+
+@pytest.fixture
+def index_path(tmp_path):
+    path = tmp_path / "index.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "kind": "EngineIndex",
+                "engines": [
+                    {
+                        "engine": "newcomer",
+                        "spec": {
+                            "engine": "newcomer",
+                            "image": "x/newcomer",
+                            "runtime": {"serve": "newcomer serve"},
+                        },
+                    }
+                ],
+            }
+        )
+    )
+    return path

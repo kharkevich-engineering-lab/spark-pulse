@@ -57,7 +57,7 @@ def _to_node(node: RenderNode | str) -> NodeInfo:
 
 @router.get("")
 def list_engines():
-    """All known engine specs, bundled defaults plus indexed ones."""
+    """Every engine the configured indexes publish (simulation: its fixed index)."""
     registry = get_registry()
     registry.refresh_if_stale()
     return {

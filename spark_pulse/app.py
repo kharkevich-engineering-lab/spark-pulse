@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from spark_pulse.agent import runtime as agent_runtime
 from spark_pulse.config import config, assert_safe_startup
+from spark_pulse.engines import get_registry
 from spark_pulse.routers import (
     recipes,
     deployments,
@@ -118,6 +119,11 @@ async def lifespan(app: FastAPI):
 
     mode = "SIMULATION" if is_simulation() else "PRODUCTION"
     print(f"Spark Pulse starting in {mode} mode")
+
+    # The engine index is the registry: asking for it starts the first fetch
+    # of a fresh install (or the top-up of a stale cache) in the background,
+    # so engines are there before the first request rather than after it.
+    get_registry()
 
     # Refuse to start on an unreadable state file. An unreadable state file is
     # not an empty cluster: coming up with an empty view while containers are

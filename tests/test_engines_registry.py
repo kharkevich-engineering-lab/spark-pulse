@@ -79,7 +79,7 @@ def registry(tmp_path):
 # ── The simulated index ──────────────────────────────────────────────────────
 
 
-BUNDLED = {
+SIMULATED = {
     "vllm/default",
     "sglang/default",
     "llama-cpp/default",
@@ -92,9 +92,9 @@ BUNDLED = {
 }
 
 
-def test_bundled_defaults_are_parsed():
+def test_the_simulated_index_is_parsed():
     specs = {s.key: s for s in load_spec_dir()}
-    assert set(specs) == BUNDLED
+    assert set(specs) == SIMULATED
     vllm = specs["vllm/default"]
     assert vllm.runtime.serve == "vllm serve"
     assert vllm.runtime.ports.api == 8000
@@ -104,9 +104,9 @@ def test_bundled_defaults_are_parsed():
     assert vllm.verified[0].nodes == 1
 
 
-def test_registry_lists_bundled_engines(registry):
-    assert set(s.key for s in registry.list()) == BUNDLED
-    assert [s.key for s in registry.list()] == sorted(BUNDLED), "listed in order"
+def test_registry_lists_the_simulated_engines(registry):
+    assert set(s.key for s in registry.list()) == SIMULATED
+    assert [s.key for s in registry.list()] == sorted(SIMULATED), "listed in order"
 
 
 def test_get_and_has(registry):

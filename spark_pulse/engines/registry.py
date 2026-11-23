@@ -37,6 +37,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import tempfile
 import threading
 import time
@@ -121,6 +122,10 @@ def engine_class(spec: EngineSpec) -> type[Engine]:
     )
     return cls or GenericEngine
 
+
+#: How long a failed fetch waits before the background top-up tries again.
+#: Short, because until a fresh install's first fetch lands it has no engines.
+RETRY_SECONDS = 60
 
 INDEX_API_VERSION = "spark-pulse.io/v1"
 INDEX_KIND = "EngineIndex"
@@ -310,6 +315,11 @@ class EngineRegistry:
         self._cache_dir = cache_dir or CACHE_DIR
         self._cache_ttl = cache_ttl
         self._lock = threading.RLock()
+        # One fetch at a time: the background top-up and a request's
+        # ``refresh_if_stale`` would otherwise pull the same index twice and
+        # race on its cache file.
+        self._refresh_lock = threading.Lock()
+        self._attempted_at: dict[str, float] = {}
         self._fixed: list[EngineSpec] = []
         self._indexed: dict[str, list[EngineSpec]] = {}
         self._fetched_at: dict[str, float] = {}
@@ -354,8 +364,15 @@ class EngineRegistry:
                 "indexes": results,
                 "engines": len(self.list()),
             }
+        with self._refresh_lock:
+            return self._refresh_locked(force)
+
+    def _refresh_locked(self, force: bool) -> dict[str, Any]:
+        results: list[dict[str, Any]] = []
         now = time.time()
         for ref in self.index_refs:
+            # Read under the refresh lock, so a call that waited behind
+            # another's fetch sees that fetch and skips.
             if not force and now - self._fetched_at.get(ref, 0) < self.cache_ttl:
                 results.append(
                     {
@@ -365,6 +382,7 @@ class EngineRegistry:
                     }
                 )
                 continue
+            self._attempted_at[ref] = now
             try:
                 data = fetch_index(ref)
             except Exception as exc:
@@ -389,16 +407,21 @@ class EngineRegistry:
         }
 
     def needs_refresh(self) -> bool:
-        """Whether any configured index is uncached or past its TTL."""
+        """Whether an index is uncached or stale and not tried in the last
+        :data:`RETRY_SECONDS` — so a failed fetch is retried, but not on
+        every request."""
         now = time.time()
         return any(
             now - self._fetched_at.get(ref, 0) >= self.cache_ttl
+            and now - self._attempted_at.get(ref, 0) >= RETRY_SECONDS
             for ref in self.index_refs
         )
 
     def refresh_in_background(self) -> threading.Thread | None:
         """Top up stale indexes on a thread; never blocks, never raises."""
-        if _is_simulation() or not self.needs_refresh():
+        if _is_simulation() or self._refresh_lock.locked():
+            return None
+        if not self.needs_refresh():
             return None
 
         def run() -> None:
@@ -441,9 +464,13 @@ class EngineRegistry:
         path = self._cache_path(ref)
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
+            # Whole or not at all: a reader must never parse half a file and
+            # take it for no cache.
+            tmp = path.with_suffix(f".{os.getpid()}.{threading.get_ident()}.tmp")
+            tmp.write_text(
                 json.dumps({"ref": ref, "fetched_at": fetched_at, "index": data})
             )
+            os.replace(tmp, path)
         except OSError as exc:  # pragma: no cover - defensive
             logger.warning("Cannot cache engine index %s: %s", ref, exc)
 
@@ -576,10 +603,13 @@ def get_registry() -> EngineRegistry:
     with _registry_lock:
         if _registry is None:
             _registry = EngineRegistry()
-            # The first fetch of a fresh install, or of an index a settings
-            # change just named, lands without anybody asking for it.
-            _registry.refresh_in_background()
-        return _registry
+        registry = _registry
+    # Every use is a chance to top up: the first fetch of a fresh install (the
+    # lifespan asks at startup), an index a settings change just named, and a
+    # fetch that failed — retried no sooner than RETRY_SECONDS. Cheap when
+    # nothing is due, and it never blocks the caller.
+    registry.refresh_in_background()
+    return registry
 
 
 def reset_registry() -> None:

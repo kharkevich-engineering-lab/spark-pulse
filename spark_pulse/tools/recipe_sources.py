@@ -231,6 +231,9 @@ def engine_support(payload: dict[str, Any]) -> list[dict[str, Any]]:
         logger.debug("Engine registry unavailable; reporting no engine support")
         return []
 
+    from spark_pulse.tools.recipe_fit import nodes_needed
+
+    needed = nodes_needed(payload)
     out: list[dict[str, Any]] = []
     for name in sorted({spec.engine for spec in specs}):
         try:
@@ -239,6 +242,11 @@ def engine_support(payload: dict[str, Any]) -> list[dict[str, Any]]:
             )
             engine = registry.engine(name, registry.variant_for(name, preferred))
             supported, reason = engine.supports(payload)
+            if supported and needed > 1:
+                # The size the recipe asks for is part of whether this engine
+                # runs it — the same refusal the plan would give, said here
+                # so the recipe page does not offer what the plan refuses.
+                supported, reason = engine.supports_size(needed)
         except EngineError as exc:
             supported, reason = False, str(exc)
         out.append(

@@ -379,6 +379,22 @@ class Engine:
         # fork, or the generic one) answers to each engine's own name.
         self.name = spec.engine or type(self).name
 
+    @property
+    def dialect(self) -> str:
+        """The framework this renderer speaks — ``vllm`` for a vLLM fork —
+        or the engine's own name when the renderer is the generic one."""
+        return type(self).name or self.name
+
+    @property
+    def answers_to(self) -> tuple[str, ...]:
+        """Every engine name a recipe may use for this engine, own name first.
+
+        A fork rendered as vLLM runs a recipe written for vLLM: the flags in
+        its ``engines.vllm`` block, or a v1 command, are that dialect's. Its
+        own name still comes first, so a block written for the fork wins.
+        """
+        return tuple(dict.fromkeys((self.name, self.dialect)))
+
     # -- declarative accessors, all driven by engine.yaml ------------------
 
     def default_image(self) -> str:
@@ -491,9 +507,7 @@ class Engine:
         """
         if self.spec.framework_version:
             return str(self.spec.framework_version)
-        source = self.spec.sources.get(self.name) or self.spec.sources.get(
-            type(self).name
-        )
+        source = self.spec.sources.get(self.name) or self.spec.sources.get(self.dialect)
         if isinstance(source, dict) and source.get("version"):
             return str(source["version"])
         return ""
@@ -513,15 +527,15 @@ class Engine:
         found = parse_version(declared)
         if not found:
             return True, (
-                f"engine '{self.spec.key}' declares no {self.name} version, so "
-                f"it cannot be checked against the {self.name} >= {wanted} the "
+                f"engine '{self.spec.key}' declares no {self.dialect} version, so "
+                f"it cannot be checked against the {self.dialect} >= {wanted} the "
                 "rendered launch flags need"
             )
         if found < required:
             return False, (
-                f"engine '{self.spec.key}' carries {self.name} {declared}, but "
+                f"engine '{self.spec.key}' carries {self.dialect} {declared}, but "
                 f"the rendered launch flags (--nnodes/--node-rank/--master-addr"
-                f"/--master-port) need {self.name} >= {wanted}; pick a newer "
+                f"/--master-port) need {self.dialect} >= {wanted}; pick a newer "
                 "engine image or variant"
             )
         return True, ""
@@ -686,7 +700,7 @@ class Engine:
         """
         command = str(recipe.get("command") or "").strip()
         pin = recipe.get("engine") or ("vllm" if command else None)
-        if command and pin != self.name:
+        if command and pin not in self.answers_to:
             return (
                 False,
                 (
@@ -696,9 +710,9 @@ class Engine:
             )
         declared = self.declared_engines(recipe)
         if declared:
-            if self.name not in declared:
+            if not set(self.answers_to) & set(declared):
                 return False, f"recipe only declares engines: {', '.join(declared)}"
-        elif pin and pin != self.name:
+        elif pin and pin not in self.answers_to:
             return False, f"recipe names engine '{pin}'"
         # Absent is chat — the same default ``recipe_schema.serves_of`` reads,
         # restated rather than imported because ``tools`` imports this package.
@@ -733,9 +747,10 @@ class Engine:
         for key in ("engine_specs", "engines"):
             value = recipe.get(key)
             if isinstance(value, dict):
-                block = value.get(self.name)
-                if isinstance(block, dict):
-                    return block
+                for name in self.answers_to:
+                    block = value.get(name)
+                    if isinstance(block, dict):
+                        return block
         return {}
 
     def block_mods(self, recipe: dict[str, Any]) -> list[str]:
