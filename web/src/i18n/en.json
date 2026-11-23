@@ -1380,5 +1380,63 @@
     "lazyNccl": "Lazy NCCL communicators",
     "lazyNcclHelp": "Experimental, torch 2.16 and later. Multi-node ranks build NCCL communicators on first use.",
     "previewCompact": "Memory is compacted on each idle node before launch."
+  },
+  "nodeCleanup": {
+    "title": "Node clean-up",
+    "settingsHint": "Checked by each node's doctor. Nothing is applied from here.",
+    "items": {
+      "desktop": {
+        "name": "Desktop session",
+        "help": "Frees about 1 GiB. A monitor on the node shows a text console."
+      },
+      "bluetooth": {
+        "name": "Bluetooth",
+        "help": "Frees the Bluetooth daemon. Bluetooth keyboards and audio stop."
+      },
+      "printing": {
+        "name": "Printing",
+        "help": "Frees the print server. The node can no longer print."
+      },
+      "snapd": {
+        "name": "Snap daemon",
+        "help": "Frees snapd and its timers. Installed snaps stop updating."
+      },
+      "dgx_dashboard": {
+        "name": "DGX dashboard",
+        "help": "Frees up to 850 MiB at its update check. The dashboard page goes away."
+      },
+      "fwupd_refresh": {
+        "name": "Firmware refresh timer",
+        "help": "Stops the daily check. fwupd stays installed; update by hand."
+      },
+      "watermark_boost": {
+        "name": "Watermark boost",
+        "help": "Gives back up to 0.87 GiB of free memory. Nothing else changes."
+      },
+      "splash": {
+        "name": "Boot splash",
+        "help": "Reads the kernel command line. Advisory: a GRUB edit and a reboot, done by hand."
+      }
+    },
+    "doctor": {
+      "summary": "{applied} of {total} applied",
+      "colItem": "Clean-up",
+      "colState": "State",
+      "colAction": "Action",
+      "state": {
+        "applied": "Applied",
+        "notApplied": "Not applied",
+        "notPresent": "Not on this node",
+        "unknown": "Not read"
+      },
+      "holds": "Holds {size}",
+      "apply": "Apply",
+      "restore": "Restore",
+      "runThere": "Run on that node",
+      "confirmTitle": "Apply {name}?",
+      "confirmDesktop": "A monitor attached to this node will show a text console, not a desktop. Remote access is not affected. Restore brings the desktop back.",
+      "confirmSnapd": "These snaps stop updating, and any service they run stops: {snaps}. Restore starts snapd again.",
+      "confirmSnapdNone": "No snaps are installed. Restore starts snapd again."
+    }
   }
 }

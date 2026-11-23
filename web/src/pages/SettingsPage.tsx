@@ -9,7 +9,8 @@ import {
   saveSecrets,
   updateSettings,
 } from "@/lib/api";
-import type { DockerSettings, MemorySettings, ModelSource } from "@/lib/types";
+import { NODE_TUNING_IDS } from "@/lib/types";
+import type { DockerSettings, MemorySettings, ModelSource, NodeTuningId } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import {
@@ -290,6 +291,11 @@ export default function SettingsPage() {
 
   const memoryCfg = (form.memory ?? {}) as MemorySettings;
   const setMemory = (patch: MemorySettings) => setForm({ ...form, memory: { ...memoryCfg, ...patch } });
+  const tuningOn = memoryCfg.node_tuning ?? [];
+  const toggleTuning = (id: NodeTuningId) =>
+    setMemory({
+      node_tuning: NODE_TUNING_IDS.filter((i) => (i === id ? !tuningOn.includes(i) : tuningOn.includes(i))),
+    });
 
   const modCfg = (form.mod ?? {}) as { network_policy?: string };
   const environment = settings?.environment;
@@ -726,7 +732,13 @@ export default function SettingsPage() {
               <Button
                 size="sm"
                 variant="ghost"
-                onClick={() => setMemory({ compact_before_launch: true, lazy_nccl_communicators: true })}
+                onClick={() =>
+                  setMemory({
+                    compact_before_launch: true,
+                    lazy_nccl_communicators: true,
+                    node_tuning: [...NODE_TUNING_IDS],
+                  })
+                }
               >
                 {t("memorySettings.enableAll")}
               </Button>
@@ -744,6 +756,17 @@ export default function SettingsPage() {
               on={!!memoryCfg.lazy_nccl_communicators}
               onChange={() => setMemory({ lazy_nccl_communicators: !memoryCfg.lazy_nccl_communicators })}
             />
+          </SettingsSection>
+          <SettingsSection title={t("nodeCleanup.title")} hint={<Brief text={t("nodeCleanup.settingsHint")} />}>
+            {NODE_TUNING_IDS.map((id) => (
+              <SwitchRow
+                key={id}
+                label={t(`nodeCleanup.items.${id}.name`)}
+                hint={<Brief text={t(`nodeCleanup.items.${id}.help`)} />}
+                on={tuningOn.includes(id)}
+                onChange={() => toggleTuning(id)}
+              />
+            ))}
           </SettingsSection>
         </div>
       )}

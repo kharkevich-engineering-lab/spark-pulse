@@ -41,6 +41,7 @@ def make_node(
     agent_dials_home: bool = True,
     runner=None,
     machine: str = "aarch64",
+    profile=None,
 ) -> SimulatedNode:
     """One point of the matrix, with every dimension named at the call site."""
     account = SimulatedUser(
@@ -64,6 +65,7 @@ def make_node(
         system_manager=system_manager,
         agent_dials_home=agent_dials_home,
         agent_runner=runner or InProcessAgentRunner(),
+        profile=profile,
     )
 
 

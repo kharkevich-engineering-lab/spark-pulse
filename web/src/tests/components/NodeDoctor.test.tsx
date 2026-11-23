@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import NodeDoctor from "@/components/NodeDoctor";
-import type { ClusterNode, DoctorReport } from "@/lib/types";
+import type { ClusterNode, DoctorFinding, DoctorReport, NodeTuningId } from "@/lib/types";
 
 vi.mock("@/lib/api", () => ({ fetchNodeDoctor: vi.fn(), treatNode: vi.fn() }));
 
@@ -145,5 +145,203 @@ describe("NodeDoctor", () => {
     await user.click(screen.getByRole("button", { name: "Repair what is fixable" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("sudo password refused");
     expect(screen.getByTestId("doctor-findings")).toBeInTheDocument();
+  });
+  describe("node clean-up", () => {
+    function tuning(id: NodeTuningId, over: Partial<NonNullable<DoctorFinding["tuning"]>> = {}, status: DoctorFinding["status"] = "warn"): DoctorFinding {
+      return {
+        check: `tuning-${id.replace("_", "-")}`,
+        status,
+        detail: "",
+        channel: "ssh",
+        verdict: status === "warn" ? "fixable-here" : "nothing-to-do",
+        remedy: "",
+        tuning: {
+          id,
+          present: true,
+          applied: false,
+          consequential: false,
+          can_treat: true,
+          memory_bytes: null,
+          apply_commands: [`sudo systemctl disable --now ${id}.service`],
+          restore_commands: [`sudo systemctl enable --now ${id}.service`],
+          ...over,
+        },
+      };
+    }
+
+    function withTunings(findings: DoctorFinding[]) {
+      const faults = report().findings;
+      return report({ findings: [...faults, ...findings] });
+    }
+
+    it("shows nothing when no clean-up was selected", async () => {
+      render(<NodeDoctor node={node()} onChanged={() => {}} />);
+      await screen.findByTestId("doctor-findings");
+      expect(screen.queryByTestId("doctor-tuning")).toBeNull();
+    });
+
+    it("says how many of the present ones are applied, and offers Apply or Restore", async () => {
+      vi.mocked(fetchNodeDoctor).mockResolvedValue(
+        withTunings([
+          tuning("bluetooth", { applied: true }, "ok"),
+          tuning("printing", { memory_bytes: 15 * 1024 * 1024 }),
+          tuning("dgx_dashboard", { present: false }, "ok"),
+        ]),
+      );
+      render(<NodeDoctor node={node()} onChanged={() => {}} />);
+      const section = await screen.findByTestId("doctor-tuning");
+
+      expect(screen.getByTestId("doctor-tuning-summary")).toHaveTextContent("1 of 2 applied");
+      const bluetooth = within(section).getByTestId("doctor-tuning-bluetooth");
+      expect(bluetooth).toHaveTextContent("Applied");
+      expect(within(bluetooth).getByRole("button", { name: "Restore" })).toBeInTheDocument();
+      const printing = within(section).getByTestId("doctor-tuning-printing");
+      expect(printing).toHaveTextContent("Not applied");
+      expect(printing).toHaveTextContent("Holds 15");
+      expect(within(printing).getByRole("button", { name: "Apply" })).toBeInTheDocument();
+      const dashboard = within(section).getByTestId("doctor-tuning-dgx_dashboard");
+      expect(dashboard).toHaveTextContent("Not on this node");
+      expect(within(dashboard).queryByRole("button")).toBeNull();
+      expect(treatNode).not.toHaveBeenCalled();
+    });
+
+    it("is not a fault: it neither counts as a problem nor offers the repair button", async () => {
+      vi.mocked(fetchNodeDoctor).mockResolvedValue(
+        report({ findings: [tuning("bluetooth")], healthy: true }),
+      );
+      render(<NodeDoctor node={node()} onChanged={() => {}} />);
+      await screen.findByTestId("doctor-tuning");
+
+      expect(screen.getByText("Nothing wrong that the doctor can see.")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Repair what is fixable" })).toBeNull();
+      // But a clean-up can be applied, which needs the sudo password field.
+      expect(screen.getByLabelText("sudo password")).toBeInTheDocument();
+    });
+
+    it("applies one named item with the password, after no confirm for a plain one", async () => {
+      const user = userEvent.setup();
+      const changed = vi.fn();
+      vi.mocked(fetchNodeDoctor).mockResolvedValue(withTunings([tuning("bluetooth")]));
+      vi.mocked(treatNode).mockResolvedValue(withTunings([tuning("bluetooth", { applied: true }, "ok")]));
+      render(<NodeDoctor node={node()} onChanged={changed} />);
+      await screen.findByTestId("doctor-tuning");
+
+      await user.type(screen.getByLabelText("sudo password"), "pw");
+      await user.click(within(screen.getByTestId("doctor-tuning-bluetooth")).getByRole("button", { name: "Apply" }));
+
+      await waitFor(() => expect(treatNode).toHaveBeenCalledWith("peer", "pw", { apply: ["bluetooth"] }));
+      expect(await screen.findByTestId("doctor-tuning-summary")).toHaveTextContent("1 of 1 applied");
+      expect(changed).toHaveBeenCalled();
+    });
+
+    it("restores by naming the item", async () => {
+      const user = userEvent.setup();
+      vi.mocked(fetchNodeDoctor).mockResolvedValue(withTunings([tuning("printing", { applied: true }, "ok")]));
+      vi.mocked(treatNode).mockResolvedValue(withTunings([tuning("printing")]));
+      render(<NodeDoctor node={node()} onChanged={() => {}} />);
+      await screen.findByTestId("doctor-tuning");
+
+      await user.click(screen.getByRole("button", { name: "Restore" }));
+
+      await waitFor(() => expect(treatNode).toHaveBeenCalledWith("peer", undefined, { restore: ["printing"] }));
+    });
+
+    it("names the text console before the desktop is turned off", async () => {
+      const user = userEvent.setup();
+      vi.mocked(fetchNodeDoctor).mockResolvedValue(withTunings([tuning("desktop", { consequential: true })]));
+      vi.mocked(treatNode).mockResolvedValue(withTunings([tuning("desktop", { consequential: true, applied: true }, "ok")]));
+      render(<NodeDoctor node={node()} onChanged={() => {}} />);
+      await screen.findByTestId("doctor-tuning");
+
+      await user.click(within(screen.getByTestId("doctor-tuning-desktop")).getByRole("button", { name: "Apply" }));
+
+      const dialog = await screen.findByRole("dialog");
+      expect(dialog).toHaveTextContent("Apply Desktop session?");
+      expect(dialog).toHaveTextContent("text console");
+      expect(treatNode).not.toHaveBeenCalled();
+
+      await user.click(within(dialog).getByRole("button", { name: "Apply" }));
+      await waitFor(() => expect(treatNode).toHaveBeenCalledWith("peer", undefined, { apply: ["desktop"] }));
+    });
+
+    it("cancelling the confirm changes nothing", async () => {
+      const user = userEvent.setup();
+      vi.mocked(fetchNodeDoctor).mockResolvedValue(withTunings([tuning("desktop", { consequential: true })]));
+      render(<NodeDoctor node={node()} onChanged={() => {}} />);
+      await screen.findByTestId("doctor-tuning");
+
+      await user.click(within(screen.getByTestId("doctor-tuning-desktop")).getByRole("button", { name: "Apply" }));
+      await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Cancel" }));
+
+      expect(treatNode).not.toHaveBeenCalled();
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    it("lists the snaps that would stop", async () => {
+      const user = userEvent.setup();
+      vi.mocked(fetchNodeDoctor).mockResolvedValue(
+        withTunings([tuning("snapd", { consequential: true, snaps: ["firefox", "gnome-42-2204"] })]),
+      );
+      render(<NodeDoctor node={node()} onChanged={() => {}} />);
+      await screen.findByTestId("doctor-tuning");
+
+      await user.click(within(screen.getByTestId("doctor-tuning-snapd")).getByRole("button", { name: "Apply" }));
+
+      expect(await screen.findByRole("dialog")).toHaveTextContent("firefox, gnome-42-2204");
+    });
+
+    it("says so when no snap is installed", async () => {
+      const user = userEvent.setup();
+      vi.mocked(fetchNodeDoctor).mockResolvedValue(withTunings([tuning("snapd", { consequential: true, snaps: [] })]));
+      render(<NodeDoctor node={node()} onChanged={() => {}} />);
+      await screen.findByTestId("doctor-tuning");
+
+      await user.click(within(screen.getByTestId("doctor-tuning-snapd")).getByRole("button", { name: "Apply" }));
+
+      expect(await screen.findByRole("dialog")).toHaveTextContent("No snaps are installed");
+    });
+
+    it("gives the control node the commands to run there instead of buttons", async () => {
+      const user = userEvent.setup();
+      vi.mocked(fetchNodeDoctor).mockResolvedValue(
+        report({
+          findings: [
+            tuning("bluetooth", { can_treat: false }),
+            tuning("printing", { can_treat: false, applied: true }, "ok"),
+          ],
+        }),
+      );
+      render(<NodeDoctor node={node({ is_control_plane: true })} onChanged={() => {}} />);
+      const section = await screen.findByTestId("doctor-tuning");
+
+      expect(within(section).queryByRole("button", { name: "Apply" })).toBeNull();
+      expect(within(section).queryByRole("button", { name: "Restore" })).toBeNull();
+      expect(screen.queryByLabelText("sudo password")).toBeNull();
+      await user.click(within(screen.getByTestId("doctor-tuning-bluetooth")).getByRole("button", { name: "Run on that node" }));
+      expect(screen.getByRole("tooltip")).toHaveTextContent("sudo systemctl disable --now bluetooth.service");
+    });
+
+    it("shows what could not be read as not read", async () => {
+      vi.mocked(fetchNodeDoctor).mockResolvedValue(
+        withTunings([{ ...tuning("bluetooth"), status: "unknown", verdict: "nothing-to-do" }]),
+      );
+      render(<NodeDoctor node={node()} onChanged={() => {}} />);
+      const row = await screen.findByTestId("doctor-tuning-bluetooth");
+      expect(row).toHaveTextContent("Not read");
+      expect(within(row).queryByRole("button")).toBeNull();
+    });
+
+    it("surfaces a failed change and keeps the report", async () => {
+      const user = userEvent.setup();
+      vi.mocked(fetchNodeDoctor).mockResolvedValue(withTunings([tuning("bluetooth")]));
+      vi.mocked(treatNode).mockRejectedValue(new Error("API 502: sudo password refused"));
+      render(<NodeDoctor node={node()} onChanged={() => {}} />);
+      await screen.findByTestId("doctor-tuning");
+
+      await user.click(screen.getByRole("button", { name: "Apply" }));
+
+      expect(await screen.findByRole("alert")).toHaveTextContent("sudo password refused");
+      expect(screen.getByTestId("doctor-tuning")).toBeInTheDocument();
+    });
   });
 });

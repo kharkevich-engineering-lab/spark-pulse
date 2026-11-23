@@ -70,6 +70,16 @@ class NodeProfile:
     #: ``getconf PAGESIZE`` and ``/proc/buddyinfo``, for the memory shape.
     page_size_bytes: int = 4096
     buddyinfo: str = ""
+    #: What the OS runs besides the engine, for the doctor's node clean-ups:
+    #: ``systemctl get-default``, the units present with the memory each holds
+    #: (MiB), the snaps installed, and ``vm.watermark_boost_factor``. A bare
+    #: ``system_units`` is a server with none of it.
+    default_target: str = "multi-user.target"
+    system_units: tuple[tuple[str, int], ...] = ()
+    snaps: tuple[str, ...] = ()
+    watermark_boost: int | None = None
+    #: ``/proc/cmdline``; DGX OS boots with ``splash``.
+    cmdline: str = "BOOT_IMAGE=/boot/vmlinuz root=/dev/nvme0n1p2 ro quiet splash"
     extra_facts: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -126,6 +136,28 @@ SPARK = NodeProfile(
         "Node 0, zone   Normal   2195   1363   1804  14409    580    259    134"
         "     65     32     30      6      3      1      6\n"
     ),
+    # DGX OS as shipped: the desktop is the default target, and everything the
+    # clean-ups look at is present, enabled and running. The MiB are round
+    # figures in the range a node of this kind reports, not a measurement.
+    default_target="graphical.target",
+    system_units=(
+        ("gdm3.service", 640),
+        ("bluetooth.service", 3),
+        ("cups.socket", 0),
+        ("cups.path", 0),
+        ("cups-browsed.service", 6),
+        ("cups.service", 9),
+        ("snapd.socket", 0),
+        ("snapd.seeded.service", 0),
+        ("snapd.snap-repair.timer", 0),
+        ("snapd.service", 38),
+        ("dgx-dashboard.service", 214),
+        ("dgx-dashboard-admin.service", 40),
+        ("fwupd-refresh.timer", 0),
+        ("fwupd.service", 21),
+    ),
+    snaps=("firefox", "snapd-desktop-integration", "gnome-42-2204", "bare", "core22"),
+    watermark_boost=15000,
 )
 
 #: The lab desktop, as its agent reported it on 2026-11-13.
@@ -152,6 +184,25 @@ WORKSTATION = NodeProfile(
     store_root="/home/ark/.local/share/containers/storage",
     # A Podman node runs no Docker daemon; the field is Docker's own version.
     extra_facts={"docker_version": ""},
+    # An Ubuntu desktop, not DGX OS: the same desktop and print services, the
+    # stock kernel boost, and no dgx-dashboard, which only DGX OS ships.
+    default_target="graphical.target",
+    system_units=(
+        ("gdm3.service", 780),
+        ("bluetooth.service", 4),
+        ("cups.socket", 0),
+        ("cups.path", 0),
+        ("cups-browsed.service", 7),
+        ("cups.service", 11),
+        ("snapd.socket", 0),
+        ("snapd.seeded.service", 0),
+        ("snapd.snap-repair.timer", 0),
+        ("snapd.service", 41),
+        ("fwupd-refresh.timer", 0),
+        ("fwupd.service", 18),
+    ),
+    snaps=("firefox", "snapd-desktop-integration", "bare", "core22"),
+    watermark_boost=15000,
 )
 
 PROFILES = {profile.name: profile for profile in (SPARK, WORKSTATION)}

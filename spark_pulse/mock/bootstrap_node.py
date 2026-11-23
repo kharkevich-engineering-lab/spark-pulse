@@ -59,6 +59,7 @@ __all__ = [
     "SimulatedSession",
     "SimulatedUser",
     "SudoPolicy",
+    "SystemUnit",
     "UnitState",
     "spark_like_node",
 ]
@@ -111,6 +112,21 @@ class UnitState:
     #: gRPC stream that is not closed leaves the node connected after its unit
     #: has been stopped — which makes "the agent is not running" untestable.
     session: Any = None
+
+
+@dataclass
+class SystemUnit:
+    """A unit the OS ships, as the doctor's node clean-ups see it.
+
+    Kept apart from :class:`UnitState`, which is the agent's own unit and runs
+    a real agent task: these only hold the three facts ``systemctl`` reports
+    and the doctor changes.
+    """
+
+    name: str
+    enabled: bool = True
+    active: bool = True
+    memory_bytes: int | None = None
 
 
 class SimulatedNode:
@@ -176,6 +192,10 @@ class SimulatedNode:
         #: something a temporary directory on somebody's laptop can have, so
         #: it is modelled here rather than made.
         foreign_owned: dict[str, int] | None = None,
+        #: What kind of machine this is, for the desktop services DGX OS ships
+        #: (:mod:`spark_pulse.mock.profiles`). ``None`` is a bare server: no
+        #: desktop, a multi-user default target and no watermark boost file.
+        profile: Any = None,
         agent_runner: Callable[..., Awaitable[RunResult]] | None = None,
     ):
         self.host = host
@@ -217,6 +237,26 @@ class SimulatedNode:
         self.foreign_owned: dict[str, int] = dict(foreign_owned or {})
         self.agent_runner = agent_runner or InProcessAgentRunner()
         self.units: dict[str, UnitState] = {}
+
+        # ── What DGX OS runs besides the agent (the doctor's clean-ups) ───
+        self.system_units: dict[str, SystemUnit] = {}
+        self.default_target = "multi-user.target"
+        #: ``None`` means there is no snapd; a list is what ``snap list`` shows.
+        self.snaps: list[str] | None = None
+        if profile is not None:
+            self.default_target = profile.default_target
+            for name, memory_mib in profile.system_units:
+                self.system_units[name] = SystemUnit(
+                    name, memory_bytes=memory_mib * 1024 * 1024 or None
+                )
+            self.snaps = list(profile.snaps) if profile.system_units else None
+            cmdline = self.path("/proc/cmdline", "root")
+            cmdline.parent.mkdir(parents=True, exist_ok=True)
+            cmdline.write_text(profile.cmdline + "\n")
+            if profile.watermark_boost is not None:
+                knob = self.path("/proc/sys/vm/watermark_boost_factor", "root")
+                knob.parent.mkdir(parents=True, exist_ok=True)
+                knob.write_text(f"{profile.watermark_boost}\n")
         #: How many times ``systemctl restart user@<uid>.service`` was run —
         #: the bootstrap applies the docker group by restarting the manager.
         self.user_manager_restarts = 0
@@ -299,7 +339,12 @@ class SimulatedNode:
 
 
 def spark_like_node(
-    host: str, root: Path, *, user: str = "alex", password: str = ""
+    host: str,
+    root: Path,
+    *,
+    user: str = "alex",
+    password: str = "",
+    profile: Any = None,
 ) -> SimulatedNode:
     """The measured DGX Spark: non-root user, ``docker`` group, linger on,
     sudo present and password-required.
@@ -320,6 +365,7 @@ def spark_like_node(
         users={user: account},
         docker_socket_users={user},
         linger={user: True},
+        profile=profile,
     )
 
 
@@ -580,7 +626,7 @@ class SimulatedSession:
             policy.mode == "scoped" and _covered(command, policy.commands)
         )
         if free:
-            return await self._sequence(command, None, as_root=True)
+            return await self._sequence(command, stdin, as_root=True)
         if non_interactive and not read_password:
             return RunResult(1, "", "sudo: a password is required")
         if not read_password:  # pragma: no cover - installer always uses -S
@@ -592,7 +638,10 @@ class SimulatedSession:
             return RunResult(
                 1, "", "Sorry, try again.\nsudo: 1 incorrect password attempt"
             )
-        return await self._sequence(command, None, as_root=True)
+        # What follows the password line is the command's own stdin, which is
+        # how ``sudo -S tee <file>`` is fed.
+        remainder = (stdin or "").partition("\n")[2]
+        return await self._sequence(command, remainder or None, as_root=True)
 
     def _sudo_list(self) -> RunResult:
         node, user = self.node, self.user
@@ -1118,6 +1167,10 @@ class SimulatedSession:
             return RunResult(1, "", "Failed to connect to bus: No medium found")
         if scope == "system" and not node.system_manager:
             return RunResult(1, "", "Failed to connect to bus: Host is down")
+        if scope == "system":
+            answered = self._os_unit_verb(parts[1:], as_root)
+            if answered is not None:
+                return answered
         verb = args[0] if args else ""
         unit_name = args[1] if len(args) > 1 else ""
 
@@ -1183,6 +1236,100 @@ class SimulatedSession:
             )
         return RunResult(1, "", f"systemctl: unsupported: {shlex.join(parts)}")
 
+    def _os_unit_verb(self, argv: list[str], as_root: bool) -> RunResult | None:
+        """The units DGX OS ships and the default target: what the doctor's
+        node clean-ups read and change. ``None`` means "not one of these", and
+        the agent's own units fall through to the ordinary handling.
+
+        Reading is open to any user, as ``systemctl show`` is. Changing needs
+        root: an unprivileged ``disable`` on a real node is refused with
+        "Interactive authentication required", which is also what makes the
+        doctor's sudo path a thing a test can break.
+        """
+        node = self.node
+        properties: list[str] = []
+        rest: list[str] = []
+        tokens = iter(argv)
+        for token in tokens:
+            if token == "-p":
+                properties.append(next(tokens, ""))
+            elif not token.startswith("-"):
+                rest.append(token)
+        verb = rest[0] if rest else ""
+        names = rest[1:]
+
+        if verb == "get-default":
+            return RunResult(0, node.default_target + "\n", "")
+        if verb == "show" and properties:
+            return RunResult(0, _show_text(node, names, properties), "")
+        if verb in ("is-active", "is-enabled") and names[:1]:
+            unit = node.system_units.get(names[0])
+            if unit is None:
+                return None
+            on = unit.active if verb == "is-active" else unit.enabled
+            word = (
+                ("active" if on else "inactive")
+                if verb == "is-active"
+                else ("enabled" if on else "disabled")
+            )
+            return RunResult(0 if on else 3, word + "\n", "")
+        if verb not in ("set-default", "enable", "disable", "stop", "start"):
+            return None
+        if verb != "set-default" and not (names and names[0] in node.system_units):
+            return None
+        if not as_root:
+            return RunResult(
+                1, "", "Failed to {}: Interactive authentication required.".format(verb)
+            )
+        if verb == "set-default":
+            node.default_target = names[0] if names else node.default_target
+            return RunResult(0, "", "")
+        unit = node.system_units[names[0]]
+        now = "--now" in argv
+        if verb == "disable":
+            unit.enabled = False
+            unit.active = unit.active and not now
+        elif verb == "enable":
+            unit.enabled = True
+            unit.active = unit.active or now
+        elif verb == "stop":
+            unit.active = False
+        elif verb == "start":
+            unit.active = True
+        return RunResult(0, "", "")
+
+    async def _cmd_snap(self, parts, stdin, as_root) -> RunResult:
+        if self.node.snaps is None:
+            return RunResult(127, "", "snap: command not found")
+        return RunResult(0, _snap_text(self.node), "")
+
+    async def _cmd_sysctl(self, parts, stdin, as_root) -> RunResult:
+        """``sysctl -w key=value``, for the one knob the doctor sets."""
+        if not as_root:
+            return RunResult(1, "", "sysctl: permission denied on key")
+        if "-w" not in parts or len(parts) < 3:
+            return RunResult(1, "", f"sysctl: unsupported: {shlex.join(parts)}")
+        key, _, value = parts[-1].partition("=")
+        if key != "vm.watermark_boost_factor" or not value.strip().isdigit():
+            return RunResult(1, "", f"sysctl: cannot stat /proc/sys/{key}")
+        knob = self.node.path("/proc/sys/vm/watermark_boost_factor", "root")
+        knob.parent.mkdir(parents=True, exist_ok=True)
+        knob.write_text(value.strip() + "\n")
+        return RunResult(0, f"{key} = {value.strip()}\n", "")
+
+    async def _cmd_tee(self, parts, stdin, as_root) -> RunResult:
+        """``tee <file>``: stdin to the file and to stdout, as root or refused."""
+        targets = [p for p in parts[1:] if not p.startswith("-")]
+        text = stdin or ""
+        for target in targets:
+            expanded = self.node.expand(target, self.user.name)
+            if not _may_write(self.node, self.user, expanded, as_root):
+                return RunResult(1, "", f"tee: {target}: Permission denied")
+            path = self.node.path(target, self.user.name)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        return RunResult(0, text, "")
+
     async def _start_unit(
         self, unit_name: str, scope: str, as_root: bool, *, restart: bool
     ) -> RunResult:
@@ -1236,6 +1383,44 @@ class SimulatedSession:
         self._last_task = self.node._last_agent_task
         self._last_session = self.node._last_agent_session
         return result
+
+
+def _show_text(node: "SimulatedNode", names: list[str], properties: list[str]) -> str:
+    """``systemctl show -p … <units>``: one ``key=value`` stanza per unit."""
+    wanted = [p for p in properties if p]
+    stanzas = []
+    for name in names:
+        unit = node.system_units.get(name)
+        if unit is None:
+            values = {
+                "Id": name,
+                "LoadState": "not-found",
+                "ActiveState": "inactive",
+                "UnitFileState": "",
+                "MemoryCurrent": "[not set]",
+            }
+        else:
+            values = {
+                "Id": name,
+                "LoadState": "loaded",
+                "ActiveState": "active" if unit.active else "inactive",
+                "UnitFileState": "enabled" if unit.enabled else "disabled",
+                "MemoryCurrent": (
+                    str(unit.memory_bytes)
+                    if unit.active and unit.memory_bytes is not None
+                    else "[not set]"
+                ),
+            }
+        stanzas.append("\n".join(f"{k}={v}" for k, v in values.items() if k in wanted))
+    return "\n\n".join(stanzas) + "\n"
+
+
+def _snap_text(node: "SimulatedNode") -> str:
+    rows = ["Name  Version  Rev  Tracking  Publisher  Notes"]
+    rows += [
+        f"{name}  1.0  1  latest/stable  canonical  -" for name in node.snaps or []
+    ]
+    return "\n".join(rows) + "\n"
 
 
 def host_probe_handler(node: "SimulatedNode", user: str) -> Any:
@@ -1296,17 +1481,54 @@ def _probe_answer(node: "SimulatedNode", user: str, command: str) -> tuple[int, 
         return 0, f"{node.docker_version}|/var/lib/docker|io.containerd.runc.v2 runc\n"
     if command == runtime_checks.TOOLKIT_COMMAND:
         return 0, "hook\nctk\n"
-    head = command.split("|", 1)[0]
+    head = command.split("|", 1)[0].replace("2>/dev/null", "").strip()
     try:
         parts = shlex.split(head)
     except ValueError:
         return 127, ""
+    tuning = _tuning_probe_answer(node, parts)
+    if tuning is not None:
+        return tuning
     if parts[:1] != ["find"] or "-user" not in parts:
         return 127, ""
     directory = parts[1]
     if not node.path(directory, user).is_dir():
         return 0, "0\n"
     return 0, f"{_foreign_under(node, user, directory)}\n"
+
+
+def _tuning_probe_answer(
+    node: "SimulatedNode", parts: list[str]
+) -> tuple[int, str] | None:
+    """The read-only commands behind the doctor's node clean-ups, for the
+    agent channel: the same node model :meth:`SimulatedSession._os_unit_verb`
+    answers from, so the two channels cannot disagree."""
+    if parts[:2] == ["systemctl", "get-default"]:
+        return 0, node.default_target + "\n"
+    if parts[:2] == ["systemctl", "show"]:
+        properties: list[str] = []
+        names: list[str] = []
+        tokens = iter(parts[2:])
+        for token in tokens:
+            if token == "-p":
+                properties.append(next(tokens, ""))
+            elif not token.startswith("-"):
+                names.append(token)
+        return 0, _show_text(node, names, properties)
+    if parts[:1] == ["snap"] and parts[1:2] == ["list"]:
+        if node.snaps is None:
+            return 127, ""
+        return 0, _snap_text(node)
+    if (
+        parts[:1] == ["cat"]
+        and len(parts) == 2
+        and parts[1].startswith(("/proc/sys/", "/proc/cmdline"))
+    ):
+        knob = node.path(parts[1], "root")
+        if not knob.exists():
+            return 1, ""
+        return 0, knob.read_text()
+    return None
 
 
 def _foreign_keys_under(node: "SimulatedNode", user: str, directory: str) -> list[str]:

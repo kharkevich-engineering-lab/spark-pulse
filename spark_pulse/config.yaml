@@ -63,6 +63,10 @@ memory:
   # Experimental, torch 2.16+: ranks of a multi-node run get
   # TORCH_DIST_USE_NCCL2=0 so NCCL communicators are made lazily.
   lazy_nccl_communicators: false
+  # Which node clean-ups the doctor checks (desktop, bluetooth, printing, snapd,
+  # dgx_dashboard, fwupd_refresh, watermark_boost). Checking is all this does:
+  # a node is changed only when an operator applies one from its doctor.
+  node_tuning: []
 
 # ── Image registry (control node) ────────────────────────────────────────────
 # Images are seeded into a registry on the control node and pulled from there
