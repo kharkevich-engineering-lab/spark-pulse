@@ -15,6 +15,12 @@
 //!   peer was denied as reimaged. `hardware_fingerprint`, which did hash it, is
 //!   still sent unchanged for control planes that know no other field.
 //!
+//! * `fingerprint_v2` (with `fingerprint_version`) is the versioned print the
+//!   ledger migrates to: the permanent MAC addresses of physical NICs plus the
+//!   board serial. Interface names are not hardware, so a renamed interface or
+//!   Podman's bridges no longer move it. `stable_fingerprint` is still sent
+//!   unchanged for a control plane that knows only that.
+//!
 //! Nothing here may fail. An agent that cannot describe its GPUs must still
 //! connect and say so; a probe that needs `nvidia-smi` must never be able to
 //! stop a node reporting in.
@@ -395,9 +401,10 @@ fn serial_fingerprint() -> String {
 /// [`classify_interface`].** The ledger compares this print exactly, so a
 /// rule that changed under it would deny every enrolled node it newly
 /// excludes as reimaged on upgrade. Podman's bridges (#169) are container
-/// interfaces to the classifier and still count here; dropping them from the
-/// print waits for a versioned print the ledger can migrate (item 3 of the
-/// v2 rollout), the way `stable_fingerprint` replaced the memory-hashing one.
+/// interfaces to the classifier and still count here. That is why this print
+/// is the v1 and stays as it is: the versioned print ([`fingerprint_v2`],
+/// from permanent MAC addresses) is what the ledger migrates to, the way
+/// `stable_fingerprint` replaced the memory-hashing one.
 pub fn identifying_names(interfaces: &[NetworkInterface]) -> Vec<&str> {
     let mut names: Vec<&str> = interfaces
         .iter()
@@ -453,6 +460,79 @@ pub fn legacy_composite_fingerprint(
     parts.push(memory_bytes.to_string());
     parts.push(machine_id.to_string());
     hex(Sha256::digest(parts.join("|").as_bytes()))
+}
+
+/// The version of the print in `fingerprint_v2`.
+pub const FINGERPRINT_VERSION: u32 = 2;
+
+/// The v2 print: the permanent MAC addresses of this machine's physical NICs,
+/// and the board serial when there is one. Reads this machine.
+pub fn fingerprint_v2() -> String {
+    composite_fingerprint_v2(&physical_permanent_macs(Path::new("/sys")), &board_serial())
+}
+
+/// The permanent MAC addresses of the physical NICs under `<sys>/class/net`,
+/// lowercase, sorted, once each. Pure over a directory tree, so a test builds
+/// a fake sysfs.
+///
+/// **Physical** is `<if>/device` existing: a NIC sitting on a bus (PCI, USB,
+/// platform) has one, while bridges, veth pairs, bonds, VLANs, tunnels and
+/// loopback have none. That is what excludes Podman's and Docker's
+/// interfaces, by being virtual rather than by name. ConnectX ports have it.
+///
+/// **Permanent** is `<if>/addr_assign_type` reading `0` (`NET_ADDR_PERM`),
+/// with the address in `<if>/address`: the kernel is saying the address is
+/// the one burned into the hardware. `1` (random), `2` (stolen) and `3` (set
+/// by userspace, as a udev rule or netplan `macaddress:` does) are not
+/// hardware, so such a NIC is left out rather than hashed under an address
+/// it could lose. A slave of a bond is the exception that has its true
+/// address elsewhere: the bond rewrites the slave's `address`, but the kernel
+/// keeps the original in `<if>/bonding_slave/perm_hwaddr`, which is preferred
+/// when present. A rename changes none of this, since nothing here reads a
+/// name. An all-zero address is no address.
+pub fn physical_permanent_macs(sys: &Path) -> Vec<String> {
+    let mut macs: BTreeSet<String> = BTreeSet::new();
+    let Ok(entries) = fs::read_dir(sys.join("class/net")) else {
+        return Vec::new();
+    };
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        if !dir.join("device").exists() {
+            continue;
+        }
+        let mac = match read_trimmed(dir.join("bonding_slave/perm_hwaddr")) {
+            Some(perm) => perm,
+            None => {
+                if read_trimmed(dir.join("addr_assign_type")).as_deref() != Some("0") {
+                    continue;
+                }
+                match read_trimmed(dir.join("address")) {
+                    Some(address) => address,
+                    None => continue,
+                }
+            }
+        };
+        let mac = mac.to_lowercase();
+        if mac.chars().all(|c| c == '0' || c == ':') {
+            continue;
+        }
+        macs.insert(mac);
+    }
+    macs.into_iter().collect()
+}
+
+/// The v2 print from already-gathered parts. Pure. Empty when nothing
+/// identifies the machine: no MAC and no serial, so the control plane
+/// compares nothing rather than a constant.
+pub fn composite_fingerprint_v2(macs: &[String], serial: &str) -> String {
+    if macs.is_empty() && serial.is_empty() {
+        return String::new();
+    }
+    let mut sorted: Vec<&str> = macs.iter().map(String::as_str).collect();
+    sorted.sort_unstable();
+    sorted.dedup();
+    let text = format!("v2|macs:{}|serial:{serial}", sorted.join(","));
+    hex(Sha256::digest(text.as_bytes()))
 }
 
 fn hex(bytes: impl AsRef<[u8]>) -> String {
@@ -714,6 +794,8 @@ pub fn collect(docker_version: String, runtime: ContainerRuntime) -> NodeFacts {
         gpu_count: gpu_count(),
         hardware_fingerprint: legacy_fingerprint(&interfaces, &machine_id, cpus, memory),
         stable_fingerprint: fingerprint(&interfaces, &machine_id, cpus),
+        fingerprint_version: FINGERPRINT_VERSION,
+        fingerprint_v2: fingerprint_v2(),
         interfaces,
         infiniband_interfaces,
         roce_links: roce_links(),

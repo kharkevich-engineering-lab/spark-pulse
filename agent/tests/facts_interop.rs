@@ -293,3 +293,121 @@ fn reading_the_links_never_fails() {
         assert!(!link.hca.is_empty());
     }
 }
+
+// ── The v2 print: permanent MACs of physical NICs ───────────────────────────
+
+mod v2 {
+    use spark_pulse_agent::facts::{composite_fingerprint_v2, physical_permanent_macs};
+    use std::fs;
+    use std::path::Path;
+
+    /// One interface under a fake `/sys/class/net`. `physical` adds the
+    /// `device` link; `assign` is `addr_assign_type`.
+    fn nic(sys: &Path, name: &str, mac: &str, physical: bool, assign: &str) {
+        let dir = sys.join("class/net").join(name);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("address"), format!("{mac}\n")).unwrap();
+        fs::write(dir.join("addr_assign_type"), format!("{assign}\n")).unwrap();
+        if physical {
+            fs::create_dir_all(dir.join("device")).unwrap();
+        }
+    }
+
+    fn print(sys: &Path) -> String {
+        composite_fingerprint_v2(&physical_permanent_macs(sys), "")
+    }
+
+    fn spark() -> tempfile::TempDir {
+        let t = tempfile::tempdir().unwrap();
+        nic(t.path(), "lo", "00:00:00:00:00:00", false, "0");
+        nic(t.path(), "enP7s7", "aa:00:00:00:00:01", true, "0");
+        nic(t.path(), "enp1s0f0np0", "aa:00:00:00:00:02", true, "0");
+        nic(t.path(), "enp1s0f1np1", "aa:00:00:00:00:03", true, "0");
+        t
+    }
+
+    #[test]
+    fn it_ignores_podman_docker_veth_and_bridges() {
+        let t = spark();
+        let before = print(t.path());
+        for (name, mac) in [
+            ("podman0", "02:00:00:00:00:10"),
+            ("cni-podman0", "02:00:00:00:00:11"),
+            ("docker0", "02:00:00:00:00:12"),
+            ("br-1a2b3c", "02:00:00:00:00:13"),
+            ("veth9f", "02:00:00:00:00:14"),
+        ] {
+            nic(t.path(), name, mac, false, "0");
+        }
+        assert_eq!(print(t.path()), before);
+    }
+
+    #[test]
+    fn it_is_stable_across_an_interface_rename() {
+        let t = spark();
+        let before = print(t.path());
+        fs::rename(
+            t.path().join("class/net/enP7s7"),
+            t.path().join("class/net/lan0"),
+        )
+        .unwrap();
+        assert_eq!(print(t.path()), before);
+    }
+
+    #[test]
+    fn it_changes_when_a_nic_is_swapped() {
+        let t = spark();
+        let before = print(t.path());
+        nic(t.path(), "enp1s0f1np1", "bb:00:00:00:00:99", true, "0");
+        assert_ne!(print(t.path()), before);
+    }
+
+    #[test]
+    fn it_is_stable_across_reboot_like_noise() {
+        let t = spark();
+        let before = print(t.path());
+        // A reboot brings a different set of container interfaces up; none
+        // of that is hardware.
+        nic(t.path(), "veth1", "02:aa:00:00:00:01", false, "1");
+        nic(t.path(), "podman1", "02:aa:00:00:00:02", false, "1");
+        assert_eq!(print(t.path()), before);
+        assert_eq!(physical_permanent_macs(t.path()).len(), 3);
+    }
+
+    #[test]
+    fn a_mac_set_by_userspace_or_random_is_not_hardware() {
+        let t = spark();
+        let before = print(t.path());
+        nic(t.path(), "wlan0", "02:11:22:33:44:55", true, "1");
+        nic(t.path(), "usb0", "02:11:22:33:44:56", true, "3");
+        assert_eq!(print(t.path()), before);
+    }
+
+    #[test]
+    fn a_bond_slave_is_read_by_its_permanent_address() {
+        let t = tempfile::tempdir().unwrap();
+        nic(t.path(), "eno1", "aa:00:00:00:00:05", true, "0");
+        let dir = t.path().join("class/net/eno1/bonding_slave");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("perm_hwaddr"), "AA:00:00:00:00:07\n").unwrap();
+        nic(t.path(), "bond0", "aa:00:00:00:00:05", false, "0");
+        assert_eq!(physical_permanent_macs(t.path()), vec!["aa:00:00:00:00:07"]);
+    }
+
+    #[test]
+    fn the_serial_is_part_of_the_print_and_nothing_at_all_is_empty() {
+        let macs = vec!["aa:00:00:00:00:01".to_string()];
+        assert_ne!(
+            composite_fingerprint_v2(&macs, "serial-1"),
+            composite_fingerprint_v2(&macs, "")
+        );
+        assert_eq!(composite_fingerprint_v2(&[], ""), "");
+        // Order of discovery does not matter.
+        let two = vec!["b".to_string(), "a".to_string()];
+        let rev = vec!["a".to_string(), "b".to_string()];
+        assert_eq!(
+            composite_fingerprint_v2(&two, ""),
+            composite_fingerprint_v2(&rev, "")
+        );
+    }
+}

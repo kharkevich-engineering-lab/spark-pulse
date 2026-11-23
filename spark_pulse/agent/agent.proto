@@ -884,6 +884,17 @@ message NodeFacts {
   // said to not run here before anything is pulled. Empty from an agent older
   // than the field, which is unknown, never a mismatch.
   string platform = 21;
+  // Which print `fingerprint_v2` is: 2 is the permanent MAC addresses of the
+  // physical NICs (a `device` link in sysfs and `addr_assign_type` 0) plus the
+  // board serial when readable. 0 from an agent older than the field.
+  uint32 fingerprint_version = 22;
+  // The print itself, hex SHA-256. Unlike `stable_fingerprint` it ignores
+  // interface names, so a rename or Podman's bridges do not move it. Empty
+  // when the machine exposes no permanent MAC and no serial. The ledger
+  // records it on the first session that presents the key it issued and
+  // compares only it from then on; `stable_fingerprint` is still sent for a
+  // control plane that does not know this field.
+  string fingerprint_v2 = 23;
 }
 
 message RoceLink {

@@ -650,3 +650,67 @@ def test_a_renewal_carrying_a_different_bundle_is_refused(tmp_path, ca):
     assert identity.verify_pin(identity.trust_bundle_pem)
     assert not identity.verify_pin(other.trust_bundle_pem)
     del issued
+
+
+# ── The versioned print (v2): permanent MACs of physical NICs ────────────────
+
+
+def test_a_record_with_only_v1_records_v2_when_the_key_is_presented(ledger):
+    """Upgrade path: accepted even when v1 has since moved (Podman installed)."""
+    node_id = _enrolled(ledger, stable_fingerprint="v1-at-enrolment")
+    assert ledger.get(node_id).fingerprint_v2 == ""
+    assert _connects(
+        ledger,
+        node_id,
+        stable_fingerprint="v1-after-podman",
+        fingerprint_v2="v2-a",
+    )
+    assert ledger.get(node_id).fingerprint_v2 == "v2-a"
+    assert ledger.get(node_id).state == NodeState.ACCEPTED.value
+    # From then on v2 alone is compared: v1 moving is not a verdict.
+    assert _connects(
+        ledger, node_id, stable_fingerprint="v1-moved-again", fingerprint_v2="v2-a"
+    )
+
+
+def test_v2_is_not_recorded_on_a_session_with_the_wrong_key(ledger):
+    node_id = _enrolled(ledger, stable_fingerprint="v1")
+    verdict = ledger.authorize(
+        node_id,
+        public_key_fingerprint="key-two",
+        facts={"stable_fingerprint": "v1", "fingerprint_v2": "v2-a"},
+    )
+    assert not verdict
+    assert ledger.get(node_id).fingerprint_v2 == ""
+
+
+def test_a_v2_mismatch_denies_the_node_for_a_human(ledger):
+    node_id = _enrolled(ledger, stable_fingerprint="v1", fingerprint_v2="v2-a")
+    verdict = _connects(ledger, node_id, stable_fingerprint="v1", fingerprint_v2="v2-b")
+    assert not verdict
+    assert "reimaged" in verdict.reason
+    entry = ledger.get(node_id)
+    assert entry.state == NodeState.DENIED.value
+    assert "reimaged" in entry.denied_reason
+
+
+def test_an_agent_without_v2_is_still_judged_on_v1(ledger):
+    node_id = _enrolled(ledger, stable_fingerprint="v1", fingerprint_v2="v2-a")
+    assert _connects(ledger, node_id, stable_fingerprint="v1")
+    assert not _connects(ledger, node_id, stable_fingerprint="other")
+
+
+def test_enrolment_records_v2_and_keeps_v1_for_a_rollback(ledger):
+    node_id = _enrolled(ledger, stable_fingerprint="s", fingerprint_v2="m")
+    entry = ledger.get(node_id)
+    assert (entry.stable_fingerprint, entry.fingerprint_v2) == ("s", "m")
+
+
+def test_a_stored_record_without_the_v2_field_loads():
+    from spark_pulse.agent.enrollment import LedgerEntry
+
+    entry = LedgerEntry.from_dict(
+        {"node_id": "n", "stable_fingerprint": "s", "unknown_future_field": 1}
+    )
+    assert entry.fingerprint_v2 == ""
+    assert entry.stable_fingerprint == "s"
