@@ -94,6 +94,18 @@ test("starts a download and reports its progress to completion", async ({ page }
   await expectNoCrash(page);
 });
 
+test("lists the model sources under Sources", async ({ page, request }) => {
+  const { sources } = (await (await request.get("/api/models/sources")).json()) as {
+    sources: { name: string }[];
+  };
+  await gotoPage(page, "/models#sources");
+  await expect(page.getByTestId("model-sources")).toBeVisible();
+  for (let i = 0; i < sources.length; i++) {
+    await expect(page.getByLabel(`Source ${i + 1} name`)).toHaveValue(sources[i].name);
+  }
+  await expectNoCrash(page);
+});
+
 test("offers the configured sources, and says where they are edited", async ({ page, request }) => {
   const response = await request.get("/api/models/sources");
   expect(response.ok(), "GET /api/models/sources should succeed").toBeTruthy();
@@ -103,9 +115,9 @@ test("offers the configured sources, and says where they are edited", async ({ p
   await page.getByRole("button", { name: "Download model" }).click();
   const dialog = page.getByRole("dialog");
 
-  // The editor is in Settings; what stays with the download is the choice it
+  // The editor is the Sources section; what stays with the download is the choice it
   // needs, and one line saying where the list itself is kept.
-  await expect(dialog.getByText("Model sources are configured in Settings.")).toBeVisible();
+  await expect(dialog.getByText("Add one under Sources.")).toBeVisible();
   const select = dialog.getByLabel("Source", { exact: true });
   for (const source of sources.filter((s) => s.type === "hf_hub")) {
     await expect(select.locator(`option[value="${source.name}"]`)).toHaveCount(1);

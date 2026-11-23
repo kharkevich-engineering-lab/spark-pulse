@@ -38,7 +38,6 @@ export const NAV_GROUPS = [
   { href: "/models", label: "Models", heading: "Models." },
   { href: "/engines", label: "Engines", heading: "Engines." },
   { href: "/mods", label: "Mods", heading: "Mods." },
-  { href: "/oci", label: "Collections", heading: "Collections." },
   { href: "/settings", label: "Settings", heading: "Settings." },
 ] as const;
 

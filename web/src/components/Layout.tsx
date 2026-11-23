@@ -25,7 +25,6 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
-  Package,
   Puzzle,
   Search,
   Server,
@@ -68,11 +67,10 @@ export const NAV_GROUPS: NavGroup[] = [
     flag: "benchmarking_enabled",
   },
   { href: "/cluster", labelKey: "nav.nodes", routes: ["/cluster", "/monitoring"], icon: Server, section: "operate" },
-  { href: "/recipes", labelKey: "nav.recipes", routes: ["/recipes"], icon: BookOpen, section: "library" },
+  { href: "/recipes", labelKey: "nav.recipes", routes: ["/recipes", "/oci"], icon: BookOpen, section: "library" },
   { href: "/models", labelKey: "nav.models", routes: ["/models", "/cache"], icon: Box, section: "library" },
   { href: "/engines", labelKey: "nav.engines", routes: ["/engines"], icon: Cpu, section: "library" },
   { href: "/mods", labelKey: "nav.mods", routes: ["/mods"], icon: Puzzle, section: "library" },
-  { href: "/oci", labelKey: "nav.collections", routes: ["/oci"], icon: Package, section: "library" },
   { href: "/settings", labelKey: "nav.settings", routes: ["/settings", "/mcp"], icon: Settings, section: "system" },
 ];
 

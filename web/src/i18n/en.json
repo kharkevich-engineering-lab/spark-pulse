@@ -75,7 +75,6 @@
     "recipes": "Recipes",
     "models": "Models",
     "engines": "Engines",
-    "collections": "Collections",
     "sectionOperate": "Operate",
     "sectionLibrary": "Library",
     "sectionSystem": "System",
@@ -166,14 +165,12 @@
     "onNodes": "On the other nodes",
     "partialDelete": "Some nodes were not cleared",
     "polling": "polling",
-    "present": "Pulled",
     "pull": "Pull",
     "pullFailed": "Pull failed",
     "pulls": "Pulls",
     "refLabel": "Image reference",
     "refPlaceholder": "ghcr.io/owner/engine:1.0.0",
     "refreshIndex": "Refresh",
-    "registry": "Where engines come from",
     "sameImage": "same image",
     "saveFailed": "Could not save",
     "soloNode": "This is the only node registered.",
@@ -189,18 +186,16 @@
     "refHint": "Any OCI reference. Engines from an index are pulled from their row.",
     "filterEngines": "Filter engines",
     "filterLabel": "Which engines",
-    "filterAll": "All",
-    "filterPulled": "Pulled",
-    "filterMissing": "Not pulled",
-    "filterUpdate": "Update available",
-    "aboutIndexes": "Where engines come from",
     "colVersion": "Version",
+    "addIndex": "Add index",
+    "indexLabel": "Index {n}",
+    "removeIndex": "Remove index {n}",
+    "noIndexes": "No indexes configured.",
     "colEnabled": "Enabled",
     "capabilities": "Capabilities",
     "ports": "Ports",
     "hardware": "Hardware",
     "index": "Index",
-    "statusUpdate": "Update available",
     "digestDriftTitle": "A newer digest is published for this tag. Pull to update.",
     "presentTitle": "The image is on this node.",
     "notPulledTitle": "The image is not on this node yet."
@@ -364,10 +359,7 @@
     "tight": "Tight fit"
   },
   "registry": {
-    "testConnection": "Test connection",
-    "remove": "Remove registry",
     "versions": "Available versions",
-    "selectVersion": "Select a version...",
     "connected": "Connected",
     "notConnected": "Not connected",
     "defaultTag": "default",
@@ -375,7 +367,6 @@
       "one": "{count} version",
       "other": "{count} versions"
     },
-    "colRegistry": "Registry",
     "colStatus": "Status",
     "test": "Test",
     "edit": "Edit",
@@ -904,12 +895,8 @@
     "installCopied": "Copied to clipboard"
   },
   "oci": {
-    "noCollections": "No collections found",
-    "noCollectionsHint": "Configure registries in Settings to browse collections",
-    "registries": "Registries",
     "noRegistries": "No registries configured",
     "addRegistry": "Add a registry",
-    "addRegistryButton": "Add registry",
     "name": "Name",
     "namePlaceholder": "my-registry",
     "url": "URL",
@@ -917,11 +904,8 @@
     "autoUpdate": "Auto-Update",
     "enableAutoUpdate": "Enable auto-update",
     "schedule": "Schedule (cron)",
-    "loadingRecipes": "Loading recipes...",
     "update": "Update",
     "install": "Install",
-    "noRecipesInCollection": "No recipes found for this collection",
-    "editRegistryButton": "Edit registry",
     "editRegistry": "Edit {name}",
     "authType": "Authentication",
     "authNone": "None",
@@ -936,8 +920,7 @@
     "secretRequiredOnAuthChange": "Enter a token or password before switching to this authentication type",
     "registryUpdateFailed": "Failed to update registry",
     "removeRegistry": "Forget registry",
-    "removeRegistryConfirm": "Forget {name}? Collections already installed from it stay where they are.",
-    "noDescription": "No description."
+    "removeRegistryConfirm": "Forget {name}? Collections already installed from it stay where they are."
   },
   "fabric": {
     "heading": "ConnectX fabric",
@@ -1100,11 +1083,9 @@
     "deleteImage": "Delete {ref}",
     "detailsFor": "Details for {ref}",
     "download": "Download",
-    "enginesInSettings": "Engine indexes are configured in Settings.",
     "onDisk": "{total} on disk, {cache} of it cache.",
     "pullImage": "Pull {ref}",
     "pullProgress": "{ref} progress",
-    "registriesInSettings": "The update schedule is configured in Settings.",
     "registryAddFailed": "Could not add that registry",
     "registryRemoveFailed": "Could not forget that registry",
     "registryUnreachable": "{name} is not reachable from here.",
@@ -1112,7 +1093,7 @@
     "remove": "Remove",
     "removeModel": "Remove {model}",
     "replicateModel": "Replicate {model} to other nodes",
-    "sourcesInSettings": "Model sources are configured in Settings.",
+    "sourcesInSettings": "Add one under Sources.",
     "syncBody": "{ref} is {size}. Each node selected pulls its own copy.",
     "syncConfirm": "Copy",
     "syncTitle": "Copy this image",
@@ -1138,7 +1119,31 @@
     "presencePartial": "partial",
     "presenceAbsent": "absent",
     "aboutCaches": "About the caches",
-    "aboutRegistries": "About the registries"
+    "catalogue": "Catalogue",
+    "sources": "Sources",
+    "sectionsLabel": "Library sections",
+    "enginesSummary": "{pulled} of {total} pulled, {size} on disk.",
+    "saveBar": "Save changes",
+    "state": {
+      "on_nodes": "On nodes",
+      "partial": "Partial",
+      "getting": "Getting",
+      "available": "Available",
+      "update": "Update",
+      "local": "Local",
+      "removed": "Removed upstream",
+      "unknown": "Unknown",
+      "installed": "Installed"
+    },
+    "filter": {
+      "all": "All",
+      "on_nodes": "On nodes",
+      "available": "Available",
+      "updates": "Updates",
+      "installed": "Installed"
+    },
+    "filterLabel": "Filter by state",
+    "addSource": "Add source"
   },
   "fleet": {
     "nodes": {
@@ -1162,20 +1167,14 @@
     "killError": "Could not kill PID {pid}"
   },
   "settingsPage": {
-    "tabLibrary": "Library",
     "tabMcp": "MCP",
     "shmHelp": "/dev/shm. Tensor-parallel workers pass tensors through it; too small shows up as a hang, not an error.",
     "pidsHelp": "Processes and threads a container may hold. An engine with many workers needs more than the Docker default.",
     "nofileHelp": "Open file descriptors a container may hold. A large model is thousands of shards.",
-    "enginesHint": "Engine images are named by an index. Refresh re-reads it; the fields below decide which index, and how long its answer is kept.",
     "defaultEngineHint": "Used by a recipe that does not name one.",
     "indexTtlHint": "How long a fetched index is reused before it is read again.",
     "sourcesHint": "Where a model is downloaded from. A name here is what the download form and a recipe's source field select.",
     "removeSource": "Remove source {n}",
-    "registriesHint": "OCI registries that publish recipe collections. Browsing and installing one is on the Registries page; this is where they are added and turned on.",
-    "registryUnreachable": "{name} did not answer.",
-    "forgetRegistry": "Forget this registry",
-    "forgetRegistryBody": "{name} is removed from the list. The collections already installed from it stay where they are.",
     "autoUpdateHint": "A background check for newer collection versions. It never applies an update to a recipe you have edited.",
     "autoUpdateToggleHint": "Run the check on the schedule below.",
     "scheduleHint": "A cron expression. Saved when the field loses focus, so a half-typed one is never the schedule.",
@@ -1236,38 +1235,15 @@
     "benchmarkChatOnly": "This run does not serve chat, so it cannot be benchmarked."
   },
   "collection": {
-    "available": "available",
     "updateAll": "Update all ({count})",
-    "installAll": "Install all ({count})",
-    "editsKept": "Update all skips local edits ({count}).",
-    "notChecked": "Could not read the newest version. Updates are not shown.",
-    "filter": "Filter recipes",
-    "filterAll": "All",
-    "filterInstalled": "Installed",
-    "filterUpdates": "Updates",
-    "filterNotInstalled": "Not installed",
-    "noneHere": "No recipes match this filter.",
-    "stateInstalled": "Installed",
-    "stateUpdate": "Update available",
-    "stateLocalEdits": "Local edits",
-    "stateNotInstalled": "Not installed",
-    "stateRemoved": "Removed upstream",
-    "removedHint": "No longer in this collection. Uninstall it from Recipes.",
     "overwriteTitle": "Overwrite local edits?",
     "overwriteConfirm": "{name} was edited here. Updating replaces those edits with the collection's version.",
-    "installAllTitle": "Install all recipes",
-    "installAllConfirm": "Install {count} recipes from {name} {version}?",
-    "installAllDone": "Install finished",
     "updateAllDone": "Update finished",
     "outcome": "{done} done · {skipped} skipped for local edits · {failed} failed",
     "failed": "Could not apply",
-    "pageHeading": "Collections.",
     "colCollection": "Collection",
-    "colVersion": "Version",
     "colRecipes": "Recipes",
-    "colInstalled": "Installed",
-    "colPublisher": "Publisher",
-    "colLicense": "License"
+    "colInstalled": "Installed"
   },
   "kubernetesPreview": {
     "heading": "Kubernetes",
@@ -1333,7 +1309,18 @@
     "soloOrCluster": "One or more",
     "colServes": "Serves",
     "colFile": "File",
-    "deployFor": "Deploy {name}"
+    "deployFor": "Deploy {name}",
+    "installFor": "Install {name}",
+    "updateFor": "Update {name}"
+  },
+  "recipeSources": {
+    "colSource": "Source",
+    "bundledWhere": "Shipped in the package. Read-only.",
+    "customWhere": "Your own recipes, in ~/.config/spark-pulse/custom-recipes."
+  },
+  "modSources": {
+    "bundledWhere": "Listed by the control plane. Read-only.",
+    "customWhere": "Your own mods, in ~/.config/spark-pulse/custom-mods."
   },
   "mods": {
     "heading": "Mods.",
@@ -1346,7 +1333,9 @@
     "colMod": "Mod",
     "colDescription": "Description",
     "colFiles": "Files",
-    "colSource": "Source"
+    "colSource": "Source",
+    "colState": "State",
+    "colMods": "Mods"
   },
   "nodesPage": {
     "healthy": "{count} healthy",

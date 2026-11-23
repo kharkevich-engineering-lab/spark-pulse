@@ -170,11 +170,46 @@ def list_recipes() -> list[dict[str, Any]]:
     """
     payloads = recipe_sources.iter_recipe_payloads()
     if payloads:
-        return [
+        listed = [
             recipe_sources.summarize(p, custom_recipes.has_customization_for(p))
             for p in payloads
         ]
-    return [_canned(r) for r in _RECIPES]
+    else:
+        listed = [_canned(r) for r in _RECIPES]
+    seen = {r["id"] for r in listed}
+    return listed + [r for r in _collection_installed() if r["id"] not in seen]
+
+
+def _collection_installed() -> list[dict[str, Any]]:
+    """The recipes the simulated collections hold as installed.
+
+    The simulated registry records an install in memory rather than writing a
+    file under the operator's config directory, so the listing has to be told
+    about them — on a real control plane the file the install writes *is* the
+    listing's answer, and a recipe installed from a collection is a recipe.
+    """
+    from spark_pulse.mock import oci_registry as sim_oci
+    from spark_pulse.tools.oci_registry import installed_recipe_id
+
+    out = []
+    for stem, meta in sim_oci._INSTALLED.items():
+        out.append(
+            _canned(
+                {
+                    "name": meta.display_name or stem,
+                    "model": "Qwen/Qwen2.5-0.5B-Instruct",
+                    "container": "vllm-node",
+                    "command": "",
+                    "description": f"From {meta.collection} {meta.version}.",
+                    "solo_only": False,
+                    "cluster_only": False,
+                    "defaults": {"port": 9000, "gpu_memory_utilization": 0.4},
+                    "source": "oci",
+                }
+            )
+            | {"id": installed_recipe_id(stem)}
+        )
+    return out
 
 
 def get_recipe(recipe_id: str) -> dict[str, Any] | None:
@@ -189,6 +224,11 @@ def get_recipe(recipe_id: str) -> dict[str, Any] | None:
             if canned["name"] == recipe_id:
                 recipe = _canned(canned)
                 break
+    if recipe is None:
+        recipe = next(
+            (r for r in _collection_installed() if recipe_id in (r["id"], r["name"])),
+            None,
+        )
     if recipe is None:
         return None
     recipe_sources.apply_customization(

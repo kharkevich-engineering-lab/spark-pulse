@@ -1,16 +1,14 @@
 import { useMemo, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import {
   deleteSecret,
-  fetchModelSources,
   fetchSecrets,
   fetchSettings,
-  saveModelSources,
   saveSecrets,
   updateSettings,
 } from "@/lib/api";
 import { NODE_TUNING_IDS } from "@/lib/types";
-import type { DockerSettings, MemorySettings, ModelSource, NodeTuningId } from "@/lib/types";
+import type { DockerSettings, MemorySettings, NodeTuningId } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import {
@@ -33,7 +31,6 @@ import { LANGUAGES, useI18n, useT } from "@/lib/i18n";
 import { getConfig, useConfig } from "@/lib/config";
 import SettingsSection, { SettingRow } from "@/components/SettingsSection";
 import Brief from "@/components/Brief";
-import SettingsLibrary from "@/components/SettingsLibrary";
 import SettingsMcp from "@/components/SettingsMcp";
 import {
   Button,
@@ -56,14 +53,15 @@ import {
  * made at the same time. Grouping by *when you go looking* is what the tabs
  * are for.
  *
- * Two of them are new, and both are settings that used to live on the page
- * they governed. **Library** answers one question — where does this control
- * plane fetch things from — that was previously answered in three places: the
- * engine registry at the bottom of Engines, the model sources at the top of
- * Models, the OCI registries behind a sub-tab of Registries. **MCP** was a
- * route of its own that an operator visited once to copy a snippet; it is a
- * way *in* to this control plane, so it belongs beside authentication and the
- * allowed origins.
+ * There is no Library tab any more. Where engines, models, recipes and mods
+ * come from is the **Sources** section of each kind's own page
+ * (`/engines#sources`, …), beside the catalogue those sources fill — a tab
+ * here that listed three of the four, with a Collections page repeating one
+ * of them, was the thing the operator had to learn to find. `#library` still
+ * arrives somewhere true: the engines' sources. **MCP** was a route of its
+ * own that an operator visited once to copy a snippet; it is a way *in* to
+ * this control plane, so it belongs beside authentication and the allowed
+ * origins.
  *
  * There is deliberately no Cluster tab. Its switch survives — `cluster_enabled`
  * forces a `cluster_only` recipe on below two nodes — but it is a feature
@@ -75,7 +73,6 @@ const TABS = [
   { id: "containers", labelKey: "settings.tabContainers" },
   { id: "memory", labelKey: "memorySettings.tab" },
   { id: "features", labelKey: "settings.tabFeatures" },
-  { id: "library", labelKey: "settingsPage.tabLibrary" },
   { id: "mcp", labelKey: "settingsPage.tabMcp" },
   { id: "preferences", labelKey: "settings.tabPreferences" },
   { id: "secrets", labelKey: "settings.tabSecrets" },
@@ -249,11 +246,7 @@ export default function SettingsPage() {
   const navigate = useNavigate();
   const { data: settings, loading, error, refetch } = useQuery(fetchSettings);
   const { data: secrets, refetch: refetchSecrets } = useQuery(fetchSecrets);
-  const { data: modelSources, refetch: refetchSources } = useQuery(fetchModelSources);
   const [form, setForm] = useState<Record<string, unknown>>({});
-  /** The model sources as they are being edited. They are their own endpoint
-   *  but the same form: the page's one Save writes them too. */
-  const [sources, setSources] = useState<ModelSource[] | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -264,6 +257,9 @@ export default function SettingsPage() {
    *  and re-renders the page) does not send the operator back to the first
    *  tab. */
   const hashTab = location.hash.replace(/^#/, "");
+  // The Library tab moved onto the pages it governed; an old link lands on
+  // the engines' sources rather than on whichever tab was last open.
+  const movedToLibrary = hashTab === "library";
   const [fallbackTab, setFallbackTab] = useState<TabId>(() => storedTab() ?? "deployment");
   const tab: TabId = isTabId(hashTab) ? hashTab : fallbackTab;
 
@@ -318,9 +314,7 @@ export default function SettingsPage() {
     Object.keys(form).some(
       (k) => JSON.stringify(form[k]) !== JSON.stringify((settings as unknown as Record<string, unknown>)[k]),
     );
-  const sourcesDirty =
-    sources != null && modelSources != null && JSON.stringify(sources) !== JSON.stringify(modelSources);
-  const isDirty = settingsDirty || sourcesDirty;
+  const isDirty = settingsDirty;
 
   // Seeded while rendering, not in an effect: an effect runs after the
   // fields are on screen, so an edit made in that gap was overwritten by the
@@ -330,25 +324,18 @@ export default function SettingsPage() {
     setSeededSettings(settings);
     setForm({ ...settings });
   }
-  const [seededSources, setSeededSources] = useState<typeof modelSources>(null);
-  if (modelSources && modelSources !== seededSources) {
-    setSeededSources(modelSources);
-    setSources(modelSources);
-  }
 
   const handleSave = async () => {
     setSaving(true);
     setSaveError(null);
     try {
       if (settingsDirty) await updateSettings(form as Parameters<typeof updateSettings>[0]);
-      if (sourcesDirty && sources) await saveModelSources(sources);
       // Every page reads the app config from one cache; without this a
       // feature switched on here stayed off elsewhere until a reload.
       if (settingsDirty) await reloadConfig();
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
       refetch();
-      if (sourcesDirty) refetchSources();
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : t("settings.saveFailed"));
     } finally {
@@ -388,7 +375,6 @@ export default function SettingsPage() {
   /** Put every field back to what the server holds. */
   const discard = () => {
     if (settings) setForm({ ...settings });
-    if (modelSources) setSources(modelSources);
     setSaveError(null);
   };
 
@@ -396,6 +382,8 @@ export default function SettingsPage() {
     () => TABS.map(({ id, labelKey }) => ({ id, label: t(labelKey) })),
     [t],
   );
+
+  if (movedToLibrary) return <Navigate to="/engines#sources" replace />;
 
   if (loading)
     return (
@@ -851,13 +839,6 @@ export default function SettingsPage() {
               )}
             </div>
           </SettingsSection>
-        </div>
-      )}
-
-      {/* ── Library ──────────────────────────────────────────────────────── */}
-      {tab === "library" && (
-        <div>
-          <SettingsLibrary form={form} setForm={setForm} sources={sources} setSources={setSources} />
         </div>
       )}
 

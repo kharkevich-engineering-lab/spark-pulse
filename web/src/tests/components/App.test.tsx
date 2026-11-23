@@ -49,7 +49,8 @@ vi.mock("@/pages/RunsPage", () => ({
 vi.mock("@/pages/FleetPage", () => ({ default: () => <div>fleet page</div> }));
 // One page under four addresses: Library is tabbed, and each tab kept the
 // route it had when it was a page of its own.
-vi.mock("@/pages/LibraryPage", () => ({ default: () => <div>library page</div> }));
+vi.mock("@/pages/EnginesPage", () => ({ default: () => <div>engines page</div> }));
+vi.mock("@/pages/ModelsPage", () => ({ default: () => <div>models page</div> }));
 vi.mock("@/pages/SettingsPage", () => ({ default: () => <div>settings page</div> }));
 vi.mock("@/pages/LoginPage", () => ({ default: () => <div>login page</div> }));
 
@@ -66,10 +67,9 @@ const ROUTES: [string, string][] = [
   ["/cluster", "fleet page"],
   // Monitoring is a tab of Fleet, so the route renders the same page.
   ["/monitoring", "fleet page"],
-  ["/models", "library page"],
-  ["/engines", "library page"],
-  ["/cache", "library page"],
-  ["/oci", "library page"],
+  ["/models", "models page"],
+  ["/engines", "engines page"],
+  ["/cache", "models page"],
   ["/settings", "settings page"],
 ];
 
@@ -101,6 +101,16 @@ describe("App routing", () => {
     expect(screen.getByText("settings page")).toBeInTheDocument();
     expect(window.location.pathname).toBe("/settings");
     expect(window.location.hash).toBe("#mcp");
+  });
+
+  /** Collections were a page; they are where recipes come from, which is
+   *  the Sources section of Recipes. */
+  it("sends the old /oci route to the sources of Recipes", () => {
+    renderAt("/oci");
+
+    expect(screen.getByText("recipes page")).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/recipes");
+    expect(window.location.hash).toBe("#sources");
   });
 
   it("renders the login page with no shell around it", () => {

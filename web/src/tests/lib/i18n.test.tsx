@@ -49,6 +49,11 @@ describe("the dictionaries", () => {
    *  French borrowed unchanged. */
   const IDENTICAL_ON_PURPOSE = new Set([
     "common.ok",
+    // The Library's two sections and a held item's state: Catalogue, Sources
+    // and Local are the same words in French.
+    "library.catalogue",
+    "library.sources",
+    "library.state.local",
     // The overview's column heads and the palette's group: GPU is an
     // initialism, and Phase, Port and Pages are the same word in French.
     "overview.gpu",

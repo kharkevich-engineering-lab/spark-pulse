@@ -552,5 +552,63 @@
     "results": {
       "error": "llama-benchy is not installed. Install it with: pip install spark-pulse[benchmarking]"
     }
+  },
+  {
+    "benchmark_id": "4755ff5a-deb8-4a10-8221-58f7728bd60f",
+    "deployment_id": "5672ba9c496b",
+    "recipe_id": "bundled/qwen3.8-27b",
+    "recipe_name": "Qwen3.8-27B",
+    "baseline_id": null,
+    "status": "error",
+    "started_at": "2026-11-23T23:06:35.962574+00:00",
+    "completed_at": "2026-11-23T23:06:35.964860+00:00",
+    "params": {
+      "benchmarks": [
+        "throughput",
+        "latency"
+      ],
+      "context_length": 4096
+    },
+    "results": {
+      "error": "llama-benchy is not installed. Install it with: pip install spark-pulse[benchmarking]"
+    }
+  },
+  {
+    "benchmark_id": "5bc835d2-767c-435b-8938-399abda13962",
+    "deployment_id": "0ebe0d320571",
+    "recipe_id": "bundled/qwen3.8-27b",
+    "recipe_name": "Qwen3.8-27B",
+    "baseline_id": null,
+    "status": "error",
+    "started_at": "2026-11-23T23:07:35.695561+00:00",
+    "completed_at": "2026-11-23T23:07:35.697649+00:00",
+    "params": {
+      "benchmarks": [
+        "throughput",
+        "latency"
+      ],
+      "context_length": 4096
+    },
+    "results": {
+      "error": "llama-benchy is not installed. Install it with: pip install spark-pulse[benchmarking]"
+    }
+  },
+  {
+    "benchmark_id": "13a0d166-9989-4edb-acb0-f4e5ecb49c9f",
+    "deployment_id": "test-deployment",
+    "recipe_id": "",
+    "recipe_name": "",
+    "baseline_id": null,
+    "status": "error",
+    "started_at": "2026-11-23T23:09:48.897464+00:00",
+    "completed_at": "2026-11-23T23:09:48.899588+00:00",
+    "params": {
+      "benchmarks": [
+        "throughput"
+      ]
+    },
+    "results": {
+      "error": "llama-benchy is not installed. Install it with: pip install spark-pulse[benchmarking]"
+    }
   }
 ]

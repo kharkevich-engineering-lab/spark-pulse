@@ -75,7 +75,6 @@
     "recipes": "Recettes",
     "models": "Modèles",
     "engines": "Moteurs",
-    "collections": "Collections",
     "sectionOperate": "Exploiter",
     "sectionLibrary": "Bibliothèque",
     "sectionSystem": "Système",
@@ -166,14 +165,12 @@
     "onNodes": "Sur les autres nœuds",
     "partialDelete": "Certains nœuds n'ont pas été nettoyés",
     "polling": "sondage",
-    "present": "Téléchargée",
     "pull": "Télécharger",
     "pullFailed": "Échec du téléchargement",
     "pulls": "Téléchargements",
     "refLabel": "Référence d'image",
     "refPlaceholder": "ghcr.io/owner/engine:1.0.0",
     "refreshIndex": "Actualiser",
-    "registry": "D'où viennent les moteurs",
     "sameImage": "même image",
     "saveFailed": "Enregistrement impossible",
     "soloNode": "C'est le seul nœud enregistré.",
@@ -189,18 +186,16 @@
     "refHint": "Toute référence OCI. Les moteurs d’un index se récupèrent depuis leur ligne.",
     "filterEngines": "Filtrer les moteurs",
     "filterLabel": "Quels moteurs",
-    "filterAll": "Tous",
-    "filterPulled": "Récupérés",
-    "filterMissing": "Non récupérés",
-    "filterUpdate": "Mise à jour disponible",
-    "aboutIndexes": "D’où viennent les moteurs",
     "colVersion": "Version (moteur)",
+    "addIndex": "Ajouter un index",
+    "indexLabel": "Index nº {n}",
+    "removeIndex": "Retirer l’index {n}",
+    "noIndexes": "Aucun index configuré.",
     "colEnabled": "Activé",
     "capabilities": "Capacités",
     "ports": "Ports (réseau)",
     "hardware": "Matériel",
     "index": "Index (moteurs)",
-    "statusUpdate": "Mise à jour disponible",
     "digestDriftTitle": "Une empreinte plus récente est publiée pour ce tag. Téléchargez pour mettre à jour.",
     "presentTitle": "L'image est sur ce nœud.",
     "notPulledTitle": "L'image n'est pas encore sur ce nœud."
@@ -364,10 +359,7 @@
     "tight": "Juste"
   },
   "registry": {
-    "testConnection": "Tester la connexion",
-    "remove": "Retirer le registre",
     "versions": "Versions disponibles",
-    "selectVersion": "Choisir une version…",
     "connected": "Connecté",
     "notConnected": "Non connecté",
     "defaultTag": "par défaut",
@@ -375,7 +367,6 @@
       "one": "{count} version",
       "other": "{count} versions"
     },
-    "colRegistry": "Registre",
     "colStatus": "État",
     "test": "Tester",
     "edit": "Modifier",
@@ -904,12 +895,8 @@
     "installCopied": "Copié dans le presse-papiers"
   },
   "oci": {
-    "noCollections": "Aucune collection trouvée",
-    "noCollectionsHint": "Configurez des registres dans les Paramètres pour parcourir les collections",
-    "registries": "Registres",
     "noRegistries": "Aucun registre configuré",
     "addRegistry": "Ajouter un registre",
-    "addRegistryButton": "Ajouter le registre",
     "name": "Nom",
     "namePlaceholder": "mon-registre",
     "url": "URL",
@@ -917,11 +904,8 @@
     "autoUpdate": "Mise à jour automatique",
     "enableAutoUpdate": "Activer la mise à jour automatique",
     "schedule": "Planification (cron)",
-    "loadingRecipes": "Chargement des recettes…",
     "update": "Mettre à jour",
     "install": "Installer",
-    "noRecipesInCollection": "Aucune recette trouvée pour cette collection",
-    "editRegistryButton": "Modifier le registre",
     "editRegistry": "Modifier {name}",
     "authType": "Authentification",
     "authNone": "Aucune",
@@ -936,8 +920,7 @@
     "secretRequiredOnAuthChange": "Saisissez un jeton ou un mot de passe avant de passer à ce type d'authentification",
     "registryUpdateFailed": "Échec de la mise à jour du registre",
     "removeRegistry": "Oublier le registre",
-    "removeRegistryConfirm": "Oublier {name} ? Les collections déjà installées depuis ce registre restent en place.",
-    "noDescription": "Aucune description."
+    "removeRegistryConfirm": "Oublier {name} ? Les collections déjà installées depuis ce registre restent en place."
   },
   "fabric": {
     "heading": "Fabric ConnectX",
@@ -1100,11 +1083,9 @@
     "deleteImage": "Supprimer {ref}",
     "detailsFor": "Détails de {ref}",
     "download": "Télécharger",
-    "enginesInSettings": "Les index de moteurs se configurent dans Paramètres.",
     "onDisk": "{total} sur le disque, dont {cache} de cache.",
     "pullImage": "Récupérer {ref}",
     "pullProgress": "progression de {ref}",
-    "registriesInSettings": "La planification des mises à jour se configure dans Paramètres.",
     "registryAddFailed": "Impossible d'ajouter ce registre",
     "registryRemoveFailed": "Impossible d'oublier ce registre",
     "registryUnreachable": "{name} est injoignable depuis ici.",
@@ -1112,7 +1093,7 @@
     "remove": "Supprimer",
     "removeModel": "Supprimer {model}",
     "replicateModel": "Répliquer {model} vers d'autres nœuds",
-    "sourcesInSettings": "Les sources de modèles se configurent dans Paramètres.",
+    "sourcesInSettings": "Ajoutez-en une sous Sources.",
     "syncBody": "{ref} pèse {size}. Chaque nœud sélectionné récupère sa propre copie.",
     "syncConfirm": "Copier",
     "syncTitle": "Copier cette image",
@@ -1138,7 +1119,31 @@
     "presencePartial": "partiel",
     "presenceAbsent": "absent du nœud",
     "aboutCaches": "À propos des caches",
-    "aboutRegistries": "À propos des registres"
+    "catalogue": "Catalogue",
+    "sources": "Sources",
+    "sectionsLabel": "Sections de la bibliothèque",
+    "enginesSummary": "{pulled} sur {total} récupérés, {size} sur disque.",
+    "saveBar": "Enregistrer les modifications",
+    "state": {
+      "on_nodes": "Sur les nœuds",
+      "partial": "Partiel",
+      "getting": "En cours",
+      "available": "Disponible",
+      "update": "Mise à jour",
+      "local": "Local",
+      "removed": "Retiré de la source",
+      "unknown": "Inconnu",
+      "installed": "Installé"
+    },
+    "filter": {
+      "all": "Tout",
+      "on_nodes": "Sur les nœuds",
+      "available": "Disponibles",
+      "updates": "Mises à jour",
+      "installed": "Installés"
+    },
+    "filterLabel": "Filtrer par état",
+    "addSource": "Ajouter une origine"
   },
   "fleet": {
     "nodes": {
@@ -1162,20 +1167,14 @@
     "killError": "Impossible d'arrêter le PID {pid}"
   },
   "settingsPage": {
-    "tabLibrary": "Bibliothèque",
     "tabMcp": "MCP",
     "shmHelp": "/dev/shm. Les travailleurs en parallélisme de tenseurs y font transiter les tenseurs ; trop petit, cela se manifeste par un blocage et non par une erreur.",
     "pidsHelp": "Processus et fils qu'un conteneur peut détenir. Un moteur à nombreux travailleurs en exige plus que la valeur Docker par défaut.",
     "nofileHelp": "Descripteurs de fichiers ouverts qu'un conteneur peut détenir. Un gros modèle représente des milliers de fragments.",
-    "enginesHint": "Les images de moteur sont nommées par un index. Rafraîchir le relit ; les champs ci-dessous décident quel index, et combien de temps sa réponse est conservée.",
     "defaultEngineHint": "Utilisé par une recette qui n'en nomme aucun.",
     "indexTtlHint": "Durée de réutilisation d'un index récupéré avant qu'il soit relu.",
     "sourcesHint": "D'où un modèle est téléchargé. Un nom inscrit ici est ce que sélectionnent le formulaire de téléchargement et le champ source d'une recette.",
     "removeSource": "Retirer la source {n}",
-    "registriesHint": "Registres OCI qui publient des collections de recettes. Parcourir et installer se fait sur la page Registres ; c'est ici qu'on les ajoute et qu'on les active.",
-    "registryUnreachable": "{name} n'a pas répondu.",
-    "forgetRegistry": "Oublier ce registre",
-    "forgetRegistryBody": "{name} est retiré de la liste. Les collections déjà installées depuis ce registre restent en place.",
     "autoUpdateHint": "Une vérification en arrière-plan des nouvelles versions de collections. Elle n'applique jamais de mise à jour à une recette que vous avez modifiée.",
     "autoUpdateToggleHint": "Lancer la vérification selon la planification ci-dessous.",
     "scheduleHint": "Une expression cron. Enregistrée quand le champ perd le focus : une saisie à moitié tapée n'est jamais la planification.",
@@ -1236,38 +1235,15 @@
     "benchmarkChatOnly": "Cette exécution ne sert pas de chat : elle ne peut pas être analysée."
   },
   "collection": {
-    "available": "disponible",
     "updateAll": "Tout mettre à jour ({count})",
-    "installAll": "Tout installer ({count})",
-    "editsKept": "Tout mettre à jour ignore les modifications locales ({count}).",
-    "notChecked": "Impossible de lire la dernière version. Les mises à jour ne sont pas affichées.",
-    "filter": "Filtrer les recettes",
-    "filterAll": "Toutes",
-    "filterInstalled": "Installées",
-    "filterUpdates": "Mises à jour",
-    "filterNotInstalled": "Non installées",
-    "noneHere": "Aucune recette pour ce filtre.",
-    "stateInstalled": "Installée",
-    "stateUpdate": "Mise à jour disponible",
-    "stateLocalEdits": "Modifiée localement",
-    "stateNotInstalled": "Non installée",
-    "stateRemoved": "Retirée de la collection",
-    "removedHint": "N'est plus dans cette collection. Désinstallez-la depuis Recettes.",
     "overwriteTitle": "Écraser les modifications locales ?",
     "overwriteConfirm": "{name} a été modifiée ici. La mise à jour remplace ces modifications par la version de la collection.",
-    "installAllTitle": "Installer toutes les recettes",
-    "installAllConfirm": "Installer {count} recettes de {name} {version} ?",
-    "installAllDone": "Installation terminée",
     "updateAllDone": "Mise à jour terminée",
     "outcome": "Faites : {done} · ignorées (modifications locales) : {skipped} · en échec : {failed}",
     "failed": "Échec de l'opération",
-    "pageHeading": "Collections de recettes.",
     "colCollection": "Collection (OCI)",
-    "colVersion": "Version (collection)",
     "colRecipes": "Recettes",
-    "colInstalled": "Installées",
-    "colPublisher": "Éditeur",
-    "colLicense": "Licence"
+    "colInstalled": "Installées"
   },
   "kubernetesPreview": {
     "heading": "Kubernetes",
@@ -1333,7 +1309,18 @@
     "soloOrCluster": "Un ou plusieurs",
     "colServes": "Sert",
     "colFile": "Fichier",
-    "deployFor": "Déployer {name}"
+    "deployFor": "Déployer {name}",
+    "installFor": "Installer {name}",
+    "updateFor": "Mettre à jour {name}"
+  },
+  "recipeSources": {
+    "colSource": "Origine",
+    "bundledWhere": "Fournies avec le paquet. Lecture seule.",
+    "customWhere": "Vos propres recettes, dans ~/.config/spark-pulse/custom-recipes."
+  },
+  "modSources": {
+    "bundledWhere": "Listés par le plan de contrôle. Lecture seule.",
+    "customWhere": "Vos propres mods, dans ~/.config/spark-pulse/custom-mods."
   },
   "mods": {
     "heading": "Mods (correctifs).",
@@ -1346,7 +1333,9 @@
     "colMod": "Mod (correctif)",
     "colDescription": "Description du mod",
     "colFiles": "Fichiers",
-    "colSource": "Origine"
+    "colSource": "Origine",
+    "colState": "État",
+    "colMods": "Correctifs"
   },
   "nodesPage": {
     "healthy": "{count} en bonne santé",

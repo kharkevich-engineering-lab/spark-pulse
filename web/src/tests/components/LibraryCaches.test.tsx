@@ -18,7 +18,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import LibraryPage from "@/pages/LibraryPage";
+import LibraryPage from "@/pages/ModelsPage";
 import type { CacheNode, CacheResponse } from "@/lib/types";
 
 vi.mock("@/lib/api", () => ({

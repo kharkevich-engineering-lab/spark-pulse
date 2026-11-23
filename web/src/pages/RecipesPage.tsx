@@ -1,17 +1,29 @@
 import { useState, useEffect, useMemo } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useI18n } from "@/lib/i18n";
-import { fetchRecipes, fetchRecipe, createDeployment, scheduleDeploy, fetchSettings, fetchRecipeCustomization, saveRecipeCustomization, deleteRecipeCustomization, listCustomRecipes, saveCustomRecipe, deleteCustomRecipe, uninstallOciRecipe, ApiError } from "@/lib/api";
+import { fetchRecipes, fetchRecipe, createDeployment, scheduleDeploy, fetchSettings, fetchRecipeCustomization, saveRecipeCustomization, deleteRecipeCustomization, listCustomRecipes, saveCustomRecipe, deleteCustomRecipe, uninstallOciRecipe, fetchOciRegistries, ApiError } from "@/lib/api";
 import { tightHere, wontRunHere } from "@/lib/types";
-import type { Deployment, RecipeDetail, RecipeCustomization, RecipeSummary, CustomRecipeInfo, PreflightReport } from "@/lib/types";
+import type { Deployment, OciCollectionApplyResult, OciCollectionState, OciRecipeState, RecipeDetail, RecipeCustomization, RecipeSummary, CustomRecipeInfo, PreflightReport } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
 import { useDeployments } from "@/hooks/useDeployments";
-import { AlertModal, Button, ConfirmModal, EmptyRow, ErrorLine, IconButton, Modal, PageHeader, SearchInput, Section, Spinner, Table, Tabs, Td, Th, THead, Toolbar, Tr, matchesQuery } from "@/ui";
+import { AlertModal, Button, ConfirmModal, EmptyRow, ErrorLine, IconButton, Modal, SearchInput, Section, Select, Spinner, Table, Tabs, Td, Th, THead, Toolbar, Tr, matchesQuery } from "@/ui";
 import type { AlertTone } from "@/ui";
 import PreflightPanel from "@/components/PreflightPanel";
-import { ChevronDown, Download, Pencil, Plus, Rocket, Trash2 } from "lucide-react";
+import { ChevronDown, Download, Pencil, Plus, RefreshCw, Rocket, Trash2 } from "lucide-react";
 import RecipeCard from "@/components/RecipeCard";
-import RecipesTable from "@/components/RecipesTable";
+import RecipesTable, { type RecipeLibrary } from "@/components/RecipesTable";
+import LibraryKindPage from "@/components/library/LibraryKindPage";
+import RecipeSources from "@/components/library/RecipeSources";
+import { libraryFilterTabs, matchesFilter, type LibraryFilter, type LibraryState } from "@/components/library/LibraryState";
+import {
+  actionOf,
+  applyRecipes,
+  describeOutcome,
+  libraryStateOf,
+  summaryFromOffered,
+  useCollectionStates,
+  type RecipeAction,
+} from "@/components/library/recipeCollections";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useWaitingDeploys } from "@/hooks/useWaitingDeploys";
 import RecipeDrawer from "@/components/RecipeDrawer";
@@ -86,6 +98,51 @@ function inSource(r: RecipeSummary, source: RecipeSource): boolean {
   return r.source === "bundled" || r.id.startsWith("bundled/");
 }
 
+/** One line of the catalogue: a recipe held here, or one a collection offers.
+ *  `oci` is what the collection says of it — absent for a bundled or custom
+ *  recipe, and for one installed from a collection that could not be read. */
+interface CatalogueRow {
+  summary: RecipeSummary;
+  library: LibraryState;
+  oci?: { collection: OciCollectionState; recipe: OciRecipeState };
+  action: RecipeAction | null;
+  /** False for a recipe only a collection knows of: its facts are not the
+   *  listing's, so what a node could or could not run is not judged. */
+  listed: boolean;
+}
+
+/** The installed recipes with the collections' state laid over them, and
+ *  every recipe a collection offers that nothing here holds. */
+export function catalogueRows(recipes: RecipeSummary[], collections: OciCollectionState[]): CatalogueRow[] {
+  const held = new Set(recipes.map((r) => r.id));
+  const byId = new Map<string, { collection: OciCollectionState; recipe: OciRecipeState }>();
+  const offered: CatalogueRow[] = [];
+  for (const collection of collections) {
+    for (const recipe of collection.recipes) {
+      if (recipe.state === "not_installed") {
+        if (!held.has(recipe.recipe_id)) {
+          offered.push({
+            summary: summaryFromOffered(recipe),
+            library: "available",
+            oci: { collection, recipe },
+            action: "install",
+            listed: false,
+          });
+        }
+      } else if (!byId.has(recipe.recipe_id)) {
+        byId.set(recipe.recipe_id, { collection, recipe });
+      }
+    }
+  }
+  const installed = recipes.map((summary): CatalogueRow => {
+    const oci = byId.get(summary.id);
+    if (oci) return { summary, oci, library: libraryStateOf(oci.recipe.state), action: actionOf(oci.recipe), listed: true };
+    const own = summary.source === "custom" || summary.id.startsWith("custom-");
+    return { summary, library: own ? "local" : "on_nodes", action: null, listed: true };
+  });
+  return [...installed, ...offered];
+}
+
 export default function RecipesPage() {
   const { t, plural } = useI18n();
   const { data: recipes, loading: recipesLoading, error: recipesError, refetch } = useQuery(fetchRecipes);
@@ -94,6 +151,13 @@ export default function RecipesPage() {
   // how the badge came to outlive the run it was marking.
   const { deployments } = useDeployments();
   const { data: settings } = useQuery(fetchSettings);
+  const registriesQuery = useQuery(fetchOciRegistries);
+  const { data: collectionStates, refetch: refetchCollections } = useCollectionStates();
+  const [stateFilter, setStateFilter] = useState<LibraryFilter>("all");
+  const [busy, setBusy] = useState<Set<string>>(new Set());
+  const [bulk, setBulk] = useState(false);
+  const [overwriteTarget, setOverwriteTarget] = useState<CatalogueRow | null>(null);
+  const [addingSource, setAddingSource] = useState(false);
   const [source, setSource] = useState<RecipeSource>("all");
   const [query, setQuery] = useState("");
   const [customRecipes, setCustomRecipes] = useState<CustomRecipeInfo[]>([]);
@@ -144,28 +208,46 @@ export default function RecipesPage() {
   // not run here goes last and folded away: the cluster-only ones with no
   // cluster, and the ones the backend says have no image for this fleet's
   // platform or too few nodes (#172). Unfolded, each is dimmed and says why.
-  const visible = useMemo(
+  const rows = useMemo(() => catalogueRows(recipes ?? [], collectionStates ?? []), [recipes, collectionStates]);
+  const rowById = useMemo(() => new Map(rows.map((row) => [row.summary.id, row])), [rows]);
+  // What the source filter and the search leave; the state filter's counts
+  // are taken over this, so a tab never promises rows the search has hidden.
+  const narrowed = useMemo(
     () =>
-      (recipes ?? []).filter(
-        (r) =>
+      rows.filter(
+        ({ summary: r }) =>
           inSource(r, source) &&
           matchesQuery(query, r.name, r.model, r.description, (r.engines ?? []).join(" "), r.engine),
       ),
-    [recipes, source, query],
+    [rows, source, query],
+  );
+  const visible = useMemo(
+    () => narrowed.filter((row) => matchesFilter(row.library, stateFilter)).map((row) => row.summary),
+    [narrowed, stateFilter],
   );
   const { available, unavailable } = useMemo(() => {
-    const blocked = (r: RecipeSummary) => (r.cluster_only && !clusterAvailable) || wontRunHere(r);
+    // A recipe only a collection knows of is installed before it is run: it
+    // is never folded away for what it would need.
+    const blocked = (r: RecipeSummary) =>
+      rowById.get(r.id)?.listed !== false && ((r.cluster_only && !clusterAvailable) || wontRunHere(r));
     return { available: visible.filter(r => !blocked(r)), unavailable: visible.filter(blocked) };
-  }, [visible, clusterAvailable]);
-  const sourceCounts = useMemo(() => {
-    const all = recipes ?? [];
-    return {
-      all: all.length,
-      bundled: all.filter((r) => inSource(r, "bundled")).length,
-      oci: all.filter((r) => inSource(r, "oci")).length,
-      custom: all.filter((r) => inSource(r, "custom")).length,
-    };
-  }, [recipes]);
+  }, [visible, clusterAvailable, rowById]);
+  const sourceCounts = useMemo(
+    () => ({
+      all: rows.length,
+      bundled: rows.filter((row) => inSource(row.summary, "bundled")).length,
+      oci: rows.filter((row) => inSource(row.summary, "oci")).length,
+      custom: rows.filter((row) => inSource(row.summary, "custom")).length,
+    }),
+    [rows],
+  );
+  const filterTabs = useMemo(
+    () => libraryFilterTabs(t, narrowed.map((row) => row.library), undefined, "installed"),
+    [narrowed, t],
+  );
+  // The button counts the recipes that are plainly behind; one edited here is
+  // sent along too and skipped by the server, which the outcome says.
+  const updatable = useMemo(() => rows.filter((row) => row.library === "update"), [rows]);
   const anyClusterBlocked = unavailable.some(r => r.cluster_only && !clusterAvailable);
 
 
@@ -245,6 +327,75 @@ export default function RecipesPage() {
         message: e instanceof Error ? e.message : t("common.unknownError"),
       });
     }
+  };
+
+  // ── Install and update, from the collections ────────────────────────────
+
+  const refreshCatalogue = async () => {
+    await Promise.all([refetch(), refetchCollections()]);
+  };
+
+  const runOne = async (row: CatalogueRow, overwrite = false) => {
+    if (!row.oci) return;
+    const { collection, recipe } = row.oci;
+    setBusy((prev) => new Set(prev).add(row.summary.id));
+    try {
+      const result = await applyRecipes(collection, [recipe.name], overwrite);
+      if (result.results.some((r) => !r.success)) {
+        setAlertModal({ title: t("collection.failed"), message: describeOutcome([result], t) });
+      }
+      await refreshCatalogue();
+    } catch (e) {
+      setAlertModal({ title: t("collection.failed"), message: e instanceof Error ? e.message : t("common.unknownError") });
+    } finally {
+      setBusy((prev) => {
+        const next = new Set(prev);
+        next.delete(row.summary.id);
+        return next;
+      });
+    }
+  };
+
+  /** Every recipe that is behind, one call per collection. A recipe edited
+   *  here goes along without `overwrite_local`: the server skips it and says
+   *  so, which is what the outcome counts. */
+  const updateAll = async () => {
+    const behind = rows.filter(
+      (row) => row.oci && (row.oci.recipe.state === "update" || (row.oci.recipe.state === "local_edits" && row.action === "update")),
+    );
+    const groups = new Map<OciCollectionState, string[]>();
+    for (const row of behind) {
+      const names = groups.get(row.oci!.collection) ?? [];
+      names.push(row.oci!.recipe.name);
+      groups.set(row.oci!.collection, names);
+    }
+    setBulk(true);
+    try {
+      const results: OciCollectionApplyResult[] = [];
+      for (const [collection, names] of groups) results.push(await applyRecipes(collection, names));
+      setAlertModal({
+        title: t("collection.updateAllDone"),
+        message: describeOutcome(results, t),
+        tone: results.some((r) => r.results.some((x) => !x.success)) ? "warning" : "info",
+      });
+      await refreshCatalogue();
+    } catch (e) {
+      setAlertModal({ title: t("collection.failed"), message: e instanceof Error ? e.message : t("common.unknownError") });
+    } finally {
+      setBulk(false);
+    }
+  };
+
+  const libraryOf = (r: RecipeSummary): RecipeLibrary | undefined => {
+    const row = rowById.get(r.id);
+    if (!row) return undefined;
+    return {
+      state: row.library,
+      offered: row.library === "available",
+      action: row.action ?? undefined,
+      busy: busy.has(r.id) || bulk,
+      onAction: () => (row.library === "local" ? setOverwriteTarget(row) : void runOne(row)),
+    };
   };
 
   const handleSelect = async (recipe: RecipeSummary) => {
@@ -415,30 +566,38 @@ export default function RecipesPage() {
 
   return (
     <div>
-      <PageHeader
-        eyebrow={t("nav.recipes")}
+      <LibraryKindPage
         title={t("recipes.heading")}
         description={recipes ? plural("recipes.meta", recipes.length) : undefined}
-        actions={
-          <Button variant="primary" icon={Plus} onClick={() => setShowNewRecipe(true)}>
-            {t("recipes.newRecipe")}
-          </Button>
-        }
-      />
-
+        action={{ label: t("recipes.newRecipe"), icon: Plus, onClick: () => setShowNewRecipe(true) }}
+        sourcesAction={{ label: t("library.addSource"), icon: Plus, onClick: () => setAddingSource(true) }}
+        sourcesCount={2 + (registriesQuery.data?.length ?? 0)}
+        catalogue={
+          <>
       <Toolbar>
         <SearchInput value={query} onChange={setQuery} label={t("recipes.search")} clearLabel={t("common.clear")} />
         <Tabs
-          label={t("recipes.sourceLabel")}
-          value={source}
-          onChange={chooseSource}
-          tabs={[
-            { id: "all", label: t("recipes.sourceAll"), count: sourceCounts.all },
-            { id: "bundled", label: t("recipes.sourceBundled"), count: sourceCounts.bundled },
-            { id: "oci", label: t("recipes.sourceCollections"), count: sourceCounts.oci },
-            { id: "custom", label: t("recipes.sourceCustom"), count: sourceCounts.custom },
-          ]}
+          variant="filter"
+          label={t("library.filterLabel")}
+          value={stateFilter}
+          onChange={(id) => setStateFilter(id as LibraryFilter)}
+          tabs={filterTabs}
         />
+        <Select
+          aria-label={t("recipes.sourceLabel")}
+          value={source}
+          onChange={(e) => chooseSource(e.target.value)}
+        >
+          <option value="all">{`${t("recipes.sourceAll")} (${sourceCounts.all})`}</option>
+          <option value="bundled">{`${t("recipes.sourceBundled")} (${sourceCounts.bundled})`}</option>
+          <option value="oci">{`${t("recipes.sourceCollections")} (${sourceCounts.oci})`}</option>
+          <option value="custom">{`${t("recipes.sourceCustom")} (${sourceCounts.custom})`}</option>
+        </Select>
+        {updatable.length > 0 && (
+          <Button size="sm" icon={RefreshCw} loading={bulk} disabled={bulk} onClick={() => void updateAll()}>
+            {t("collection.updateAll", { count: updatable.length })}
+          </Button>
+        )}
       </Toolbar>
 
       {recipesLoading && (
@@ -472,6 +631,7 @@ export default function RecipesPage() {
                       stateOf={stateOf}
                       onSelect={(r) => void handleSelect(r)}
                       onReset={openResetConfirm}
+                      libraryOf={libraryOf}
                       empty={nothingMatches}
                     />
                   </Section>
@@ -490,6 +650,7 @@ export default function RecipesPage() {
                       tight={tightHere(r)}
                       onSelect={() => handleSelect(r)}
                       onReset={() => openResetConfirm(r)}
+                      library={libraryOf(r)}
                     />
                   ))}
                 </div>
@@ -522,6 +683,7 @@ export default function RecipesPage() {
                         stateOf={unavailableStateOf}
                         onSelect={(r) => void handleSelect(r)}
                         onReset={openResetConfirm}
+                        libraryOf={libraryOf}
                       />
                     </Section>
                   )}
@@ -536,6 +698,7 @@ export default function RecipesPage() {
                           notHere={wontRunHere(r) ? r.fit?.reason : undefined}
                           onSelect={() => handleSelect(r)}
                           onReset={() => openResetConfirm(r)}
+                          library={libraryOf(r)}
                         />
                       ))}
                     </div>
@@ -627,6 +790,18 @@ export default function RecipesPage() {
           )}
         </div>
       )}
+          </>
+        }
+        sources={
+          <RecipeSources
+            registries={registriesQuery}
+            recipes={recipes ?? []}
+            addOpen={addingSource}
+            onAddOpenChange={setAddingSource}
+            onChanged={() => void refreshCatalogue()}
+          />
+        }
+      />
 
       {/* ── Drawers ─────────────────────────────────────────────────────── */}
       {selected && (
@@ -760,6 +935,22 @@ export default function RecipesPage() {
               : t("recipes.deleteBody", { name: deleteTarget.name })
           }
           confirmLabel={deleteTarget.kind === "oci" ? t("common.uninstall") : t("common.delete")}
+          confirmVariant="danger"
+        />
+      )}
+
+      {overwriteTarget && (
+        <ConfirmModal
+          open
+          onClose={() => setOverwriteTarget(null)}
+          onConfirm={async () => {
+            const row = overwriteTarget;
+            setOverwriteTarget(null);
+            await runOne(row, true);
+          }}
+          title={t("collection.overwriteTitle")}
+          message={t("collection.overwriteConfirm", { name: overwriteTarget.summary.name })}
+          confirmLabel={t("oci.update")}
           confirmVariant="danger"
         />
       )}

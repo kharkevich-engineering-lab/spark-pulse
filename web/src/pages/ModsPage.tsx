@@ -22,12 +22,10 @@ import { useQuery } from "@/hooks/useQuery";
 import type { CustomModInfo, ModDetail, ModFileMap, ModSummary } from "@/lib/types";
 import {
   AlertModal,
-  Button,
   ConfirmModal,
   EmptyRow,
   ErrorLine,
   IconButton,
-  PageHeader,
   SearchInput,
   Section,
   Spinner,
@@ -43,6 +41,9 @@ import {
 import SlideDrawer from "@/components/SlideDrawer";
 import CustomModDrawer from "@/components/CustomModDrawer";
 import NewModModal from "@/components/NewModModal";
+import LibraryKindPage from "@/components/library/LibraryKindPage";
+import ModSources from "@/components/library/ModSources";
+import { LibraryStateChip } from "@/components/library/LibraryState";
 
 type ModSource = "all" | "bundled" | "custom";
 
@@ -266,17 +267,13 @@ export default function ModsPage() {
 
   return (
     <div>
-      <PageHeader
-        eyebrow={t("nav.mods")}
+      <LibraryKindPage
         title={t("mods.heading")}
         description={plural("mods.meta", rows.length)}
-        actions={
-          <Button variant="primary" icon={Plus} onClick={() => setShowNewMod(true)}>
-            {t("recipes.newMod")}
-          </Button>
-        }
-      />
-
+        action={{ label: t("recipes.newMod"), icon: Plus, onClick: () => setShowNewMod(true) }}
+        sourcesCount={2}
+        catalogue={
+          <>
       <Toolbar>
         <SearchInput value={query} onChange={setQuery} label={t("mods.search")} clearLabel={t("common.clear")} />
         <Tabs
@@ -306,11 +303,12 @@ export default function ModsPage() {
               <Th>{t("mods.colDescription")}</Th>
               <Th>{t("mods.colFiles")}</Th>
               <Th>{t("mods.colSource")}</Th>
+              <Th>{t("mods.colState")}</Th>
               <Th srOnly>{t("runs.actions")}</Th>
             </THead>
             <tbody>
               {visible.length === 0 && (
-                <EmptyRow colSpan={5}>
+                <EmptyRow colSpan={6}>
                   {rows.length === 0 ? (
                     <>
                       <p>{t("recipes.noMods")}</p>
@@ -347,6 +345,9 @@ export default function ModsPage() {
                   <Td muted className="whitespace-nowrap">
                     {row.source === "bundled" ? t("recipes.sourceBundled") : t("recipes.sourceCustom")}
                   </Td>
+                  <Td>
+                    <LibraryStateChip state={row.source === "custom" ? "local" : "on_nodes"} heldAs="installed" />
+                  </Td>
                   <Td actions>
                     {row.custom && (
                       <IconButton
@@ -363,6 +364,10 @@ export default function ModsPage() {
           </Table>
         </Section>
       )}
+          </>
+        }
+        sources={<ModSources bundled={counts.bundled} custom={counts.custom} />}
+      />
 
       {activeModId && <ModDrawer modId={activeModId} onClose={() => setActiveModId(null)} />}
 

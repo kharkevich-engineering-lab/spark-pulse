@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import LibraryPage from "@/pages/LibraryPage";
+import LibraryPage from "@/pages/ModelsPage";
 import { describePrecision, describeWhere, ggufDetail, shortRevision } from "@/components/library/ModelsTab";
 import { translate } from "@/lib/i18n";
 import type { ModelEntry } from "@/lib/types";
@@ -178,7 +178,7 @@ describe("Library — models", () => {
     renderPage();
     await screen.findByText("acme/plain-7b");
 
-    expect(await screen.findAllByText("1 of 1 nodes")).toHaveLength(2);
+    expect(await screen.findAllByText(/1 of 1 nodes/)).toHaveLength(2);
     expect(fetchModelPresence).toHaveBeenCalledWith("acme/plain-7b", []);
   });
 
@@ -195,7 +195,7 @@ describe("Library — models", () => {
     renderPage();
     const row = await screen.findByTestId("model-acme/plain-7b");
 
-    expect(await within(row).findByText("downloading 40%")).toBeInTheDocument();
+    expect(await within(row).findByText(/40%/)).toBeInTheDocument();
     expect(row).not.toHaveTextContent("1 of 1 nodes");
   });
 
@@ -206,7 +206,7 @@ describe("Library — models", () => {
     renderPage();
     await screen.findByText("acme/plain-7b");
 
-    expect(await screen.findByText(/^partial on /)).toBeInTheDocument();
+    expect(await screen.findByText(/partial on /)).toBeInTheDocument();
   });
 
   it("lists hub sources in the download form", async () => {
@@ -982,7 +982,7 @@ describe("Library — where a model is", () => {
     );
     renderPage();
 
-    expect(await screen.findAllByText("spark-01 only")).toHaveLength(2);
+    expect(await screen.findAllByText(/spark-01 only/)).toHaveLength(2);
   });
 
   /** Replicate is an offer to move bytes. When every node has answered and
@@ -1003,7 +1003,7 @@ describe("Library — where a model is", () => {
     );
     renderPage();
 
-    expect(await screen.findAllByText("2 of 2 nodes")).toHaveLength(2);
+    expect(await screen.findAllByText(/2 of 2 nodes/)).toHaveLength(2);
     expect(
       screen.queryByLabelText("Replicate acme/plain-7b to other nodes"),
     ).not.toBeInTheDocument();
@@ -1065,7 +1065,7 @@ describe("Library — where a model is", () => {
     renderPage();
 
     await screen.findByText("acme/plain-7b");
-    await waitFor(() => expect(screen.getAllByText("not checked")).toHaveLength(2));
+    await waitFor(() => expect(screen.getAllByText("Unknown")).toHaveLength(2));
   });
 });
 
@@ -1134,7 +1134,7 @@ describe("Library — an open model and the search", () => {
     const user = userEvent.setup();
     renderPage();
     const row = await screen.findByTestId("model-acme/plain-7b");
-    await within(row).findByText(/^partial on /);
+    await within(row).findByText(/partial on /);
 
     await user.click(row);
     // The copies open under the row, not in a panel beside the list.

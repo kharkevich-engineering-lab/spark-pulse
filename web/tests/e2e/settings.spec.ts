@@ -34,7 +34,6 @@ test("shows the configuration the backend is running with", async ({ page, reque
     "Containers",
     "Memory",
     "Features",
-    "Library",
     "MCP",
     "Preferences",
     "Secrets",
@@ -65,21 +64,13 @@ test("shows the configuration the backend is running with", async ({ page, reque
   expect(containers).toContain(String(settings.docker.shm_size_gb));
   expect(containers).toContain(String(settings.docker.pids_limit));
 
-  // Library: the engine registry, which was a panel at the bottom of Engines,
-  // and the model sources, which were a panel at the top of Models.
-  await page.getByRole("tab", { name: "Library" }).click();
-  await expect(page.getByRole("heading", { name: "Where engines come from" })).toBeVisible();
-  // The default engine is picked from what the indexes publish.
-  await expect(page.getByRole("combobox", { name: "Default engine" })).toHaveValue(
-    settings.default_engine,
-  );
-  // Each configured index says what it gave (simulation fetches nothing).
-  await expect(page.getByTestId("index-status")).toContainText(settings.engine_indexes[0]);
-  const indexes = await page.getByLabel("Engine indexes").inputValue();
-  expect(indexes).toBe(settings.engine_indexes.join("\n"));
-  await expect(page.getByRole("heading", { name: "Model sources" })).toBeVisible();
-  await expect(page.getByLabel("Source 1 name")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Registries", exact: true })).toBeVisible();
+  // There is no Library tab: each kind's sources are on its own page, and the
+  // tab's old address lands on the engines' sources.
+  await expect(page.getByRole("tab", { name: "Library", exact: true })).toHaveCount(0);
+  await gotoPage(page, "/settings#library");
+  await expect(page).toHaveURL(/\/engines#sources$/);
+  await expect(page.getByTestId("engine-sources")).toBeVisible();
+  await gotoPage(page, "/settings");
 
   // MCP: the tool list is asked of the endpoint itself rather than kept by hand
   // in the page, which is how the page came to document nine of twenty-one.

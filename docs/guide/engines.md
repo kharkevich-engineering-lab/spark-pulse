@@ -65,7 +65,7 @@ The **Engines** tab of Library (`/engines`) shows per engine: the image, whether
 
 The switch beside an engine's badge enables or disables it, next to the image it gates — the last enabled engine cannot be switched off, because nothing would be deployable. Copying an image to other machines names them first: *copy to every registered node* was one click and, on a four-node cluster, 26 GB a machine.
 
-Which indexes are consulted, the cache lifetime and the default engine are configuration, and are edited in **Settings → Library** rather than on the page they govern. Each configured index shows how many engines it published and when, or why its last fetch failed; **Use the default index** puts back the one Spark Pulse ships with; and the default engine is picked from the engines the indexes publish. When `SPARK_PULSE_ENGINE_INDEXES` is set, the environment decides and the field is read-only.
+Which indexes are consulted, the cache lifetime and the default engine are the page's **Sources** section (`/engines#sources`), beside the catalogue they fill, and save on their own. Each configured index shows how many engines it published and when, or why its last fetch failed; **Use the default index** puts back the one Spark Pulse ships with; and the default engine is picked from the engines the indexes publish. When `SPARK_PULSE_ENGINE_INDEXES` is set, the environment decides and the field is read-only.
 
 ## Distributing images across nodes
 

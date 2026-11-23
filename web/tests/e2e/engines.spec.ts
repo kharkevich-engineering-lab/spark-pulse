@@ -5,7 +5,7 @@
  * new digest. The spec asserts it tells them apart — and, since the Images
  * page and the Engines settings tab became one row, that an engine's own facts
  * sit beside its image's size. Where engines *come from* is configuration and
- * has left for Settings, so what is asserted here is the line that says so.
+ * is the page's Sources section.
  */
 
 import { expect, test } from "@playwright/test";
@@ -64,10 +64,6 @@ test("shows the engines the registry knows about", async ({ page, request }) => 
     await expect(detail).toHaveCount(0);
   }
 
-  // The indexes are configuration and live in Settings now; leaving no trace
-  // of where they went reads as a feature that was removed.
-  await page.getByRole("button", { name: "Where engines come from" }).click();
-  await expect(page.getByRole("tooltip")).toContainText("Engine indexes are configured in Settings.");
   await expectNoCrash(page);
 });
 
@@ -106,7 +102,7 @@ test("distinguishes a missing image from a republished digest", async ({ page, r
 
   for (const image of missing) {
     const row = page.getByTestId(`engine-${image.ref}`);
-    await expect(row).toContainText("Not pulled");
+    await expect(row).toContainText("Available");
     await expect(row.getByRole("button", { name: `Pull ${image.ref}` })).toBeVisible();
     // Nothing to delete, and no size to report, for an image that is not here.
     await expect(row.getByRole("button", { name: `Delete ${image.ref}` })).toHaveCount(0);
@@ -115,14 +111,31 @@ test("distinguishes a missing image from a republished digest", async ({ page, r
   for (const image of drifted) {
     const row = page.getByTestId(`engine-${image.ref}`);
     // One dot and a word; why is on the hover, and Pull is in the same row.
-    const status = row.getByText("Update available", { exact: true });
+    const status = row.getByText("Update", { exact: true });
     await expect(status).toBeVisible();
     await expect(row.getByTitle(/newer digest is published/)).toBeVisible();
     await expect(row.getByRole("button", { name: `Pull ${image.ref}` })).toBeVisible();
   }
 
   // The filter counts what a pull would change: a republished digest.
-  await expect(page.getByRole("tab", { name: `Update available (${drifted.length})` })).toBeVisible();
+  await expect(page.getByRole("tab", { name: `Updates (${drifted.length})` })).toBeVisible();
+  await expectNoCrash(page);
+});
+
+/** Where engines come from is the page's second section, in the address. */
+test("shows the engine indexes under Sources, and the section is the URL hash", async ({ page }) => {
+  await gotoPage(page, "/engines");
+  await page.getByRole("tab", { name: /^Sources/ }).click();
+  await expect(page).toHaveURL(/\/engines#sources$/);
+  await expect(page.getByTestId("engine-sources")).toBeVisible();
+  await expect(page.getByLabel("Default engine")).toBeVisible();
+  await expect(page.getByTestId("engines-table")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Add index" }).click();
+  await page.getByLabel(/^Index \d+$/).last().fill("ghcr.io/example/engines:latest");
+  await expect(page.getByText("Unsaved changes on this page.")).toBeVisible();
+  await page.getByRole("button", { name: "Discard" }).click();
+  await expect(page.getByText("Unsaved changes on this page.")).toHaveCount(0);
   await expectNoCrash(page);
 });
 
