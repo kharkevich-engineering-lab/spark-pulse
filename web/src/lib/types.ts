@@ -292,6 +292,21 @@ export interface NodeStats {
   cpu: CPUStats;
   disk: DiskStats[];
   processes: GPUProcess[];
+  /** How the free memory is cut up (`/proc/buddyinfo`); absent from an older
+   *  server or agent, `null` when the node did not report it. */
+  memory_shape?: MemoryShape | null;
+}
+
+/** The buddy allocator's free memory, and how much of it a GPU can map with
+ *  large pages. `free_bytes` excludes the page cache that `MemAvailable` counts. */
+export interface MemoryShape {
+  page_size_bytes: number;
+  free_bytes: number;
+  contiguous_bytes: number;
+  contiguous_percent: number;
+  largest_block_bytes: number;
+  fragmented: boolean;
+  blocks: { block_bytes: number; count: number; bytes: number }[];
 }
 
 export interface MemoryResponse {

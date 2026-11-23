@@ -562,6 +562,19 @@ message NodeStats {
   // no nvidia-smi on the node, an unreadable /proc. Empty means "nothing to
   // say", never "we did not look".
   repeated string unavailable = 7;
+  // The shape of the free memory, from /proc/buddyinfo. Absent when the node
+  // could not read it, which `unavailable` then says.
+  BuddyInfo buddy = 8;
+}
+
+// How the kernel's free memory is cut up: `free_blocks[order]` is how many
+// free blocks of `page_size_bytes << order` the buddy allocator holds, summed
+// over every zone. `MemAvailable` says how much is free; this says whether it
+// comes in pieces a GPU can map with large pages. Raw counts, not a verdict:
+// what counts as contiguous is the control plane's question.
+message BuddyInfo {
+  uint64 page_size_bytes = 1;
+  repeated uint64 free_blocks = 2;
 }
 
 // One file of a snapshot.

@@ -39,6 +39,7 @@ from spark_pulse.tools.preflight import (  # noqa: F401 — re-exported shapes
     CHECK_IMAGE as CHECK_IMAGE,
     CHECK_INTERFACES as CHECK_INTERFACES,
     CHECK_MEMORY as CHECK_MEMORY,
+    CHECK_MEMORY_SHAPE as CHECK_MEMORY_SHAPE,
     CHECK_MODEL as CHECK_MODEL,
     CHECK_ORDER as CHECK_ORDER,
     CHECK_PORTS as CHECK_PORTS,
@@ -46,6 +47,7 @@ from spark_pulse.tools.preflight import (  # noqa: F401 — re-exported shapes
     CHECK_TOOLKIT as CHECK_TOOLKIT,
     CHECK_VRAM as CHECK_VRAM,
     DISK_HEADROOM as DISK_HEADROOM,
+    MEMORY_SHAPE_COMMAND as MEMORY_SHAPE_COMMAND,
     PORTS_COMMAND as PORTS_COMMAND,
     PROBE_TIMEOUT as PROBE_TIMEOUT,
     STATUS_FAIL as STATUS_FAIL,
@@ -66,6 +68,7 @@ from spark_pulse.tools.preflight import (  # noqa: F401 — re-exported shapes
     parse_gpu_query as parse_gpu_query,
     parse_listening_ports as parse_listening_ports,
     parse_meminfo as parse_meminfo,
+    parse_memory_shape as parse_memory_shape,
     parse_runtimes as parse_runtimes,
     parse_toolkit as parse_toolkit,
     selector_names as selector_names,
@@ -186,6 +189,10 @@ class SimulatedHostProbe:
                 f"MemFree:        {available_kb // 2} kB\n"
                 f"MemAvailable:   {available_kb} kB\n"
             )
+        if command == MEMORY_SHAPE_COMMAND:
+            if not profile.buddyinfo:
+                return ProbeResult(reachable=True, returncode=1)
+            return _ok(f"{profile.page_size_bytes}\n{profile.buddyinfo}")
         if command.startswith("ss -H"):
             body = "\n".join(
                 f"LISTEN 0 4096 0.0.0.0:{port} 0.0.0.0:*"
@@ -296,6 +303,7 @@ __all__ = [
     "parse_gpu_query",
     "parse_listening_ports",
     "parse_meminfo",
+    "parse_memory_shape",
     "parse_runtimes",
     "parse_toolkit",
     "selector_names",

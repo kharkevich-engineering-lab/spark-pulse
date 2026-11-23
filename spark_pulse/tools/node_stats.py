@@ -39,6 +39,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from spark_pulse import tools
+from spark_pulse.tools import memory_shape
 from spark_pulse.tools.labels import DEPLOYMENT_LABEL
 
 logger = logging.getLogger(__name__)
@@ -148,6 +149,18 @@ def _process_gpu_uuid(gpus: Any) -> str:
     if len(gpus) == 1:
         return gpus[0].uuid
     return ""
+
+
+def _memory_shape(stats: Any) -> dict[str, Any] | None:
+    """How the free memory is cut up, or ``None`` when the node did not say.
+
+    An agent older than the field sends no ``buddy``, and one that could not
+    read ``/proc/buddyinfo`` says why in ``unavailable``; either way the page
+    shows the reading as absent, never as a machine with nothing free.
+    """
+    if not stats.HasField("buddy"):
+        return None
+    return memory_shape.summarize(stats.buddy.page_size_bytes, stats.buddy.free_blocks)
 
 
 def _processes(stats: Any, owners: dict[str, dict[str, str]]) -> list[dict[str, Any]]:
@@ -297,6 +310,7 @@ def _empty_block(**fields: Any) -> dict[str, Any]:
     block = {
         "gpu": [],
         "cpu": {"total": 0, "used": 0, "free": 0, "available": 0, "usage_percent": 0},
+        "memory_shape": None,
         "disk": [],
         "processes": [],
         "unavailable": [],
@@ -325,6 +339,7 @@ def for_node(node: Any, services: Any | None = None) -> dict[str, Any]:
         reachable=True,
         gpu=[_gpu(gpu) for gpu in stats.gpus],
         cpu=_cpu(stats),
+        memory_shape=_memory_shape(stats),
         disk=_disks(stats),
         processes=_processes(stats, _owners(service)),
         unavailable=list(stats.unavailable),

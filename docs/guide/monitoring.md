@@ -31,6 +31,14 @@ Two halves decide whether a GPU process is *ours*: the node says which container
 
 **A node that could not be asked keeps its section** and says why. A missing section and an idle machine look identical on a page.
 
+### The shape of free memory
+
+`MemAvailable` says how much memory is free, but not what shape it's in. On unified memory the GPU maps weights with large pages, and a large page needs a physically contiguous block under it. The agent reads `/proc/buddyinfo` (free blocks per order, summed over zones) along with the page size. `tools/memory_shape.py` turns that into **Contiguous free** on the node page: how much of the free memory is in blocks of 2 MiB or more, and the largest block. A card with memory of its own shows nothing, because the host's pool is not where its weights go.
+
+The buddy allocator's free memory excludes the page cache, so it is usually far below `MemAvailable`. The pre-flight's **Memory shape** line reports that gap as cache the kernel can drop. It warns, and never blocks, when less than half of at least 1 GiB of free memory is in blocks of 2 MiB or more. The remedy it gives runs only with no engine on the node: `sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches; echo 1 > /proc/sys/vm/compact_memory'`. The 50% threshold is a first guess, to be moved by measurement.
+
+For reference, a DGX Spark runs 4 KiB pages with 14 orders, so its largest possible block is 32 MiB. On 2026-11-23, 21 days up with a run loaded, one had 1.5 GiB free, 52% of it in 2 MiB+ blocks, and 22 GiB of cache.
+
 ### Ending a process
 
 `DELETE /api/memory/processes/{pid}?node=…` works on any node:

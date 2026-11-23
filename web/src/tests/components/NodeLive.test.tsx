@@ -107,6 +107,40 @@ describe("NodeLive pieces", () => {
     expect(screen.getByRole("listitem")).toHaveTextContent("qwen");
   });
 
+  const SHAPE = {
+    page_size_bytes: 4096,
+    free_bytes: 2 * 1024 ** 3,
+    contiguous_bytes: 1024 ** 3,
+    contiguous_percent: 50,
+    largest_block_bytes: 32 * 1024 ** 2,
+    fragmented: false,
+    blocks: [],
+  };
+
+  it("says how much of the free memory is in large blocks", () => {
+    render(<NodeStatStrip node={NODE} interfaces="" stats={stats({ memory_shape: SHAPE })} layout={null} loading={false} />);
+    const cell = screen.getByTestId("memory-shape-n");
+    expect(cell).toHaveTextContent("50%");
+    expect(cell).toHaveTextContent("1.0 GB of 2.0 GB in blocks of 2 MiB or more · largest 32.0 MB");
+    expect(within(cell).queryByText(/Fragmented/)).toBeNull();
+  });
+
+  it("warns when the free memory is shredded", () => {
+    const shredded = { ...SHAPE, contiguous_percent: 12, fragmented: true };
+    render(<NodeStatStrip node={NODE} interfaces="" stats={stats({ memory_shape: shredded })} layout={null} loading={false} />);
+    expect(screen.getByText("Fragmented. Compact it before the next run.")).toBeInTheDocument();
+    expect(screen.getByText("12%")).toHaveClass("text-warn");
+  });
+
+  it("shows no shape for a card with memory of its own", () => {
+    const discrete = stats({
+      memory_shape: SHAPE,
+      gpu: [{ index: 0, gpu: "0", uuid: "u", name: "G", memory_supported: true, memory_total: 12288, memory_used: 100 } as never],
+    });
+    render(<NodeStatStrip node={NODE} interfaces="" stats={discrete} layout={null} loading={false} />);
+    expect(screen.queryByTestId("memory-shape-n")).toBeNull();
+  });
+
   it("draws a chart once there are samples, with no label of its own", () => {
     const one = stats({
       gpu: [{ index: 0, gpu: "0", uuid: "u", name: "G", memory_supported: false, temperature: 1, utilization: 1 } as never],

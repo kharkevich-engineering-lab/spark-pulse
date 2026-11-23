@@ -376,3 +376,30 @@ def test_the_control_node_is_the_default_target(address):
     node_stats.terminate(4242, address, services=_resolve)
 
     assert seen == [True]
+
+
+# ── The shape of free memory ─────────────────────────────────────────────────
+
+
+def test_the_memory_shape_is_read_from_the_nodes_buddy_counts():
+    stats = spark_stats()
+    stats.buddy.page_size_bytes = 4096
+    stats.buddy.free_blocks.extend([0] * 9 + [10])
+
+    block = node_stats.for_node("node", services_for(FakeService(stats)))
+
+    assert block["memory_shape"]["contiguous_bytes"] == 10 * 2 * node_stats.MIB
+    assert block["memory_shape"]["contiguous_percent"] == 100.0
+
+
+def test_an_agent_that_sends_no_buddy_counts_reports_no_shape():
+    block = node_stats.for_node("node", services_for(FakeService(spark_stats())))
+    assert block["reachable"] is True
+    assert block["memory_shape"] is None
+
+
+def test_an_unreachable_node_reports_no_shape():
+    block = node_stats.for_node(
+        "node", services_for(FakeService(error=RuntimeError("gone")))
+    )
+    assert block["memory_shape"] is None
