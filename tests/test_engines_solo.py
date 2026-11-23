@@ -19,7 +19,7 @@ from spark_pulse.engines import (
     Topology,
     TrtllmEngine,
 )
-from spark_pulse.engines.registry import ENGINE_CLASSES, load_bundled_specs
+from spark_pulse.engines.registry import ENGINE_CLASSES, load_spec_dir
 
 MODEL = "unsloth/Qwen3-8B-GGUF"
 RECIPE = {
@@ -65,7 +65,7 @@ CASES = {
 
 def engine_for(name: str) -> SoloEngine:
     cls = CASES[name][0]
-    spec = next(s for s in load_bundled_specs() if s.engine == name)
+    spec = next(s for s in load_spec_dir() if s.engine == name)
     return cls(spec)
 
 
@@ -186,7 +186,7 @@ def test_every_bundled_engine_declares_a_published_image():
     options: pulling an unpublished reference answers 403, not an image. Every
     one bundled today has one — the engine that did not was removed rather
     than left as a definition nobody could run."""
-    specs = {s.engine: s for s in load_bundled_specs()}
+    specs = {s.engine: s for s in load_spec_dir()}
 
     assert specs["llama-cpp"].available is True
     assert specs["atlas"].available is True

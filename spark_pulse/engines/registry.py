@@ -1,11 +1,7 @@
-"""Engine registry — bundled defaults plus optional OCI engine indexes.
+"""Engine registry — the configured engine indexes are the registry.
 
-Specs come from two places:
-
-1. **Bundled defaults** (``spark_pulse/engines/defaults/*.yaml``) — always
-   available, no network, loaded eagerly.
-2. **Engine indexes** — OCI artifacts named by ``engine_indexes`` in the
-   config. Each holds an ``index.yaml``::
+Specs come from the OCI artifacts named by ``engine_indexes`` in the config.
+Each holds an ``index.yaml``::
 
        apiVersion: spark-pulse.io/v1
        kind: EngineIndex
@@ -20,10 +16,20 @@ Specs come from two places:
            digest: sha256:...
            spec: {...}          # a full engine.yaml
 
-   Index results are cached on disk with a TTL. Fetching **never** happens on
-   startup and never blocks it: the registry serves whatever is cached, and a
-   refresh is an explicit call (``POST /api/engines/refresh``) or a lazy
-   TTL-expired top-up. In simulation mode the network is skipped entirely.
+Nothing about an engine ships in the wheel: adding one, or a variant, is a
+change to the index, and a control plane picks it up on its next refresh
+without a release. Which class renders a spec is :func:`engine_class`'s
+answer, and it never refuses an engine name it has not heard of.
+
+Index results are cached on disk, and the cache is what a restart serves —
+including one with no network. A fetch never blocks startup: a registry with
+an uncached or expired index starts a background refresh when it is created
+(at startup and after the settings change it), and ``POST
+/api/engines/refresh`` is the explicit one. Until the first fetch lands there
+are no engines, and a lookup says so rather than "unknown engine".
+
+Simulation has no network, so it reads a fixed index instead — the specs in
+``spark_pulse/mock/engines`` — which is also what the tests render against.
 """
 
 from __future__ import annotations
@@ -46,14 +52,20 @@ from spark_pulse.engines.llama_cpp import LlamaCppEngine
 from spark_pulse.engines.sglang import SglangEngine
 from spark_pulse.engines.solo import (
     AtlasEngine,
+    GenericEngine,
     ModularMaxEngine,
+    SoloEngine,
     TrtllmEngine,
 )
 from spark_pulse.engines.vllm import VllmEngine
 
 logger = logging.getLogger(__name__)
 
-DEFAULTS_DIR = Path(__file__).resolve().parent / "defaults"
+#: Simulation's engine index: one ``engine.yaml`` per file. Read only in
+#: simulation (and by tests that name it); a real control plane's engines are
+#: its indexes'.
+SIMULATION_SPECS_DIR = Path(__file__).resolve().parent.parent / "mock" / "engines"
+SIMULATION_SOURCE = "simulation"
 CACHE_DIR = Path.home() / ".cache" / "spark-pulse" / "engines"
 
 ENGINE_CLASSES: dict[str, type[Engine]] = {
@@ -70,6 +82,45 @@ ENGINE_CLASSES: dict[str, type[Engine]] = {
     "modular-max": ModularMaxEngine,
     "atlas": AtlasEngine,
 }
+
+#: Every renderer a spec may name with ``runtime.renderer``. The engine's own
+#: name is the first thing asked (:data:`ENGINE_CLASSES`), so a built-in needs
+#: no ``renderer`` line; an engine the index adds later says which dialect it
+#: speaks — ``vllm`` for a vLLM fork, ``solo`` for one process on one node —
+#: and runs without a control-plane release.
+RENDERERS: dict[str, type[Engine]] = {**ENGINE_CLASSES, "solo": SoloEngine}
+
+#: A ``multi_node.style`` that is itself enough to pick the renderer, for a
+#: spec that names neither a known engine nor a renderer.
+STYLE_RENDERERS: dict[str, type[Engine]] = {"llama-rpc": LlamaCppEngine}
+
+
+def engine_class(spec: EngineSpec) -> type[Engine]:
+    """The class that renders ``spec``. Never refuses an unknown engine name.
+
+    In order: the renderer the spec names, the class registered for its
+    engine name, the class its multi-node style implies, and otherwise
+    :class:`GenericEngine` — the spec-driven solo renderer, which refuses a
+    topology above one node at plan time because it has no rendezvous to
+    render. Only a renderer the spec *names* and this build lacks is an
+    error, and it says so, since rendering it as something else would launch
+    a command nobody wrote.
+    """
+    renderer = (spec.runtime.renderer or "").strip()
+    if renderer:
+        cls = RENDERERS.get(renderer)
+        if cls is None:
+            raise EngineNotFound(
+                f"engine '{spec.key}' asks for the '{renderer}' renderer, which "
+                f"this control plane does not have (has: "
+                f"{', '.join(sorted(RENDERERS))}); upgrade spark-pulse"
+            )
+        return cls
+    cls = ENGINE_CLASSES.get(spec.engine) or STYLE_RENDERERS.get(
+        spec.runtime.multi_node.style
+    )
+    return cls or GenericEngine
+
 
 INDEX_API_VERSION = "spark-pulse.io/v1"
 INDEX_KIND = "EngineIndex"
@@ -134,9 +185,11 @@ def parse_index(data: dict[str, Any], source: str) -> list[EngineSpec]:
     return specs
 
 
-def load_bundled_specs(defaults_dir: Path | None = None) -> list[EngineSpec]:
-    """Parse every bundled ``engine.yaml``."""
-    directory = defaults_dir or DEFAULTS_DIR
+def load_spec_dir(
+    directory: Path | None = None, source: str = SIMULATION_SOURCE
+) -> list[EngineSpec]:
+    """Parse every ``engine.yaml`` in ``directory`` (simulation's by default)."""
+    directory = directory or SIMULATION_SPECS_DIR
     specs: list[EngineSpec] = []
     if not directory.is_dir():
         return specs
@@ -144,15 +197,15 @@ def load_bundled_specs(defaults_dir: Path | None = None) -> list[EngineSpec]:
         try:
             data = yaml.safe_load(path.read_text())
         except (OSError, yaml.YAMLError) as exc:
-            logger.warning("Skipping bundled engine %s: %s", path.name, exc)
+            logger.warning("Skipping engine spec %s: %s", path.name, exc)
             continue
         if not isinstance(data, dict):
             continue
-        data["source"] = "bundled"
+        data["source"] = source
         try:
             specs.append(EngineSpec.model_validate(data))
         except ValidationError as exc:
-            logger.warning("Skipping bundled engine %s: %s", path.name, exc)
+            logger.warning("Skipping engine spec %s: %s", path.name, exc)
     return specs
 
 
@@ -241,19 +294,23 @@ def _fetch_index_oci(ref: str) -> dict[str, Any] | None:
 
 
 class EngineRegistry:
-    """Bundled engine specs plus whatever the configured indexes provide."""
+    """What the configured engine indexes provide, served from their cache.
+
+    ``specs_dir`` is a fixed index read from disk — simulation's, or a test's.
+    Left unset, it is simulation's in simulation and nothing otherwise.
+    """
 
     def __init__(
         self,
-        defaults_dir: Path | None = None,
+        specs_dir: Path | None = None,
         cache_dir: Path | None = None,
         cache_ttl: int | None = None,
     ):
-        self._defaults_dir = defaults_dir
+        self._specs_dir = specs_dir
         self._cache_dir = cache_dir or CACHE_DIR
         self._cache_ttl = cache_ttl
         self._lock = threading.RLock()
-        self._bundled: list[EngineSpec] = []
+        self._fixed: list[EngineSpec] = []
         self._indexed: dict[str, list[EngineSpec]] = {}
         self._fetched_at: dict[str, float] = {}
         self.reload()
@@ -271,9 +328,14 @@ class EngineRegistry:
         return list(config.engine_indexes)
 
     def reload(self) -> None:
-        """Reload bundled defaults and any cached index payloads (no network)."""
+        """Reload the fixed specs and any cached index payloads (no network)."""
         with self._lock:
-            self._bundled = load_bundled_specs(self._defaults_dir)
+            if self._specs_dir is not None:
+                self._fixed = load_spec_dir(self._specs_dir)
+            elif _is_simulation():
+                self._fixed = load_spec_dir()
+            else:
+                self._fixed = []
             self._indexed = {}
             self._fetched_at = {}
             for ref in self.index_refs:
@@ -288,7 +350,7 @@ class EngineRegistry:
         if _is_simulation():
             return {
                 "refreshed": False,
-                "reason": "simulation mode: bundled engines only",
+                "reason": "simulation mode: the simulated engine index only",
                 "indexes": results,
                 "engines": len(self.list()),
             }
@@ -325,6 +387,29 @@ class EngineRegistry:
             "indexes": results,
             "engines": len(self.list()),
         }
+
+    def needs_refresh(self) -> bool:
+        """Whether any configured index is uncached or past its TTL."""
+        now = time.time()
+        return any(
+            now - self._fetched_at.get(ref, 0) >= self.cache_ttl
+            for ref in self.index_refs
+        )
+
+    def refresh_in_background(self) -> threading.Thread | None:
+        """Top up stale indexes on a thread; never blocks, never raises."""
+        if _is_simulation() or not self.needs_refresh():
+            return None
+
+        def run() -> None:
+            try:
+                self.refresh(force=False)
+            except Exception as exc:  # pragma: no cover - refresh reports its own
+                logger.warning("Engine index background refresh failed: %s", exc)
+
+        thread = threading.Thread(target=run, name="engine-index-refresh", daemon=True)
+        thread.start()
+        return thread
 
     def refresh_if_stale(self) -> None:
         """Top up expired indexes; safe to call from a request path."""
@@ -365,18 +450,25 @@ class EngineRegistry:
     # -- lookup ------------------------------------------------------------
 
     def list(self) -> list[EngineSpec]:
-        """All known specs; an index entry shadows the bundled one it matches."""
+        """All known specs; a later index shadows an earlier one's entry."""
         with self._lock:
-            merged: dict[str, EngineSpec] = {s.key: s for s in self._bundled}
+            merged: dict[str, EngineSpec] = {s.key: s for s in self._fixed}
             for ref in self.index_refs:
                 for spec in self._indexed.get(ref, []):
                     merged[spec.key] = spec
         return [merged[k] for k in sorted(merged)]
 
     def get(self, engine: str, variant: str = "default") -> EngineSpec:
-        for spec in self.list():
+        specs = self.list()
+        for spec in specs:
             if spec.engine == engine and spec.variant == variant:
                 return spec
+        if not specs:
+            raise EngineNotFound(
+                f"unknown engine '{engine}/{variant}': no engine index has been "
+                "fetched yet — refresh the engine index (Library → Engines) or "
+                "check engine_indexes in settings"
+            )
         raise EngineNotFound(f"unknown engine '{engine}/{variant}'")
 
     def has(self, engine: str, variant: str = "default") -> bool:
@@ -427,13 +519,49 @@ class EngineRegistry:
         spec = self.get(engine, variant or "default")
         return spec.engine, spec.variant
 
+    def select_for_recipe(
+        self,
+        recipe: dict[str, Any],
+        engine: str | None = None,
+        variant: str | None = None,
+    ) -> tuple[str, str]:
+        """:meth:`select` for a deploy of ``recipe``: request, recipe, default.
+
+        A recipe may pin a variant (``engine: sglang/inkling-2-mini``). A
+        request naming that same bare engine and no variant has not chosen
+        another image, so the recipe's variant stands.
+        """
+        recipe_engine = recipe.get("engine")
+        recipe_variant = recipe.get("variant")
+        if recipe_engine and recipe_variant:
+            if engine == recipe_engine and not variant:
+                engine = None
+            recipe_engine = f"{recipe_engine}/{recipe_variant}"
+        override = engine
+        if override and variant:
+            override = f"{override}/{variant}"
+        elif variant and not override:
+            base = (recipe_engine or config.default_engine).partition("/")[0]
+            override = f"{base}/{variant}"
+        return self.select(
+            request_override=override,
+            recipe_engine=recipe_engine,
+            default_engine=config.default_engine,
+        )
+
+    def variant_for(self, engine: str, preferred: str | None = None) -> str:
+        """A variant of ``engine`` to ask a question of: ``preferred``, else
+        ``default``, else the first one the registry holds."""
+        variants = [s.variant for s in self.list() if s.engine == engine]
+        for candidate in (preferred, "default"):
+            if candidate and candidate in variants:
+                return candidate
+        return variants[0] if variants else (preferred or "default")
+
     def engine(self, engine: str, variant: str = "default") -> Engine:
         """Instantiate the engine plugin for ``engine/variant``."""
         spec = self.get(engine, variant)
-        cls = ENGINE_CLASSES.get(spec.engine)
-        if cls is None:
-            raise EngineNotFound(f"no engine plugin implements '{spec.engine}'")
-        return cls(spec)
+        return engine_class(spec)(spec)
 
 
 # ── Process-wide registry ────────────────────────────────────────────────────
@@ -448,6 +576,9 @@ def get_registry() -> EngineRegistry:
     with _registry_lock:
         if _registry is None:
             _registry = EngineRegistry()
+            # The first fetch of a fresh install, or of an index a settings
+            # change just named, lands without anybody asking for it.
+            _registry.refresh_in_background()
         return _registry
 
 

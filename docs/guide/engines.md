@@ -2,7 +2,7 @@
 
 An **engine** is a plugin plus a published container image. The plugin knows how to render a launch command, which ports the engine listens on, how to tell when it is ready and where its metrics are. The image is what actually runs.
 
-Bundled today: `vllm`, `sglang`, `llama-cpp`, `trtllm`, `modular-max`, `atlas`. A recipe names an engine, or takes the configured default. An engine can have several **variants** — `llama-cpp/default` and `llama-cpp/prism` are one engine with two images — and a deploy picks one.
+Which engines exist is the engine index's answer, not the control plane's: the default index publishes `vllm`, `sglang`, `llama-cpp`, `trtllm`, `modular-max`, `atlas` and `tensorfold`, and adding one is a change to the index rather than a release. A recipe names an engine (or an exact variant, `engine: sglang/inkling-2-mini`), or takes the configured default. An engine can have several **variants** — `llama-cpp/default` and `llama-cpp/prism` are one engine with two images — and a deploy picks one.
 
 ## What a spec says
 
@@ -54,12 +54,12 @@ A variant opts in by declaring both halves — `capabilities.cluster: true` and 
 ```mermaid
 flowchart LR
   IDX["Engine index<br/>ghcr.io/…/spark-pulse-engine/index:latest"] --> REG["Engine registry<br/>in the control plane"]
-  DEF["Bundled defaults<br/>spark_pulse/engines/defaults/*.yaml"] --> REG
+  CACHE["Last fetched copy<br/>~/.cache/spark-pulse/engines"] --> REG
   REG --> UI["Engines page"]
   REG --> PLAN["Plan / deploy"]
 ```
 
-An index is an OCI artifact listing published engine images and their digests. The registry merges it over the bundled defaults, caches it for `engine_index_cache_ttl_seconds`, and marks each engine `available` or not — an engine whose image has not been published is listed but not offered.
+An index is an OCI artifact listing published engine images, their digests and each engine's full spec. Nothing about an engine ships with Spark Pulse: the registry is the configured indexes, fetched in the background when a cache is missing or older than `engine_index_cache_ttl_seconds`, and served from the last fetched copy otherwise — so a restart without network keeps every engine it had. A fresh install has no engines until that first fetch lands (seconds, with network). Each engine is marked `available` or not — one whose image has not been published is listed but not offered.
 
 The **Engines** tab of Library (`/engines`) shows per engine: the image, whether this node has it, its size, its digest, and **digest drift** — the same tag now resolving to a different image than the one on disk. Expanding a row asks every node whether it holds that image; a node that cannot be asked is *unknown*, never *absent*, because "we could not ask" is not a reason to pull 26 GB again.
 
@@ -78,4 +78,4 @@ Either way, registry credentials stay on the control node: workers pull anonymou
 
 ## Adding your own
 
-Point `engine_indexes` at your own index artifact, or drop a spec in the operator's engine directory. A spec can also say `build: {external: true}` with a `tag`, which means *use this image, do not try to build it* — that is how `trtllm`, `modular-max` and `atlas` are wired to images published by other people.
+Point `engine_indexes` at your own index artifact, or at an `index.yaml` on disk. An engine this build has no renderer for by name is rendered from its spec alone, as one process on one node; a fork that speaks an existing dialect says `runtime.renderer: vllm` (or `sglang`, `llama-cpp`) and spans nodes the way that engine does. A spec can also say `build: {external: true}` with a `tag`, which means *use this image, do not try to build it* — that is how `trtllm`, `modular-max` and `atlas` are wired to images published by other people.

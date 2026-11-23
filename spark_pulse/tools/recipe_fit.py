@@ -177,10 +177,16 @@ def fit(
 
     runnable: dict[str, list[str]] = {}
     by_unknown: dict[str, list[str]] = {}
+    pinned_engine, pinned_variant = recipe.get("engine"), recipe.get("variant")
     for engine in candidates:
         for spec in variants:
             if spec.engine != engine or not spec.usable:
                 continue
+            if pinned_variant and engine == pinned_engine:
+                # The recipe names its image; another variant of the same
+                # engine is not what it was written for.
+                if spec.variant != pinned_variant:
+                    continue
             arch = set(spec.arch)
             known = [n for n in fleet_nodes if n.platform and n.platform in arch]
             unknown = [n for n in fleet_nodes if not n.platform]
@@ -425,7 +431,11 @@ def _engine_patterns(recipe: dict[str, Any]) -> list[str]:
     from spark_pulse.engines import get_registry
 
     try:
-        engine = get_registry().engine(str(recipe.get("engine") or ""), "default")
+        registry = get_registry()
+        name = str(recipe.get("engine") or "")
+        engine = registry.engine(
+            name, registry.variant_for(name, recipe.get("variant"))
+        )
         return list(engine.model_patterns(recipe))
     except Exception:  # noqa: BLE001 — no patterns is "the whole repository"
         return []

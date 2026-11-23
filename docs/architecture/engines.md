@@ -4,11 +4,12 @@
 
 An engine plugin decides four things a recipe cannot: how to render the launch command, which ports the engine wants, how readiness is decided, and where its metrics live. `ENGINE_CLASSES` maps a name to a plugin; `EngineSpec` is the data half, a pydantic model with `extra="allow"` so an index can carry fields this build has not heard of without failing to load.
 
+An engine the index adds does not need a release of the control plane. `registry.engine_class(spec)` asks, in order: the renderer the spec names (`runtime.renderer` — `vllm`, `sglang`, `llama-cpp` or `solo`, for a fork that speaks an existing dialect), the class registered for its engine name, the class its `multi_node.style` implies, and otherwise `GenericEngine` — the spec-driven solo renderer, which builds the launch from `serve`, `model_arg` and `param_flags` alone and refuses more than one node at plan time. Only a renderer the spec *names* and this build lacks is refused, by name. A recipe pins a variant with the same form the registry takes, `engine: sglang/inkling-2-mini`; the parser splits it into the engine its `engines:` block is keyed by and the variant a deploy then selects unless the request names another.
+
 ```mermaid
 flowchart TD
-  D["Bundled defaults<br/>engines/defaults/*.yaml"] --> M["merge"]
+  D["Last fetched copy<br/>~/.cache/spark-pulse/engines"] --> M["merge"]
   I["Engine index (OCI artifact)<br/>images + digests + availability"] --> M
-  O["Operator's own specs"] --> M
   M --> REG["EngineRegistry<br/>cached, TTL"]
   REG --> AV{"available?"}
   AV -->|"image published"| OFF["Offered on the deploy form"]

@@ -91,17 +91,9 @@ def render_launch(req: RenderRequest):
             status_code=404, detail=f"Recipe '{req.recipe_id}' not found"
         )
 
-    override = req.engine
-    if override and req.variant:
-        override = f"{override}/{req.variant}"
-    elif req.variant and not override:
-        override = f"{recipe.get('engine') or config.default_engine}/{req.variant}"
-
     try:
-        engine_name, variant = registry.select(
-            request_override=override,
-            recipe_engine=recipe.get("engine"),
-            default_engine=config.default_engine,
+        engine_name, variant = registry.select_for_recipe(
+            recipe, req.engine, req.variant
         )
         engine = registry.engine(engine_name, variant)
     except EngineNotFound as exc:

@@ -8,12 +8,12 @@ from fastapi.testclient import TestClient
 from spark_pulse.app import create_app
 from spark_pulse.config import config
 from spark_pulse.engines import EngineRegistry, reset_registry
-from spark_pulse.engines.registry import load_bundled_specs
+from spark_pulse.engines.registry import load_spec_dir
 
 #: Whatever ships in ``engines/defaults``. Named rather than listed: which
 #: engines are bundled is that directory's business, and a router test that
 #: repeats the list only fails when somebody adds one.
-BUNDLED_KEYS = {s.key for s in load_bundled_specs()}
+BUNDLED_KEYS = {s.key for s in load_spec_dir()}
 
 V1_RECIPE = {
     "id": "qwen3-8b",
@@ -81,7 +81,7 @@ class TestListEngines:
         assert vllm["enabled"] is True
         assert vllm["legacy_tags"] == ["vllm-node"]
         assert vllm["verified"][0]["model"] == "Qwen/Qwen2.5-0.5B-Instruct"
-        assert vllm["source"] == "bundled"
+        assert vllm["source"] == "simulation"
 
 
 class TestGetEngine:

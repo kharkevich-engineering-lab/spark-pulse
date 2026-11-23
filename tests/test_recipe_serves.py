@@ -18,7 +18,7 @@ from referencing import Registry, Resource
 from spark_pulse import tools
 from spark_pulse.app import create_app
 from spark_pulse.engines import SglangEngine, Topology, VllmEngine
-from spark_pulse.engines.registry import load_bundled_specs
+from spark_pulse.engines.registry import load_spec_dir
 from spark_pulse.tools import deploy_dispatch, recipe_sources
 from spark_pulse.tools.recipe_schema import (
     DEFAULT_SERVES,
@@ -135,7 +135,7 @@ class TestPayload:
 
 
 def _engine(cls, name):
-    return cls(next(s for s in load_bundled_specs() if s.engine == name))
+    return cls(next(s for s in load_spec_dir() if s.engine == name))
 
 
 EMBED = {

@@ -87,6 +87,12 @@ class EngineRuntime(BaseModel):
     container: EngineContainer = Field(default_factory=EngineContainer)
     multi_node: EngineMultiNode = Field(default_factory=EngineMultiNode)
     param_flags: dict[str, str] = Field(default_factory=dict)
+    #: Which renderer speaks this engine's command line, for an engine whose
+    #: name this build does not know: ``vllm``, ``sglang``, ``llama-cpp`` or
+    #: ``solo`` (see ``registry.RENDERERS``). Unset, the engine's name decides,
+    #: then ``multi_node.style``, then the spec-driven solo renderer — so a new
+    #: single-node engine needs only its spec in the index, not a release.
+    renderer: str | None = None
 
 
 class EngineCapabilities(BaseModel):
@@ -368,6 +374,10 @@ class Engine:
 
     def __init__(self, spec: EngineSpec):
         self.spec = spec
+        # The name a recipe's ``engines:`` block is keyed by is the spec's, so
+        # a renderer shared by several engines (``renderer: vllm`` on a vLLM
+        # fork, or the generic one) answers to each engine's own name.
+        self.name = spec.engine or type(self).name
 
     # -- declarative accessors, all driven by engine.yaml ------------------
 
@@ -481,7 +491,9 @@ class Engine:
         """
         if self.spec.framework_version:
             return str(self.spec.framework_version)
-        source = self.spec.sources.get(self.name)
+        source = self.spec.sources.get(self.name) or self.spec.sources.get(
+            type(self).name
+        )
         if isinstance(source, dict) and source.get("version"):
             return str(source["version"])
         return ""

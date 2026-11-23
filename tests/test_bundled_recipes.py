@@ -12,7 +12,7 @@ import pytest
 import yaml
 
 from spark_pulse.engines import EngineRegistry, Topology
-from spark_pulse.engines.registry import load_bundled_specs
+from spark_pulse.engines.registry import load_spec_dir
 from spark_pulse.tools import custom_files, recipe_schema, recipe_sources
 
 # `recipes` is the mock under SIMULATION_MODE=1, which is what the API serves
@@ -21,7 +21,7 @@ from spark_pulse.tools import recipes
 
 #: Every engine the bundled registry carries, by name. Not a list repeated
 #: here: which engines are bundled is that directory's business.
-REGISTERED_ENGINES = {spec.engine for spec in load_bundled_specs()}
+REGISTERED_ENGINES = {spec.engine for spec in load_spec_dir()}
 
 BUNDLED_IDS = [
     "bundled/qwen2.5-0.5b-instruct",

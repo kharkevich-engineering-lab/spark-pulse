@@ -13,6 +13,8 @@ export interface RecipeSummary {
   recipe_version: string;
   /** Preferred engine, or null when the recipe does not name one. */
   engine: string | null;
+  /** The variant the recipe pins (`engine: sglang/inkling-2-mini`), if any. */
+  variant?: string | null;
   /** Engine names this recipe can run on. v1 recipes are vLLM-only. */
   engines: string[];
   /** Engine-neutral parameters. Mirrors `defaults` for v1 recipes. */

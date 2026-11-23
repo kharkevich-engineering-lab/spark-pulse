@@ -277,7 +277,7 @@ def test_customized_env_and_mods_reach_a_v2_engine_block(tmp_path, monkeypatch):
     # The engine reads its own block when the recipe has one, so an override
     # written only to the flattened top level used to be dropped at launch.
     from spark_pulse.engines import VllmEngine
-    from spark_pulse.engines.registry import load_bundled_specs
+    from spark_pulse.engines.registry import load_spec_dir
 
     (custom_dir() / "structured.yaml").write_text(V2_RECIPE, encoding="utf-8")
     custom_path = tmp_path / "custom-recipes.json"
@@ -295,7 +295,7 @@ def test_customized_env_and_mods_reach_a_v2_engine_block(tmp_path, monkeypatch):
     monkeypatch.setattr(recipes.custom_recipes, "_CUSTOM_PATH", custom_path)
 
     out = recipes.get_recipe("custom-structured")
-    engine = VllmEngine(next(s for s in load_bundled_specs() if s.engine == "vllm"))
+    engine = VllmEngine(next(s for s in load_spec_dir() if s.engine == "vllm"))
 
     assert engine.block_env(out) == {"NCCL_DEBUG": "INFO"}
     assert engine.block_mods(out) == ["other-mod"]

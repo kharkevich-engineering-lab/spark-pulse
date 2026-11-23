@@ -3,7 +3,7 @@
 import pytest
 
 from spark_pulse.engines import EngineError, NodeInfo, SglangEngine, Topology
-from spark_pulse.engines.registry import load_bundled_specs
+from spark_pulse.engines.registry import load_spec_dir
 
 RECIPE = {
     "id": "llama-8b",
@@ -43,7 +43,7 @@ def line(tp: int, nnodes: int, rank: int, addr: str) -> str:
 
 @pytest.fixture
 def engine():
-    spec = next(s for s in load_bundled_specs() if s.engine == "sglang")
+    spec = next(s for s in load_spec_dir() if s.engine == "sglang")
     return SglangEngine(spec)
 
 
