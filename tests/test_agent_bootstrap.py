@@ -342,6 +342,13 @@ async def test_offer_sudoers_installs_the_nmcli_grant_for_fabric_config(
     )
     assert "NOPASSWD: /usr/bin/nmcli\n" not in installed
     assert not any(c.capability == "fabric-sudoers" for c in report.concessions)
+    memory = node.read("/etc/sudoers.d/spark-pulse-agent-memory").decode()
+    assert memory.endswith(
+        f"{USER} ALL=(root) NOPASSWD: "
+        "/usr/bin/tee /proc/sys/vm/drop_caches, "
+        "/usr/bin/tee /proc/sys/vm/compact_memory\n"
+    )
+    assert not any(c.capability == "memory-sudoers" for c in report.concessions)
 
 
 async def test_without_offer_sudoers_no_nmcli_grant_is_written(
@@ -351,6 +358,7 @@ async def test_without_offer_sudoers_no_nmcli_grant_is_written(
     report = await do_install(agent_server, agent_fleet, node, agent_bundle)
     assert report.connected
     assert not node.exists("/etc/sudoers.d/spark-pulse-agent-nmcli")
+    assert not node.exists("/etc/sudoers.d/spark-pulse-agent-memory")
 
 
 async def test_the_privileged_summary_names_the_manager_restart(

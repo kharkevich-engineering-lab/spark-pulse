@@ -318,6 +318,10 @@ class DeployPlan:
     #: is what the engine will be handed. ``None`` for an engine that
     #: allocates as it goes and so claims no fraction at all.
     gpu_memory_utilization: float | None = None
+    #: Whether memory will be dropped and compacted on each node before the
+    #: first rank starts (`memory.compact_before_launch`), so the preview can
+    #: say so. Read when the run is planned, not stored on the record.
+    compact_before_launch: bool = False
     #: One entry per node the run occupies: its total memory, the other runs
     #: on it and what each claims, what is left and the largest fraction that
     #: fits (:class:`~spark_pulse.tools.memory_budget.NodeBudget`). The

@@ -4,6 +4,7 @@
     "~/.cache/huggingface",
     "~/tiktoken_encodings"
   ],
+  "compact_before_launch": false,
   "container": {
     "cap_add": [],
     "command": "sleep infinity",

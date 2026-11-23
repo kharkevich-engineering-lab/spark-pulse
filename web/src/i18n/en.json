@@ -1369,5 +1369,16 @@
     "memoryShape": "Contiguous free",
     "memoryShapeDetail": "{contiguous} of {free} in blocks of 2 MiB or more · largest {largest}",
     "memoryShapeFragmented": "Fragmented. Compact it before the next run."
+  },
+  "memorySettings": {
+    "tab": "Memory",
+    "title": "Memory",
+    "hint": "How free memory is prepared before a run starts.",
+    "enableAll": "Enable all",
+    "compact": "Compact before launch",
+    "compactHelp": "Drops caches and compacts memory on each idle node before a run starts. Needs the agent's sudoers rule.",
+    "lazyNccl": "Lazy NCCL communicators",
+    "lazyNcclHelp": "Experimental, torch 2.16 and later. Multi-node ranks build NCCL communicators on first use.",
+    "previewCompact": "Memory is compacted on each idle node before launch."
   }
 }

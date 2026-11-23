@@ -59,6 +59,7 @@ _ALLOWED_SETTING_KEYS = frozenset(
         "engines",
         "docker",
         "mod",
+        "memory",
     }
 )
 
@@ -91,6 +92,9 @@ _ALLOWED_DOCKER_KEYS = frozenset(
 _ALLOWED_MOD_KEYS = frozenset({"network_policy"})
 
 _MOD_NETWORK_POLICIES = ("allow", "warn", "deny")
+
+#: The keys the `memory:` block may carry, each a boolean.
+_ALLOWED_MEMORY_KEYS = frozenset({"compact_before_launch", "lazy_nccl_communicators"})
 
 
 def _redacted(url: str) -> str:
@@ -236,6 +240,10 @@ def _settings_response() -> dict:
         "engines": config.engines,
         "docker": _docker_block(),
         "mod": {"network_policy": config.mod_network_policy},
+        "memory": {
+            "compact_before_launch": config.memory_compact_before_launch,
+            "lazy_nccl_communicators": config.memory_lazy_nccl_communicators,
+        },
         "env_managed": config.env_managed,
         "environment": _environment_block(),
         "cluster": _cluster_block(),
@@ -302,6 +310,15 @@ def update_settings(req: dict):
                 f"{', '.join(_MOD_NETWORK_POLICIES)}",
             )
         incoming["mod"] = block
+    if "memory" in incoming:
+        block = _checked_block("memory", incoming["memory"], _ALLOWED_MEMORY_KEYS)
+        wrong = sorted(k for k, v in block.items() if not isinstance(v, bool))
+        if wrong:
+            raise HTTPException(
+                status_code=400,
+                detail=f"memory setting(s) must be true or false: {', '.join(wrong)}",
+            )
+        incoming["memory"] = block
 
     config.update(**incoming)
     # Engine settings feed the registry; drop it so the next call rebuilds.

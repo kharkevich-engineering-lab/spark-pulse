@@ -84,6 +84,21 @@ def _occupied_nodes(record: dict[str, Any]) -> set[str] | None:
     return nodes or {""}
 
 
+def occupied_by_others(exclude: str = "") -> set[str]:
+    """Every node (by :func:`_node_key`) a run other than ``exclude`` occupies.
+
+    The same rule as the ports and the memory budget, flattened to "is anyone
+    else here": what a stall of the whole node — dropping caches, compacting
+    memory — must not be done to.
+    """
+    held: set[str] = set()
+    for record in _load_records():
+        if exclude and record.get("id") == exclude:
+            continue
+        held |= _occupied_nodes(record) or set()
+    return held
+
+
 def _ports_in_use(exclude: str = "") -> dict[str, dict[int, str]]:
     """Ports live deployments hold, per node — API, rendezvous *and* RPC.
 

@@ -64,6 +64,7 @@ class TestGetSettings:
             "docker_pull_stall_timeout_seconds",
             "docker",
             "mod",
+            "memory",
             "env_managed",
             "environment",
             "cluster",
@@ -320,6 +321,48 @@ class TestTheModBlock:
 
         assert response.status_code == 400
         assert "sandbox" in response.json()["detail"]
+
+
+class TestTheMemoryBlock:
+    def test_it_is_off_by_default(self, client):
+        body = client.get("/api/settings").json()
+
+        assert body["memory"] == {
+            "compact_before_launch": False,
+            "lazy_nccl_communicators": False,
+        }
+
+    def test_both_switches_round_trip(self, client):
+        body = client.put(
+            "/api/settings",
+            json={
+                "memory": {
+                    "compact_before_launch": True,
+                    "lazy_nccl_communicators": True,
+                }
+            },
+        ).json()
+
+        assert body["memory"] == {
+            "compact_before_launch": True,
+            "lazy_nccl_communicators": True,
+        }
+        assert config.memory_compact_before_launch is True
+        assert config.memory_lazy_nccl_communicators is True
+
+    def test_an_unknown_memory_key_is_refused(self, client):
+        response = client.put("/api/settings", json={"memory": {"swappiness": True}})
+
+        assert response.status_code == 400
+        assert "swappiness" in response.json()["detail"]
+
+    def test_a_switch_must_be_a_boolean(self, client):
+        response = client.put(
+            "/api/settings", json={"memory": {"compact_before_launch": "yes"}}
+        )
+
+        assert response.status_code == 400
+        assert "compact_before_launch" in response.json()["detail"]
 
 
 class TestTheRuntimeReport:

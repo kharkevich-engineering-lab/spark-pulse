@@ -1274,6 +1274,21 @@ describe("DeployOptions model source", () => {
     await waitFor(() => expect(screen.getByText(/preview/i)).toBeInTheDocument());
     expect(screen.queryByTestId("deploy-plan-model-source")).toBeNull();
   });
+
+  it("says when memory will be compacted before launch, and otherwise nothing", async () => {
+    vi.mocked(planDeployment).mockResolvedValue({ ...PLAN, compact_before_launch: true } as never);
+    await preview();
+    await waitFor(() =>
+      expect(screen.getByTestId("deploy-plan-compaction")).toHaveTextContent("compacted"),
+    );
+  });
+
+  it("says nothing about compaction while the setting is off", async () => {
+    vi.mocked(planDeployment).mockResolvedValue({ ...PLAN, compact_before_launch: false } as never);
+    await preview();
+    await waitFor(() => expect(screen.getByText(/preview/i)).toBeInTheDocument());
+    expect(screen.queryByTestId("deploy-plan-compaction")).toBeNull();
+  });
 });
 
 /** A recipe from the OCI collection: every one of them says `port: 8000`. */

@@ -1369,5 +1369,16 @@
     "memoryShape": "Libre contigu",
     "memoryShapeDetail": "{contiguous} sur {free} en blocs de 2 Mio ou plus · le plus grand {largest}",
     "memoryShapeFragmented": "Fragmentée. Compactez-la avant la prochaine exécution."
+  },
+  "memorySettings": {
+    "tab": "Mémoire",
+    "title": "Mémoire",
+    "hint": "Comment la mémoire libre est préparée avant le démarrage d'une exécution.",
+    "enableAll": "Tout activer",
+    "compact": "Compacter avant le lancement",
+    "compactHelp": "Vide les caches et compacte la mémoire de chaque nœud inactif avant le démarrage. Exige la règle sudoers de l'agent.",
+    "lazyNccl": "Communicateurs NCCL paresseux",
+    "lazyNcclHelp": "Expérimental, torch 2.16 et suivants. Les rangs multi-nœuds créent leurs communicateurs NCCL au premier usage.",
+    "previewCompact": "La mémoire est compactée sur chaque nœud inactif avant le lancement."
   }
 }

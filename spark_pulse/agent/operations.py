@@ -457,6 +457,21 @@ class NodeOperations:
         )
         return await self._call(command, "cache_clean")
 
+    # ── Memory ───────────────────────────────────────────────────────────
+
+    async def compact_memory(self, drop_caches: bool = True) -> pb.MemoryCompaction:
+        """Drop the page cache and compact free memory on this node.
+
+        The agent answers with the buddy allocator's free lists before and
+        after, and says in ``detail`` why a write did not happen (a missing
+        sudo rule included). It does not raise for a refusal: a caller that
+        only wants memory in better shape must not have its deploy depend on it.
+        """
+        command = self.hub.new_command(
+            compact_memory=pb.CompactMemory(drop_caches=bool(drop_caches))
+        )
+        return await self._call(command, "memory_compaction")
+
     # ── Processes ────────────────────────────────────────────────────────
 
     async def install_bundle(

@@ -539,6 +539,8 @@ class MockDockerService(DockerService):
         #: Processes a caller asked this node to signal.
         self.terminated: list[tuple[int, bool]] = []
         self.fabric_applied: list = []
+        #: One entry per compaction asked of this node (its ``drop_caches``).
+        self.compactions: list[bool] = []
         #: This node's own caches: ``~``-relative path -> (bytes, files).
         #: One table per simulated machine, because that is the property the
         #: real thing has and the one the page is about — two nodes hold two
@@ -626,6 +628,39 @@ class MockDockerService(DockerService):
             )
         )
         return processes
+
+    def compact_memory(self, drop_caches: bool = True) -> Any:
+        """Compact this simulated node's free memory.
+
+        ``before`` is the profile's buddyinfo; ``after`` folds every block
+        smaller than 2 MiB into the top orders, which is what compaction does
+        to a fragmented node and the reading the deploy event reports.
+        """
+        from spark_pulse.agent import agent_pb2 as pb
+        from spark_pulse.mock import profiles
+        from spark_pulse.tools import memory_shape
+
+        self.compactions.append(bool(drop_caches))
+        profile = profiles.profile_for(self.address)
+        result = pb.MemoryCompaction(dropped_caches=bool(drop_caches), compacted=True)
+        if not profile.buddyinfo:
+            return result
+        counts = memory_shape.parse_buddyinfo(profile.buddyinfo)
+        page = profile.page_size_bytes
+        result.before.page_size_bytes = page
+        result.before.free_blocks.extend(counts)
+        folded = list(counts)
+        top = len(folded) - 1
+        small_bytes = 0
+        for order, count in enumerate(folded):
+            if (page << order) < memory_shape.HUGE_BLOCK_BYTES:
+                small_bytes += count * (page << order)
+                folded[order] = 0
+        if top >= 0:
+            folded[top] += small_bytes // (page << top)
+        result.after.page_size_bytes = page
+        result.after.free_blocks.extend(folded)
+        return result
 
     def scan_cache(self, paths: Any) -> Any:
         """Measure this simulated node's caches, from its own table.

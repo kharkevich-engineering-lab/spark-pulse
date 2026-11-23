@@ -55,6 +55,14 @@ docker:
     - ~/.cache/flashinfer
     - ~/.triton
   keep_entrypoint: false
+# Memory shape of a node, before and during a run (see docs/guide/monitoring.md).
+memory:
+  # Before any rank starts, drop the page cache and compact memory on each node
+  # of the run, unless another run is on it. Needs the agent's sudoers rule.
+  compact_before_launch: false
+  # Experimental, torch 2.16+: ranks of a multi-node run get
+  # TORCH_DIST_USE_NCCL2=0 so NCCL communicators are made lazily.
+  lazy_nccl_communicators: false
 
 # ── Image registry (control node) ────────────────────────────────────────────
 # Images are seeded into a registry on the control node and pulled from there

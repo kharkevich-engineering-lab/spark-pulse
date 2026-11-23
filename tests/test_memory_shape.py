@@ -70,3 +70,22 @@ def test_too_little_free_memory_says_nothing_about_its_shape():
 def test_no_counts_or_no_page_size_is_no_reading():
     assert memory_shape.summarize(4096, []) is None
     assert memory_shape.summarize(0, [1, 2]) is None
+
+
+def test_a_simulated_compaction_folds_small_blocks_into_large_ones():
+    from spark_pulse.mock.docker import MockDockerClient, MockDockerService
+
+    service = MockDockerService(MockDockerClient())
+    result = service.compact_memory(True)
+
+    before = memory_shape.summarize(
+        result.before.page_size_bytes, list(result.before.free_blocks)
+    )
+    after = memory_shape.summarize(
+        result.after.page_size_bytes, list(result.after.free_blocks)
+    )
+    assert result.compacted and result.dropped_caches
+    assert after["contiguous_bytes"] > before["contiguous_bytes"]
+    # Nothing is created: compaction moves free memory, it does not add any.
+    assert abs(after["free_bytes"] - before["free_bytes"]) < 32 * MIB
+    assert service.compactions == [True]

@@ -128,6 +128,27 @@ class TestRenderedFilesAreNotInjectable:
             with pytest.raises(BootstrapError):
                 render_network_sudoers(hostile)
 
+    def test_the_memory_sudoers_names_two_exact_tee_commands(self):
+        from spark_pulse.agent.bootstrap import render_memory_sudoers
+
+        rule = render_memory_sudoers("spark")
+        assert rule.endswith(
+            "spark ALL=(root) NOPASSWD: "
+            "/usr/bin/tee /proc/sys/vm/drop_caches, "
+            "/usr/bin/tee /proc/sys/vm/compact_memory\n"
+        )
+        # No wildcard: an exact argv is the whole boundary.
+        assert "*" not in "\n".join(
+            line for line in rule.splitlines() if not line.startswith("#")
+        )
+
+    def test_the_memory_sudoers_refuses_a_hostile_username(self):
+        from spark_pulse.agent.bootstrap import BootstrapError, render_memory_sudoers
+
+        for hostile in ("spark, root", "spark ALL", "%wheel", "spark\n", ""):
+            with pytest.raises(BootstrapError):
+                render_memory_sudoers(hostile)
+
     def test_the_usernames_a_node_actually_has_are_accepted(self):
         """And the allowlist must not refuse a name a real node reports."""
         from spark_pulse.agent.bootstrap import render_sudoers

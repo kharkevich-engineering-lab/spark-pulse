@@ -2424,6 +2424,167 @@ class TestRankNaming:
         )
 
 
+class TestMemoryBeforeLaunch:
+    """``memory.compact_before_launch`` and ``memory.lazy_nccl_communicators``."""
+
+    @contextmanager
+    def _settings(self, **memory):
+        with (
+            patch.object(
+                type(config),
+                "memory_compact_before_launch",
+                property(lambda self: bool(memory.get("compact"))),
+            ),
+            patch.object(
+                type(config),
+                "memory_lazy_nccl_communicators",
+                property(lambda self: bool(memory.get("lazy"))),
+            ),
+        ):
+            yield
+
+    def _journal_compactions(self, fleet, raising=None):
+        for address, node in fleet.nodes.items():
+            original = node.compact_memory
+
+            def compact(drop_caches=True, _a=address, _o=original):
+                fleet.journal.append(("compact_memory", _a, ""))
+                if raising and _a in raising:
+                    raise raising[_a]
+                return _o(drop_caches)
+
+            node.compact_memory = compact
+
+    def _events(self):
+        captured: list = []
+        patcher = patch.object(
+            docker_state,
+            "publish_event",
+            side_effect=lambda t, d, m="", meta=None: captured.append((t, m, meta)),
+        )
+        return captured, patcher
+
+    def test_nothing_is_asked_of_a_node_while_the_setting_is_off(self, native, fleet):
+        self._journal_compactions(fleet)
+        plan = native.plan("qwen3-8b-tp3", nodes=NODES, solo=False, deployment_id="d1")
+        with self._settings():
+            native.start(plan, services=fleet.services, wait=True)
+        assert fleet.verbs("compact_memory") == []
+        assert plan.compact_before_launch is False
+
+    def test_every_node_is_compacted_before_any_rank_is_launched(self, native, fleet):
+        self._journal_compactions(fleet)
+        captured, patcher = self._events()
+        with self._settings(compact=True):
+            plan = native.plan(
+                "qwen3-8b-tp3", nodes=NODES, solo=False, deployment_id="d1"
+            )
+            with patcher:
+                record = native.start(plan, services=fleet.services, wait=True)
+
+        assert record["status"] == "running"
+        assert plan.compact_before_launch is True
+        kinds = [kind for kind, _node, _name in fleet.journal]
+        first_launch = kinds.index("copy_to_container")
+        compactions = [i for i, kind in enumerate(kinds) if kind == "compact_memory"]
+        assert len(compactions) == 3
+        assert max(compactions) < first_launch
+        messages = [m for t, m, _ in captured if "compact" in t.value]
+        assert len(messages) == 3
+        assert all("free in blocks of 2 MiB or more" in m for m in messages)
+        assert all("→" in m for m in messages)
+
+    def test_a_node_another_run_is_on_is_left_alone(self, native, fleet):
+        self._journal_compactions(fleet)
+        captured, patcher = self._events()
+        other = {
+            "id": "other",
+            "name": "other",
+            "status": "running",
+            "ranks": [{"node": "10.0.0.2"}],
+        }
+        with (
+            self._settings(compact=True),
+            patch("spark_pulse.tools.placement._load_records", return_value=[other]),
+        ):
+            plan = native.plan(
+                "qwen3-8b-tp3", nodes=NODES, solo=False, deployment_id="d1"
+            )
+            with patcher:
+                native.start(plan, services=fleet.services, wait=True)
+
+        asked = [node for kind, node, _ in fleet.journal if kind == "compact_memory"]
+        assert sorted(asked) == ["10.0.0.1", "10.0.0.3"]
+        assert any("another run is on this node" in m for _, m, _ in captured)
+
+    def test_a_run_is_not_its_own_other_run(self, native, fleet):
+        self._journal_compactions(fleet)
+        own = {"id": "d1", "status": "starting", "ranks": [{"node": "10.0.0.1"}]}
+        with (
+            self._settings(compact=True),
+            patch("spark_pulse.tools.placement._load_records", return_value=[own]),
+        ):
+            plan = native.plan(
+                "qwen3-8b-tp3", nodes=NODES, solo=False, deployment_id="d1"
+            )
+            native.start(plan, services=fleet.services, wait=True)
+        assert len(fleet.verbs("compact_memory")) == 3
+
+    def test_a_node_that_cannot_compact_never_fails_the_deploy(self, native, fleet):
+        self._journal_compactions(
+            fleet,
+            raising={
+                "10.0.0.1": RuntimeError("command carries no op"),
+                "10.0.0.2": TimeoutError("timed out"),
+            },
+        )
+        captured, patcher = self._events()
+        with self._settings(compact=True):
+            plan = native.plan(
+                "qwen3-8b-tp3", nodes=NODES, solo=False, deployment_id="d1"
+            )
+            with patcher:
+                record = native.start(plan, services=fleet.services, wait=True)
+
+        assert record["status"] == "running"
+        messages = [m for t, m, _ in captured if "compact" in t.value]
+        assert any("agent is too old" in m for m in messages)
+        assert any("timed out" in m for m in messages)
+
+    def test_a_missing_sudo_rule_is_named_with_its_remedy(self):
+        from spark_pulse.agent import agent_pb2 as pb
+        from spark_pulse.tools.backends.docker import compaction
+
+        result = pb.MemoryCompaction(
+            compacted=False, detail="drop_caches: sudo rule missing; reinstall"
+        )
+        message, meta = compaction.describe("spark-02", result)
+        assert "sudoers rule is missing" in message
+        assert "reinstall the agent" in message
+        assert meta["compacted"] is False
+
+    def test_lazy_nccl_is_set_on_every_rank_of_a_multi_node_run(self, native):
+        with self._settings(lazy=True):
+            plan = native.plan("qwen3-8b-tp3", nodes=NODES, solo=False)
+        for rank in plan.rank_plans:
+            assert rank.container.env["TORCH_DIST_USE_NCCL2"] == "0"
+
+    def test_lazy_nccl_is_not_set_on_one_node_or_when_off(self, native):
+        with self._settings(lazy=True):
+            solo = native.plan("qwen3-8b")
+        assert "TORCH_DIST_USE_NCCL2" not in solo.container.env
+        with self._settings():
+            multi = native.plan("qwen3-8b-tp3", nodes=NODES, solo=False)
+        assert "TORCH_DIST_USE_NCCL2" not in multi.container.env
+
+    def test_the_lazy_switch_is_not_part_of_what_the_run_is(self, native):
+        with self._settings(lazy=True):
+            on = native.plan("qwen3-8b-tp3", nodes=NODES, solo=False)
+        with self._settings():
+            off = native.plan("qwen3-8b-tp3", nodes=NODES, solo=False)
+        assert on.intent_hash == off.intent_hash
+
+
 class TestStartOrder:
     def test_every_container_exists_before_any_rank_is_launched(self, native, fleet):
         """Upstream's two phases: create them all, then run the command.

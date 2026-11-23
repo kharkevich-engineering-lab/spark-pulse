@@ -184,6 +184,7 @@ message Command {
     RunHostProbe run_host_probe = 33;
     ScanCache scan_cache = 34;
     CleanCache clean_cache = 35;
+    CompactMemory compact_memory = 36;
   }
 }
 
@@ -214,6 +215,7 @@ message CommandResult {
     HostProbeResult host_probe = 20;
     CacheScan cache_scan = 21;
     CacheClean cache_clean = 22;
+    MemoryCompaction memory_compaction = 23;
   }
 }
 
@@ -710,6 +712,30 @@ message CacheDirResult {
   bool removed = 2;
   uint64 freed_bytes = 3;
   string error = 4;
+}
+
+// Fold this node's free memory back into large blocks, before a run starts.
+//
+// Free memory on a node that has run for a while is mostly small fragments;
+// a model that wants a long contiguous mapping can fail with plenty "free".
+// The agent writes `3` to /proc/sys/vm/drop_caches (when `drop_caches`) and
+// `1` to /proc/sys/vm/compact_memory, each through `sudo -n /usr/bin/tee` with
+// a fixed path, because the agent runs unprivileged. Both stall whatever else
+// is on the node, so the control plane only asks an idle one.
+message CompactMemory {
+  bool drop_caches = 1;
+}
+
+message MemoryCompaction {
+  // The buddy allocator's free lists before and after, in the shape NodeStats
+  // carries, so the control plane summarises both the same way.
+  BuddyInfo before = 1;
+  BuddyInfo after = 2;
+  bool dropped_caches = 3;
+  bool compacted = 4;
+  // Why it did not, or a note. A missing sudo rule says so in plain words so
+  // the caller can name the remedy.
+  string detail = 5;
 }
 
 message ConfigureFabric {
