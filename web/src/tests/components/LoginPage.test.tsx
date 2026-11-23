@@ -72,8 +72,8 @@ describe("LoginPage", () => {
       "href",
       "https://pypi.org/project/spark-pulse/",
     );
-    expect(
-      screen.getByRole("link", { name: new RegExp(String(new Date().getFullYear())) }),
-    ).toBeInTheDocument();
+    // The copyright names the company and no year.
+    const copyright = screen.getByRole("link", { name: /^© Kharkevich Engineering Lab$/ });
+    expect(copyright).toHaveAttribute("href", "https://kharkevich.com");
   });
 });

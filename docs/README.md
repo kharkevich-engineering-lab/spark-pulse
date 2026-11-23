@@ -6,7 +6,7 @@ It answers four questions that are otherwise four different shell sessions: *wha
 
 ![The Runs page, with a run expanded](assets/screenshots/jobs.png)
 
-> **Not affiliated with NVIDIA.** NVIDIA, DGX and related marks belong to their owners. Spark Pulse is MIT-licensed, © 2026 Kharkevich Engineering Lab.
+> **Not affiliated with NVIDIA.** NVIDIA, DGX and related marks belong to their owners. Spark Pulse is MIT-licensed, © Kharkevich Engineering Lab.
 
 ## The shape of it
 

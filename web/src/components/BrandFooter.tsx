@@ -40,7 +40,7 @@ export function BrandFooter({ className, compact = false }: { className?: string
           "text-muted no-underline hover:text-text hover:no-underline transition-colors",
         )}
       >
-        © {new Date().getFullYear()} {t("brand.company")}
+        © {t("brand.company")}
       </a>
       <div className="flex items-center gap-4">
         <a
