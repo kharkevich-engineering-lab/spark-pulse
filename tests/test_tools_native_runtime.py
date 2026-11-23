@@ -2447,11 +2447,11 @@ class TestMemoryBeforeLaunch:
         for address, node in fleet.nodes.items():
             original = node.compact_memory
 
-            def compact(drop_caches=True, _a=address, _o=original):
+            def compact(drop_caches=True, compact=True, _a=address, _o=original):
                 fleet.journal.append(("compact_memory", _a, ""))
                 if raising and _a in raising:
                     raise raising[_a]
-                return _o(drop_caches)
+                return _o(drop_caches, compact)
 
             node.compact_memory = compact
 
@@ -3870,3 +3870,158 @@ class TestThePullProgressLine:
             == "pulling img: 0% (2.0 GB)"
         )
         assert nr.pull_progress_message("img", {}) == "pulling img: 0%"
+
+
+class TestTheErrorCarriesItsRootCause:
+    """vLLM's last twenty lines are the API server's wrapper traceback.
+
+    Seen on the cluster: an embedding run beside a chat model ended in
+    ``RuntimeError: Engine core initialization failed. See root cause above``,
+    and the container holding "above" was removed before anybody looked.
+    """
+
+    @staticmethod
+    def _vllm_log(cause: str) -> str:
+        noise = [f"(APIServer pid=1) INFO line {i}" for i in range(50)]
+        core = [
+            "(EngineCore pid=126) ERROR 11-23 20:45:40 [core.py:1100] "
+            "EngineCore failed to start.",
+            "(EngineCore pid=126) Traceback (most recent call last):",
+            '(EngineCore pid=126)   File "/vllm/v1/worker/gpu_worker.py", line 1',
+            f"(EngineCore pid=126) {cause}",
+        ]
+        wrapper = [
+            '  File "/vllm/v1/engine/core_client.py", line 731, in __init__',
+            "    with launch_core_engines(",
+        ] * 10 + [
+            "RuntimeError: Engine core initialization failed. See root cause "
+            "above. Failed core proc(s): {}"
+        ]
+        return "\n".join(noise + core + wrapper)
+
+    def test_the_engine_core_exception_is_put_above_the_tail(self):
+        cause = (
+            "ValueError: Free memory on device (11.2/121.63 GiB) on startup is "
+            "less than desired GPU memory utilization (0.12, 14.6 GiB)"
+        )
+        excerpt = docker_lifecycle.error_excerpt(self._vllm_log(cause))
+
+        lines = excerpt.splitlines()
+        assert lines[0] == "Root cause:"
+        assert any(cause in line for line in lines[1:4])
+        assert lines[-1].startswith("RuntimeError: Engine core initialization")
+        # The tail itself is still exactly the last twenty lines.
+        assert len(lines[lines.index("…") + 1 :]) == docker_lifecycle.ERROR_LOG_LINES
+
+    def test_a_tail_that_holds_the_exception_comes_back_unchanged(self):
+        log = "\n".join(
+            [f"INFO {i}" for i in range(30)]
+            + ["error: unknown argument: --bogus", "ValueError: no such flag"]
+        )
+        excerpt = docker_lifecycle.error_excerpt(log)
+
+        assert "Root cause" not in excerpt
+        assert excerpt == "\n".join(log.splitlines()[-20:])
+
+    def test_a_short_log_is_returned_whole(self):
+        log = "one\nTypeError: two\nthree"
+        assert docker_lifecycle.error_excerpt(log) == log
+
+    def test_traceback_frames_are_not_mistaken_for_causes(self):
+        log = "\n".join(
+            [
+                '  File "/x/errors.py", line 3, in raise_error',
+                "Traceback (most recent call last):",
+                "    ^^^^^^^^^^^^^^^^^^^^^",
+            ]
+            + [f"INFO {i}" for i in range(25)]
+        )
+        assert "Root cause" not in docker_lifecycle.error_excerpt(log)
+
+    def test_the_tail_reads_far_enough_back_to_find_it(self):
+        calls = []
+
+        class _Docker:
+            def get_logs(self, name, tail):
+                calls.append(tail)
+                return "ValueError: the cause\n" + "\n".join(
+                    f"INFO {i}" for i in range(40)
+                )
+
+        excerpt = docker_lifecycle._log_tail(_Docker(), "c")
+
+        assert calls == [docker_lifecycle.ROOT_CAUSE_SCAN_LINES]
+        assert excerpt.startswith("Root cause:\nValueError: the cause\n…\n")
+
+
+GIB = 1024**3
+
+
+class TestTheLaunchChecksMemoryAgain:
+    """After the pull, before the engine: the gate in :mod:`memory_gate`.
+
+    The case it exists for: an embedding run at 0.12 beside a 0.8 SGLang run,
+    started straight after an 8 GB pull, died in vLLM's own free-memory check
+    — and the same command started cleanly twenty minutes later.
+    """
+
+    def _short(self, free):
+        memory = docker_lifecycle.tools.node_stats.NodeMemory(
+            model="unified", total_bytes=130 * GIB, free_bytes=free, held={}
+        )
+        return patch.object(
+            docker_lifecycle.tools.node_stats, "node_memory", return_value=memory
+        )
+
+    def test_a_node_short_of_memory_fails_before_any_container(self, native, docker):
+        plan = native.plan("qwen3-8b", params={"gpu_memory_utilization": 0.5})
+        with (
+            self._short(20 * GIB),
+            patch.object(type(config), "memory_launch_wait_seconds", 0),
+        ):
+            record = native.start(plan, docker=docker, wait=True)
+
+        assert record["status"] == "error"
+        assert "not enough free memory" in record["error_message"]
+        assert "0.50 of 130.0 GiB (65.0 GiB)" in record["error_message"]
+        assert "20.0 GiB is free" in record["error_message"]
+        assert "lower gpu_memory_utilization to 0.15" in record["error_message"]
+        # Nothing was created: the gate runs before the containers are made.
+        with pytest.raises(Exception):
+            docker.client.containers.get(plan.container.name)
+
+    def test_the_page_cache_is_dropped_before_it_gives_up(self, native, docker):
+        plan = native.plan("qwen3-8b", params={"gpu_memory_utilization": 0.5})
+        asked: list = []
+        original = docker.compact_memory
+
+        def compact(drop_caches=True, compact=True):
+            asked.append((drop_caches, compact))
+            return original(drop_caches, compact)
+
+        with (
+            self._short(20 * GIB),
+            patch.object(docker, "compact_memory", side_effect=compact),
+            patch.object(type(config), "memory_launch_wait_seconds", 0),
+        ):
+            native.start(plan, docker=docker, wait=True)
+
+        # Nobody else is on the node, so it may compact as well.
+        assert asked == [(True, True)]
+
+    def test_enough_memory_launches_as_before(self, native, docker):
+        plan = native.plan("qwen3-8b", params={"gpu_memory_utilization": 0.5})
+        with self._short(100 * GIB):
+            record = native.start(plan, docker=docker, wait=True)
+
+        assert record["status"] == "running"
+
+    def test_the_check_can_be_turned_off(self, native, docker):
+        plan = native.plan("qwen3-8b", params={"gpu_memory_utilization": 0.5})
+        with (
+            self._short(1 * GIB),
+            patch.object(type(config), "memory_check_before_launch", False),
+        ):
+            record = native.start(plan, docker=docker, wait=True)
+
+        assert record["status"] == "running"

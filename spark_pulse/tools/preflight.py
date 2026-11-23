@@ -1679,6 +1679,10 @@ def _check_vram(target: NodeTarget, ctx: _Context) -> Check:
     detail = estimate.to_dict()
     detail["max_model_len"] = workload.max_model_len
 
+    inside = _check_inside_fraction(target, ctx, estimate, workload, detail)
+    if inside is not None:
+        return inside
+
     if estimate.fits is None:
         # Say which half is missing. "Could not estimate" with no reason is a
         # line an operator cannot act on and will stop reading.
@@ -1711,6 +1715,15 @@ def _check_vram(target: NodeTarget, ctx: _Context) -> Check:
             **detail,
         )
 
+    fit = vram.context_that_fits(
+        _vram_shape(target, ctx), workload, estimate.available_bytes
+    )
+    detail["max_model_len_fit"] = fit
+    shorter = (
+        f" At about {fit:,} tokens it would fit in what is free."
+        if fit and context and fit < context
+        else ""
+    )
     return _check(
         CHECK_VRAM,
         title,
@@ -1721,8 +1734,103 @@ def _check_vram(target: NodeTarget, ctx: _Context) -> Check:
         "This is an estimate, not a refusal — the engine may still fit it. "
         "The KV cache is what scales, linearly, with both max_model_len and "
         "max_num_seqs, so halving either roughly halves that half. Raising "
-        "tensor_parallel shards the weights and the cache across more nodes.",
+        f"tensor_parallel shards the weights and the cache across more nodes."
+        f"{shorter}",
         **detail,
+    )
+
+
+def _node_total_bytes(target: NodeTarget, ctx: _Context) -> int | None:
+    """The node's total memory: the planner's budget figure, else meminfo's."""
+    entry = _budget_for(target, ctx) or {}
+    total = _int_or_none(entry.get("total_bytes"))
+    if total:
+        return total
+    facts = ctx.facts.get(target.id)
+    reported = [g for g in (facts.gpus if facts else []) if g.get("memory_total_mib")]
+    if reported:
+        return int(reported[0]["memory_total_mib"]) * 1024 * 1024
+    value = facts.meminfo.get("MemTotal") if facts else None
+    return int(value) if value else None
+
+
+def _check_inside_fraction(
+    target: NodeTarget,
+    ctx: _Context,
+    estimate: vram.VramEstimate,
+    workload: vram.Workload,
+    detail: dict[str, Any],
+) -> Check | None:
+    """Does the model fit inside the fraction this run takes?
+
+    For an engine that takes a fraction, *that* is the budget the model has
+    to live in, not what is free: vLLM sizes its KV cache from what is left
+    of ``gpu_memory_utilization × total`` after the weights, and refuses with
+    "No available memory for the cache blocks" — or a ``max_model_len``
+    larger than the cache holds — after the pull and the load. ``None`` when
+    the run takes no fraction or the figures to judge it are missing, which
+    leaves the free-memory comparison to answer.
+    """
+    fraction = ctx.plan.get("gpu_memory_utilization")
+    total = _node_total_bytes(target, ctx)
+    need = estimate.total_bytes
+    if not isinstance(fraction, (int, float)) or not total or not need:
+        return None
+    fraction = float(fraction)
+    budget = int(fraction * total)
+    entry = _budget_for(target, ctx) or {}
+    max_fraction = entry.get("max_fraction")
+    smallest = vram.min_fraction(need, total)
+    fit = vram.context_that_fits(_vram_shape(target, ctx), workload, budget)
+    detail.update(
+        fraction=fraction,
+        fraction_bytes=budget,
+        min_fraction=smallest,
+        max_fraction=max_fraction,
+        max_model_len_fit=fit,
+    )
+    model = str(ctx.plan.get("model") or "")
+    context = workload.max_model_len
+    kv = _bytes(estimate.kv_bytes)
+    if need <= budget:
+        return _check(
+            CHECK_VRAM,
+            "GPU memory",
+            target,
+            STATUS_PASS,
+            f"{model} needs about {_bytes(need)} ({kv} of it KV cache at "
+            f"{context:,} tokens) and its {fraction:.2f} of {target.label} is "
+            f"{_bytes(budget)}",
+            **detail,
+        )
+    ways: list[str] = []
+    if smallest is not None and (
+        max_fraction is None or smallest <= float(max_fraction)
+    ):
+        ways.append(f"raise gpu_memory_utilization to {smallest:.2f}")
+    if fit and context and fit < context:
+        ways.append(f"lower max_model_len to {fit:,}")
+    if not ways:
+        ways.append("stop a run on this node to make room, or lower max_num_seqs")
+    return _check(
+        CHECK_VRAM,
+        "GPU memory",
+        target,
+        STATUS_WARN,
+        f"{model} needs about {_bytes(need)} ({kv} of it KV cache at "
+        f"{context:,} tokens) but its {fraction:.2f} of {target.label} is "
+        f"{_bytes(budget)}",
+        "This is an estimate; the engine refuses with no room for its cache "
+        f"when it is right. To fit: {' or '.join(ways)}.",
+        **detail,
+    )
+
+
+def _vram_shape(target: NodeTarget, ctx: _Context) -> vram.ModelShape:
+    """The model's shape with the weights as measured on this node."""
+    row = ctx.model_rows.get(target.id) or {}
+    return vram.shape_from_config(
+        ctx.model_config, weight_bytes=_int_or_none(row.get("bytes_expected"))
     )
 
 
@@ -1753,9 +1861,31 @@ def _holder_text(holder: dict[str, Any]) -> str:
     name = f"run {holder.get('name') or holder.get('id')}"
     if holder.get("bytes") is None:
         return f"{name} (unknown: {holder.get('reason') or 'not reported'})"
-    if holder.get("fraction") is not None:
+    source = holder.get("source")
+    if source == "observed":
+        return f"{name} holds up to {_gib(holder['bytes'])} (seen before)"
+    if source == "fraction" and holder.get("fraction") is not None:
         return f"{name} holds {holder['fraction']:.2f} ({_gib(holder['bytes'])})"
+    if holder.get("fraction") is not None:
+        return (
+            f"{name} holds {_gib(holder['bytes'])}, more than its "
+            f"{holder['fraction']:.2f} (measured)"
+        )
     return f"{name} holds {_gib(holder['bytes'])} (measured)"
+
+
+#: Memory nobody of ours accounts for is named once it is this large; below
+#: it, it is the noise a running kernel makes.
+_UNATTRIBUTED_NAMED_BYTES = 2 * _GIB
+
+
+def _held_text(entry: dict[str, Any]) -> str:
+    """Every holder on the node, the ones outside any run included."""
+    parts = [_holder_text(h) for h in entry.get("holders") or []]
+    outside = entry.get("unattributed_bytes")
+    if isinstance(outside, int) and outside >= _UNATTRIBUTED_NAMED_BYTES:
+        parts.append(f"{_gib(outside)} is held outside any run")
+    return "; ".join(parts)
 
 
 def _budget_for(target: NodeTarget, ctx: _Context) -> dict[str, Any] | None:
@@ -1786,11 +1916,33 @@ def _check_memory_budget(target: NodeTarget, ctx: _Context) -> list[Check]:
     """
     entry = _budget_for(target, ctx)
     holders = list((entry or {}).get("holders") or [])
-    if entry is None or not holders:
+    if entry is None:
         return []
     title = "Shared memory"
-    held = "; ".join(_holder_text(h) for h in holders)
     detail = {"budget": entry}
+    if not holders:
+        # Nobody of ours is here, so only the node's own free figure can say
+        # no — and when it does, the engine would have said it after the pull.
+        if entry.get("fits") is not False:
+            return []
+        claim = int(entry.get("claim_bytes") or 0)
+        left = int(entry.get("left_bytes") or 0)
+        outside = _held_text(entry) or "no run of ours is on it"
+        return [
+            _check(
+                CHECK_MEMORY,
+                title,
+                target,
+                STATUS_FAIL,
+                f"{outside}; {_gib(left)} is free and this run asks " f"{_gib(claim)}",
+                "Free the memory on the node — a download, a container "
+                "started by hand, the desktop — or lower "
+                f"gpu_memory_utilization to {float(entry.get('max_fraction') or 0):.2f}"
+                " or less.",
+                **detail,
+            )
+        ]
+    held = _held_text(entry)
     if not entry.get("total_bytes"):
         return [
             _check(
@@ -1865,24 +2017,9 @@ def _check_memory_budget(target: NodeTarget, ctx: _Context) -> list[Check]:
         if claim_fraction is not None
         else f"about {_gib(claim)}{' (estimated)' if estimated else ''}"
     )
-    if claim_fraction is not None:
-        # Fitting beside the others is half the question once the fraction has
-        # been lowered to make room: the engine then has to fit *inside* it.
-        need = _vram_estimate(target, ctx)[0].total_bytes
-        if need and need > claim:
-            return [
-                _check(
-                    CHECK_MEMORY,
-                    title,
-                    target,
-                    STATUS_WARN,
-                    f"{held}; this run's {asks} fits beside them, but the "
-                    f"model needs about {_gib(need)}",
-                    "Lower max_model_len or max_num_seqs so the model fits the "
-                    "fraction, or stop a run on this node to raise it.",
-                    **detail,
-                )
-            ]
+    # Whether the model fits *inside* the fraction is the GPU memory line's
+    # question (``_check_inside_fraction``), asked whether or not anybody else
+    # is on the node.
     return [
         _check(
             CHECK_MEMORY,

@@ -12,6 +12,14 @@ from typing import Literal
 SERVICE_NAME = "spark-pulse.service"
 ServiceScope = Literal["system", "user"]
 
+#: No ``NoNewPrivileges`` in either unit, and no sandboxing in the user one.
+#: The control node's agent is this service's child, and it is what runs the
+#: memory and fabric operations' ``sudo -n`` lines: under ``NoNewPrivileges``
+#: sudo refuses outright ("the no new privileges flag is set"), and in a user
+#: unit ``ProtectSystem``/``PrivateTmp`` put the service in a user namespace
+#: where ``/etc/sudo.conf`` reads as owned by uid 65534 and sudo refuses that
+#: too. Seen on the cluster as a control node whose memory was never once
+#: compacted, while its peer's was every time.
 _SYSTEM_SERVICE_TEMPLATE = """\
 [Unit]
 Description=Spark Pulse Web UI
@@ -31,7 +39,6 @@ StandardOutput=journal
 StandardError=journal
 ProtectSystem=full
 ReadWritePaths={data_dir}
-NoNewPrivileges=true
 PrivateTmp=true
 
 [Install]
@@ -53,10 +60,6 @@ Restart=on-failure
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
-ProtectSystem=full
-ReadWritePaths={data_dir}
-NoNewPrivileges=true
-PrivateTmp=true
 
 [Install]
 WantedBy=default.target

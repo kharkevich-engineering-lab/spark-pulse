@@ -629,7 +629,7 @@ class MockDockerService(DockerService):
         )
         return processes
 
-    def compact_memory(self, drop_caches: bool = True) -> Any:
+    def compact_memory(self, drop_caches: bool = True, compact: bool = True) -> Any:
         """Compact this simulated node's free memory.
 
         ``before`` is the profile's buddyinfo; ``after`` folds every block
@@ -642,8 +642,10 @@ class MockDockerService(DockerService):
 
         self.compactions.append(bool(drop_caches))
         profile = profiles.profile_for(self.address)
-        result = pb.MemoryCompaction(dropped_caches=bool(drop_caches), compacted=True)
-        if not profile.buddyinfo:
+        result = pb.MemoryCompaction(
+            dropped_caches=bool(drop_caches), compacted=bool(compact)
+        )
+        if not compact or not profile.buddyinfo:
             return result
         counts = memory_shape.parse_buddyinfo(profile.buddyinfo)
         page = profile.page_size_bytes

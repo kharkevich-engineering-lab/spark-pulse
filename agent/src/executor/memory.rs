@@ -106,8 +106,10 @@ pub fn compact(request: &CompactMemory) -> MemoryCompaction {
         refused = outcome == Write::NoSudoRule;
         notes.extend(describe("drop_caches", &outcome));
     }
-    // A node that refused the first write will refuse the second.
-    let compacted = if refused {
+    // A node that refused the first write will refuse the second; a caller
+    // that asked only for the caches (a launch beside a serving run) gets no
+    // compaction, which would stall that run.
+    let compacted = if refused || request.skip_compaction {
         false
     } else {
         let outcome = privileged_write("1", COMPACT_MEMORY);

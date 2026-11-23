@@ -113,6 +113,7 @@
     {
       "claim_bytes": null,
       "claim_fraction": null,
+      "claim_source": "",
       "complete": true,
       "fits": null,
       "free_bytes": 11878268928,
@@ -127,6 +128,7 @@
       "reason": "",
       "reserve_bytes": 0,
       "total_bytes": 12884901888,
+      "unattributed_bytes": null,
       "unknown": []
     }
   ],

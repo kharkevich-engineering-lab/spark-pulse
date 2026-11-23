@@ -207,6 +207,9 @@
   },
   "preflight": {
     "label": "Pré-vol",
+    "fitRange": "La mémoire GPU convient de {min} à {max}.",
+    "fitContext": "Contexte le plus long qui tient : {n} jetons.",
+    "useMin": "Prendre {min}",
     "nothingToFix": "Rien à corriger et rien à télécharger au préalable.",
     "ready": "Prêt",
     "slow": "Prêt, mais lent",
@@ -1214,7 +1217,15 @@
     "full": "Partage {node} avec {runs}. Plus rien n'y tient.",
     "unread": "Partage {node} avec {runs}. Sa mémoire n'a pas pu être lue.",
     "unknown": "inconnu",
-    "apply": "Prendre {max}"
+    "apply": "Prendre {max}",
+    "barLabel": "Mémoire sur {node} : {parts}.",
+    "seg": {
+      "reserve": "Hôte",
+      "outside": "Hors de toute exécution",
+      "claim": "Cette exécution",
+      "free": "Libre",
+      "over": "Dépassement de"
+    }
   },
   "serves": {
     "embedding": "Plongements",
@@ -1379,7 +1390,11 @@
     "compactHelp": "Vide les caches et compacte la mémoire de chaque nœud inactif avant le démarrage. Exige la règle sudoers de l'agent.",
     "lazyNccl": "Communicateurs NCCL paresseux",
     "lazyNcclHelp": "Expérimental, torch 2.16 et suivants. Les rangs multi-nœuds créent leurs communicateurs NCCL au premier usage.",
-    "previewCompact": "La mémoire est compactée sur chaque nœud inactif avant le lancement."
+    "previewCompact": "La mémoire est compactée sur chaque nœud inactif avant le lancement.",
+    "checkLaunch": "Vérifier la mémoire avant le lancement",
+    "checkLaunchHelp": "Attend de la mémoire libre, en vidant les caches au besoin, avant le démarrage d'une exécution.",
+    "launchWait": "Attente de mémoire",
+    "launchWaitHelp": "Secondes qu'un lancement attend la mémoire avant d'échouer. 0 vérifie une seule fois."
   },
   "nodeCleanup": {
     "title": "Nettoyage du nœud",

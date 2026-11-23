@@ -207,6 +207,9 @@
   },
   "preflight": {
     "label": "Pre-flight",
+    "fitRange": "GPU memory fits from {min} to {max}.",
+    "fitContext": "Longest context that fits: {n} tokens.",
+    "useMin": "Use {min}",
     "nothingToFix": "Nothing to fix and nothing to download first.",
     "ready": "Ready",
     "slow": "Ready, but slow",
@@ -1214,7 +1217,15 @@
     "full": "Shares {node} with {runs}. Nothing more fits.",
     "unread": "Shares {node} with {runs}. Its memory could not be read.",
     "unknown": "unknown",
-    "apply": "Use {max}"
+    "apply": "Use {max}",
+    "barLabel": "Memory on {node}: {parts}.",
+    "seg": {
+      "reserve": "Host",
+      "outside": "Outside any run",
+      "claim": "This run",
+      "free": "Free",
+      "over": "Over by"
+    }
   },
   "serves": {
     "embedding": "Embeddings",
@@ -1379,7 +1390,11 @@
     "compactHelp": "Drops caches and compacts memory on each idle node before a run starts. Needs the agent's sudoers rule.",
     "lazyNccl": "Lazy NCCL communicators",
     "lazyNcclHelp": "Experimental, torch 2.16 and later. Multi-node ranks build NCCL communicators on first use.",
-    "previewCompact": "Memory is compacted on each idle node before launch."
+    "previewCompact": "Memory is compacted on each idle node before launch.",
+    "checkLaunch": "Check memory before launch",
+    "checkLaunchHelp": "Waits for free memory, dropping caches if needed, before a run starts.",
+    "launchWait": "Memory wait",
+    "launchWaitHelp": "Seconds a launch waits for memory before it fails. 0 checks once."
   },
   "nodeCleanup": {
     "title": "Node clean-up",

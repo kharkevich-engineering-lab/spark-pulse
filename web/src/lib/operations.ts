@@ -35,6 +35,7 @@ export enum EventType {
   DEPLOYMENT_FAILURE = "deployment_failure",
   DEPLOYMENT_CANCELLED = "deployment_cancelled",
   DEPLOYMENT_ROLLBACK = "deployment_rollback",
+  DEPLOYMENT_MEMORY_WAIT = "deployment_memory_wait",
 
   // Container events
   CONTAINER_START = "container_start",

@@ -830,10 +830,12 @@ class CacheDirResult(_message.Message):
     def __init__(self, path: _Optional[str] = ..., removed: _Optional[bool] = ..., freed_bytes: _Optional[int] = ..., error: _Optional[str] = ...) -> None: ...
 
 class CompactMemory(_message.Message):
-    __slots__ = ("drop_caches",)
+    __slots__ = ("drop_caches", "skip_compaction")
     DROP_CACHES_FIELD_NUMBER: _ClassVar[int]
+    SKIP_COMPACTION_FIELD_NUMBER: _ClassVar[int]
     drop_caches: bool
-    def __init__(self, drop_caches: _Optional[bool] = ...) -> None: ...
+    skip_compaction: bool
+    def __init__(self, drop_caches: _Optional[bool] = ..., skip_compaction: _Optional[bool] = ...) -> None: ...
 
 class MemoryCompaction(_message.Message):
     __slots__ = ("before", "after", "dropped_caches", "compacted", "detail")

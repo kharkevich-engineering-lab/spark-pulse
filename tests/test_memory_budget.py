@@ -26,6 +26,7 @@ from spark_pulse.tools.labels import DEPLOYMENT_LABEL
 
 nr = importlib.import_module("spark_pulse.tools.native_runtime")
 real_preflight = importlib.import_module("spark_pulse.tools.preflight")
+real_vram = importlib.import_module("spark_pulse.tools.vram")
 node_stats = importlib.import_module("spark_pulse.tools.node_stats")
 sim = importlib.import_module("spark_pulse.mock.preflight")
 
@@ -268,8 +269,11 @@ class FakeNode:
         held=None,
         fail: Exception | None = None,
         vram: tuple[int, int] | None = None,
+        available: int | None = None,
     ):
         self.total, self.held, self.fail = total, held or {}, fail
+        #: ``MemAvailable`` of a unified pool; None reports none.
+        self.available = available
         #: ``(total, free)`` of a discrete card; None is a unified pool.
         self.vram = vram
         self.asked = 0
@@ -281,7 +285,11 @@ class FakeNode:
         self.asked += 1
         if self.fail:
             raise self.fail
-        stats = pb.NodeStats(memory=pb.MemoryStat(total_bytes=self.total))
+        stats = pb.NodeStats(
+            memory=pb.MemoryStat(
+                total_bytes=self.total, available_bytes=self.available or 0
+            )
+        )
         if self.vram is not None:
             stats.gpus.append(
                 pb.GpuStat(
@@ -339,15 +347,57 @@ class TestPlannerLedger:
         )
         assert nr._claimed_fraction(engine, "--gpu-memory-utilization 0.5", {}) is None
 
-    def test_an_empty_unified_node_is_left_to_the_engine(self):
-        """Alone on a Spark's pool, the engine's own startup check judges, as
-        before: the node is asked only to learn what kind of memory it has."""
-        node = FakeNode()
+    def test_an_empty_unified_node_is_budgeted_against_what_is_free(self):
+        """Alone on a Spark's pool, the node is still asked: what it says is
+        free is what vLLM's startup check will compare against."""
+        node = FakeNode(available=90 * GIB)
 
-        budget = nr._memory_budget([], 0.5, "", node)
+        (entry,) = nr._memory_budget([], 0.5, "", node)
 
-        assert budget[0]["holders"] == [] and budget[0]["total_bytes"] is None
-        assert budget[0]["fits"] is None
+        assert entry["holders"] == [] and entry["total_bytes"] == TOTAL
+        # Alone, no margin: the engine compares against the same figure.
+        assert entry["left_bytes"] == 90 * GIB
+        assert entry["fits"] is True
+
+    def test_memory_held_outside_any_run_blocks_an_empty_node(self):
+        """Nobody of ours on the node, and 70 GiB in use anyway — a download,
+        a container somebody started by hand. 0.5 cannot be had."""
+        node = FakeNode(available=30 * GIB)
+
+        (entry,) = nr._memory_budget([], 0.5, "", node)
+
+        assert entry["fits"] is False
+        assert entry["unattributed_bytes"] == TOTAL - 30 * GIB
+        (check,) = _memory(_report([entry]))
+        assert check["status"] == "fail"
+        assert "held outside any run" in check["observed"]
+
+    def test_a_co_tenant_holding_more_than_its_fraction_counts_at_that(self):
+        """SGLang's static fraction leaves out its CUDA graphs and its heap:
+        0.5 on paper, 60 GiB measured, and 60 is what is gone."""
+        nr._save_records([_record("s", "sglang", gpu_memory_utilization=0.5)])
+
+        (entry,) = nr._memory_budget([], 0.2, "", FakeNode(held={"s": 60 * GIB}))
+
+        (holder,) = entry["holders"]
+        assert holder["bytes"] == 60 * GIB and holder["source"] == "measured"
+        assert holder["measured_bytes"] == 60 * GIB
+
+    def test_a_footprint_seen_before_raises_both_claims(self):
+        nr._save_records(
+            [_record("s", "sglang", gpu_memory_utilization=0.5, intent_hash="h1")]
+        )
+        tools.footprints.observe("h1", TOTAL, 70 * GIB, "s")
+        tools.footprints.observe("mine", TOTAL, 30 * GIB, "earlier")
+
+        (entry,) = nr._memory_budget(
+            [], 0.2, "", FakeNode(held={"s": 55 * GIB}), "mine"
+        )
+
+        (holder,) = entry["holders"]
+        assert holder["bytes"] == 70 * GIB and holder["source"] == "observed"
+        assert entry["claim_bytes"] == 30 * GIB
+        assert entry["claim_source"] == "observed"
 
     def test_a_discrete_card_is_budgeted_even_alone(self):
         """A 12 GB card with 3 GB free — somebody else's training job holds the
@@ -570,18 +620,31 @@ class TestPreflightVerdict:
         assert check["status"] == "warn"
         assert "own claim is unknown" in check["observed"]
 
-    def test_a_fraction_too_small_for_the_model_warns(self):
+    def test_a_fraction_too_small_for_the_model_warns_on_the_gpu_line(self):
+        """Fitting beside the others is half the question; the model then has
+        to fit *inside* its fraction, and that is the GPU memory line's to say
+        — with or without company on the node."""
         entry = mb.budget_for_node(
             "", "", "spark-01", [("q", "qwen", 0.5)], TOTAL, {}, 0.1
         ).to_dict()
-        estimate = SimpleNamespace(total_bytes=30 * GIB)
+        estimate = real_vram.VramEstimate(
+            weight_bytes=20 * GIB, kv_bytes=8 * GIB, total_bytes=30 * GIB
+        )
+        workload = real_vram.Workload(max_model_len=32768)
         with patch.object(
-            real_preflight, "_vram_estimate", return_value=(estimate, None)
+            real_preflight, "_vram_estimate", return_value=(estimate, workload)
         ):
-            (check,) = _memory(_report([entry]))
+            report = _report([entry], model="m", gpu_memory_utilization=0.1)
 
-        assert check["status"] == "warn"
-        assert "model needs about 30.0 GiB" in check["observed"]
+        (memory,) = _memory(report)
+        assert memory["status"] == "pass"
+        (gpu,) = [c for c in report["checks"] if c["id"] == "vram"]
+        assert gpu["status"] == "warn"
+        assert "needs about" in gpu["observed"] and "0.10" in gpu["observed"]
+        assert gpu["detail"]["min_fraction"] == 0.3
+        # Half the node is qwen's and 4 GiB the host's, so 0.46 is left beside
+        # it and 0.30 can be offered.
+        assert "raise gpu_memory_utilization to 0.30" in gpu["remedy"]
 
     def test_a_peer_finds_its_own_entry_by_address(self):
         entry = _budget(node="10.0.0.11", key="10.0.0.11", label="spark-02")

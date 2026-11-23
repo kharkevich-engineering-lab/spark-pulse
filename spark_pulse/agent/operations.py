@@ -459,7 +459,9 @@ class NodeOperations:
 
     # ── Memory ───────────────────────────────────────────────────────────
 
-    async def compact_memory(self, drop_caches: bool = True) -> pb.MemoryCompaction:
+    async def compact_memory(
+        self, drop_caches: bool = True, compact: bool = True
+    ) -> pb.MemoryCompaction:
         """Drop the page cache and compact free memory on this node.
 
         The agent answers with the buddy allocator's free lists before and
@@ -468,7 +470,9 @@ class NodeOperations:
         only wants memory in better shape must not have its deploy depend on it.
         """
         command = self.hub.new_command(
-            compact_memory=pb.CompactMemory(drop_caches=bool(drop_caches))
+            compact_memory=pb.CompactMemory(
+                drop_caches=bool(drop_caches), skip_compaction=not compact
+            )
         )
         return await self._call(command, "memory_compaction")
 

@@ -507,8 +507,8 @@ class NodeService(Protocol):
         """Empty the engine caches on the node."""
         ...
 
-    def compact_memory(self, drop_caches: bool = True) -> Any:
-        """Drop caches and compact free memory on the node."""
+    def compact_memory(self, drop_caches: bool = True, compact: bool = True) -> Any:
+        """Drop caches and (unless ``compact`` is false) compact free memory."""
         ...
 
 

@@ -327,11 +327,25 @@ class TestTheMemoryBlock:
     def test_it_is_off_by_default(self, client):
         body = client.get("/api/settings").json()
 
+        # Everything that changes a node is off; the launch's memory check,
+        # which only reads (and drops the page cache when short), is on.
         assert body["memory"] == {
             "compact_before_launch": False,
+            "check_before_launch": True,
+            "launch_wait_seconds": 90,
             "lazy_nccl_communicators": False,
             "node_tuning": [],
         }
+
+    def test_the_launch_wait_is_whole_seconds_in_range(self, client):
+        ok = client.put("/api/settings", json={"memory": {"launch_wait_seconds": 30}})
+        assert ok.status_code == 200
+        assert client.get("/api/settings").json()["memory"]["launch_wait_seconds"] == 30
+        for bad in (-1, 3601, "90", True, 1.5):
+            response = client.put(
+                "/api/settings", json={"memory": {"launch_wait_seconds": bad}}
+            )
+            assert response.status_code == 400, bad
 
     def test_both_switches_round_trip(self, client):
         body = client.put(
@@ -346,6 +360,8 @@ class TestTheMemoryBlock:
 
         assert body["memory"] == {
             "compact_before_launch": True,
+            "check_before_launch": True,
+            "launch_wait_seconds": 90,
             "lazy_nccl_communicators": True,
             "node_tuning": [],
         }

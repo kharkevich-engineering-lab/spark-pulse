@@ -180,18 +180,22 @@ def _memory_budget(
     fraction: float | None,
     exclude: str,
     services: Callable[[str], Any],
+    intent_hash: str = "",
 ) -> list[dict[str, Any]]:
     """Each node's memory budget, beside the runs already on it.
 
     The runs are the ones :func:`_occupied_nodes` says occupy the node — the
-    same rule the port choice uses. A co-tenant whose record carries a
-    fraction claims that fraction of the node's total; one that does not is
-    measured, by asking the node what its containers hold (``GetNodeStats``
-    through the node's agent, attributed by :mod:`node_stats`). The node is
-    asked only when somebody else is on it: alone on a node, a run is judged
-    by the engine's own startup check exactly as before.
+    same rule the port choice uses. Every node is asked for its memory
+    (``GetNodeStats`` through the node's agent, attributed by
+    :mod:`node_stats`), alone or not: what is free there bounds what is left,
+    and on a node nobody of ours is on, whatever *is* holding memory — a
+    desktop, a download, a container started by hand — is exactly what the
+    records cannot see. A co-tenant counts at the largest of what its fraction
+    entitles it to, what the node measures it holding and what a run of its
+    intent was seen holding (:mod:`footprints`); this run's own claim is
+    raised the same way by ``intent_hash``.
     """
-    tenants: dict[str, list[tuple[str, str, float | None]]] = {}
+    tenants: dict[str, list[tuple[str, str, float | None, str]]] = {}
     for record in _load_records():
         if exclude and record.get("id") == exclude:
             continue
@@ -202,6 +206,7 @@ def _memory_budget(
             str(record.get("id") or ""),
             str(record.get("name") or record.get("id") or ""),
             memory_budget.record_fraction(record),
+            str(record.get("intent_hash") or ""),
         )
         for node in nodes:
             tenants.setdefault(node, []).append(holder)
@@ -215,33 +220,27 @@ def _memory_budget(
             continue
         seen.add(key)
         label = labels.get(address) or (control_label if not key else address)
-        holders = tenants.get(key, [])
         memory: Any = None
         reason = ""
         try:
             memory = tools.node_stats.node_memory(services(address))
         except Exception as exc:  # noqa: BLE001 — an unanswered node is unknown
             reason = f"could not ask {label} for its memory: {str(exc)[:200]}"
+        total = memory.total_bytes if memory is not None else None
+        holders = [
+            (run_id, name, run_fraction, tools.footprints.lookup(run_hash, total))
+            for run_id, name, run_fraction, run_hash in tenants.get(key, [])
+        ]
         discrete = (
             memory is not None and memory.model == tools.node_stats.MEMORY_DISCRETE
         )
-        if not holders and not discrete:
-            # Alone on a unified pool, the engine's own startup check judges,
-            # as before. A discrete card is asked even alone: what holds its
-            # memory is often something no record of ours started.
-            budgets.append(
-                memory_budget.budget_for_node(
-                    address, key, label, [], None, {}, fraction
-                ).to_dict()
-            )
-            continue
         budgets.append(
             memory_budget.budget_for_node(
                 address,
                 key,
                 label,
                 holders,
-                memory.total_bytes if memory is not None else None,
+                total,
                 memory.held if memory is not None else None,
                 fraction,
                 reason=reason,
@@ -249,7 +248,16 @@ def _memory_budget(
                 # where the kernel and the services live.
                 reserve_bytes=0 if discrete else memory_budget.OS_RESERVE_BYTES,
                 memory_model=memory.model if memory is not None else "",
-                free_bytes=memory.free_bytes if discrete else None,
+                free_bytes=memory.free_bytes if memory is not None else None,
+                observed_claim_bytes=tools.footprints.lookup(intent_hash, total),
+                # Shaved only beside somebody: alone, the engine's own check
+                # compares against the same free figure with no margin, and a
+                # budget stricter than the engine refuses runs that start.
+                free_margin_bytes=(
+                    memory_budget.FREE_MARGIN_BYTES
+                    if holders and not discrete and memory is not None
+                    else 0
+                ),
             ).to_dict()
         )
     return budgets

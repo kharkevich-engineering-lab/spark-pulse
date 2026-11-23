@@ -94,10 +94,16 @@ _ALLOWED_MOD_KEYS = frozenset({"network_policy"})
 
 _MOD_NETWORK_POLICIES = ("allow", "warn", "deny")
 
-#: The keys the `memory:` block may carry: two booleans, and `node_tuning`, a
-#: list of ids from the doctor's catalogue.
+#: The keys the `memory:` block may carry: three booleans, a wait in seconds,
+#: and `node_tuning`, a list of ids from the doctor's catalogue.
 _ALLOWED_MEMORY_KEYS = frozenset(
-    {"compact_before_launch", "lazy_nccl_communicators", "node_tuning"}
+    {
+        "compact_before_launch",
+        "check_before_launch",
+        "launch_wait_seconds",
+        "lazy_nccl_communicators",
+        "node_tuning",
+    }
 )
 
 
@@ -246,6 +252,8 @@ def _settings_response() -> dict:
         "mod": {"network_policy": config.mod_network_policy},
         "memory": {
             "compact_before_launch": config.memory_compact_before_launch,
+            "check_before_launch": config.memory_check_before_launch,
+            "launch_wait_seconds": config.memory_launch_wait_seconds,
             "lazy_nccl_communicators": config.memory_lazy_nccl_communicators,
             "node_tuning": config.memory_node_tuning,
         },
@@ -334,10 +342,23 @@ def update_settings(req: dict):
                     f"expected {', '.join(TUNING_IDS)}",
                 )
             block["node_tuning"] = [i for i in TUNING_IDS if i in tuning]
+        if "launch_wait_seconds" in block:
+            wait = block["launch_wait_seconds"]
+            if (
+                isinstance(wait, bool)
+                or not isinstance(wait, int)
+                or not 0 <= wait <= 3600
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail="memory.launch_wait_seconds must be whole seconds "
+                    "from 0 to 3600",
+                )
         wrong = sorted(
             k
             for k, v in block.items()
-            if k != "node_tuning" and not isinstance(v, bool)
+            if k not in ("node_tuning", "launch_wait_seconds")
+            and not isinstance(v, bool)
         )
         if wrong:
             raise HTTPException(

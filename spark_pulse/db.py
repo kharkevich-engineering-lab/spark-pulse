@@ -253,6 +253,7 @@ _MODEL_MODULES = (
     "spark_pulse.blobs",
     "spark_pulse.tools.deployment_records",
     "spark_pulse.tools.event_log",
+    "spark_pulse.tools.footprints",
     "spark_pulse.tools.node_registry",
     "spark_pulse.tools.benchmarking",
     "spark_pulse.tools.custom_recipes",

@@ -38,6 +38,7 @@ from typing import Any
 
 __all__ = [
     "ENGINE_DEFAULT_FRACTION",
+    "FREE_MARGIN_BYTES",
     "FRACTION_FLAGS",
     "GIB",
     "OS_RESERVE_BYTES",
@@ -59,6 +60,14 @@ GIB = 1024**3
 #: few, rounded up; it is a floor for the host, not headroom for the runs.
 OS_RESERVE_BYTES = 4 * GIB
 
+#: What a unified pool's live free figure is shaved by before a run may count
+#: on it. ``MemAvailable`` moved between 19 and 22 GiB within a minute on a
+#: Spark holding a 0.8 SGLang run, and vLLM's startup check reads it at one
+#: instant: a budget that handed out the last gigabyte planned a run the
+#: engine then refused. A discrete card's free figure is the driver's own and
+#: steady, so it is not shaved.
+FREE_MARGIN_BYTES = 2 * GIB
+
 #: The fraction a fraction-taking engine uses when the command passes none:
 #: vLLM's own default for ``--gpu-memory-utilization``. SGLang's renderer
 #: always passes ``--mem-fraction-static``, so this is vLLM's number in
@@ -72,6 +81,9 @@ FRACTION_FLAGS = ("--gpu-memory-utilization", "--mem-fraction-static")
 #: Claims, by where the number came from.
 SOURCE_FRACTION = "fraction"
 SOURCE_MEASURED = "measured"
+#: The largest a run of the same intent has been seen holding
+#: (:mod:`footprints`).
+SOURCE_OBSERVED = "observed"
 SOURCE_UNKNOWN = "unknown"
 
 
@@ -132,6 +144,11 @@ class Holder:
     source: str = SOURCE_UNKNOWN
     #: Why the claim is unknown, in words.
     reason: str = ""
+    #: What the node measures its containers holding now, when it was asked.
+    measured_bytes: int | None = None
+    #: The largest a run of the same intent was seen holding on a node this
+    #: size (:mod:`footprints`).
+    observed_bytes: int | None = None
 
 
 @dataclass
@@ -169,6 +186,14 @@ class NodeBudget:
     #: on a discrete card this bounds what is left, because it counts holders
     #: no record of ours knows about.
     free_bytes: int | None = None
+    #: Memory in use on the node that no run of ours accounts for — the
+    #: desktop, a download, a container somebody started by hand — on a
+    #: unified pool, where the node's free figure makes it visible.
+    unattributed_bytes: int | None = None
+    #: Where this run's own claim came from: ``fraction``, ``observed`` (a
+    #: run of the same intent held more than its fraction, or the engine takes
+    #: none) or ``estimate``; empty when there is no claim.
+    claim_source: str = ""
 
     @property
     def unknown(self) -> list[Holder]:
@@ -184,7 +209,7 @@ def budget_for_node(
     node: str,
     key: str,
     label: str,
-    holders: list[tuple[str, str, float | None]],
+    holders: list[tuple[Any, ...]],
     total_bytes: int | None,
     measured: dict[str, int | None] | None,
     claim_fraction: float | None,
@@ -193,15 +218,29 @@ def budget_for_node(
     reserve_bytes: int = OS_RESERVE_BYTES,
     memory_model: str = "",
     free_bytes: int | None = None,
+    observed_claim_bytes: int | None = None,
+    free_margin_bytes: int = 0,
 ) -> NodeBudget:
     """The budget on one node.
 
-    ``holders`` is every other run on the node as ``(id, name, fraction)``;
+    ``holders`` is every other run on the node as ``(id, name, fraction)``,
+    or ``(id, name, fraction, observed)`` with the largest a run of its intent
+    was seen holding;
     ``measured`` is what the node says each deployment's containers hold
     (``None`` for a node that could not be asked, a ``None`` value for a
     deployment whose processes report no memory). ``claim_fraction`` is the
     new run's own fraction, and ``claim_bytes`` stands in for an engine that
-    takes none and has an estimate instead.
+    takes none and has an estimate instead; ``observed_claim_bytes`` is what
+    a run of the new run's own intent was seen holding, which raises the claim
+    when it is larger. ``free_bytes`` (what the node says is free now, less
+    ``free_margin_bytes``) bounds what is left: every holder the records do
+    not know about is in it.
+
+    A holder counts at the largest of its three figures — what its fraction
+    entitles it to, what the node measures, what its intent was seen at —
+    because each is a floor on what it may hold: SGLang's static fraction
+    leaves out its CUDA graphs and its Python, and llama.cpp grows its cache
+    under load.
     """
     budget = NodeBudget(
         node=node,
@@ -215,19 +254,30 @@ def budget_for_node(
         free_bytes=free_bytes,
     )
     total = budget.total_bytes
-    for run_id, name, fraction in holders:
+    for entry in holders:
+        run_id, name, fraction = entry[0], entry[1], entry[2]
+        observed = entry[3] if len(entry) > 3 else None
         holder = Holder(id=run_id, name=name or run_id, fraction=fraction)
-        if fraction is not None:
+        holder.observed_bytes = int(observed) if observed else None
+        if measured is not None and measured.get(run_id) is not None:
+            holder.measured_bytes = int(measured[run_id] or 0)
+        candidates: list[tuple[int, str]] = []
+        if fraction is not None and total:
+            candidates.append((int(fraction * total), SOURCE_FRACTION))
+        if holder.measured_bytes is not None:
+            candidates.append((holder.measured_bytes, SOURCE_MEASURED))
+        if holder.observed_bytes:
+            candidates.append((holder.observed_bytes, SOURCE_OBSERVED))
+        if candidates:
+            # The first of equals wins, so a fraction that is also what the
+            # node measures still reads as the fraction.
+            best = max(candidates, key=lambda c: c[0])
+            holder.bytes, holder.source = best
+        elif fraction is not None:
             holder.source = SOURCE_FRACTION
-            if total:
-                holder.bytes = int(fraction * total)
-            else:
-                holder.reason = reason or "the node did not report its total memory"
+            holder.reason = reason or "the node did not report its total memory"
         elif measured is None:
             holder.reason = reason or "the node could not be asked"
-        elif measured.get(run_id) is not None:
-            holder.source = SOURCE_MEASURED
-            holder.bytes = int(measured[run_id] or 0)
         elif run_id in measured:
             holder.reason = "the node reports its process but not its memory"
         else:
@@ -237,23 +287,33 @@ def budget_for_node(
     budget.held_bytes = sum(h.bytes or 0 for h in budget.holders)
     # Nobody else on the node is a complete answer with nothing in it.
     budget.complete = not budget.unknown and (total is not None or not holders)
+    if total is not None and free_bytes is not None and memory_model == "unified":
+        ours = sum(h.measured_bytes or 0 for h in budget.holders)
+        budget.unattributed_bytes = max(0, total - free_bytes - ours)
+
+    own: int | None = None
+    if claim_fraction is not None and total:
+        own, budget.claim_source = int(claim_fraction * total), SOURCE_FRACTION
+    elif claim_bytes is not None:
+        own, budget.claim_source = int(claim_bytes), "estimate"
+    if observed_claim_bytes and (own is None or observed_claim_bytes > own):
+        own, budget.claim_source = int(observed_claim_bytes), SOURCE_OBSERVED
+
     if total is None:
-        budget.claim_bytes = claim_bytes
+        budget.claim_bytes = own
         return budget
 
     left = max(0, total - budget.held_bytes - reserve_bytes)
     if free_bytes is not None:
         # What the node measures free bounds what the records leave: a holder
-        # we never started (a training job, a desktop's compositor) is in it.
-        left = min(left, max(0, free_bytes))
+        # we never started (a training job, a desktop's compositor, the page
+        # cache an image pull left pinned) is in it.
+        left = min(left, max(0, free_bytes - free_margin_bytes))
     budget.left_bytes = left
     # The epsilon keeps 0.17 from flooring to 0.16 when float division lands
     # on 0.16999…; it is far below anything a fraction can express.
     budget.max_fraction = max(0.0, math.floor(left / total * 100 + 1e-9) / 100)
-    if claim_fraction is not None:
-        budget.claim_bytes = int(claim_fraction * total)
-    else:
-        budget.claim_bytes = claim_bytes
+    budget.claim_bytes = own
     if budget.claim_bytes is not None:
         budget.fits = budget.claim_bytes <= left
     return budget

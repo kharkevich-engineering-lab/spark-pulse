@@ -60,6 +60,11 @@ memory:
   # Before any rank starts, drop the page cache and compact memory on each node
   # of the run, unless another run is on it. Needs the agent's sudoers rule.
   compact_before_launch: false
+  # After the image pull, ask each node again whether the memory the engine
+  # will ask for is free; drop the page cache if it is not, and wait up to
+  # launch_wait_seconds before failing with the numbers and who holds them.
+  check_before_launch: true
+  launch_wait_seconds: 90
   # Experimental, torch 2.16+: ranks of a multi-node run get
   # TORCH_DIST_USE_NCCL2=0 so NCCL communicators are made lazily.
   lazy_nccl_communicators: false

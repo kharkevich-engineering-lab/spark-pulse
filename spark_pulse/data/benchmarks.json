@@ -418,5 +418,139 @@
     "results": {
       "error": "llama-benchy is not installed. Install it with: pip install spark-pulse[benchmarking]"
     }
+  },
+  {
+    "benchmark_id": "1fd81d5a-ada6-475d-98a7-0311db46b582",
+    "deployment_id": "test-deployment",
+    "recipe_id": "",
+    "recipe_name": "",
+    "baseline_id": null,
+    "status": "error",
+    "started_at": "2026-11-23T21:55:41.794730+00:00",
+    "completed_at": "2026-11-23T21:55:41.800996+00:00",
+    "params": {
+      "benchmarks": [
+        "throughput"
+      ]
+    },
+    "results": {
+      "error": "llama-benchy is not installed. Install it with: pip install spark-pulse[benchmarking]"
+    }
+  },
+  {
+    "benchmark_id": "41ef851d-7cc6-4bb3-8987-bc6f655f0589",
+    "deployment_id": "test-deployment",
+    "recipe_id": "",
+    "recipe_name": "",
+    "baseline_id": null,
+    "status": "error",
+    "started_at": "2026-11-23T22:04:35.595737+00:00",
+    "completed_at": "2026-11-23T22:04:35.656308+00:00",
+    "params": {
+      "benchmarks": [
+        "throughput"
+      ]
+    },
+    "results": {
+      "error": "llama-benchy is not installed. Install it with: pip install spark-pulse[benchmarking]"
+    }
+  },
+  {
+    "benchmark_id": "0edb6dfa-9b66-460b-a75f-d486f26c9931",
+    "deployment_id": "test-deployment",
+    "recipe_id": "",
+    "recipe_name": "",
+    "baseline_id": null,
+    "status": "error",
+    "started_at": "2026-11-23T22:11:56.778762+00:00",
+    "completed_at": "2026-11-23T22:11:56.780443+00:00",
+    "params": {
+      "benchmarks": [
+        "throughput"
+      ]
+    },
+    "results": {
+      "error": "llama-benchy is not installed. Install it with: pip install spark-pulse[benchmarking]"
+    }
+  },
+  {
+    "benchmark_id": "70f51dee-3f13-4425-89ae-ab7f54d5edad",
+    "deployment_id": "def408cf8492",
+    "recipe_id": "bundled/qwen3.8-27b",
+    "recipe_name": "Qwen3.8-27B",
+    "baseline_id": null,
+    "status": "error",
+    "started_at": "2026-11-23T22:15:33.997769+00:00",
+    "completed_at": "2026-11-23T22:15:33.999775+00:00",
+    "params": {
+      "benchmarks": [
+        "throughput",
+        "latency"
+      ],
+      "context_length": 4096
+    },
+    "results": {
+      "error": "llama-benchy is not installed. Install it with: pip install spark-pulse[benchmarking]"
+    }
+  },
+  {
+    "benchmark_id": "62be12ea-ac4a-484b-9b5a-c4ae7e2ac66b",
+    "deployment_id": "7dad32276ea7",
+    "recipe_id": "bundled/qwen3.8-27b",
+    "recipe_name": "Qwen3.8-27B",
+    "baseline_id": null,
+    "status": "error",
+    "started_at": "2026-11-23T22:16:21.914820+00:00",
+    "completed_at": "2026-11-23T22:16:21.916910+00:00",
+    "params": {
+      "benchmarks": [
+        "throughput",
+        "latency"
+      ],
+      "context_length": 4096
+    },
+    "results": {
+      "error": "llama-benchy is not installed. Install it with: pip install spark-pulse[benchmarking]"
+    }
+  },
+  {
+    "benchmark_id": "11bc073b-cd17-4d3a-82e5-34b09cd33093",
+    "deployment_id": "0da422496ba4",
+    "recipe_id": "bundled/qwen3.8-27b",
+    "recipe_name": "Qwen3.8-27B",
+    "baseline_id": null,
+    "status": "error",
+    "started_at": "2026-11-23T22:18:27.057531+00:00",
+    "completed_at": "2026-11-23T22:18:27.100957+00:00",
+    "params": {
+      "benchmarks": [
+        "throughput",
+        "latency"
+      ],
+      "context_length": 4096
+    },
+    "results": {
+      "error": "llama-benchy is not installed. Install it with: pip install spark-pulse[benchmarking]"
+    }
+  },
+  {
+    "benchmark_id": "1cf8a839-7778-4ffa-8919-65d4d30db609",
+    "deployment_id": "f2e1fe202603",
+    "recipe_id": "bundled/qwen3.8-27b",
+    "recipe_name": "Qwen3.8-27B",
+    "baseline_id": null,
+    "status": "error",
+    "started_at": "2026-11-23T22:19:19.716255+00:00",
+    "completed_at": "2026-11-23T22:19:19.719174+00:00",
+    "params": {
+      "benchmarks": [
+        "throughput",
+        "latency"
+      ],
+      "context_length": 4096
+    },
+    "results": {
+      "error": "llama-benchy is not installed. Install it with: pip install spark-pulse[benchmarking]"
+    }
   }
 ]

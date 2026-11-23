@@ -1649,3 +1649,95 @@ describe("DeployOptions GPU memory", () => {
     expect(screen.queryByTestId("deploy-memory-budget")).toBeNull();
   });
 });
+
+describe("DeployOptions memory bar and fit values", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(fetchEngines).mockResolvedValue({ engines: [engine("vllm")] } as never);
+    vi.mocked(fetchModels).mockResolvedValue([] as never);
+    vi.mocked(fetchNodes).mockResolvedValue([CONTROL_NODE]);
+    vi.mocked(runPreflight).mockResolvedValue(REPORT as never);
+  });
+
+  const preview = async (budget: MemoryBudget[], report: unknown = REPORT) => {
+    vi.mocked(planDeployment).mockResolvedValue({
+      ...PLAN,
+      warnings: [],
+      gpu_memory_utilization: 0.5,
+      memory_budget: budget,
+    } as never);
+    vi.mocked(runPreflight).mockResolvedValue(report as never);
+    render(<ControlledDeployOptions recipe={FRACTION_RECIPE} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /deploy options/i }));
+    await user.click(screen.getByRole("button", { name: /preview/i }));
+    await screen.findByTestId("deploy-plan");
+    return user;
+  };
+
+  it("draws a bar with the run's claim, the holder and the free rest", async () => {
+    await preview([{ ...SHARED, fits: true, claim_bytes: 10 * GIB, claim_fraction: 0.08 }]);
+    const bar = await screen.findByRole("img", { name: /Memory on spark-01/ });
+    expect(bar.getAttribute("aria-label")).toContain("qwen 96.8 GB");
+    expect(screen.getByTestId("memory-seg-claim")).toHaveTextContent("This run 10.0 GB");
+    expect(screen.getByTestId("memory-seg-free")).toBeInTheDocument();
+    expect(screen.queryByTestId("memory-seg-over")).toBeNull();
+    expect(screen.queryByTestId("memory-seg-outside")).toBeNull();
+  });
+
+  it("shows the overflow when the claim does not fit", async () => {
+    await preview([SHARED]);
+    // 96.8 + 4 + 60.5 = 161.3 GiB on 121 GiB.
+    expect(await screen.findByTestId("memory-seg-over")).toHaveTextContent("Over by 40.3 GB");
+    expect(screen.getByTestId("memory-seg-free")).toHaveTextContent("Free 0 B");
+  });
+
+  it("shows memory held outside any run only from 2 GiB", async () => {
+    await preview([{ ...SHARED, fits: true, claim_bytes: 5 * GIB, unattributed_bytes: 1 * GIB }]);
+    await screen.findByTestId("deploy-memory-bar");
+    expect(screen.queryByTestId("memory-seg-outside")).toBeNull();
+  });
+
+  it("includes memory held outside any run when it is large", async () => {
+    await preview([{ ...SHARED, fits: true, claim_bytes: 5 * GIB, unattributed_bytes: 6 * GIB }]);
+    expect(await screen.findByTestId("memory-seg-outside")).toHaveTextContent("Outside any run 6.0 GB");
+  });
+
+  it("draws the bar for a node the run is alone on, with no sharing line", async () => {
+    await preview([{ ...SHARED, holders: [], fits: true, claim_bytes: 60 * GIB }]);
+    expect(await screen.findByTestId("deploy-memory-bar")).toBeInTheDocument();
+    expect(screen.queryByTestId("deploy-memory-budget")).toBeNull();
+  });
+
+  it("draws nothing when the node's memory was not read", async () => {
+    await preview([{ ...SHARED, holders: [], total_bytes: null }]);
+    expect(screen.queryByTestId("deploy-memory-bar")).toBeNull();
+  });
+
+  it("offers the pre-flight's smallest fraction, and puts it in the field", async () => {
+    const report = {
+      ...REPORT,
+      checks: [
+        {
+          id: "vram",
+          title: "GPU memory",
+          node: "spark-01",
+          node_id: "c",
+          status: "pass",
+          observed: "ok",
+          remedy: "",
+          delay_bytes: 0,
+          costs_time: false,
+          detail: { fraction: 0.5, min_fraction: 0.3333, max_fraction: 0.7, max_model_len_fit: 131072 },
+        },
+      ],
+    };
+    const user = await preview([], report);
+    expect(await screen.findByTestId("preflight-vram-fit")).toHaveTextContent(
+      "GPU memory fits from 0.34 to 0.70.",
+    );
+    expect(screen.getByTestId("preflight-vram-fit")).toHaveTextContent("Longest context that fits: 131,072 tokens.");
+    await user.click(screen.getByTestId("preflight-use-min"));
+    expect(screen.getByLabelText(/GPU memory/i)).toHaveValue("0.34");
+  });
+});

@@ -44,6 +44,9 @@ class EventType(str, Enum):
     DEPLOYMENT_SERVING = "deployment_serving"
     DEPLOYMENT_READY = "deployment_ready"
     DEPLOYMENT_MEMORY_COMPACTED = "deployment_memory_compacted"
+    #: The launch gate found less free memory than the run needs and is
+    #: waiting (or dropped the caches) before starting the engine.
+    DEPLOYMENT_MEMORY_WAIT = "deployment_memory_wait"
     DEPLOYMENT_STARTING = "deployment_starting"
     DEPLOYMENT_STARTED = "deployment_started"
     DEPLOYMENT_STOPPED = "deployment_stopped"
@@ -104,6 +107,7 @@ WARNING_EVENTS = frozenset(
     {
         EventType.MODEL_DOWNLOAD_CANCELLED,
         EventType.IMAGE_PULL_CANCELLED,
+        EventType.DEPLOYMENT_MEMORY_WAIT,
     }
 )
 
