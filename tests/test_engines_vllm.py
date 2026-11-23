@@ -5,7 +5,7 @@ import socket
 import pytest
 
 from spark_pulse.engines import EngineError, NodeInfo, Topology, VllmEngine
-from spark_pulse.engines.registry import load_bundled_specs
+from spark_pulse.engines.registry import load_spec_dir
 
 V1_COMMAND = """
 vllm serve Qwen/Qwen3-8B \\
@@ -52,7 +52,7 @@ def rendezvous(nnodes: int, rank: int, addr: str = "10.0.0.1") -> str:
 
 @pytest.fixture
 def engine():
-    spec = next(s for s in load_bundled_specs() if s.engine == "vllm")
+    spec = next(s for s in load_spec_dir() if s.engine == "vllm")
     return VllmEngine(spec)
 
 

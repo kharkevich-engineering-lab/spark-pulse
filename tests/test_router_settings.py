@@ -541,3 +541,62 @@ class TestClusterAvailability:
 
         assert response.status_code == 200
         assert "cluster" not in json.loads(private_config_files["settings"].read_text())
+
+
+# ── Engine indexes: where every engine comes from ────────────────────────────
+
+
+class TestEngineIndexes:
+    def test_they_are_written_trimmed_and_once_each(self, client, monkeypatch):
+        monkeypatch.delenv("SPARK_PULSE_ENGINE_INDEXES", raising=False)
+        resp = client.put(
+            "/api/settings",
+            json={"engine_indexes": [" ghcr.io/a/index:1 ", "ghcr.io/a/index:1", ""]},
+        )
+        assert resp.status_code == 200
+        assert config.engine_indexes == ["ghcr.io/a/index:1"]
+
+    def test_none_at_all_is_refused(self, client, monkeypatch):
+        monkeypatch.delenv("SPARK_PULSE_ENGINE_INDEXES", raising=False)
+        resp = client.put("/api/settings", json={"engine_indexes": ["  "]})
+        assert resp.status_code == 400
+        assert "at least one engine index" in resp.json()["detail"]
+
+    def test_the_environment_wins_and_says_so(self, client, monkeypatch):
+        monkeypatch.setenv("SPARK_PULSE_ENGINE_INDEXES", "ghcr.io/env/index:1")
+        # The form saving everything it holds is not an edit of this field.
+        same = client.put(
+            "/api/settings", json={"engine_indexes": ["ghcr.io/env/index:1"]}
+        )
+        assert same.status_code == 200
+        changed = client.put(
+            "/api/settings", json={"engine_indexes": ["ghcr.io/other/index:1"]}
+        )
+        assert changed.status_code == 409
+        assert "SPARK_PULSE_ENGINE_INDEXES" in changed.json()["detail"]
+
+    def test_the_engine_listing_reports_each_index_and_the_default(self, client):
+        body = client.get("/api/engines").json()
+        assert body["default_indexes"] == [
+            "ghcr.io/kharkevich-engineering-lab/spark-pulse-engine/index:latest"
+        ]
+        assert isinstance(body["indexes_env_managed"], bool)
+        for row in body["indexes"]:
+            assert set(row) == {"ref", "engines", "fetched_at", "error"}
+
+    def test_an_empty_environment_value_does_not_block_other_saves(
+        self, client, monkeypatch
+    ):
+        monkeypatch.setenv("SPARK_PULSE_ENGINE_INDEXES", "")
+        resp = client.put(
+            "/api/settings", json={"engine_indexes": [], "job_retention_days": 9}
+        )
+        assert resp.status_code == 200
+        assert config.job_retention_days == 9
+
+    def test_a_repeated_environment_value_reads_as_unchanged(self, client, monkeypatch):
+        monkeypatch.setenv("SPARK_PULSE_ENGINE_INDEXES", "ghcr.io/a/i:1,ghcr.io/a/i:1")
+        resp = client.put(
+            "/api/settings", json={"engine_indexes": ["ghcr.io/a/i:1", "ghcr.io/a/i:1"]}
+        )
+        assert resp.status_code == 200

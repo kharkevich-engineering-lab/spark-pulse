@@ -1,4 +1,4 @@
-"""Engine registry: bundled defaults, index loading, legacy tags, selection."""
+"""Engine registry: the simulated index, index loading, legacy tags, selection."""
 
 import textwrap
 
@@ -11,7 +11,7 @@ from spark_pulse.engines import (
     VllmEngine,
 )
 from spark_pulse.engines.registry import (
-    load_bundled_specs,
+    load_spec_dir,
     parse_index,
 )
 
@@ -76,10 +76,10 @@ def registry(tmp_path):
     return EngineRegistry(cache_dir=tmp_path / "cache")
 
 
-# ── Bundled defaults ─────────────────────────────────────────────────────────
+# ── The simulated index ──────────────────────────────────────────────────────
 
 
-BUNDLED = {
+SIMULATED = {
     "vllm/default",
     "sglang/default",
     "llama-cpp/default",
@@ -92,21 +92,21 @@ BUNDLED = {
 }
 
 
-def test_bundled_defaults_are_parsed():
-    specs = {s.key: s for s in load_bundled_specs()}
-    assert set(specs) == BUNDLED
+def test_the_simulated_index_is_parsed():
+    specs = {s.key: s for s in load_spec_dir()}
+    assert set(specs) == SIMULATED
     vllm = specs["vllm/default"]
     assert vllm.runtime.serve == "vllm serve"
     assert vllm.runtime.ports.api == 8000
     assert vllm.runtime.ports.rendezvous == 29501
     assert vllm.capabilities.mods is True
-    assert vllm.source == "bundled"
+    assert vllm.source == "simulation"
     assert vllm.verified[0].nodes == 1
 
 
-def test_registry_lists_bundled_engines(registry):
-    assert set(s.key for s in registry.list()) == BUNDLED
-    assert [s.key for s in registry.list()] == sorted(BUNDLED), "listed in order"
+def test_registry_lists_the_simulated_engines(registry):
+    assert set(s.key for s in registry.list()) == SIMULATED
+    assert [s.key for s in registry.list()] == sorted(SIMULATED), "listed in order"
 
 
 def test_get_and_has(registry):
@@ -212,21 +212,21 @@ def test_refresh_loads_from_a_local_index_file(monkeypatch, tmp_path, index_file
         type(_config()), "engine_indexes", property(lambda self: [str(index_file)])
     )
     registry = EngineRegistry(cache_dir=tmp_path / "cache")
-    # Before refresh only the bundled specs are known.
-    assert registry.get("vllm").version == "0.1.0"
+    # Before the first fetch a real control plane knows no engine at all.
+    assert registry.list() == []
 
     result = registry.refresh()
     assert result["refreshed"] is True
     assert result["indexes"][0]["status"] == "ok"
     assert result["indexes"][0]["engines"] == 2
 
-    # The indexed entry shadows the bundled one; the new variant shows up.
+    # What the index says is what there is.
     assert registry.get("vllm").version == "9.9.9"
     assert registry.get("vllm").digest == "sha256:deadbeef"
     assert registry.get("vllm", "b12x").image == "ghcr.io/example/vllm-b12x"
     assert registry.resolve_legacy_tag("vllm-node-b12x").variant == "b12x"
-    # sglang is untouched by the index.
-    assert registry.get("sglang").version == "0.1.0"
+    # Nothing the index does not carry, sglang included, comes from the wheel.
+    assert not registry.has("sglang")
 
 
 def test_refresh_survives_a_missing_index(monkeypatch, tmp_path):
@@ -243,8 +243,9 @@ def test_refresh_survives_a_missing_index(monkeypatch, tmp_path):
     registry = EngineRegistry(cache_dir=tmp_path / "cache")
     result = registry.refresh()
     assert result["indexes"][0]["status"] == "error"
-    # Bundled specs still serve.
-    assert registry.get("vllm").version == "0.1.0"
+    # No index and no cache: no engines, and a lookup says why.
+    with pytest.raises(EngineNotFound, match="no engine index has been fetched"):
+        registry.get("vllm")
 
 
 def test_refresh_caches_to_disk_and_reload_uses_it(monkeypatch, tmp_path, index_file):
@@ -402,3 +403,42 @@ class TestSupportsSize:
         ok, reason = registry.engine("vllm").supports_size(0)
         assert ok is False
         assert "at least one node" in reason
+
+
+# ── Nothing about an engine ships in the wheel ───────────────────────────────
+
+
+def test_outside_simulation_the_indexes_are_the_only_engines(tmp_path, monkeypatch):
+    from spark_pulse.engines import registry as registry_module
+
+    monkeypatch.setattr(registry_module, "_is_simulation", lambda: False)
+    monkeypatch.setattr(registry_module.config, "_data", {"engine_indexes": []})
+    empty = EngineRegistry(cache_dir=tmp_path / "cache")
+    assert empty.list() == []
+    with pytest.raises(EngineNotFound, match="no engine index has been fetched"):
+        empty.get("vllm")
+
+
+def test_an_uncached_index_is_fetched_in_the_background(
+    tmp_path, monkeypatch, index_file
+):
+    from spark_pulse.engines import registry as registry_module
+
+    monkeypatch.setattr(registry_module, "_is_simulation", lambda: False)
+    monkeypatch.setattr(
+        EngineRegistry, "index_refs", property(lambda self: [str(index_file)])
+    )
+    fresh = EngineRegistry(cache_dir=tmp_path / "cache", cache_ttl=3600)
+    assert fresh.list() == []
+    thread = fresh.refresh_in_background()
+    assert thread is not None
+    thread.join(timeout=10)
+    assert {s.key for s in fresh.list()} == {"vllm/default", "vllm/b12x"}
+    # Fresh now, so a second registry over the same cache starts nothing.
+    again = EngineRegistry(cache_dir=tmp_path / "cache", cache_ttl=3600)
+    assert again.refresh_in_background() is None
+    assert {s.key for s in again.list()} == {"vllm/default", "vllm/b12x"}
+
+
+def test_simulation_never_fetches(registry):
+    assert registry.refresh_in_background() is None

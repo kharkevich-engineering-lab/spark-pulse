@@ -249,6 +249,11 @@ class RecipeV2(BaseModel):
     model: str
     description: str = ""
     engine: str | None = None
+    #: The engine variant the recipe pins, written ``engine: sglang/inkling-2-mini``
+    #: — the same ``engine/variant`` form the registry and the deploy request
+    #: take. Split off at parse time so ``engine`` stays the bare name the
+    #: ``engines:`` block is keyed by.
+    variant: str | None = None
     serves: Serves = DEFAULT_SERVES
     constraints: RecipeConstraints = Field(default_factory=RecipeConstraints)
     params: RecipeParams = Field(default_factory=RecipeParams)
@@ -266,6 +271,12 @@ class RecipeV2(BaseModel):
             # default, not a request for a kind called ``None``.
             if data.get("serves") is None:
                 data.pop("serves", None)
+            engine = data.get("engine")
+            if isinstance(engine, str) and "/" in engine:
+                name, _, variant = engine.partition("/")
+                data["engine"] = name.strip() or None
+                if variant.strip() and not data.get("variant"):
+                    data["variant"] = variant.strip()
         return data
 
     @model_validator(mode="after")

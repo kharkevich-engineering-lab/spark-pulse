@@ -87,6 +87,12 @@ class EngineRuntime(BaseModel):
     container: EngineContainer = Field(default_factory=EngineContainer)
     multi_node: EngineMultiNode = Field(default_factory=EngineMultiNode)
     param_flags: dict[str, str] = Field(default_factory=dict)
+    #: Which renderer speaks this engine's command line, for an engine whose
+    #: name this build does not know: ``vllm``, ``sglang``, ``llama-cpp`` or
+    #: ``solo`` (see ``registry.RENDERERS``). Unset, the engine's name decides,
+    #: then ``multi_node.style``, then the spec-driven solo renderer — so a new
+    #: single-node engine needs only its spec in the index, not a release.
+    renderer: str | None = None
 
 
 class EngineCapabilities(BaseModel):
@@ -165,8 +171,9 @@ class EngineSpec(BaseModel):
     runtime: EngineRuntime = Field(default_factory=EngineRuntime)
     capabilities: EngineCapabilities = Field(default_factory=EngineCapabilities)
     verified: list[EngineVerification] = Field(default_factory=list)
-    source: str = "bundled"
-    """Where this spec came from: ``bundled`` or an engine index reference."""
+    source: str = "index"
+    """Where this spec came from: the index reference it was read from, or
+    ``simulation`` for simulation's fixed index."""
 
     @property
     def key(self) -> str:
@@ -368,6 +375,26 @@ class Engine:
 
     def __init__(self, spec: EngineSpec):
         self.spec = spec
+        # The name a recipe's ``engines:`` block is keyed by is the spec's, so
+        # a renderer shared by several engines (``renderer: vllm`` on a vLLM
+        # fork, or the generic one) answers to each engine's own name.
+        self.name = spec.engine or type(self).name
+
+    @property
+    def dialect(self) -> str:
+        """The framework this renderer speaks — ``vllm`` for a vLLM fork —
+        or the engine's own name when the renderer is the generic one."""
+        return type(self).name or self.name
+
+    @property
+    def answers_to(self) -> tuple[str, ...]:
+        """Every engine name a recipe may use for this engine, own name first.
+
+        A fork rendered as vLLM runs a recipe written for vLLM: the flags in
+        its ``engines.vllm`` block, or a v1 command, are that dialect's. Its
+        own name still comes first, so a block written for the fork wins.
+        """
+        return tuple(dict.fromkeys((self.name, self.dialect)))
 
     # -- declarative accessors, all driven by engine.yaml ------------------
 
@@ -481,7 +508,7 @@ class Engine:
         """
         if self.spec.framework_version:
             return str(self.spec.framework_version)
-        source = self.spec.sources.get(self.name)
+        source = self.spec.sources.get(self.name) or self.spec.sources.get(self.dialect)
         if isinstance(source, dict) and source.get("version"):
             return str(source["version"])
         return ""
@@ -501,15 +528,15 @@ class Engine:
         found = parse_version(declared)
         if not found:
             return True, (
-                f"engine '{self.spec.key}' declares no {self.name} version, so "
-                f"it cannot be checked against the {self.name} >= {wanted} the "
+                f"engine '{self.spec.key}' declares no {self.dialect} version, so "
+                f"it cannot be checked against the {self.dialect} >= {wanted} the "
                 "rendered launch flags need"
             )
         if found < required:
             return False, (
-                f"engine '{self.spec.key}' carries {self.name} {declared}, but "
+                f"engine '{self.spec.key}' carries {self.dialect} {declared}, but "
                 f"the rendered launch flags (--nnodes/--node-rank/--master-addr"
-                f"/--master-port) need {self.name} >= {wanted}; pick a newer "
+                f"/--master-port) need {self.dialect} >= {wanted}; pick a newer "
                 "engine image or variant"
             )
         return True, ""
@@ -674,7 +701,7 @@ class Engine:
         """
         command = str(recipe.get("command") or "").strip()
         pin = recipe.get("engine") or ("vllm" if command else None)
-        if command and pin != self.name:
+        if command and pin not in self.answers_to:
             return (
                 False,
                 (
@@ -684,9 +711,9 @@ class Engine:
             )
         declared = self.declared_engines(recipe)
         if declared:
-            if self.name not in declared:
+            if not set(self.answers_to) & set(declared):
                 return False, f"recipe only declares engines: {', '.join(declared)}"
-        elif pin and pin != self.name:
+        elif pin and pin not in self.answers_to:
             return False, f"recipe names engine '{pin}'"
         # Absent is chat — the same default ``recipe_schema.serves_of`` reads,
         # restated rather than imported because ``tools`` imports this package.
@@ -721,9 +748,10 @@ class Engine:
         for key in ("engine_specs", "engines"):
             value = recipe.get(key)
             if isinstance(value, dict):
-                block = value.get(self.name)
-                if isinstance(block, dict):
-                    return block
+                for name in self.answers_to:
+                    block = value.get(name)
+                    if isinstance(block, dict):
+                        return block
         return {}
 
     def block_mods(self, recipe: dict[str, Any]) -> list[str]:

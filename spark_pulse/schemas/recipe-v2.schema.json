@@ -26,7 +26,12 @@
     },
     "engine": {
       "type": "string",
-      "description": "Preferred engine name (e.g. vllm, sglang). Omit to use the configured default engine.",
+      "description": "Preferred engine name (e.g. vllm, sglang), or an exact variant as engine/variant (e.g. sglang/inkling-2-mini). The engines block is keyed by the bare engine name. Omit to use the configured default engine.",
+      "minLength": 1
+    },
+    "variant": {
+      "type": "string",
+      "description": "The engine variant (image) this recipe pins, as engine/variant in `engine` writes it. A deploy that names another variant wins.",
       "minLength": 1
     },
     "serves": {

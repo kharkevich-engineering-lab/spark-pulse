@@ -25,7 +25,7 @@ from spark_pulse.engines.llama_cpp import (
     rpc_endpoint,
     split_hf_file,
 )
-from spark_pulse.engines.registry import ENGINE_CLASSES, load_bundled_specs
+from spark_pulse.engines.registry import ENGINE_CLASSES, load_spec_dir
 
 MODEL = "PrismML/Bonsai-2-27B-GGUF"
 RECIPE = {
@@ -46,9 +46,7 @@ THREE_NODES = Topology(nodes=[HEAD, WORKER, THIRD])
 
 def spec_for(variant: str) -> EngineSpec:
     return next(
-        s
-        for s in load_bundled_specs()
-        if s.engine == "llama-cpp" and s.variant == variant
+        s for s in load_spec_dir() if s.engine == "llama-cpp" and s.variant == variant
     )
 
 

@@ -429,7 +429,9 @@ export function EngineSelect({
     >
       <option value="">
         {recipe.engine
-          ? i18n.t("deployOptions.recipeDefaultEngine", { engine: recipe.engine })
+          ? i18n.t("deployOptions.recipeDefaultEngine", {
+              engine: recipe.variant ? `${recipe.engine}/${recipe.variant}` : recipe.engine,
+            })
           : i18n.t("deployOptions.recipeDefault")}
       </option>
       {available.map((engine) => (

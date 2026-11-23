@@ -23,6 +23,7 @@ from spark_pulse.engines.base import (
 from spark_pulse.engines.llama_cpp import LlamaCppEngine
 from spark_pulse.engines.registry import (
     ENGINE_CLASSES,
+    RENDERERS,
     EngineNotFound,
     EngineRegistry,
     get_registry,
@@ -31,6 +32,7 @@ from spark_pulse.engines.registry import (
 from spark_pulse.engines.sglang import SglangEngine
 from spark_pulse.engines.solo import (
     AtlasEngine,
+    GenericEngine,
     ModularMaxEngine,
     SoloEngine,
     TrtllmEngine,
@@ -39,12 +41,14 @@ from spark_pulse.engines.vllm import VllmEngine
 
 __all__ = [
     "ENGINE_CLASSES",
+    "RENDERERS",
     "MAX_CLUSTER_NODES",
     "AtlasEngine",
     "Engine",
     "EngineCapabilities",
     "EngineContainer",
     "EngineError",
+    "GenericEngine",
     "EngineMultiNode",
     "EngineNotFound",
     "EnginePorts",

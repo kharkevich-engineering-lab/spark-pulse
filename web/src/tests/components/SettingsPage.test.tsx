@@ -31,6 +31,7 @@ vi.mock("@/lib/api", () => ({
   fetchModelSources: vi.fn(),
   saveModelSources: vi.fn(),
   refreshEngines: vi.fn(),
+  fetchEngines: vi.fn(),
   fetchOciRegistries: vi.fn(),
   addOciRegistry: vi.fn(),
   updateOciRegistry: vi.fn(),
@@ -50,6 +51,7 @@ import {
   fetchSecrets,
   fetchSettings,
   refreshEngines,
+  fetchEngines,
   runOciAutoUpdate,
   saveModelSources,
   saveSecrets,
@@ -137,6 +139,7 @@ function seedApi() {
     overwrite_local: false,
   });
   vi.mocked(refreshEngines).mockResolvedValue({ refreshed: true, engines: 2, indexes: [] });
+  vi.mocked(fetchEngines).mockResolvedValue({ default_engine: "vllm", engines: [] });
 }
 
 // ── The tabs themselves ─────────────────────────────────────────────────────

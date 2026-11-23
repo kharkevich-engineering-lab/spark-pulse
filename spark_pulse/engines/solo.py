@@ -202,3 +202,30 @@ class AtlasEngine(SoloEngine):
     """Atlas's ``spark serve``."""
 
     name = "atlas"
+
+
+class GenericEngine(SoloEngine):
+    """Any engine this build has no class for, rendered from its spec alone.
+
+    What lets an engine index add a single-node engine without a control-plane
+    release: the serve command, ``model_arg`` and ``param_flags`` are all the
+    spec's, so there is nothing here to write. It answers to the spec's engine
+    name (:meth:`Engine.__init__`). A larger topology is refused at plan time,
+    whatever the spec claims: a spec that spans nodes in a dialect this build
+    does not render must say ``runtime.renderer``, and until a renderer exists
+    for it the honest answer is "one node".
+    """
+
+    def supports_size(self, node_count: int) -> tuple[bool, str]:
+        ok, reason = super().supports_size(node_count)
+        if not ok or node_count <= 1:
+            return ok, reason
+        style = self.spec.runtime.multi_node.style
+        dialect = (
+            f"its multi-node style '{style}'" if style != "none" else "a rendezvous"
+        )
+        return False, (
+            f"engine '{self.spec.key}' has no renderer in this control plane "
+            f"for {dialect}, so it runs on one node here; deploy it solo, or "
+            "upgrade spark-pulse for a renderer that spans nodes"
+        )

@@ -57,11 +57,14 @@ def _to_node(node: RenderNode | str) -> NodeInfo:
 
 @router.get("")
 def list_engines():
-    """All known engine specs, bundled defaults plus indexed ones."""
+    """Every engine the configured indexes publish (simulation: its fixed index)."""
     registry = get_registry()
     registry.refresh_if_stale()
     return {
         "default_engine": config.default_engine,
+        "indexes": registry.index_status(),
+        "default_indexes": config.default_engine_indexes,
+        "indexes_env_managed": config.engine_indexes_env_managed,
         "engines": [
             {
                 **spec.summary(),
@@ -91,17 +94,9 @@ def render_launch(req: RenderRequest):
             status_code=404, detail=f"Recipe '{req.recipe_id}' not found"
         )
 
-    override = req.engine
-    if override and req.variant:
-        override = f"{override}/{req.variant}"
-    elif req.variant and not override:
-        override = f"{recipe.get('engine') or config.default_engine}/{req.variant}"
-
     try:
-        engine_name, variant = registry.select(
-            request_override=override,
-            recipe_engine=recipe.get("engine"),
-            default_engine=config.default_engine,
+        engine_name, variant = registry.select_for_recipe(
+            recipe, req.engine, req.variant
         )
         engine = registry.engine(engine_name, variant)
     except EngineNotFound as exc:

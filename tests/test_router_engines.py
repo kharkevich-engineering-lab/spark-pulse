@@ -8,12 +8,12 @@ from fastapi.testclient import TestClient
 from spark_pulse.app import create_app
 from spark_pulse.config import config
 from spark_pulse.engines import EngineRegistry, reset_registry
-from spark_pulse.engines.registry import load_bundled_specs
+from spark_pulse.engines.registry import load_spec_dir
 
-#: Whatever ships in ``engines/defaults``. Named rather than listed: which
-#: engines are bundled is that directory's business, and a router test that
-#: repeats the list only fails when somebody adds one.
-BUNDLED_KEYS = {s.key for s in load_bundled_specs()}
+#: Whatever simulation's fixed index (``mock/engines``) holds. Named rather
+#: than listed: which engines it has is that directory's business, and a
+#: router test that repeats the list only fails when somebody adds one.
+SIMULATED_KEYS = {s.key for s in load_spec_dir()}
 
 V1_RECIPE = {
     "id": "qwen3-8b",
@@ -70,7 +70,7 @@ class TestListEngines:
         data = response.json()
         assert data["default_engine"] == "vllm"
         keys = {e["key"] for e in data["engines"]}
-        assert keys == BUNDLED_KEYS
+        assert keys == SIMULATED_KEYS
 
     def test_list_carries_capabilities_image_and_verification(self, client):
         engines = client.get("/api/engines").json()["engines"]
@@ -81,7 +81,7 @@ class TestListEngines:
         assert vllm["enabled"] is True
         assert vllm["legacy_tags"] == ["vllm-node"]
         assert vllm["verified"][0]["model"] == "Qwen/Qwen2.5-0.5B-Instruct"
-        assert vllm["source"] == "bundled"
+        assert vllm["source"] == "simulation"
 
 
 class TestGetEngine:
@@ -116,7 +116,7 @@ class TestRefresh:
         data = response.json()
         assert data["refreshed"] is False
         assert "simulation" in data["reason"]
-        assert data["engines"] == len(BUNDLED_KEYS)
+        assert data["engines"] == len(SIMULATED_KEYS)
 
     def test_refresh_reports_per_index_status(self, client, monkeypatch):
         monkeypatch.setattr(
@@ -127,7 +127,7 @@ class TestRefresh:
         data = response.json()
         assert data["refreshed"] is True
         assert data["indexes"] == []
-        assert data["engines"] == len(BUNDLED_KEYS)
+        assert data["engines"] == len(SIMULATED_KEYS)
 
 
 class TestRender:

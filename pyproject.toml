@@ -112,7 +112,7 @@ spark_pulse = [
     "service/templates/**/*",
     "config.yaml",
     "registries.yaml",
-    "engines/defaults/*.yaml",
+    "mock/engines/*.yaml",
     "recipes/*.yaml",
     "schemas/*.json",
     # The protocol definition travels with the package. The generated stubs

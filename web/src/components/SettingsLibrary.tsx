@@ -19,11 +19,12 @@
  * failures are a line under the control that failed, not a modal.
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Plus, RefreshCw, X } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import {
   addOciRegistry,
+  fetchEngines,
   fetchOciAutoUpdateSettings,
   fetchOciRegistries,
   refreshEngines,
@@ -77,7 +78,24 @@ export default function SettingsLibrary({ form, setForm, sources, setSources }: 
   const [refreshing, setRefreshing] = useState(false);
   const [engineError, setEngineError] = useState<string | null>(null);
 
+  const { data: registry, refetch: refetchEngines } = useQuery(fetchEngines);
   const { data: registries, loading: regsLoading, refetch: refetchRegs } = useQuery(fetchOciRegistries);
+
+  // What the default-engine picker offers: every engine the indexes publish,
+  // plus whatever is set now, so a value nothing publishes yet stays visible
+  // rather than silently reading as the first option.
+  const engineNames = useMemo(() => {
+    const names = new Set((registry?.engines ?? []).map((e) => e.engine));
+    if (engines.default_engine) names.add(engines.default_engine);
+    return [...names].sort();
+  }, [registry, engines.default_engine]);
+  const indexesFromEnv = registry?.indexes_env_managed === true;
+  const defaultIndexes = registry?.default_indexes ?? [];
+  const currentIndexes = engines.engine_indexes ?? [];
+  const isDefault =
+    defaultIndexes.length > 0 &&
+    currentIndexes.length === defaultIndexes.length &&
+    currentIndexes.every((ref, i) => ref === defaultIndexes[i]);
   const { data: auto, loading: autoLoading, refetch: refetchAuto } = useQuery(fetchOciAutoUpdateSettings);
 
   const [registryError, setRegistryError] = useState<string | null>(null);
@@ -105,6 +123,7 @@ export default function SettingsLibrary({ form, setForm, sources, setSources }: 
       setEngineError(message(e, t("engines.saveFailed")));
     } finally {
       setRefreshing(false);
+      refetchEngines();
     }
   };
 
@@ -239,32 +258,80 @@ export default function SettingsLibrary({ form, setForm, sources, setSources }: 
         }
       >
         <SettingRow label={t("engines.defaultEngine")} hint={t("settingsPage.defaultEngineHint")}>
-          {(control) => (
-            <Input
-              {...control}
-              mono
-              type="text"
-              value={engines.default_engine ?? ""}
-              onChange={(e) => setForm({ ...form, default_engine: e.target.value })}
-              placeholder="vllm"
-            />
-          )}
+          {(control) =>
+            engineNames.length > 0 ? (
+              <Select
+                {...control}
+                className="font-mono text-sm"
+                value={engines.default_engine ?? ""}
+                onChange={(e) => setForm({ ...form, default_engine: e.target.value })}
+              >
+                {engineNames.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </Select>
+            ) : (
+              <Input
+                {...control}
+                mono
+                type="text"
+                value={engines.default_engine ?? ""}
+                onChange={(e) => setForm({ ...form, default_engine: e.target.value })}
+                placeholder="vllm"
+              />
+            )
+          }
         </SettingRow>
 
         <SettingRow label={t("engines.indexes")} hint={t("engines.indexesHelp")} error={engineError}>
           {(control) => (
-            <Textarea
-              {...control}
-              mono
-              rows={3}
-              value={(engines.engine_indexes ?? []).join("\n")}
-              onChange={(e) =>
-                setForm({
-                  ...form,
-                  engine_indexes: e.target.value.split("\n").map((l) => l.trim()).filter(Boolean),
-                })
-              }
-            />
+            <div className="space-y-2">
+              <Textarea
+                {...control}
+                mono
+                rows={3}
+                disabled={indexesFromEnv}
+                value={currentIndexes.join("\n")}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    engine_indexes: e.target.value.split("\n").map((l) => l.trim()).filter(Boolean),
+                  })
+                }
+              />
+              {indexesFromEnv && (
+                <p className="text-[13px] text-muted" data-testid="indexes-from-env">
+                  {t("settingsPage.indexesFromEnv")}
+                </p>
+              )}
+              {!indexesFromEnv && defaultIndexes.length > 0 && !isDefault && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setForm({ ...form, engine_indexes: [...defaultIndexes] })}
+                >
+                  {t("settingsPage.useDefaultIndex")}
+                </Button>
+              )}
+              {(registry?.indexes ?? []).length > 0 && (
+                <ul className="space-y-1" data-testid="index-status">
+                  {(registry?.indexes ?? []).map((index) => (
+                    <li key={index.ref} className="text-[13px]">
+                      <span className="font-mono text-muted">{index.ref}</span>{" "}
+                      {index.fetched_at
+                        ? t("settingsPage.indexFetched", {
+                            count: index.engines,
+                            time: new Date(index.fetched_at * 1000).toLocaleString(),
+                          })
+                        : t("settingsPage.indexNeverFetched")}
+                      {index.error && <ErrorLine>{index.error}</ErrorLine>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           )}
         </SettingRow>
 

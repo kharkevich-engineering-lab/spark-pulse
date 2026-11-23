@@ -42,12 +42,13 @@ rate" story starts by making the checks happen at all.
 `EngineSpec.runtime.metrics` is a real field (`spark_pulse/engines/base.py:78`),
 surfaced by `Engine.metrics_path()` (`base.py:357-358`) and returned by the
 engines router as `"metrics"` (`spark_pulse/routers/engines.py:135`). Both
-bundled engines declare it:
+engines declare it (the specs live in the engine index; the files cited are
+simulation's copies of them):
 
 | Engine | `metrics` | API port | File |
 |---|---|---|---|
-| vLLM | `/metrics` | 8000 | `spark_pulse/engines/defaults/vllm.yaml:46,47` |
-| SGLang | `/metrics` | 30000 | `spark_pulse/engines/defaults/sglang.yaml:23,24` |
+| vLLM | `/metrics` | 8000 | `spark_pulse/mock/engines/vllm.yaml:46,47` |
+| SGLang | `/metrics` | 30000 | `spark_pulse/mock/engines/sglang.yaml:23,24` |
 
 `DeployPlan` carries `metrics_path` (`spark_pulse/tools/native_runtime.py:252`),
 set from the engine at `native_runtime.py:1093`. **It is never read.** Nothing

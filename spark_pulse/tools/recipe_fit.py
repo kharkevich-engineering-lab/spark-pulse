@@ -425,7 +425,11 @@ def _engine_patterns(recipe: dict[str, Any]) -> list[str]:
     from spark_pulse.engines import get_registry
 
     try:
-        engine = get_registry().engine(str(recipe.get("engine") or ""), "default")
+        registry = get_registry()
+        name = str(recipe.get("engine") or "")
+        engine = registry.engine(
+            name, registry.variant_for(name, recipe.get("variant"))
+        )
         return list(engine.model_patterns(recipe))
     except Exception:  # noqa: BLE001 — no patterns is "the whole repository"
         return []

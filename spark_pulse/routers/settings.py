@@ -21,6 +21,7 @@ as letting the browser change it, and the ones that would be dangerous — or, i
 masked; the raw value leaves this process only in a deployment's environment.
 """
 
+from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import APIRouter, HTTPException
@@ -273,6 +274,20 @@ def update_settings(req: dict):
         k: v for k, v in req.items() if v is not None and k not in reported_only
     }
 
+    if "engine_indexes" in incoming and config.engine_indexes_env_managed:
+        # The environment decides, so nothing is written either way. The form
+        # writes every field it holds, so an unchanged value is the save of
+        # something else, not an attempt at this one — compared as the
+        # environment's own value is parsed, never normalised further.
+        if _as_refs(incoming.pop("engine_indexes")) != config.engine_indexes:
+            raise HTTPException(
+                status_code=409,
+                detail="engine indexes are set by SPARK_PULSE_ENGINE_INDEXES "
+                "in this process's environment; change it there",
+            )
+    if "engine_indexes" in incoming:
+        incoming["engine_indexes"] = _checked_engine_indexes(incoming["engine_indexes"])
+
     if "docker" in incoming:
         incoming["docker"] = _checked_block(
             "docker", incoming["docker"], _ALLOWED_DOCKER_KEYS
@@ -293,6 +308,29 @@ def update_settings(req: dict):
     if any(k.startswith(("engine", "default_engine")) for k in req):
         reset_registry()
     return _settings_response()
+
+
+def _as_refs(value: Any) -> list[str]:
+    """``engine_indexes`` as a list of trimmed, non-empty references."""
+    if isinstance(value, str):
+        value = value.split(",")
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise HTTPException(
+            status_code=400, detail="engine_indexes must be a list of references"
+        )
+    return [v.strip() for v in value if v.strip()]
+
+
+def _checked_engine_indexes(value: Any) -> list[str]:
+    """A list of references, at least one: with no index there are no engines."""
+    refs = list(dict.fromkeys(_as_refs(value)))
+    if not refs:
+        raise HTTPException(
+            status_code=400,
+            detail="at least one engine index is needed: the indexes are where "
+            "every engine comes from",
+        )
+    return refs
 
 
 @router.get("/secrets")

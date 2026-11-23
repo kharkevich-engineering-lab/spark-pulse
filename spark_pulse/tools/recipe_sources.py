@@ -71,6 +71,7 @@ SUMMARY_FIELDS = (
     "params",
     "recipe_version",
     "engine",
+    "variant",
     "engines",
     "engine_support",
     "source",
@@ -230,11 +231,22 @@ def engine_support(payload: dict[str, Any]) -> list[dict[str, Any]]:
         logger.debug("Engine registry unavailable; reporting no engine support")
         return []
 
+    from spark_pulse.tools.recipe_fit import nodes_needed
+
+    needed = nodes_needed(payload)
     out: list[dict[str, Any]] = []
     for name in sorted({spec.engine for spec in specs}):
         try:
-            engine = registry.engine(name)
+            preferred = (
+                payload.get("variant") if payload.get("engine") == name else None
+            )
+            engine = registry.engine(name, registry.variant_for(name, preferred))
             supported, reason = engine.supports(payload)
+            if supported and needed > 1:
+                # The size the recipe asks for is part of whether this engine
+                # runs it — the same refusal the plan would give, said here
+                # so the recipe page does not offer what the plan refuses.
+                supported, reason = engine.supports_size(needed)
         except EngineError as exc:
             supported, reason = False, str(exc)
         out.append(
@@ -300,6 +312,7 @@ def to_payload(
             "min_nodes": recipe.constraints.min_nodes,
             "recipe_version": "2",
             "engine": recipe.engine,
+            "variant": recipe.variant,
             "engines": recipe.engine_names(),
             "engine_specs": _engine_specs(recipe),
             "source": source_of(recipe_id),
@@ -325,6 +338,7 @@ def to_payload(
         "min_nodes": None,
         "recipe_version": "1",
         "engine": None,
+        "variant": None,
         "engines": recipe.engines,
         "engine_specs": {},
         "source": source_of(recipe_id),

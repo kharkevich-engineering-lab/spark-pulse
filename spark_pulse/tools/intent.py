@@ -26,7 +26,6 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from spark_pulse import tools
-from spark_pulse.config import config
 from spark_pulse.engines import (
     Engine,
     EngineError,
@@ -338,16 +337,9 @@ def _select_engine(
     engine: str | None,
     variant: str | None,
 ) -> tuple[Engine, str, str]:
-    override = engine
-    if override and variant:
-        override = f"{override}/{variant}"
-    elif variant and not override:
-        override = f"{recipe.get('engine') or config.default_engine}/{variant}"
     try:
-        engine_name, resolved_variant = registry.select(
-            request_override=override,
-            recipe_engine=recipe.get("engine"),
-            default_engine=config.default_engine,
+        engine_name, resolved_variant = registry.select_for_recipe(
+            recipe, engine, variant
         )
         return (
             registry.engine(engine_name, resolved_variant),

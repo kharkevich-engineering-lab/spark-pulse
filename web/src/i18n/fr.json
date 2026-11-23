@@ -154,7 +154,7 @@
     "empty": "Aucun moteur pour l’instant. Récupérez-en un avec « Récupérer une image ».",
     "indexTtl": "Durée du cache d'index",
     "indexes": "Index de moteurs",
-    "indexesHelp": "Une référence OCI par ligne. Récupérée à la demande et mise en cache, jamais au démarrage.",
+    "indexesHelp": "Une référence OCI (ou un chemin vers index.yaml) par ligne. Tous les moteurs en proviennent ; récupérés en arrière-plan et mis en cache.",
     "lastEngineMessage": "Au moins un moteur doit rester activé, sinon aucune recette ne pourrait être déployée.",
     "lastEngineTitle": "Impossible de désactiver le dernier moteur",
     "live": "en direct",
@@ -1192,7 +1192,11 @@
     "toolsHeading": "Outils ({count})",
     "toolsHint": "Demandés au point de terminaison lui-même : c'est donc ce qu'un client verrait, et non une liste tenue à la main ici.",
     "toolsFailed": "Impossible de lire la liste des outils depuis {endpoint}.",
-    "guidesHint": "Chaque extrait porte le point de terminaison ci-dessus : il n'y a rien à compléter."
+    "guidesHint": "Chaque extrait porte le point de terminaison ci-dessus : il n'y a rien à compléter.",
+    "indexesFromEnv": "Défini par SPARK_PULSE_ENGINE_INDEXES dans l'environnement du processus ; modifiez-le là.",
+    "useDefaultIndex": "Utiliser l'index par défaut",
+    "indexFetched": "· {count} moteurs, récupéré le {time}",
+    "indexNeverFetched": "· pas encore récupéré"
   },
   "deployPort": {
     "label": "Port de l'API",
